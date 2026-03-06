@@ -1,0 +1,99 @@
+<svg width="400" height="260" viewBox="0 0 400 260" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="frameGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#64C8FF" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#A78BFA" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#10B981" stop-opacity="0.6"/>
+    </linearGradient>
+
+    <linearGradient id="bevelHighlight" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="bevelShadow" x1="100%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.25"/>
+      <stop offset="50%" stop-color="#000000" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="innerGlow" x="-5%" y="-5%" width="110%" height="110%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur"/>
+      <feOffset dx="0" dy="0"/>
+      <feComposite in2="SourceAlpha" operator="arithmetic" k2="-1" k3="1"/>
+      <feFlood flood-color="#64C8FF" flood-opacity="0.06"/>
+      <feComposite in2="blur" operator="in"/>
+      <feComposite in="SourceGraphic"/>
+    </filter>
+
+    <filter id="nodeGlow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="cursorGlow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Terminal background -->
+  <rect x="20" y="40" width="340" height="200" rx="10" fill="#0f0f1a" stroke="url(#frameGradient)" stroke-width="1.5" filter="url(#innerGlow)"/>
+  <rect x="20" y="40" width="340" height="200" rx="10" fill="url(#bevelHighlight)" stroke="none"/>
+  <rect x="20" y="40" width="340" height="200" rx="10" fill="url(#bevelShadow)" stroke="none"/>
+  <rect x="22" y="42" width="336" height="196" rx="9" fill="none" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+
+  <!-- Large blinking cursor — top-left, natural prompt position -->
+  <rect x="42" y="58" width="14" height="28" rx="2" fill="#64C8FF" opacity="0.8" filter="url(#cursorGlow)">
+    <animate attributeName="opacity" values="0.8;0;0.8" dur="1s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- === Node cluster — top-right corner, enlarged === -->
+  <g transform="translate(280, 0)">
+    <!-- Backing circle -->
+    <circle cx="60" cy="60" r="55" fill="#0f0f1a" opacity="0.85"/>
+    <circle cx="60" cy="60" r="55" fill="none" stroke="url(#frameGradient)" stroke-width="1.2" opacity="0.35"/>
+
+    <!-- Connection lines -->
+    <g stroke="#64C8FF" stroke-width="1.2" opacity="0.25" stroke-linecap="round">
+      <line x1="60" y1="48" x2="28" y2="28"/>
+      <line x1="60" y1="48" x2="92" y2="28"/>
+      <line x1="60" y1="48" x2="28" y2="78"/>
+      <line x1="60" y1="48" x2="92" y2="78"/>
+      <line x1="60" y1="48" x2="60" y2="92"/>
+      <!-- Peer connections -->
+      <line x1="28" y1="28" x2="92" y2="28" opacity="0.15"/>
+      <line x1="28" y1="78" x2="92" y2="78" opacity="0.15"/>
+      <line x1="28" y1="28" x2="28" y2="78" opacity="0.1"/>
+      <line x1="92" y1="28" x2="92" y2="78" opacity="0.1"/>
+    </g>
+
+    <!-- Central orchestrator -->
+    <circle cx="60" cy="48" r="9" fill="#64C8FF" opacity="0.9" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.7;1;0.7" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="60" cy="48" r="3.5" fill="#0f0f1a" opacity="0.4"/>
+
+    <!-- Agent nodes -->
+    <circle cx="28" cy="28" r="5.5" fill="#A78BFA" opacity="0.85" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.6;0.95;0.6" dur="2.3s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="92" cy="28" r="5.5" fill="#A78BFA" opacity="0.85" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.6;0.95;0.6" dur="2.5s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="28" cy="78" r="5.5" fill="#10B981" opacity="0.85" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.6;0.95;0.6" dur="2.7s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="92" cy="78" r="5.5" fill="#10B981" opacity="0.85" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.6;0.95;0.6" dur="2.1s" repeatCount="indefinite"/>
+    </circle>
+    <circle cx="60" cy="92" r="5.5" fill="#64C8FF" opacity="0.85" filter="url(#nodeGlow)">
+      <animate attributeName="opacity" values="0.6;0.95;0.6" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+</svg>

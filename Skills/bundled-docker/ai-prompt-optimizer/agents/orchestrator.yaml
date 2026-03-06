@@ -1,0 +1,30 @@
+agents:
+  primary:
+    - CodeAgent      # For prompt analysis and optimization generation
+    - MemoryAgent    # For storing and retrieving optimized prompt library
+
+delegation:
+  patterns:
+    - trigger: "analyze|evaluate|assess|review"
+      agent: CodeAgent
+      action: Analyze prompt weaknesses and provide scoring
+    - trigger: "optimize|improve|enhance|refine"
+      agent: CodeAgent
+      action: Generate improved prompt version
+    - trigger: "template|pattern|framework"
+      agent: CodeAgent
+      action: Create domain-specific prompt template
+    - trigger: "remember|store|save|library"
+      agent: MemoryAgent
+      action: Store optimized prompt for future reference
+    - trigger: "similar|previous|past|reuse"
+      agent: MemoryAgent
+      action: Retrieve relevant optimized prompts
+
+prompts:
+  default: "Optimize this prompt for better LLM responses: {prompt}"
+  analyze: "Analyze this prompt for weaknesses: {prompt}\nProvide scores (1-10) for: clarity, specificity, structure, context, constraints\nList specific issues found."
+  optimize: "Optimize this prompt: {original}\n\nRequirements:\n1. Add clear objective statement\n2. Define persona if relevant\n3. Specify output format\n4. Add length constraints\n5. Include required sections\n6. Provide context/background\n7. Add examples if helpful\n\nOutput both the optimized prompt and explanation of changes."
+  template: "Create a prompt template for {task_type}\n\nInclude:\n- Persona definition\n- Task description structure\n- Output format specification\n- Common constraints\n- Examples placeholder\n\nMake it reusable with {placeholders} clearly marked."
+  store: "Store this optimized prompt:\n- Key: {key}\n- Category: {category}\n- Prompt: {prompt}\n- Use case: {use_case}"
+  retrieve: "Find optimized prompts matching: {query}\nReturn relevant prompts from the library with their use cases."

@@ -1,0 +1,60 @@
+[tool.poetry]
+name = "mcp-swagger-cli"
+version = "0.1.0"
+description = "Generate MCP servers from Swagger/OpenAPI specifications"
+readme = "README.md"
+authors = ["MCP Swagger CLI Team"]
+license = "MIT"
+homepage = "https://github.com/mcp-swagger/mcp-swagger-cli"
+repository = "https://github.com/mcp-swagger/mcp-swagger-cli"
+documentation = "https://github.com/mcp-swagger/mcp-swagger-cli#readme"
+keywords = ["mcp", "swagger", "openapi", "cli", "code-generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+packages = [{include = "mcp_swagger_cli"}]
+
+[tool.poetry.scripts]
+mcp-swagger = "mcp_swagger_cli.cli:main"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+typer = {extras = ["all"], version = ">=0.12.0"}
+httpx = ">=0.27.0"
+prance = ">=0.22.0"
+openapi-spec-validator = ">=0.7.0"
+jinja2 = ">=3.1.0"
+pyyaml = ">=6.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+pytest-asyncio = ">=0.23.0"
+ruff = ">=0.4.0"
+black = ">=24.0.0"
+
+[tool.poetry.group.test.dependencies]
+pytest-cov = ">=4.1.0"
+responses = ">=0.25.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

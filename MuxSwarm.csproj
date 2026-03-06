@@ -1,0 +1,63 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net10.0</TargetFramework>
+        <LangVersion>14</LangVersion>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+
+        <Content Include="Runtime\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <Content Include="Prompts\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <Content Include="Configs\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <Content Include="Skills\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <Content Include="Sessions\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Remove="Runtime\**" />
+        <Compile Remove="Prompts\**" />
+        <Compile Remove="Configs\**" />
+        <Compile Remove="Skills\**" />
+        <Compile Remove="Sessions\**" />
+
+        <None Remove="Runtime\**" />
+        <None Remove="Prompts\**" />
+        <None Remove="Configs\**" />
+        <None Remove="Skills\**" />
+        <None Remove="Sessions\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.260205.1" />
+        <PackageReference Include="Microsoft.Extensions.AI" Version="10.2.0" />
+        <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
+        <PackageReference Include="ModelContextProtocol" Version="0.8.0-preview.1" />
+        <PackageReference Include="OpenAI" Version="2.8.0" />
+        <PackageReference Include="Spectre.Console" Version="0.54.0" />
+    </ItemGroup>
+
+</Project>
