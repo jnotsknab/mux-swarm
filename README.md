@@ -100,10 +100,10 @@ dotnet run --project Mux-Swarm.csproj
 mux-swarm
 
 # Single goal
-mux-swarm --goal "Create a report and save it under an allowed sandbox path"
+mux-swarm --goal "Create a detailed report from the shareholder data in your sandbox and save it under an allowed path"
 
 # Continuous autonomous loop
-mux-swarm --continuous --goal "Monitor docs and produce periodic summary" --goal-id docs-loop --min-delay 600
+mux-swarm --continuous --goal "Monitor recent AI related news daily and keep a rolling report of public sentiment based on company in the sandbox" --goal-id web-loop --min-delay 43200
 ```
 
 See [Usage](#usage) for the full command reference and [CLI Flags](#cli-flags) for all options.
