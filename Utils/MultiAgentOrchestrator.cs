@@ -191,7 +191,7 @@ public static class MultiAgentOrchestrator
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
         var baseDir = PlatformContext.BaseDirectory.TrimEnd('\\', '/');
-        SkillLoader.LoadSkills(baseDir);
+        SkillLoader.LoadSkills();
 
         var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, AgentDefinition Def)>();
 

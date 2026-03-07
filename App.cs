@@ -16,14 +16,21 @@ public class App
         "Interactive Commands",
         "  /multiagent     Launch interactive multi agent swarm loop",
         "  /agent          Launch interactive single agent loop",
+        "  /stateless       Stateless single agent loop, ideal for one-off tasks",
         "  /model          View current models set for your swarm",
         "  /setmodel       Change the current model for single agent loop (swarm models can be updated via swarm.json in the Configs dir.)",
         "  /tools          List available MCP tools across enabled servers",
+        "  /skills         List available local skills",
         "  /memory         View knowledge graph",
+        "  /sessions       List all saved sessions with type and agent count",
         "  /dockerexec     Toggle Docker execution mode",
         "  /dbg            Enable tool call output (applies to stdio mode only)",
         "  /nodbg          Disable tool call output (applies to stdio mode only)",
         "  /setup          Run initial setup / reconfigure",
+        "  /reloadskills   Refresh skills directory for any mid process changes",
+        "  /refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills",
+        "  /report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes",
+        "  /report <id>    Audit a specific session by timestamp",
         "  /clear          Clear screen",
         "  /exit           Exit Mux-Swarm",
         "",
@@ -50,7 +57,8 @@ public class App
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --watchdog [true|false]    External watchdog toggle",
         "  --mcp-strict [true|false]  Require all MCPs (default true)",
-        "  --docker-exec [true|false] Route exec via docker skills"
+        "  --docker-exec [true|false] Route exec via docker skills",
+        "  --report [session-id]       Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated"
     );
 
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
@@ -181,6 +189,12 @@ public class App
             );
             return Environment.ExitCode;
         }
+        
+        if (parsed.ReportAll || parsed.ReportSessionId != null)
+        {
+            CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
+            return Environment.ExitCode;
+        }
 
         // Interactive loop
         while (!Environment.HasShutdownStarted)
@@ -259,10 +273,26 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
                     break;
+                
+                case "/stateless":
+                    Config = LoadConfig(ConfigPath);
+                    var statelessAgent = LoadSingleAgentModel();
+                    var statelessAgentCts = GetOrResetCts();
+
+                    await SingleAgentOrchestrator.ChatAgentAsync(
+                        client: CreateChatClient(statelessAgent),
+                        statelessAgentCts.Token,
+                        maxIterations: 3,
+                        mcpTools: _mcpTools,
+                        showToolResultCalls: _showToolCallResults,
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        persistSession: false
+                    );
+                    break;
 
                 case "/setmodel":
-                    MuxConsole.WriteBody("Enter model_id from the pages below:");
-                    MuxConsole.WriteMuted("Example: openai/gpt-5.1-codex-max");
+                    MuxConsole.WriteBody("Open Router Model ID's listed below, other providers may follow a different convention, be sure to check:");
+                    MuxConsole.WriteMuted("Example: openai/gpt-5.1-codex-max, claude-sonnet-4.6");
                     MuxConsole.WriteLine();
                     Common.ListModelsHumanRFormat();
 
@@ -333,6 +363,28 @@ public class App
 
                 case "/memory":
                     CliCmdUtils.ShowKnowledgeGraph(McpClients, _mcpTools);
+                    break;
+                
+                case "/skills":
+                    CliCmdUtils.ShowLoadedSkills();
+                    break;
+                
+                case "/reloadskills":
+                    CliCmdUtils.ReloadSkills();
+                    break;
+                
+                case "/refresh":
+                    await CliCmdUtils.ReloadMcpServersAsync(InitMcpServersAsync, ConfigPath);
+                    CliCmdUtils.ReloadSkills();
+                    break;
+                
+                case var cmd when cmd.StartsWith("/report"):
+                    var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
+                    break;
+                
+                case "/sessions":
+                    CliCmdUtils.ListSessions();
                     break;
 
                 default:
@@ -417,7 +469,9 @@ public class App
         uint SessionRetention,
         bool ProdMode,
         bool? McpStrictOverride,
-        bool? DockerExecOverride
+        bool? DockerExecOverride,
+        string? ReportSessionId,
+        bool ReportAll
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -441,6 +495,9 @@ public class App
         bool prodMode = false;
         bool? mcpStrictOverride = null;
         bool? dockerExecOverride = null;
+        string? reportSessionId = null;
+        bool reportAll = false;
+
 
         for (int i = 0; i < args.Length; i++)
         {
@@ -519,6 +576,22 @@ public class App
                 case "--clear":
                     Console.Clear();
                     break;
+                
+                case "--report":
+                {
+                    var v = NextValue(args, ref i);
+                    // If next value looks like another flag or is missing, report all
+                    if (v == null || v.StartsWith("-"))
+                    {
+                        if (v != null) i--; // put it back
+                        reportAll = true;
+                    }
+                    else
+                    {
+                        reportSessionId = v;
+                    }
+                    break;
+                }
 
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
@@ -536,7 +609,9 @@ public class App
             sessionRetention,
             prodMode,
             mcpStrictOverride,
-            dockerExecOverride
+            dockerExecOverride,
+            reportSessionId,
+            reportAll
         );
     }
 

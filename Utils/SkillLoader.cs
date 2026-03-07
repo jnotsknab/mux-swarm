@@ -41,7 +41,7 @@ public static class SkillLoader
     /// Call once at startup.
     /// </summary>
     /// TODO: Add boolean arg for docker use, some users may have docker installed but still dont want to use docker skills variant
-    public static void LoadSkills(string baseDir, List<string>? extraDirs = null)
+    public static void LoadSkills(List<string>? extraDirs = null)
     {
         _allSkills.Clear();
         _loaded = true;

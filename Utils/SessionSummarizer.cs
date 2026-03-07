@@ -227,6 +227,196 @@ public static class SessionSummarizer
 
         return string.Join("\n", lines);
     }
+    
+    /// <summary>
+    /// Generates a detailed, human-readable markdown report for a single session directory.
+    /// Unlike SummarizeSession, this preserves the full conversation flow including
+    /// tool arguments, results, and assistant reasoning.
+    /// </summary>
+    public static string GenerateDetailedReport(string sessionDirPath)
+    {
+        var sessionFiles = Directory.GetFiles(sessionDirPath, "*_session.json", SearchOption.AllDirectories)
+            .OrderBy(f => f)
+            .ToList();
+
+        if (sessionFiles.Count == 0)
+            return "No session files found.";
+
+        string sessionType = sessionFiles.Count > 1 ? "Swarm" : "Single Agent";
+        string timestamp = Path.GetFileName(sessionDirPath);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"# Session Report: {timestamp}");
+        sb.AppendLine($"**Type:** {sessionType} | **Agents:** {sessionFiles.Count}");
+        sb.AppendLine();
+
+        foreach (string sessionFile in sessionFiles)
+        {
+            JsonDocument? doc = LoadJson(sessionFile);
+            if (doc == null) continue;
+
+            string agentName = Path.GetFileNameWithoutExtension(sessionFile)
+                .Replace("_session", "", StringComparison.OrdinalIgnoreCase);
+
+            var messages = doc.RootElement
+                .TryGetProperty("chatHistoryProviderState", out var state) &&
+                state.TryGetProperty("messages", out var msgs) &&
+                msgs.ValueKind == JsonValueKind.Array
+                    ? msgs.EnumerateArray().ToList()
+                    : [];
+
+            if (messages.Count == 0) continue;
+
+            sb.AppendLine($"## Agent: {agentName}");
+            sb.AppendLine($"**Messages:** {messages.Count}");
+            sb.AppendLine();
+
+            int turnNumber = 0;
+
+            foreach (var message in messages)
+            {
+                string role = message.TryGetProperty("role", out var r) ? r.GetString() ?? "" : "";
+                string author = message.TryGetProperty("authorName", out var a) ? a.GetString() ?? "" : "";
+                string createdAt = message.TryGetProperty("createdAt", out var ts) ? ts.GetString() ?? "" : "";
+
+                var contents = message.TryGetProperty("contents", out var c) &&
+                               c.ValueKind == JsonValueKind.Array
+                    ? c.EnumerateArray().ToList()
+                    : [];
+
+                string roleLabel = role switch
+                {
+                    "user" => "User",
+                    "assistant" => author.Length > 0 ? author : "Assistant",
+                    "tool" => "Tool Result",
+                    _ => role
+                };
+
+                if (role == "user") turnNumber++;
+
+                sb.AppendLine($"### [{roleLabel}]{(createdAt.Length > 0 ? $" — {createdAt}" : "")}");
+
+                foreach (var content in contents)
+                {
+                    string ctype = content.TryGetProperty("$type", out var ct) ? ct.GetString() ?? "" : "";
+
+                    switch (ctype)
+                    {
+                        case "text":
+                        {
+                            string text = content.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                            if (string.IsNullOrWhiteSpace(text)) continue;
+
+                            // Trim injected system preamble for readability
+                            if (role == "user" && text.Contains("## Filesystem Write Rules"))
+                            {
+                                int subTaskIdx = text.IndexOf("Sub-task:", StringComparison.OrdinalIgnoreCase);
+                                if (subTaskIdx >= 0)
+                                    text = text[subTaskIdx..];
+                                else
+                                    text = "*[System preamble omitted]*\n" + text;
+                            }
+
+                            sb.AppendLine(text.Trim());
+                            break;
+                        }
+                        case "functionCall":
+                        {
+                            string name = content.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                            string args = content.TryGetProperty("arguments", out var ar)
+                                ? FormatJson(ar)
+                                : "";
+
+                            sb.AppendLine($"**Tool Call:** `{name}`");
+                            if (!string.IsNullOrWhiteSpace(args))
+                            {
+                                sb.AppendLine("```json");
+                                sb.AppendLine(args);
+                                sb.AppendLine("```");
+                            }
+                            break;
+                        }
+                        case "functionResult":
+                        {
+                            string resultText = ExtractResultText(content);
+                            sb.AppendLine($"**Result:**");
+                            sb.AppendLine("```");
+                            sb.AppendLine(resultText.Trim());
+                            sb.AppendLine("```");
+                            break;
+                        }
+                    }
+                }
+
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("---");
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Extracts readable text from a functionResult content block.
+    /// </summary>
+    private static string ExtractResultText(JsonElement content)
+    {
+        // Check for nested result.content[].text pattern
+        if (content.TryGetProperty("result", out var result))
+        {
+            if (result.ValueKind == JsonValueKind.String)
+                return result.GetString() ?? "";
+
+            if (result.ValueKind == JsonValueKind.Object &&
+                result.TryGetProperty("content", out var contentArray) &&
+                contentArray.ValueKind == JsonValueKind.Array)
+            {
+                return string.Join("\n", contentArray.EnumerateArray()
+                    .Where(e => e.TryGetProperty("text", out _))
+                    .Select(e => e.GetProperty("text").GetString() ?? ""));
+            }
+
+            // Fallback: result.structuredContent.content
+            if (result.ValueKind == JsonValueKind.Object &&
+                result.TryGetProperty("structuredContent", out var sc) &&
+                sc.TryGetProperty("content", out var scContent))
+            {
+                return scContent.GetString() ?? "";
+            }
+
+            // Last resort: serialize the whole result
+            return result.GetRawText();
+        }
+
+        return string.Join("\n", ExtractStrings(content));
+    }
+
+    /// <summary>
+    /// Pretty-prints a JsonElement for display. Handles both object and string-encoded JSON.
+    /// </summary>
+    private static string FormatJson(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            string raw = element.GetString() ?? "";
+            try
+            {
+                var parsed = JsonDocument.Parse(raw);
+                return JsonSerializer.Serialize(parsed, new JsonSerializerOptions { WriteIndented = true });
+            }
+            catch
+            {
+                return raw;
+            }
+        }
+
+        if (element.ValueKind == JsonValueKind.Object || element.ValueKind == JsonValueKind.Array)
+            return JsonSerializer.Serialize(element, new JsonSerializerOptions { WriteIndented = true });
+
+        return element.GetRawText();
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 

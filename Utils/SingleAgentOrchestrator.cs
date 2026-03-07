@@ -56,9 +56,10 @@ public static class SingleAgentOrchestrator
         IList<McpClientTool>? mcpTools = null,
         bool showToolResultCalls = false,
         Func<string, IChatClient>? chatClientFactory = null,
-        int autoCompactTokenThreshold = 80_000)
+        int autoCompactTokenThreshold = 80_000,
+        bool persistSession = true)
     {
-        MuxConsole.WriteBanner("AGENTIC CHAT INTERFACE");
+        MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Escape] to cancel the current turn.");
 
         var baseDir = PlatformContext.BaseDirectory.TrimEnd(
@@ -66,7 +67,7 @@ public static class SingleAgentOrchestrator
             Path.AltDirectorySeparatorChar
         );
 
-        SkillLoader.LoadSkills(baseDir);
+        SkillLoader.LoadSkills();
         var singleAgentDef = GetSingleAgentDefinition();
 
         IList<AITool> allTools = (mcpTools ?? Array.Empty<McpClientTool>()).Cast<AITool>().ToList();
@@ -345,10 +346,11 @@ public static class SingleAgentOrchestrator
             if (wasInterrupted)
                 MuxConsole.WriteInfo("Ready for next input.");
 
-            // Save session
-            await Common.PersistChatSessionAsync(agent, session, sessionTimestamp);
+            // Save session if not stateless
+            
+            if (persistSession)
+                await Common.PersistChatSessionAsync(agent, session, sessionTimestamp);
 
-            // ── Show token estimate ──
             int currentTokens = EstimateTokens(conversationHistory);
             MuxConsole.WriteMuted($"~{currentTokens:N0} tokens in context");
 
@@ -360,7 +362,6 @@ public static class SingleAgentOrchestrator
             if (string.IsNullOrEmpty(nextInput) || nextInput.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
                 break;
 
-            // ── Manual compact command ──
             if (nextInput.Trim().Equals("/compact", StringComparison.OrdinalIgnoreCase))
             {
                 await TryCompactAsync();
