@@ -56,10 +56,6 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-      # ── Tests ──────────────────────────────────────────────
-      # Uncomment when you add a test project.
-      # If your test project is in a subfolder, adjust the path.
-      #
       # - name: Run tests
       #   run: dotnet test --configuration Release --no-restore --verbosity normal
 
@@ -81,7 +77,7 @@ jobs:
           if [ "${{ matrix.rid }}" = "win-x64" ]; then
             ls -lh ./publish/MuxSwarm.exe
           else
-            ls -lh ./publish/mux-swarm
+            ls -lh ./publish/MuxSwarm
             chmod +x ./publish/MuxSwarm
           fi
 
