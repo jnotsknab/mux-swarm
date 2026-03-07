@@ -150,12 +150,18 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ```
 /multiagent     Launch multi-agent swarm loop
 /agent          Launch single-agent loop
+/stateless      Launch stateless single agent loop, ideal for one-off tasks (sessions not persisted as to not convolute stateful agent runs)
 /model          View current model assignments
 /setmodel       Change the single-agent model
 /tools          List available tools
 /memory         View the knowledge graph
+/sessions       List all saved sessions with type and agent count
 /dockerexec     Toggle Docker execution mode
 /setup          Run initial setup
+/reloadskills   Refresh skills directory for any mid process changes
+/refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills
+/report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes
+/report <id>    Audit a specific session by timestamp
 /clear          Clear terminal
 /exit           Exit the runtime
 /qm or /qc      Stop the current session
@@ -191,7 +197,7 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 --mcp-strict [true|false]  Require all integrations to connect
 --docker-exec [true|false] Route execution through Docker
 --model <id>               Override the single-agent model
---prod                     Production output formatting
+--report [session-id]       Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated
 --clear                    Clear terminal before continuing
 --help, -h                 Show help
 ```
