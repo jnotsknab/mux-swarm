@@ -162,6 +162,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 /refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills
 /report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes
 /report <id>    Audit a specific session by timestamp
+/compact        Compact current agent session for token burn prevention
 /clear          Clear terminal
 /exit           Exit the runtime
 /qm or /qc      Stop the current session
