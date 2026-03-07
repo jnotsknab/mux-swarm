@@ -104,6 +104,14 @@ public static class Common
         return definitions;
     }
     
+    public static string? ResolveDirCaseInsensitive(string parent, string name)
+    {
+        if (!Directory.Exists(parent)) return null;
+        return Directory.GetDirectories(parent)
+            .FirstOrDefault(d => Path.GetFileName(d)
+                .Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+    
     public static IList<AITool> ApplyToolFilter(
         IList<AITool> tools,
         IList<string>? mcpServers,

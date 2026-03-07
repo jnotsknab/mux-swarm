@@ -46,7 +46,13 @@ public static class SkillLoader
         _allSkills.Clear();
         _loaded = true;
         
-        var skillsRoot = Path.Combine(baseDir, "skills");
+        var skillsRoot = Common.ResolveDirCaseInsensitive(baseDir, "skills");
+        if (skillsRoot == null)
+        {
+            MuxConsole.WriteWarning("[SKILLS] No skills directory found — skipping");
+            return;
+        }
+        
         var bundledDir = Path.Combine(skillsRoot, "bundled");
         var bundledDockerDir = Path.Combine(skillsRoot, "bundled-docker");
 
