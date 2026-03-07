@@ -372,7 +372,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 - Scope MCP servers and [tool patterns](#swarmjson--topology--roles) narrowly by role
 - Use environment variables for all credentials
 - Prefer file-path-based deliverables so outputs remain inspectable
-- Use /report or --report to review session artifacts regularly
+- Use `/report` or `--report` to review session artifacts regularly
 
 ---
 
