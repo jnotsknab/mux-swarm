@@ -68,13 +68,13 @@
 **Linux / macOS:**
 
 ```bash
-curl -fsSL https://muxswarm.dev/install.sh | bash
+curl -fsSL https://www.muxswarm.dev/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
-irm https://muxswarm.dev/install.ps1 | iex
+irm https://www.muxswarm.dev/install.ps1 | iex
 ```
 
 The installer downloads the latest release, installs the runtime locally, and adds `mux-swarm` to your PATH.
@@ -386,7 +386,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ## Contributing
 
-Contributions are welcome. Guidelines coming soon — open an issue to discuss.
+Contributions are welcome. Guidelines coming soon, open an issue to discuss.
 
 ---
 
