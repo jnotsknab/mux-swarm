@@ -45,9 +45,9 @@ public static class SkillLoader
     {
         _allSkills.Clear();
         _loaded = true;
-        
-        var skillsRoot = Common.ResolveDirCaseInsensitive(baseDir, "skills");
-        if (skillsRoot == null)
+    
+        var skillsRoot = Path.GetDirectoryName(PlatformContext.SkillsDirectory);
+        if (skillsRoot == null || !Directory.Exists(skillsRoot))
         {
             MuxConsole.WriteWarning("[SKILLS] No skills directory found — skipping");
             return;
