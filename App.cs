@@ -16,7 +16,7 @@ public class App
         "Interactive Commands",
         "  /multiagent     Launch interactive multi agent swarm loop",
         "  /agent          Launch interactive single agent loop",
-        "  /stateless       Stateless single agent loop, ideal for one-off tasks",
+        "  /stateless      Stateless single agent loop, ideal for one-off tasks",
         "  /model          View current models set for your swarm",
         "  /setmodel       Change the current model for single agent loop (swarm models can be updated via swarm.json in the Configs dir.)",
         "  /tools          List available MCP tools across enabled servers",
