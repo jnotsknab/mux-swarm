@@ -61,6 +61,7 @@
 - An LLM provider API key (any [OpenAI-compatible](https://platform.openai.com/docs/api-reference) endpoint), set as an environment variable
 - **Node / npm** (`npx`) for Node-based [MCP](https://modelcontextprotocol.io/) servers
 - **uvx / uv** for Python-based MCP servers
+- **Note Mux-Swarm utilizes the ChromaDB MCP server in its default config which has a known issue with python version 3.14** - Therefore it is recommended uv / uvx is configured to utilize a seperate python version eg. 3.12
 
 ### Install via Script (Recommended)
 
