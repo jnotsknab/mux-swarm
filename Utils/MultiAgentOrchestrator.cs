@@ -20,23 +20,20 @@ public static class MultiAgentOrchestrator
     public static readonly string SwarmConfPath = PlatformContext.SwarmPath;
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
-    
-
-    // Context Budget Configuration
 
     /// <summary>Max chars per delegation result stored in the orchestrator's progress log.</summary>
-    private const int ProgressEntryBudget = 600;
+    private const int ProgressEntryBudget = 1000;
 
     /// <summary>Max chars of prior-agent context injected into a new sub-agent's task.</summary>
-    private const int CrossAgentContextBudget = 1200;
+    private const int CrossAgentContextBudget = 2000;
 
     /// <summary>Max total chars for the full progress log sent in continuation prompts.</summary>
-    private const int ProgressLogTotalBudget = 3000;
+    private const int ProgressLogTotalBudget = 4500;
 
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
-    private const int ToolResultPreviewLength = 100;
+    private const int ToolResultPreviewLength = 250;
 
-    // ── Retry Configuration ──────────────────────────────────────────────
+    private const int DelegationPreviewLength = 300;
 
     /// <summary>Max orchestrator iterations before giving up.</summary>
     private const int DefaultMaxOrchestratorIterations = 15;
@@ -50,15 +47,6 @@ public static class MultiAgentOrchestrator
     /// <summary>Max consecutive empty/stuck responses before aborting.</summary>
     private const int MaxStuckCount = 3;
 
-    // ── Agent Definition ─────────────────────────────────────────────────
-
-    public record AgentDefinition(
-        string Name,
-        string Description,
-        string SystemPromptPath,
-        bool CanDelegate,
-        Func<IList<AITool>, IList<AITool>> ToolFilter
-    );
 
     /// <summary>
     /// Captures a compacted delegation result with structured metadata.
@@ -76,9 +64,6 @@ public static class MultiAgentOrchestrator
     /// progressively stronger recovery hints on each retry.
     /// </summary>
     private record RetryState(int AttemptCount, string? LastFailureReason);
-    
-
-    // ── Helpers ───────────────────────────────────────────────────────────
 
     /// <summary>Truncate and collapse whitespace for tool result previews.</summary>
     private static string TruncateResult(string? result, int maxLength = ToolResultPreviewLength)
@@ -88,38 +73,7 @@ public static class MultiAgentOrchestrator
         return clean.Length > maxLength ? clean[..maxLength] + "..." : clean;
     }
 
-    // ── Swarm Config Loading ──────────────────────────────────────────────
 
-    private static List<AgentDefinition> GetAgentDefinitions()
-    {
-        if (File.Exists(SwarmConfPath))
-        {
-            try
-            {
-                var json = File.ReadAllText(SwarmConfPath);
-                var config = JsonSerializer.Deserialize<SwarmConfig>(json);
-
-                if (config?.Agents != null && config.Agents.Count > 0)
-                {
-                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count} agents from swarm.json");
-                    return Common.ParseAgentDefinitions(config);
-                }
-            }
-            catch (Exception ex)
-            {
-                MuxConsole.WriteWarning($"Failed to parse swarm.json: {ex.Message}");
-                MuxConsole.WriteWarning("Falling back to default agents...");
-            }
-        }
-        else
-        {
-            MuxConsole.WriteWarning($"swarm.json not found at {SwarmConfPath}");
-            MuxConsole.WriteWarning("Using default agent definitions...");
-        }
-
-        return new List<AgentDefinition>();
-    }
-    
     private static IList<AITool> GetOrchestratorFilteredToolsFromConfig(IList<AITool> mcpTools)
     {
         if (!File.Exists(SwarmConfPath))
@@ -130,23 +84,20 @@ public static class MultiAgentOrchestrator
             var json = File.ReadAllText(SwarmConfPath);
             var config = JsonSerializer.Deserialize<SwarmConfig>(json);
 
-            // NOTE: adjust property names below to match your SwarmConfig shape.
-            // Based on your JSON, it’s config.Orchestrator.ToolPatterns and optionally config.Orchestrator.McpServers.
             var orch = config?.Orchestrator;
             if (orch == null)
                 return new List<AITool>();
 
-            // safest behavior: orchestrator gets NOTHING unless explicitly configured
             return Common.ApplyToolFilter(
                 tools: mcpTools,
-                mcpServers: orch.McpServers,       // may be null / missing
-                toolPatterns: orch.ToolPatterns,   // may be null / missing
+                mcpServers: orch.McpServers,
+                toolPatterns: orch.ToolPatterns,
                 includeAllWhenEmpty: false
             );
         }
         catch
         {
-            return new List<AITool>(); // safe default
+            return new List<AITool>();
         }
     }
 
@@ -170,7 +121,7 @@ public static class MultiAgentOrchestrator
         return FallbackOrchPromptPath;
     }
 
-    // ── Core Orchestration ───────────────────────────────────────────────
+    //Core Orchestration
 
     public static async Task RunAsync(
         Func<string, IChatClient> chatClientFactory,
@@ -187,18 +138,17 @@ public static class MultiAgentOrchestrator
         uint sessionRetention = 10,
         CancellationToken cancellationToken = default)
     {
-        var agentDefs = GetAgentDefinitions();
+        var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
-        var baseDir = PlatformContext.BaseDirectory.TrimEnd('\\', '/');
         SkillLoader.LoadSkills();
 
-        var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, AgentDefinition Def)>();
+        var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
 
         var taskCompleteTool = AIFunctionFactory.Create(
             method: (
                 [Description("Status of the task: 'success', 'failure', or 'partial'")] string status,
-                [Description("Brief summary of what was accomplished or why it failed")] string summary,
+                [Description("Summary of what was accomplished or why it failed")] string summary,
                 [Description("Optional comma-separated list of file paths or identifiers produced")] string? artifacts
             ) =>
             {
@@ -342,7 +292,7 @@ public static class MultiAgentOrchestrator
             description: "Delegate a sub-task to a specialist agent by name. Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. Cannot delegate to the Orchestrator."
         );
 
-        // ── Build specialist agents ──
+        //Build specialist agents
         await MuxConsole.WithSpinnerAsync("Initializing specialist agents", async () =>
         {
             foreach (var def in agentDefs)
@@ -414,8 +364,8 @@ public static class MultiAgentOrchestrator
                 );
 
                 var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, subAgentDelegateTool, ..filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, ..filteredTools];
+                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, subAgentDelegateTool, .. filteredTools]
+                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, .. filteredTools];
 
                 if (def.CanDelegate)
                     MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");
@@ -491,7 +441,7 @@ public static class MultiAgentOrchestrator
         IChatClient orchestratorClient = chatClientFactory(orchestratorModelId);
 
         var orchestratorFilteredTools = GetOrchestratorFilteredToolsFromConfig(mcpTools);
-        
+
         if (orchestratorFilteredTools.Count == 0)
             MuxConsole.WriteMuted("Orchestrator has 0 MCP tools (ToolFilter). Using built-in tools only.");
         else
@@ -519,7 +469,8 @@ public static class MultiAgentOrchestrator
         string currentIterationSessionDir = string.Empty;
 
         await using var persister = new SeshPersistor(
-            async () => {
+            async () =>
+            {
                 if (!_sessionDirty || string.IsNullOrEmpty(currentIterationSessionDir)) return;
                 await Common.PersistSessionsAsync(orchestratorAgent, currentOrchestratorSession, specialists, currentIterationSessionDir);
             },
@@ -536,10 +487,10 @@ public static class MultiAgentOrchestrator
 
         if (!prodMode)
             MuxConsole.WriteMuted("Press [Escape] during execution to cancel the current goal.");
-        
+
         MuxConsole.WriteLine();
         MuxConsole.WriteRule();
-        
+
         //Main loop 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -554,8 +505,13 @@ public static class MultiAgentOrchestrator
                 if (!prodMode) MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
                 string? input = Console.ReadLine();
 
-                if (string.IsNullOrEmpty(input) || input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) || input.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(input) || input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
+                    input.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
+                {   
+                    MuxConsole.WriteSuccess("Exited from Swarm interface successfully!");
                     break;
+                }
+                    
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
             }
@@ -583,7 +539,7 @@ public static class MultiAgentOrchestrator
                 ContinuousStateManager.WriteAtomic(goalId!, state, SessionDir);
             }
 
-            // ── Create a linked CTS for Escape key cancellation ──────────
+            //Create a linked CTS for Escape key cancellation
             using var goalCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             IDisposable? escapeListener = null;
 
@@ -640,7 +596,7 @@ public static class MultiAgentOrchestrator
                 state.NextWakeAt = DateTime.Now.AddSeconds(state.MinDelaySeconds);
                 state.Status = wasInterrupted ? "interrupted" : "sleeping";
                 ContinuousStateManager.WriteAtomic(goalId!, state, SessionDir);
-                PruneOldSessions(SessionDir, sessionRetention);
+                Common.PruneOldSessions(SessionDir, sessionRetention);
             }
 
             if (goalFromArgs && !continuous)
@@ -651,9 +607,9 @@ public static class MultiAgentOrchestrator
                 MuxConsole.WriteInfo("Continuous mode stopped due to user interruption.");
                 break;
             }
-            
+
             MuxConsole.WriteRule();
-            
+
             if (continuous)
             {
                 MuxConsole.WriteInfo($"Iteration {state!.Iteration} complete. Enforced delay: {minDelaySeconds}s. Next run: {state.NextWakeAt:HH:mm:ss}");
@@ -675,34 +631,6 @@ public static class MultiAgentOrchestrator
         }
     }
 
-    // ── Session Pruning ───────────────────────────────────────────────────
-
-    private static void PruneOldSessions(string sessionDir, uint retention)
-    {
-        var dirs = Directory.GetDirectories(sessionDir)
-            .Where(d => !Path.GetFileName(d).Equals("state", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(d => d)
-            .Skip((int)retention)
-            .ToList();
-
-        foreach (var dir in dirs)
-        {
-            try
-            {
-                Directory.Delete(dir, recursive: true);
-            }
-            catch (IOException ex)
-            {
-                MuxConsole.WriteWarning($"Failed to delete session dir '{dir}': {ex.Message}");
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                MuxConsole.WriteWarning($"Access denied deleting session dir '{dir}': {ex.Message}");
-            }
-        }
-    }
-
-    // ── Retry Hint Injection ─────────────────────────────────────────────
 
     private static string InjectRetryHint(string task, int attemptNumber, string? lastFailureReason)
     {
@@ -787,7 +715,7 @@ public static class MultiAgentOrchestrator
         string goal,
         AIAgent orchestratorAgent,
         AgentSession orchestratorSession,
-        Dictionary<string, (AIAgent Agent, AgentSession Session, AgentDefinition Def)> specialists,
+        Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)> specialists,
         List<DelegationResult> delegationResults,
         IChatClient? compactionClient,
         int maxOrchestratorIterations,
@@ -806,7 +734,7 @@ public static class MultiAgentOrchestrator
         {
             Console.WriteLine($"[[START_ORCHESTRATOR]]{DateTime.Now:yyyy-MM-dd HH:mm:ss}[[END_TIMESTAMP]]");
         }
-        
+
         _sessionDirty = true;
         var progressLog = new List<string>();
         List<string> toolCalls = [];
@@ -964,7 +892,7 @@ public static class MultiAgentOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                 {
@@ -974,7 +902,7 @@ public static class MultiAgentOrchestrator
                 {
                     if (currentlyStreaming)
                         MuxConsole.EndStreaming();
-                    
+
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1042,7 +970,7 @@ public static class MultiAgentOrchestrator
     // ── SubAgent Execution Logic ──────────────────────────────────────────
 
     private static async Task<(string RawResult, string? Status, string? Summary, string? Artifacts)> RunSubAgentAsync(
-        (AIAgent Agent, AgentSession Session, AgentDefinition Def) specialist,
+        (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def) specialist,
         string subTask,
         int maxIterations,
         CancellationToken cancellationToken,
@@ -1154,18 +1082,18 @@ public static class MultiAgentOrchestrator
                     MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
                     thinking = MuxConsole.BeginThinking(specialist.Def.Name);
                 }
-                
-                
-                
+
+
+
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), cancellationToken);
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
                     .WithCancellation(cancellationToken))
-                {   
-                    
+                {
+
                     activityTimeout.Ping();
-                    
+
                     // Process text first — if this update has text, we need streaming mode.
                     if (!string.IsNullOrEmpty(update.Text))
                     {

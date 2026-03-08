@@ -12,7 +12,7 @@ public class OrchestratorConfig
 
     [JsonPropertyName("model")]
     public string? Model { get; set; }
-    
+
     [JsonPropertyName("mcpServers")]
     public List<string> McpServers { get; set; } = [];
 

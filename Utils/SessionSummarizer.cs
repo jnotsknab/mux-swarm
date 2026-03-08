@@ -71,7 +71,7 @@ public static class SessionSummarizer
         sb.AppendLine(new string('=', 60));
         sb.AppendLine("### End of Session Context");
         sb.AppendLine(new string('=', 60));
-        
+
         return sb.ToString();
     }
 
@@ -213,10 +213,10 @@ public static class SessionSummarizer
                 ?? (lastDelegatedTo != null && lastDelegationIdx > lastAssistantTextIdx
                     ? $"Delegated to: {lastDelegatedTo}"
                     : lastAssistantText ?? "No outcome captured.");
-            
+
             if (toolCalls.Count == 0 && artifacts.Count == 0 && lastOutcome == null)
                 continue;
-            
+
             lines.Add($"#### Agent: {agentName}");
             lines.Add($"- Tool calls: {FormatToolCalls(toolCalls)}");
             lines.Add($"- Delegated agents: {FormatSet(delegatedAgents)}");
@@ -227,7 +227,7 @@ public static class SessionSummarizer
 
         return string.Join("\n", lines);
     }
-    
+
     /// <summary>
     /// Generates a detailed, human-readable markdown report for a single session directory.
     /// Unlike SummarizeSession, this preserves the full conversation flow including
@@ -303,48 +303,48 @@ public static class SessionSummarizer
                     switch (ctype)
                     {
                         case "text":
-                        {
-                            string text = content.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
-                            if (string.IsNullOrWhiteSpace(text)) continue;
-
-                            // Trim injected system preamble for readability
-                            if (role == "user" && text.Contains("## Filesystem Write Rules"))
                             {
-                                int subTaskIdx = text.IndexOf("Sub-task:", StringComparison.OrdinalIgnoreCase);
-                                if (subTaskIdx >= 0)
-                                    text = text[subTaskIdx..];
-                                else
-                                    text = "*[System preamble omitted]*\n" + text;
-                            }
+                                string text = content.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+                                if (string.IsNullOrWhiteSpace(text)) continue;
 
-                            sb.AppendLine(text.Trim());
-                            break;
-                        }
+                                // Trim injected system preamble for readability
+                                if (role == "user" && text.Contains("## Filesystem Write Rules"))
+                                {
+                                    int subTaskIdx = text.IndexOf("Sub-task:", StringComparison.OrdinalIgnoreCase);
+                                    if (subTaskIdx >= 0)
+                                        text = text[subTaskIdx..];
+                                    else
+                                        text = "*[System preamble omitted]*\n" + text;
+                                }
+
+                                sb.AppendLine(text.Trim());
+                                break;
+                            }
                         case "functionCall":
-                        {
-                            string name = content.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-                            string args = content.TryGetProperty("arguments", out var ar)
-                                ? FormatJson(ar)
-                                : "";
-
-                            sb.AppendLine($"**Tool Call:** `{name}`");
-                            if (!string.IsNullOrWhiteSpace(args))
                             {
-                                sb.AppendLine("```json");
-                                sb.AppendLine(args);
-                                sb.AppendLine("```");
+                                string name = content.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                                string args = content.TryGetProperty("arguments", out var ar)
+                                    ? FormatJson(ar)
+                                    : "";
+
+                                sb.AppendLine($"**Tool Call:** `{name}`");
+                                if (!string.IsNullOrWhiteSpace(args))
+                                {
+                                    sb.AppendLine("```json");
+                                    sb.AppendLine(args);
+                                    sb.AppendLine("```");
+                                }
+                                break;
                             }
-                            break;
-                        }
                         case "functionResult":
-                        {
-                            string resultText = ExtractResultText(content);
-                            sb.AppendLine($"**Result:**");
-                            sb.AppendLine("```");
-                            sb.AppendLine(resultText.Trim());
-                            sb.AppendLine("```");
-                            break;
-                        }
+                            {
+                                string resultText = ExtractResultText(content);
+                                sb.AppendLine($"**Result:**");
+                                sb.AppendLine("```");
+                                sb.AppendLine(resultText.Trim());
+                                sb.AppendLine("```");
+                                break;
+                            }
                     }
                 }
 

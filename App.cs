@@ -19,6 +19,7 @@ public class App
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
         "  /model          View current models set for your swarm",
         "  /setmodel       Change the current model for single agent loop (swarm models can be updated via swarm.json in the Configs dir.)",
+        "  /swap           Swap the active agent for single-agent mode",
         "  /tools          List available MCP tools across enabled servers",
         "  /skills         List available local skills",
         "  /memory         View knowledge graph",
@@ -50,6 +51,7 @@ public class App
         "CLI Flags",
         "  --goal <text|file>         Explicit goal",
         "  --continuous               Continuous autonomous mode",
+        "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
         "  --goal-id <id>             Attach goal/session id",
         "  --min-delay <secs>         Min delay between loops (default 300)",
         "  --persist-interval <s>     Persist session every N seconds",
@@ -166,30 +168,8 @@ public class App
         }
 
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
-        {
-            var cliCts = GetOrResetCts();
+            return await HandleParsedRun(args, parsed);
 
-            if (_watchDogEnabled)
-                Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: cliCts);
-
-            var agentModels = LoadAgentModels();
-            
-            await MultiAgentOrchestrator.RunAsync(
-                chatClientFactory: modelId => CreateChatClient(modelId),
-                mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
-                agentModels: agentModels,
-                prodMode: parsed.ProdMode,
-                incomingGoal: parsed.Goal,
-                continuous: parsed.Continuous,
-                goalId: parsed.GoalId,
-                minDelaySeconds: parsed.MinDelay,
-                persistIntervalSeconds: parsed.PersistInterval,
-                sessionRetention: parsed.SessionRetention,
-                cancellationToken: cliCts.Token
-            );
-            return Environment.ExitCode;
-        }
-        
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
@@ -250,7 +230,7 @@ public class App
                     MuxConsole.WriteBody("Model assignments:");
                     foreach (var kvp in maModels)
                         MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
-                    
+
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -273,7 +253,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
                     break;
-                
+
                 case "/stateless":
                     Config = LoadConfig(ConfigPath);
                     var statelessAgent = LoadSingleAgentModel();
@@ -291,12 +271,15 @@ public class App
                     break;
 
                 case "/setmodel":
-                    MuxConsole.WriteBody("Open Router Model ID's listed below, other providers may follow a different convention, be sure to check:");
-                    MuxConsole.WriteMuted("Example: openai/gpt-5.1-codex-max, claude-sonnet-4.6");
+                    MuxConsole.WriteBody("Provide a valid model ID for your configured provider. Examples by provider:");
+                    MuxConsole.WriteMuted("  OpenRouter:  openai/gpt-5.1-codex-max, google/gemini-2.5-pro-preview, anthropic/claude-sonnet-4.6, meta-llama/llama-4-maverick");
+                    MuxConsole.WriteMuted("  OpenAI:      gpt-5.1, gpt-4o, gpt-4o-mini");
+                    MuxConsole.WriteMuted("  Anthropic:   claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001");
+                    MuxConsole.WriteMuted("  Google:      gemini-2.5-pro, gemini-2.5-flash");
+                    MuxConsole.WriteMuted("  DeepSeek:    deepseek-chat, deepseek-reasoner");
                     MuxConsole.WriteLine();
-                    Common.ListModelsHumanRFormat();
 
-                    var choice = MuxConsole.Prompt("Model ID");
+                    var choice = MuxConsole.Prompt("Model ID: ");
                     if (!string.IsNullOrEmpty(choice))
                     {
                         try
@@ -344,6 +327,9 @@ public class App
                 case "/dockerexec":
                     CliCmdUtils.HandleDockerExec(ConfigPath);
                     break;
+                case "/swap":
+                    CliCmdUtils.HandleAgentSwap();
+                    break;
 
                 case "/qc":
                 case "/qm":
@@ -364,25 +350,25 @@ public class App
                 case "/memory":
                     CliCmdUtils.ShowKnowledgeGraph(McpClients, _mcpTools);
                     break;
-                
+
                 case "/skills":
                     CliCmdUtils.ShowLoadedSkills();
                     break;
-                
+
                 case "/reloadskills":
                     CliCmdUtils.ReloadSkills();
                     break;
-                
+
                 case "/refresh":
                     await CliCmdUtils.ReloadMcpServersAsync(InitMcpServersAsync, ConfigPath);
                     CliCmdUtils.ReloadSkills();
                     break;
-                
+
                 case var cmd when cmd.StartsWith("/report"):
                     var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
                     break;
-                
+
                 case "/sessions":
                     CliCmdUtils.ListSessions();
                     break;
@@ -421,10 +407,10 @@ public class App
 
             if (swarm?.Orchestrator != null && !string.IsNullOrEmpty(swarm.Orchestrator.Model))
                 agentModels["Orchestrator"] = swarm.Orchestrator.Model;
-            
+
             if (swarm?.CompactionAgent != null && !string.IsNullOrEmpty(swarm.CompactionAgent.Model))
                 agentModels["Compaction"] = swarm.CompactionAgent.Model;
-            
+
             if (swarm?.Agents != null)
             {
                 foreach (var agent in swarm.Agents)
@@ -438,8 +424,6 @@ public class App
         if (!agentModels.ContainsKey("Orchestrator"))
             agentModels["Orchestrator"] = "x-ai/grok-4.1-fast";
         
-        
-
         return agentModels;
     }
 
@@ -447,6 +431,13 @@ public class App
     {
         if (!string.IsNullOrEmpty(_cliModelOverride))
             return _cliModelOverride;
+
+        if (SingleAgentOrchestrator.AgentDef != null)
+        {
+            var agentModels = LoadAgentModels();
+            if (agentModels.TryGetValue(SingleAgentOrchestrator.AgentDef.Name, out var model))
+                return model;
+        }
 
         if (File.Exists(MultiAgentOrchestrator.SwarmConfPath))
         {
@@ -471,7 +462,8 @@ public class App
         bool? McpStrictOverride,
         bool? DockerExecOverride,
         string? ReportSessionId,
-        bool ReportAll
+        bool ReportAll,
+        string AgentName
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -497,6 +489,7 @@ public class App
         bool? dockerExecOverride = null;
         string? reportSessionId = null;
         bool reportAll = false;
+        string? agentName = null;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -530,24 +523,24 @@ public class App
                     break;
 
                 case "--goal":
-                {
-                    var v = NextValue(args, ref i);
-                    if (!string.IsNullOrWhiteSpace(v))
-                        goal = Common.ReadGoalValue(v);
-                    break;
-                }
+                    {
+                        var v = NextValue(args, ref i);
+                        if (!string.IsNullOrWhiteSpace(v))
+                            goal = Common.ReadGoalValue(v);
+                        break;
+                    }
 
                 case "--goal-id":
                     goalId = NextValue(args, ref i);
                     break;
 
                 case "--model":
-                {
-                    var modelOverride = NextValue(args, ref i);
-                    if (!string.IsNullOrWhiteSpace(modelOverride))
-                        _cliModelOverride = modelOverride;
-                    break;
-                }
+                    {
+                        var modelOverride = NextValue(args, ref i);
+                        if (!string.IsNullOrWhiteSpace(modelOverride))
+                            _cliModelOverride = modelOverride;
+                        break;
+                    }
 
                 case "--min-delay":
                     if (Common.TryNextUInt(args, ref i, out var md)) minDelay = md;
@@ -572,26 +565,31 @@ public class App
                 case "--docker-exec":
                     dockerExecOverride = NextBool(args, ref i) ?? true;
                     break;
+                case "--agent":
+                    var an = NextValue(args, ref i);
+                    if (!string.IsNullOrWhiteSpace(an))
+                        agentName = an;
+                    break;
 
                 case "--clear":
                     Console.Clear();
                     break;
-                
+
                 case "--report":
-                {
-                    var v = NextValue(args, ref i);
-                    // If next value looks like another flag or is missing, report all
-                    if (v == null || v.StartsWith("-"))
                     {
-                        if (v != null) i--; // put it back
-                        reportAll = true;
+                        var v = NextValue(args, ref i);
+                        // If next value looks like another flag or is missing, report all
+                        if (v == null || v.StartsWith("-"))
+                        {
+                            if (v != null) i--; // put it back
+                            reportAll = true;
+                        }
+                        else
+                        {
+                            reportSessionId = v;
+                        }
+                        break;
                     }
-                    else
-                    {
-                        reportSessionId = v;
-                    }
-                    break;
-                }
 
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
@@ -611,7 +609,8 @@ public class App
             mcpStrictOverride,
             dockerExecOverride,
             reportSessionId,
-            reportAll
+            reportAll,
+            agentName
         );
     }
 
@@ -923,6 +922,60 @@ public class App
             new OpenAI.OpenAIClientOptions { Endpoint = new Uri(normalized) }
         );
     });
+
+    private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
+    {
+        var cliCts = GetOrResetCts();
+
+        if (_watchDogEnabled)
+            Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: cliCts);
+
+        var agentModels = LoadAgentModels();
+        if (parsed != null && !string.IsNullOrWhiteSpace(parsed.AgentName))
+        {
+            var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+            var matched = agentDefs.FirstOrDefault(d => d.Name.Equals(parsed.AgentName, StringComparison.OrdinalIgnoreCase));
+
+            if (matched == null)
+            {
+                var available = string.Join(", ", agentDefs.Select(d => d.Name).Distinct());
+                MuxConsole.WriteError($"No agent found matching '{parsed.AgentName}'. Available: {available}");
+                return 1;
+            }
+
+            SingleAgentOrchestrator.AgentDef = matched;
+            var mId = agentModels.GetValueOrDefault(matched.Name, agentModels["Orchestrator"]);
+
+            await SingleAgentOrchestrator.ChatAgentAsync(
+                client: CreateChatClient(mId),
+                cancellationToken: cliCts.Token,
+                mcpTools: _mcpTools,
+                chatClientFactory: modelId => CreateChatClient(modelId),
+                incomingGoal: parsed.Goal,
+                continuous: parsed.Continuous,
+                goalId: parsed.GoalId,
+                minDelaySeconds: parsed.MinDelay,
+                persistIntervalSeconds: parsed.PersistInterval,
+                sessionRetention: parsed.SessionRetention,
+                prodMode: parsed.ProdMode);
+            return Environment.ExitCode;
+        }
+
+        await MultiAgentOrchestrator.RunAsync(
+            chatClientFactory: modelId => CreateChatClient(modelId),
+            mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+            agentModels: agentModels,
+            prodMode: parsed.ProdMode,
+            incomingGoal: parsed.Goal,
+            continuous: parsed.Continuous,
+            goalId: parsed.GoalId,
+            minDelaySeconds: parsed.MinDelay,
+            persistIntervalSeconds: parsed.PersistInterval,
+            sessionRetention: parsed.SessionRetention,
+            cancellationToken: cliCts.Token
+            );
+        return Environment.ExitCode;
+    }
 
     private static IChatClient CreateChatClient(string modelId)
     {

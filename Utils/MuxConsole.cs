@@ -50,16 +50,16 @@ public static class MuxConsole
 
     private static class C
     {
-        public const string Step    = "#64B4DC";
+        public const string Step = "#64B4DC";
         public const string Success = "#78C88C";
         public const string Warning = "#D4A054";
-        public const string Error   = "#D46C6C";
-        public const string Info    = "#909090"; 
-        public const string Muted   = "#787878"; 
-        public const string Accent  = "#64B4DC"; 
-        public const string Prompt  = "#B0B0B0"; 
-        public const string Banner  = "#64B4DC"; 
-        public const string Agent   = "#8FB8D4"; 
+        public const string Error = "#D46C6C";
+        public const string Info = "#909090";
+        public const string Muted = "#787878";
+        public const string Accent = "#64B4DC";
+        public const string Prompt = "#B0B0B0";
+        public const string Banner = "#64B4DC";
+        public const string Agent = "#8FB8D4";
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -88,8 +88,8 @@ public static class MuxConsole
             write();
         }
     }
-    
-    
+
+
     /// <summary>
     /// Stops and detaches the active indicator (caller must hold ConsoleLock).
     /// Uses CancelNoWait() to avoid deadlock since we already hold the lock.
@@ -687,16 +687,16 @@ public static class MuxConsole
             AnsiConsole.WriteLine();
         }, clearIndicator: false);
     }
-    
-    
 
-    public static void WriteDelegation(string fromAgent, string toAgent, string task)
+
+
+    public static void WriteDelegation(string fromAgent, string toAgent, string task, int truncLength = 800)
     {
         WithConsole(() =>
         {
             if (StdioMode) { Console.WriteLine($"[DELEGATE] {fromAgent} -> {toAgent}: {task}"); return; }
 
-            string truncTask = task.Length > 160 ? task[..160] + "..." : task;
+            string truncTask = task.Length > truncLength ? task[..truncLength] + "..." : task;
             AnsiConsole.MarkupLine($"  [{C.Accent}]>>[/] [{C.Info}]{Esc(fromAgent)}[/] [{C.Muted}]->[/] [{C.Step}]{Esc(toAgent)}[/]");
             AnsiConsole.MarkupLine($"     [{C.Muted}]{Esc(truncTask)}[/]");
         });
@@ -752,7 +752,7 @@ public static class MuxConsole
         if (string.IsNullOrEmpty(text)) return text;
         return System.Text.RegularExpressions.Regex.Replace(text.Trim(), @"\s+", " ");
     }
-    
+
     public static void FlushAndNewline()
     {
         WithConsole(() =>

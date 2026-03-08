@@ -3,7 +3,7 @@
 namespace MuxSwarm.Utils;
 
 public static class LocalAiFunctions
-{   
+{
     //TODO: Convert to get to methods
     public static AIFunction ListSkillsTool = null!;
     public static AIFunction ReadSkillTool = null!;
@@ -44,12 +44,13 @@ public static class LocalAiFunctions
             description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
                          "Read the relevant skill BEFORE starting a task to follow its best practices."
         );
-        
+
         SleepTool = AIFunctionFactory.Create(
             method: async (
                 [System.ComponentModel.Description("Seconds to pause.")]
                 int seconds
-                ) => {
+                ) =>
+            {
                 await Task.Delay(TimeSpan.FromSeconds(seconds));
                 return $"Slept for {seconds} seconds.";
             },

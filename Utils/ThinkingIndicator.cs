@@ -29,7 +29,7 @@ public sealed class ThinkingIndicator : IDisposable
     private volatile bool _clearedExternally;
 
     private static readonly string[] Frames =
-        ["⠀","⠄","⠆","⠦","⠶","⠷","⣷","⣿","⣷","⠷","⠶","⠦","⠆","⠄","⠀"];
+        ["⠀", "⠄", "⠆", "⠦", "⠶", "⠷", "⣷", "⣿", "⣷", "⠷", "⠶", "⠦", "⠆", "⠄", "⠀"];
 
     internal ThinkingIndicator(Action<string> renderRaw, Action<int> clearLine, object consoleLock)
     {
@@ -46,13 +46,13 @@ public sealed class ThinkingIndicator : IDisposable
 
     /// <summary>Update the status phrase to reflect what's actually happening.</summary>
     public void UpdateStatus(string status) => _status = status;
-    
+
     private static int SafeWindowWidth()
     {
         try { return Console.WindowWidth; }
         catch { return 120; }
     }
-    
+
     /// <summary>Starts the animation loop. Call once after construction.</summary>
     internal void Start(string agentName)
     {
@@ -75,7 +75,7 @@ public sealed class ThinkingIndicator : IDisposable
 
                     int len = line.Length;
                     if (len > _maxLen) _maxLen = len;
-                    
+
                     string padded = line.PadRight(_maxLen);
 
                     lock (_consoleLock)

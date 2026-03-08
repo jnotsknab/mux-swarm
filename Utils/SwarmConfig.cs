@@ -6,14 +6,14 @@ namespace MuxSwarm.Utils;
 /// Configuration model for swarm.json - defines sub-agents and their tool access
 /// </summary>
 public class SwarmConfig
-{   
-    
+{
+
     [JsonPropertyName("compactionAgent")]
     public CompacterConfig? CompactionAgent { get; set; }
-    
+
     [JsonPropertyName("singleAgent")]
     public AgentConfig? SingleAgent { get; set; }
-    
+
     [JsonPropertyName("orchestrator")]
     public OrchestratorConfig? Orchestrator { get; set; }
 

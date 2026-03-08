@@ -19,7 +19,7 @@ public static class TokenInjector
         content = content.Replace("{{which}}", PlatformContext.Which);
         content = content.Replace("{{platform.ext}}", PlatformContext.ExecutableExtension);
         content = content.Replace("{{platform.separator}}", PlatformContext.PathSeparator);
-        
+
         return content;
     }
 }
