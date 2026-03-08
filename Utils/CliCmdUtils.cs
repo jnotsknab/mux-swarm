@@ -7,7 +7,7 @@ namespace MuxSwarm.Utils;
 
 public static class CliCmdUtils
 {
-    public static void ShowKnowledgeGraph(Dictionary<string,McpClient> mcpClients, IList<McpClientTool>? mcpTools = null)
+    public static void ShowKnowledgeGraph(Dictionary<string, McpClient> mcpClients, IList<McpClientTool>? mcpTools = null)
     {
         MuxConsole.WithSpinner("Fetching knowledge graph...", () =>
         {
@@ -44,7 +44,7 @@ public static class CliCmdUtils
 
     public static void HandleDockerExec(string cfgPath)
     {
-        App.Config.IsUsingDockerForExec = ! App.Config.IsUsingDockerForExec;
+        App.Config.IsUsingDockerForExec = !App.Config.IsUsingDockerForExec;
         MuxConsole.WriteInfo($"Docker Exec is now: {App.Config.IsUsingDockerForExec}");
 
         MuxConsole.WriteMuted(App.Config.IsUsingDockerForExec
@@ -55,7 +55,39 @@ public static class CliCmdUtils
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
     }
+
+    public static void HandleAgentSwap()
+    {
+        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+        var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
     
+        var allDefs = defaultDef != null
+            ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
+            : agentDefs;
+
+        var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
+        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"  [{i + 1}] {a.Name}"));
+        MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
+
+        string choice = MuxConsole.Prompt("Agent: ");
+
+        Common.AgentDefinition? matched = null;
+        if (int.TryParse(choice, out var index) && index >= 1 && index <= distinctDefs.Count)
+            matched = distinctDefs[index - 1];
+        else
+            matched = distinctDefs.FirstOrDefault(d => d.Name.Equals(choice, StringComparison.OrdinalIgnoreCase));
+
+        if (matched != null)
+        {
+            SingleAgentOrchestrator.AgentDef = matched;
+            MuxConsole.WriteSuccess($"Successfully updated singular agent mode to utilize: {matched.Name}");
+        }
+        else
+        {
+            MuxConsole.WriteWarning($"No agent found matching: {choice}");
+        }
+    }
+
     public static void ShowLoadedSkills()
     {
         var skills = SkillLoader.GetSkillMetadata();
@@ -66,10 +98,11 @@ public static class CliCmdUtils
             return;
         }
 
-        var text = string.Join("\n", skills.Select(s => $"  {s.Name} — {s.Description}"));
-        MuxConsole.WritePanel($"Skills ({skills.Count})", text);
+        var maxNameLen = skills.Max(s => s.Name.Length);
+        var text = string.Join("\n", skills.Select(s => $"  {s.Name.PadRight(maxNameLen)}   {s.Description}"));
+        MuxConsole.WritePanel($"Loaded Skills ({skills.Count})", text);
     }
-    
+
     public static void ListSessions()
     {
         var sessionsDir = PlatformContext.SessionsDirectory;
@@ -105,7 +138,7 @@ public static class CliCmdUtils
         MuxConsole.WritePanel($"Sessions ({sessionDirs.Count})", text);
         MuxConsole.WriteMuted("Use /report <id> to generate a full audit report.");
     }
-    
+
     public static void ReloadSkills()
     {
         MuxConsole.WithSpinner("Reloading skills...", () =>
@@ -124,7 +157,7 @@ public static class CliCmdUtils
             MuxConsole.WriteSuccess($"Reloaded {skills.Count} skills.");
         }
     }
-    
+
     public static async Task ReloadMcpServersAsync(
         Func<AppConfig, Task<bool>> initMcpServers,
         string configPath)
@@ -140,7 +173,7 @@ public static class CliCmdUtils
         else
             MuxConsole.WriteError("One or more MCP servers failed to reconnect.");
     }
-    
+
     public static void GenerateSessionReports(string? sessionId = null)
     {
         var sessionsDir = PlatformContext.SessionsDirectory;

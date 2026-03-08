@@ -17,7 +17,7 @@ public static class SwarmDefaults
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true
     };
-    
+
     /// <summary>
     /// Unconditionally writes a fresh swarm.json, overwriting any existing file.
     /// Used at the end of RunSetup to ensure model IDs match the just-configured provider.
@@ -33,7 +33,7 @@ public static class SwarmDefaults
 
         return WriteDefaultSwarmJson(swarmPath, config);
     }
-    
+
     /// <summary>
     /// Ensures a valid swarm.json exists. Creates a default if missing, backs up and recreates if unparseable.
     /// Must be called AFTER endpoint/provider config is collected so model IDs can be resolved.
@@ -82,8 +82,8 @@ public static class SwarmDefaults
         var models = ResolveModelIds(config);
 
         if (
-            string.IsNullOrEmpty(models.OrchestratorModel) || 
-            string.IsNullOrEmpty(models.AgentModel) || 
+            string.IsNullOrEmpty(models.OrchestratorModel) ||
+            string.IsNullOrEmpty(models.AgentModel) ||
             string.IsNullOrEmpty(models.LightModel)
             )
         {
@@ -106,7 +106,7 @@ public static class SwarmDefaults
         if (HasEnabled("ChromaDB")) singleAgentServers.Add("ChromaDB");
         if (HasEnabled("BraveSearchMCP")) singleAgentServers.Add("BraveSearchMCP");
         if (HasEnabled("PythonReplMCP")) singleAgentServers.Add("PythonReplMCP");
-        
+
 
         var orchestratorToolPatterns = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
 
@@ -224,7 +224,7 @@ public static class SwarmDefaults
         File.WriteAllText(swarmPath, JsonSerializer.Serialize(swarm, SwarmSerialOpts));
         return true;
     }
-    
+
     private static void PrintUnknownProviderWarning(string swarmPath)
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
@@ -248,7 +248,7 @@ public static class SwarmDefaults
         Console.WriteLine();
         Console.ResetColor();
     }
-    
+
     /// <summary>
     /// Resolves the appropriate model ID conventions based on the user's configured endpoint.
     /// Different providers use different model ID formats (OpenRouter, OpenAI, Anthropic, Ollama, etc.).
@@ -311,7 +311,7 @@ public static class SwarmDefaults
             CompactionModel = "claude-haiku-4-5-20251001"
         };
     }
-    
+
     /// <summary>
     /// Patches only the promptPath fields in an existing swarm.json to swap between
     /// standard and _docker variants. Preserves all other user customizations.

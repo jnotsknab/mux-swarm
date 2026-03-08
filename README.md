@@ -7,7 +7,7 @@
 <h1>Mux-Swarm</h1>
 <p>A CLI-native, cross-platform, multi-agent runtime for deterministic, tool-native AI operations.</p>
 
-[![Build](https://img.shields.io/badge/build-configure_in_GitHub_Actions-blue)](#)
+[![Build](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
 [![OS](https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
 [![License](https://img.shields.io/badge/license-See%20LICENSE-lightgrey)](#license)
@@ -61,7 +61,11 @@
 - An LLM provider API key (any [OpenAI-compatible](https://platform.openai.com/docs/api-reference) endpoint), set as an environment variable
 - **Node / npm** (`npx`) for Node-based [MCP](https://modelcontextprotocol.io/) servers
 - **uvx / uv** for Python-based MCP servers
-- **Note Mux-Swarm utilizes the ChromaDB MCP server in its default config which has a known issue with python version 3.14** - Therefore it is recommended uv / uvx is configured to utilize a seperate python version eg. 3.12
+
+These are not hard requirements. During setup you can opt out of automatic installation, but you are responsible for ensuring that any MCP servers referenced in your `swarm.json` have their dependencies available on your system.
+
+- **BRAVE_API_KEY** environment variable for the [Brave Search MCP](https://brave.com/search/api/) server, which is the default web search provider. Brave Search is recommended as it includes AI-generated summaries alongside results. It can be disabled in `swarm.json` and the swarm will fall back to the Fetch MCP server, though this is not recommended for optimal research quality.
+- **Note: Mux-Swarm utilizes the ChromaDB MCP server in its default config which has a known issue with Python version 3.14.** It is recommended that uv / uvx is configured to utilize a separate Python version e.g. 3.12
 
 ### Install via Script (Recommended)
 
@@ -146,14 +150,15 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ## Usage
 
 ### Interactive Commands
-
 ```
 /multiagent     Launch multi-agent swarm loop
 /agent          Launch single-agent loop
 /stateless      Launch stateless single agent loop, ideal for one-off tasks (sessions not persisted as to not convolute stateful agent runs)
+/swap           Swap the active agent for single-agent mode
 /model          View current model assignments
 /setmodel       Change the single-agent model
 /tools          List available tools
+/skills         List available local skills
 /memory         View the knowledge graph
 /sessions       List all saved sessions with type and agent count
 /dockerexec     Toggle Docker execution mode
@@ -169,7 +174,6 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ```
 
 ### Goal-Driven Execution
-
 ```bash
 mux-swarm "<goal>"
 mux-swarm <goal.txt>
@@ -177,17 +181,22 @@ mux-swarm --goal "<goal>"
 mux-swarm --goal <goal.txt>
 ```
 
-### Continuous Mode
+### Single-Agent via CLI
+```bash
+mux-swarm --agent CodeAgent --goal "<goal>"
+mux-swarm --agent WebAgent --goal task.txt --continuous --goal-id overnight --min-delay 600
+```
 
+### Continuous Mode
 ```bash
 mux-swarm --continuous --goal "<goal>" --goal-id my-run
 mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 ```
 
 ### CLI Flags
-
 ```
 --goal <text|file>         Goal input (text or file path)
+--agent <name>             Run in single-agent mode with the specified agent
 --continuous               Enable continuous autonomous mode
 --goal-id <id>             Persistent goal/session identifier
 --min-delay <secs>         Minimum delay between loops (default 300)
@@ -198,7 +207,7 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 --mcp-strict [true|false]  Require all integrations to connect
 --docker-exec [true|false] Route execution through Docker
 --model <id>               Override the single-agent model
---report [session-id]       Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated
+--report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated
 --clear                    Clear terminal before continuing
 --help, -h                 Show help
 ```
@@ -386,7 +395,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ## Contributing
 
-Contributions are welcome. Guidelines coming soon, open an issue to discuss.
+Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, or open an issue to discuss.
 
 ---
 

@@ -51,7 +51,7 @@ public static class PreambleBuilder
                         - Canonical artifact paths (most recent verified)
                         - What changed this iteration vs. prior state (delta)
                         ";
-        
+
         preamble += @"
                     ## Sleep Tool
                     You have access to system_sleep(seconds) which pauses execution without consuming tokens or timing out.
@@ -68,7 +68,6 @@ public static class PreambleBuilder
                     4. Proceed when ready
 
                     Prefer sleep over rapid retries. A sleeping agent costs nothing.
-
 
                     ## Filesystem Write Rules (STRICT)
                     You MUST only write files to directories that are explicitly allowed.

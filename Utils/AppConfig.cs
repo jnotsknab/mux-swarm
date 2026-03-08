@@ -3,10 +3,10 @@
 namespace MuxSwarm.Utils;
 
 public class AppConfig
-{   
+{
     [JsonPropertyName("setupCompleted")]
     public bool SetupCompleted { get; set; } = false;
-    
+
     [JsonPropertyName("isUsingDockerForExec")]
     public bool IsUsingDockerForExec { get; set; } = false;
 
@@ -15,7 +15,7 @@ public class AppConfig
 
     [JsonPropertyName("llmProviders")]
     public LlmProvidersConfig LlmProviders { get; set; } = new();
-    
+
     [JsonPropertyName("filesystem")]
     public FilesystemConfig Filesystem { get; set; } = new();
 }

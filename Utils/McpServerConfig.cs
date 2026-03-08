@@ -18,10 +18,10 @@ public class McpServerConfig
 
     [JsonPropertyName("url")]
     public string? Url { get; set; }
-    
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; } = true;
-    
+
     [JsonPropertyName("headers")]
     public Dictionary<string, string>? Headers { get; set; }
 }

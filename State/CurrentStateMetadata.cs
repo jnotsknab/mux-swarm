@@ -1,4 +1,5 @@
 ﻿namespace MuxSwarm.State;
+
 using System.Text.Json.Serialization;
 
 public class CurrentStateMetadata(

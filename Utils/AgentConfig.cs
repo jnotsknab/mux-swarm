@@ -15,7 +15,7 @@ public class AgentConfig
 
     [JsonPropertyName("promptPath")]
     public string? PromptPath { get; set; }
-    
+
     [JsonPropertyName("canDelegate")]
     public bool CanDelegate { get; set; }
 
@@ -35,7 +35,7 @@ public class AgentConfig
     /// </summary>
     [JsonPropertyName("toolPatterns")]
     public List<string> ToolPatterns { get; set; } = [];
-    
+
     /// <summary>
     /// Optional: explicit skill name patterns.
     /// Supports wildcards with * at the end.

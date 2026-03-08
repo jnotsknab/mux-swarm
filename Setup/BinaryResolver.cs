@@ -80,7 +80,7 @@ public static class BinaryResolver
                 return true;
         }
 
-        
+
         foreach (var dir in GetCommonBinaryDirs())
         {
             if (TryFindInDir(dir, binary, exts, out fullPath))

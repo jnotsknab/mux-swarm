@@ -11,7 +11,7 @@ namespace MuxSwarm.State;
 public static class ContinuousStateManager
 {
     private const string StateDirName = "state";
-    
+
     private static string GetStatePath(string goalId, string sessionDir)
     {
         var stateDir = Path.Combine(sessionDir, StateDirName);
@@ -25,7 +25,7 @@ public static class ContinuousStateManager
     public static CurrentStateMetadata? Load(string goalId, string sessionDir)
     {
         var path = GetStatePath(goalId, sessionDir);
-        
+
         if (!File.Exists(path))
             return null;
 
@@ -33,7 +33,7 @@ public static class ContinuousStateManager
         {
             var json = File.ReadAllText(path);
             var state = JsonSerializer.Deserialize<CurrentStateMetadata>(json);
-            
+
             if (state != null)
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
@@ -65,11 +65,11 @@ public static class ContinuousStateManager
 
         try
         {
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions 
-            { 
-                WriteIndented = true 
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions
+            {
+                WriteIndented = true
             });
-            
+
             File.WriteAllText(tmp, json);
             File.Move(tmp, path, overwrite: true);
         }
@@ -89,7 +89,7 @@ public static class ContinuousStateManager
     {
         state.Status = "stopped";
         WriteAtomic(goalId, state, sessionDir);
-        
+
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine($"[CONTINUOUS] State for '{goalId}' marked as stopped at iteration {state.Iteration}.");
         Console.ResetColor();
@@ -101,7 +101,7 @@ public static class ContinuousStateManager
     public static void Clear(string goalId, string sessionDir)
     {
         var path = GetStatePath(goalId, sessionDir);
-        
+
         try
         {
             if (File.Exists(path))

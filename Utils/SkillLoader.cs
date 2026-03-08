@@ -1,4 +1,5 @@
 ﻿namespace MuxSwarm.Utils;
+
 using static Setup.Setup;
 
 /// <summary>
@@ -9,13 +10,13 @@ public class SkillManifestEntry
     public string Name { get; set; } = "";
     public string Description { get; set; } = "";
     public string Location { get; set; } = "";
-    
+
     /// <summary>Optional: only load this skill for specific agent names.</summary>
     public List<string>? Agents { get; set; }
-    
+
     /// <summary>Optional: required environment variables that must be set.</summary>
     public List<string>? RequiresEnv { get; set; }
-    
+
     /// <summary>Optional: required binaries that must exist on PATH.</summary>
     public List<string>? RequiresBins { get; set; }
 }
@@ -45,19 +46,19 @@ public static class SkillLoader
     {
         _allSkills.Clear();
         _loaded = true;
-    
+
         var skillsRoot = Path.GetDirectoryName(PlatformContext.SkillsDirectory);
         if (skillsRoot == null || !Directory.Exists(skillsRoot))
         {
             MuxConsole.WriteWarning("[SKILLS] No skills directory found — skipping");
             return;
         }
-        
+
         var bundledDir = Path.Combine(skillsRoot, "bundled");
         var bundledDockerDir = Path.Combine(skillsRoot, "bundled-docker");
 
         var dockerAvailable = Directory.Exists(bundledDockerDir) && IsBinaryAvailable("docker");
-        
+
         var selectedBundledDir = dockerAvailable ? bundledDockerDir : bundledDir;
 
         if (App.Config.IsUsingDockerForExec)
@@ -130,7 +131,7 @@ public static class SkillLoader
                     a.Equals(agentName, StringComparison.OrdinalIgnoreCase))))
             .ToList();
     }
-    
+
     /// <summary>
     /// Read the full content of a SKILL.md file by skill name.
     /// Returns the full markdown content (minus frontmatter) for injection into context.
@@ -277,5 +278,5 @@ public static class SkillLoader
 
         return true;
     }
-    
+
 }
