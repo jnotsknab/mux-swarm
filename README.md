@@ -39,6 +39,11 @@
 -->
 <!-- <img src="docs/assets/demo.gif" alt="mux-swarm demo" width="100%"> -->
 
+## Demo
+
+https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
+
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
