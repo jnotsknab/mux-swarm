@@ -256,7 +256,9 @@ public static class SwarmDefaults
     /// </summary>
     private static SwarmModelSet ResolveModelIds(AppConfig config)
     {
-        var endpoint = config.LlmProviders?.OpenApiCompatible?.Endpoint?.ToLowerInvariant() ?? "";
+        var endpoint = App.ActiveProvider?.Endpoint?.ToLowerInvariant()
+                       ?? config.LlmProviders.FirstOrDefault(p => p.Enabled)?.Endpoint?.ToLowerInvariant()
+                       ?? "";
 
         if (endpoint.Contains("openrouter.ai"))
         {
@@ -302,14 +304,8 @@ public static class SwarmDefaults
             };
         }
 
-        // Generic / unknown provider — use bare model names, user can customize in swarm.json
-        return new SwarmModelSet
-        {
-            OrchestratorModel = "claude-opus-4-6",
-            AgentModel = "claude-sonnet-4-6",
-            LightModel = "claude-haiku-4-5-20251001",
-            CompactionModel = "claude-haiku-4-5-20251001"
-        };
+        // Generic / unknown provider, issue warning
+        return new SwarmModelSet();
     }
 
     /// <summary>

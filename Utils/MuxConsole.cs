@@ -416,11 +416,7 @@ public static class MuxConsole
             else AnsiConsole.WriteLine();
         });
     }
-
-    // ─────────────────────────────────────────────────────────────
-    // INTERACTIVE PROMPTS
-    // ─────────────────────────────────────────────────────────────
-
+    
     /// <summary>Prompt for a text value. Returns trimmed input.</summary>
     public static string Prompt(string message, string? defaultValue = null)
     {

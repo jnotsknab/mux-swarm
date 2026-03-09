@@ -25,7 +25,7 @@ public sealed class EscapeKeyListener : IDisposable
             {
                 while (!listenerCts.Token.IsCancellationRequested)
                 {
-                    if (Console.KeyAvailable)
+                    if (!Console.IsInputRedirected && Console.KeyAvailable)
                     {
                         var key = Console.ReadKey(intercept: true);
                         if (key.Key == ConsoleKey.Escape)

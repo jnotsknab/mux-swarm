@@ -498,12 +498,40 @@ public static class Common
             Console.ResetColor();
         }
     }
-
-    public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp)
+    
+    public static string? FindSessionDirectory(string sessionTimestamp)
     {
         try
         {
+            var sessionsRoot = PlatformContext.SessionsDirectory;
+
+            if (string.IsNullOrWhiteSpace(sessionTimestamp) || !Directory.Exists(sessionsRoot))
+                return null;
+
+            var directPath = Path.Combine(sessionsRoot, sessionTimestamp);
+            if (Directory.Exists(directPath))
+                return directPath;
+
+            var match = new DirectoryInfo(sessionsRoot)
+                .GetDirectories()
+                .FirstOrDefault(d =>
+                    d.Name.Equals(sessionTimestamp, StringComparison.OrdinalIgnoreCase));
+
+            return match?.FullName;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+    
+    public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp, string? existingSessionDir = null)
+    {
+        try
+        {   
             var sessionSubDir = Path.Combine(MultiAgentOrchestrator.SessionDir, sessionTimestamp);
+            if (!string.IsNullOrEmpty(existingSessionDir)) sessionSubDir = existingSessionDir;
+            
             Directory.CreateDirectory(sessionSubDir);
 
             var serialized = agent.SerializeSession(session);
@@ -521,6 +549,127 @@ public static class Common
             Console.WriteLine($"[Agent Session save failed: {ex.Message}]");
             Console.ResetColor();
         }
+    }
+    
+    public static string GetFirstUserMessage(string sessionFile, int maxLength = 60)
+    {
+        try
+        {
+            var doc = JsonDocument.Parse(File.ReadAllText(sessionFile));
+            var messages = doc.RootElement
+                .GetProperty("chatHistoryProviderState")
+                .GetProperty("messages");
+
+            foreach (var msg in messages.EnumerateArray())
+            {
+                if (msg.TryGetProperty("role", out var role) && role.GetString() == "user" &&
+                    msg.TryGetProperty("contents", out var contents))
+                {
+                    foreach (var content in contents.EnumerateArray())
+                    {
+                        if (content.TryGetProperty("$type", out var t) && t.GetString() == "text" &&
+                            content.TryGetProperty("text", out var text))
+                        {
+                            var str = text.GetString() ?? "";
+                            return str.Length > maxLength ? str[..maxLength] + "..." : str;
+                        }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return "No preview";
+    }
+
+    /// <summary>
+    /// Estimates the total number of tokens in a conversation based on the provided chat history and optional system prompt.
+    /// </summary>
+    /// <param name="history">The list of chat messages representing the conversation history.</param>
+    /// <param name="systemPrompt">The optional system prompt to include in the token estimation.</param>
+    /// <param name="sessionFileName">The name of the session file to look for when attempting accurate token counting. Defaults to "agent_session.json".</param>
+    /// <returns>The estimated token count based on the conversation history and system prompt.</returns>
+    public static int EstimateTokenCount(
+        IReadOnlyList<ChatMessage> history,
+        string? systemPrompt = null,
+        string sessionFileName = "agent_session.json")
+    {
+        try
+        {
+            var sessionRoot = PlatformContext.SessionsDirectory;
+
+            if (Directory.Exists(sessionRoot))
+            {
+                var latestSessionFile = new DirectoryInfo(sessionRoot)
+                    .GetDirectories()
+                    .OrderByDescending(d => d.LastWriteTimeUtc)
+                    .Select(d => new FileInfo(Path.Combine(d.FullName, sessionFileName)))
+                    .FirstOrDefault(f => f.Exists);
+
+                if (latestSessionFile != null)
+                {
+                    var currentJson = File.ReadAllText(latestSessionFile.FullName);
+                    int currentTokens = (int)Math.Ceiling(
+                        (currentJson.Length + (systemPrompt?.Length ?? 0)) / 3.5);
+
+                    var previousSnapshotPath = Path.Combine(
+                        latestSessionFile.DirectoryName!,
+                        $"{Path.GetFileNameWithoutExtension(sessionFileName)}.prev{latestSessionFile.Extension}");
+
+                    if (File.Exists(previousSnapshotPath))
+                    {
+                        var previousJson = File.ReadAllText(previousSnapshotPath);
+                        int previousTokens = (int)Math.Ceiling(
+                            (previousJson.Length + (systemPrompt?.Length ?? 0)) / 3.5);
+
+                        int deltaTokens = Math.Max(currentTokens - previousTokens, 0);
+
+                        File.WriteAllText(previousSnapshotPath, currentJson);
+
+                        return previousTokens + deltaTokens;
+                    }
+
+                    File.WriteAllText(previousSnapshotPath, currentJson);
+                    return currentTokens;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to legacy historybased estimation below.
+        }
+
+        int totalChars = 0;
+
+        if (!string.IsNullOrEmpty(systemPrompt))
+            totalChars += systemPrompt.Length;
+
+        foreach (var msg in history)
+        {
+            totalChars += msg.AuthorName?.Length ?? 0;
+            totalChars += msg.Role.Value.Length;
+
+            foreach (var content in msg.Contents)
+            {
+                switch (content)
+                {
+                    case TextContent text:
+                        totalChars += text.Text?.Length ?? 0;
+                        break;
+                    case FunctionCallContent fc:
+                        totalChars += fc.Name?.Length ?? 0;
+                        totalChars += fc.CallId?.Length ?? 0;
+                        totalChars += fc.Arguments?.ToString().Length ?? 0;
+                        break;
+                    case FunctionResultContent fr:
+                        totalChars += fr.CallId?.Length ?? 0;
+                        totalChars += fr.Result?.ToString().Length ?? 0;
+                        break;
+                }
+            }
+        }
+
+        return (int)Math.Ceiling(totalChars / 3.5);
     }
 
     public static void StartExternalWatchdog(string[] args, string baseDir, CancellationTokenSource cts)
@@ -595,5 +744,4 @@ public static class Common
         Console.WriteLine("[RAW PROBE] Body (first 2k):");
         Console.WriteLine(body.Length > 2000 ? body[..2000] : body);
     }
-    
 }

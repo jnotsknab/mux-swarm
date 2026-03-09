@@ -67,7 +67,8 @@ public static class ResultCompactor
         string? completionSummary = null,
         string? completionArtifacts = null,
         int charBudget = DefaultCharBudget,
-        IChatClient? chatClient = null)
+        IChatClient? chatClient = null,
+        ChatOptions? chatOptions = null)
     {
         // ── Tier 1: Structured fields (best case — already compact) ──
         //TODO: Maybe make this less strict as there should always be a completion summary in theory.
@@ -90,14 +91,12 @@ public static class ResultCompactor
         if (rawResult.Length <= charBudget)
             return rawResult;
 
-        // ── Tier 2: Extractive compaction ──
         string extracted = ExtractTopLines(rawResult, charBudget);
 
         if (extracted.Length <= charBudget || chatClient == null)
             return extracted;
 
-        // ── Tier 3: LLM summarization ──
-        return await LlmSummarizeAsync(chatClient, rawResult, charBudget);
+        return await LlmSummarizeAsync(chatClient, rawResult, charBudget, chatOptions);
     }
 
     /// <summary>
@@ -118,7 +117,8 @@ public static class ResultCompactor
     public static async Task<ChatMessage> CompactConversationAsync(
         IReadOnlyList<ChatMessage> history,
         IChatClient chatClient,
-        int charBudget = 2000)
+        int charBudget = 2000,
+        ChatOptions? chatOptions = null)
     {
         var transcript = new StringBuilder();
         foreach (var msg in history)
@@ -143,7 +143,7 @@ public static class ResultCompactor
                 new(ChatRole.User, transcript.ToString())
             };
 
-            var response = await chatClient.GetResponseAsync(messages);
+            var response = await chatClient.GetResponseAsync(messages, chatOptions);
             summary = response.Text ?? transcript.ToString();
         }
         catch
@@ -240,10 +240,9 @@ public static class ResultCompactor
         return score;
     }
 
-    // ── LLM Summarization ────────────────────────────────────────────────
 
     private static async Task<string> LlmSummarizeAsync(
-        IChatClient chatClient, string text, int charBudget)
+        IChatClient chatClient, string text, int charBudget, ChatOptions? chatOptions = null)
     {
         try
         {
@@ -266,7 +265,7 @@ public static class ResultCompactor
                 new(ChatRole.User, input)
             };
 
-            var response = await chatClient.GetResponseAsync(messages);
+            var response = await chatClient.GetResponseAsync(messages, chatOptions);
             string summary = response.Text ?? "";
 
             return string.IsNullOrWhiteSpace(summary)

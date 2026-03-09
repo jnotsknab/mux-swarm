@@ -2,8 +2,11 @@
 
 namespace MuxSwarm.Utils;
 
-public class LlmProviderConfig
+public class ProviderConfig
 {
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = string.Empty;
+
     [JsonPropertyName("enabled")]
     public bool Enabled { get; set; }
 
@@ -12,7 +15,4 @@ public class LlmProviderConfig
 
     [JsonPropertyName("endpoint")]
     public string? Endpoint { get; set; }
-
-    [JsonPropertyName("defaultModel")]
-    public string? DefaultModel { get; set; }
 }
