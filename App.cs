@@ -8,18 +8,21 @@ using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm;
 
-public class App
-{
-    private static readonly string HelpText = string.Join("\n",
+    public class App
+    {
+        private static readonly string HelpText = string.Join("\n",
         "Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime & Operating Environment",
         "",
-        "Interactive Commands",
-        "  /multiagent     Launch interactive multi agent swarm loop",
+        "Slash Commands",
+        "  /swarm          Launch interactive multi agent swarm loop",
         "  /agent          Launch interactive single agent loop",
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
+        "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
+        "  /compact        Compact current session context (applies to single agent loops only)",
         "  /model          View current models set for your swarm",
-        "  /setmodel       Change the current model for single agent loop (swarm models can be updated via swarm.json in the Configs dir.)",
+        "  /setmodel       Change the model for any agent, orchestrator, or compaction agent in your swarm config",
         "  /swap           Swap the active agent for single-agent mode",
+        "  /provider       View or switch the active LLM provider",
         "  /tools          List available MCP tools across enabled servers",
         "  /skills         List available local skills",
         "  /memory         View knowledge graph",
@@ -33,7 +36,15 @@ public class App
         "  /report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes",
         "  /report <id>    Audit a specific session by timestamp",
         "  /clear          Clear screen",
+        "  /status         View current system status: provider, models, tools, skills, and sessions",
         "  /exit           Exit Mux-Swarm",
+        "",
+        "Model Tuning (swarm.json)",
+        "  Any agent, orchestrator, singleAgent, or compactionAgent supports an optional modelOpts block:",
+        "    \"modelOpts\": { \"temperature\": 0.7, \"topP\": 0.9, \"topK\": 40,",
+        "                    \"maxOutputTokens\": 4096, \"frequencyPenalty\": 0.0,",
+        "                    \"presencePenalty\": 0.0, \"seed\": 42 }",
+        "  All fields are optional. Omitted values use provider defaults.",
         "",
         "CLI Usage",
         "  mux-swarm \"<goal>\"",
@@ -52,6 +63,7 @@ public class App
         "  --goal <text|file>         Explicit goal",
         "  --continuous               Continuous autonomous mode",
         "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
+        "  --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)",
         "  --goal-id <id>             Attach goal/session id",
         "  --min-delay <secs>         Min delay between loops (default 300)",
         "  --persist-interval <s>     Persist session every N seconds",
@@ -60,24 +72,25 @@ public class App
         "  --watchdog [true|false]    External watchdog toggle",
         "  --mcp-strict [true|false]  Require all MCPs (default true)",
         "  --docker-exec [true|false] Route exec via docker skills",
-        "  --report [session-id]       Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated"
-    );
+        "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated"
+        );
 
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     private static readonly string ConfigPath = PlatformContext.ConfigPath;
-    public static AppConfig Config = new();
     private static bool _showToolCallResults;
     private static IList<McpClientTool>? _mcpTools;
     private static string? _cliModelOverride;
     private static readonly Dictionary<string, McpClient> McpClients = new();
     private static bool _watchDogEnabled = false;
-
     private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
-
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
-
+    
+    public static AppConfig Config = new();
+    public static ProviderConfig? ActiveProvider = null;
+    
+    
     private static CancellationTokenSource GetOrResetCts()
     {
         lock (CtsLock)
@@ -121,7 +134,6 @@ public class App
             Config = LoadConfig(ConfigPath);
         }
 
-        InitLlmProvider();
 
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
@@ -181,7 +193,7 @@ public class App
         {
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
-            if (Console.KeyAvailable)
+            if (!Console.IsInputRedirected && Console.KeyAvailable)
             {
                 var key = Console.ReadKey(intercept: true);
                 if (key.Key == ConsoleKey.Escape)
@@ -221,7 +233,7 @@ public class App
                     if (setupSuccess) MuxConsole.WriteSuccess("Setup complete!");
                     break;
 
-                case "/multiagent":
+                case "/swarm":
                     Config = LoadConfig(ConfigPath);
                     var maModels = LoadAgentModels();
                     var maCts = GetOrResetCts();
@@ -269,29 +281,30 @@ public class App
                         persistSession: false
                     );
                     break;
-
-                case "/setmodel":
-                    MuxConsole.WriteBody("Provide a valid model ID for your configured provider. Examples by provider:");
-                    MuxConsole.WriteMuted("  OpenRouter:  openai/gpt-5.1-codex-max, google/gemini-2.5-pro-preview, anthropic/claude-sonnet-4.6, meta-llama/llama-4-maverick");
-                    MuxConsole.WriteMuted("  OpenAI:      gpt-5.1, gpt-4o, gpt-4o-mini");
-                    MuxConsole.WriteMuted("  Anthropic:   claude-opus-4-6, claude-sonnet-4-6, claude-haiku-4-5-20251001");
-                    MuxConsole.WriteMuted("  Google:      gemini-2.5-pro, gemini-2.5-flash");
-                    MuxConsole.WriteMuted("  DeepSeek:    deepseek-chat, deepseek-reasoner");
-                    MuxConsole.WriteLine();
-
-                    var choice = MuxConsole.Prompt("Model ID: ");
-                    if (!string.IsNullOrEmpty(choice))
+                
+                case "/resume":
+                    var resumeData = CliCmdUtils.HandleSessionResume();
+                    if (resumeData.HasValue)
                     {
-                        try
-                        {
-                            _ = CreateChatClient(choice);
-                            MuxConsole.WriteSuccess($"Model set to: {choice}");
-                        }
-                        catch (Exception ex)
-                        {
-                            MuxConsole.WriteError($"Failed to create client for '{choice}': {ex.Message}");
-                        }
+                        Config = LoadConfig(ConfigPath);
+                        var resumeModel = LoadSingleAgentModel();
+                        var resumeCts = GetOrResetCts();
+
+                        await SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(resumeModel),
+                            resumeCts.Token,
+                            maxIterations: 3,
+                            mcpTools: _mcpTools,
+                            showToolResultCalls: _showToolCallResults,
+                            chatClientFactory: modelId => CreateChatClient(modelId),
+                            resumedSession: resumeData.Value.data,
+                            resumedSessionDir: resumeData.Value.sessionDir
+                        );
                     }
+                    break;
+                
+                case "/setmodel":
+                    CliCmdUtils.HandleModelSwap();
                     break;
 
                 case "/tools":
@@ -319,6 +332,10 @@ public class App
                 case "/clear":
                     Console.Clear();
                     break;
+                
+                case "/status":
+                    CliCmdUtils.HandleStatus(_mcpTools, LoadAgentModels());
+                    break;
 
                 case "/disabletools":
                     DisableTools();
@@ -330,6 +347,9 @@ public class App
                 case "/swap":
                     CliCmdUtils.HandleAgentSwap();
                     break;
+                case "/provider":
+                    CliCmdUtils.HandleProviderSwap();
+                    break;
 
                 case "/qc":
                 case "/qm":
@@ -338,8 +358,7 @@ public class App
                         if (!_cts.IsCancellationRequested)
                         {
                             _cts.Cancel();
-                            MuxConsole.WriteInfo("Stopping current agent/multiagent session...");
-                        }
+                            MuxConsole.WriteInfo("Stopping current session...");                        }
                         else
                         {
                             MuxConsole.WriteMuted("No active session to stop.");
@@ -448,7 +467,8 @@ public class App
                 return swarm.SingleAgent.Model;
         }
 
-        return Config.LlmProviders?.OpenApiCompatible?.DefaultModel ?? "gpt-4o-mini";
+        MuxConsole.WriteWarning("No model resolved for single agent. Check swarm.json configuration.");
+        return string.Empty;
     }
 
     private record ParsedArgs(
@@ -590,6 +610,32 @@ public class App
                         }
                         break;
                     }
+                case "--provider":
+                {
+                    var v = NextValue(args, ref i);
+                    if (v != null && !v.StartsWith("-"))
+                    {
+                        var config = LoadConfig(configPath: ConfigPath);
+                        var match = config.LlmProviders.FirstOrDefault(p =>
+                            p.Name.Equals(v, StringComparison.OrdinalIgnoreCase));
+
+                        if (match != null)
+                        {
+                            ActiveProvider = match;
+                            MuxConsole.WriteSuccess($"Provider set to: {match.Name}");
+                        }
+                        else
+                        {
+                            MuxConsole.WriteWarning($"No provider found matching: {v}");
+                        }
+                    }
+                    else
+                    {
+                        if (v != null) i--;
+                        MuxConsole.WriteWarning("--provider requires a name (e.g. --provider ollama)");
+                    }
+                    break;
+                }
 
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
@@ -818,54 +864,62 @@ public class App
     }
 
     private static void InitLlmProvider()
-    {
+    {   
+        if (ActiveProvider != null)
+            return;
+        
         var config = LoadConfig(configPath: ConfigPath);
 
-        if (!config.LlmProviders.OpenApiCompatible.Enabled)
+        var provider = config.LlmProviders.FirstOrDefault(p => p.Enabled);
+        if (provider == null)
         {
             MuxConsole.WriteWarning("No LLM provider is enabled. Run /setup to configure.");
             return;
         }
 
-        var providerConfig = config.LlmProviders.OpenApiCompatible;
-        var apiKeyEnvVar = providerConfig.ApiKeyEnvVar ?? "";
+        ActiveProvider = provider;
 
-        var apiKeyValue = Environment.GetEnvironmentVariable(apiKeyEnvVar);
-        if (string.IsNullOrWhiteSpace(apiKeyValue))
+        if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
-            MuxConsole.WriteWarning($"API key env var '{apiKeyEnvVar}' is not set.");
+            var apiKeyValue = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
+            if (string.IsNullOrWhiteSpace(apiKeyValue))
+            {
+                MuxConsole.WriteWarning($"API key env var '{provider.ApiKeyEnvVar}' is not set.");
 
-            MuxConsole.WriteBody("You can:");
-            if (PlatformContext.IsWindows)
-            {
-                MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{apiKeyEnvVar}\", \"your-key\", \"User\")");
-                MuxConsole.WriteMuted($"     Or (cmd):  setx {apiKeyEnvVar} \"your-key\"");
-            }
-            else
-            {
-                MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {apiKeyEnvVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
-            }
-            MuxConsole.WriteBody("  2. Set it for this session only:");
+                MuxConsole.WriteBody("You can:");
+                if (PlatformContext.IsWindows)
+                {
+                    MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{provider.ApiKeyEnvVar}\", \"your-key\", \"User\")");
+                    MuxConsole.WriteMuted($"     Or (cmd):  setx {provider.ApiKeyEnvVar} \"your-key\"");
+                }
+                else
+                {
+                    MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {provider.ApiKeyEnvVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
+                }
+                MuxConsole.WriteBody("  2. Set it for this session only:");
 
-            var input = MuxConsole.PromptSecret("Paste API key (hidden)");
-            if (!string.IsNullOrEmpty(input))
-            {
-                Environment.SetEnvironmentVariable(apiKeyEnvVar, input, EnvironmentVariableTarget.Process);
-                apiKeyValue = input;
-                MuxConsole.WriteSuccess("API key set for this session.");
+                var input = MuxConsole.PromptSecret("Paste API key (hidden)");
+                if (!string.IsNullOrEmpty(input))
+                {
+                    Environment.SetEnvironmentVariable(provider.ApiKeyEnvVar, input, EnvironmentVariableTarget.Process);
+                    apiKeyValue = input;
+                    MuxConsole.WriteSuccess("API key set for this session.");
+                }
+                else
+                {
+                    MuxConsole.WriteError("No API key provided. Agent commands will fail until a key is set.");
+                    return;
+                }
             }
-            else
-            {
-                MuxConsole.WriteError("No API key provided. Agent commands will fail until a key is set.");
-                return;
-            }
+
+            MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
         }
 
-        var rawEndpoint = providerConfig.Endpoint ?? "";
+        var rawEndpoint = provider.Endpoint ?? "";
         var normalizedEndpoint = NormalizeOpenAiEndpoint(rawEndpoint);
 
+        MuxConsole.WriteInfo($"Provider: {provider.Name}");
         MuxConsole.WriteInfo($"Endpoint: {normalizedEndpoint}");
-        MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
     }
 
     private static string NormalizeOpenAiEndpoint(string endpoint)
@@ -907,21 +961,35 @@ public class App
         return builder.Uri.ToString().TrimEnd('/');
     }
 
-    private static readonly Lazy<OpenAI.OpenAIClient> OpenAiClient = new(() =>
+    private static OpenAI.OpenAIClient CreateOpenAiClient()
     {
-        var config = LoadConfig(configPath: ConfigPath);
-        var providerConfig = config.LlmProviders.OpenApiCompatible;
+        if (ActiveProvider == null)
+            InitLlmProvider();
+        
+        var provider = ActiveProvider ?? LoadConfig(configPath: ConfigPath).LlmProviders.FirstOrDefault(p => p.Enabled);
+        
+        var apiKey = !string.IsNullOrWhiteSpace(provider?.ApiKeyEnvVar)
+            ? Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar) ?? "no-key"
+            : "no-key";
 
-        var apiKeyEnvVar = providerConfig.ApiKeyEnvVar ?? "OPENAI_API_KEY";
-        var apiKeyValue = Environment.GetEnvironmentVariable(apiKeyEnvVar) ?? "";
-
-        var normalized = NormalizeOpenAiEndpoint(providerConfig.Endpoint ?? "https://openrouter.ai/api/v1");
+        var normalized = NormalizeOpenAiEndpoint(provider?.Endpoint ?? "https://openrouter.ai/api/v1");
 
         return new OpenAI.OpenAIClient(
-            new ApiKeyCredential(apiKeyValue),
+            new ApiKeyCredential(apiKey),
             new OpenAI.OpenAIClientOptions { Endpoint = new Uri(normalized) }
         );
-    });
+    }
+
+    private static IChatClient CreateChatClient(string modelId)
+    {
+        return CreateOpenAiClient()
+            .GetChatClient(modelId)
+            .AsIChatClient()
+            .AsBuilder()
+            .UseFunctionInvocation()
+            .Build();
+    }
+
 
     private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
     {
@@ -976,17 +1044,7 @@ public class App
             );
         return Environment.ExitCode;
     }
-
-    private static IChatClient CreateChatClient(string modelId)
-    {
-        return OpenAiClient.Value
-            .GetChatClient(modelId)
-            .AsIChatClient()
-            .AsBuilder()
-            .UseFunctionInvocation()
-            .Build();
-    }
-
+    
     private void DisableTools()
     {
         MuxConsole.WriteBody("Enter the index or range of tools to disable (e.g. 1-10):");

@@ -23,19 +23,18 @@ public static class Setup
         _appConfig ??= new AppConfig();
 
         _appConfig.McpServers ??= new Dictionary<string, McpServerConfig>(StringComparer.OrdinalIgnoreCase);
-        _appConfig.LlmProviders ??= new LlmProvidersConfig();
+        _appConfig.LlmProviders ??= [];
         _appConfig.Filesystem ??= new FilesystemConfig();
-
-        _appConfig.LlmProviders.OpenApiCompatible ??= new LlmProviderConfig();
-        _appConfig.LlmProviders.Ollama ??= new LlmProviderConfig();
 
         _appConfig.Filesystem.AllowedPaths ??= new List<string>();
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // CONFIG LOADING
-    // ─────────────────────────────────────────────────────────────
-
+    /// <summary>
+    /// Loads the application configuration from the specified file path or creates a default configuration if the file does not exist.
+    /// </summary>
+    /// <param name="configPath">The file path to the JSON configuration file.</param>
+    /// <param name="configObj">An optional pre-existing AppConfig object to use directly without loading from file.</param>
+    /// <returns>The loaded or newly created AppConfig instance with defaults applied.</returns>
     public static AppConfig LoadConfig(string configPath, AppConfig? configObj = null)
     {
         if (configObj != null)
@@ -71,10 +70,13 @@ public static class Setup
         return _appConfig;
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // INTERACTIVE SETUP
-    // ─────────────────────────────────────────────────────────────
-
+    /// <summary>
+    /// Executes the interactive setup process for the Mux-Swarm application.
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> if the setup completed successfully and all configuration steps were performed;
+    /// <c>false</c> if the setup was interrupted or failed at any step.
+    /// </returns>
     public static bool RunSetup()
     {
         MuxConsole.WriteBanner("Mux-Swarm SETUP");
@@ -164,7 +166,7 @@ public static class Setup
             MuxConsole.WriteMuted("Example: /home/john, /mnt/data, /opt/projects");
 
         MuxConsole.WriteLine();
-        var input = MuxConsole.Prompt("Paths");
+        var input = MuxConsole.Prompt("Paths: ");
 
         var paths = ParsePaths(input);
 
@@ -183,7 +185,7 @@ public static class Setup
         MuxConsole.WriteBody("Which path should be used as the agent output sandbox?");
         MuxConsole.WriteMuted("This is where agents will write files and artifacts.");
 
-        var sandboxInput = MuxConsole.Prompt("Enter number or full path");
+        var sandboxInput = MuxConsole.Prompt("Enter number or full path: ");
         string sandboxPath;
 
         if (int.TryParse(sandboxInput, out int idx) && idx >= 1 && idx <= paths.Count)
@@ -299,7 +301,7 @@ public static class Setup
         MuxConsole.WriteMuted("Example: https://openrouter.ai/api/v1");
 
         MuxConsole.WriteLine();
-        var endpoint = MuxConsole.Prompt("Endpoint");
+        var endpoint = MuxConsole.Prompt("Endpoint: ");
 
         if (string.IsNullOrEmpty(endpoint))
         {
@@ -313,19 +315,18 @@ public static class Setup
         MuxConsole.WriteLine();
         MuxConsole.WriteMuted("If you prefer (not recommended), you may paste your RAW API key instead.");
         MuxConsole.WriteMuted("Raw keys will only be stored in-memory for this session.");
+        MuxConsole.WriteMuted("Leave blank for local endpoints (e.g. Ollama).");
 
         MuxConsole.WriteLine();
-        var input = MuxConsole.Prompt("Env var name or raw key");
+        var input = MuxConsole.Prompt("Env var name or raw key: ");
+
+        string? apiKeyEnvVar = null;
 
         if (string.IsNullOrEmpty(input))
         {
-            MuxConsole.WriteError("No API key input provided. Setup failed.");
-            return false;
+            MuxConsole.WriteMuted("No API key configured — suitable for local endpoints.");
         }
-
-        string apiKeyEnvVar;
-
-        if (Common.LooksLikeEnvVarName(input))
+        else if (Common.LooksLikeEnvVarName(input))
         {
             apiKeyEnvVar = input;
 
@@ -346,12 +347,17 @@ public static class Setup
             MuxConsole.WriteSuccess("API key stored securely for this session only.");
         }
 
-        _appConfig.LlmProviders ??= new LlmProvidersConfig();
-        _appConfig.LlmProviders.OpenApiCompatible ??= new LlmProviderConfig();
+        var provider = new ProviderConfig
+        {
+            Name = "default",
+            Endpoint = endpoint,
+            ApiKeyEnvVar = apiKeyEnvVar,
+            Enabled = true
+        };
 
-        _appConfig.LlmProviders.OpenApiCompatible.Endpoint = endpoint;
-        _appConfig.LlmProviders.OpenApiCompatible.ApiKeyEnvVar = apiKeyEnvVar;
-        _appConfig.LlmProviders.OpenApiCompatible.Enabled = true;
+        _appConfig.LlmProviders ??= [];
+        _appConfig.LlmProviders.Clear();
+        _appConfig.LlmProviders.Add(provider);
 
         return true;
     }

@@ -139,6 +139,14 @@ public static class MultiAgentOrchestrator
         CancellationToken cancellationToken = default)
     {
         var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
+        
+        SwarmConfig? swarmConfig = null;
+        try
+        {
+            swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath));
+        }
+        catch {/*Defaults*/ }
+        
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
         SkillLoader.LoadSkills();
@@ -179,7 +187,9 @@ public static class MultiAgentOrchestrator
             compactionClient = chatClientFactory(compactionModel);
         }
         catch { /* falls back to extractive only */ }
-
+        
+        ChatOptions? compactionChatOptions = swarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
+        
         async Task<string> ExecuteDelegation(
             string agentName,
             string task,
@@ -213,7 +223,7 @@ public static class MultiAgentOrchestrator
             await MuxConsole.WithSpinnerAsync($"Preparing context for {agentName}", async () =>
             {
                 enrichedTask = await EnrichTaskWithCrossAgentContext(
-                    task, agentName, delegationResults, compactionClient);
+                    task, agentName, delegationResults, compactionClient, compactionChatOptions);
 
                 if (attemptNumber > 1 && retryState != null)
                     enrichedTask = InjectRetryHint(enrichedTask, attemptNumber, retryState.LastFailureReason);
@@ -247,7 +257,8 @@ public static class MultiAgentOrchestrator
                     completionSummary: summary,
                     completionArtifacts: artifacts,
                     charBudget: ProgressEntryBudget,
-                    chatClient: compactionClient);
+                    chatClient: compactionClient,
+                    chatOptions: compactionChatOptions);
             });
 
             delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts));
@@ -370,11 +381,32 @@ public static class MultiAgentOrchestrator
                 if (def.CanDelegate)
                     MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");
 
-                var agent = client.AsAIAgent(
-                    name: def.Name,
-                    instructions: prompt,
-                    tools: agentTools
-                );
+                var agentChatOptions = new ChatOptions
+                {
+                    Instructions = prompt,
+                    Tools = agentTools
+                };
+
+                var agentConfigOpts = swarmConfig?.Agents?
+                    .FirstOrDefault(a => a.Name.Equals(def.Name, StringComparison.OrdinalIgnoreCase))
+                    ?.ModelOpts;
+
+                if (agentConfigOpts?.ToChatOptions() is { } modelChatOpts)
+                {
+                    agentChatOptions.Temperature = modelChatOpts.Temperature;
+                    agentChatOptions.TopP = modelChatOpts.TopP;
+                    agentChatOptions.TopK = modelChatOpts.TopK;
+                    agentChatOptions.MaxOutputTokens = modelChatOpts.MaxOutputTokens;
+                    agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
+                    agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
+                    agentChatOptions.Seed = modelChatOpts.Seed;
+                }
+
+                var agent = client.AsAIAgent(new ChatClientAgentOptions
+                {
+                    Name = def.Name,
+                    ChatOptions = agentChatOptions
+                });
 
                 var session = await agent.CreateSessionAsync();
                 specialists[def.Name] = (agent, session, def);
@@ -456,11 +488,28 @@ public static class MultiAgentOrchestrator
             ..orchestratorFilteredTools
         ];
 
-        var orchestratorAgent = orchestratorClient.AsAIAgent(
-            name: "Orchestrator",
-            instructions: orchestratorPrompt,
-            tools: orchestratorTools
-        );
+        var orchChatOptions = new ChatOptions
+        {
+            Instructions = orchestratorPrompt,
+            Tools = orchestratorTools
+        };
+
+        if (swarmConfig?.Orchestrator?.ModelOpts?.ToChatOptions() is { } orchModelOpts)
+        {
+            orchChatOptions.Temperature = orchModelOpts.Temperature;
+            orchChatOptions.TopP = orchModelOpts.TopP;
+            orchChatOptions.TopK = orchModelOpts.TopK;
+            orchChatOptions.MaxOutputTokens = orchModelOpts.MaxOutputTokens;
+            orchChatOptions.FrequencyPenalty = orchModelOpts.FrequencyPenalty;
+            orchChatOptions.PresencePenalty = orchModelOpts.PresencePenalty;
+            orchChatOptions.Seed = orchModelOpts.Seed;
+        }
+
+        var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = "Orchestrator",
+            ChatOptions = orchChatOptions
+        });
 
         var orchestratorSession = await orchestratorAgent.CreateSessionAsync();
 
@@ -662,7 +711,8 @@ public static class MultiAgentOrchestrator
         string originalTask,
         string targetAgentName,
         List<DelegationResult> priorResults,
-        IChatClient? compactionClient)
+        IChatClient? compactionClient,
+        ChatOptions? compactionChatOptions = null)
     {
         if (priorResults.Count == 0)
             return originalTask;
@@ -692,7 +742,8 @@ public static class MultiAgentOrchestrator
                     entry,
                     result.Status, result.Summary, result.Artifacts,
                     charBudget: budgetRemaining,
-                    chatClient: compactionClient);
+                    chatClient: compactionClient,
+                    chatOptions: compactionChatOptions);
             }
 
             context.AppendLine($"[{result.AgentName}]: {entry}");

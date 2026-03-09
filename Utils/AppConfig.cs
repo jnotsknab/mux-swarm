@@ -14,7 +14,7 @@ public class AppConfig
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
 
     [JsonPropertyName("llmProviders")]
-    public LlmProvidersConfig LlmProviders { get; set; } = new();
+    public List<ProviderConfig> LlmProviders { get; set; } = [];
 
     [JsonPropertyName("filesystem")]
     public FilesystemConfig Filesystem { get; set; } = new();

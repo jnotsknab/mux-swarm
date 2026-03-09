@@ -43,16 +43,32 @@ public static class SingleAgentOrchestrator
         }
         return null;
     }
+    
 
-    private static int EstimateTokens(IReadOnlyList<ChatMessage> history)
+    private static bool IsQuitCommand(string? input)
     {
-        int totalChars = 0;
-        foreach (var msg in history)
-            totalChars += (msg.Text ?? "").Length;
+        if (string.IsNullOrWhiteSpace(input))
+            return true;
 
-        return (int)(totalChars / CharsPerToken);
+        var trimmed = input.Trim();
+        return trimmed.Equals("/qc", StringComparison.OrdinalIgnoreCase)
+            || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
+    
+    private static ModelOpts? GetSingleAgentModelOpts()
+    {
+        if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
+            return null;
 
+        try
+        {
+            var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
+            var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
+            return swarm?.SingleAgent?.ModelOpts;
+        }
+        catch { return null; }
+    }
+    
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -68,7 +84,9 @@ public static class SingleAgentOrchestrator
         uint minDelaySeconds = 0,
         uint persistIntervalSeconds = 0,
         uint sessionRetention = 0,
-        bool prodMode = false)
+        bool prodMode = false,
+        JsonElement? resumedSession = null,
+        string? resumedSessionDir = null)
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Escape] to cancel the current turn.");
@@ -98,15 +116,19 @@ public static class SingleAgentOrchestrator
         }
         else
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-            initialGoal = Console.ReadLine() ?? "USER DID NOT PROVIDE YOU WITH A GOAL";
+            initialGoal = Console.ReadLine() ?? "";
+
+            cancellationToken.ThrowIfCancellationRequested();
         }
 
-        if (string.IsNullOrEmpty(initialGoal) || initialGoal.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
-        {   
+        if (IsQuitCommand(initialGoal))
+        {
             MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
             return;
-        };
+        }
 
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
@@ -150,11 +172,34 @@ public static class SingleAgentOrchestrator
 
         var singleAgentTools = (IList<AITool>)[listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, .. filteredTools];
 
-        AIAgent? agent = client?.AsAIAgent(
-            name: singleAgentDef.Name,
-            instructions: systemPrompt,
-            tools: [.. singleAgentTools!]
-        );
+        var agentChatOptions = new ChatOptions
+        {
+            Instructions = systemPrompt,
+            Tools = [.. singleAgentTools!]
+        };
+
+        // Merge modelOpts from swarm.json if present
+        var singleAgentOpts = GetSingleAgentModelOpts();
+        if (singleAgentOpts is not null)
+        {
+            var modelChatOpts = singleAgentOpts.ToChatOptions();
+            if (modelChatOpts is not null)
+            {
+                agentChatOptions.Temperature = modelChatOpts.Temperature;
+                agentChatOptions.TopP = modelChatOpts.TopP;
+                agentChatOptions.TopK = modelChatOpts.TopK;
+                agentChatOptions.MaxOutputTokens = modelChatOpts.MaxOutputTokens;
+                agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
+                agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
+                agentChatOptions.Seed = modelChatOpts.Seed;
+            }
+        }
+
+        AIAgent? agent = client?.AsAIAgent(new ChatClientAgentOptions
+        {
+            Name = singleAgentDef.Name,
+            ChatOptions = agentChatOptions
+        });
 
         if (agent == null)
         {
@@ -162,15 +207,22 @@ public static class SingleAgentOrchestrator
             return;
         }
         
-        var session = await agent.CreateSessionAsync();
         string currentGoal = initialGoal;
-        var sessionTimestamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-
+        
+        var sessionTimestamp = resumedSessionDir != null
+            ? Path.GetFileName(resumedSessionDir)
+            : DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+        
+        var session = resumedSession.HasValue
+            ? await agent.DeserializeSessionAsync(resumedSession.Value)
+            : await agent.CreateSessionAsync();
+        
         var conversationHistory = new List<ChatMessage>();
 
         IChatClient? compactionClient = null;
+        ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
-
+        
         IChatClient? ResolveCompactionClient()
         {
             if (compactionResolved) return compactionClient;
@@ -190,6 +242,8 @@ public static class SingleAgentOrchestrator
 
                     if (swarmConfig.CompactionAgent.AutoCompactTokenThreshold > 0)
                         autoCompactTokenThreshold = swarmConfig.CompactionAgent.AutoCompactTokenThreshold;
+                    
+                    compactionChatOptions = swarmConfig.CompactionAgent.ModelOpts?.ToChatOptions();
                 }
 
                 var compactionModel = swarmConfig?.CompactionAgent?.Model;
@@ -211,20 +265,27 @@ public static class SingleAgentOrchestrator
                 return false;
             }
 
-            int beforeTokens = EstimateTokens(conversationHistory);
+            int beforeTokens = Common.EstimateTokenCount(conversationHistory);
+
+            ChatMessage? compactedMsg = null;
 
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
-                var compacted = await ResultCompactor.CompactConversationAsync(
-                    conversationHistory, cc);
+                compactedMsg = await ResultCompactor.CompactConversationAsync(
+                    conversationHistory, cc, chatOptions: compactionChatOptions);
+
+                compactedMsg = new ChatMessage(ChatRole.User,
+                    compactedMsg.Text + "\n\n[SYSTEM: This is a context restoration message. Do not respond. Await the next user message.]");
 
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
-                conversationHistory.Add(compacted);
+                conversationHistory.Add(compactedMsg);
 
-                await foreach (var _ in agent.RunStreamingAsync([compacted], session)) { }
+                await foreach (var _ in agent.RunStreamingAsync([compactedMsg], session)) { }
             });
-            int afterTokens = EstimateTokens(conversationHistory);
+
+            int afterTokens = (int)Math.Ceiling(
+                (compactedMsg?.Text?.Length ?? 0) / 3.5);
             MuxConsole.WriteSuccess($"Compacted: ~{beforeTokens:N0} -> ~{afterTokens:N0} tokens");
             return true;
         }
@@ -235,7 +296,7 @@ public static class SingleAgentOrchestrator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            int estimatedTokens = EstimateTokens(conversationHistory);
+            int estimatedTokens = Common.EstimateTokenCount(conversationHistory);
             if (estimatedTokens > autoCompactTokenThreshold)
             {
                 MuxConsole.WriteInfo($"Context approaching limit (~{estimatedTokens:N0} tokens). Auto-compacting...");
@@ -382,11 +443,16 @@ public static class SingleAgentOrchestrator
 
             if (shouldPersist)
             {
-                await Common.PersistChatSessionAsync(agent, session, sessionTimestamp);
+                await Common.PersistChatSessionAsync(
+                    agent,
+                    session,
+                    sessionTimestamp,
+                    resumedSession.HasValue ? Common.FindSessionDirectory(sessionTimestamp) : null);
+
                 lastPersistTime = DateTime.UtcNow;
             }
 
-            int currentTokens = EstimateTokens(conversationHistory);
+            int currentTokens = Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteMuted($"~{currentTokens:N0} tokens in context");
             
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
@@ -410,30 +476,34 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteRule();
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
+            cancellationToken.ThrowIfCancellationRequested();
             string? nextInput = Console.ReadLine();
+            cancellationToken.ThrowIfCancellationRequested();
 
-            if (string.IsNullOrEmpty(nextInput) || nextInput.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
+            if (IsQuitCommand(nextInput))
             {
                 MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
                 break;
             }
-            
-            if (nextInput.Trim().Equals("/compact", StringComparison.OrdinalIgnoreCase))
+
+            if (nextInput!.Trim().Equals("/compact", StringComparison.OrdinalIgnoreCase))
             {
                 await TryCompactAsync();
                 MuxConsole.WriteRule();
                 MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                nextInput = Console.ReadLine();
 
-                if (string.IsNullOrEmpty(nextInput) ||
-                    nextInput.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
+                cancellationToken.ThrowIfCancellationRequested();
+                nextInput = Console.ReadLine();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (IsQuitCommand(nextInput))
                 {
                     MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
                     break;
                 }
             }
 
-            currentGoal = nextInput;
+            currentGoal = nextInput!;
 
         } while (!Environment.HasShutdownStarted);
 
