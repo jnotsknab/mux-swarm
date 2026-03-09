@@ -49,8 +49,9 @@ https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
 - [Quick Start](#quick-start)
 - [About](#about)
 - [Key Capabilities](#key-capabilities)
+- [Protocols & Standards](#protocols--standards)
 - [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [CLI Flags](#cli-flags)
-- [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
+- [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
 - [Architecture](#architecture) — [Orchestration Lifecycle](#orchestration-lifecycle) · [Memory Architecture](#layered-memory-architecture)
 - [Security & Safety](#security--safety)
 - [Roadmap](#roadmap)
@@ -63,7 +64,7 @@ https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
 
 ### Prerequisites
 
-- An LLM provider API key (any [OpenAI-compatible](https://platform.openai.com/docs/api-reference) endpoint), set as an environment variable
+- An LLM provider API key (any [OpenAI-compatible](https://platform.openai.com/docs/api-reference) endpoint), preferably set as an environment variable
 - **Node / npm** (`npx`) for Node-based [MCP](https://modelcontextprotocol.io/) servers
 - **uvx / uv** for Python-based MCP servers
 
@@ -127,11 +128,6 @@ Out of the box it ships with a general-purpose swarm of specialized agents (rese
 
 The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprotocol.io/)) for tool integration, supports any OpenAI-compatible LLM provider, and includes a modular **skills system** that lets agents load structured instructions dynamically at runtime. Together, MCP tools and skills form the operational surface of the swarm — keeping workflows transparent, auditable, and extensible.
 
-<!-- ARCHITECTURE DIAGRAM: Replace with a Mermaid diagram, Excalidraw export, or SVG.
-     A simple box flow showing: config.json → swarm.json → prompts → mux-swarm CLI → agents
-     See the Architecture section below for the conceptual model. -->
-<!-- <img src="docs/assets/architecture-overview.svg" alt="mux-swarm architecture" width="100%"> -->
-
 ---
 
 ## Key Capabilities
@@ -140,15 +136,28 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 **[Execution](#usage)** — CLI-native runtime for scripts and pipelines, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems — from personal automation scripts to backend services and enterprise pipelines.
 
-**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider, and cross-platform support (Windows, Linux, macOS).
+**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS).
 
 **[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
 
 ---
 
+## Protocols & Standards
+
+| Protocol | Description | Integration |
+|----------|-------------|-------------|
+| **[OpenAI Compatible API](https://platform.openai.com/docs/api-reference)** | Industry-standard chat completions and responses API. Any endpoint exposing `/v1/chat/completions` or `/v1/responses` works without code changes. | Multi-provider support with runtime swapping. Tested with OpenRouter, Ollama, LiteLLM, vLLM, LocalAI, and direct OpenAI/Google/xAI endpoints. |
+| **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)** | Standardized protocol for AI agents to interact with external tools and services. Enables dynamic tool discovery and scoped execution. | Native dual-transport support (stdio + HTTP/SSE). Per-agent MCP server scoping via `swarm.json`. Strict-mode validation for production deployments. |
+| **[Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions)** | Unified .NET abstraction layer for AI services. Provider-agnostic `IChatClient` interface with streaming, tool invocation, and options propagation. | Core abstraction layer. All LLM interactions route through `IChatClient` with `ChatOptions` for per-agent model tuning. |
+| **[Microsoft.Agents.AI](https://github.com/microsoft/Agents-for-net)** | Agent framework providing session management, chat history, streaming orchestration, and serializable session state. | Agent lifecycle management. Session serialize/restore for `/resume`. `ChatClientAgentOptions` for wiring model parameters and tools. |
+| **[Agent Skills (SKILL.md)](https://docs.anthropic.com/en/docs/claude-code/skills)** | Markdown-based format for defining modular, reusable agent capabilities. Agents discover and load skills at runtime without code changes. | Built-in skills system with `list_skills` / `read_skill` tools. Per-agent skill scoping via `skillPatterns`. Hot-reload via `/reloadskills`. |
+| **Session Serialization** | Full round-trip session state persistence via `SerializeSession` / `DeserializeSessionAsync`. Enables session portability and resume across restarts. | `/resume` command for single-agent session restore. Automatic session persistence with configurable intervals. |
+
+---
+
 ## Built With
 
-[.NET 10](https://dotnet.microsoft.com/) · C# 14 · [Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions) · [OpenAI .NET SDK](https://github.com/openai/openai-dotnet) · [Model Context Protocol](https://modelcontextprotocol.io/) · [Spectre.Console](https://spectreconsole.net/)
+[.NET 10](https://dotnet.microsoft.com/) · C# 14 · [Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions) · [Microsoft.Agents.AI](https://github.com/microsoft/Agents-for-net) · [OpenAI .NET SDK](https://github.com/openai/openai-dotnet) · [Model Context Protocol](https://modelcontextprotocol.io/) · [Spectre.Console](https://spectreconsole.net/)
 
 ---
 
@@ -156,23 +165,28 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 ### Interactive Commands
 ```
-/multiagent     Launch multi-agent swarm loop
-/agent          Launch single-agent loop
-/stateless      Launch stateless single agent loop, ideal for one-off tasks (sessions not persisted as to not convolute stateful agent runs)
-/swap           Swap the active agent for single-agent mode
+/swarm          Launch multi-agent swarm loop
+/agent          Launch interactive single agent loop
+/stateless      Stateless single agent loop, ideal for one-off tasks
+/resume         Resume a previous single-agent session
+/compact        Compact current session context (applies to single agent loops only)
 /model          View current model assignments
-/setmodel       Change the single-agent model
-/tools          List available tools
+/setmodel       Change the model for any agent, orchestrator, or compaction agent
+/swap           Swap the active agent for single-agent mode
+/provider       View or switch the active LLM provider
+/tools          List available MCP tools across enabled servers
 /skills         List available local skills
 /memory         View the knowledge graph
 /sessions       List all saved sessions with type and agent count
+/status         View current system status: provider, models, tools, skills, and sessions
 /dockerexec     Toggle Docker execution mode
-/setup          Run initial setup
+/dbg            Enable tool call output (applies to stdio mode only)
+/nodbg          Disable tool call output (applies to stdio mode only)
+/setup          Run initial setup / reconfigure
 /reloadskills   Refresh skills directory for any mid process changes
-/refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills
-/report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes
+/refresh        Full Mux system refresh: config, MCP servers, and skills
+/report         Generate full session audit reports
 /report <id>    Audit a specific session by timestamp
-/compact        Compact current agent session for token burn prevention
 /clear          Clear terminal
 /exit           Exit the runtime
 /qm or /qc      Stop the current session
@@ -202,6 +216,7 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 ```
 --goal <text|file>         Goal input (text or file path)
 --agent <name>             Run in single-agent mode with the specified agent
+--provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
 --continuous               Enable continuous autonomous mode
 --goal-id <id>             Persistent goal/session identifier
 --min-delay <secs>         Minimum delay between loops (default 300)
@@ -212,7 +227,7 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 --mcp-strict [true|false]  Require all integrations to connect
 --docker-exec [true|false] Route execution through Docker
 --model <id>               Override the single-agent model
---report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated
+--report [session-id]      Generate audit report(s) and exit
 --clear                    Clear terminal before continuing
 --help, -h                 Show help
 ```
@@ -224,13 +239,13 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 mux-swarm separates configuration into two files:
 
 - [**`Configs/config.json`**](#configjson--infrastructure) — Infrastructure & runtime environment (providers, MCP servers, filesystem boundaries, Docker posture)
-- [**`Configs/swarm.json`**](#swarmjson--topology--roles) — Swarm topology & agent behavior (roles, model routing, delegation permissions, tool scope)
+- [**`Configs/swarm.json`**](#swarmjson--topology--roles) — Swarm topology & agent behavior (roles, model routing, model tuning, delegation permissions, tool scope)
 
 This separation lets you swap providers without redesigning the swarm, or redesign the swarm without changing infrastructure wiring.
 
 ### `config.json` — Infrastructure
 
-Defines which external integrations are available, where the runtime can read/write, and which provider endpoint to use.
+Defines which external integrations are available, where the runtime can read/write, and which provider endpoints to use. Supports multiple providers with runtime swapping via `/provider` or `--provider`.
 
 ```json
 {
@@ -249,29 +264,63 @@ Defines which external integrations are available, where the runtime can read/wr
       "enabled": true
     }
   },
-  "llmProviders": {
-    "openAiCompatible": {
+  "llmProviders": [
+    {
+      "name": "openrouter",
       "enabled": true,
       "apiKeyEnvVar": "OPENROUTER_API_KEY",
       "endpoint": "https://openrouter.ai/api/v1"
+    },
+    {
+      "name": "ollama",
+      "enabled": true,
+      "endpoint": "http://localhost:11434/v1"
     }
-  },
+  ],
   "filesystem": {
     "allowedPaths": ["/path/to/project"],
     "sandboxPath": "/path/to/project"
   }
 }
 ```
+> **Enterprise Storage:** `allowedPaths` works with any storage that presents as a filesystem path — Azure Blob Storage ([BlobFuse](https://github.com/Azure/azure-storage-fuse)), AWS S3 ([Mountpoint](https://github.com/awslabs/mountpoint-s3), [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)), Google Cloud Storage ([GCS FUSE](https://cloud.google.com/storage/docs/cloud-storage-fuse/overview)), SMB/CIFS shares, and NFS mounts. Mount your cloud or network storage, add the mount path to `allowedPaths`, and agents read/write to it like any local directory. No code changes required.
+
 
 ### `swarm.json` — Topology & Roles
 
-Defines which agents exist, what they specialize in, which models and MCP servers each role can access, and who can delegate.
+Defines which agents exist, what they specialize in, which models and MCP servers each role can access, who can delegate, and optional per-agent model tuning via [`modelOpts`](#model-tuning-modelopts).
 
 ```json
 {
+  "compactionAgent": {
+    "model": "google/gemini-3-flash-preview",
+    "autoCompactTokenThreshold": 80000,
+    "modelOpts": {
+      "temperature": 0.2,
+      "topP": 0.85,
+      "maxOutputTokens": 4096
+    }
+  },
+  "singleAgent": {
+    "name": "MuxAgent",
+    "promptPath": "Prompts/Agents/chat_prompt.md",
+    "model": "google/gemini-3.1-pro-preview",
+    "modelOpts": {
+      "temperature": 0.6,
+      "topP": 0.95,
+      "maxOutputTokens": 16384
+    },
+    "mcpServers": ["Filesystem", "Memory", "BraveSearchMCP"],
+    "toolPatterns": []
+  },
   "orchestrator": {
     "promptPath": "Prompts/Agents/orchestrator.md",
     "model": "google/gemini-3.1-pro-preview",
+    "modelOpts": {
+      "temperature": 0.3,
+      "topP": 0.9,
+      "maxOutputTokens": 4096
+    },
     "toolPatterns": ["Filesystem_list_directory", "Filesystem_read_file"]
   },
   "agents": [
@@ -287,13 +336,49 @@ Defines which agents exist, what they specialize in, which models and MCP server
       "name": "CodeAgent",
       "description": "Code generation, editing, and debugging.",
       "promptPath": "Prompts/Agents/code_agent.md",
-      "model": "openai/gpt-5.3-codex",
+      "model": "google/gemini-3.1-pro-preview",
+      "modelOpts": {
+        "temperature": 0.4,
+        "maxOutputTokens": 8192
+      },
       "mcpServers": ["Filesystem", "BraveSearchMCP", "PythonReplMCP"],
       "canDelegate": true
     }
   ]
 }
 ```
+
+### Model Tuning (`modelOpts`)
+
+Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `modelOpts` block for per-agent model parameter tuning. All fields are optional — omitted values use provider defaults.
+
+```json
+"modelOpts": {
+  "temperature": 0.7,
+  "topP": 0.9,
+  "topK": 40,
+  "maxOutputTokens": 4096,
+  "frequencyPenalty": 0.0,
+  "presencePenalty": 0.0,
+  "seed": 42
+}
+```
+
+| Parameter | Type | Range | Description |
+|-----------|------|-------|-------------|
+| `temperature` | float | 0.0–2.0 | Controls output randomness. Lower = more deterministic, higher = more creative. |
+| `topP` | float | 0.0–1.0 | Nucleus sampling — considers tokens within this cumulative probability mass. |
+| `topK` | int | 1+ | Considers only the top K most probable tokens. Not all providers support this. |
+| `maxOutputTokens` | int | 1+ | Hard ceiling on response length. |
+| `frequencyPenalty` | float | -2.0–2.0 | Penalizes tokens proportionally to how often they appear. Reduces repetition. |
+| `presencePenalty` | float | -2.0–2.0 | Penalizes any token that has appeared at all. Encourages topic diversity. |
+| `seed` | long | — | Attempts deterministic output for identical inputs. Provider support varies. |
+
+**Tuning guidelines:**
+- **Orchestrators:** Low temperature (0.2–0.4) for consistent planning and delegation decisions.
+- **Code agents:** Moderate temperature (0.3–0.5) for accurate but flexible code generation.
+- **Research/general agents:** Higher temperature (0.5–0.7) for varied, comprehensive responses.
+- **Compaction agents:** Low temperature (0.1–0.3) for faithful summarization.
 
 ### Prompts: `Prompts/Agents/*.md`
 
@@ -313,7 +398,7 @@ mux-swarm separates [configuration](#configuration) and execution into control p
 
 **Control Plane A — [`config.json`](#configjson--infrastructure)**: Infrastructure & runtime boundaries. Provider config, MCP integrations, filesystem access, Docker posture.
 
-**Control Plane B — [`swarm.json`](#swarmjson--topology--roles)**: Swarm topology & capability routing. Agent roles, model routing, delegation permissions, tool scope.
+**Control Plane B — [`swarm.json`](#swarmjson--topology--roles)**: Swarm topology & capability routing. Agent roles, model routing, model tuning, delegation permissions, tool scope.
 
 **Control Plane C — [`Prompts/Agents`](#prompts-promptsagentsmd)**: Agent behavior contracts. Structured prompts defining reasoning, workflows, and interaction rules.
 
@@ -323,7 +408,7 @@ mux-swarm separates [configuration](#configuration) and execution into control p
 graph TD
     subgraph Control Planes
         Config["config.json<br/><small>Providers · MCP Servers · Filesystem · Docker</small>"]
-        Swarm["swarm.json<br/><small>Roles · Models · Delegation · Tool Scope</small>"]
+        Swarm["swarm.json<br/><small>Roles · Models · ModelOpts · Delegation · Tool Scope</small>"]
         Prompts["Prompts/Agents<br/><small>Behavior Contracts · Workflows · Constraints</small>"]
     end
 
