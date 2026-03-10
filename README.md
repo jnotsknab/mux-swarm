@@ -50,7 +50,7 @@ https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
 - [About](#about)
 - [Key Capabilities](#key-capabilities)
 - [Protocols & Standards](#protocols--standards)
-- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [CLI Flags](#cli-flags)
+- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
 - [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
 - [Architecture](#architecture) — [Orchestration Lifecycle](#orchestration-lifecycle) · [Memory Architecture](#layered-memory-architecture)
 - [Security & Safety](#security--safety)
