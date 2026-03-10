@@ -344,6 +344,8 @@ public static class MultiAgentOrchestrator
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
+                
+                var analyzeImageTool = LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, modelId);
 
                 var listSkillsTool = AIFunctionFactory.Create(
                     method: () =>
@@ -375,8 +377,8 @@ public static class MultiAgentOrchestrator
                 );
 
                 var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, subAgentDelegateTool, .. filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, .. filteredTools];
+                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
+                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
 
                 if (def.CanDelegate)
                     MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");

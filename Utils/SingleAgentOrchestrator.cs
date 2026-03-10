@@ -97,6 +97,23 @@ public static class SingleAgentOrchestrator
         if (singleAgentDef != null && singleAgentDef.CanDelegate)
             MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities. Delegation is not supported in single-agent mode and will be disabled. All other capabilities remain unaffected.");
 
+        var resolvedModelId = "";
+        try
+        {
+            var swarmJson = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
+            var swarm = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
+
+            var match = singleAgentDef != null
+                ? swarm?.Agents?.FirstOrDefault(a =>
+                    a.Name != null && a.Name.Equals(singleAgentDef.Name, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            resolvedModelId = match?.Model
+                              ?? swarm?.SingleAgent?.Model
+                              ?? "";
+        }
+        catch { /* fall through */ }
+
         IList<AITool> allTools = (mcpTools ?? Array.Empty<McpClientTool>()).Cast<AITool>().ToList();
         IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
 
@@ -138,9 +155,13 @@ public static class SingleAgentOrchestrator
 
         var systemPrompt = await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath);
         
-        if (continuous)
-            systemPrompt += "\n\n[CONTINUOUS MODE] You are running in continuous autonomous mode. Use the sleep tool if you need to wait before continuing. When the task is complete, provide a final summary.";
-        
+        var preamble = PreambleBuilder.Build(
+            singleAgentDef.Name,
+            App.Config.IsUsingDockerForExec,
+            continuous);
+
+        systemPrompt = preamble + "\n\n" + systemPrompt;
+      
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
             {
@@ -170,7 +191,16 @@ public static class SingleAgentOrchestrator
                          "Read the relevant skill BEFORE starting a task to follow its best practices."
         );
 
-        var singleAgentTools = (IList<AITool>)[listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, .. filteredTools];
+        var analyzeImageTool = chatClientFactory != null && !string.IsNullOrEmpty(resolvedModelId)
+            ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, resolvedModelId)
+            : null;
+
+        var singleAgentTools = (IList<AITool>)
+        [
+            listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool,
+            .. (analyzeImageTool != null ? new[] { analyzeImageTool } : Array.Empty<AITool>()),
+            .. filteredTools
+        ];
 
         var agentChatOptions = new ChatOptions
         {

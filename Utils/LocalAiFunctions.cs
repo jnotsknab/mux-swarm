@@ -13,7 +13,84 @@ public static class LocalAiFunctions
     {
         CreateSkillFuncs();
     }
+    
+    public static AIFunction CreateAnalyzeImageTool(
+        Func<string, IChatClient> chatClientFactory,
+        string? visionModel = null)
+    {
+        return AIFunctionFactory.Create(
+            method: async (
+                [System.ComponentModel.Description("Absolute file path to the image to analyze. Must be within an allowed directory.")]
+                string imagePath,
+                [System.ComponentModel.Description("Optional specific question or focus for the analysis. If omitted, provides a general description.")]
+                string? prompt
+            ) =>
+            {
+                if (!File.Exists(imagePath))
+                    return $"File not found: {imagePath}";
 
+                var ext = Path.GetExtension(imagePath).ToLowerInvariant();
+                var mimeType = ext switch
+                {
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".gif" => "image/gif",
+                    ".webp" => "image/webp",
+                    ".bmp" => "image/bmp",
+                    _ => (string?)null
+                };
+
+                if (mimeType is null)
+                    return $"Unsupported image format: {ext}. Supported: png, jpg, jpeg, gif, webp, bmp.";
+
+                var modelId = visionModel;
+                if (string.IsNullOrEmpty(modelId))
+                {
+                    // Fall back to current agent's model
+                    var agentDef = SingleAgentOrchestrator.GetCurrSingleAgentDef();
+                    if (agentDef != null)
+                    {
+                        var models = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+                        // Use whatever the caller's model is — best effort
+                    }
+                    modelId = App.ActiveProvider != null ? null : null;
+                }
+
+                if (string.IsNullOrEmpty(modelId))
+                    return "No vision model configured. Set 'visionModel' in swarm.json.";
+
+                try
+                {
+                    var imageBytes = await File.ReadAllBytesAsync(imagePath);
+                    var analysisPrompt = string.IsNullOrWhiteSpace(prompt)
+                        ? "Describe what you see in this image in detail."
+                        : prompt;
+
+                    var message = new ChatMessage(ChatRole.User, [
+                        new DataContent(imageBytes, mimeType),
+                        new TextContent(analysisPrompt)
+                    ]);
+
+                    var client = chatClientFactory(modelId);
+                    var response = await client.GetResponseAsync([message]);
+
+                    var result = response?.Text;
+                    return string.IsNullOrWhiteSpace(result)
+                        ? "Vision model returned an empty response."
+                        : $"[Analysis of {Path.GetFileName(imagePath)}]\n{result}";
+                }
+                catch (Exception ex)
+                {
+                    return $"Failed to analyze image: {ex.Message}";
+                }
+            },
+            name: "analyze_image",
+            description: "Analyze an image file using a vision-capable model. Returns a text description of the image contents. " +
+                         "The image is processed in a separate call and does not enter conversation context. " +
+                         "Use this after capturing screenshots or when you need to understand visual content in a file."
+        );
+    }
+    
     private static void CreateSkillFuncs()
     {
         ListSkillsTool = AIFunctionFactory.Create(

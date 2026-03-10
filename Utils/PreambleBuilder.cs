@@ -9,7 +9,19 @@ public static class PreambleBuilder
     public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false)
     {
         var preamble = "";
+        
+        var userInfo = App.Config.UserInfo;
+        if (!string.IsNullOrWhiteSpace(userInfo.Name))
+        {
+            preamble += $"## User Context\nYou are assisting {userInfo.Name}.";
+            if (!string.IsNullOrWhiteSpace(userInfo.Role)) preamble += $" Role: {userInfo.Role}.";
+            if (!string.IsNullOrWhiteSpace(userInfo.Timezone)) preamble += $" Timezone: {userInfo.Timezone}.";
+            if (!string.IsNullOrWhiteSpace(userInfo.Locale)) preamble += $" Locale: {userInfo.Locale}.";
+            if (!string.IsNullOrWhiteSpace(userInfo.Info)) preamble += $" {userInfo.Info}";
+            preamble += "\n\n";
+        }
 
+        
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
         if (hasSkills && isUsingDockerForExec)
         {

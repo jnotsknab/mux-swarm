@@ -72,6 +72,8 @@ namespace MuxSwarm;
         "  --watchdog [true|false]    External watchdog toggle",
         "  --mcp-strict [true|false]  Require all MCPs (default true)",
         "  --docker-exec [true|false] Route exec via docker skills",
+        "  --cfg <path>               Override Config.json path for scoped instance",
+        "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
         "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated"
         );
 
@@ -636,6 +638,10 @@ namespace MuxSwarm;
                     }
                     break;
                 }
+                case "--cfg":
+                case "--swarmcfg":
+                    NextValue(args, ref i); //handled in program bootstrap
+                    break;
 
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
@@ -757,6 +763,34 @@ namespace MuxSwarm;
         _mcpTools = new List<McpClientTool>();
 
         var baseDir = PlatformContext.BaseDirectory;
+
+        // Patch storage paths from config before server init
+        if (!string.IsNullOrEmpty(config.Filesystem?.ChromaDbPath))
+        {
+            Directory.CreateDirectory(config.Filesystem.ChromaDbPath);
+
+            if (config.McpServers.TryGetValue("ChromaDB", out var chromaCfg) && chromaCfg.Enabled)
+            {
+                chromaCfg.Args = new[]
+                {
+                    "chroma-mcp", "--client-type", "persistent",
+                    "--data-dir", config.Filesystem.ChromaDbPath
+                };
+            }
+        }
+
+        if (!string.IsNullOrEmpty(config.Filesystem?.KnowledgeGraphPath))
+        {
+            var kgDir = Path.GetDirectoryName(config.Filesystem.KnowledgeGraphPath);
+            if (!string.IsNullOrEmpty(kgDir))
+                Directory.CreateDirectory(kgDir);
+
+            if (config.McpServers.TryGetValue("Memory", out var memCfg) && memCfg.Enabled)
+            {
+                memCfg.Env ??= new Dictionary<string, string?>();
+                memCfg.Env["MEMORY_FILE_PATH"] = config.Filesystem.KnowledgeGraphPath;
+            }
+        }
 
         int enabledCount = config.McpServers.Count(kvp => kvp.Value.Enabled);
         int successCount = 0;

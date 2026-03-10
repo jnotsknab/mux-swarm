@@ -134,7 +134,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 **[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, config-driven model routing per role, and continuous autonomous execution with configurable loop timing.
 
-**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems — from personal automation scripts to backend services and enterprise pipelines.
+**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems — from personal automation scripts to multi-user web applications and enterprise pipelines.
 
 **[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS).
 
@@ -228,9 +228,32 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 --docker-exec [true|false] Route execution through Docker
 --model <id>               Override the single-agent model
 --report [session-id]      Generate audit report(s) and exit
+--cfg <path>               Override config.json path for scoped instances
+--swarmcfg <path>          Override swarm.json path for scoped instances
 --clear                    Clear terminal before continuing
 --help, -h                 Show help
 ```
+
+### Scoped Instances
+
+The `--cfg` and `--swarmcfg` flags allow fully isolated runtime instances from a single installation. Each instance resolves its own provider, MCP servers, filesystem boundaries, storage paths, and user identity from its config files.
+```bash
+# User-scoped instances
+mux-swarm --cfg /path/to/alice/Config.json --swarmcfg /path/to/alice/Swarm.json
+mux-swarm --cfg /path/to/bob/Config.json --swarmcfg /path/to/bob/Swarm.json
+
+# Environment-scoped instances
+mux-swarm --cfg /etc/mux/production/Config.json --swarmcfg /etc/mux/production/Swarm.json
+
+```
+
+This enables multi-user deployments, per-environment configurations, and integration into larger systems where each consumer needs an isolated agent runtime.
+
+### User Identity (`userInfo`)
+
+An optional `userInfo` block in `config.json` injects user context into every agent's preamble. Agents receive the user's name, role, and any freeform context — adapting behavior without prompt changes.
+
+All fields except `name` are optional. The `info` field is freeform and can carry preferences, domain context, or behavioral directives (e.g. `"Strict compliance mode. All outputs must reference internal policy docs."`).
 
 ---
 
@@ -279,7 +302,16 @@ Defines which external integrations are available, where the runtime can read/wr
   ],
   "filesystem": {
     "allowedPaths": ["/path/to/project"],
-    "sandboxPath": "/path/to/project"
+    "sandboxPath": "/path/to/project",
+    "chromaDbPath": "/path/to/project/chroma-db",
+    "knowledgeGraphPath": "/path/to/project/memory.jsonl"
+  },
+  "userInfo": {
+    "name": "Micky",
+    "role": "admin",
+    "timezone": "America/New_York",
+    "locale": "en-US",
+    "info": "Prefers concise responses. Primary stack is .NET/C#."
   }
 }
 ```
@@ -465,6 +497,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Recommended Production Stance
 
+- Use `--cfg` and `--swarmcfg` to isolate per-user or per-environment instances
 - Keep `--mcp-strict` enabled so startup fails if required integrations are unavailable
 - Keep filesystem allowed paths minimal and purpose-specific
 - Route execution-heavy tasks through Docker when possible

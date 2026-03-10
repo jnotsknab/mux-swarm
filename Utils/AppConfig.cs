@@ -18,4 +18,8 @@ public class AppConfig
 
     [JsonPropertyName("filesystem")]
     public FilesystemConfig Filesystem { get; set; } = new();
+    
+    [JsonPropertyName("userInfo")]
+    public UserInfoConfig UserInfo { get; set; } = new();
+    
 }
