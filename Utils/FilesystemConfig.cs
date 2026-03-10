@@ -22,6 +22,9 @@ public class FilesystemConfig
 
     [JsonPropertyName("chromaDbPath")]
     public string? ChromaDbPath { get; set; }
+    
+    [JsonPropertyName("knowledgeGraphPath")]
+    public string? KnowledgeGraphPath { get; set; }
 
     [JsonPropertyName("promptsPath")]
     public string? PromptsPath { get; set; }

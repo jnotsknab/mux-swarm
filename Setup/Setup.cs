@@ -98,6 +98,10 @@ public static class Setup
 
         if (!StepCollectEndpointConfig()) return false;
 
+        MuxConsole.WriteRule();
+
+        if (!StepCollectUserInfo()) return false;
+
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
 
         MuxConsole.WriteRule();
@@ -120,10 +124,7 @@ public static class Setup
         return true;
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // SETUP STEPS
-    // ─────────────────────────────────────────────────────────────
-
+    //STEPS
     private static bool StepCheckDependencies()
     {
         MuxConsole.WriteStep(1, "Dependency Check");
@@ -281,6 +282,7 @@ public static class Setup
         MuxConsole.WriteLine();
 
         var memoryFile = Path.Combine(sandbox, "memory.jsonl");
+        _appConfig.Filesystem.KnowledgeGraphPath = memoryFile;
 
         if (_appConfig.McpServers.TryGetValue("Memory", out var memoryServer) && memoryServer.Enabled)
         {
@@ -361,10 +363,50 @@ public static class Setup
 
         return true;
     }
+    
+    private static bool StepCollectUserInfo()
+    {
+        MuxConsole.WriteStep(5, "User Profile (Optional)");
 
+        MuxConsole.WriteBody("You can optionally tell your agents who you are.");
+        MuxConsole.WriteMuted("This helps agents personalize responses and address you by name.");
+        MuxConsole.WriteMuted("Press Enter to skip any field, or type 'skip' to skip this step entirely.");
+        MuxConsole.WriteLine();
+
+        var nameInput = MuxConsole.Prompt("Your name");
+
+        if (string.IsNullOrWhiteSpace(nameInput) || nameInput.Trim().Equals("skip", StringComparison.OrdinalIgnoreCase))
+        {
+            MuxConsole.WriteMuted("Skipped user profile.");
+            return true;
+        }
+
+        var userInfo = new UserInfoConfig { Name = nameInput.Trim() };
+
+        var role = MuxConsole.Prompt("Role (e.g. admin, developer, analyst)");
+        if (!string.IsNullOrWhiteSpace(role)) userInfo.Role = role.Trim();
+
+        var tz = MuxConsole.Prompt("Timezone (e.g. America/New_York)");
+        if (!string.IsNullOrWhiteSpace(tz)) userInfo.Timezone = tz.Trim();
+
+        var locale = MuxConsole.Prompt("Locale (e.g. en-US)");
+        if (!string.IsNullOrWhiteSpace(locale)) userInfo.Locale = locale.Trim();
+
+        MuxConsole.WriteLine();
+        MuxConsole.WriteMuted("Anything else your agents should know about you?");
+        MuxConsole.WriteMuted("e.g. preferred language, tech stack, communication style");
+        var info = MuxConsole.Prompt("Info");
+        if (!string.IsNullOrWhiteSpace(info)) userInfo.Info = info.Trim();
+
+        _appConfig.UserInfo = userInfo;
+
+        MuxConsole.WriteSuccess($"Profile set for {userInfo.Name}.");
+        return true;
+    }
+    
     private static bool StepCollectMcpSecrets()
     {
-        MuxConsole.WriteStep(5, "MCP API Keys");
+        MuxConsole.WriteStep(6, "MCP API Keys");
 
         MuxConsole.WriteBody("Some MCP servers require API keys.");
         MuxConsole.WriteBody("By default, MuxSwarm stores ONLY the env-var names in config (no secrets).");
@@ -443,7 +485,7 @@ public static class Setup
 
     private static bool StepResolveMcpServerPaths()
     {
-        MuxConsole.WriteStep(6, "MCP Server Validation");
+        MuxConsole.WriteStep(7, "MCP Server Validation");
 
         foreach (var (name, server) in _appConfig.McpServers)
         {
@@ -528,6 +570,7 @@ public static class Setup
             ("Sandbox",       _appConfig.Filesystem?.SandboxPath ?? "—"),
             ("Allowed paths", string.Join(", ", _appConfig.Filesystem?.AllowedPaths ?? [])),
             ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "—"),
+            ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "—"),
         });
 
         /*
