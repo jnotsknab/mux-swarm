@@ -15,6 +15,7 @@ namespace MuxSwarm;
         "",
         "Slash Commands",
         "  /swarm          Launch interactive multi agent swarm loop",
+        "  /pswarm         Launch parallel swarm — concurrent batch dispatch for independent tasks",
         "  /agent          Launch interactive single agent loop",
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
@@ -56,12 +57,18 @@ namespace MuxSwarm;
         "  mux-swarm --continuous --goal \"<goal>\" --goal-id my-run",
         "  mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600",
         "",
+        "  Parallel mode:",
+        "  mux-swarm --parallel --goal \"<goal>\"",
+        "  mux-swarm --parallel --continuous --goal \"<goal>\" --goal-id batch-run",
+        "",
         "  Ex:",
         @"  mux-swarm --continuous --goal-id overnight-research --goal C:\goals\research.txt --min-delay 600 --persist-interval 120 --watchdog true --docker-exec true --stdio",
         "",
         "CLI Flags",
         "  --goal <text|file>         Explicit goal",
         "  --continuous               Continuous autonomous mode",
+        "  --parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential",
+        "  --max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)",
         "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
         "  --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)",
         "  --goal-id <id>             Attach goal/session id",
@@ -216,7 +223,20 @@ namespace MuxSwarm;
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
-
+            
+            if (userInput.Trim() == "__CANCEL__")
+            {
+                lock (CtsLock)
+                {
+                    if (!_cts.IsCancellationRequested)
+                    {
+                        _cts.Cancel();
+                        MuxConsole.WriteInfo("Cancelled by client.");
+                    }
+                }
+                continue;
+            }
+            
             switch (userInput)
             {
                 case "/help":
@@ -250,6 +270,24 @@ namespace MuxSwarm;
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         agentModels: maModels,
                         cancellationToken: maCts.Token
+                    );
+                    break;
+
+                case "/pswarm":
+                    Config = LoadConfig(ConfigPath);
+                    var pModels = LoadAgentModels();
+                    var pCts = GetOrResetCts();
+
+                    MuxConsole.WriteLine();
+                    MuxConsole.WriteBody("Model assignments (parallel):");
+                    foreach (var kvp in pModels)
+                        MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
+
+                    await ParallelSwarmOrchestrator.RunAsync(
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                        agentModels: pModels,
+                        cancellationToken: pCts.Token
                     );
                     break;
 
@@ -476,6 +514,8 @@ namespace MuxSwarm;
     private record ParsedArgs(
         string? Goal,
         bool Continuous,
+        bool Parallel,
+        int MaxParallelism,
         string? GoalId,
         uint MinDelay,
         uint PersistInterval,
@@ -502,6 +542,8 @@ namespace MuxSwarm;
     {
         string? goal = null;
         bool continuous = false;
+        bool parallel = false;
+        int maxParallelism = 4;
         string? goalId = null;
         uint minDelay = 300;
         uint persistInterval = 60;
@@ -534,6 +576,14 @@ namespace MuxSwarm;
 
                 case "--continuous":
                     continuous = true;
+                    break;
+
+                case "--parallel":
+                    parallel = true;
+                    break;
+
+                case "--max-parallelism":
+                    if (Common.TryNextUInt(args, ref i, out var mp)) maxParallelism = (int)mp;
                     break;
 
                 case "--prod":
@@ -653,6 +703,8 @@ namespace MuxSwarm;
         return new ParsedArgs(
             goal,
             continuous,
+            parallel,
+            maxParallelism,
             goalId,
             minDelay,
             persistInterval,
@@ -1060,6 +1112,25 @@ namespace MuxSwarm;
                 persistIntervalSeconds: parsed.PersistInterval,
                 sessionRetention: parsed.SessionRetention,
                 prodMode: parsed.ProdMode);
+            return Environment.ExitCode;
+        }
+
+        if (parsed.Parallel)
+        {
+            await ParallelSwarmOrchestrator.RunAsync(
+                chatClientFactory: modelId => CreateChatClient(modelId),
+                mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                agentModels: agentModels,
+                maxDegreeOfParallelism: parsed.MaxParallelism,
+                prodMode: parsed.ProdMode,
+                incomingGoal: parsed.Goal,
+                continuous: parsed.Continuous,
+                goalId: parsed.GoalId,
+                minDelaySeconds: parsed.MinDelay,
+                persistIntervalSeconds: parsed.PersistInterval,
+                sessionRetention: parsed.SessionRetention,
+                cancellationToken: cliCts.Token
+            );
             return Environment.ExitCode;
         }
 
