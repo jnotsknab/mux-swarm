@@ -5,7 +5,7 @@
 <img alt="mux-swarm" src="docs/assets/logo.svg" width="120">
 
 <h1>Mux-Swarm</h1>
-<p>A CLI-native, cross-platform, multi-agent runtime for deterministic, tool-native AI operations.</p>
+<p>A CLI-native agent runtime for multi-agent orchestration, parallel execution, and tool-native AI operations. Define your config. Launch your swarm. The ceiling is yours.</p>
 
 [![Build](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
@@ -15,6 +15,8 @@
 <a href="#quick-start"><strong>Quick Start »</strong></a>
 &nbsp;·&nbsp;
 <a href="#usage">Usage</a>
+&nbsp;·&nbsp;
+<a href="docs/examples.md">Examples</a>
 &nbsp;·&nbsp;
 <a href="#configuration">Configuration</a>
 &nbsp;·&nbsp;
@@ -28,21 +30,12 @@
 
 ---
 
-<!-- BANNER: Replace with a wide banner image (e.g. 1280x640).
-     For dark/light variants, use <picture> as shown above for the logo. -->
 <img src="docs/assets/banner.svg" alt="mux-swarm banner" width="100%">
-
-<!-- DEMO: Replace with a terminal GIF or video.
-     Recommended tools: VHS (github.com/charmbracelet/vhs), asciinema, or ttygif.
-     For video, use the GitHub-native video embed:
-<video src="https://github.com/<owner>/<repo>/assets/<id>/demo.mp4" controls width="100%"></video>
--->
-<!-- <img src="docs/assets/demo.gif" alt="mux-swarm demo" width="100%"> -->
 
 ## Demo
 
 https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
-
+> **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
 
 ## Table of Contents
 
@@ -93,7 +86,7 @@ The installer downloads the latest release, installs the runtime locally, and ad
 
 Requires [Git](https://git-scm.com/) and [.NET SDK](https://dotnet.microsoft.com/download) compatible with net10.0.
 ```bash
-git clone https://github.com/<owner>/mux-swarm.git
+git clone https://github.com/jnotsknab/mux-swarm.git
 cd mux-swarm
 dotnet build
 ```
@@ -104,7 +97,7 @@ dotnet run --project Mux-Swarm.csproj
 ```
 
 ### First Run
-
+> **New to Mux-Swarm?** See the [Setup Guide](docs/setup-guide.md) for a full walkthrough of first-time configuration with `/setup`, video examples, and tips for getting your first swarm running.
 ```bash
 # Interactive
 mux-swarm
@@ -114,10 +107,12 @@ mux-swarm --goal "Create a detailed report from the shareholder data in your san
 
 # Continuous autonomous loop
 mux-swarm --continuous --goal "Monitor recent AI related news daily and keep a rolling report of public sentiment based on company in the sandbox" --goal-id web-loop --min-delay 43200
+
+# Parallel batch dispatch
+mux-swarm --parallel --goal "Research these five companies and produce individual summaries"
 ```
 
 See [Usage](#usage) for the full command reference and [CLI Flags](#cli-flags) for all options.
-
 ---
 
 ## About
@@ -132,9 +127,9 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 ## Key Capabilities
 
-**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, config-driven model routing per role, and continuous autonomous execution with configurable loop timing.
+**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing.
 
-**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems — from personal automation scripts to multi-user web applications and enterprise pipelines.
+**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
 
 **[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS).
 
@@ -166,6 +161,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ### Interactive Commands
 ```
 /swarm          Launch multi-agent swarm loop
+/pswarm         Launch parallel swarm loop and concurrent batch dispatch for independent tasks
 /agent          Launch interactive single agent loop
 /stateless      Stateless single agent loop, ideal for one-off tasks
 /resume         Resume a previous single-agent session
@@ -212,6 +208,15 @@ mux-swarm --continuous --goal "<goal>" --goal-id my-run
 mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 ```
 
+### Parallel Mode
+```bash
+mux-swarm --parallel --goal "<goal>"
+mux-swarm --parallel --continuous --goal "<goal>" --goal-id batch-run
+mux-swarm --parallel --max-parallelism 6 --goal task.txt
+```
+
+Parallel mode decomposes a goal into independent subtasks and dispatches them concurrently across agents. Use `--max-parallelism` to cap the number of simultaneous agent tasks (default 4). Combines with `--continuous` for recurring parallel batch runs.
+
 ### CLI Flags
 ```
 --goal <text|file>         Goal input (text or file path)
@@ -219,6 +224,8 @@ mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
 --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
 --continuous               Enable continuous autonomous mode
 --goal-id <id>             Persistent goal/session identifier
+--parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential
+--max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)
 --min-delay <secs>         Minimum delay between loops (default 300)
 --persist-interval <secs>  Persist session state interval
 --session-retention <n>    Retain last N session runs (default 10)
@@ -510,9 +517,18 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ## Roadmap
 
-**Near-term focus**: runtime reliability hardening for long-running workflows, expanded auditing and execution trace visibility, stronger isolation patterns, additional swarm configuration templates, and improved developer ergonomics around configuring and debugging swarms.
+### Shipped
 
-**Community**: community-contributed swarm templates, skill libraries, and reference configurations. Documentation improvements driven by real-world usage.
+- **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
+- **v0.5.0 — Stdin Cancellation (stdio mode)**: Out-of-band `__CANCEL__` signal for graceful turn cancellation in piped/stdio integrations.
+
+### Up Next
+
+Runtime reliability hardening for long-running workflows, parallel mode observability and per-task retry policies, expanded auditing and execution trace visibility, stronger isolation patterns, additional swarm configuration templates, and improved developer ergonomics around configuring and debugging swarms.
+
+### Community
+
+Community-contributed swarm templates, skill libraries, and reference configurations. Documentation improvements driven by real-world usage.
 
 ---
 
