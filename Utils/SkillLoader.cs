@@ -56,10 +56,8 @@ public static class SkillLoader
 
         var bundledDir = Path.Combine(skillsRoot, "bundled");
         var bundledDockerDir = Path.Combine(skillsRoot, "bundled-docker");
-
-        var dockerAvailable = Directory.Exists(bundledDockerDir) && IsBinaryAvailable("docker");
-
-        var selectedBundledDir = dockerAvailable ? bundledDockerDir : bundledDir;
+        
+        var selectedBundledDir = App.Config.IsUsingDockerForExec ? bundledDockerDir : bundledDir;
 
         if (App.Config.IsUsingDockerForExec)
             MuxConsole.WriteInfo("[SKILLS] Docker detected — using bundled-docker skills");

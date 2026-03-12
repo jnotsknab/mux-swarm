@@ -554,7 +554,8 @@ public static class MultiAgentOrchestrator
             else
             {
                 if (!prodMode) MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string? input = Console.ReadLine();
+                string? input = StdinCancelMonitor.Instance?.ReadLine() 
+                                ?? Console.ReadLine();
 
                 if (string.IsNullOrEmpty(input) || input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
                     input.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
@@ -596,7 +597,9 @@ public static class MultiAgentOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
-
+            
+            StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
+            
             bool wasInterrupted = false;
 
             try
@@ -624,7 +627,7 @@ public static class MultiAgentOrchestrator
             }
             finally
             {
-                escapeListener?.Dispose();
+                StdinCancelMonitor.Instance?.ClearActiveTurnCts();
             }
 
             cancellationToken.ThrowIfCancellationRequested();

@@ -560,7 +560,8 @@ public static class ParallelSwarmOrchestrator
             else
             {
                 if (!prodMode) MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string? input = Console.ReadLine();
+                string? input = StdinCancelMonitor.Instance?.ReadLine() 
+                                ?? Console.ReadLine();
 
                 if (string.IsNullOrEmpty(input) ||
                     input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
@@ -602,6 +603,8 @@ public static class ParallelSwarmOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
+            
+            StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
             bool wasInterrupted = false;
 
@@ -625,7 +628,8 @@ public static class ParallelSwarmOrchestrator
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
             finally
-            {
+            {   
+                StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener?.Dispose();
             }
 

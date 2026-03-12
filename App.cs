@@ -175,7 +175,10 @@ namespace MuxSwarm;
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-
+        
+        if (MuxConsole.StdioMode)
+            StdinCancelMonitor.Start();
+        
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -219,7 +222,8 @@ namespace MuxSwarm;
                 }
             }
 
-            string? userInput = Console.ReadLine();
+            string? userInput = StdinCancelMonitor.Instance?.ReadLine() 
+                                ?? Console.ReadLine();
 
             if (string.IsNullOrEmpty(userInput))
                 continue;

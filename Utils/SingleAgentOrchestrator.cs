@@ -136,7 +136,7 @@ public static class SingleAgentOrchestrator
             cancellationToken.ThrowIfCancellationRequested();
 
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-            initialGoal = Console.ReadLine() ?? "";
+            initialGoal = (StdinCancelMonitor.Instance?.ReadLine() ?? Console.ReadLine()) ?? "";
 
             cancellationToken.ThrowIfCancellationRequested();
         }
@@ -340,6 +340,7 @@ public static class SingleAgentOrchestrator
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken);
+            StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
 
@@ -420,7 +421,8 @@ public static class SingleAgentOrchestrator
                         {
                             try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                         }
-
+                        
+                        StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
                     }
 
@@ -507,7 +509,8 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
             cancellationToken.ThrowIfCancellationRequested();
-            string? nextInput = Console.ReadLine();
+            string? nextInput = StdinCancelMonitor.Instance?.ReadLine(cancellationToken) 
+                                ?? Console.ReadLine();
             cancellationToken.ThrowIfCancellationRequested();
 
             if (IsQuitCommand(nextInput))
@@ -523,7 +526,8 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
                 cancellationToken.ThrowIfCancellationRequested();
-                nextInput = Console.ReadLine();
+                nextInput = StdinCancelMonitor.Instance?.ReadLine(cancellationToken) 
+                    ?? Console.ReadLine();
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (IsQuitCommand(nextInput))
