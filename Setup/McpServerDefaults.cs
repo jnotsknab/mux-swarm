@@ -74,18 +74,19 @@ public static class McpServerDefaults
             Env = new Dictionary<string, string?> { ["BRAVE_API_KEY"] = "BRAVE_API_KEY" },
             Enabled = true
         });
+        
+        var replPath = Path.Combine(PlatformContext.BaseDirectory, "Runtime", "mcps", "py_async_repl_mcp.py");
 
-        // Optional (requires docker)
         AddIfMissing("PythonReplMCP", new McpServerConfig
         {
             Type = "stdio",
-            Command = "uvx",
-            Args = new[] { "mcp-python" },
+            Command = "uv",
+            Args = new[] { "run", "--with", "mcp", "python", replPath },
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });
 
-        // OS-specific shell MCP
+        // OS-specific
         if (PlatformContext.IsWindows)
         {
             AddIfMissing("Windows", new McpServerConfig
@@ -96,21 +97,6 @@ public static class McpServerDefaults
                 Env = new Dictionary<string, string?>
                 {
                     ["ANONYMIZED_TELEMETRY"] = "true"
-                },
-                Enabled = true
-            });
-        }
-        else
-        {
-            AddIfMissing("Shell", new McpServerConfig
-            {
-                Type = "stdio",
-                Command = "npx",
-                Args = new[] { "-y", "@mako10k/mcp-shell-server" },
-                Env = new Dictionary<string, string?>
-                {
-                    { "MCP_SHELL_SECURITY_MODE", "enhanced" },
-                    { "MCP_SHELL_ELICITATION", "true" }
                 },
                 Enabled = true
             });
