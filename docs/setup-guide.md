@@ -99,10 +99,6 @@ Each enabled MCP server is validated for connectivity. On success you'll see a s
 
 > **Troubleshooting:** If a server fails to connect and you're running in strict mode (default), Mux-Swarm will exit. You can disable a problematic server by editing `Configs/Config.json` and setting `"enabled": false` on that server, then re-launch. You can also replace any default MCP server with your own — point to a local binary, a custom runtime, or a remote HTTP/SSE endpoint. As long as it implements the MCP protocol, Mux-Swarm will pick it up. Re-run `/setup` at any time to reconfigure.
 
-<!-- VIDEO: Replace with setup walkthrough recording
-<video src="https://github.com/user-attachments/assets/PLACEHOLDER" controls width="100%"></video>
--->
-
 ## Verifying Your Setup
 
 The real test is whether your agents can make LLM calls end to end. Launch a single-agent session and send a simple prompt:
@@ -139,10 +135,6 @@ You can also use `/status` for a quick overview of your runtime configuration �
 │   Docker Exec: disabled                                           │
 ╰───────────────────────────────────────────────────────────────────╯
 ```
-
-<!-- VIDEO: Replace with first interaction recording
-<video src="https://github.com/user-attachments/assets/PLACEHOLDER" controls width="100%"></video>
--->
 
 ## Next Steps
 
