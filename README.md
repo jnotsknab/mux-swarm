@@ -37,6 +37,12 @@
 https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
 > **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
 
+## Case Study: Autonomous Model Specialization
+
+A single goal file triggered an end-to-end autonomous pipeline including domain research, synthetic data generation via frontier model distillation, self-recovering training (4 consecutive failures fixed without human intervention), evaluation, and iterative self-improvement. Total cost: ~$11.
+
+**[Read the full case study →](https://www.muxswarm.dev/case-study.html)**
+
 ## Table of Contents
 
 - [Quick Start](#quick-start)
