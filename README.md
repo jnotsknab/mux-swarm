@@ -16,6 +16,8 @@
 &nbsp;·&nbsp;
 <a href="#usage">Usage</a>
 &nbsp;·&nbsp;
+<a href="docs/examples.md">Examples</a>
+&nbsp;·&nbsp;
 <a href="#configuration">Configuration</a>
 &nbsp;·&nbsp;
 <a href="#architecture">Architecture</a>
@@ -33,7 +35,7 @@
 ## Demo
 
 https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
-
+> **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
 
 ## Table of Contents
 
