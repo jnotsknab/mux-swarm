@@ -43,7 +43,8 @@
         <Compile Remove="Configs\**" />
         <Compile Remove="Skills\**" />
         <Compile Remove="Sessions\**" />
-
+        <None Remove="MuxSwarm.Tests\**" />
+        <Compile Remove="MuxSwarm.Tests\**" />
         <None Remove="Runtime\**" />
         <None Remove="Prompts\**" />
         <None Remove="Configs\**" />

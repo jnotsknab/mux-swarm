@@ -24,6 +24,14 @@ public static class MuxConsole
     /// </summary>
     internal static readonly object ConsoleLock = new();
 
+
+    /// <summary>
+    /// Gets or sets the text reader used for console input.
+    /// Defaults to <see cref="Console.In"/>. Set this property to redirect input from a different source
+    /// such as a <see cref="StringReader"/> for testing or automated scenarios.
+    /// </summary>
+    public static TextReader InputOverride { get; set; } = Console.In;
+
     private static ThinkingIndicator? _activeIndicator;
     private static bool _isStreaming;
 
@@ -369,7 +377,7 @@ public static class MuxConsole
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));
-            var input = Console.ReadLine()?.Trim() ?? string.Empty;
+            var input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
             return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
         }
 
@@ -394,7 +402,7 @@ public static class MuxConsole
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("secret", true)));
-            return Console.ReadLine()?.Trim() ?? string.Empty;
+            return InputOverride.ReadLine()?.Trim() ?? string.Empty;
         }
 
         return AnsiConsole.Prompt(
@@ -413,7 +421,7 @@ public static class MuxConsole
         if (StdioMode)
         {
             EmitJson("confirm_request", D(("prompt", message), ("default", defaultValue)));
-            var input = Console.ReadLine()?.Trim().ToLowerInvariant() ?? string.Empty;
+            var input = InputOverride.ReadLine()?.Trim().ToLowerInvariant() ?? string.Empty;
             return string.IsNullOrEmpty(input) ? defaultValue : input.StartsWith('y');
         }
 
@@ -432,7 +440,7 @@ public static class MuxConsole
             var list = choices.ToList();
             EmitJson("select_request", D(("prompt", title), ("choices", list)));
 
-            var input = Console.ReadLine()?.Trim() ?? "1";
+            var input = InputOverride.ReadLine()?.Trim() ?? "1";
             if (int.TryParse(input, out int idx) && idx >= 1 && idx <= list.Count)
                 return list[idx - 1];
             return list[0];
@@ -457,7 +465,7 @@ public static class MuxConsole
             var list = choices.ToList();
             EmitJson("multiselect_request", D(("prompt", title), ("choices", list)));
 
-            var input = Console.ReadLine()?.Trim() ?? "";
+            var input = InputOverride.ReadLine()?.Trim() ?? "";
             var selected = new List<string>();
             foreach (var part in input.Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
