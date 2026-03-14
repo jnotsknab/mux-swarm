@@ -49,8 +49,9 @@ public static class SingleAgentOrchestrator
     {
         if (string.IsNullOrWhiteSpace(input))
             return true;
-
+    
         var trimmed = input.Trim();
+        
         return trimmed.Equals("/qc", StringComparison.OrdinalIgnoreCase)
             || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
@@ -321,9 +322,10 @@ public static class SingleAgentOrchestrator
         }
 
         var lastPersistTime = DateTime.UtcNow;
-
+        (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
         {
+            
             cancellationToken.ThrowIfCancellationRequested();
 
             int estimatedTokens = Common.EstimateTokenCount(conversationHistory);
@@ -332,9 +334,23 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInfo($"Context approaching limit (~{estimatedTokens:N0} tokens). Auto-compacting...");
                 await TryCompactAsync();
             }
+            
+            List<ChatMessage> messages;
+            if (lastInterruptedContext is { } ctx)
+            {
+                messages = [
+                    new(ChatRole.User, ctx.userMsg),
+                    new(ChatRole.Assistant, ctx.partialResponse + "\n\n[response interrupted by user]"),
+                    new(ChatRole.User, currentGoal)
+                ];
+                lastInterruptedContext = null;
+            }
+            else
+            {
+                messages = [new(ChatRole.User, currentGoal)];
+            }
 
-            List<ChatMessage> messages = [new(ChatRole.User, currentGoal)];
-            conversationHistory.Add(messages[0]);
+            conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
             int stuckCount = 0;
 
@@ -343,14 +359,12 @@ public static class SingleAgentOrchestrator
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
-
+            StringBuilder responseText = new();
             try
             {
                 for (int i = 0; i < maxIterations; i++)
                 {
                     turnCts.Token.ThrowIfCancellationRequested();
-
-                    StringBuilder responseText = new();
 
                     MuxConsole.WriteAgentTurnHeader(singleAgentDef.Name);
 
@@ -394,12 +408,12 @@ public static class SingleAgentOrchestrator
                                         thinking?.Dispose();
                                         thinking = MuxConsole.ResumeThinking(singleAgentDef.Name);
                                         calledTools.Add(functionCall.Name);
-                                        thinking.UpdateStatus($"[calling: {string.Join(", ", calledTools)}]");
+                                        thinking.UpdateStatus(calledTools);
                                     }
                                     else
                                     {
                                         calledTools.Add(functionCall.Name);
-                                        thinking?.UpdateStatus($"[calling: {string.Join(", ", calledTools)}]");
+                                        thinking?.UpdateStatus(calledTools);
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
@@ -409,7 +423,7 @@ public static class SingleAgentOrchestrator
                                         thinking.Dispose();
                                         thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
                                         if (calledTools.Count > 0)
-                                            thinking.UpdateStatus($"[calling: {string.Join(", ", calledTools)}]");
+                                            thinking.UpdateStatus(calledTools);
                                     }
                                 }
                             }
@@ -456,6 +470,18 @@ public static class SingleAgentOrchestrator
             catch (OperationCanceledException) when (turnCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 wasInterrupted = true;
+
+                string partial = responseText.ToString();
+                if (!string.IsNullOrWhiteSpace(partial))
+                {
+                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\n\n[interrupted by user]"));
+                    lastInterruptedContext = (currentGoal, partial);
+                }
+                else
+                {
+                    lastInterruptedContext = (currentGoal, "[no response — interrupted before agent replied]");
+                }
+
                 MuxConsole.WriteLine();
                 MuxConsole.WriteWarning("Turn cancelled by user (Escape key pressed).");
             }

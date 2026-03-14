@@ -827,12 +827,12 @@ public static class ParallelSwarmOrchestrator
                                 thinking?.Dispose();
                                 thinking = MuxConsole.ResumeThinking("Orchestrator");
                                 toolCalls.Add(fc.Name);
-                                thinking.UpdateStatus($"[calling: {string.Join(", ", toolCalls)}]");
+                                thinking.UpdateStatus(toolCalls);
                             }
                             else
                             {
                                 toolCalls.Add(fc.Name);
-                                thinking?.UpdateStatus($"[calling: {string.Join(", ", toolCalls)}]");
+                                thinking?.UpdateStatus(toolCalls);
                             }
 
                             if (prodMode)
@@ -845,7 +845,7 @@ public static class ParallelSwarmOrchestrator
                                 thinking.Dispose();
                                 thinking = MuxConsole.BeginThinking("Orchestrator");
                                 if (toolCalls.Count > 0)
-                                    thinking.UpdateStatus($"[calling: {string.Join(", ", toolCalls)}]");
+                                    thinking.UpdateStatus(toolCalls);
                             }
 
                             if (prodMode)
@@ -860,7 +860,7 @@ public static class ParallelSwarmOrchestrator
                     }
                 }
 
-            streamComplete:;
+                streamComplete:;
 
                 if (prodMode)
                     Console.Write("[[END_AGENT_TURN]]");
@@ -1176,12 +1176,12 @@ public static class ParallelSwarmOrchestrator
                                 thinking?.Dispose();
                                 thinking = MuxConsole.ResumeThinking(specialist.Def.Name);
                                 iterToolCalls.Add(fc.Name);
-                                thinking.UpdateStatus($"[calling: {string.Join(", ", iterToolCalls)}]");
+                                thinking.UpdateStatus(iterToolCalls);
                             }
                             else
                             {
                                 iterToolCalls.Add(fc.Name);
-                                thinking?.UpdateStatus($"[calling: {string.Join(", ", iterToolCalls)}]");
+                                thinking?.UpdateStatus(iterToolCalls);
                             }
 
                             if (prodMode)
@@ -1208,7 +1208,7 @@ public static class ParallelSwarmOrchestrator
                                 thinking.Dispose();
                                 thinking = MuxConsole.BeginThinking(specialist.Def.Name);
                                 if (iterToolCalls.Count > 0)
-                                    thinking.UpdateStatus($"[calling: {string.Join(", ", iterToolCalls)}]");
+                                    thinking.UpdateStatus(iterToolCalls);
                             }
 
                             if (prodMode)

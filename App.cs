@@ -8,9 +8,9 @@ using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm;
 
-    public class App
-    {
-        private static readonly string HelpText = string.Join("\n",
+public class App
+{
+    private static readonly string HelpText = string.Join("\n",
         "Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime & Operating Environment",
         "",
         "Slash Commands",
@@ -81,8 +81,7 @@ namespace MuxSwarm;
         "  --docker-exec [true|false] Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
         "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
-        "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated"
-        );
+        "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
 
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     private static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -90,7 +89,7 @@ namespace MuxSwarm;
     private static IList<McpClientTool>? _mcpTools;
     private static string? _cliModelOverride;
     private static readonly Dictionary<string, McpClient> McpClients = new();
-    private static bool _watchDogEnabled = false;
+    private static bool _watchDogEnabled;
     private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
@@ -431,7 +430,7 @@ namespace MuxSwarm;
                     var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
                     break;
-
+                
                 case "/sessions":
                     CliCmdUtils.ListSessions();
                     break;
