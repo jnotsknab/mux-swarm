@@ -96,7 +96,7 @@ public class App
     private static readonly Lock CtsLock = new();
     
     public static AppConfig Config = new();
-    public static ProviderConfig? ActiveProvider = null;
+    public static ProviderConfig? ActiveProvider;
     
     
     private static CancellationTokenSource GetOrResetCts()
@@ -115,12 +115,19 @@ public class App
     public App()
     {
         _ = ProcessCleanup.Instance;
+        
+        //Ensure processes mux spawns are killed
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = false;
             MuxConsole.WriteInfo("Exiting...");
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
+        };
+        
+        AppDomain.CurrentDomain.ProcessExit += (_, e) =>
+        {
+            ProcessCleanup.Instance.Shutdown();
         };
 
         var hbPath = Path.Combine(BaseDir, "watchdog.heartbeat");
