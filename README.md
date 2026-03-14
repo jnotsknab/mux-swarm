@@ -99,7 +99,7 @@ dotnet build
 
 **Run from source:**
 ```bash
-dotnet run --project Mux-Swarm.csproj
+dotnet run --project MuxSwarm.csproj
 ```
 
 ### First Run
