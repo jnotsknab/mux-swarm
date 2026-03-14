@@ -56,8 +56,8 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-      # - name: Run tests
-      #   run: dotnet test --configuration Release --no-restore --verbosity normal
+      - name: Run tests
+        run: dotnet test MuxSwarm.Tests --configuration Release --no-restore --verbosity normal
 
       - name: Publish
         run: >
