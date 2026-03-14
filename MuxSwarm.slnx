@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="MuxSwarm.csproj" />
+  <Project Path="MuxSwarm.Tests/MuxSwarm.Tests.csproj" />
+</Solution>

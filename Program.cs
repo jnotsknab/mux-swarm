@@ -19,7 +19,8 @@ namespace MuxSwarm
                 
                 static string? ArgValue(string[] args, string flag)
                     => Array.IndexOf(args, flag) is >= 0 and var i && i + 1 < args.Length ? args[i + 1] : null;
-
+                
+                //Override for native multi-tenancy support
                 PlatformContext.ApplyOverrides(
                     ArgValue(args, "--cfg"),
                     ArgValue(args, "--swarmcfg")
