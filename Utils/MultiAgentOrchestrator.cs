@@ -20,33 +20,10 @@ public static class MultiAgentOrchestrator
     public static readonly string SwarmConfPath = PlatformContext.SwarmPath;
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
-
-    /// <summary>Max chars per delegation result stored in the orchestrator's progress log.</summary>
-    private const int ProgressEntryBudget = 1000;
-
-    /// <summary>Max chars of prior-agent context injected into a new sub-agent's task.</summary>
-    private const int CrossAgentContextBudget = 2000;
-
-    /// <summary>Max total chars for the full progress log sent in continuation prompts.</summary>
-    private const int ProgressLogTotalBudget = 4500;
-
+    private static uint _swarmTokens;
+    
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
-
-    private const int DelegationPreviewLength = 300;
-
-    /// <summary>Max orchestrator iterations before giving up.</summary>
-    private const int DefaultMaxOrchestratorIterations = 15;
-
-    /// <summary>Max sub-agent iterations per delegation before escalating.</summary>
-    private const int DefaultMaxSubAgentIterations = 8;
-
-    /// <summary>Max retry attempts per sub-task before the orchestrator surfaces failure.</summary>
-    private const int MaxSubTaskRetries = 4;
-
-    /// <summary>Max consecutive empty/stuck responses before aborting.</summary>
-    private const int MaxStuckCount = 3;
-
 
     /// <summary>
     /// Captures a compacted delegation result with structured metadata.
@@ -127,8 +104,8 @@ public static class MultiAgentOrchestrator
         Func<string, IChatClient> chatClientFactory,
         IList<AITool> mcpTools,
         Dictionary<string, string> agentModels,
-        int maxOrchestratorIterations = DefaultMaxOrchestratorIterations,
-        int maxSubAgentIterations = DefaultMaxSubAgentIterations,
+        int maxOrchestratorIterations = -1,
+        int maxSubAgentIterations = -1,
         bool prodMode = false,
         string? incomingGoal = null,
         bool continuous = false,
@@ -140,6 +117,9 @@ public static class MultiAgentOrchestrator
     {
         var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
         
+        if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
+        if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
+        
         SwarmConfig? swarmConfig = null;
         try
         {
@@ -147,6 +127,8 @@ public static class MultiAgentOrchestrator
         }
         catch {/*Defaults*/ }
         
+        ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
+
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
         SkillLoader.LoadSkills();
@@ -217,7 +199,7 @@ public static class MultiAgentOrchestrator
             MuxConsole.WriteDelegation(callerName, agentName, task);
 
             if (attemptNumber > 1)
-                MuxConsole.WriteWarning($"RETRY {attemptNumber}/{MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
+                MuxConsole.WriteWarning($"RETRY {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
 
             string enrichedTask = task;
             await MuxConsole.WithSpinnerAsync($"Preparing context for {agentName}", async () =>
@@ -240,8 +222,8 @@ public static class MultiAgentOrchestrator
                     LastFailureReason: summary ?? "No summary provided"
                 );
 
-                if (attemptNumber >= MaxSubTaskRetries)
-                    MuxConsole.WriteError($"{agentName} failed {MaxSubTaskRetries} times on this sub-task.");
+                if (attemptNumber >= ExecutionLimits.Current.MaxSubTaskRetries)
+                    MuxConsole.WriteError($"{agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} times on this sub-task.");
             }
             else
             {
@@ -256,7 +238,7 @@ public static class MultiAgentOrchestrator
                     completionStatus: status,
                     completionSummary: summary,
                     completionArtifacts: artifacts,
-                    charBudget: ProgressEntryBudget,
+                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
                     chatClient: compactionClient,
                     chatOptions: compactionChatOptions);
             });
@@ -266,9 +248,9 @@ public static class MultiAgentOrchestrator
             if (prodMode)
                 compacted = $"[[START_AGENT_TURN]]{agentName}[[END_AGENT_NAME]]{compacted}[[END_AGENT_TURN]]";
 
-            if (!succeeded && attemptNumber >= MaxSubTaskRetries)
+            if (!succeeded && attemptNumber >= ExecutionLimits.Current.MaxSubTaskRetries)
             {
-                compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {MaxSubTaskRetries} attempts. " +
+                compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
                              $"Last reason: {retryState?.LastFailureReason ?? summary}. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
@@ -515,7 +497,6 @@ public static class MultiAgentOrchestrator
 
         var orchestratorSession = await orchestratorAgent.CreateSessionAsync();
 
-        // ── Periodic session persister ────────────────────────────────────
         AgentSession currentOrchestratorSession = orchestratorSession;
         string currentIterationSessionDir = string.Empty;
 
@@ -583,6 +564,10 @@ public static class MultiAgentOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
+            
+            //reset upon new goal
+            _swarmTokens = 0;
+            
             currentIterationSessionDir = Path.Combine(SessionDir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
             if (state != null)
             {
@@ -639,6 +624,8 @@ public static class MultiAgentOrchestrator
                     {
                         await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, specialists, currentIterationSessionDir);
                     });
+                
+                MuxConsole.WriteMuted($"{_swarmTokens:N0} tokens used this goal");
                 _sessionDirty = false;
             }
 
@@ -690,7 +677,7 @@ public static class MultiAgentOrchestrator
         var hint = new StringBuilder();
         hint.AppendLine();
         hint.AppendLine("---");
-        hint.AppendLine($"[RETRY ATTEMPT {attemptNumber}/{MaxSubTaskRetries}]");
+        hint.AppendLine($"[RETRY ATTEMPT {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries}]");
 
         if (!string.IsNullOrWhiteSpace(lastFailureReason))
             hint.AppendLine($"Previous attempt failed with: {lastFailureReason}");
@@ -733,7 +720,7 @@ public static class MultiAgentOrchestrator
         context.AppendLine();
         context.AppendLine("--- Context from prior agents ---");
 
-        int budgetRemaining = CrossAgentContextBudget;
+        int budgetRemaining = ExecutionLimits.Current.CrossAgentContextBudget;
 
         foreach (var result in relevantResults)
         {
@@ -831,7 +818,7 @@ public static class MultiAgentOrchestrator
                     for (int p = progressLog.Count - 1; p >= 0; p--)
                     {
                         totalChars += progressLog[p].Length + 5;
-                        if (totalChars > ProgressLogTotalBudget)
+                        if (totalChars > ExecutionLimits.Current.ProgressLogTotalBudget)
                         {
                             startIndex = p + 1;
                             break;
@@ -944,6 +931,10 @@ public static class MultiAgentOrchestrator
                             if (toolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
                                 goto streamComplete;
                         }
+                        else if (content is UsageContent usageContent)
+                        {
+                            _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                        }
                     }
                 }
 
@@ -989,9 +980,9 @@ public static class MultiAgentOrchestrator
             if (string.IsNullOrWhiteSpace(response) && toolCalls.Count == 0)
             {
                 stuckCount++;
-                MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{MaxStuckCount})");
+                MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{ExecutionLimits.Current.MaxStuckCount})");
 
-                if (stuckCount >= MaxStuckCount)
+                if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                 {
                     MuxConsole.WriteError("Orchestrator stuck repeatedly — aborting.");
                     break;
@@ -1217,6 +1208,10 @@ public static class MultiAgentOrchestrator
                                 Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
                             }
                         }
+                        else if (content is UsageContent usageContent)
+                        {
+                            _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                        }
                     }
                 }
 
@@ -1249,7 +1244,7 @@ public static class MultiAgentOrchestrator
             if (string.IsNullOrWhiteSpace(iterResponse.ToString()) && iterToolCalls.Count == 0)
             {
                 stuckCount++;
-                if (stuckCount >= MaxStuckCount)
+                if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                     return ($"[{specialist.Def.Name} stuck after {stuckCount} empty responses]", "failure",
                             "Agent produced no output repeatedly", null);
 

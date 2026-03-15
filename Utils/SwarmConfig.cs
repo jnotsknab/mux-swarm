@@ -7,6 +7,9 @@ namespace MuxSwarm.Utils;
 /// </summary>
 public class SwarmConfig
 {
+    
+    [JsonPropertyName("executionLimits")]
+    public ExecutionLimits ExecutionLimits { get; set; } = new();
 
     [JsonPropertyName("compactionAgent")]
     public CompacterConfig? CompactionAgent { get; set; }

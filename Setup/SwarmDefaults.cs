@@ -105,7 +105,7 @@ public static class SwarmDefaults
         if (HasEnabled("Memory")) singleAgentServers.Add("Memory");
         if (HasEnabled("ChromaDB")) singleAgentServers.Add("ChromaDB");
         if (HasEnabled("BraveSearchMCP")) singleAgentServers.Add("BraveSearchMCP");
-        if (HasEnabled("PythonReplMCP")) singleAgentServers.Add("PythonReplMCP");
+        if (HasEnabled("ReplShellMcp")) singleAgentServers.Add("ReplShellMcp");
 
 
         var orchestratorToolPatterns = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
@@ -137,7 +137,7 @@ public static class SwarmDefaults
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
-            if (HasEnabled("PythonReplMCP")) mcp.Add("PythonReplMCP");
+            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
 
             /*var toolPatterns = PlatformContext.IsWindows
                 ? new[] { "Windows_Shell" }
@@ -174,12 +174,12 @@ public static class SwarmDefaults
             });
         }
 
-        // DataAnalysisAgent (only if PythonReplMCP exists at all)
-        if (HasAny("PythonReplMCP"))
+        // DataAnalysisAgent (only if ReplShellMcp exists at all)
+        if (HasAny("ReplShellMcp"))
         {
             var mcp = new List<string>();
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
-            if (HasEnabled("PythonReplMCP")) mcp.Add("PythonReplMCP");
+            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
 

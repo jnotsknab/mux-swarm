@@ -8,9 +8,9 @@ namespace MuxSwarm.Utils;
 
 public static class SingleAgentOrchestrator
 {
-    private const double CharsPerToken = 3.5;
 
     public static Common.AgentDefinition? AgentDef = null;
+    private static uint _sessionTokens;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {   
@@ -248,8 +248,9 @@ public static class SingleAgentOrchestrator
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
         
+        
         var conversationHistory = new List<ChatMessage>();
-
+        
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
@@ -296,9 +297,10 @@ public static class SingleAgentOrchestrator
                 return false;
             }
 
-            int beforeTokens = Common.EstimateTokenCount(conversationHistory);
-
-            ChatMessage? compactedMsg = null;
+            uint beforeTokens = _sessionTokens > 0 
+                ? _sessionTokens 
+                : (uint)Common.EstimateTokenCount(conversationHistory);
+            ChatMessage? compactedMsg;
 
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
@@ -306,21 +308,40 @@ public static class SingleAgentOrchestrator
                     conversationHistory, cc, chatOptions: compactionChatOptions);
 
                 compactedMsg = new ChatMessage(ChatRole.User,
-                    compactedMsg.Text + "\n\n[SYSTEM: This is a context restoration message. Do not respond. Await the next user message.]");
+                    "[SYSTEM: Context restoration. DO NOT RESPOND to this message.]\n\n" + compactedMsg.Text);
 
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
                 conversationHistory.Add(compactedMsg);
 
-                await foreach (var _ in agent.RunStreamingAsync([compactedMsg], session)) { }
+                await foreach (var update in agent.RunStreamingAsync([compactedMsg], session))
+                {
+                    foreach (var content in update.Contents)
+                    {
+                        if (content is UsageContent usageContent)
+                            _sessionTokens = (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                    }
+                }
             });
 
-            int afterTokens = (int)Math.Ceiling(
-                (compactedMsg?.Text?.Length ?? 0) / 3.5);
-            MuxConsole.WriteSuccess($"Compacted: ~{beforeTokens:N0} -> ~{afterTokens:N0} tokens");
+            MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
             return true;
         }
+        
+        //Offer option to compact
+        if (resumedSession.HasValue)
+        {
+            int estimatedResumeTokens = Common.EstimateTokenCount(resumedSession.Value);
+            if (estimatedResumeTokens > autoCompactTokenThreshold)
+            {
+                MuxConsole.WriteWarning($"Resumed session is large (~{estimatedResumeTokens:N0} tokens, threshold: {autoCompactTokenThreshold:N0}).");
+                _sessionTokens = (uint)estimatedResumeTokens;
 
+                if (MuxConsole.Confirm("Compact before continuing?"))
+                    await TryCompactAsync();
+            }
+        }
+        
         var lastPersistTime = DateTime.UtcNow;
         (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
@@ -328,10 +349,9 @@ public static class SingleAgentOrchestrator
             
             cancellationToken.ThrowIfCancellationRequested();
 
-            int estimatedTokens = Common.EstimateTokenCount(conversationHistory);
-            if (estimatedTokens > autoCompactTokenThreshold)
+            if (_sessionTokens > autoCompactTokenThreshold)
             {
-                MuxConsole.WriteInfo($"Context approaching limit (~{estimatedTokens:N0} tokens). Auto-compacting...");
+                MuxConsole.WriteInfo($"Context approaching limit (~{_sessionTokens:N0} tokens). Auto-compacting...");
                 await TryCompactAsync();
             }
             
@@ -426,6 +446,11 @@ public static class SingleAgentOrchestrator
                                             thinking.UpdateStatus(calledTools);
                                     }
                                 }
+                                else if (content is UsageContent usageContent)
+                                {
+                                    var details = usageContent.Details;
+                                    _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
+                                }
                             }
                         }
                     }
@@ -510,8 +535,7 @@ public static class SingleAgentOrchestrator
                 lastPersistTime = DateTime.UtcNow;
             }
 
-            int currentTokens = Common.EstimateTokenCount(conversationHistory);
-            MuxConsole.WriteMuted($"~{currentTokens:N0} tokens in context");
+            MuxConsole.WriteMuted($"{_sessionTokens:N0} tokens in context");
             
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)

@@ -113,7 +113,19 @@ public static class MuxConsole
     }
     
     public static string? ReadInput(CancellationToken ct = default)
-    {
+    {   
+        if (InputOverride != Console.In)
+        {
+            var line = InputOverride.ReadLine();
+            if (line == null)
+            {   
+                //exhausted workflow return to keyboard input
+                InputOverride = Console.In;
+                return Console.ReadLine();
+            }
+            return line;
+        }
+        
         if (UsingDelimiter && MultiLineDelimiter is not null)
         {
             var sb = new StringBuilder();
@@ -392,6 +404,12 @@ public static class MuxConsole
         lock (ConsoleLock)
         {
             StopActiveIndicator_NoLock();
+        }
+        
+        if (InputOverride != Console.In)
+        {
+            string input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
+            return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
         }
         
         if (UsingDelimiter && MultiLineDelimiter is not null)
