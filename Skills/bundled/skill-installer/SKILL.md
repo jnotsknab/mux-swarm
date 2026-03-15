@@ -42,6 +42,10 @@ Skills must be installed to:
 
 This is the bundled skills directory read by the agent system. Each skill lives in its own subdirectory containing a `SKILL.md` file.
 
+**CRITICAL: Mux-Swarm Python Execution Standards**
+When installing or modifying any skill that uses Python, you MUST ensure that the `requires_bins` array in the YAML frontmatter includes `uv` alongside `python`. The Mux-Swarm Python REPL relies heavily on `uv` for dependency management and virtual environment creation.
+Example: `requires_bins: [uv]`
+
 The openai/skills repo is already cloned to the NAS sandbox at:
 ```
 {{paths.sandbox}}/openai-skills

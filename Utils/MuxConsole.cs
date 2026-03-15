@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Text;
+using System.Text.Json;
 using Spectre.Console;
 
 namespace MuxSwarm.Utils;
@@ -33,6 +34,8 @@ public static class MuxConsole
     public static TextReader InputOverride { get; set; } = Console.In;
 
     private static ThinkingIndicator? _activeIndicator;
+    public static string? MultiLineDelimiter { get; set; }
+    public static bool UsingDelimiter { get; set; }
     private static bool _isStreaming;
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
@@ -108,7 +111,24 @@ public static class MuxConsole
 
         ind.CancelNoWait();
     }
+    
+    public static string? ReadInput(CancellationToken ct = default)
+    {
+        if (UsingDelimiter && MultiLineDelimiter is not null)
+        {
+            var sb = new StringBuilder();
+            while (true)
+            {
+                var line = StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
+                if (line is null || line.Trim() == MultiLineDelimiter) break;
+                sb.AppendLine(line);
+            }
+            return sb.ToString().Trim();
+        }
 
+        return StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
+    }
+    
     public static void WriteBanner(string title = "MUX-SWARM SETUP")
     {
         WithConsole(() =>
@@ -373,7 +393,23 @@ public static class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+        
+        if (UsingDelimiter && MultiLineDelimiter is not null)
+        {
+            if (StdioMode)
+                EmitJson("input_request", D(("prompt", message), ("default", defaultValue), ("delimiter", MultiLineDelimiter)));
 
+            var sb = new StringBuilder();
+            var reader = StdioMode ? InputOverride : Console.In;
+            while (reader.ReadLine() is { } line)
+            {
+                if (line.Trim() == MultiLineDelimiter) break;
+                sb.AppendLine(line);
+            }
+            var result = sb.ToString().Trim();
+            return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
+        }
+        
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));

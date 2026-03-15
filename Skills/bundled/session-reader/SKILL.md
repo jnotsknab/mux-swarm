@@ -1,6 +1,7 @@
 ---
 name: session-reader
 description: Summarize Mux session folders into a clean markdown report. Use when you need fast context at task start, want to review tool calls, delegated agents, artifacts, or outcomes across one or more sessions.
+requires_bins: [uv]
 ---
 
 ## Use this skill

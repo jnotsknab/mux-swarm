@@ -29,12 +29,13 @@ skill-name/
     └── assets/       — Files used in output (templates, fonts, boilerplate)
 ```
 
-**Frontmatter fields** — only `name` and `description` are valid. Do not add any other fields.
+**Frontmatter fields** — only `name`, `description`, and `requires_bins` are valid. Do not add any other fields.
 
 ```yaml
 ---
 name: my-skill
 description: What the skill does and when to use it. Include specific triggers.
+requires_bins: [uv] # If the skill uses Python, it MUST include uv (and only uv, do not include python as a binary)
 ---
 ```
 

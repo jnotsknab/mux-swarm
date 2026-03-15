@@ -137,7 +137,7 @@ public static class SingleAgentOrchestrator
             cancellationToken.ThrowIfCancellationRequested();
 
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-            initialGoal = (StdinCancelMonitor.Instance?.ReadLine() ?? Console.ReadLine()) ?? "";
+            initialGoal = MuxConsole.ReadInput(cancellationToken) ?? "";
 
             cancellationToken.ThrowIfCancellationRequested();
         }
@@ -535,8 +535,7 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
             cancellationToken.ThrowIfCancellationRequested();
-            string? nextInput = StdinCancelMonitor.Instance?.ReadLine(cancellationToken) 
-                                ?? Console.ReadLine();
+            string? nextInput = MuxConsole.ReadInput(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             if (IsQuitCommand(nextInput))
@@ -552,8 +551,7 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
                 cancellationToken.ThrowIfCancellationRequested();
-                nextInput = StdinCancelMonitor.Instance?.ReadLine(cancellationToken) 
-                    ?? Console.ReadLine();
+                nextInput = MuxConsole.ReadInput(cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (IsQuitCommand(nextInput))

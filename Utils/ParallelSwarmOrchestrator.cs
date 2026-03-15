@@ -560,8 +560,7 @@ public static class ParallelSwarmOrchestrator
             else
             {
                 if (!prodMode) MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string? input = StdinCancelMonitor.Instance?.ReadLine() 
-                                ?? Console.ReadLine();
+                string? input = MuxConsole.ReadInput();
 
                 if (string.IsNullOrEmpty(input) ||
                     input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||

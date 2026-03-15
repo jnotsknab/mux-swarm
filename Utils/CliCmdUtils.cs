@@ -57,6 +57,31 @@ public static class CliCmdUtils
         SwarmDefaults.PatchPromptPaths(App.Config);
     }
 
+    public static void HandleSetMultiLineDelimiter(string? delim)
+    {   
+        if (string.IsNullOrEmpty(delim))
+        {
+            MuxConsole.WriteWarning("Cannot set delimiter, invalid.");
+            return;
+        }
+    
+        MuxConsole.MultiLineDelimiter = delim;
+        MuxConsole.UsingDelimiter = true;
+        MuxConsole.WriteSuccess($"Multi-Line Delimiter set to: {delim}");
+        MuxConsole.WriteMuted($"Paste your content, then type {delim} on its own line to send.");
+    }
+    
+    public static void HandleMultiDelimiterToggle()
+    {
+        MuxConsole.UsingDelimiter = !MuxConsole.UsingDelimiter;
+        MuxConsole.WriteInfo($"Multi-Line Delimiter is now: {MuxConsole.UsingDelimiter}");
+
+        MuxConsole.WriteMuted(MuxConsole.UsingDelimiter
+            ? $"Paste your content, then type {MuxConsole.MultiLineDelimiter} on its own line to send."
+            : "Standard single-line input restored.");
+    }
+    
+
     /// <summary>
     /// Updates the single agent configuration by allowing the user to select from available agent definitions.
     /// </summary>

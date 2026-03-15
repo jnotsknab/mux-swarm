@@ -1,7 +1,7 @@
 ---
 name: mcp-swagger
 description: Generate runnable MCP servers from Swagger/OpenAPI specifications using the mcp-swagger-cli tool. Use when the user wants to turn any REST API into an MCP server, integrate a third-party API into an agent workflow, or generate MCP tools from an OpenAPI/Swagger spec (JSON or YAML, local file or URL).
-requires_bins: [uv, python]
+requires_bins: [uv]
 ---
 
 # MCP Swagger ({{os}})

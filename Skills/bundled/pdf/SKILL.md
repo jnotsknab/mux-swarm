@@ -1,7 +1,7 @@
 ---
 name: pdf
 description: Use when tasks involve reading, creating, or reviewing PDF files where rendering and layout matter; prefer visual checks by rendering pages and use Python tools such as reportlab, pdfplumber, and pypdf for generation and extraction.
-requires_bins: [uv, python]
+requires_bins: [uv]
 ---
 
 # PDF Skill ({{os}})
