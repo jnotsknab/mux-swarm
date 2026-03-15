@@ -2,6 +2,7 @@
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using MuxSwarm.Setup;
+using MuxSwarm.State;
 using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm.Utils;
@@ -264,7 +265,7 @@ public static class CliCmdUtils
         App.ActiveProvider = matched;
         MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({matched.Endpoint}), be sure to update your model ID's in Swarm.json");
 
-        var setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
+        string setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
         if (setDefault?.Trim().Equals("y", StringComparison.OrdinalIgnoreCase) == true)
         {
             config.LlmProviders.Remove(matched);
@@ -275,10 +276,34 @@ public static class CliCmdUtils
             MuxConsole.WriteSuccess($"{matched.Name} is now the default provider.");
         }
     }
+
+    public static void HandleInteractiveWorkflow()
+    {
+        string pathToLoad = MuxConsole.Prompt("Enter the path to your workflow file: ");
+        
+        if (string.IsNullOrEmpty(pathToLoad))
+        {
+            MuxConsole.WriteWarning("No workflow file path provided.");
+            return;
+        }
+
+        Workflow workflow = WorkflowHelper.Load(pathToLoad);
+
+        if (string.IsNullOrEmpty(workflow.Name) || workflow.Steps.Count == 0)
+        {
+            MuxConsole.WriteWarning("The workflow you provided is invalid!");
+            return;
+        }
+        
+        MuxConsole.WriteSuccess($"Loaded {workflow.Name} ({workflow.Steps.Count} steps) - Running workflow in 3 seconds...");
+        Thread.Sleep(TimeSpan.FromSeconds(3));
+        WorkflowHelper.RunWorkflow(workflow);
+        
+    }
     
     public static (JsonElement data, string sessionDir)? HandleSessionResume()
     {
-        var sessionsDir = PlatformContext.SessionsDirectory;
+        string sessionsDir = PlatformContext.SessionsDirectory;
 
         if (!Directory.Exists(sessionsDir))
         {
@@ -286,7 +311,7 @@ public static class CliCmdUtils
             return null;
         }
 
-        var sessionDirs = Directory.GetDirectories(sessionsDir)
+        List<string> sessionDirs = Directory.GetDirectories(sessionsDir)
             .Where(d => Directory.GetFiles(d, "*.json").Length <= 2)
             .OrderByDescending(d => d)
             .ToList();

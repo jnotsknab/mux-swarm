@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using MuxSwarm.State;
 using MuxSwarm.Utils;
 using static MuxSwarm.Setup.Setup;
 
@@ -18,6 +19,7 @@ public class App
         "  /pswarm         Launch parallel swarm — concurrent batch dispatch for independent tasks",
         "  /agent          Launch interactive single agent loop",
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
+        "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
         "  /compact        Compact current session context (applies to single agent loops only)",
         "  /model          View current models set for your swarm",
@@ -71,6 +73,7 @@ public class App
         "  --parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential",
         "  --max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)",
         "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
+        "  --workflow <file>          Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
         "  --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)",
         "  --goal-id <id>             Attach goal/session id",
         "  --min-delay <secs>         Min delay between loops (default 300)",
@@ -230,8 +233,7 @@ public class App
                 }
             }
 
-            string? userInput = StdinCancelMonitor.Instance?.ReadLine() 
-                                ?? Console.ReadLine();
+            string? userInput = MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
@@ -334,6 +336,9 @@ public class App
                     );
                     break;
                 
+                case "/workflow":
+                    CliCmdUtils.HandleInteractiveWorkflow();
+                    break;
                 case "/resume":
                     var resumeData = CliCmdUtils.HandleSessionResume();
                     if (resumeData.HasValue)
@@ -710,7 +715,16 @@ public class App
                 case "--swarmcfg":
                     NextValue(args, ref i); //handled in program bootstrap
                     break;
-
+                case "--workflow":
+                case "--wf":
+                    var wfPath = NextValue(args, ref i);
+                    if (!string.IsNullOrWhiteSpace(wfPath))
+                    {
+                        var wf = WorkflowHelper.Load(wfPath);
+                        MuxConsole.WriteSuccess($"Loaded workflow: {wf.Name} ({wf.Steps.Count} steps)");
+                        WorkflowHelper.RunWorkflow(wf);
+                    }
+                    break;
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
                         MuxConsole.WriteWarning($"Unknown flag: {a}");
@@ -1093,7 +1107,8 @@ public class App
             .UseFunctionInvocation()
             .Build();
     }
-
+    
+    
 
     private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
     {
