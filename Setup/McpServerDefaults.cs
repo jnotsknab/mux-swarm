@@ -75,13 +75,12 @@ public static class McpServerDefaults
             Enabled = true
         });
         
-        var replPath = Path.Combine(PlatformContext.BaseDirectory, "Runtime", "mcps", "py_async_repl_mcp.py");
 
-        AddIfMissing("PythonReplMCP", new McpServerConfig
+        AddIfMissing("ReplShellMcp", new McpServerConfig
         {
             Type = "stdio",
-            Command = "uv",
-            Args = new[] { "run", "--with", "mcp", "python", replPath },
+            Command = "uvx",
+            Args = new[] { "mcp-async-repl" },
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });

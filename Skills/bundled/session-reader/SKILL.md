@@ -1,6 +1,7 @@
 ---
 name: session-reader
 description: Summarize Mux session folders into a clean markdown report. Use when you need fast context at task start, want to review tool calls, delegated agents, artifacts, or outcomes across one or more sessions.
+requires_bins: [uv]
 ---
 
 ## Use this skill
@@ -24,7 +25,7 @@ Session directories are named by timestamp (`yyyy-MM-dd_HH-mm-ss`). Use this to 
 
 ## Script
 The summarize script is located at:
-`{{paths.skills}}/bundled/session-reader/scripts/summarize_session.py`
+`{{paths.skills}}/session-reader/scripts/summarize_session.py`
 
 ## Setup
 
@@ -38,7 +39,7 @@ uv venv {{paths.base}}/session-reader-venv
 Identify session folders in `{{paths.sessions}}`, then pass them along with your allowed paths for artifact detection:
 
 ```bash
-{{shell}} {{shell.flag}} "python {{paths.skills}}/bundled/session-reader/scripts/summarize_session.py {{paths.sessions}}/<ts1> {{paths.sessions}}/<ts2> --allowed-paths {{paths.sandbox}}"
+{{shell}} {{shell.flag}} "python {{paths.skills}}/session-reader/scripts/summarize_session.py {{paths.sessions}}/<ts1> {{paths.sessions}}/<ts2> --allowed-paths {{paths.sandbox}}"
 ```
 
 Each session will be clearly delimited in the output with a header and footer so the agent can distinguish where one session ends and the next begins.
@@ -55,6 +56,6 @@ If no paths are provided, artifact detection is disabled and a warning is printe
 ## Example — last 3 sessions
 
 ```bash
-{{shell}} {{shell.flag}} "python {{paths.skills}}/bundled/session-reader/scripts/summarize_session.py {{paths.sessions}}/2026-02-22_23-11-36 {{paths.sessions}}/2026-02-23_08-15-09 {{paths.sessions}}/2026-02-24_14-30-00 --allowed-paths {{paths.sandbox}}"
+{{shell}} {{shell.flag}} "python {{paths.skills}}/session-reader/scripts/summarize_session.py {{paths.sessions}}/2026-02-22_23-11-36 {{paths.sessions}}/2026-02-23_08-15-09 {{paths.sessions}}/2026-02-24_14-30-00 --allowed-paths {{paths.sandbox}}"
 ```
 

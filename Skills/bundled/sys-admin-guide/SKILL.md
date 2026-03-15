@@ -1,6 +1,7 @@
 ---
 name: sys-admin-guide
 description: Use this skill when performing general system administration tasks across Windows, macOS, or Linux, such as configuring OS settings, managing packages/software, interacting with services, or network operations.
+requires_bins: [uv]
 ---
 
 # Cross-Platform System Administration Skill

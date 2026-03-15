@@ -29,6 +29,7 @@ public class App
         "  /memory         View knowledge graph",
         "  /sessions       List all saved sessions with type and agent count",
         "  /dockerexec     Toggle Docker execution mode",
+        "  /delimiter      Toggle multi-line input delimiter",
         "  /dbg            Enable tool call output (applies to stdio mode only)",
         "  /nodbg          Disable tool call output (applies to stdio mode only)",
         "  /setup          Run initial setup / reconfigure",
@@ -76,6 +77,7 @@ public class App
         "  --persist-interval <s>     Persist session every N seconds",
         "  --session-retention <n>    Keep last N sessions (default 10)",
         "  --stdio                    Machine-readable output (no ANSI)",
+        "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
         "  --watchdog [true|false]    External watchdog toggle",
         "  --mcp-strict [true|false]  Require all MCPs (default true)",
         "  --docker-exec [true|false] Route exec via docker skills",
@@ -394,6 +396,9 @@ public class App
                 case "/dockerexec":
                     CliCmdUtils.HandleDockerExec(ConfigPath);
                     break;
+                case "/delimiter":
+                    CliCmdUtils.HandleMultiDelimiterToggle();
+                    break;
                 case "/swap":
                     CliCmdUtils.HandleAgentSwap();
                     break;
@@ -603,7 +608,10 @@ public class App
                 case "--stdio":
                     MuxConsole.StdioMode = true;
                     break;
-
+                case "--delimiter":
+                    var delim = NextValue(args, ref i);
+                    CliCmdUtils.HandleSetMultiLineDelimiter(delim);
+                    break;
                 case "--goal":
                     {
                         var v = NextValue(args, ref i);
