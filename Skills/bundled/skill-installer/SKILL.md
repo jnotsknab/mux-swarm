@@ -37,7 +37,7 @@ After installing a skill, tell the user: "The skill has been installed to the lo
 
 Skills must be installed to:
 ```
-{{paths.skills}}/bundled/<skill-name>\
+{{paths.skills}}/<skill-name>\
 ```
 
 This is the bundled skills directory read by the agent system. Each skill lives in its own subdirectory containing a `SKILL.md` file.
@@ -64,7 +64,7 @@ Since openai/skills is already cloned to the NAS, copy directly:
 {{paths.sandbox}}/openai-skills\skills\.curated\<skill-name>
 
 # Copy to local bundled skills
-Copy-Item -Recurse "{{paths.sandbox}}/openai-skills\skills\.curated\<skill-name>" "{{paths.skills}}/bundled/<skill-name>"
+Copy-Item -Recurse "{{paths.sandbox}}/openai-skills\skills\.curated\<skill-name>" "{{paths.skills}}/<skill-name>"
 ```
 
 ### Option 2: Clone via git-container (other repos or fresh clone)
@@ -91,7 +91,7 @@ bash -c "
   cd /nas/temp-skill &&
   git sparse-checkout set skills/<skill-name>
 "
-# Then copy to {{paths.skills}}/bundled/<skill-name>
+# Then copy to {{paths.skills}}/<skill-name>
 ```
 
 ## Behavior and Options
