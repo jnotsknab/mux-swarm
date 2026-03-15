@@ -65,7 +65,6 @@ public static class Setup
         _appConfig = JsonSerializer.Deserialize<AppConfig>(json, CfgSerialOpts) ?? new AppConfig();
 
         EnsureConfigInitialized();
-        McpServerDefaults.EnsureDefaultsPresent(_appConfig);
         SwarmDefaults.EnsurePresent(_appConfig);
         return _appConfig;
     }
