@@ -5,7 +5,7 @@
 <img alt="mux-swarm" src="docs/assets/logo.svg" width="120">
 
 <h1>Mux-Swarm</h1>
-<p>A CLI-native agent runtime for multi-agent orchestration, parallel execution, and tool-native AI operations. Define your config. Launch your swarm. The ceiling is yours.</p>
+<p>A CLI-native agentic OS for multi-agent orchestration, parallel execution, deterministic workflows, and tool-native AI operations. Process management, crash recovery, scoped isolation, layered memory, and a skills runtime. Define your config. Launch your swarm. The ceiling is yours.</p>
 
 [![Build](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
@@ -123,7 +123,7 @@ See [Usage](#usage) for the full command reference and [CLI Flags](#cli-flags) f
 
 ## About
 
-**mux-swarm** is a configurable agentic runtime that operates alongside your OS in user space — not as an agentic chat interface, but as a configurable execution environment for AI agents.
+**mux-swarm** is a configurable agentic operating system that runs alongside your OS, not an agentic chat interface, but a configurable execution environment for AI agents with process management, crash recovery, multi-tenant isolation, layered memory, and a workflow engine.
 
 Out of the box it ships with a general-purpose swarm of specialized agents (research, coding, analysis, automation, system operations) coordinated through an orchestrator that delegates work, manages results, and executes multi-step objectives. The real versatility comes with the [**configuration-driven architecture**](#configuration): define custom swarms, agent roles, [prompts](#prompts-promptsagentsmd), MCP servers, [skills](#skills-skills), and execution policies entirely through config files. Swap providers, redesign agent topologies, or adapt the runtime for anything from personal workflows to enterprise pipelines — all without modifying code.
 
@@ -170,6 +170,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 /pswarm         Launch parallel swarm loop and concurrent batch dispatch for independent tasks
 /agent          Launch interactive single agent loop
 /stateless      Stateless single agent loop, ideal for one-off tasks
+/workflow       Run a deterministic workflow from a JSON file
 /resume         Resume a previous single-agent session
 /compact        Compact current session context (applies to single agent loops only)
 /model          View current model assignments
@@ -223,6 +224,37 @@ mux-swarm --parallel --max-parallelism 6 --goal task.txt
 
 Parallel mode decomposes a goal into independent subtasks and dispatches them concurrently across agents. Use `--max-parallelism` to cap the number of simultaneous agent tasks (default 4). Combines with `--continuous` for recurring parallel batch runs.
 
+
+### Workflow Engine
+
+Define deterministic, replayable execution pipelines as JSON files. A workflow is a sequence of commands piped through the runtime, exactly as a human would type them, but reproducible and shareable.
+```json
+{
+  "name": "Research and Report",
+  "steps": [
+    "/agent",
+    "Search for the latest developments in quantum computing and summarize your findings",
+    "/qc",
+    "/swarm",
+    "Take the research from the previous agent session and produce a formatted report",
+    "/qm",
+    "/pswarm",
+    "Cross-reference the report against three independent sources for accuracy",
+    "/qm"
+  ]
+}
+```
+```bash
+# Run from CLI
+mux-swarm --workflow ./workflows/research-pipeline.json
+
+# Run mid-session
+> /workflow ./workflows/research-pipeline.json
+```
+
+A single workflow file can transition between agent mode, swarm mode, and parallel swarm mode, chain REPL operations with persistent state, and orchestrate multi-step pipelines across different execution models. The runtime handles all state transitions, tool loading, and cleanup. When the workflow completes, control returns to the keyboard.
+
+No DAG engine, no state machine, no YAML DSL. A workflow is a list of strings piped to the runtime. The architecture does the rest.
 ### CLI Flags
 ```
 --goal <text|file>         Goal input (text or file path)
@@ -236,6 +268,8 @@ Parallel mode decomposes a goal into independent subtasks and dispatches them co
 --persist-interval <secs>  Persist session state interval
 --session-retention <n>    Retain last N session runs (default 10)
 --stdio                    Machine-readable output (no ANSI)
+--workflow <file>          Run a workflow file (JSON) on launch
+--wf <file>                Alias for --workflow
 --watchdog [true|false]    Enable watchdog monitoring
 --mcp-strict [true|false]  Require all integrations to connect
 --docker-exec [true|false] Route execution through Docker
@@ -386,7 +420,7 @@ Defines which agents exist, what they specialize in, which models and MCP server
         "temperature": 0.4,
         "maxOutputTokens": 8192
       },
-      "mcpServers": ["Filesystem", "BraveSearchMCP", "PythonReplMCP"],
+      "mcpServers": ["Filesystem", "BraveSearchMCP", "ReplShellMCP"],
       "canDelegate": true
     }
   ]
@@ -525,6 +559,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Shipped
 
+- **v0.6.0 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
 - **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
 - **v0.5.0 — Stdin Cancellation (stdio mode)**: Out-of-band `__CANCEL__` signal for graceful turn cancellation in piped/stdio integrations.
 
