@@ -19,17 +19,10 @@ public static class ParallelSwarmOrchestrator
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator_parallel.md");
 
     private static readonly object _stateLock = new();
-    private static bool _sessionDirty = false;
-
-    private const int ProgressEntryBudget = 1000;
-    private const int CrossAgentContextBudget = 2000;
-    private const int ProgressLogTotalBudget = 4500;
-    private const int DefaultMaxOrchestratorIterations = 15;
-    private const int DefaultMaxSubAgentIterations = 8;
-    private const int MaxSubTaskRetries = 4;
-    private const int MaxStuckCount = 3;
-
-    public record ParallelTaskRequest(
+    private static bool _sessionDirty;
+    private static uint _swarmTokens;
+    
+    private record ParallelTaskRequest(
         [Description("Name of the agent to assign (e.g., CodeAgent, WebAgent)")] string AgentName,
         [Description("The specific sub-task or instruction for this agent")] string Task
     );
@@ -92,7 +85,7 @@ public static class ParallelSwarmOrchestrator
         var hint = new StringBuilder();
         hint.AppendLine();
         hint.AppendLine("---");
-        hint.AppendLine($"[RETRY ATTEMPT {attemptNumber}/{MaxSubTaskRetries}]");
+        hint.AppendLine($"[RETRY ATTEMPT {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries}]");
 
         if (!string.IsNullOrWhiteSpace(lastFailureReason))
             hint.AppendLine($"Previous attempt failed with: {lastFailureReason}");
@@ -134,7 +127,7 @@ public static class ParallelSwarmOrchestrator
         context.AppendLine();
         context.AppendLine("--- Context from prior agents ---");
 
-        int budgetRemaining = CrossAgentContextBudget;
+        int budgetRemaining = ExecutionLimits.Current.CrossAgentContextBudget;
 
         foreach (var result in snapshot)
         {
@@ -165,8 +158,8 @@ public static class ParallelSwarmOrchestrator
         IList<AITool> mcpTools,
         Dictionary<string, string> agentModels,
         int maxDegreeOfParallelism = 4,
-        int maxOrchestratorIterations = DefaultMaxOrchestratorIterations,
-        int maxSubAgentIterations = DefaultMaxSubAgentIterations,
+        int maxOrchestratorIterations = -1,
+        int maxSubAgentIterations = -1,
         bool prodMode = false,
         string? incomingGoal = null,
         bool continuous = false,
@@ -176,14 +169,17 @@ public static class ParallelSwarmOrchestrator
         uint sessionRetention = 10,
         CancellationToken cancellationToken = default)
     {
-        // ── 1. Load config & definitions ─────────────────────────────────
+        if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
+        if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 
         var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
 
         SwarmConfig? swarmConfig = null;
         try { swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath)); }
         catch { /* defaults */ }
-
+        
+        ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
+        
         string orchestratorPromptPath = GetOrchestratorPromptPath();
         SkillLoader.LoadSkills();
 
@@ -193,8 +189,7 @@ public static class ParallelSwarmOrchestrator
         var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
         _sessionDirty = false;
 
-        // ── 2. Compaction client ─────────────────────────────────────────
-
+        
         IChatClient? compactionClient = null;
         try
         {
@@ -205,7 +200,6 @@ public static class ParallelSwarmOrchestrator
 
         ChatOptions? compactionChatOptions = swarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
 
-        // ── 3. Shared tools ──────────────────────────────────────────────
 
         var taskCompleteTool = AIFunctionFactory.Create(
             method: (
@@ -518,7 +512,6 @@ public static class ParallelSwarmOrchestrator
 
         var orchestratorSession = await orchestratorAgent.CreateSessionAsync();
 
-        // ── Periodic session persister ────────────────────────────────────
         AgentSession currentOrchestratorSession = orchestratorSession;
         string currentIterationSessionDir = string.Empty;
 
@@ -534,7 +527,6 @@ public static class ParallelSwarmOrchestrator
         if (continuous)
             persister.Start();
 
-        // ── 7. Goal entry ────────────────────────────────────────────────
 
         bool goalFromArgs = !string.IsNullOrEmpty(incomingGoal);
 
@@ -547,7 +539,6 @@ public static class ParallelSwarmOrchestrator
         MuxConsole.WriteLine();
         MuxConsole.WriteRule();
 
-        // ── 8. Main loop ─────────────────────────────────────────────────
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -589,6 +580,10 @@ public static class ParallelSwarmOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
+            
+            //reset upon new goal
+            _swarmTokens = 0;
+            
             currentIterationSessionDir = Path.Combine(PlatformContext.SessionsDirectory, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
 
             if (state != null)
@@ -642,6 +637,7 @@ public static class ParallelSwarmOrchestrator
                     {
                         await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, specialists, currentIterationSessionDir);
                     });
+                MuxConsole.WriteMuted($"{_swarmTokens:N0} tokens used this goal");
                 _sessionDirty = false;
             }
 
@@ -749,7 +745,7 @@ public static class ParallelSwarmOrchestrator
                     for (int p = progressLog.Count - 1; p >= 0; p--)
                     {
                         totalChars += progressLog[p].Length + 5;
-                        if (totalChars > ProgressLogTotalBudget)
+                        if (totalChars > ExecutionLimits.Current.ProgressLogTotalBudget)
                         {
                             startIndex = p + 1;
                             break;
@@ -856,6 +852,13 @@ public static class ParallelSwarmOrchestrator
                             if (toolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
                                 goto streamComplete;
                         }
+                        else if (content is UsageContent usageContent)
+                        {
+                            lock (_stateLock)
+                            {
+                                _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                            }
+                        }
                     }
                 }
 
@@ -898,9 +901,9 @@ public static class ParallelSwarmOrchestrator
             if (string.IsNullOrWhiteSpace(response) && toolCalls.Count == 0)
             {
                 stuckCount++;
-                MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{MaxStuckCount})");
+                MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{ExecutionLimits.Current.MaxStuckCount})");
 
-                if (stuckCount >= MaxStuckCount)
+                if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                 {
                     MuxConsole.WriteError("Orchestrator stuck repeatedly — aborting.");
                     break;
@@ -931,7 +934,6 @@ public static class ParallelSwarmOrchestrator
             MuxConsole.WriteWarning($"Max orchestrator iterations ({maxOrchestratorIterations}) reached.");
     }
 
-    // ── Parallel Worker (per-agent execution) ────────────────────────────
 
     private static async Task<string> ExecuteParallelWorker(
         string agentName,
@@ -970,7 +972,7 @@ public static class ParallelSwarmOrchestrator
         MuxConsole.WriteDelegation(callerName, agentName, $"[Parallel] {task}");
 
         if (attemptNumber > 1)
-            MuxConsole.WriteWarning($"RETRY {attemptNumber}/{MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
+            MuxConsole.WriteWarning($"RETRY {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
 
         // Enrich with cross-agent context (thread-safe snapshot inside)
         string enrichedTask = await EnrichTaskWithCrossAgentContext(
@@ -993,8 +995,8 @@ public static class ParallelSwarmOrchestrator
                     AttemptCount: attemptNumber,
                     LastFailureReason: summary ?? "No summary provided");
 
-                if (attemptNumber >= MaxSubTaskRetries)
-                    MuxConsole.WriteError($"{agentName} failed {MaxSubTaskRetries} times on this sub-task.");
+                if (attemptNumber >= ExecutionLimits.Current.MaxSubTaskRetries)
+                    MuxConsole.WriteError($"{agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} times on this sub-task.");
             }
             else
             {
@@ -1008,7 +1010,7 @@ public static class ParallelSwarmOrchestrator
             completionStatus: status,
             completionSummary: summary,
             completionArtifacts: artifacts,
-            charBudget: ProgressEntryBudget,
+            charBudget: ExecutionLimits.Current.ProgressEntryBudget,
             chatClient: compactionClient,
             chatOptions: compactionChatOptions);
 
@@ -1020,9 +1022,9 @@ public static class ParallelSwarmOrchestrator
         if (prodMode)
             compacted = $"[[START_AGENT_TURN]]{agentName}[[END_AGENT_NAME]]{compacted}[[END_AGENT_TURN]]";
 
-        if (!succeeded && attemptNumber >= MaxSubTaskRetries)
+        if (!succeeded && attemptNumber >= ExecutionLimits.Current.MaxSubTaskRetries)
         {
-            compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {MaxSubTaskRetries} attempts. " +
+            compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
                          $"Last reason: {retryState?.LastFailureReason ?? summary}. " +
                          "Consider a different approach or agent, or surface this to the user.";
         }
@@ -1216,6 +1218,13 @@ public static class ParallelSwarmOrchestrator
                                 Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
                             }
                         }
+                        else if (content is UsageContent usageContent)
+                        {
+                            lock (_stateLock)
+                            {
+                                _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                            }
+                        }
                     }
                 }
 
@@ -1242,7 +1251,7 @@ public static class ParallelSwarmOrchestrator
             if (string.IsNullOrWhiteSpace(iterResponse.ToString()) && iterToolCalls.Count == 0)
             {
                 stuckCount++;
-                if (stuckCount >= MaxStuckCount)
+                if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                     return ($"[{specialist.Def.Name} stuck after {stuckCount} empty responses]", "failure",
                             "Agent produced no output repeatedly", null);
 

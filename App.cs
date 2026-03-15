@@ -26,6 +26,7 @@ public class App
         "  /setmodel       Change the model for any agent, orchestrator, or compaction agent in your swarm config",
         "  /swap           Swap the active agent for single-agent mode",
         "  /provider       View or switch the active LLM provider",
+        "  /limits         Display current execution limits for orchestration and agents",
         "  /tools          List available MCP tools across enabled servers",
         "  /skills         List available local skills",
         "  /memory         View knowledge graph",
@@ -410,7 +411,9 @@ public class App
                 case "/provider":
                     CliCmdUtils.HandleProviderSwap();
                     break;
-
+                case "/limits":
+                    CliCmdUtils.ShowExecutionLimits();
+                    break;
                 case "/qc":
                 case "/qm":
                     lock (CtsLock)

@@ -582,94 +582,23 @@ public static class Common
         return "No preview";
     }
 
-    /// <summary>
-    /// Estimates the total number of tokens in a conversation based on the provided chat history and optional system prompt.
-    /// </summary>
-    /// <param name="history">The list of chat messages representing the conversation history.</param>
-    /// <param name="systemPrompt">The optional system prompt to include in the token estimation.</param>
-    /// <param name="sessionFileName">The name of the session file to look for when attempting accurate token counting. Defaults to "agent_session.json".</param>
-    /// <returns>The estimated token count based on the conversation history and system prompt.</returns>
-    public static int EstimateTokenCount(
-        IReadOnlyList<ChatMessage> history,
-        string? systemPrompt = null,
-        string sessionFileName = "agent_session.json")
+    public static int EstimateTokenCount(JsonElement sessionData, float charsPerToken = 2.5f)
     {
-        try
-        {
-            var sessionRoot = PlatformContext.SessionsDirectory;
-
-            if (Directory.Exists(sessionRoot))
-            {
-                var latestSessionFile = new DirectoryInfo(sessionRoot)
-                    .GetDirectories()
-                    .OrderByDescending(d => d.LastWriteTimeUtc)
-                    .Select(d => new FileInfo(Path.Combine(d.FullName, sessionFileName)))
-                    .FirstOrDefault(f => f.Exists);
-
-                if (latestSessionFile != null)
-                {
-                    var currentJson = File.ReadAllText(latestSessionFile.FullName);
-                    int currentTokens = (int)Math.Ceiling(
-                        (currentJson.Length + (systemPrompt?.Length ?? 0)) / 3.5);
-
-                    var previousSnapshotPath = Path.Combine(
-                        latestSessionFile.DirectoryName!,
-                        $"{Path.GetFileNameWithoutExtension(sessionFileName)}.prev{latestSessionFile.Extension}");
-
-                    if (File.Exists(previousSnapshotPath))
-                    {
-                        var previousJson = File.ReadAllText(previousSnapshotPath);
-                        int previousTokens = (int)Math.Ceiling(
-                            (previousJson.Length + (systemPrompt?.Length ?? 0)) / 3.5);
-
-                        int deltaTokens = Math.Max(currentTokens - previousTokens, 0);
-
-                        File.WriteAllText(previousSnapshotPath, currentJson);
-
-                        return previousTokens + deltaTokens;
-                    }
-
-                    File.WriteAllText(previousSnapshotPath, currentJson);
-                    return currentTokens;
-                }
-            }
-        }
-        catch
-        {
-            // Fall back to legacy historybased estimation below.
-        }
-
+        return (int)Math.Ceiling(sessionData.ToString().Length / charsPerToken);
+    }
+    
+    public static int EstimateTokenCount(IReadOnlyList<ChatMessage> history, float charsPerToken = 2.5f)
+    {
         int totalChars = 0;
-
-        if (!string.IsNullOrEmpty(systemPrompt))
-            totalChars += systemPrompt.Length;
-
         foreach (var msg in history)
         {
-            totalChars += msg.AuthorName?.Length ?? 0;
-            totalChars += msg.Role.Value.Length;
-
             foreach (var content in msg.Contents)
             {
-                switch (content)
-                {
-                    case TextContent text:
-                        totalChars += text.Text?.Length ?? 0;
-                        break;
-                    case FunctionCallContent fc:
-                        totalChars += fc.Name?.Length ?? 0;
-                        totalChars += fc.CallId?.Length ?? 0;
-                        totalChars += fc.Arguments?.ToString().Length ?? 0;
-                        break;
-                    case FunctionResultContent fr:
-                        totalChars += fr.CallId?.Length ?? 0;
-                        totalChars += fr.Result?.ToString().Length ?? 0;
-                        break;
-                }
+                if (content is TextContent text)
+                    totalChars += text.Text?.Length ?? 0;
             }
         }
-
-        return (int)Math.Ceiling(totalChars / 3.5);
+        return (int)Math.Ceiling(totalChars / charsPerToken);
     }
 
     public static void StartExternalWatchdog(string[] args, string baseDir, CancellationTokenSource cts)

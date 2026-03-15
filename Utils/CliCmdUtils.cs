@@ -57,6 +57,21 @@ public static class CliCmdUtils
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
     }
+    
+    public static void ShowExecutionLimits()
+    {
+        var l = ExecutionLimits.Current;
+        var lines = string.Join("\n",
+            $"  Progress Entry Budget:        {l.ProgressEntryBudget:N0} chars",
+            $"  Cross-Agent Context Budget:   {l.CrossAgentContextBudget:N0} chars",
+            $"  Progress Log Total Budget:    {l.ProgressLogTotalBudget:N0} chars",
+            $"  Max Orchestrator Iterations:  {l.MaxOrchestratorIterations}",
+            $"  Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
+            $"  Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
+            $"  Max Stuck Count:              {l.MaxStuckCount}"
+        );
+        MuxConsole.WritePanel("Execution Limits", lines);
+    }
 
     public static void HandleSetMultiLineDelimiter(string? delim)
     {   
