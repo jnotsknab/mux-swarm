@@ -44,13 +44,6 @@ public class App
         "  /status         View current system status: provider, models, tools, skills, and sessions",
         "  /exit           Exit Mux-Swarm",
         "",
-        "Model Tuning (swarm.json)",
-        "  Any agent, orchestrator, singleAgent, or compactionAgent supports an optional modelOpts block:",
-        "    \"modelOpts\": { \"temperature\": 0.7, \"topP\": 0.9, \"topK\": 40,",
-        "                    \"maxOutputTokens\": 4096, \"frequencyPenalty\": 0.0,",
-        "                    \"presencePenalty\": 0.0, \"seed\": 42 }",
-        "  All fields are optional. Omitted values use provider defaults.",
-        "",
         "CLI Usage",
         "  mux-swarm \"<goal>\"",
         "  mux-swarm <goal.txt>",
@@ -82,12 +75,12 @@ public class App
         "  --session-retention <n>    Keep last N sessions (default 10)",
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
-        "  --watchdog [true|false]    External watchdog toggle",
-        "  --mcp-strict [true|false]  Require all MCPs (default true)",
-        "  --docker-exec [true|false] Route exec via docker skills",
+        "  --watchdog <true|false>    External watchdog toggle",
+        "  --mcp-strict <true|false>  Require all MCPs (default true)",
+        "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
         "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
-        "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
+        "  --report <session-id>      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
 
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     private static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -155,8 +148,10 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
-
-
+        
+        InitLlmProvider();
+        SkillLoader.LoadSkills();
+        
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
         {
@@ -166,10 +161,11 @@ public class App
 
             Environment.Exit(1);
         }
-
+        
         MuxConsole.WriteSuccess(_mcpStrictMode
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
+        
     }
 
     public async Task<int> Run(string[] args)
@@ -256,7 +252,7 @@ public class App
             switch (userInput)
             {
                 case "/help":
-                    PrintHelp();
+                    MuxConsole.PrintHelp(HelpText);
                     break;
 
                 case "/exit":
@@ -276,11 +272,6 @@ public class App
                     var maModels = LoadAgentModels();
                     var maCts = GetOrResetCts();
 
-                    MuxConsole.WriteLine();
-                    MuxConsole.WriteBody("Model assignments:");
-                    foreach (var kvp in maModels)
-                        MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
-
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -293,11 +284,6 @@ public class App
                     Config = LoadConfig(ConfigPath);
                     var pModels = LoadAgentModels();
                     var pCts = GetOrResetCts();
-
-                    MuxConsole.WriteLine();
-                    MuxConsole.WriteBody("Model assignments (parallel):");
-                    foreach (var kvp in pModels)
-                        MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
 
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -469,17 +455,6 @@ public class App
         return Environment.ExitCode;
     }
 
-    private static void PrintHelp()
-    {
-        if (MuxConsole.StdioMode)
-        {
-            MuxConsole.WriteBody(HelpText);
-            return;
-        }
-
-        MuxConsole.WritePanel("Hi There :)", HelpText);
-    }
-
     private Dictionary<string, string> LoadAgentModels()
     {
         var agentModels = new Dictionary<string, string>();
@@ -595,7 +570,7 @@ public class App
             {
                 case "--help":
                 case "-h":
-                    PrintHelp();
+                    MuxConsole.PrintHelp(HelpText);
                     Environment.Exit(0);
                     break;
 
@@ -1035,7 +1010,7 @@ public class App
                 }
             }
 
-            MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
+            // MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
         }
 
         var rawEndpoint = provider.Endpoint ?? "";

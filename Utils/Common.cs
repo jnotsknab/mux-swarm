@@ -40,9 +40,10 @@ public static class Common
                 var config = JsonSerializer.Deserialize<SwarmConfig>(json);
 
                 if (config?.Agents != null && config.Agents.Count > 0)
-                {
-                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count} agents from swarm.json");
-                    return Common.ParseAgentDefinitions(config);
+                {   
+                    //HACK: compact agent is outside agents array we need to account for it too i.e. +1
+                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count + 1} agents from swarm.json");
+                    return ParseAgentDefinitions(config);
                 }
             }
             catch (Exception ex)
@@ -487,15 +488,11 @@ public static class Common
                     serialized.GetRawText());
             }
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"[AGENT SESSION] Saved to {sessionSubDir}");
-            Console.ResetColor();
+            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[AGENT SESSION] Save failed: {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[AGENT SESSION] Save failed: {ex.Message}");
         }
     }
 
@@ -539,15 +536,11 @@ public static class Common
                 Path.Combine(sessionSubDir, "agent_session.json"),
                 serialized.GetRawText());
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"[AGENT SESSION] Saved to {sessionSubDir}");
-            Console.ResetColor();
+            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[Agent Session save failed: {ex.Message}]");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[AGENT SESSION] Save failed: {ex.Message}");
         }
     }
 

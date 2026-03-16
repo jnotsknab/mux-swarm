@@ -90,9 +90,9 @@ public static class SingleAgentOrchestrator
         string? resumedSessionDir = null)
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
-        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Escape] to cancel the current turn.");
+        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
 
-        SkillLoader.LoadSkills();
+        // SkillLoader.LoadSkills();
         var singleAgentDef = GetCurrSingleAgentDef();
 
         if (singleAgentDef != null && singleAgentDef.CanDelegate)
@@ -119,9 +119,9 @@ public static class SingleAgentOrchestrator
         IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
 
         if (filteredTools.Count == 0)
-            MuxConsole.WriteWarning($"[AGENT] Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
+            MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
         else
-            MuxConsole.WriteSuccess($"[AGENT] {filteredTools.Count} tools available");
+            MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         MuxConsole.WriteLine();
         MuxConsole.WriteRule();
@@ -502,7 +502,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 MuxConsole.WriteLine();
-                MuxConsole.WriteWarning("Turn cancelled by user (Escape key pressed).");
+                MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
             }
             catch (Exception ex)
             {

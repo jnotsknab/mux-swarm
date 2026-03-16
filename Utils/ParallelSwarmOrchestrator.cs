@@ -181,7 +181,7 @@ public static class ParallelSwarmOrchestrator
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
 
         string orchestratorPromptPath = GetOrchestratorPromptPath();
-        SkillLoader.LoadSkills();
+        // SkillLoader.LoadSkills();
 
         var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
         var delegationResults = new List<DelegationResult>();
@@ -286,9 +286,9 @@ public static class ParallelSwarmOrchestrator
                 IList<AITool> filteredTools = def.ToolFilter(mcpTools);
 
                 if (filteredTools.Count == 0)
-                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter.");
+                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
                 else
-                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available");
+                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
@@ -324,10 +324,7 @@ public static class ParallelSwarmOrchestrator
                 var agentTools = def.CanDelegate
                     ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
                     : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
-
-                if (def.CanDelegate)
-                    MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");
-
+                
                 var agentChatOptions = new ChatOptions
                 {
                     Instructions = prompt,
