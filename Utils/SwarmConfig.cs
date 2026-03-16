@@ -7,7 +7,7 @@ namespace MuxSwarm.Utils;
 /// </summary>
 public class SwarmConfig
 {
-    
+
     [JsonPropertyName("executionLimits")]
     public ExecutionLimits ExecutionLimits { get; set; } = new();
 

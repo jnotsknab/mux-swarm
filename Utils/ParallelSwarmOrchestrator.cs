@@ -21,7 +21,7 @@ public static class ParallelSwarmOrchestrator
     private static readonly object _stateLock = new();
     private static bool _sessionDirty;
     private static uint _swarmTokens;
-    
+
     private record ParallelTaskRequest(
         [Description("Name of the agent to assign (e.g., CodeAgent, WebAgent)")] string AgentName,
         [Description("The specific sub-task or instruction for this agent")] string Task
@@ -177,9 +177,9 @@ public static class ParallelSwarmOrchestrator
         SwarmConfig? swarmConfig = null;
         try { swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath)); }
         catch { /* defaults */ }
-        
+
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
-        
+
         string orchestratorPromptPath = GetOrchestratorPromptPath();
         SkillLoader.LoadSkills();
 
@@ -189,7 +189,7 @@ public static class ParallelSwarmOrchestrator
         var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
         _sessionDirty = false;
 
-        
+
         IChatClient? compactionClient = null;
         try
         {
@@ -580,10 +580,10 @@ public static class ParallelSwarmOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
-            
+
             //reset upon new goal
             _swarmTokens = 0;
-            
+
             currentIterationSessionDir = Path.Combine(PlatformContext.SessionsDirectory, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
 
             if (state != null)
@@ -597,7 +597,7 @@ public static class ParallelSwarmOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
-            
+
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
             bool wasInterrupted = false;
@@ -622,7 +622,7 @@ public static class ParallelSwarmOrchestrator
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
             finally
-            {   
+            {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener?.Dispose();
             }
@@ -862,7 +862,7 @@ public static class ParallelSwarmOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                     Console.Write("[[END_AGENT_TURN]]");

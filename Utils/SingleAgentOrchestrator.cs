@@ -13,7 +13,7 @@ public static class SingleAgentOrchestrator
     private static uint _sessionTokens;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
-    {   
+    {
         if (AgentDef != null && !fromCfg) return AgentDef;
 
         var paths = new[]
@@ -43,19 +43,19 @@ public static class SingleAgentOrchestrator
         }
         return null;
     }
-    
+
 
     private static bool IsQuitCommand(string? input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return true;
-    
+
         var trimmed = input.Trim();
-        
+
         return trimmed.Equals("/qc", StringComparison.OrdinalIgnoreCase)
             || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
-    
+
     private static ModelOpts? GetSingleAgentModelOpts()
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
@@ -69,7 +69,7 @@ public static class SingleAgentOrchestrator
         }
         catch { return null; }
     }
-    
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -155,14 +155,14 @@ public static class SingleAgentOrchestrator
         }
 
         var systemPrompt = await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath);
-        
+
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
             App.Config.IsUsingDockerForExec,
             continuous);
 
         systemPrompt = preamble + "\n\n" + systemPrompt;
-      
+
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
             {
@@ -237,24 +237,24 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteError($"[AGENT] Failed to initialize {singleAgentDef.Name}. Verify your configuration and API credentials.");
             return;
         }
-        
+
         string currentGoal = initialGoal;
-        
+
         var sessionTimestamp = resumedSessionDir != null
             ? Path.GetFileName(resumedSessionDir)
             : DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-        
+
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
-        
-        
+
+
         var conversationHistory = new List<ChatMessage>();
-        
+
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
-        
+
         IChatClient? ResolveCompactionClient()
         {
             if (compactionResolved) return compactionClient;
@@ -274,7 +274,7 @@ public static class SingleAgentOrchestrator
 
                     if (swarmConfig.CompactionAgent.AutoCompactTokenThreshold > 0)
                         autoCompactTokenThreshold = swarmConfig.CompactionAgent.AutoCompactTokenThreshold;
-                    
+
                     compactionChatOptions = swarmConfig.CompactionAgent.ModelOpts?.ToChatOptions();
                 }
 
@@ -297,37 +297,31 @@ public static class SingleAgentOrchestrator
                 return false;
             }
 
-            uint beforeTokens = _sessionTokens > 0 
-                ? _sessionTokens 
+            uint beforeTokens = _sessionTokens > 0
+                ? _sessionTokens
                 : (uint)Common.EstimateTokenCount(conversationHistory);
-            ChatMessage? compactedMsg;
+            ChatMessage? compactedMsg = null;
 
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
                     conversationHistory, cc, chatOptions: compactionChatOptions);
 
-                compactedMsg = new ChatMessage(ChatRole.User,
-                    "[SYSTEM: Context restoration. DO NOT RESPOND to this message.]\n\n" + compactedMsg.Text);
-
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
-                conversationHistory.Add(compactedMsg);
 
-                await foreach (var update in agent.RunStreamingAsync([compactedMsg], session))
-                {
-                    foreach (var content in update.Contents)
-                    {
-                        if (content is UsageContent usageContent)
-                            _sessionTokens = (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                    }
-                }
+                conversationHistory.Add(new ChatMessage(ChatRole.User,
+                    "[CONTEXT SUMMARY — prior conversation compacted]\n\n" + compactedMsg.Text));
+
+                conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
+                    "Context restored. Ready to continue."));
             });
 
+            _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
             return true;
         }
-        
+
         //Offer option to compact
         if (resumedSession.HasValue)
         {
@@ -341,12 +335,12 @@ public static class SingleAgentOrchestrator
                     await TryCompactAsync();
             }
         }
-        
+
         var lastPersistTime = DateTime.UtcNow;
         (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
         {
-            
+
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_sessionTokens > autoCompactTokenThreshold)
@@ -354,7 +348,7 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInfo($"Context approaching limit (~{_sessionTokens:N0} tokens). Auto-compacting...");
                 await TryCompactAsync();
             }
-            
+
             List<ChatMessage> messages;
             if (lastInterruptedContext is { } ctx)
             {
@@ -460,7 +454,7 @@ public static class SingleAgentOrchestrator
                         {
                             try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                         }
-                        
+
                         StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
                     }
@@ -536,11 +530,11 @@ public static class SingleAgentOrchestrator
             }
 
             MuxConsole.WriteMuted($"{_sessionTokens:N0} tokens in context");
-            
+
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)
                 break;
-            
+
             if (continuous)
             {
                 if (minDelaySeconds > 0)

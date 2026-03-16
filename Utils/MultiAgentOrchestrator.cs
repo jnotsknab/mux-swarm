@@ -21,7 +21,7 @@ public static class MultiAgentOrchestrator
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
-    
+
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
 
@@ -116,17 +116,17 @@ public static class MultiAgentOrchestrator
         CancellationToken cancellationToken = default)
     {
         var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
-        
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
-        
+
         SwarmConfig? swarmConfig = null;
         try
         {
             swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath));
         }
         catch {/*Defaults*/ }
-        
+
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
 
         string orchestratorPromptPath = GetOrchestratorPromptPath();
@@ -169,9 +169,9 @@ public static class MultiAgentOrchestrator
             compactionClient = chatClientFactory(compactionModel);
         }
         catch { /* falls back to extractive only */ }
-        
+
         ChatOptions? compactionChatOptions = swarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
-        
+
         async Task<string> ExecuteDelegation(
             string agentName,
             string task,
@@ -326,7 +326,7 @@ public static class MultiAgentOrchestrator
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
-                
+
                 var analyzeImageTool = LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, modelId);
 
                 var listSkillsTool = AIFunctionFactory.Create(
@@ -539,11 +539,11 @@ public static class MultiAgentOrchestrator
 
                 if (string.IsNullOrEmpty(input) || input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
                     input.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
-                {   
+                {
                     MuxConsole.WriteSuccess("Exited from Swarm interface successfully!");
                     break;
                 }
-                    
+
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
             }
@@ -564,10 +564,10 @@ public static class MultiAgentOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
-            
+
             //reset upon new goal
             _swarmTokens = 0;
-            
+
             currentIterationSessionDir = Path.Combine(SessionDir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
             if (state != null)
             {
@@ -581,9 +581,9 @@ public static class MultiAgentOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
-            
+
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
-            
+
             bool wasInterrupted = false;
 
             try
@@ -624,7 +624,7 @@ public static class MultiAgentOrchestrator
                     {
                         await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, specialists, currentIterationSessionDir);
                     });
-                
+
                 MuxConsole.WriteMuted($"{_swarmTokens:N0} tokens used this goal");
                 _sessionDirty = false;
             }
@@ -938,7 +938,7 @@ public static class MultiAgentOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                 {

@@ -74,7 +74,7 @@ public static class McpServerDefaults
             Env = new Dictionary<string, string?> { ["BRAVE_API_KEY"] = "BRAVE_API_KEY" },
             Enabled = true
         });
-        
+
 
         AddIfMissing("ReplShellMcp", new McpServerConfig
         {

@@ -112,21 +112,21 @@ public static class MuxConsole
 
         ind.CancelNoWait();
     }
-    
+
     public static string? ReadInput(CancellationToken ct = default)
-    {   
+    {
         if (InputOverride != Console.In)
         {
             var line = InputOverride.ReadLine();
             if (line == null)
-            {   
+            {
                 //exhausted workflow return to keyboard input
                 InputOverride = Console.In;
                 return Console.ReadLine();
             }
             return line;
         }
-        
+
         if (UsingDelimiter && MultiLineDelimiter is not null)
         {
             var sb = new StringBuilder();
@@ -231,7 +231,7 @@ public static class MuxConsole
 
                 // swap in whatever mascot you landed on
                 string[] bot =
-                {   
+                {
                     @"   █     █ ",
                     @" ▄█████████▄ ",
                     @" █   ◠ ◠   █ ",
@@ -279,7 +279,7 @@ public static class MuxConsole
                 right.AppendLine($"[{C.Step}]Quick Tips[/]");
                 right.AppendLine($"  [{C.Muted}]/qc or /qm to exit an active session[/]");
                 right.Append($"  [{C.Muted}]/status to view current config[/]");
-                
+
                 var rightFar = new StringBuilder();
                 rightFar.AppendLine($"[{C.Step}]Recent Sessions[/]");
                 rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
@@ -337,7 +337,7 @@ public static class MuxConsole
                 rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
                 rightFar.AppendLine($"  [{C.Muted}]/resume to continue a session[/]");
                 rightFar.Append($"  [{C.Muted}]/sessions to view session info[/]");
-                
+
                 var grid = new Grid();
                 grid.AddColumn(new GridColumn().NoWrap().PadRight(4));
                 grid.AddColumn(new GridColumn().Width(1).NoWrap());
@@ -366,7 +366,7 @@ public static class MuxConsole
             AnsiConsole.WriteLine();
         });
     }
-    
+
 
     public static void WriteBanner(string title = "MUX-SWARM SETUP")
     {
@@ -632,13 +632,13 @@ public static class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
-        
+
         if (InputOverride != Console.In)
         {
             string input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
             return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
         }
-        
+
         if (UsingDelimiter && MultiLineDelimiter is not null)
         {
             if (StdioMode)
@@ -654,7 +654,7 @@ public static class MuxConsole
             var result = sb.ToString().Trim();
             return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
         }
-        
+
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));

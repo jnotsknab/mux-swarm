@@ -13,7 +13,7 @@ public static class LocalAiFunctions
     {
         CreateSkillFuncs();
     }
-    
+
     public static AIFunction CreateAnalyzeImageTool(
         Func<string, IChatClient> chatClientFactory,
         string? visionModel = null)
@@ -90,7 +90,7 @@ public static class LocalAiFunctions
                          "Use this after capturing screenshots or when you need to understand visual content in a file."
         );
     }
-    
+
     private static void CreateSkillFuncs()
     {
         ListSkillsTool = AIFunctionFactory.Create(

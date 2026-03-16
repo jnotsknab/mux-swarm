@@ -100,11 +100,11 @@ public class App
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
-    
+
     public static AppConfig Config = new();
     public static ProviderConfig? ActiveProvider;
-    
-    
+
+
     private static CancellationTokenSource GetOrResetCts()
     {
         lock (CtsLock)
@@ -121,7 +121,7 @@ public class App
     public App()
     {
         _ = ProcessCleanup.Instance;
-        
+
         //Ensure processes mux spawns are killed
         Console.CancelKeyPress += (_, e) =>
         {
@@ -130,7 +130,7 @@ public class App
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
         };
-        
+
         AppDomain.CurrentDomain.ProcessExit += (_, e) =>
         {
             ProcessCleanup.Instance.Shutdown();
@@ -188,10 +188,10 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-        
+
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
-        
+
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -239,7 +239,7 @@ public class App
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
-            
+
             if (userInput.Trim() == "__CANCEL__")
             {
                 lock (CtsLock)
@@ -252,7 +252,7 @@ public class App
                 }
                 continue;
             }
-            
+
             switch (userInput)
             {
                 case "/help":
@@ -337,7 +337,7 @@ public class App
                         persistSession: false
                     );
                     break;
-                
+
                 case "/workflow":
                     CliCmdUtils.HandleInteractiveWorkflow();
                     break;
@@ -361,7 +361,7 @@ public class App
                         );
                     }
                     break;
-                
+
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
@@ -391,7 +391,7 @@ public class App
                 case "/clear":
                     Console.Clear();
                     break;
-                
+
                 case "/status":
                     CliCmdUtils.HandleStatus(_mcpTools, LoadAgentModels());
                     break;
@@ -422,7 +422,8 @@ public class App
                         if (!_cts.IsCancellationRequested)
                         {
                             _cts.Cancel();
-                            MuxConsole.WriteInfo("Stopping current session...");                        }
+                            MuxConsole.WriteInfo("Stopping current session...");
+                        }
                         else
                         {
                             MuxConsole.WriteMuted("No active session to stop.");
@@ -451,7 +452,7 @@ public class App
                     var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
                     break;
-                
+
                 case "/sessions":
                     CliCmdUtils.ListSessions();
                     break;
@@ -506,7 +507,7 @@ public class App
 
         if (!agentModels.ContainsKey("Orchestrator"))
             agentModels["Orchestrator"] = "x-ai/grok-4.1-fast";
-        
+
         return agentModels;
     }
 
@@ -690,31 +691,31 @@ public class App
                         break;
                     }
                 case "--provider":
-                {
-                    var v = NextValue(args, ref i);
-                    if (v != null && !v.StartsWith("-"))
                     {
-                        var config = LoadConfig(configPath: ConfigPath);
-                        var match = config.LlmProviders.FirstOrDefault(p =>
-                            p.Name.Equals(v, StringComparison.OrdinalIgnoreCase));
-
-                        if (match != null)
+                        var v = NextValue(args, ref i);
+                        if (v != null && !v.StartsWith("-"))
                         {
-                            ActiveProvider = match;
-                            MuxConsole.WriteSuccess($"Provider set to: {match.Name}");
+                            var config = LoadConfig(configPath: ConfigPath);
+                            var match = config.LlmProviders.FirstOrDefault(p =>
+                                p.Name.Equals(v, StringComparison.OrdinalIgnoreCase));
+
+                            if (match != null)
+                            {
+                                ActiveProvider = match;
+                                MuxConsole.WriteSuccess($"Provider set to: {match.Name}");
+                            }
+                            else
+                            {
+                                MuxConsole.WriteWarning($"No provider found matching: {v}");
+                            }
                         }
                         else
                         {
-                            MuxConsole.WriteWarning($"No provider found matching: {v}");
+                            if (v != null) i--;
+                            MuxConsole.WriteWarning("--provider requires a name (e.g. --provider ollama)");
                         }
+                        break;
                     }
-                    else
-                    {
-                        if (v != null) i--;
-                        MuxConsole.WriteWarning("--provider requires a name (e.g. --provider ollama)");
-                    }
-                    break;
-                }
                 case "--cfg":
                 case "--swarmcfg":
                     NextValue(args, ref i); //handled in program bootstrap
@@ -986,10 +987,10 @@ public class App
     }
 
     private static void InitLlmProvider()
-    {   
+    {
         if (ActiveProvider != null)
             return;
-        
+
         var config = LoadConfig(configPath: ConfigPath);
 
         var provider = config.LlmProviders.FirstOrDefault(p => p.Enabled);
@@ -1087,9 +1088,9 @@ public class App
     {
         if (ActiveProvider == null)
             InitLlmProvider();
-        
+
         var provider = ActiveProvider ?? LoadConfig(configPath: ConfigPath).LlmProviders.FirstOrDefault(p => p.Enabled);
-        
+
         var apiKey = !string.IsNullOrWhiteSpace(provider?.ApiKeyEnvVar)
             ? Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar) ?? "no-key"
             : "no-key";
@@ -1111,8 +1112,8 @@ public class App
             .UseFunctionInvocation()
             .Build();
     }
-    
-    
+
+
 
     private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
     {
@@ -1186,7 +1187,7 @@ public class App
             );
         return Environment.ExitCode;
     }
-    
+
     private void DisableTools()
     {
         MuxConsole.WriteBody("Enter the index or range of tools to disable (e.g. 1-10):");

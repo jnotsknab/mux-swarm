@@ -498,7 +498,7 @@ public static class Common
             Console.ResetColor();
         }
     }
-    
+
     public static string? FindSessionDirectory(string sessionTimestamp)
     {
         try
@@ -524,14 +524,14 @@ public static class Common
             return null;
         }
     }
-    
+
     public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp, string? existingSessionDir = null)
     {
         try
-        {   
+        {
             var sessionSubDir = Path.Combine(MultiAgentOrchestrator.SessionDir, sessionTimestamp);
             if (!string.IsNullOrEmpty(existingSessionDir)) sessionSubDir = existingSessionDir;
-            
+
             Directory.CreateDirectory(sessionSubDir);
 
             var serialized = agent.SerializeSession(session);
@@ -550,7 +550,7 @@ public static class Common
             Console.ResetColor();
         }
     }
-    
+
     public static string GetFirstUserMessage(string sessionFile, int maxLength = 60)
     {
         try
@@ -586,7 +586,7 @@ public static class Common
     {
         return (int)Math.Ceiling(sessionData.ToString().Length / charsPerToken);
     }
-    
+
     public static int EstimateTokenCount(IReadOnlyList<ChatMessage> history, float charsPerToken = 2.5f)
     {
         int totalChars = 0;

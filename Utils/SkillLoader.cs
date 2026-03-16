@@ -56,7 +56,7 @@ public static class SkillLoader
 
         var bundledDir = Path.Combine(skillsRoot, "bundled");
         var bundledDockerDir = Path.Combine(skillsRoot, "bundled-docker");
-        
+
         var selectedBundledDir = App.Config.IsUsingDockerForExec ? bundledDockerDir : bundledDir;
 
         if (App.Config.IsUsingDockerForExec)
