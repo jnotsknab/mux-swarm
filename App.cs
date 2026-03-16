@@ -141,6 +141,7 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
+        MuxConsole.WriteSplashScreen(version: "0.6.0");
 
         if (!Config.SetupCompleted)
         {
