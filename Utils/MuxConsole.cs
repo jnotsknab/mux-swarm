@@ -37,6 +37,7 @@ public static class MuxConsole
     public static string? MultiLineDelimiter { get; set; }
     public static bool UsingDelimiter { get; set; }
     private static bool _isStreaming;
+    public static string? MascotPath { get; set; }
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
     {
@@ -140,7 +141,180 @@ public static class MuxConsole
 
         return StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
     }
+
+    /// <summary>
+    /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
+    /// No external dependencies or image files required.
+    /// </summary>
+    public static void WriteSplashScreen(string version)
+    {
+        WithConsole(() =>
+        {
+            if (StdioMode)
+            {
+                EmitJson("splash", D(("version", version)));
+                return;
+            }
+
+            AnsiConsole.WriteLine();
+
+            if (AnsiConsole.Profile.Width < 56)
+            {
+                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]")
+                    .RuleStyle(new Style(Color.Grey35))
+                    .LeftJustified());
+            }
+            else
+            {
+                string[] mux =
+                {
+                    "███╗   ███╗██╗   ██╗██╗  ██╗",
+                    "████╗ ████║██║   ██║╚██╗██╔╝",
+                    "██╔████╔██║██║   ██║ ╚███╔╝ ",
+                    "██║╚██╔╝██║██║   ██║ ██╔██╗ ",
+                    "██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗",
+                    "╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝",
+                };
+
+                // swap in whatever mascot you landed on
+                string[] bot =
+                {   
+                    @"   █     █ ",
+                    @" ▄█████████▄ ",
+                    @" █   ◠ ◠   █ ",
+                    @" █    ◡    █ ",
+                    @" █▄▄▄▄▄▄▄▄▄█ ",
+                    @"  ▀▀▀▀▀▀▀▀▀  ",
+                };
+
+                int muxW = mux.Max(l => l.Length);
+                var left = new StringBuilder();
+
+                for (int i = 0; i < mux.Length; i++)
+                {
+                    var muxLine = mux[i].PadRight(muxW + 4);
+                    var botLine = i < bot.Length ? bot[i] : "";
+                    left.AppendLine($"[{C.Banner}]{Esc(muxLine)}[/][{C.Success}]{Esc(botLine)}[/]");
+                }
+
+                const string swarmArt =
+                    "███████╗██╗    ██╗ █████╗ ██████╗ ███╗   ███╗\n" +
+                    "██╔════╝██║    ██║██╔══██╗██╔══██╗████╗ ████║\n" +
+                    "███████╗██║ █╗ ██║███████║██████╔╝██╔████╔██║\n" +
+                    "╚════██║██║███╗██║██╔══██║██╔══██╗██║╚██╔╝██║\n" +
+                    "███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║\n" +
+                    "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝";
+
+                left.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
+                left.AppendLine();
+                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                left.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]");
+
+                var right = new StringBuilder();
+                right.AppendLine($"[{C.Step}]Getting Started[/]");
+                right.AppendLine($"[{C.Muted}]Pick a mode to begin, then enter your task[/]");
+                right.AppendLine($"[{C.Muted}]────────────────────────────────────────────[/]");
+                right.AppendLine();
+                right.AppendLine($"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Multi-agent orchestrated loop[/]");
+                right.AppendLine($"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Parallel concurrent dispatch[/]");
+                right.AppendLine($"  [{C.Prompt}]/agent[/]       [{C.Muted}]Single-agent conversation[/]");
+                right.AppendLine($"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off stateless task[/]");
+                right.AppendLine($"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Run a workflow file[/]");
+                right.AppendLine($"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]");
+                right.AppendLine();
+                right.AppendLine($"[{C.Muted}]────────────────────────────────────────────[/]");
+                right.AppendLine($"[{C.Step}]Quick Tips[/]");
+                right.AppendLine($"  [{C.Muted}]/qc or /qm to exit an active session[/]");
+                right.Append($"  [{C.Muted}]/status to view current config[/]");
+                
+                var rightFar = new StringBuilder();
+                rightFar.AppendLine($"[{C.Step}]Recent Sessions[/]");
+                rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
+
+                var sessionsPath = PlatformContext.SessionsDirectory;
+                if (Directory.Exists(sessionsPath))
+                {
+                    var recentDirs = Directory.GetDirectories(sessionsPath)
+                        .OrderByDescending(d => d)
+                        .Take(5)
+                        .ToList();
+
+                    if (recentDirs.Count > 0)
+                    {
+                        foreach (var dir in recentDirs)
+                        {
+                            string ts = Path.GetFileName(dir);
+                            var files = Directory.GetFiles(dir, "*_session.json", SearchOption.AllDirectories);
+                            string type = files.Length > 1 ? "swarm" : "agent";
+
+                            string preview = "No preview";
+                            if (files.Length > 0)
+                            {
+                                try
+                                {
+                                    var raw = Common.GetFirstUserMessage(files[0]);
+                                    if (!string.IsNullOrWhiteSpace(raw)
+                                        && !raw.StartsWith("[SYSTEM", StringComparison.OrdinalIgnoreCase)
+                                        && !raw.StartsWith("[CONTEXT SUMMARY", StringComparison.OrdinalIgnoreCase)
+                                        && !raw.StartsWith("## User Context", StringComparison.OrdinalIgnoreCase)
+                                        && !raw.Contains("Context restoration", StringComparison.OrdinalIgnoreCase)
+                                        && !raw.Contains("Filesystem Write Rules", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        preview = raw.Length > 40 ? raw[..40] + "..." : raw;
+                                    }
+                                }
+                                catch { /* ignore */ }
+                            }
+
+                            rightFar.AppendLine($"  [{C.Prompt}]{Esc(ts)}[/]");
+                            rightFar.AppendLine($"    [{C.Muted}]{type} · {Esc(preview)}[/]");
+                        }
+                    }
+                    else
+                    {
+                        rightFar.AppendLine($"  [{C.Muted}]No sessions yet[/]");
+                    }
+                }
+                else
+                {
+                    rightFar.AppendLine($"  [{C.Muted}]No sessions yet[/]");
+                }
+
+                rightFar.AppendLine();
+                rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
+                rightFar.AppendLine($"  [{C.Muted}]/resume to continue a session[/]");
+                rightFar.Append($"  [{C.Muted}]/sessions to view session info[/]");
+                
+                var grid = new Grid();
+                grid.AddColumn(new GridColumn().NoWrap().PadRight(4));
+                grid.AddColumn(new GridColumn().Width(1).NoWrap());
+                grid.AddColumn(new GridColumn().PadLeft(3).PadRight(3));
+                grid.AddColumn(new GridColumn().Width(1).NoWrap());
+                grid.AddColumn(new GridColumn().PadLeft(3));
+                grid.AddRow(
+                    new Markup(left.ToString()),
+                    new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+                    new Markup(right.ToString()),
+                    new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+                    new Markup(rightFar.ToString())
+                );
+
+                var panel = new Panel(grid)
+                    .Border(BoxBorder.Rounded)
+                    .BorderStyle(new Style(Color.Grey35))
+                    .Padding(1, 1)
+                    .Expand();
+
+                AnsiConsole.Write(panel);
+            }
+
+            AnsiConsole.WriteLine();
+            AnsiConsole.Write(new Rule().RuleStyle(new Style(Color.Grey23)));
+            AnsiConsole.WriteLine();
+        });
+    }
     
+
     public static void WriteBanner(string title = "MUX-SWARM SETUP")
     {
         WithConsole(() =>
