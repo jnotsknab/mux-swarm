@@ -34,7 +34,7 @@
 
 ## Demo
 
-https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f
+[https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f](https://github.com/user-attachments/assets/3e817e6b-d339-4016-a386-23b9bfe4b72d)
 > **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
 
 ## Case Study: Autonomous Model Specialization
