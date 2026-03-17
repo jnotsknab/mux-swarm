@@ -127,7 +127,9 @@ public static class MultiAgentOrchestrator
         }
         catch {/*Defaults*/ }
 
+        /*
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
+        */
 
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
@@ -1128,7 +1130,7 @@ public static class MultiAgentOrchestrator
 
 
 
-                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), cancellationToken);
+                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
@@ -1137,12 +1139,12 @@ public static class MultiAgentOrchestrator
 
                     activityTimeout.Ping();
 
-                    // Process text first — if this update has text, we need streaming mode.
+                    // Process text first if this update has text, we need streaming mode.
                     if (!string.IsNullOrEmpty(update.Text))
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            // Transition: thinking → streaming
+                            // Transition: thinking -> streaming
                             MuxConsole.BeginStreaming();
                             currentlyStreaming = true;
                             startedStreaming = true;

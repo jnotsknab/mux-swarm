@@ -62,13 +62,21 @@ public static class CliCmdUtils
     {
         var l = ExecutionLimits.Current;
         var lines = string.Join("\n",
-            $"  Progress Entry Budget:        {l.ProgressEntryBudget:N0} chars",
-            $"  Cross-Agent Context Budget:   {l.CrossAgentContextBudget:N0} chars",
-            $"  Progress Log Total Budget:    {l.ProgressLogTotalBudget:N0} chars",
-            $"  Max Orchestrator Iterations:  {l.MaxOrchestratorIterations}",
-            $"  Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
-            $"  Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
-            $"  Max Stuck Count:              {l.MaxStuckCount}"
+            "  Swarm / Parallel Swarm",
+            $"    Progress Entry Budget:        {l.ProgressEntryBudget:N0} chars",
+            $"    Cross-Agent Context Budget:   {l.CrossAgentContextBudget:N0} chars",
+            $"    Progress Log Total Budget:    {l.ProgressLogTotalBudget:N0} chars",
+            $"    Max Orchestrator Iterations:  {l.MaxOrchestratorIterations}",
+            $"    Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
+            $"    Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
+            "",
+            "  Single Agent",
+            $"    Compaction Char Budget:       {l.CompactionCharBudget:N0} chars",
+            $"    Compaction Max Message Chars: {l.CompactionMaxMessageChars:N0} chars",
+            "",
+            "  All Modes",
+            $"    Max Stuck Count:              {l.MaxStuckCount}",
+            $"    Activity Timeout:             {l.ActivityTimeoutSeconds}s"
         );
         MuxConsole.WritePanel("Execution Limits", lines);
     }

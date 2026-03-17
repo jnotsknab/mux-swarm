@@ -103,30 +103,30 @@ public static class ResultCompactor
     /// Compacts a conversation history into a concise context summary for passing as context to another agent.
     /// </summary>
     /// <param name="history">
-    /// The conversation history to compact. Each message should contain a role and text content.
+    ///     The conversation history to compact. Each message should contain a role and text content.
     /// </param>
     /// <param name="chatClient">
-    /// The chat client used to generate a condensed summary of the conversation. If the summarization fails, a fallback extractive method is used.
+    ///     The chat client used to generate a condensed summary of the conversation. If the summarization fails, a fallback extractive method is used.
     /// </param>
-    /// <param name="charBudget">
-    /// The maximum number of characters allowed in the generated summary. Defaults to 2000 characters.
-    /// </param>
+    /// <param name="chatOptions"></param>
     /// <returns>
     /// A <see cref="ChatMessage"/> with the <see cref="ChatRole.User"/> role containing the compacted context summary wrapped with markers indicating the start and end of the summary.
     /// </returns>
     public static async Task<ChatMessage> CompactConversationAsync(
         IReadOnlyList<ChatMessage> history,
         IChatClient chatClient,
-        int charBudget = 2000,
         ChatOptions? chatOptions = null)
-    {
+    {   
+        int charBudget = ExecutionLimits.Current.CompactionCharBudget;
+        int maxMsgChars = ExecutionLimits.Current.CompactionMaxMessageChars;
+
         var transcript = new StringBuilder();
         foreach (var msg in history)
         {
             string role = msg.Role == ChatRole.User ? "User" : "Agent";
             string text = msg.Text ?? "";
-            if (text.Length > 500)
-                text = text[..500] + "...";
+            if (text.Length > maxMsgChars)
+                text = text[..maxMsgChars] + "...";
             transcript.AppendLine($"[{role}]: {text}");
         }
 
@@ -136,10 +136,24 @@ public static class ResultCompactor
             var messages = new List<ChatMessage>
             {
                 new(ChatRole.System,
-                    $"Compress the following conversation into a concise context summary under {charBudget} characters. "
-                    + "Preserve: key decisions, file paths, artifacts produced, current state of work, user preferences expressed. "
-                    + "Drop: greetings, reasoning steps, tool call details, repeated information. "
-                    + "Output ONLY the summary."),
+                    $"""
+                    Compress the following conversation into a structured context summary under {charBudget} characters.
+                    
+                    MUST preserve:
+                    - All key decisions made and their reasoning
+                    - File paths, artifact locations, and outputs produced
+                    - Current state of work and next steps discussed
+                    - User preferences, constraints, and corrections expressed
+                    - Technical details: model names, config values, tool names, error messages
+                    - Any unresolved issues or open questions
+                    
+                    Drop: greetings, pleasantries, reasoning chains, verbose tool call details, repeated information, markdown formatting.
+                    
+                    Format as a structured summary with labeled sections. Output ONLY the summary wrapped in:
+                    [CONTEXT SUMMARY — prior conversation compacted]
+                    ...content...
+                    [END SUMMARY — continue from here]
+                    """),
                 new(ChatRole.User, transcript.ToString())
             };
 
@@ -148,13 +162,10 @@ public static class ResultCompactor
         }
         catch
         {
-            // Fallback to extractive
             summary = ExtractTopLines(transcript.ToString(), charBudget);
         }
 
-        return new ChatMessage(ChatRole.User,
-            "[CONTEXT SUMMARY — prior conversation compacted]\n" + summary
-                                                                 + "\n[END SUMMARY — continue from here]");
+        return new ChatMessage(ChatRole.User, summary);
     }
 
     /// <summary>

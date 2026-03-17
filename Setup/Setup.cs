@@ -69,6 +69,21 @@ public static class Setup
         return _appConfig;
     }
 
+    public static void FetchSetExecLimits()
+    {
+        try
+        {
+            if (File.Exists(PlatformContext.SwarmPath))
+            {
+                var swarmJson = File.ReadAllText(PlatformContext.SwarmPath);
+                var swarm = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
+                if (swarm?.ExecutionLimits != null)
+                    ExecutionLimits.Current = swarm.ExecutionLimits;
+            }
+        }
+        catch { /* defaults */ }
+    }
+
     /// <summary>
     /// Executes the interactive setup process for the Mux-Swarm application.
     /// </summary>

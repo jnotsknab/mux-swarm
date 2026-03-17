@@ -178,7 +178,9 @@ public static class ParallelSwarmOrchestrator
         try { swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath)); }
         catch { /* defaults */ }
 
+        /*
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
+        */
 
         string orchestratorPromptPath = GetOrchestratorPromptPath();
         // SkillLoader.LoadSkills();
@@ -1144,7 +1146,7 @@ public static class ParallelSwarmOrchestrator
                     thinking = MuxConsole.BeginThinking(specialist.Def.Name);
                 }
 
-                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), cancellationToken);
+                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)

@@ -11,6 +11,7 @@ public static class SingleAgentOrchestrator
 
     public static Common.AgentDefinition? AgentDef = null;
     private static uint _sessionTokens;
+    private static bool pendingCompaction;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {
@@ -247,10 +248,14 @@ public static class SingleAgentOrchestrator
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
-
-
-        var conversationHistory = new List<ChatMessage>();
-
+        
+        var conversationHistory = resumedSession.HasValue
+            ? Common.ExtractMessagesFromSession(resumedSession.Value)
+            : new List<ChatMessage>();
+        
+        if (resumedSession.HasValue)
+            MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
+        
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
@@ -288,6 +293,7 @@ public static class SingleAgentOrchestrator
             return compactionClient;
         }
 
+        pendingCompaction = false;
         async Task<bool> TryCompactAsync()
         {
             var cc = ResolveCompactionClient();
@@ -310,16 +316,16 @@ public static class SingleAgentOrchestrator
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
 
-                conversationHistory.Add(new ChatMessage(ChatRole.User,
-                    "[CONTEXT SUMMARY — prior conversation compacted]\n\n" + compactedMsg.Text));
+                conversationHistory.Add(new ChatMessage(ChatRole.User, compactedMsg.Text));
 
                 conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
                     "Context restored. Ready to continue."));
             });
-
+            
+            pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
-            return true;
+            return pendingCompaction;
         }
 
         //Offer option to compact
@@ -392,8 +398,18 @@ public static class SingleAgentOrchestrator
 
                         var calledTools = new List<string>();
 
-                        using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), turnCts.Token);
-
+                        using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
+                        
+                        if (pendingCompaction)
+                        {
+                            messages.InsertRange(0, new[]
+                            {
+                                conversationHistory[0],  // already has the header
+                                conversationHistory[1]   // Context restored. Ready to continue.
+                            });
+                            pendingCompaction = false;
+                        }
+                        
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {

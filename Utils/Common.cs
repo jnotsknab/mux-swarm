@@ -60,6 +60,45 @@ public static class Common
 
         return new List<AgentDefinition>();
     }
+    
+    public static List<ChatMessage> ExtractMessagesFromSession(JsonElement serializedSession)
+    {
+        var messages = new List<ChatMessage>();
+        
+        if (serializedSession.TryGetProperty("chatHistoryProviderState", out var storeState)
+            && storeState.TryGetProperty("messages", out var msgArray)
+            && msgArray.ValueKind == JsonValueKind.Array)
+        {   
+            
+            foreach (var msg in msgArray.EnumerateArray())
+            {
+                var role = msg.TryGetProperty("role", out var r) ? r.GetString() : null;
+                if (role == null) continue;
+
+                var text = "";
+                if (msg.TryGetProperty("contents", out var contents)
+                    && contents.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var c in contents.EnumerateArray())
+                    {
+                        if (c.TryGetProperty("$type", out var t) && t.GetString() == "text"
+                                                                 && c.TryGetProperty("text", out var txt))
+                        {
+                            text += txt.GetString();
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var chatRole = role == "assistant" ? ChatRole.Assistant : ChatRole.User;
+                    messages.Add(new ChatMessage(chatRole, text));
+                }
+            }
+        }
+
+        return messages;
+    }
 
     public static List<AgentDefinition> ParseAgentDefinitions(SwarmConfig config)
     {

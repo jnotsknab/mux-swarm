@@ -134,6 +134,11 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
+        
+        //Load and populate exec limits from swarm cfg
+        FetchSetExecLimits();
+        
+        
         MuxConsole.WriteSplashScreen(version: "0.6.0");
 
         if (!Config.SetupCompleted)
