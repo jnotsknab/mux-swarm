@@ -12,7 +12,7 @@ public class OrchestratorConfig
 
     [JsonPropertyName("model")]
     public string? Model { get; set; }
-    
+
     [JsonPropertyName("modelOpts")]
     public ModelOpts? ModelOpts { get; set; }
 

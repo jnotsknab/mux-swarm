@@ -57,36 +57,44 @@ public static class CliCmdUtils
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
     }
-    
+
     public static void ShowExecutionLimits()
     {
         var l = ExecutionLimits.Current;
         var lines = string.Join("\n",
-            $"  Progress Entry Budget:        {l.ProgressEntryBudget:N0} chars",
-            $"  Cross-Agent Context Budget:   {l.CrossAgentContextBudget:N0} chars",
-            $"  Progress Log Total Budget:    {l.ProgressLogTotalBudget:N0} chars",
-            $"  Max Orchestrator Iterations:  {l.MaxOrchestratorIterations}",
-            $"  Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
-            $"  Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
-            $"  Max Stuck Count:              {l.MaxStuckCount}"
+            "  Swarm / Parallel Swarm",
+            $"    Progress Entry Budget:        {l.ProgressEntryBudget:N0} chars",
+            $"    Cross-Agent Context Budget:   {l.CrossAgentContextBudget:N0} chars",
+            $"    Progress Log Total Budget:    {l.ProgressLogTotalBudget:N0} chars",
+            $"    Max Orchestrator Iterations:  {l.MaxOrchestratorIterations}",
+            $"    Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
+            $"    Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
+            "",
+            "  Single Agent",
+            $"    Compaction Char Budget:       {l.CompactionCharBudget:N0} chars",
+            $"    Compaction Max Message Chars: {l.CompactionMaxMessageChars:N0} chars",
+            "",
+            "  All Modes",
+            $"    Max Stuck Count:              {l.MaxStuckCount}",
+            $"    Activity Timeout:             {l.ActivityTimeoutSeconds}s"
         );
         MuxConsole.WritePanel("Execution Limits", lines);
     }
 
     public static void HandleSetMultiLineDelimiter(string? delim)
-    {   
+    {
         if (string.IsNullOrEmpty(delim))
         {
             MuxConsole.WriteWarning("Cannot set delimiter, invalid.");
             return;
         }
-    
+
         MuxConsole.MultiLineDelimiter = delim;
         MuxConsole.UsingDelimiter = true;
         MuxConsole.WriteSuccess($"Multi-Line Delimiter set to: {delim}");
         MuxConsole.WriteMuted($"Paste your content, then type {delim} on its own line to send.");
     }
-    
+
     public static void HandleMultiDelimiterToggle()
     {
         MuxConsole.UsingDelimiter = !MuxConsole.UsingDelimiter;
@@ -96,7 +104,7 @@ public static class CliCmdUtils
             ? $"Paste your content, then type {MuxConsole.MultiLineDelimiter} on its own line to send."
             : "Standard single-line input restored.");
     }
-    
+
 
     /// <summary>
     /// Updates the single agent configuration by allowing the user to select from available agent definitions.
@@ -127,7 +135,7 @@ public static class CliCmdUtils
     {
         var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
         var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
-    
+
         var allDefs = defaultDef != null
             ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
             : agentDefs;
@@ -213,7 +221,7 @@ public static class CliCmdUtils
         }
 
         var selected = slots[selectedIndex];
-        
+
         MuxConsole.WriteBody("Provide a valid model ID for your configured provider. Examples by provider:");
         MuxConsole.WriteMuted("  OpenRouter:  openai/gpt-5.1-codex-max, google/gemini-2.5-pro-preview, anthropic/claude-sonnet-4.6, meta-llama/llama-4-maverick");
         MuxConsole.WriteMuted("  OpenAI:      gpt-5.1, gpt-4o, gpt-4o-mini");
@@ -236,7 +244,7 @@ public static class CliCmdUtils
 
         MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
     }
-    
+
     public static void HandleProviderSwap()
     {
         var config = LoadConfig(PlatformContext.ConfigPath);
@@ -295,7 +303,7 @@ public static class CliCmdUtils
     public static void HandleInteractiveWorkflow()
     {
         string pathToLoad = MuxConsole.Prompt("Enter the path to your workflow file: ");
-        
+
         if (string.IsNullOrEmpty(pathToLoad))
         {
             MuxConsole.WriteWarning("No workflow file path provided.");
@@ -309,13 +317,13 @@ public static class CliCmdUtils
             MuxConsole.WriteWarning("The workflow you provided is invalid!");
             return;
         }
-        
+
         MuxConsole.WriteSuccess($"Loaded {workflow.Name} ({workflow.Steps.Count} steps) - Running workflow in 3 seconds...");
         Thread.Sleep(TimeSpan.FromSeconds(3));
         WorkflowHelper.RunWorkflow(workflow);
-        
+
     }
-    
+
     public static (JsonElement data, string sessionDir)? HandleSessionResume()
     {
         string sessionsDir = PlatformContext.SessionsDirectory;
@@ -420,7 +428,7 @@ public static class CliCmdUtils
 
         MuxConsole.WritePanel("Mux-Swarm Status", lines);
     }
-    
+
     public static void ShowLoadedSkills()
     {
         var skills = SkillLoader.GetSkillMetadata();

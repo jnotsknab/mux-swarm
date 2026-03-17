@@ -9,7 +9,7 @@ public static class PreambleBuilder
     public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false)
     {
         var preamble = "";
-        
+
         var userInfo = App.Config.UserInfo;
         if (!string.IsNullOrWhiteSpace(userInfo.Name))
         {
@@ -21,7 +21,7 @@ public static class PreambleBuilder
             preamble += "\n\n";
         }
 
-        
+
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
         if (hasSkills && isUsingDockerForExec)
         {

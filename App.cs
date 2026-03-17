@@ -44,13 +44,6 @@ public class App
         "  /status         View current system status: provider, models, tools, skills, and sessions",
         "  /exit           Exit Mux-Swarm",
         "",
-        "Model Tuning (swarm.json)",
-        "  Any agent, orchestrator, singleAgent, or compactionAgent supports an optional modelOpts block:",
-        "    \"modelOpts\": { \"temperature\": 0.7, \"topP\": 0.9, \"topK\": 40,",
-        "                    \"maxOutputTokens\": 4096, \"frequencyPenalty\": 0.0,",
-        "                    \"presencePenalty\": 0.0, \"seed\": 42 }",
-        "  All fields are optional. Omitted values use provider defaults.",
-        "",
         "CLI Usage",
         "  mux-swarm \"<goal>\"",
         "  mux-swarm <goal.txt>",
@@ -82,12 +75,12 @@ public class App
         "  --session-retention <n>    Keep last N sessions (default 10)",
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
-        "  --watchdog [true|false]    External watchdog toggle",
-        "  --mcp-strict [true|false]  Require all MCPs (default true)",
-        "  --docker-exec [true|false] Route exec via docker skills",
+        "  --watchdog <true|false>    External watchdog toggle",
+        "  --mcp-strict <true|false>  Require all MCPs (default true)",
+        "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
         "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
-        "  --report [session-id]      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
+        "  --report <session-id>      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
 
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     private static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -100,11 +93,11 @@ public class App
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
-    
+
     public static AppConfig Config = new();
     public static ProviderConfig? ActiveProvider;
-    
-    
+
+
     private static CancellationTokenSource GetOrResetCts()
     {
         lock (CtsLock)
@@ -121,7 +114,7 @@ public class App
     public App()
     {
         _ = ProcessCleanup.Instance;
-        
+
         //Ensure processes mux spawns are killed
         Console.CancelKeyPress += (_, e) =>
         {
@@ -130,7 +123,7 @@ public class App
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
         };
-        
+
         AppDomain.CurrentDomain.ProcessExit += (_, e) =>
         {
             ProcessCleanup.Instance.Shutdown();
@@ -141,6 +134,11 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
+        
+        //Load and populate exec limits from swarm cfg
+        FetchSetExecLimits();
+        
+        
         MuxConsole.WriteSplashScreen(version: "0.6.0");
 
         if (!Config.SetupCompleted)
@@ -155,8 +153,10 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
-
-
+        
+        InitLlmProvider();
+        SkillLoader.LoadSkills();
+        
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
         {
@@ -166,10 +166,11 @@ public class App
 
             Environment.Exit(1);
         }
-
+        
         MuxConsole.WriteSuccess(_mcpStrictMode
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
+        
     }
 
     public async Task<int> Run(string[] args)
@@ -188,10 +189,10 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-        
+
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
-        
+
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -239,7 +240,7 @@ public class App
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
-            
+
             if (userInput.Trim() == "__CANCEL__")
             {
                 lock (CtsLock)
@@ -252,11 +253,11 @@ public class App
                 }
                 continue;
             }
-            
+
             switch (userInput)
             {
                 case "/help":
-                    PrintHelp();
+                    MuxConsole.PrintHelp(HelpText);
                     break;
 
                 case "/exit":
@@ -276,11 +277,6 @@ public class App
                     var maModels = LoadAgentModels();
                     var maCts = GetOrResetCts();
 
-                    MuxConsole.WriteLine();
-                    MuxConsole.WriteBody("Model assignments:");
-                    foreach (var kvp in maModels)
-                        MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
-
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -293,11 +289,6 @@ public class App
                     Config = LoadConfig(ConfigPath);
                     var pModels = LoadAgentModels();
                     var pCts = GetOrResetCts();
-
-                    MuxConsole.WriteLine();
-                    MuxConsole.WriteBody("Model assignments (parallel):");
-                    foreach (var kvp in pModels)
-                        MuxConsole.WriteInfo($"{kvp.Key} -> {kvp.Value}");
 
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -337,7 +328,7 @@ public class App
                         persistSession: false
                     );
                     break;
-                
+
                 case "/workflow":
                     CliCmdUtils.HandleInteractiveWorkflow();
                     break;
@@ -361,7 +352,7 @@ public class App
                         );
                     }
                     break;
-                
+
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
@@ -391,7 +382,7 @@ public class App
                 case "/clear":
                     Console.Clear();
                     break;
-                
+
                 case "/status":
                     CliCmdUtils.HandleStatus(_mcpTools, LoadAgentModels());
                     break;
@@ -422,7 +413,8 @@ public class App
                         if (!_cts.IsCancellationRequested)
                         {
                             _cts.Cancel();
-                            MuxConsole.WriteInfo("Stopping current session...");                        }
+                            MuxConsole.WriteInfo("Stopping current session...");
+                        }
                         else
                         {
                             MuxConsole.WriteMuted("No active session to stop.");
@@ -451,7 +443,7 @@ public class App
                     var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
                     break;
-                
+
                 case "/sessions":
                     CliCmdUtils.ListSessions();
                     break;
@@ -466,17 +458,6 @@ public class App
         }
 
         return Environment.ExitCode;
-    }
-
-    private static void PrintHelp()
-    {
-        if (MuxConsole.StdioMode)
-        {
-            MuxConsole.WriteBody(HelpText);
-            return;
-        }
-
-        MuxConsole.WritePanel("Hi There :)", HelpText);
     }
 
     private Dictionary<string, string> LoadAgentModels()
@@ -506,7 +487,7 @@ public class App
 
         if (!agentModels.ContainsKey("Orchestrator"))
             agentModels["Orchestrator"] = "x-ai/grok-4.1-fast";
-        
+
         return agentModels;
     }
 
@@ -594,7 +575,7 @@ public class App
             {
                 case "--help":
                 case "-h":
-                    PrintHelp();
+                    MuxConsole.PrintHelp(HelpText);
                     Environment.Exit(0);
                     break;
 
@@ -690,31 +671,31 @@ public class App
                         break;
                     }
                 case "--provider":
-                {
-                    var v = NextValue(args, ref i);
-                    if (v != null && !v.StartsWith("-"))
                     {
-                        var config = LoadConfig(configPath: ConfigPath);
-                        var match = config.LlmProviders.FirstOrDefault(p =>
-                            p.Name.Equals(v, StringComparison.OrdinalIgnoreCase));
-
-                        if (match != null)
+                        var v = NextValue(args, ref i);
+                        if (v != null && !v.StartsWith("-"))
                         {
-                            ActiveProvider = match;
-                            MuxConsole.WriteSuccess($"Provider set to: {match.Name}");
+                            var config = LoadConfig(configPath: ConfigPath);
+                            var match = config.LlmProviders.FirstOrDefault(p =>
+                                p.Name.Equals(v, StringComparison.OrdinalIgnoreCase));
+
+                            if (match != null)
+                            {
+                                ActiveProvider = match;
+                                MuxConsole.WriteSuccess($"Provider set to: {match.Name}");
+                            }
+                            else
+                            {
+                                MuxConsole.WriteWarning($"No provider found matching: {v}");
+                            }
                         }
                         else
                         {
-                            MuxConsole.WriteWarning($"No provider found matching: {v}");
+                            if (v != null) i--;
+                            MuxConsole.WriteWarning("--provider requires a name (e.g. --provider ollama)");
                         }
+                        break;
                     }
-                    else
-                    {
-                        if (v != null) i--;
-                        MuxConsole.WriteWarning("--provider requires a name (e.g. --provider ollama)");
-                    }
-                    break;
-                }
                 case "--cfg":
                 case "--swarmcfg":
                     NextValue(args, ref i); //handled in program bootstrap
@@ -986,10 +967,10 @@ public class App
     }
 
     private static void InitLlmProvider()
-    {   
+    {
         if (ActiveProvider != null)
             return;
-        
+
         var config = LoadConfig(configPath: ConfigPath);
 
         var provider = config.LlmProviders.FirstOrDefault(p => p.Enabled);
@@ -1034,7 +1015,7 @@ public class App
                 }
             }
 
-            MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
+            // MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
         }
 
         var rawEndpoint = provider.Endpoint ?? "";
@@ -1087,9 +1068,9 @@ public class App
     {
         if (ActiveProvider == null)
             InitLlmProvider();
-        
+
         var provider = ActiveProvider ?? LoadConfig(configPath: ConfigPath).LlmProviders.FirstOrDefault(p => p.Enabled);
-        
+
         var apiKey = !string.IsNullOrWhiteSpace(provider?.ApiKeyEnvVar)
             ? Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar) ?? "no-key"
             : "no-key";
@@ -1111,8 +1092,8 @@ public class App
             .UseFunctionInvocation()
             .Build();
     }
-    
-    
+
+
 
     private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
     {
@@ -1186,7 +1167,7 @@ public class App
             );
         return Environment.ExitCode;
     }
-    
+
     private void DisableTools()
     {
         MuxConsole.WriteBody("Enter the index or range of tools to disable (e.g. 1-10):");

@@ -50,19 +50,19 @@ public static class SkillLoader
         var skillsRoot = Path.GetDirectoryName(PlatformContext.SkillsDirectory);
         if (skillsRoot == null || !Directory.Exists(skillsRoot))
         {
-            MuxConsole.WriteWarning("[SKILLS] No skills directory found — skipping");
+            MuxConsole.WriteWarning("No skills directory found — skipping");
             return;
         }
 
         var bundledDir = Path.Combine(skillsRoot, "bundled");
         var bundledDockerDir = Path.Combine(skillsRoot, "bundled-docker");
-        
+
         var selectedBundledDir = App.Config.IsUsingDockerForExec ? bundledDockerDir : bundledDir;
 
         if (App.Config.IsUsingDockerForExec)
-            MuxConsole.WriteInfo("[SKILLS] Docker detected — using bundled-docker skills");
+            MuxConsole.WriteInfo("Docker Execution enabled, loading bundled-docker skills");
         else
-            MuxConsole.WriteInfo("[SKILLS] Docker not detected — using bundled skills");
+            MuxConsole.WriteInfo("Docker Execution not enabled, loading bundled skills");
 
         var skillDirs = new List<string>
         {
@@ -112,7 +112,7 @@ public static class SkillLoader
             }
         }
 
-        MuxConsole.WriteSuccess($"[SKILLS] Loaded {_allSkills.Count} skills from {skillDirs.Count(Directory.Exists)} directories");
+        MuxConsole.WriteSuccess($"Loaded {_allSkills.Count} skills from {skillDirs.Count(Directory.Exists)} directorie(s)");
     }
 
     /// <summary>

@@ -40,9 +40,10 @@ public static class Common
                 var config = JsonSerializer.Deserialize<SwarmConfig>(json);
 
                 if (config?.Agents != null && config.Agents.Count > 0)
-                {
-                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count} agents from swarm.json");
-                    return Common.ParseAgentDefinitions(config);
+                {   
+                    //HACK: compact agent is outside agents array we need to account for it too i.e. +1
+                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count + 1} agents from swarm.json");
+                    return ParseAgentDefinitions(config);
                 }
             }
             catch (Exception ex)
@@ -58,6 +59,45 @@ public static class Common
         }
 
         return new List<AgentDefinition>();
+    }
+    
+    public static List<ChatMessage> ExtractMessagesFromSession(JsonElement serializedSession)
+    {
+        var messages = new List<ChatMessage>();
+        
+        if (serializedSession.TryGetProperty("chatHistoryProviderState", out var storeState)
+            && storeState.TryGetProperty("messages", out var msgArray)
+            && msgArray.ValueKind == JsonValueKind.Array)
+        {   
+            
+            foreach (var msg in msgArray.EnumerateArray())
+            {
+                var role = msg.TryGetProperty("role", out var r) ? r.GetString() : null;
+                if (role == null) continue;
+
+                var text = "";
+                if (msg.TryGetProperty("contents", out var contents)
+                    && contents.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var c in contents.EnumerateArray())
+                    {
+                        if (c.TryGetProperty("$type", out var t) && t.GetString() == "text"
+                                                                 && c.TryGetProperty("text", out var txt))
+                        {
+                            text += txt.GetString();
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(text))
+                {
+                    var chatRole = role == "assistant" ? ChatRole.Assistant : ChatRole.User;
+                    messages.Add(new ChatMessage(chatRole, text));
+                }
+            }
+        }
+
+        return messages;
     }
 
     public static List<AgentDefinition> ParseAgentDefinitions(SwarmConfig config)
@@ -487,18 +527,14 @@ public static class Common
                     serialized.GetRawText());
             }
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"[AGENT SESSION] Saved to {sessionSubDir}");
-            Console.ResetColor();
+            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[AGENT SESSION] Save failed: {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[AGENT SESSION] Save failed: {ex.Message}");
         }
     }
-    
+
     public static string? FindSessionDirectory(string sessionTimestamp)
     {
         try
@@ -524,14 +560,14 @@ public static class Common
             return null;
         }
     }
-    
+
     public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp, string? existingSessionDir = null)
     {
         try
-        {   
+        {
             var sessionSubDir = Path.Combine(MultiAgentOrchestrator.SessionDir, sessionTimestamp);
             if (!string.IsNullOrEmpty(existingSessionDir)) sessionSubDir = existingSessionDir;
-            
+
             Directory.CreateDirectory(sessionSubDir);
 
             var serialized = agent.SerializeSession(session);
@@ -539,18 +575,14 @@ public static class Common
                 Path.Combine(sessionSubDir, "agent_session.json"),
                 serialized.GetRawText());
 
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"[AGENT SESSION] Saved to {sessionSubDir}");
-            Console.ResetColor();
+            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[Agent Session save failed: {ex.Message}]");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[AGENT SESSION] Save failed: {ex.Message}");
         }
     }
-    
+
     public static string GetFirstUserMessage(string sessionFile, int maxLength = 60)
     {
         try
@@ -586,7 +618,7 @@ public static class Common
     {
         return (int)Math.Ceiling(sessionData.ToString().Length / charsPerToken);
     }
-    
+
     public static int EstimateTokenCount(IReadOnlyList<ChatMessage> history, float charsPerToken = 2.5f)
     {
         int totalChars = 0;

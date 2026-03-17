@@ -15,7 +15,7 @@ Thank you for your interest in contributing to Mux-Swarm. This document covers e
 2. **Clone your fork** locally:
 
    ```bash
-   git clone https://github.com/<your-username>/mux-swarm.git
+   git clone https://github.com/jnotsknab/mux-swarm.git
    cd mux-swarm
    ```
 

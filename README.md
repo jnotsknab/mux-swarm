@@ -589,6 +589,15 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Up Next
 
+#### v0.7.0 — Event Hooks
+Shell command execution triggered at lifecycle points via `swarm.json` config. Hooks for `postTask`, `postAgent`, `postGoal`, and `onToolCall` enable custom notifications, logging, and integration with external systems.
+
+#### v0.7.0 — Daemon Mode
+Background execution with `--daemon` flag. Filesystem watchers, WebSocket listeners, and JSON rulesets for reactive automation. Triggers swarm execution on file changes, external events, or scheduled intervals.
+
+#### v0.8.0 — OpenTelemetry Tracing
+Native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
+
 Runtime reliability hardening for long-running workflows, parallel mode observability and per-task retry policies, expanded auditing and execution trace visibility, stronger isolation patterns, additional swarm configuration templates, and improved developer ergonomics around configuring and debugging swarms.
 
 ### Community

@@ -21,7 +21,7 @@ public static class ParallelSwarmOrchestrator
     private static readonly object _stateLock = new();
     private static bool _sessionDirty;
     private static uint _swarmTokens;
-    
+
     private record ParallelTaskRequest(
         [Description("Name of the agent to assign (e.g., CodeAgent, WebAgent)")] string AgentName,
         [Description("The specific sub-task or instruction for this agent")] string Task
@@ -177,11 +177,13 @@ public static class ParallelSwarmOrchestrator
         SwarmConfig? swarmConfig = null;
         try { swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath)); }
         catch { /* defaults */ }
-        
+
+        /*
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
-        
+        */
+
         string orchestratorPromptPath = GetOrchestratorPromptPath();
-        SkillLoader.LoadSkills();
+        // SkillLoader.LoadSkills();
 
         var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
         var delegationResults = new List<DelegationResult>();
@@ -189,7 +191,7 @@ public static class ParallelSwarmOrchestrator
         var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
         _sessionDirty = false;
 
-        
+
         IChatClient? compactionClient = null;
         try
         {
@@ -286,9 +288,9 @@ public static class ParallelSwarmOrchestrator
                 IList<AITool> filteredTools = def.ToolFilter(mcpTools);
 
                 if (filteredTools.Count == 0)
-                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter.");
+                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
                 else
-                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available");
+                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
@@ -324,10 +326,7 @@ public static class ParallelSwarmOrchestrator
                 var agentTools = def.CanDelegate
                     ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
                     : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
-
-                if (def.CanDelegate)
-                    MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");
-
+                
                 var agentChatOptions = new ChatOptions
                 {
                     Instructions = prompt,
@@ -580,10 +579,10 @@ public static class ParallelSwarmOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
-            
+
             //reset upon new goal
             _swarmTokens = 0;
-            
+
             currentIterationSessionDir = Path.Combine(PlatformContext.SessionsDirectory, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
 
             if (state != null)
@@ -597,7 +596,7 @@ public static class ParallelSwarmOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
-            
+
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
             bool wasInterrupted = false;
@@ -622,7 +621,7 @@ public static class ParallelSwarmOrchestrator
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
             finally
-            {   
+            {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener?.Dispose();
             }
@@ -862,7 +861,7 @@ public static class ParallelSwarmOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                     Console.Write("[[END_AGENT_TURN]]");
@@ -1147,7 +1146,7 @@ public static class ParallelSwarmOrchestrator
                     thinking = MuxConsole.BeginThinking(specialist.Def.Name);
                 }
 
-                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), cancellationToken);
+                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)

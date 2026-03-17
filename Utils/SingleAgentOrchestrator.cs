@@ -11,9 +11,10 @@ public static class SingleAgentOrchestrator
 
     public static Common.AgentDefinition? AgentDef = null;
     private static uint _sessionTokens;
+    private static bool pendingCompaction;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
-    {   
+    {
         if (AgentDef != null && !fromCfg) return AgentDef;
 
         var paths = new[]
@@ -43,19 +44,19 @@ public static class SingleAgentOrchestrator
         }
         return null;
     }
-    
+
 
     private static bool IsQuitCommand(string? input)
     {
         if (string.IsNullOrWhiteSpace(input))
             return true;
-    
+
         var trimmed = input.Trim();
-        
+
         return trimmed.Equals("/qc", StringComparison.OrdinalIgnoreCase)
             || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
-    
+
     private static ModelOpts? GetSingleAgentModelOpts()
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
@@ -69,7 +70,7 @@ public static class SingleAgentOrchestrator
         }
         catch { return null; }
     }
-    
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -90,9 +91,9 @@ public static class SingleAgentOrchestrator
         string? resumedSessionDir = null)
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
-        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Escape] to cancel the current turn.");
+        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
 
-        SkillLoader.LoadSkills();
+        // SkillLoader.LoadSkills();
         var singleAgentDef = GetCurrSingleAgentDef();
 
         if (singleAgentDef != null && singleAgentDef.CanDelegate)
@@ -119,9 +120,9 @@ public static class SingleAgentOrchestrator
         IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
 
         if (filteredTools.Count == 0)
-            MuxConsole.WriteWarning($"[AGENT] Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
+            MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
         else
-            MuxConsole.WriteSuccess($"[AGENT] {filteredTools.Count} tools available");
+            MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         MuxConsole.WriteLine();
         MuxConsole.WriteRule();
@@ -155,14 +156,14 @@ public static class SingleAgentOrchestrator
         }
 
         var systemPrompt = await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath);
-        
+
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
             App.Config.IsUsingDockerForExec,
             continuous);
 
         systemPrompt = preamble + "\n\n" + systemPrompt;
-      
+
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
             {
@@ -237,24 +238,28 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteError($"[AGENT] Failed to initialize {singleAgentDef.Name}. Verify your configuration and API credentials.");
             return;
         }
-        
+
         string currentGoal = initialGoal;
-        
+
         var sessionTimestamp = resumedSessionDir != null
             ? Path.GetFileName(resumedSessionDir)
             : DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-        
+
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
         
+        var conversationHistory = resumedSession.HasValue
+            ? Common.ExtractMessagesFromSession(resumedSession.Value)
+            : new List<ChatMessage>();
         
-        var conversationHistory = new List<ChatMessage>();
+        if (resumedSession.HasValue)
+            MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
         
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
-        
+
         IChatClient? ResolveCompactionClient()
         {
             if (compactionResolved) return compactionClient;
@@ -274,7 +279,7 @@ public static class SingleAgentOrchestrator
 
                     if (swarmConfig.CompactionAgent.AutoCompactTokenThreshold > 0)
                         autoCompactTokenThreshold = swarmConfig.CompactionAgent.AutoCompactTokenThreshold;
-                    
+
                     compactionChatOptions = swarmConfig.CompactionAgent.ModelOpts?.ToChatOptions();
                 }
 
@@ -288,6 +293,7 @@ public static class SingleAgentOrchestrator
             return compactionClient;
         }
 
+        pendingCompaction = false;
         async Task<bool> TryCompactAsync()
         {
             var cc = ResolveCompactionClient();
@@ -297,37 +303,31 @@ public static class SingleAgentOrchestrator
                 return false;
             }
 
-            uint beforeTokens = _sessionTokens > 0 
-                ? _sessionTokens 
+            uint beforeTokens = _sessionTokens > 0
+                ? _sessionTokens
                 : (uint)Common.EstimateTokenCount(conversationHistory);
-            ChatMessage? compactedMsg;
+            ChatMessage? compactedMsg = null;
 
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
                     conversationHistory, cc, chatOptions: compactionChatOptions);
 
-                compactedMsg = new ChatMessage(ChatRole.User,
-                    "[SYSTEM: Context restoration. DO NOT RESPOND to this message.]\n\n" + compactedMsg.Text);
-
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
-                conversationHistory.Add(compactedMsg);
 
-                await foreach (var update in agent.RunStreamingAsync([compactedMsg], session))
-                {
-                    foreach (var content in update.Contents)
-                    {
-                        if (content is UsageContent usageContent)
-                            _sessionTokens = (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                    }
-                }
+                conversationHistory.Add(new ChatMessage(ChatRole.User, compactedMsg.Text));
+
+                conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
+                    "Context restored. Ready to continue."));
             });
-
+            
+            pendingCompaction = true;
+            _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
-            return true;
+            return pendingCompaction;
         }
-        
+
         //Offer option to compact
         if (resumedSession.HasValue)
         {
@@ -341,12 +341,12 @@ public static class SingleAgentOrchestrator
                     await TryCompactAsync();
             }
         }
-        
+
         var lastPersistTime = DateTime.UtcNow;
         (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
         {
-            
+
             cancellationToken.ThrowIfCancellationRequested();
 
             if (_sessionTokens > autoCompactTokenThreshold)
@@ -354,7 +354,7 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInfo($"Context approaching limit (~{_sessionTokens:N0} tokens). Auto-compacting...");
                 await TryCompactAsync();
             }
-            
+
             List<ChatMessage> messages;
             if (lastInterruptedContext is { } ctx)
             {
@@ -398,8 +398,18 @@ public static class SingleAgentOrchestrator
 
                         var calledTools = new List<string>();
 
-                        using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), turnCts.Token);
-
+                        using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
+                        
+                        if (pendingCompaction)
+                        {
+                            messages.InsertRange(0, new[]
+                            {
+                                conversationHistory[0],  // already has the header
+                                conversationHistory[1]   // Context restored. Ready to continue.
+                            });
+                            pendingCompaction = false;
+                        }
+                        
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
@@ -460,7 +470,7 @@ public static class SingleAgentOrchestrator
                         {
                             try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                         }
-                        
+
                         StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
                     }
@@ -508,7 +518,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 MuxConsole.WriteLine();
-                MuxConsole.WriteWarning("Turn cancelled by user (Escape key pressed).");
+                MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
             }
             catch (Exception ex)
             {
@@ -536,11 +546,11 @@ public static class SingleAgentOrchestrator
             }
 
             MuxConsole.WriteMuted($"{_sessionTokens:N0} tokens in context");
-            
+
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)
                 break;
-            
+
             if (continuous)
             {
                 if (minDelaySeconds > 0)

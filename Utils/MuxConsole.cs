@@ -95,7 +95,7 @@ public static class MuxConsole
             write();
         }
     }
-
+    
     private static void StopActiveIndicator_NoLock()
     {
         if (_activeIndicator is null) return;
@@ -112,21 +112,21 @@ public static class MuxConsole
 
         ind.CancelNoWait();
     }
-    
+
     public static string? ReadInput(CancellationToken ct = default)
-    {   
+    {
         if (InputOverride != Console.In)
         {
             var line = InputOverride.ReadLine();
             if (line == null)
-            {   
+            {
                 //exhausted workflow return to keyboard input
                 InputOverride = Console.In;
                 return Console.ReadLine();
             }
             return line;
         }
-        
+
         if (UsingDelimiter && MultiLineDelimiter is not null)
         {
             var sb = new StringBuilder();
@@ -231,7 +231,7 @@ public static class MuxConsole
 
                 // swap in whatever mascot you landed on
                 string[] bot =
-                {   
+                {
                     @"   █     █ ",
                     @" ▄█████████▄ ",
                     @" █   ◠ ◠   █ ",
@@ -279,7 +279,7 @@ public static class MuxConsole
                 right.AppendLine($"[{C.Step}]Quick Tips[/]");
                 right.AppendLine($"  [{C.Muted}]/qc or /qm to exit an active session[/]");
                 right.Append($"  [{C.Muted}]/status to view current config[/]");
-                
+
                 var rightFar = new StringBuilder();
                 rightFar.AppendLine($"[{C.Step}]Recent Sessions[/]");
                 rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
@@ -337,7 +337,7 @@ public static class MuxConsole
                 rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
                 rightFar.AppendLine($"  [{C.Muted}]/resume to continue a session[/]");
                 rightFar.Append($"  [{C.Muted}]/sessions to view session info[/]");
-                
+
                 var grid = new Grid();
                 grid.AddColumn(new GridColumn().NoWrap().PadRight(4));
                 grid.AddColumn(new GridColumn().Width(1).NoWrap());
@@ -366,7 +366,7 @@ public static class MuxConsole
             AnsiConsole.WriteLine();
         });
     }
-    
+
 
     public static void WriteBanner(string title = "MUX-SWARM SETUP")
     {
@@ -632,13 +632,13 @@ public static class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
-        
+
         if (InputOverride != Console.In)
         {
             string input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
             return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
         }
-        
+
         if (UsingDelimiter && MultiLineDelimiter is not null)
         {
             if (StdioMode)
@@ -654,7 +654,7 @@ public static class MuxConsole
             var result = sb.ToString().Trim();
             return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
         }
-        
+
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));
@@ -952,5 +952,114 @@ public static class MuxConsole
             Console.WriteLine();
             try { Console.Out.Flush(); } catch { /* ignore */ }
         });
+    }
+    
+    public static void PrintHelp(string helpText)
+    {
+        if (StdioMode)
+        {
+            WriteBody(helpText);
+            return;
+        }
+
+        if (AnsiConsole.Profile.Width < 140)
+        {
+            WritePanel("Mux-Swarm — Command Reference", helpText);
+            return;
+        }
+
+        var commands = new StringBuilder();
+        commands.AppendLine($"[{C.Step}]Modes[/]");
+        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+        commands.AppendLine($"  [{C.Prompt}]/swarm[/]         [{C.Muted}]Multi-agent orchestrated loop[/]");
+        commands.AppendLine($"  [{C.Prompt}]/pswarm[/]        [{C.Muted}]Parallel concurrent dispatch[/]");
+        commands.AppendLine($"  [{C.Prompt}]/agent[/]         [{C.Muted}]Single-agent conversation[/]");
+        commands.AppendLine($"  [{C.Prompt}]/stateless[/]     [{C.Muted}]One-off stateless task[/]");
+        commands.AppendLine($"  [{C.Prompt}]/workflow[/]      [{C.Muted}]Run a workflow file[/]");
+        commands.AppendLine($"  [{C.Prompt}]/resume[/]        [{C.Muted}]Resume a previous session[/]");
+        commands.AppendLine();
+        commands.AppendLine($"[{C.Step}]Session[/]");
+        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+        commands.AppendLine($"  [{C.Prompt}]/compact[/]       [{C.Muted}]Compress context (single agent)[/]");
+        commands.AppendLine($"  [{C.Prompt}]/sessions[/]      [{C.Muted}]List saved sessions[/]");
+        commands.AppendLine($"  [{C.Prompt}]/report[/]        [{C.Muted}]Generate session audit report[/]");
+        commands.AppendLine($"  [{C.Prompt}]/report <id>[/]   [{C.Muted}]Audit a specific session[/]");
+        commands.AppendLine($"  [{C.Prompt}]/clear[/]         [{C.Muted}]Clear screen[/]");
+        commands.AppendLine($"  [{C.Prompt}]/qc[/] [{C.Muted}]/[/] [{C.Prompt}]/qm[/]      [{C.Muted}]Exit active session[/]");
+        commands.Append($"  [{C.Prompt}]/exit[/]          [{C.Muted}]Exit Mux-Swarm[/]");
+
+        var config = new StringBuilder();
+        config.AppendLine($"[{C.Step}]Configuration[/]");
+        config.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+        config.AppendLine($"  [{C.Prompt}]/model[/]         [{C.Muted}]View current models[/]");
+        config.AppendLine($"  [{C.Prompt}]/setmodel[/]      [{C.Muted}]Change agent/orchestrator model[/]");
+        config.AppendLine($"  [{C.Prompt}]/swap[/]          [{C.Muted}]Swap active single agent[/]");
+        config.AppendLine($"  [{C.Prompt}]/provider[/]      [{C.Muted}]View or switch LLM provider[/]");
+        config.AppendLine($"  [{C.Prompt}]/limits[/]        [{C.Muted}]View execution limits[/]");
+        config.AppendLine($"  [{C.Prompt}]/tools[/]         [{C.Muted}]List MCP tools[/]");
+        config.AppendLine($"  [{C.Prompt}]/skills[/]        [{C.Muted}]List local skills[/]");
+        config.AppendLine($"  [{C.Prompt}]/memory[/]        [{C.Muted}]View knowledge graph[/]");
+        config.AppendLine($"  [{C.Prompt}]/status[/]        [{C.Muted}]Full system status[/]");
+        config.AppendLine($"  [{C.Prompt}]/setup[/]         [{C.Muted}]Reconfigure[/]");
+        config.AppendLine($"  [{C.Prompt}]/refresh[/]       [{C.Muted}]Reload config, MCPs, skills[/]");
+        config.AppendLine($"  [{C.Prompt}]/reloadskills[/]  [{C.Muted}]Refresh skills only[/]");
+        config.AppendLine($"  [{C.Prompt}]/dockerexec[/]    [{C.Muted}]Toggle Docker exec mode[/]");
+        config.AppendLine($"  [{C.Prompt}]/delimiter[/]     [{C.Muted}]Toggle multi-line input[/]");
+        config.AppendLine($"  [{C.Prompt}]/dbg[/]           [{C.Muted}]Enable tool call output (stdio)[/]");
+        config.Append($"  [{C.Prompt}]/nodbg[/]         [{C.Muted}]Disable tool call output (stdio)[/]");
+
+        var cli = new StringBuilder();
+        cli.AppendLine($"[{C.Step}]CLI Usage[/]");
+        cli.AppendLine($"[{C.Muted}]────────────────────────────────────────[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms \"<goal>\"[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms <goal.txt>[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms --goal \"<goal>\"[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms --goal <goal.txt>[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms --continuous --goal \"<goal>\"[/]");
+        cli.AppendLine($"  [{C.Prompt}]ms --parallel --goal \"<goal>\"[/]");
+        cli.AppendLine();
+        cli.AppendLine($"[{C.Step}]Flags[/]");
+        cli.AppendLine($"[{C.Muted}]────────────────────────────────────────[/]");
+        cli.AppendLine($"  [{C.Prompt}]--goal <text|file>[/]       [{C.Muted}]Explicit goal[/]");
+        cli.AppendLine($"  [{C.Prompt}]--continuous[/]             [{C.Muted}]Autonomous loop mode[/]");
+        cli.AppendLine($"  [{C.Prompt}]--parallel[/]               [{C.Muted}]Concurrent batch dispatch[/]");
+        cli.AppendLine($"  [{C.Prompt}]--max-parallelism <n>[/]    [{C.Muted}]Max concurrent tasks (default 4)[/]");
+        cli.AppendLine($"  [{C.Prompt}]--agent <name>[/]           [{C.Muted}]Single agent mode[/]");
+        cli.AppendLine($"  [{C.Prompt}]--workflow <file>[/]        [{C.Muted}]Run workflow file[/]");
+        cli.AppendLine($"  [{C.Prompt}]--provider <name>[/]        [{C.Muted}]Set LLM provider[/]");
+        cli.AppendLine($"  [{C.Prompt}]--goal-id <id>[/]           [{C.Muted}]Session identifier[/]");
+        cli.AppendLine($"  [{C.Prompt}]--min-delay <secs>[/]       [{C.Muted}]Loop delay (default 300)[/]");
+        cli.AppendLine($"  [{C.Prompt}]--persist-interval <s>[/]   [{C.Muted}]Save interval in seconds[/]");
+        cli.AppendLine($"  [{C.Prompt}]--session-retention <n>[/]  [{C.Muted}]Keep last N sessions[/]");
+        cli.AppendLine($"  [{C.Prompt}]--stdio[/]                  [{C.Muted}]Machine-readable NDJSON[/]");
+        cli.AppendLine($"  [{C.Prompt}]--delimiter <str>[/]        [{C.Muted}]Multi-line input delimiter[/]");
+        cli.AppendLine($"  [{C.Prompt}]--watchdog[/]               [{C.Muted}]External watchdog toggle[/]");
+        cli.AppendLine($"  [{C.Prompt}]--mcp-strict[/]             [{C.Muted}]Require all MCPs (default true)[/]");
+        cli.AppendLine($"  [{C.Prompt}]--docker-exec[/]            [{C.Muted}]Route exec via Docker[/]");
+        cli.AppendLine($"  [{C.Prompt}]--cfg <path>[/]             [{C.Muted}]Override config.json[/]");
+        cli.AppendLine($"  [{C.Prompt}]--swarmcfg <path>[/]        [{C.Muted}]Override swarm.json[/]");
+        cli.Append($"  [{C.Prompt}]--report [[id]][/]            [{C.Muted}]Generate report(s) and exit[/]");
+        var grid = new Grid();
+        grid.AddColumn(new GridColumn().PadRight(3));
+        grid.AddColumn(new GridColumn().Width(1).NoWrap());
+        grid.AddColumn(new GridColumn().PadLeft(3).PadRight(3));
+        grid.AddColumn(new GridColumn().Width(1).NoWrap());
+        grid.AddColumn(new GridColumn().PadLeft(3));
+        grid.AddRow(
+            new Markup(commands.ToString()),
+            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+            new Markup(config.ToString()),
+            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+            new Markup(cli.ToString())
+        );
+
+        var panel = new Panel(grid)
+            .Header($"[{C.Step}]Mux-Swarm — Command Reference[/]")
+            .Border(BoxBorder.Rounded)
+            .BorderStyle(new Style(Color.Grey35))
+            .Padding(1, 1)
+            .Expand();
+
+        AnsiConsole.Write(panel);
     }
 }

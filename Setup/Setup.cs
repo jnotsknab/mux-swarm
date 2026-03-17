@@ -69,6 +69,21 @@ public static class Setup
         return _appConfig;
     }
 
+    public static void FetchSetExecLimits()
+    {
+        try
+        {
+            if (File.Exists(PlatformContext.SwarmPath))
+            {
+                var swarmJson = File.ReadAllText(PlatformContext.SwarmPath);
+                var swarm = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
+                if (swarm?.ExecutionLimits != null)
+                    ExecutionLimits.Current = swarm.ExecutionLimits;
+            }
+        }
+        catch { /* defaults */ }
+    }
+
     /// <summary>
     /// Executes the interactive setup process for the Mux-Swarm application.
     /// </summary>
@@ -362,7 +377,7 @@ public static class Setup
 
         return true;
     }
-    
+
     private static bool StepCollectUserInfo()
     {
         MuxConsole.WriteStep(5, "User Profile (Optional)");
@@ -402,7 +417,7 @@ public static class Setup
         MuxConsole.WriteSuccess($"Profile set for {userInfo.Name}.");
         return true;
     }
-    
+
     private static bool StepCollectMcpSecrets()
     {
         MuxConsole.WriteStep(6, "MCP API Keys");

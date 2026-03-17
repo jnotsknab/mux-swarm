@@ -8,11 +8,11 @@ public static class WorkflowHelper
     public static Workflow Load(string path)
     {
         path = path.Trim('"', '\'', ' ');
-    
+
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<Workflow>(json, new JsonSerializerOptions 
-        { 
-            PropertyNameCaseInsensitive = true 
+        return JsonSerializer.Deserialize<Workflow>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
         }) ?? throw new InvalidOperationException($"Failed to parse workflow: {path}");
     }
 

@@ -21,7 +21,7 @@ public static class MultiAgentOrchestrator
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
-    
+
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
 
@@ -116,22 +116,24 @@ public static class MultiAgentOrchestrator
         CancellationToken cancellationToken = default)
     {
         var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
-        
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
-        
+
         SwarmConfig? swarmConfig = null;
         try
         {
             swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath));
         }
         catch {/*Defaults*/ }
-        
+
+        /*
         ExecutionLimits.Current = swarmConfig?.ExecutionLimits ?? new();
+        */
 
         string orchestratorPromptPath = GetOrchestratorPromptPath();
 
-        SkillLoader.LoadSkills();
+        // SkillLoader.LoadSkills();
 
         var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
 
@@ -169,9 +171,9 @@ public static class MultiAgentOrchestrator
             compactionClient = chatClientFactory(compactionModel);
         }
         catch { /* falls back to extractive only */ }
-        
+
         ChatOptions? compactionChatOptions = swarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
-        
+
         async Task<string> ExecuteDelegation(
             string agentName,
             string task,
@@ -320,13 +322,13 @@ public static class MultiAgentOrchestrator
                 IList<AITool> filteredTools = def.ToolFilter(mcpTools);
 
                 if (filteredTools.Count == 0)
-                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter.");
+                    MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
                 else
-                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available");
+                    MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
-                
+
                 var analyzeImageTool = LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, modelId);
 
                 var listSkillsTool = AIFunctionFactory.Create(
@@ -361,9 +363,6 @@ public static class MultiAgentOrchestrator
                 var agentTools = def.CanDelegate
                     ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
                     : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
-
-                if (def.CanDelegate)
-                    MuxConsole.WriteMuted($"{def.Name} has sub-agent delegation enabled");
 
                 var agentChatOptions = new ChatOptions
                 {
@@ -539,11 +538,11 @@ public static class MultiAgentOrchestrator
 
                 if (string.IsNullOrEmpty(input) || input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
                     input.Trim().Equals("/qc", StringComparison.OrdinalIgnoreCase))
-                {   
+                {
                     MuxConsole.WriteSuccess("Exited from Swarm interface successfully!");
                     break;
                 }
-                    
+
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
             }
@@ -564,10 +563,10 @@ public static class MultiAgentOrchestrator
             delegationResults.Clear();
             retryRegistry.Clear();
             _sessionDirty = false;
-            
+
             //reset upon new goal
             _swarmTokens = 0;
-            
+
             currentIterationSessionDir = Path.Combine(SessionDir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
             if (state != null)
             {
@@ -581,9 +580,9 @@ public static class MultiAgentOrchestrator
 
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
-            
+
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
-            
+
             bool wasInterrupted = false;
 
             try
@@ -624,7 +623,7 @@ public static class MultiAgentOrchestrator
                     {
                         await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, specialists, currentIterationSessionDir);
                     });
-                
+
                 MuxConsole.WriteMuted($"{_swarmTokens:N0} tokens used this goal");
                 _sessionDirty = false;
             }
@@ -938,7 +937,7 @@ public static class MultiAgentOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                 {
@@ -1131,7 +1130,7 @@ public static class MultiAgentOrchestrator
 
 
 
-                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromMinutes(3), cancellationToken);
+                using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
@@ -1140,12 +1139,12 @@ public static class MultiAgentOrchestrator
 
                     activityTimeout.Ping();
 
-                    // Process text first — if this update has text, we need streaming mode.
+                    // Process text first if this update has text, we need streaming mode.
                     if (!string.IsNullOrEmpty(update.Text))
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            // Transition: thinking → streaming
+                            // Transition: thinking -> streaming
                             MuxConsole.BeginStreaming();
                             currentlyStreaming = true;
                             startedStreaming = true;
