@@ -496,8 +496,10 @@ public static class Common
     public static bool TryNextUInt(string[] args, ref int i, out uint value)
     {
         value = 0;
-        var next = NextValue(args, ref i);
-        return next != null && uint.TryParse(next, out value);
+        if (i + 1 >= args.Length) return false;
+        if (!uint.TryParse(args[i + 1], out value)) return false;
+        i++;
+        return true;
     }
 
     public static async Task PersistSessionsAsync(

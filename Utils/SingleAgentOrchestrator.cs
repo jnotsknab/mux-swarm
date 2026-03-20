@@ -93,13 +93,13 @@ public static class SingleAgentOrchestrator
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
-
-        // SkillLoader.LoadSkills();
+        
         var singleAgentDef = GetCurrSingleAgentDef();
-
+        
         if (singleAgentDef != null && singleAgentDef.CanDelegate)
             MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities. Delegation is not supported in single-agent mode and will be disabled. All other capabilities remain unaffected.");
-
+        
+        
         var resolvedModelId = "";
         try
         {
@@ -110,7 +110,16 @@ public static class SingleAgentOrchestrator
                 ? swarm?.Agents?.FirstOrDefault(a =>
                     a.Name != null && a.Name.Equals(singleAgentDef.Name, StringComparison.OrdinalIgnoreCase))
                 : null;
-
+            
+            HookWorker.Enqueue(new HookEvent
+            {
+                Event = "session_start",
+                Agent = singleAgentDef?.Name,
+                Summary = persistSession ? "agent" : "stateless",
+                Text = incomingGoal,
+                Timestamp = DateTimeOffset.UtcNow
+            });
+            
             resolvedModelId = match?.Model
                               ?? swarm?.SingleAgent?.Model
                               ?? "";
@@ -149,6 +158,14 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
             return;
         }
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "user_input",
+            Agent = singleAgentDef?.Name,
+            Text = initialGoal,
+            Timestamp = DateTimeOffset.UtcNow
+        });
 
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
@@ -499,6 +516,14 @@ public static class SingleAgentOrchestrator
 
                         StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
+                        
+                        HookWorker.Enqueue(new HookEvent
+                        {
+                            Event = "turn_end",
+                            Agent = singleAgentDef.Name,
+                            Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
+                            Timestamp = DateTimeOffset.UtcNow
+                        });
                     }
 
                     MuxConsole.WriteAgentTurnFooter();
@@ -622,10 +647,26 @@ public static class SingleAgentOrchestrator
             }
 
             currentGoal = nextInput!;
+            
+            HookWorker.Enqueue(new HookEvent
+            {
+                Event = "user_input",
+                Agent = singleAgentDef.Name,
+                Text = currentGoal,
+                Timestamp = DateTimeOffset.UtcNow
+            });
 
         } while (!Environment.HasShutdownStarted);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_end",
+            Agent = singleAgentDef.Name,
+            Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
+            Timestamp = DateTimeOffset.UtcNow
+        });
     }
 }

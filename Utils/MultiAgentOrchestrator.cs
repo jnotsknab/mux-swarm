@@ -163,6 +163,15 @@ public static class MultiAgentOrchestrator
         var delegationResults = new List<DelegationResult>();
         var retryRegistry = new Dictionary<string, RetryState>();
         _sessionDirty = false;
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_start",
+            Agent = "Orchestrator",
+            Summary = "swarm",
+            Text = incomingGoal,
+            Timestamp = DateTimeOffset.UtcNow
+        });
 
         IChatClient? compactionClient = null;
         try
@@ -547,6 +556,14 @@ public static class MultiAgentOrchestrator
 
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "user_input",
+                    Agent = "Orchestrator",
+                    Text = goal,
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             // Fresh sessions per iteration
@@ -662,7 +679,7 @@ public static class MultiAgentOrchestrator
             }
         }
 
-        // ── Graceful shutdown ─────────────────────────────────────────────
+        // Graceful shutdown
         if (continuous && state != null)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -670,6 +687,14 @@ public static class MultiAgentOrchestrator
             else
                 ContinuousStateManager.Clear(goalId!, SessionDir);
         }
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_end",
+            Agent = "Orchestrator",
+            Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
+            Timestamp = DateTimeOffset.UtcNow
+        });
     }
 
 
@@ -888,6 +913,14 @@ public static class MultiAgentOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         responseText.Append(update.Text);
+                        
+                        HookWorker.Enqueue(new HookEvent
+                        {
+                            Event = "text_chunk",
+                            Agent = "Orchestrator",
+                            Text = update.Text,
+                            Timestamp = DateTimeOffset.UtcNow
+                        });
                     }
 
                     foreach (var content in update.Contents)
@@ -955,7 +988,7 @@ public static class MultiAgentOrchestrator
                     }
                 }
 
-            streamComplete:;
+                streamComplete:;
 
                 if (prodMode)
                 {
@@ -983,6 +1016,14 @@ public static class MultiAgentOrchestrator
                 }
 
                 thinking?.Dispose();
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "turn_end",
+                    Agent = "Orchestrator",
+                    Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             MuxConsole.WriteLine();
@@ -1170,6 +1211,14 @@ public static class MultiAgentOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         iterResponse.Append(update.Text);
+                        
+                        HookWorker.Enqueue(new HookEvent
+                        {
+                            Event = "text_chunk",
+                            Agent = specialist.Def.Name,
+                            Text = update.Text,
+                            Timestamp = DateTimeOffset.UtcNow
+                        });
                     }
 
                     foreach (var content in update.Contents)
@@ -1270,6 +1319,14 @@ public static class MultiAgentOrchestrator
                 }
 
                 thinking?.Dispose();
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "turn_end",
+                    Agent = specialist.Def.Name,
+                    Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             MuxConsole.WriteLine();
