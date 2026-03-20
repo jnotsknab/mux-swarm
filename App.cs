@@ -129,7 +129,7 @@ public class App
         };
 
         AppDomain.CurrentDomain.ProcessExit += (_, e) =>
-        {   
+        {
             HookWorker.Stop();
             ProcessCleanup.Instance.Shutdown();
         };
@@ -139,9 +139,9 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
-        
-        
-        MuxConsole.WriteSplashScreen(version: "0.6.0");
+
+
+        MuxConsole.WriteSplashScreen(version: "0.7.1");
 
         if (!Config.SetupCompleted)
         {
@@ -155,16 +155,16 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
-        
+
         //Shouldnt be null
         SwarmConfig = LoadSwarm() ?? throw new InvalidOperationException();
-        
+
         //Load and populate exec limits from swarm cfg
         FetchSetExecLimits();
-        
+
         InitLlmProvider();
         SkillLoader.LoadSkills();
-        
+
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
         {
@@ -174,11 +174,11 @@ public class App
 
             Environment.Exit(1);
         }
-        
+
         MuxConsole.WriteSuccess(_mcpStrictMode
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
-        
+
         HookWorker.Start(SwarmConfig.Hooks ?? []);
     }
 
@@ -198,13 +198,13 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-        
+
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
-        
+
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
-        
+
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -225,7 +225,7 @@ public class App
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             return Environment.ExitCode;
         }
-        
+
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {

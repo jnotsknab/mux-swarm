@@ -225,6 +225,7 @@ public static class SingleAgentOrchestrator
                 agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
                 agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
                 agentChatOptions.Seed = modelChatOpts.Seed;
+                agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
             }
         }
 
@@ -249,14 +250,14 @@ public static class SingleAgentOrchestrator
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
-        
+
         var conversationHistory = resumedSession.HasValue
             ? Common.ExtractMessagesFromSession(resumedSession.Value)
             : new List<ChatMessage>();
-        
+
         if (resumedSession.HasValue)
             MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
-        
+
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
@@ -322,7 +323,7 @@ public static class SingleAgentOrchestrator
                 conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
                     "Context restored. Ready to continue."));
             });
-            
+
             pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
@@ -400,7 +401,7 @@ public static class SingleAgentOrchestrator
                         var calledTools = new List<string>();
 
                         using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
-                        
+
                         if (pendingCompaction)
                         {
                             messages.InsertRange(0, new[]
@@ -410,7 +411,7 @@ public static class SingleAgentOrchestrator
                             });
                             pendingCompaction = false;
                         }
-                        
+
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
@@ -427,20 +428,28 @@ public static class SingleAgentOrchestrator
 
                                 MuxConsole.WriteStream(update.Text);
                                 responseText.Append(update.Text);
+
+                                HookWorker.Enqueue(new HookEvent
+                                {
+                                    Event = "text_chunk",
+                                    Agent = singleAgentDef.Name,
+                                    Text = update.Text,
+                                    Timestamp = DateTimeOffset.UtcNow
+                                });
                             }
 
                             foreach (AIContent content in update.Contents)
                             {
                                 if (content is FunctionCallContent functionCall)
-                                {   
+                                {
                                     HookWorker.Enqueue(new HookEvent
                                     {
-                                        Event     = "tool_call",
-                                        Agent     = singleAgentDef.Name,
-                                        Tool      = functionCall.Name,
+                                        Event = "tool_call",
+                                        Agent = singleAgentDef.Name,
+                                        Tool = functionCall.Name,
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-                                    
+
                                     if (currentlyStreaming)
                                     {
                                         currentlyStreaming = false;
@@ -456,15 +465,15 @@ public static class SingleAgentOrchestrator
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
-                                {   
+                                {
                                     HookWorker.Enqueue(new HookEvent
                                     {
-                                        Event     = "tool_result",
-                                        Agent     = singleAgentDef.Name,
-                                        Summary   = functionResult.Result?.ToString(),
+                                        Event = "tool_result",
+                                        Agent = singleAgentDef.Name,
+                                        Summary = functionResult.Result?.ToString(),
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-                                    
+
                                     if (!currentlyStreaming && thinking != null)
                                     {
                                         thinking.Dispose();

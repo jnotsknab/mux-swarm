@@ -96,7 +96,7 @@ public static class MuxConsole
             write();
         }
     }
-    
+
     private static void StopActiveIndicator_NoLock()
     {
         if (_activeIndicator is null) return;
@@ -868,8 +868,8 @@ public static class MuxConsole
 
         HookWorker.Enqueue(new HookEvent
         {
-            Event     = "agent_turn_start",
-            Agent     = agentName,
+            Event = "agent_turn_start",
+            Agent = agentName,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -901,9 +901,9 @@ public static class MuxConsole
 
         HookWorker.Enqueue(new HookEvent
         {
-            Event     = "delegation",
-            Agent     = fromAgent,
-            Summary   = task.Length > truncLength ? task[..truncLength] + "..." : task,
+            Event = "delegation",
+            Agent = fromAgent,
+            Summary = task.Length > truncLength ? task[..truncLength] + "..." : task,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -924,10 +924,10 @@ public static class MuxConsole
 
         HookWorker.Enqueue(new HookEvent
         {
-            Event     = "tool_call",
-            Agent     = agent,
-            Tool      = tool,
-            Args      = args,
+            Event = "tool_call",
+            Agent = agent,
+            Tool = tool,
+            Args = args,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -950,9 +950,9 @@ public static class MuxConsole
 
         HookWorker.Enqueue(new HookEvent
         {
-            Event     = "tool_result",
-            Agent     = agent,
-            Summary   = summary,
+            Event = "tool_result",
+            Agent = agent,
+            Summary = summary,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -973,9 +973,9 @@ public static class MuxConsole
 
         HookWorker.Enqueue(new HookEvent
         {
-            Event     = "task_complete",
-            Agent     = agent,
-            Summary   = summary,
+            Event = "task_complete",
+            Agent = agent,
+            Summary = summary,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -1003,7 +1003,7 @@ public static class MuxConsole
             try { Console.Out.Flush(); } catch { /* ignore */ }
         });
     }
-    
+
     public static void PrintHelp(string helpText)
     {
         if (StdioMode)

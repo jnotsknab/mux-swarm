@@ -77,7 +77,7 @@ public sealed class StdinCancelMonitor : IDisposable
     {
         return _lineQueue.TryTake();
     }
-    
+
     /// <summary>
     /// Programmatically fire a cancel signal (used by ServeMode when
     /// __CANCEL__ arrives over WebSocket instead of stdin).
@@ -93,7 +93,7 @@ public sealed class StdinCancelMonitor : IDisposable
             }
         }
     }
-    
+
     private void ReadLoop()
     {
         try

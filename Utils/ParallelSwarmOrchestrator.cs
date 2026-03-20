@@ -326,7 +326,7 @@ public static class ParallelSwarmOrchestrator
                 var agentTools = def.CanDelegate
                     ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
                     : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
-                
+
                 var agentChatOptions = new ChatOptions
                 {
                     Instructions = prompt,
@@ -346,6 +346,7 @@ public static class ParallelSwarmOrchestrator
                     agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
                     agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
                     agentChatOptions.Seed = modelChatOpts.Seed;
+                    agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
                 var agent = client.AsAIAgent(new ChatClientAgentOptions
@@ -501,6 +502,7 @@ public static class ParallelSwarmOrchestrator
             orchChatOptions.FrequencyPenalty = orchModelOpts.FrequencyPenalty;
             orchChatOptions.PresencePenalty = orchModelOpts.PresencePenalty;
             orchChatOptions.Seed = orchModelOpts.Seed;
+            orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
 
         var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
@@ -814,15 +816,15 @@ public static class ParallelSwarmOrchestrator
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {   
+                        {
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_call",
-                                Agent     = "Orchestrator",
-                                Tool      = fc.Name,
+                                Event = "tool_call",
+                                Agent = "Orchestrator",
+                                Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && currentlyStreaming)
                             {
                                 currentlyStreaming = false;
@@ -841,16 +843,16 @@ public static class ParallelSwarmOrchestrator
                                 Console.Write($"[[TOOL_CALL]]{fc.Name}[[END_TOOL_CALL]]");
                         }
                         else if (content is FunctionResultContent fr)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_result",
-                                Agent     = "Orchestrator",
-                                Summary   = fr.Result?.ToString(),
+                                Event = "tool_result",
+                                Agent = "Orchestrator",
+                                Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -878,7 +880,7 @@ public static class ParallelSwarmOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                     Console.Write("[[END_AGENT_TURN]]");
@@ -1186,16 +1188,16 @@ public static class ParallelSwarmOrchestrator
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_call",
-                                Agent     = specialist.Def.Name,
-                                Tool      = fc.Name,
+                                Event = "tool_call",
+                                Agent = specialist.Def.Name,
+                                Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && currentlyStreaming)
                             {
                                 currentlyStreaming = false;
@@ -1228,16 +1230,16 @@ public static class ParallelSwarmOrchestrator
                                 subProgress.Add($"Called {fc.Name}");
                         }
                         else if (content is FunctionResultContent fr)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_result",
-                                Agent     = specialist.Def.Name,
-                                Summary   = fr.Result?.ToString(),
+                                Event = "tool_result",
+                                Agent = specialist.Def.Name,
+                                Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
