@@ -191,7 +191,15 @@ public static class ParallelSwarmOrchestrator
         var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
         _sessionDirty = false;
 
-
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_start",
+            Agent = "Orchestrator",
+            Summary = "pswarm",
+            Text = incomingGoal,
+            Timestamp = DateTimeOffset.UtcNow
+        });
+        
         IChatClient? compactionClient = null;
         try
         {
@@ -326,7 +334,7 @@ public static class ParallelSwarmOrchestrator
                 var agentTools = def.CanDelegate
                     ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
                     : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
-                
+
                 var agentChatOptions = new ChatOptions
                 {
                     Instructions = prompt,
@@ -346,6 +354,7 @@ public static class ParallelSwarmOrchestrator
                     agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
                     agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
                     agentChatOptions.Seed = modelChatOpts.Seed;
+                    agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
                 var agent = client.AsAIAgent(new ChatClientAgentOptions
@@ -501,6 +510,7 @@ public static class ParallelSwarmOrchestrator
             orchChatOptions.FrequencyPenalty = orchModelOpts.FrequencyPenalty;
             orchChatOptions.PresencePenalty = orchModelOpts.PresencePenalty;
             orchChatOptions.Seed = orchModelOpts.Seed;
+            orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
 
         var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
@@ -561,6 +571,14 @@ public static class ParallelSwarmOrchestrator
                 }
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "user_input",
+                    Agent = "Orchestrator",
+                    Text = goal,
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             // Fresh sessions per goal
@@ -672,7 +690,7 @@ public static class ParallelSwarmOrchestrator
             }
         }
 
-        // ── Graceful shutdown ─────────────────────────────────────────────
+        // Graceful shutdown
         if (continuous && state != null)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -680,9 +698,17 @@ public static class ParallelSwarmOrchestrator
             else
                 ContinuousStateManager.Clear(goalId!, PlatformContext.SessionsDirectory);
         }
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_end",
+            Agent = "Orchestrator",
+            Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
+            Timestamp = DateTimeOffset.UtcNow
+        });
     }
 
-    // ── Goal Execution (Orchestrator Loop) ───────────────────────────────
+    //Goal Execution (Orchestrator Loop)
 
     private static async Task RunOrchestratedGoalAsync(
         string goal,
@@ -809,20 +835,28 @@ public static class ParallelSwarmOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         responseText.Append(update.Text);
+                        
+                        HookWorker.Enqueue(new HookEvent
+                        {
+                            Event = "text_chunk",
+                            Agent = "Orchestrator",
+                            Text = update.Text,
+                            Timestamp = DateTimeOffset.UtcNow
+                        });
                     }
 
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {   
+                        {
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_call",
-                                Agent     = "Orchestrator",
-                                Tool      = fc.Name,
+                                Event = "tool_call",
+                                Agent = "Orchestrator",
+                                Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && currentlyStreaming)
                             {
                                 currentlyStreaming = false;
@@ -841,16 +875,16 @@ public static class ParallelSwarmOrchestrator
                                 Console.Write($"[[TOOL_CALL]]{fc.Name}[[END_TOOL_CALL]]");
                         }
                         else if (content is FunctionResultContent fr)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_result",
-                                Agent     = "Orchestrator",
-                                Summary   = fr.Result?.ToString(),
+                                Event = "tool_result",
+                                Agent = "Orchestrator",
+                                Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -900,6 +934,14 @@ public static class ParallelSwarmOrchestrator
                     try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "turn_end",
+                    Agent = "Orchestrator",
+                    Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             MuxConsole.WriteLine();
@@ -1181,21 +1223,29 @@ public static class ParallelSwarmOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         iterResponse.Append(update.Text);
+                        
+                        HookWorker.Enqueue(new HookEvent
+                        {
+                            Event = "text_chunk",
+                            Agent = specialist.Def.Name,
+                            Text = update.Text,
+                            Timestamp = DateTimeOffset.UtcNow
+                        });
                     }
 
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_call",
-                                Agent     = specialist.Def.Name,
-                                Tool      = fc.Name,
+                                Event = "tool_call",
+                                Agent = specialist.Def.Name,
+                                Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && currentlyStreaming)
                             {
                                 currentlyStreaming = false;
@@ -1228,16 +1278,16 @@ public static class ParallelSwarmOrchestrator
                                 subProgress.Add($"Called {fc.Name}");
                         }
                         else if (content is FunctionResultContent fr)
-                        {   
-                            
+                        {
+
                             HookWorker.Enqueue(new HookEvent
                             {
-                                Event     = "tool_result",
-                                Agent     = specialist.Def.Name,
-                                Summary   = fr.Result?.ToString(),
+                                Event = "tool_result",
+                                Agent = specialist.Def.Name,
+                                Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -1277,6 +1327,14 @@ public static class ParallelSwarmOrchestrator
                     try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
+                
+                HookWorker.Enqueue(new HookEvent
+                {
+                    Event = "turn_end",
+                    Agent = specialist.Def.Name,
+                    Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
+                    Timestamp = DateTimeOffset.UtcNow
+                });
             }
 
             MuxConsole.WriteLine();

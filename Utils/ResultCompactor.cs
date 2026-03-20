@@ -116,7 +116,7 @@ public static class ResultCompactor
         IReadOnlyList<ChatMessage> history,
         IChatClient chatClient,
         ChatOptions? chatOptions = null)
-    {   
+    {
         int charBudget = ExecutionLimits.Current.CompactionCharBudget;
         int maxMsgChars = ExecutionLimits.Current.CompactionMaxMessageChars;
 

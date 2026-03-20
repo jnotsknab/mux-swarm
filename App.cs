@@ -59,7 +59,7 @@ public class App
         "  mux-swarm --parallel --continuous --goal \"<goal>\" --goal-id batch-run",
         "",
         "  Ex:",
-        @"  mux-swarm --continuous --goal-id overnight-research --goal C:\goals\research.txt --min-delay 600 --persist-interval 120 --watchdog true --docker-exec true --stdio",
+        @"  mux-swarm --continuous --goal-id overnight-research --goal C:\goals\research.txt --min-delay 600 --persist-interval 120 --watchdog --docker-exec true --stdio",
         "",
         "CLI Flags",
         "  --goal <text|file>         Explicit goal",
@@ -75,8 +75,11 @@ public class App
         "  --session-retention <n>    Keep last N sessions (default 10)",
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
-        "  --watchdog <true|false>    External watchdog toggle",
+        "  --watchdog                 Enable external watchdog (auto-restart on crash)",
         "  --serve <port>             Start embedded web UI (default 6723)",
+        "  --daemon                   Start daemon mode (file watch, cron, status triggers from config.json)",
+        "  --register                 Register mux-swarm as an OS service (survives reboots)",
+        "  --remove                   Unregister mux-swarm OS service",
         "  --mcp-strict <true|false>  Require all MCPs (default true)",
         "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
@@ -129,7 +132,7 @@ public class App
         };
 
         AppDomain.CurrentDomain.ProcessExit += (_, e) =>
-        {   
+        {
             HookWorker.Stop();
             ProcessCleanup.Instance.Shutdown();
         };
@@ -139,9 +142,9 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
-        
-        
-        MuxConsole.WriteSplashScreen(version: "0.6.0");
+
+
+        MuxConsole.WriteSplashScreen(version: "0.8.0");
 
         if (!Config.SetupCompleted)
         {
@@ -155,16 +158,16 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
-        
+
         //Shouldnt be null
         SwarmConfig = LoadSwarm() ?? throw new InvalidOperationException();
-        
+
         //Load and populate exec limits from swarm cfg
         FetchSetExecLimits();
-        
+
         InitLlmProvider();
         SkillLoader.LoadSkills();
-        
+
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
         {
@@ -174,11 +177,11 @@ public class App
 
             Environment.Exit(1);
         }
-        
+
         MuxConsole.WriteSuccess(_mcpStrictMode
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
-        
+
         HookWorker.Start(SwarmConfig.Hooks ?? []);
     }
 
@@ -199,12 +202,15 @@ public class App
     {
         var parsed = ParseArgs(args);
         
+        if (_watchDogEnabled)
+            Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
+        
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
-        
+
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
-        
+
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -218,12 +224,36 @@ public class App
         }
 
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
-            return await HandleParsedRun(args, parsed);
+            return await HandleParsedRun(parsed);
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             return Environment.ExitCode;
+        }
+        
+        DaemonRunner? daemon = null;
+        if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
+        {
+            daemon = new DaemonRunner(Config.Daemon);
+
+            if (servePort > 0)
+            {
+                foreach (var trigger in Config.Daemon.Triggers
+                             .Where(t => t.Type == "status" && t.Restart &&
+                                         t.Check != null && t.Check.Contains($":{servePort}")))
+                {
+                    daemon.RegisterRestart(trigger.Check!,
+                        () => ServeMode.StartAsync(servePort));
+                }
+            }
+
+            daemon.Start(
+                chatClientFactory: modelId => CreateChatClient(modelId),
+                mcpTools: _mcpTools!.Cast<AITool>().ToList(),
+                agentModels: LoadAgentModels());
+
+            MuxConsole.WriteInfo("[Daemon] Running in background.");
         }
         
         // Interactive loop
@@ -468,7 +498,10 @@ public class App
                     break;
             }
         }
-
+        
+        if (daemon != null)
+            await daemon.DisposeAsync();
+        
         return Environment.ExitCode;
     }
 
@@ -543,7 +576,8 @@ public class App
         string? ReportSessionId,
         bool ReportAll,
         string AgentName,
-        int? ServePort
+        int? ServePort,
+        bool DaemonMode
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -572,6 +606,7 @@ public class App
         string? reportSessionId = null;
         bool reportAll = false;
         string? agentName = null;
+        bool daemonMode = false;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -648,7 +683,7 @@ public class App
                     break;
 
                 case "--watchdog":
-                    _watchDogEnabled = NextBool(args, ref i) ?? true;
+                    _watchDogEnabled = true;
                     break;
 
                 case "--mcp-strict":
@@ -727,6 +762,17 @@ public class App
                     if (Common.TryNextUInt(args, ref i, out var sp)) servePort = (int)sp;
                     else servePort = 6723;
                     break;
+                case "--daemon":
+                    daemonMode = true;
+                    break;
+                case "--register":
+                    ServiceRegistration.Register(args);
+                    Environment.Exit(0);
+                    break;
+                case "--remove":
+                    ServiceRegistration.Remove();
+                    Environment.Exit(0);
+                    break;
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
                         MuxConsole.WriteWarning($"Unknown flag: {a}");
@@ -749,7 +795,8 @@ public class App
             reportSessionId,
             reportAll,
             agentName,
-            servePort
+            servePort,
+            daemonMode
         );
     }
 
@@ -1113,12 +1160,9 @@ public class App
 
 
 
-    private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
+    private async Task<int> HandleParsedRun(ParsedArgs? parsed)
     {
         var cliCts = GetOrResetCts();
-
-        if (_watchDogEnabled)
-            Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: cliCts);
 
         var agentModels = LoadAgentModels();
         if (parsed != null && !string.IsNullOrWhiteSpace(parsed.AgentName))

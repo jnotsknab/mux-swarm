@@ -1,5 +1,5 @@
 ﻿using System.Text.Json.Serialization;
-
+using Microsoft.Extensions.AI;
 namespace MuxSwarm.Utils;
 
 /// <summary>
@@ -29,18 +29,22 @@ public class ModelOpts
     [JsonPropertyName("seed")]
     public long? Seed { get; set; }
 
+    [JsonPropertyName("additionalParams")]
+    public Dictionary<string, object>? AdditionalParams { get; set; }
+
+
     /// <summary>
     /// Builds a ChatOptions from non-null fields.
     /// Returns null if every field is default.
     /// </summary>
-    public Microsoft.Extensions.AI.ChatOptions? ToChatOptions()
+    public ChatOptions? ToChatOptions()
     {
         if (Temperature is null && TopP is null && TopK is null &&
             MaxOutputTokens is null && FrequencyPenalty is null &&
-            PresencePenalty is null && Seed is null)
+            PresencePenalty is null && Seed is null && AdditionalParams is null)
             return null;
 
-        return new Microsoft.Extensions.AI.ChatOptions
+        ChatOptions opts = new ChatOptions
         {
             Temperature = Temperature,
             TopP = TopP,
@@ -50,5 +54,14 @@ public class ModelOpts
             PresencePenalty = PresencePenalty,
             Seed = Seed
         };
+
+        if (AdditionalParams is { Count: > 0 })
+        {
+            opts.AdditionalProperties ??= new AdditionalPropertiesDictionary();
+            foreach (var (k, v) in AdditionalParams)
+                opts.AdditionalProperties[k] = v;
+        }
+
+        return opts;
     }
 }

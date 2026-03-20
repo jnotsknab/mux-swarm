@@ -40,7 +40,7 @@ public static class Common
                 var config = JsonSerializer.Deserialize<SwarmConfig>(json);
 
                 if (config?.Agents != null && config.Agents.Count > 0)
-                {   
+                {
                     //HACK: compact agent is outside agents array we need to account for it too i.e. +1
                     MuxConsole.WriteInfo($"Loaded {config.Agents.Count + 1} agents from swarm.json");
                     return ParseAgentDefinitions(config);
@@ -60,16 +60,16 @@ public static class Common
 
         return new List<AgentDefinition>();
     }
-    
+
     public static List<ChatMessage> ExtractMessagesFromSession(JsonElement serializedSession)
     {
         var messages = new List<ChatMessage>();
-        
+
         if (serializedSession.TryGetProperty("chatHistoryProviderState", out var storeState)
             && storeState.TryGetProperty("messages", out var msgArray)
             && msgArray.ValueKind == JsonValueKind.Array)
-        {   
-            
+        {
+
             foreach (var msg in msgArray.EnumerateArray())
             {
                 var role = msg.TryGetProperty("role", out var r) ? r.GetString() : null;
@@ -496,8 +496,10 @@ public static class Common
     public static bool TryNextUInt(string[] args, ref int i, out uint value)
     {
         value = 0;
-        var next = NextValue(args, ref i);
-        return next != null && uint.TryParse(next, out value);
+        if (i + 1 >= args.Length) return false;
+        if (!uint.TryParse(args[i + 1], out value)) return false;
+        i++;
+        return true;
     }
 
     public static async Task PersistSessionsAsync(

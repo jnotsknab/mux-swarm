@@ -21,5 +21,8 @@ public class AppConfig
 
     [JsonPropertyName("userInfo")]
     public UserInfoConfig UserInfo { get; set; } = new();
+    
+    [JsonPropertyName("daemon")]
+    public DaemonConfig? Daemon { get; set; }
 
 }

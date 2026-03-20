@@ -136,7 +136,7 @@ public static class ServeMode
         }
         catch { /* non-fatal */ }
     }
-    
+
     private static async Task HandleWebSocket(HttpContext context)
     {
         if (!context.WebSockets.IsWebSocketRequest)
@@ -171,7 +171,7 @@ public static class ServeMode
                 if (result.MessageType == WebSocketMessageType.Text)
                 {
                     var msg = Encoding.UTF8.GetString(buf, 0, result.Count).Trim();
-                    
+
                     if (msg == "__CANCEL__")
                     {
                         StdinCancelMonitor.Instance?.FireCancel();
@@ -193,7 +193,7 @@ public static class ServeMode
             }
         }
     }
-    
+
     private static async Task HandleListFiles(HttpContext context)
     {
         var type = context.Request.RouteValues["type"]?.ToString() ?? "sandbox";
@@ -263,8 +263,8 @@ public static class ServeMode
             await WriteJson(context, 403, new { error = "Permission denied", items = Array.Empty<object>() });
         }
     }
-    
-    
+
+
     private static async Task HandleDownload(HttpContext context)
     {
         var type = context.Request.RouteValues["type"]?.ToString() ?? "sandbox";
@@ -295,7 +295,7 @@ public static class ServeMode
         await context.Response.SendFileAsync(filepath);
     }
 
-    
+
     private static async Task HandleUpload(HttpContext context)
     {
         var targetSubdir = context.Request.Query["dir"].FirstOrDefault() ?? "uploads";
@@ -408,7 +408,7 @@ public static class ServeMode
             await WriteJson(context, 500, new { error = $"Upload failed: {ex.Message}" });
         }
     }
-    
+
     //helpers
     private static string? GetRoot(string type) => type.ToLowerInvariant() switch
     {
@@ -447,8 +447,8 @@ public static class ServeMode
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsync(JsonSerializer.Serialize(data, _jsonOpts));
     }
-    
-    
+
+
     private static readonly ConcurrentQueue<string> _replayBuffer = new();
     private const int MaxReplay = 500;
 
@@ -458,7 +458,7 @@ public static class ServeMode
         while (_replayBuffer.Count > MaxReplay)
             _replayBuffer.TryDequeue(out _);
     }
-    
+
     private static void BroadcastLine(string line)
     {
         if (string.IsNullOrEmpty(line)) return;
@@ -493,7 +493,7 @@ public static class ServeMode
         foreach (var id in stale)
             _clients.TryRemove(id, out _);
     }
-    
+
     private static string? ResolveWwwroot()
     {
         var runtimeDir = Path.Combine(PlatformContext.BaseDirectory, "Runtime", "mux-web-app");
@@ -507,7 +507,7 @@ public static class ServeMode
 
         return null;
     }
-    
+
     private sealed class BroadcastWriter : TextWriter
     {
         private readonly TextWriter _passthrough;
@@ -566,7 +566,7 @@ public static class ServeMode
             }
         }
     }
-    
+
     private sealed class WsChannelReader : TextReader
     {
         private readonly ChannelReader<string> _channel;

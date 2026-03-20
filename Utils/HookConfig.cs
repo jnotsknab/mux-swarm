@@ -18,6 +18,9 @@ public class HookConfig
     [JsonPropertyName("mode")]
     public HookMode Mode { get; set; } = HookMode.Async;
 
+    [JsonPropertyName("persistent")]
+    public bool Persistent { get; set; } = false;
+
     [JsonPropertyName("command")]
     public string Command { get; set; } = string.Empty;
 

@@ -26,7 +26,7 @@ public class ExecutionLimits
 
     [JsonPropertyName("maxStuckCount")]
     public int MaxStuckCount { get; set; } = 3;
-    
+
     [JsonPropertyName("compactionCharBudget")]
     public int CompactionCharBudget { get; set; } = 6000;
 
@@ -35,5 +35,5 @@ public class ExecutionLimits
 
     [JsonPropertyName("activityTimeoutSeconds")]
     public int ActivityTimeoutSeconds { get; set; } = 180;
-    
+
 }

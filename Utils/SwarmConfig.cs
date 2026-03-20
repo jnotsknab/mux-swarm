@@ -22,7 +22,7 @@ public class SwarmConfig
 
     [JsonPropertyName("agents")]
     public List<AgentConfig> Agents { get; set; } = [];
-    
+
     [JsonPropertyName("hooks")]
     public List<HookConfig> Hooks { get; set; } = [];
 }
