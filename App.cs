@@ -198,7 +198,10 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-
+        
+        if (_watchDogEnabled)
+            Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
+        
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
@@ -218,7 +221,7 @@ public class App
         }
 
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
-            return await HandleParsedRun(args, parsed);
+            return await HandleParsedRun(parsed);
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
@@ -1113,12 +1116,9 @@ public class App
 
 
 
-    private async Task<int> HandleParsedRun(string[] args, ParsedArgs? parsed)
+    private async Task<int> HandleParsedRun(ParsedArgs? parsed)
     {
         var cliCts = GetOrResetCts();
-
-        if (_watchDogEnabled)
-            Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: cliCts);
 
         var agentModels = LoadAgentModels();
         if (parsed != null && !string.IsNullOrWhiteSpace(parsed.AgentName))
