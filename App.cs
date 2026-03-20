@@ -232,18 +232,18 @@ public class App
             return Environment.ExitCode;
         }
         
+        DaemonRunner? daemon = null;
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
-            var daemon = new DaemonRunner(Config.Daemon);
+            daemon = new DaemonRunner(Config.Daemon);
 
-            // Autoregister serve restart for any status check targeting our serve port
             if (servePort > 0)
             {
                 foreach (var trigger in Config.Daemon.Triggers
-                             .Where(t => t.Type == "status" && t.Restart && 
+                             .Where(t => t.Type == "status" && t.Restart &&
                                          t.Check != null && t.Check.Contains($":{servePort}")))
                 {
-                    daemon.RegisterRestart(trigger.Check!, 
+                    daemon.RegisterRestart(trigger.Check!,
                         () => ServeMode.StartAsync(servePort));
                 }
             }
@@ -253,11 +253,7 @@ public class App
                 mcpTools: _mcpTools!.Cast<AITool>().ToList(),
                 agentModels: LoadAgentModels());
 
-            MuxConsole.WriteInfo("[Daemon] Running. Press Ctrl+C to stop.");
-
-            await Task.Delay(Timeout.Infinite, _cts.Token);
-            await daemon.DisposeAsync();
-            return 0;
+            MuxConsole.WriteInfo("[Daemon] Running in background.");
         }
         
         // Interactive loop
@@ -502,7 +498,10 @@ public class App
                     break;
             }
         }
-
+        
+        if (daemon != null)
+            await daemon.DisposeAsync();
+        
         return Environment.ExitCode;
     }
 
