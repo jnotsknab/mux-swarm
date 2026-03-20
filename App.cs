@@ -231,7 +231,7 @@ public class App
         {
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
-            if (!Console.IsInputRedirected && Console.KeyAvailable)
+            if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
             {
                 var key = Console.ReadKey(intercept: true);
                 if (key.Key == ConsoleKey.Escape)
