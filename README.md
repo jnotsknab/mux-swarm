@@ -49,8 +49,8 @@ A single goal file triggered an end-to-end autonomous pipeline including domain 
 - [About](#about)
 - [Key Capabilities](#key-capabilities)
 - [Protocols & Standards](#protocols--standards)
-- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
-- [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
+- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [Parallel Mode](#parallel-mode) · [Workflow Engine](#workflow-engine) · [Event Hooks](#event-hooks) · [Web UI](#web-ui---serve) · [Daemon Mode](#daemon-mode---daemon) · [OS Service Registration](#os-service-registration---register----remove) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
+- [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Provider-Specific Parameters](#provider-specific-parameters-additionalparams) · [Execution Limits](#execution-limits-executionlimits) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
 - [Architecture](#architecture) — [Orchestration Lifecycle](#orchestration-lifecycle) · [Memory Architecture](#layered-memory-architecture)
 - [Security & Safety](#security--safety)
 - [Roadmap](#roadmap)
@@ -196,6 +196,37 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 /qm or /qc      Stop the current session
 ```
 
+### CLI Flags
+```
+--goal <text|file>         Goal input (text or file path)
+--agent <name>             Run in single-agent mode with the specified agent
+--provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
+--continuous               Enable continuous autonomous mode
+--goal-id <id>             Persistent goal/session identifier
+--parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential
+--max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)
+--min-delay <secs>         Minimum delay between loops (default 300)
+--persist-interval <secs>  Persist session state interval
+--session-retention <n>    Retain last N session runs (default 10)
+--stdio                    Machine-readable output (no ANSI)
+--serve [port]             Start embedded web UI (default 6723)
+--daemon                   Start daemon mode (file watch, cron, status triggers)
+--register                 Register mux-swarm as an OS service (survives reboots)
+--remove                   Unregister mux-swarm OS service
+--watchdog                 Enable external watchdog (auto-restart on crash)
+--workflow <file>          Run a workflow file (JSON) on launch
+--wf <file>                Alias for --workflow
+--delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)
+--model <id>               Override the single-agent model
+--mcp-strict [true|false]  Require all integrations to connect
+--docker-exec [true|false] Route execution through Docker
+--report [session-id]      Generate audit report(s) and exit
+--cfg <path>               Override config.json path for scoped instances
+--swarmcfg <path>          Override swarm.json path for scoped instances
+--clear                    Clear terminal before continuing
+--help, -h                 Show help
+```
+
 ### Goal-Driven Execution
 ```bash
 mux-swarm "<goal>"
@@ -270,6 +301,13 @@ Hooks execute external commands in response to runtime lifecycle events. Configu
       "when": { "event": "task_complete" }
     },
     {
+      "id": "voice-out",
+      "mode": "async",
+      "persistent": true,
+      "command": "python scripts/tts_voice.py",
+      "when": { "event": "text_chunk" }
+    },
+    {
       "id": "log-tool-calls",
       "mode": "blocking",
       "command": "bash scripts/audit.sh",
@@ -280,9 +318,24 @@ Hooks execute external commands in response to runtime lifecycle events. Configu
 }
 ```
 
-Hooks receive the full event payload as JSON on stdin. Two dispatch modes are available: `async` fires and continues immediately, `blocking` waits for the process to exit (with a configurable timeout) before the runtime proceeds. Pattern matching supports filtering by `event` type, `agent` name, and `tool` name. All fields in `when` except `event` are optional.
+Hooks receive the full event payload as JSON on stdin. Two dispatch modes: `async` fires and continues immediately, `blocking` waits for the process to exit (with configurable timeout). **Persistent hooks** (`"persistent": true`) start a long-lived process that receives events as NDJSON lines on stdin for the entire session, ideal for stateful consumers like TTS pipelines or live dashboards.
 
-Supported events: `agent_turn_start`, `tool_call`, `tool_result`, `delegation`, `task_complete`.
+Pattern matching supports filtering by `event` type, `agent` name, and `tool` name. All fields in `when` except `event` are optional.
+
+**Supported events (10):**
+
+| Event | Description | Fires in |
+|-------|-------------|----------|
+| `session_start` | Mode entered (agent, stateless, swarm, pswarm) | All orchestrators |
+| `session_end` | Session exited (complete, interrupted) | All orchestrators |
+| `user_input` | Goal or message received | All orchestrators |
+| `text_chunk` | Streaming token from agent response | All orchestrators |
+| `turn_end` | Agent turn completed | All orchestrators |
+| `agent_turn_start` | Agent begins a turn | All orchestrators |
+| `tool_call` | Tool invocation | All orchestrators |
+| `tool_result` | Tool execution result | All orchestrators |
+| `task_complete` | Agent signals task done | All orchestrators |
+| `delegation` | Orchestrator delegates to specialist | Multi + Parallel |
 
 On startup, if hooks are configured, the runtime prompts for confirmation before enabling them. Hooks are suppressed in `--stdio` mode to avoid interfering with structured output.
 
@@ -309,33 +362,78 @@ Features:
 
 The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience where Kestrel restarts automatically on crash.
 
-### CLI Flags
+### Daemon Mode (`--daemon`)
+
+The `--daemon` flag starts background trigger loops that fire goals into the runtime autonomously. Configure triggers in the `daemon` block of `config.json`. The daemon runs alongside the interactive loop and web UI, it does not block user interaction.
+```bash
+mux-swarm --serve --daemon              # web UI + daemon triggers
+mux-swarm --serve --daemon --watchdog   # full always-on stack
 ```
---goal <text|file>         Goal input (text or file path)
---agent <name>             Run in single-agent mode with the specified agent
---provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
---continuous               Enable continuous autonomous mode
---goal-id <id>             Persistent goal/session identifier
---parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential
---max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)
---min-delay <secs>         Minimum delay between loops (default 300)
---persist-interval <secs>  Persist session state interval
---session-retention <n>    Retain last N session runs (default 10)
---stdio                    Machine-readable output (no ANSI)
---serve [port]             Start embedded web UI (default 6723)
---workflow <file>          Run a workflow file (JSON) on launch
---wf <file>                Alias for --workflow
---delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)
---model <id>               Override the single-agent model
---watchdog [true|false]    Enable watchdog monitoring
---mcp-strict [true|false]  Require all integrations to connect
---docker-exec [true|false] Route execution through Docker
---report [session-id]      Generate audit report(s) and exit
---cfg <path>               Override config.json path for scoped instances
---swarmcfg <path>          Override swarm.json path for scoped instances
---clear                    Clear terminal before continuing
---help, -h                 Show help
+
+Three trigger types:
+
+**Watch** — monitors a file path pattern via `FileSystemWatcher`. Fires a goal when matching files are created or modified, with per-file cooldown debounce.
+
+**Cron** — standard 5-field cron expressions (`minute hour day month weekday`). Supports `*`, `*/N`, `N-M`, and `N,M,O`. Sleeps until next occurrence.
+
+**Status** — health checks that monitor resources without firing goals. Supports `http://` (HEAD request), `process:name` (process lookup), and `tcp:host:port` (connect check). Optionally restarts failed resources via registered handlers.
+```json
+{
+  "daemon": {
+    "enabled": true,
+    "triggers": [
+      {
+        "id": "inbox-watcher",
+        "type": "watch",
+        "path": "/path/to/inbox/*.txt",
+        "goal": "Read and process this file: {file}",
+        "mode": "agent",
+        "cooldown": 60
+      },
+      {
+        "id": "daily-report",
+        "type": "cron",
+        "schedule": "0 9 * * 1-5",
+        "goal": "Generate the daily status report and save to the sandbox",
+        "mode": "swarm"
+      },
+      {
+        "id": "serve-alive",
+        "type": "status",
+        "check": "http://localhost:6723",
+        "restart": true,
+        "interval": 30,
+        "failThreshold": 3
+      }
+    ]
+  }
+}
 ```
+
+Goal templates support `{file}`, `{filename}`, `{timestamp}`, and `{id}` substitution. Each trigger specifies a `mode` (`agent`, `swarm`, or `pswarm`) to control which orchestrator handles the goal. All triggers run as independent tasks — a slow swarm goal does not block status checks or other triggers.
+
+Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`.
+
+### OS Service Registration (`--register` / `--remove`)
+
+Register mux-swarm as a system service that starts automatically on boot. One command, no manual file editing.
+```bash
+# Register (run elevated on Windows)
+mux-swarm --register --serve --daemon --watchdog
+
+# Remove
+mux-swarm --remove
+```
+
+The `--register` flag is stripped from the service definition — only runtime flags (`--serve`, `--daemon`, `--watchdog`) are forwarded. The binary path and working directory are resolved automatically from the install location (not from shell aliases).
+
+| Platform | Mechanism | Details |
+|----------|-----------|---------|
+| **Windows** | Task Scheduler (XML) | Boot trigger with 30s delay, `RestartOnFailure` (60s interval, 999 retries), runs before user login, `WorkingDirectory` set |
+| **Linux** | systemd user service | `Restart=always`, `RestartSec=10`, `enable-linger` for headless boot (starts before login) |
+| **macOS** | launchd LaunchAgent | `RunAtLoad`, `KeepAlive`, logs to `~/.local/share/Mux-Swarm/Logs/` |
+
+Combined with `--watchdog` (process-level restart) and daemon status triggers (subsystem-level restart), this creates a three-layer resilience stack: the OS ensures the process starts, the watchdog ensures it stays running, and the daemon ensures internal subsystems are healthy.
 
 ### Scoped Instances
 
@@ -524,6 +622,21 @@ Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `m
 - **Research/general agents:** Higher temperature (0.5–0.7) for varied, comprehensive responses.
 - **Compaction agents:** Low temperature (0.1–0.3) for faithful summarization.
 
+#### Provider-Specific Parameters (`additionalParams`)
+
+For parameters not covered by the standard `modelOpts` fields, use `additionalParams` to pass arbitrary key-value pairs directly to the provider via `ChatOptions.AdditionalProperties`. This is a pass-through, the runtime does not validate these values.
+```json
+"modelOpts": {
+  "temperature": 0.3,
+  "maxOutputTokens": 4096,
+  "additionalParams": {
+    "reasoning_effort": "high"
+  }
+}
+```
+
+Use the correct convention for your provider (e.g. `reasoning_effort` for OpenAI, `enable_thinking` for models that support it via OpenRouter).
+
 ### Execution Limits (`executionLimits`)
 
 Optional tuning for orchestration budgets, iteration caps, and retry behavior. All fields are serialized with sensible defaults on first run. Adjust as needed. Raise limits for complex goals on capable models, lower for cost-sensitive deployments. Inspect active values at runtime with `/limits`.
@@ -618,26 +731,32 @@ Instead of forcing every agent to carry large historical context, the runtime di
 
 mux-swarm is designed around scoped execution, explicit boundaries, and inspectable outputs.
 
-**Core characteristics**: filesystem allowlist enforcement, least-privilege per-agent [MCP scoping](#swarmjson--topology--roles), prompt- and config-level role separation, deterministic completion signaling, session-based provenance and artifact trails, configurable Docker-based execution, and environment-variable-based secret handling.
+**Core characteristics**: filesystem allowlist enforcement, least-privilege per-agent [MCP scoping](#swarmjson--topology--roles), prompt- and config-level role separation, deterministic completion signaling, session-based provenance and artifact trails, configurable Docker-based execution, environment-variable-based secret handling, hook execution gating, and daemon trigger isolation.
 
 ### Recommended Production Stance
 
 - Use `--cfg` and `--swarmcfg` to isolate per-user or per-environment instances
-- Keep `--mcp-strict` enabled so startup fails if required integrations are unavailable
+- Keep `--mcp-strict` enabled (enabled by default) so startup fails if required integrations are unavailable
 - Keep filesystem allowed paths minimal and purpose-specific
 - Route execution-heavy tasks through Docker when possible
-- Scope MCP servers and [tool patterns](#swarmjson--topology--roles) narrowly by role
+- Scope MCP servers narrowly by role
 - Use environment variables for all credentials
 - Prefer file-path-based deliverables so outputs remain inspectable
 - Use `/report` or `--report` to review session artifacts regularly
-
+- Review hook commands before confirming on startup -- hooks run with your user permissions
+- Scope daemon watch paths narrowly; avoid watching broad directories like home or root
+- Use `--register` from an elevated terminal only when you've validated your daemon and hook config
+- Pair `--daemon` with status checks (`failThreshold` > 1) to avoid restart loops on transient failures
+- Use the three-layer resilience stack (`--register` + `--watchdog` + status triggers) for production always-on deployments rather than relying on any single layer
+- For maximum isolation, run mux-swarm itself inside a Docker container with only the necessary volumes mounted -- this constrains all agent execution, hook commands, and daemon triggers to the container's filesystem and network boundaries regardless of configuration
 ---
 
 ## Roadmap
 
 ### Shipped
 
-- **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async and blocking dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
+- **v0.8.0 — Daemon Mode & OS Service Registration**: Background trigger loops via `--daemon` with file watch (FileSystemWatcher + cooldown), cron (zero-dependency 5-field parser), and status checks (HTTP, process, TCP) with auto-restart. OS service registration via `--register`/`--remove` for Windows (Task Scheduler XML), Linux (systemd + linger), and macOS (launchd). Full hook lifecycle with 10 events across all orchestrators. `additionalParams` pass-through for provider-specific model options.
+- **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async, blocking, and persistent dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
 - **v0.6.0 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
 - **v0.6.0 — Token Tracking & Execution Limits**: Accurate provider-reported token tracking across all orchestration modes. Configurable `executionLimits` block in swarm.json for tuning orchestration budgets, iteration caps, and retry policies. `/limits` command for runtime inspection.
 - **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
@@ -645,13 +764,8 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Up Next
 
-#### v0.8.0 — Daemon Mode
-Background execution with `--daemon` flag. Filesystem watchers, endpoint listeners, and polling triggers with JSON rulesets for reactive automation. Triggers swarm execution on file changes, external events, or scheduled intervals. Pairs with `--serve --watchdog` for always-on operation.
-
 #### v0.9.0 — OpenTelemetry Tracing
 Native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
-
-Runtime reliability hardening for long-running workflows, parallel mode observability and per-task retry policies, expanded auditing and execution trace visibility, stronger isolation patterns, additional swarm configuration templates, and improved developer ergonomics around configuring and debugging swarms.
 
 ### Community
 
