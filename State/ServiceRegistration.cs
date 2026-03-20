@@ -78,25 +78,6 @@ public static class ServiceRegistration
 
         return (exePath, installDir);
     }
-
-    /// <summary>
-    /// Filter out --register and --remove so the service definition
-    /// only contains runtime flags.
-    /// </summary>
-    private static string BuildServiceArgs(string[] originalArgs)
-    {
-        var filtered = new List<string>();
-
-        for (int i = 0; i < originalArgs.Length; i++)
-        {
-            if (StripFlags.Contains(originalArgs[i]))
-                continue;
-
-            filtered.Add(originalArgs[i]);
-        }
-
-        return string.Join(" ", filtered);
-    }
     
     private static void RegisterWindows(string exePath, string workDir, string serviceArgs)
     {
@@ -183,6 +164,104 @@ public static class ServiceRegistration
         }
     }
     
+    private static string BuildServiceArgs(string[] originalArgs)
+    {
+        var filtered = new List<string>();
+        bool stripWatchdog = !RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+        for (int i = 0; i < originalArgs.Length; i++)
+        {
+            if (StripFlags.Contains(originalArgs[i]))
+                continue;
+
+            if (stripWatchdog && originalArgs[i].Equals("--watchdog", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            filtered.Add(originalArgs[i]);
+        }
+
+        return string.Join(" ", filtered);
+    }
+
+    private static StringBuilder BuildEnvironmentLines()
+    {
+        var envLines = new StringBuilder();
+
+        // Capture PATH so bare commands (uvx, npx) resolve in the service
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrEmpty(path))
+            envLines.AppendLine($"Environment=PATH={path}");
+
+        envLines.AppendLine("Environment=DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1");
+
+        try
+        {
+            var config = Setup.Setup.LoadConfig(PlatformContext.ConfigPath);
+
+            // Forward API key env vars from current environment
+            foreach (var provider in config.LlmProviders.Where(p =>
+                         p.Enabled && !string.IsNullOrEmpty(p.ApiKeyEnvVar)))
+            {
+                var value = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
+                if (!string.IsNullOrEmpty(value))
+                    envLines.AppendLine($"Environment={provider.ApiKeyEnvVar}={value}");
+            }
+
+            // Forward MCP server env vars
+            foreach (var (_, server) in config.McpServers)
+            {
+                if (server.Env == null) continue;
+                foreach (var (key, _) in server.Env)
+                {
+                    var value = Environment.GetEnvironmentVariable(key);
+                    if (!string.IsNullOrEmpty(value))
+                        envLines.AppendLine($"Environment={key}={value}");
+                }
+            }
+        }
+        catch { /* best effort */ }
+
+        return envLines;
+    }
+
+    private static Dictionary<string, string> BuildEnvironmentDict()
+    {
+        var env = new Dictionary<string, string>();
+
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrEmpty(path))
+            env["PATH"] = path;
+
+        env["DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"] = "1";
+
+        try
+        {
+            var config = Setup.Setup.LoadConfig(PlatformContext.ConfigPath);
+
+            foreach (var provider in config.LlmProviders.Where(p =>
+                         p.Enabled && !string.IsNullOrEmpty(p.ApiKeyEnvVar)))
+            {
+                var value = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
+                if (!string.IsNullOrEmpty(value))
+                    env[provider.ApiKeyEnvVar] = value;
+            }
+
+            foreach (var (_, server) in config.McpServers)
+            {
+                if (server.Env == null) continue;
+                foreach (var (key, _) in server.Env)
+                {
+                    var value = Environment.GetEnvironmentVariable(key);
+                    if (!string.IsNullOrEmpty(value))
+                        env[key] = value;
+                }
+            }
+        }
+        catch { /* best effort */ }
+
+        return env;
+    }
+
     private static void RegisterLinux(string exePath, string workDir, string serviceArgs)
     {
         var serviceDir = Path.Combine(
@@ -197,6 +276,8 @@ public static class ServiceRegistration
             ? exePath
             : $"{exePath} {serviceArgs}";
 
+        var envLines = BuildEnvironmentLines();
+
         var unit = $"""
             [Unit]
             Description=Mux-Swarm Daemon
@@ -209,7 +290,7 @@ public static class ServiceRegistration
             ExecStart={execStart}
             Restart=always
             RestartSec=10
-            Environment=DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+            {envLines.ToString().TrimEnd()}
 
             [Install]
             WantedBy=default.target
@@ -269,7 +350,7 @@ public static class ServiceRegistration
             MuxConsole.WriteWarning($"Service file not found: {servicePath}");
         }
     }
-    
+
     private static void RegisterMac(string exePath, string workDir, string serviceArgs)
     {
         var agentsDir = Path.Combine(
@@ -287,6 +368,21 @@ public static class ServiceRegistration
         {
             foreach (var arg in serviceArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                 argsXml.AppendLine($"        <string>{SecurityEscape(arg)}</string>");
+        }
+
+        // Build environment variables dict for plist
+        var envDict = BuildEnvironmentDict();
+        var envXml = new StringBuilder();
+        if (envDict.Count > 0)
+        {
+            envXml.AppendLine("        <key>EnvironmentVariables</key>");
+            envXml.AppendLine("        <dict>");
+            foreach (var (key, value) in envDict)
+            {
+                envXml.AppendLine($"            <key>{SecurityEscape(key)}</key>");
+                envXml.AppendLine($"            <string>{SecurityEscape(value)}</string>");
+            }
+            envXml.AppendLine("        </dict>");
         }
 
         var logDir = Path.Combine(
@@ -312,6 +408,7 @@ public static class ServiceRegistration
                 <true/>
                 <key>KeepAlive</key>
                 <true/>
+            {envXml.ToString().TrimEnd()}
                 <key>StandardOutPath</key>
                 <string>{Path.Combine(logDir, "mux-swarm.stdout.log")}</string>
                 <key>StandardErrorPath</key>

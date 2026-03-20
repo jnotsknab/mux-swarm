@@ -645,7 +645,7 @@ public static class Common
 
         Process.Start(new ProcessStartInfo
         {
-            FileName = Path.Combine(PlatformContext.BaseDirectory, "runtime", $"Watchdog{PlatformContext.ExecutableExtension}"),
+            FileName = Path.Combine(PlatformContext.BaseDirectory, "Runtime", $"Watchdog{PlatformContext.ExecutableExtension}"),
             Arguments = $"\"{Path.Combine(baseDir, $"MuxSwarm{PlatformContext.ExecutableExtension}")}\" \"{hbPath}\" {originalArgs}",
             UseShellExecute = true,
             CreateNoWindow = false
