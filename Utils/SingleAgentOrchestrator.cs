@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using MuxSwarm.State;
 
 namespace MuxSwarm.Utils;
 
@@ -431,7 +432,15 @@ public static class SingleAgentOrchestrator
                             foreach (AIContent content in update.Contents)
                             {
                                 if (content is FunctionCallContent functionCall)
-                                {
+                                {   
+                                    HookWorker.Enqueue(new HookEvent
+                                    {
+                                        Event     = "tool_call",
+                                        Agent     = singleAgentDef.Name,
+                                        Tool      = functionCall.Name,
+                                        Timestamp = DateTimeOffset.UtcNow
+                                    });
+                                    
                                     if (currentlyStreaming)
                                     {
                                         currentlyStreaming = false;
@@ -447,7 +456,15 @@ public static class SingleAgentOrchestrator
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
-                                {
+                                {   
+                                    HookWorker.Enqueue(new HookEvent
+                                    {
+                                        Event     = "tool_result",
+                                        Agent     = singleAgentDef.Name,
+                                        Summary   = functionResult.Result?.ToString(),
+                                        Timestamp = DateTimeOffset.UtcNow
+                                    });
+                                    
                                     if (!currentlyStreaming && thinking != null)
                                     {
                                         thinking.Dispose();

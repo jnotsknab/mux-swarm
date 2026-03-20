@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using System.Text.Json;
+using MuxSwarm.State;
 using Spectre.Console;
 
 namespace MuxSwarm.Utils;
@@ -855,11 +856,21 @@ public static class MuxConsole
     {
         WithConsole(() =>
         {
-            if (StdioMode) { EmitJson("agent_turn_start", D(("agent", agentName))); return; }
-            AnsiConsole.WriteLine();
-            AnsiConsole.Write(new Rule($"[{C.Agent}]{Esc(agentName)}[/]")
-                .RuleStyle(new Style(Color.Grey23))
-                .LeftJustified());
+            if (StdioMode) { EmitJson("agent_turn_start", D(("agent", agentName))); }
+            else
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(new Rule($"[{C.Agent}]{Esc(agentName)}[/]")
+                    .RuleStyle(new Style(Color.Grey23))
+                    .LeftJustified());
+            }
+        });
+
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event     = "agent_turn_start",
+            Agent     = agentName,
+            Timestamp = DateTimeOffset.UtcNow
         });
     }
 
@@ -879,12 +890,21 @@ public static class MuxConsole
             if (StdioMode)
             {
                 EmitJson("delegation", D(("from", fromAgent), ("to", toAgent), ("task", task)));
-                return;
             }
+            else
+            {
+                string truncTask = task.Length > truncLength ? task[..truncLength] + "..." : task;
+                AnsiConsole.MarkupLine($"  [{C.Accent}]>>[/] [{C.Info}]{Esc(fromAgent)}[/] [{C.Muted}]->[/] [{C.Step}]{Esc(toAgent)}[/]");
+                AnsiConsole.MarkupLine($"     [{C.Muted}]{Esc(truncTask)}[/]");
+            }
+        });
 
-            string truncTask = task.Length > truncLength ? task[..truncLength] + "..." : task;
-            AnsiConsole.MarkupLine($"  [{C.Accent}]>>[/] [{C.Info}]{Esc(fromAgent)}[/] [{C.Muted}]->[/] [{C.Step}]{Esc(toAgent)}[/]");
-            AnsiConsole.MarkupLine($"     [{C.Muted}]{Esc(truncTask)}[/]");
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event     = "delegation",
+            Agent     = fromAgent,
+            Summary   = task.Length > truncLength ? task[..truncLength] + "..." : task,
+            Timestamp = DateTimeOffset.UtcNow
         });
     }
 
@@ -895,9 +915,20 @@ public static class MuxConsole
             if (StdioMode)
             {
                 EmitJson("tool_call", D(("agent", agent), ("tool", tool), ("args", args)));
-                return;
             }
-            AnsiConsole.MarkupLine($"  [{C.Muted}]--[/] [{C.Info}]{Esc(agent)}[/] [{C.Muted}]->[/] [{C.Accent}]{Esc(tool)}[/]");
+            else
+            {
+                AnsiConsole.MarkupLine($"  [{C.Muted}]--[/] [{C.Info}]{Esc(agent)}[/] [{C.Muted}]->[/] [{C.Accent}]{Esc(tool)}[/]");
+            }
+        });
+
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event     = "tool_call",
+            Agent     = agent,
+            Tool      = tool,
+            Args      = args,
+            Timestamp = DateTimeOffset.UtcNow
         });
     }
 
@@ -908,12 +939,21 @@ public static class MuxConsole
             if (StdioMode)
             {
                 EmitJson("tool_result", D(("agent", agent), ("summary", summary)));
-                return;
             }
+            else
+            {
+                string clean = CollapseWhitespace(summary);
+                if (clean.Length > 120) clean = clean[..120] + "...";
+                AnsiConsole.MarkupLine($"     [{C.Muted}]{Esc(clean)}[/]");
+            }
+        });
 
-            string clean = CollapseWhitespace(summary);
-            if (clean.Length > 120) clean = clean[..120] + "...";
-            AnsiConsole.MarkupLine($"     [{C.Muted}]{Esc(clean)}[/]");
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event     = "tool_result",
+            Agent     = agent,
+            Summary   = summary,
+            Timestamp = DateTimeOffset.UtcNow
         });
     }
 
@@ -924,9 +964,19 @@ public static class MuxConsole
             if (StdioMode)
             {
                 EmitJson("task_complete", D(("agent", agent), ("summary", summary)));
-                return;
             }
-            AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Step}]{Esc(agent)}[/] [{C.Muted}]completed[/]  [{C.Info}]{Esc(summary)}[/]");
+            else
+            {
+                AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Step}]{Esc(agent)}[/] [{C.Muted}]completed[/]  [{C.Info}]{Esc(summary)}[/]");
+            }
+        });
+
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event     = "task_complete",
+            Agent     = agent,
+            Summary   = summary,
+            Timestamp = DateTimeOffset.UtcNow
         });
     }
 

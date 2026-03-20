@@ -891,7 +891,15 @@ public static class MultiAgentOrchestrator
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {
+                        {   
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event     = "tool_call",
+                                Agent     = "Orchestrator",
+                                Tool      = fc.Name,
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                            
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
                             if (!prodMode && currentlyStreaming)
@@ -912,7 +920,15 @@ public static class MultiAgentOrchestrator
                                 Console.Write($"[[TOOL_CALL]]{fc.Name}[[END_TOOL_CALL]]");
                         }
                         else if (content is FunctionResultContent fr)
-                        {
+                        {   
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event     = "tool_result",
+                                Agent     = "Orchestrator",
+                                Summary   = fr.Result?.ToString(),
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                            
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -1157,7 +1173,15 @@ public static class MultiAgentOrchestrator
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
-                        {
+                        {   
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event     = "tool_call",
+                                Agent     = specialist.Def.Name,
+                                Tool      = fc.Name,
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                            
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
                             if (!prodMode && currentlyStreaming)
@@ -1192,7 +1216,16 @@ public static class MultiAgentOrchestrator
                                 subProgress.Add($"Called {fc.Name}");
                         }
                         else if (content is FunctionResultContent fr)
-                        {
+                        {   
+                            
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event     = "tool_result",
+                                Agent     = specialist.Def.Name,
+                                Summary   = fr.Result?.ToString(),
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                            
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();

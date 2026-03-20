@@ -76,6 +76,7 @@ public class App
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
         "  --watchdog <true|false>    External watchdog toggle",
+        "  --serve <port>             Start embedded web UI (default 6723)",
         "  --mcp-strict <true|false>  Require all MCPs (default true)",
         "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
@@ -93,8 +94,10 @@ public class App
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
+    private static int servePort;
 
     public static AppConfig Config = new();
+    public static SwarmConfig SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
 
 
@@ -120,12 +123,14 @@ public class App
         {
             e.Cancel = false;
             MuxConsole.WriteInfo("Exiting...");
+            HookWorker.Stop();
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
         };
 
         AppDomain.CurrentDomain.ProcessExit += (_, e) =>
-        {
+        {   
+            HookWorker.Stop();
             ProcessCleanup.Instance.Shutdown();
         };
 
@@ -134,9 +139,6 @@ public class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
-        
-        //Load and populate exec limits from swarm cfg
-        FetchSetExecLimits();
         
         
         MuxConsole.WriteSplashScreen(version: "0.6.0");
@@ -153,6 +155,12 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
+        
+        //Shouldnt be null
+        SwarmConfig = LoadSwarm() ?? throw new InvalidOperationException();
+        
+        //Load and populate exec limits from swarm cfg
+        FetchSetExecLimits();
         
         InitLlmProvider();
         SkillLoader.LoadSkills();
@@ -171,6 +179,7 @@ public class App
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
         
+        HookWorker.Start(SwarmConfig.Hooks ?? []);
     }
 
     public async Task<int> Run(string[] args)
@@ -189,10 +198,13 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
-
+        
+        if (parsed.ServePort > 0)
+            await ServeMode.StartAsync((int)parsed.ServePort);
+        
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
-
+        
         if (parsed.DockerExecOverride.HasValue)
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
@@ -213,7 +225,7 @@ public class App
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             return Environment.ExitCode;
         }
-
+        
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {
@@ -530,7 +542,8 @@ public class App
         bool? DockerExecOverride,
         string? ReportSessionId,
         bool ReportAll,
-        string AgentName
+        string AgentName,
+        int? ServePort
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -710,6 +723,10 @@ public class App
                         WorkflowHelper.RunWorkflow(wf);
                     }
                     break;
+                case "--serve":
+                    if (Common.TryNextUInt(args, ref i, out var sp)) servePort = (int)sp;
+                    else servePort = 6723;
+                    break;
                 default:
                     if (a.StartsWith("-", StringComparison.Ordinal))
                         MuxConsole.WriteWarning($"Unknown flag: {a}");
@@ -731,7 +748,8 @@ public class App
             dockerExecOverride,
             reportSessionId,
             reportAll,
-            agentName
+            agentName,
+            servePort
         );
     }
 

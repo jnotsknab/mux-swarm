@@ -77,7 +77,23 @@ public sealed class StdinCancelMonitor : IDisposable
     {
         return _lineQueue.TryTake();
     }
-
+    
+    /// <summary>
+    /// Programmatically fire a cancel signal (used by ServeMode when
+    /// __CANCEL__ arrives over WebSocket instead of stdin).
+    /// </summary>
+    public void FireCancel()
+    {
+        lock (_ctsLock)
+        {
+            if (_activeTurnCts is { IsCancellationRequested: false })
+            {
+                _activeTurnCts.Cancel();
+                MuxConsole.WriteInfo("Cancelled by client.");
+            }
+        }
+    }
+    
     private void ReadLoop()
     {
         try

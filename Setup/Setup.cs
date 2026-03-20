@@ -69,6 +69,8 @@ public static class Setup
         return _appConfig;
     }
 
+    public static SwarmConfig? LoadSwarm() => JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath));
+
     public static void FetchSetExecLimits()
     {
         try
