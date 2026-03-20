@@ -256,6 +256,59 @@ mux-swarm --workflow ./workflows/research-pipeline.json
 A single workflow file can transition between agent mode, swarm mode, and parallel swarm mode, chain REPL operations with persistent state, and orchestrate multi-step pipelines across different execution models. The runtime handles all state transitions, tool loading, and cleanup. When the workflow completes, control returns to the keyboard.
 
 No DAG engine, no state machine, no YAML DSL. A workflow is a list of strings piped to the runtime. The architecture does the rest.
+
+### Event Hooks
+
+Hooks execute external commands in response to runtime lifecycle events. Configure them in `swarm.json` alongside your agent definitions. Each hook fires when its `when` clause matches an emitted event.
+```json
+{
+  "hooks": [
+    {
+      "id": "notify-slack",
+      "mode": "async",
+      "command": "python scripts/notify.py",
+      "when": { "event": "task_complete" }
+    },
+    {
+      "id": "log-tool-calls",
+      "mode": "blocking",
+      "command": "bash scripts/audit.sh",
+      "timeoutSeconds": 10,
+      "when": { "event": "tool_call", "agent": "CodeAgent" }
+    }
+  ]
+}
+```
+
+Hooks receive the full event payload as JSON on stdin. Two dispatch modes are available: `async` fires and continues immediately, `blocking` waits for the process to exit (with a configurable timeout) before the runtime proceeds. Pattern matching supports filtering by `event` type, `agent` name, and `tool` name. All fields in `when` except `event` are optional.
+
+Supported events: `agent_turn_start`, `tool_call`, `tool_result`, `delegation`, `task_complete`.
+
+On startup, if hooks are configured, the runtime prompts for confirmation before enabling them. Hooks are suppressed in `--stdio` mode to avoid interfering with structured output.
+
+### Web UI (`--serve`)
+
+The `--serve` flag starts an embedded web interface alongside the normal agent runtime. MuxSwarm initializes as usual (config, providers, MCP servers, skills), then starts a Kestrel HTTP server that bridges the browser to the agent loop over a WebSocket.
+```bash
+mux-swarm --serve           # default port 6723
+mux-swarm --serve 8080      # custom port
+mux-swarm --serve --watchdog  # resilient always-on operation
+```
+
+The browser connects via WebSocket and receives the same NDJSON event stream that `--stdio` emits. User input flows back through the socket to the agent's input loop. No proxy, no subprocess, no second process. The web UI is a single `index.html` served from `Runtime/mux-web-app/`.
+
+Features:
+- Streaming agent responses with markdown rendering
+- Tool call activity with friendly action descriptions
+- Interactive prompts (select, confirm, input) rendered as clickable UI elements
+- File browser sidebar for sandbox and session directories
+- File upload via drag-drop, file picker, or clipboard paste (Ctrl+V)
+- Cancel active agent turns via Stop button or Escape key
+- Accessible on LAN and Tailscale (binds to all interfaces)
+- Mobile responsive
+
+The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience where Kestrel restarts automatically on crash.
+
 ### CLI Flags
 ```
 --goal <text|file>         Goal input (text or file path)
@@ -269,12 +322,14 @@ No DAG engine, no state machine, no YAML DSL. A workflow is a list of strings pi
 --persist-interval <secs>  Persist session state interval
 --session-retention <n>    Retain last N session runs (default 10)
 --stdio                    Machine-readable output (no ANSI)
+--serve [port]             Start embedded web UI (default 6723)
 --workflow <file>          Run a workflow file (JSON) on launch
 --wf <file>                Alias for --workflow
+--delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)
+--model <id>               Override the single-agent model
 --watchdog [true|false]    Enable watchdog monitoring
 --mcp-strict [true|false]  Require all integrations to connect
 --docker-exec [true|false] Route execution through Docker
---model <id>               Override the single-agent model
 --report [session-id]      Generate audit report(s) and exit
 --cfg <path>               Override config.json path for scoped instances
 --swarmcfg <path>          Override swarm.json path for scoped instances
@@ -582,6 +637,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Shipped
 
+- **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async and blocking dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
 - **v0.6.0 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
 - **v0.6.0 — Token Tracking & Execution Limits**: Accurate provider-reported token tracking across all orchestration modes. Configurable `executionLimits` block in swarm.json for tuning orchestration budgets, iteration caps, and retry policies. `/limits` command for runtime inspection.
 - **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
@@ -589,13 +645,10 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Up Next
 
-#### v0.7.0 — Event Hooks
-Shell command execution triggered at lifecycle points via `swarm.json` config. Hooks for `postTask`, `postAgent`, `postGoal`, and `onToolCall` enable custom notifications, logging, and integration with external systems.
+#### v0.8.0 — Daemon Mode
+Background execution with `--daemon` flag. Filesystem watchers, endpoint listeners, and polling triggers with JSON rulesets for reactive automation. Triggers swarm execution on file changes, external events, or scheduled intervals. Pairs with `--serve --watchdog` for always-on operation.
 
-#### v0.7.0 — Daemon Mode
-Background execution with `--daemon` flag. Filesystem watchers, WebSocket listeners, and JSON rulesets for reactive automation. Triggers swarm execution on file changes, external events, or scheduled intervals.
-
-#### v0.8.0 — OpenTelemetry Tracing
+#### v0.9.0 — OpenTelemetry Tracing
 Native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
 
 Runtime reliability hardening for long-running workflows, parallel mode observability and per-task retry policies, expanded auditing and execution trace visibility, stronger isolation patterns, additional swarm configuration templates, and improved developer ergonomics around configuring and debugging swarms.

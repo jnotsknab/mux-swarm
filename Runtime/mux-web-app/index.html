@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Mux-Swarm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0D0F12;
+  --bg-card:  #13161B;
+  --bg-input: #1A1D24;
+  --border:   #2A2D35;
+  --text:     #C8CCD4;
+  --muted:    #5A5F6B;
+  --blue:     #64B4DC;
+  --green:    #78C88C;
+  --amber:    #D4A054;
+  --red:      #D46C6C;
+  --agent:    #8FB8D4;
+  --accent:   #64B4DC;
+  --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+  --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
+  --sidebar-width: 300px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.app-container { display: flex; height: 100vh; height: 100dvh; }
+
+.app {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  padding: 0 24px;
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+  transition: margin-right 0.2s;
+}
+
+.app.sidebar-open { margin-right: var(--sidebar-width); }
+
+/* ── Header ── */
+.header {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.header-logo { color: var(--blue); font-weight: 700; font-size: 14px; letter-spacing: 0.5px; }
+
+.header-status { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; flex: 1; }
+
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); transition: background 0.3s; }
+.status-dot.connected { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.error { background: var(--red); }
+
+.header-actions { display: flex; gap: 6px; }
+
+.icon-btn {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 8px; font-size: 14px; cursor: pointer;
+  transition: all 0.15s; line-height: 1;
+}
+.icon-btn:hover, .icon-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+/* ── Sidebar ── */
+.sidebar {
+  position: fixed; top: 0; right: 0; width: var(--sidebar-width); height: 100vh; height: 100dvh;
+  background: var(--bg-card); border-left: 1px solid var(--border);
+  display: flex; flex-direction: column; transform: translateX(100%);
+  transition: transform 0.2s ease; z-index: 100;
+}
+.sidebar.open { transform: translateX(0); }
+
+.sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; gap: 4px; align-items: center; }
+
+.sidebar-tab {
+  flex: 1; background: var(--bg-input); color: var(--muted); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 10px; font-family: var(--font-mono); font-size: 11px;
+  font-weight: 600; cursor: pointer; transition: all 0.15s;
+}
+.sidebar-tab:hover { color: var(--text); }
+.sidebar-tab.active { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+.sidebar-close {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--muted); font-size: 14px; cursor: pointer; padding: 4px 8px; line-height: 1;
+  position: static; flex-shrink: 0;
+}
+.sidebar-close:hover { color: var(--text); background: var(--accent); border-color: var(--accent); }
+
+.sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
+.sidebar-content::-webkit-scrollbar { width: 4px; }
+.sidebar-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.file-list { font-size: 12px; }
+.file-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+  border-radius: 3px; cursor: pointer; transition: background 0.1s;
+}
+.file-item:hover { background: var(--bg-input); }
+.file-item.dir { color: var(--blue); }
+.file-item.file { color: var(--text); }
+.file-item .icon { font-size: 10px; width: 14px; text-align: center; }
+.file-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item .size { color: var(--muted); font-size: 10px; }
+
+.file-item .dl-btn {
+  color: var(--muted); background: none; border: none; font-size: 11px;
+  cursor: pointer; padding: 2px 4px; opacity: 0; transition: opacity 0.1s, color 0.1s;
+}
+.file-item:hover .dl-btn { opacity: 1; }
+.file-item .dl-btn:hover { color: var(--accent); }
+
+.file-path {
+  padding: 6px 8px; color: var(--muted); font-size: 11px;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 6px;
+}
+.file-path .back-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px; }
+.file-path .back-btn:hover { color: var(--text); }
+
+.loading { padding: 20px; text-align: center; color: var(--muted); }
+.error-msg { padding: 10px; color: var(--red); font-size: 12px; }
+
+.sidebar-content.drag-over { background: rgba(100,180,220,0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
+
+/* ── Output ── */
+.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
+.output::-webkit-scrollbar { width: 4px; }
+.output::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Events ── */
+.event { padding: 2px 0; animation: fadeIn 0.15s ease; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; } }
+
+.event-success { color: var(--green); }
+.event-success::before { content: '✓ '; }
+.event-warning { color: var(--amber); }
+.event-warning::before { content: '! '; }
+.event-error { color: var(--red); }
+.event-error::before { content: '✗ '; }
+.event-info { color: var(--muted); }
+.event-debug { color: #484C55; font-size: 12px; }
+.event-body { color: var(--text); }
+
+.event-rule { border-top: 1px solid var(--border); margin: 8px 0; padding-top: 4px; color: var(--muted); font-size: 12px; }
+.event-step { color: var(--blue); font-weight: 600; margin: 12px 0 4px; padding: 4px 0; border-bottom: 1px dashed var(--border); }
+
+/* ── Agent turns ── */
+.agent-turn { margin: 12px 0 4px; display: flex; align-items: center; gap: 8px; }
+.agent-badge {
+  background: var(--bg-input); color: var(--agent); font-size: 11px; font-weight: 600;
+  padding: 2px 8px; border-radius: 3px; border: 1px solid var(--border); letter-spacing: 0.3px;
+}
+
+/* ── Stream block ── */
+.stream-block {
+  background: var(--bg-card); border-left: 2px solid var(--border);
+  padding: 10px 14px; margin: 4px 0; border-radius: 0 4px 4px 0;
+  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  font-size: 13px; line-height: 1.7; max-width: 100%; overflow-x: hidden;
+}
+.stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+.stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.5; }
+.stream-block pre code { background: none; padding: 0; }
+
+/* ── Thinking bar (inside stream block) ── */
+.thinking-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0 2px;
+  color: var(--muted); font-size: 12px;
+}
+.thinking-bar .bar {
+  width: 40px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; position: relative;
+}
+.thinking-bar .bar::after {
+  content: ''; position: absolute; left: -40px; top: 0; width: 20px; height: 100%;
+  background: var(--accent); border-radius: 2px;
+  animation: shimmer 1.2s ease-in-out infinite;
+}
+@keyframes shimmer { 0% { left: -20px; } 100% { left: 40px; } }
+
+/* ── Tool calls ── */
+.tool-call {
+  display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px;
+  color: var(--muted);
+}
+.tool-call .tool-icon { color: var(--accent); font-size: 10px; flex-shrink: 0; }
+.tool-call .tool { color: var(--text); }
+
+.tool-result {
+  color: var(--muted); font-size: 11px; padding-left: 22px;
+  max-height: 48px; overflow: hidden; text-overflow: ellipsis;
+  border-left: 1px solid var(--border); margin-left: 4px;
+}
+
+/* ── Delegation / Task ── */
+.delegation { font-size: 12px; padding: 4px 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.delegation .deleg-icon { color: var(--accent); }
+.delegation .from { color: var(--muted); }
+.delegation .deleg-arrow { color: var(--muted); font-size: 11px; }
+.delegation .to { color: var(--blue); font-weight: 600; }
+.delegation .task { color: var(--muted); font-size: 11px; width: 100%; padding-left: 18px; margin-top: 2px; }
+
+.task-complete { color: var(--green); font-size: 12px; padding: 2px 0; }
+.task-complete .agent { color: var(--blue); font-weight: 500; }
+
+/* ── Panels / Tables ── */
+.panel-block { border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.panel-header { background: var(--bg-input); color: var(--blue); font-weight: 600; font-size: 12px; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.panel-body { padding: 8px 10px; white-space: pre-wrap; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
+
+.table-block { border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.table-block table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.table-block th { background: var(--bg-input); color: var(--blue); font-weight: 600; text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--border); }
+.table-block td { padding: 3px 10px; border-bottom: 1px solid var(--border); }
+.table-block tr:last-child td { border-bottom: none; }
+
+/* ── Prompts ── */
+.prompt-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px; padding: 10px; margin: 8px 0; }
+.prompt-block .prompt-text { color: var(--text); margin-bottom: 8px; font-size: 12px; }
+.prompt-block button {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 6px 14px; font-family: var(--font-mono); font-size: 12px;
+  cursor: pointer; margin: 2px 4px 2px 0; transition: all 0.15s; min-height: 36px;
+}
+.prompt-block button:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+/* ── Welcome card ── */
+.welcome-card {
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 20px 24px; margin: 8px 0; max-width: 600px;
+}
+.welcome-card h2 { color: var(--blue); font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+.welcome-card p { color: var(--muted); font-size: 12px; margin-bottom: 12px; line-height: 1.6; }
+.welcome-card .cmd-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: 12px; }
+.welcome-card .cmd { color: var(--green); font-weight: 500; }
+.welcome-card .desc { color: var(--muted); }
+.welcome-card .shortcut-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+.welcome-card kbd { background: var(--bg-input); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--text); }
+
+/* ── Upload preview ── */
+.upload-preview {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+  padding: 6px 10px; margin: 2px 0; font-size: 12px;
+}
+.upload-preview img { width: 36px; height: 36px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
+.upload-preview .file-icon {
+  width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-input); border-radius: 3px; border: 1px solid var(--border);
+  font-size: 9px; font-weight: 700; color: var(--accent); text-transform: uppercase; flex-shrink: 0;
+}
+.upload-preview .upload-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
+.upload-preview .upload-size { color: var(--muted); font-size: 10px; }
+
+/* ── Input area ── */
+.input-area { border-top: 1px solid var(--border); padding: 10px 0; flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; }
+
+.input-area textarea {
+  flex: 1; width: 100%; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px 12px; font-family: var(--font-mono); font-size: 13px;
+  line-height: 1.5; resize: none; outline: none; min-height: 38px; max-height: 200px;
+  transition: border-color 0.15s;
+}
+.input-area textarea:focus { border-color: var(--accent); }
+.input-area textarea::placeholder { color: var(--muted); }
+
+/* ── Pending attachments strip ── */
+.attachments-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
+.attachments-strip:empty { display: none; }
+
+.btn-group { display: flex; gap: 6px; flex-shrink: 0; }
+
+.send-btn {
+  background: var(--accent); color: var(--bg); border: none; border-radius: 4px;
+  padding: 8px 14px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap; min-height: 38px;
+}
+.send-btn:hover { opacity: 0.85; }
+.send-btn.stop-mode { background: var(--red); }
+
+.upload-btn {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px 10px; font-family: var(--font-mono); font-size: 14px;
+  cursor: pointer; transition: all 0.15s; min-height: 38px;
+}
+.upload-btn:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+#fileInput { display: none; }
+
+.upload-notify {
+  position: fixed; bottom: 80px; right: 20px; background: var(--bg-card);
+  border: 1px solid var(--green); border-radius: 4px; padding: 8px 12px;
+  font-size: 12px; color: var(--green); animation: slideIn 0.2s ease; z-index: 200;
+}
+@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+/* ── User message ── */
+.user-msg { text-align: right; padding: 4px 0; }
+.user-msg .bubble {
+  display: inline-block; background: var(--bg-input); padding: 6px 12px;
+  border-radius: 4px; max-width: 80%; text-align: left; word-break: break-word;
+}
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+  html { font-size: 12px; }
+  .app { padding: 0 8px; padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
+  .header { padding: 8px 0; gap: 8px; }
+  .header-logo { font-size: 12px; }
+  .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
+  .panel-body { word-break: break-word; overflow-wrap: anywhere; }
+  .input-area { padding: 6px 0 8px; gap: 4px; }
+  .input-area textarea { font-size: 16px; min-height: 44px; padding: 8px 10px; }
+  .btn-group { gap: 4px; }
+  .send-btn { min-height: 44px; padding: 8px 10px; font-size: 11px; }
+  .upload-btn { min-height: 44px; padding: 8px; font-size: 12px; }
+  .prompt-block button { min-height: 44px; padding: 8px 12px; }
+  :root { --sidebar-width: 100vw; }
+  .app.sidebar-open { margin-right: 0; }
+  .sidebar { padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
+  .welcome-card { padding: 12px 14px; }
+  .welcome-card .cmd-grid { grid-template-columns: 1fr; gap: 2px; }
+  .welcome-card .shortcut-row { font-size: 10px; }
+  .tool-call { font-size: 11px; flex-wrap: wrap; }
+  .delegation { font-size: 11px; }
+  .event { font-size: 12px; word-break: break-word; }
+  .table-block { overflow-x: auto; }
+  .user-msg .bubble { max-width: 90%; }
+}
+
+@media (min-width: 1200px) {
+  :root { --sidebar-width: 360px; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-container">
+  <div class="app" id="app">
+    <div class="header">
+      <span class="header-logo">MUX-SWARM</span>
+      <span class="header-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">connecting...</span>
+      </span>
+      <div class="header-actions">
+        <button class="icon-btn" id="sidebarToggle" title="Toggle file browser">📁</button>
+      </div>
+    </div>
+
+    <div class="output" id="output"></div>
+
+    <div class="input-area">
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;">
+        <div class="attachments-strip" id="attachments"></div>
+        <textarea id="input" rows="1" placeholder="Type a message or /command..." autofocus></textarea>
+      </div>
+      <div class="btn-group">
+        <button class="upload-btn" id="uploadBtn" title="Upload file">📎</button>
+        <input type="file" id="fileInput" />
+        <button class="send-btn" id="actionBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
+      <button class="sidebar-tab" data-tab="sessions">Sessions</button>
+      <button class="sidebar-close" id="sidebarClose">×</button>
+    </div>
+    <div class="sidebar-content" id="sidebarContent">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const output = $('output');
+  const input = $('input');
+  const actionBtn = $('actionBtn');
+  const uploadBtn = $('uploadBtn');
+  const fileInput = $('fileInput');
+  const statusDot = $('statusDot');
+  const statusText = $('statusText');
+  const app = $('app');
+  const sidebar = $('sidebar');
+  const sidebarToggle = $('sidebarToggle');
+  const sidebarClose = $('sidebarClose');
+  const sidebarContent = $('sidebarContent');
+  const attachmentsStrip = $('attachments');
+
+  let ws = null;
+  let currentStreamEl = null;
+  let currentStreamText = '';
+  let reconnectDelay = 1000;
+  let sidebarOpen = false;
+  let currentTab = 'sandbox';
+  let currentPath = '';
+  let isAgentBusy = false;
+  let pendingFiles = []; // [{path, name, thumbUrl}]
+
+  // ─── WebSocket ───
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+    ws.onopen = () => {
+      statusDot.className = 'status-dot connected';
+      statusText.textContent = 'connected';
+      reconnectDelay = 1000;
+      showWelcome();
+      // Force repaint on iOS Safari — it defers DOM updates until user interaction
+      requestAnimationFrame(() => { document.body.style.opacity = '0.999'; requestAnimationFrame(() => { document.body.style.opacity = '1'; }); });
+    };
+    ws.onclose = () => {
+      statusDot.className = 'status-dot';
+      statusText.textContent = 'disconnected';
+      setBusy(false);
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 2, 10000);
+    };
+    ws.onerror = () => {
+      statusDot.className = 'status-dot error';
+      statusText.textContent = 'error';
+    };
+    ws.onmessage = (e) => {
+      for (const line of e.data.split('\n')) {
+        if (!line.trim()) continue;
+        try { handleEvent(JSON.parse(line)); }
+        catch {
+          // Filter splash noise
+          if (/^[│╭╰╮╯┌┐└┘─═╗╔╝╚║███▄▀◠◡█\s|]+$/.test(line.trim())) continue;
+          if (line.includes('CLI-native agentic swarm') || line.includes('Check Out The Repo')) continue;
+          if (/^v\d+\.\d+/.test(line.trim()) && line.includes('·')) continue;
+          if (line.trim() === '') continue;
+          appendText(line, 'event-info');
+        }
+      }
+    };
+  }
+
+  // ─── Welcome card ───
+  let welcomeShown = false;
+  function showWelcome() {
+    if (welcomeShown) return;
+    welcomeShown = true;
+    const html = `<div class="welcome-card">
+      <h2>Mux-Swarm</h2>
+      <p>CLI-native agentic swarm OS. Pick a mode to get started.</p>
+      <div class="cmd-grid">
+        <span class="cmd">/agent</span><span class="desc">Single-agent conversation</span>
+        <span class="cmd">/swarm</span><span class="desc">Multi-agent orchestrated loop</span>
+        <span class="cmd">/pswarm</span><span class="desc">Parallel concurrent dispatch</span>
+        <span class="cmd">/stateless</span><span class="desc">One-off stateless task</span>
+        <span class="cmd">/workflow</span><span class="desc">Run a workflow file</span>
+        <span class="cmd">/resume</span><span class="desc">Resume a previous session</span>
+        <span class="cmd">/status</span><span class="desc">View system status</span>
+        <span class="cmd">/tools</span><span class="desc">List available MCP tools</span>
+        <span class="cmd">/help</span><span class="desc">Full command reference</span>
+      </div>
+      <div class="shortcut-row">
+        <kbd>Enter</kbd> send &nbsp; <kbd>Shift+Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl+V</kbd> paste file &nbsp; 📎 upload
+      </div>
+    </div>`;
+    appendHTML(html);
+  }
+
+  // ─── Busy state ───
+  function setBusy(busy) {
+    isAgentBusy = busy;
+    actionBtn.textContent = busy ? 'Stop' : 'Send';
+    actionBtn.className = busy ? 'send-btn stop-mode' : 'send-btn';
+  }
+
+  // ─── Thinking bar ───
+  function appendThinkingBar(agentName, status) {
+    removeThinkingBar();
+    const bar = document.createElement('div');
+    bar.className = 'thinking-bar';
+    bar.id = '_thinking';
+    bar.innerHTML = `<div class="bar"></div><span>${esc(agentName)}${status ? ' — ' + esc(status) : ''}</span>`;
+    // Append inside current stream block if exists, else to output
+    if (currentStreamEl) {
+      currentStreamEl.appendChild(bar);
+    } else {
+      output.appendChild(bar);
+    }
+    scrollToBottom();
+  }
+
+  function updateThinkingBar(agentName, status) {
+    const bar = document.getElementById('_thinking');
+    if (bar) {
+      bar.innerHTML = `<div class="bar"></div><span>${esc(agentName)}${status ? ' — ' + status : ''}</span>`;
+    }
+  }
+
+  function removeThinkingBar() {
+    document.getElementById('_thinking')?.remove();
+  }
+
+  // ─── Event dispatcher ───
+  function handleEvent(ev) {
+    switch (ev.type) {
+      case 'splash':
+      case 'banner':
+        break; // suppressed
+
+      case 'step':
+        appendHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`);
+        break;
+
+      case 'rule':
+        appendHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`);
+        break;
+
+      case 'success': appendText(ev.message, 'event-success'); break;
+      case 'warning': appendText(ev.message, 'event-warning'); break;
+      case 'error':   appendText(ev.message, 'event-error'); break;
+      case 'info':    appendText(ev.message, 'event-info'); break;
+      case 'debug':   appendText(ev.message, 'event-debug'); break;
+      case 'body':
+      case 'markup':
+        if (ev.message && ev.message.length > 200) {
+          // Long text (like /help) — render as formatted panel
+          appendHTML(`<div class="stream-block">${renderMarkdown(ev.message)}</div>`);
+        } else {
+          appendText(ev.message, 'event-body');
+        }
+        break;
+
+      case 'agent_turn_start':
+        removeThinkingBar();
+        finalizeStream();
+        setBusy(true);
+        appendHTML(`<div class="agent-turn"><span class="agent-badge">${esc(ev.agent || 'Agent')}</span></div>`);
+        break;
+
+      case 'agent_turn_end':
+        removeThinkingBar();
+        finalizeStream();
+        setBusy(false);
+        break;
+
+      case 'stream':
+        setBusy(true);
+        removeThinkingBar();
+        if (!currentStreamEl) {
+          currentStreamEl = document.createElement('div');
+          currentStreamEl.className = 'stream-block';
+          output.appendChild(currentStreamEl);
+          currentStreamText = '';
+        }
+        currentStreamText += (ev.text || '');
+        currentStreamEl.innerHTML = renderMarkdown(currentStreamText);
+        scrollToBottom();
+        break;
+
+      case 'stream_end':
+        removeThinkingBar();
+        finalizeStream();
+        setBusy(false);
+        break;
+
+      case 'thinking_start':
+        setBusy(true);
+        appendThinkingBar(ev.agent || '', '');
+        break;
+
+      case 'thinking_update': {
+        const status = ev.status || '';
+        // Parse "[calling: Tool_action, Tool_action2]" format from ThinkingIndicator
+        const match = status.match(/\[calling:\s*(.+)\]/);
+        if (match) {
+          const tools = match[1].split(',').map(t => friendlyToolName(t.trim(), ev.agent || ''));
+          updateThinkingBar(ev.agent || '', tools.join(', '));
+        } else {
+          updateThinkingBar(ev.agent || '', status);
+        }
+        break;
+      }
+
+      case 'thinking_end':
+        removeThinkingBar();
+        break;
+
+      case 'tool_call':
+        removeThinkingBar();
+        appendHTML(`<div class="tool-call"><span class="tool-icon">⚡</span> <span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span></div>`);
+        break;
+
+      case 'tool_result':
+        if (ev.summary) {
+          const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
+          appendHTML(`<div class="tool-result">${esc(trunc)}</div>`);
+        }
+        break;
+
+      case 'delegation':
+        appendHTML(`<div class="delegation"><span class="deleg-icon">↗</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task.substring(0, 200))}</span>` : ''}</div>`);
+        break;
+
+      case 'task_complete':
+        appendHTML(`<div class="task-complete">✓ <span class="agent">${esc(ev.agent || '')}</span> <span style="color:var(--muted)">completed</span> ${ev.summary ? '— ' + esc(ev.summary) : ''}</div>`);
+        break;
+
+      case 'prompt':
+        setBusy(false);
+        input.focus();
+        break;
+
+      case 'input_request':  setBusy(false); renderInputPrompt(ev); break;
+      case 'confirm_request': setBusy(false); renderConfirm(ev); break;
+      case 'select_request':  setBusy(false); renderSelect(ev); break;
+      case 'multiselect_request': setBusy(false); renderSelect(ev, true); break;
+
+      case 'table': renderTable(ev); break;
+
+      case 'panel':
+        appendHTML(`<div class="panel-block"><div class="panel-header">${esc(ev.title || '')}</div><div class="panel-body">${esc(ev.content || '')}</div></div>`);
+        break;
+
+      case 'task_start': appendText('\u23f3 ' + (ev.message || ''), 'event-info'); break;
+      case 'task_done':  appendText('\u2713 ' + (ev.message || ''), 'event-success'); break;
+
+      default:
+        if (ev.message) appendText(ev.message, 'event-info');
+        break;
+    }
+    scrollToBottom();
+  }
+
+  // ─── Rendering helpers ───
+  function appendText(text, cls) {
+    const el = document.createElement('div');
+    el.className = `event ${cls || ''}`;
+    el.textContent = text || '';
+    output.appendChild(el);
+  }
+
+  function appendHTML(html) {
+    const w = document.createElement('div');
+    w.innerHTML = html;
+    while (w.firstChild) output.appendChild(w.firstChild);
+  }
+
+  function finalizeStream() { currentStreamEl = null; currentStreamText = ''; }
+
+  function scrollToBottom() {
+    requestAnimationFrame(() => {
+      output.scrollTop = output.scrollHeight;
+      // iOS Safari paint nudge
+      output.style.transform = 'translateZ(0)';
+    });
+  }
+
+  function esc(s) { const el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
+
+  function renderMarkdown(raw) {
+    let h = esc(raw);
+    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code}</code></pre>`);
+    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
+    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    h = h.replace(/^### (.+)$/gm, '<strong style="color:var(--blue)">$1</strong>');
+    h = h.replace(/^## (.+)$/gm, '<strong style="color:var(--blue);font-size:14px">$1</strong>');
+    return h;
+  }
+
+  /** Map raw MCP tool names like "Filesystem_read_file" to friendly descriptions */
+  function friendlyToolName(raw, agent) {
+    // Split MCP prefix: "ServerName_action_name" → ["ServerName", "action_name"]
+    const idx = raw.indexOf('_');
+    const server = idx > 0 ? raw.substring(0, idx) : '';
+    const action = idx > 0 ? raw.substring(idx + 1) : raw;
+
+    // Friendly action map
+    const friendly = {
+      'read_file': 'Reading file',
+      'write_file': 'Writing file',
+      'edit_file': 'Editing file',
+      'create_directory': 'Creating directory',
+      'list_directory': 'Listing directory',
+      'search_files': 'Searching files',
+      'move_file': 'Moving file',
+      'delete_file': 'Deleting file',
+      'get_file_info': 'Getting file info',
+      'read_multiple_files': 'Reading multiple files',
+      'list_allowed_directories': 'Listing paths',
+      'brave_web_search': 'Searching the web',
+      'brave_local_search': 'Searching locally',
+      'fetch': 'Fetching URL',
+      'execute': 'Running code',
+      'run_command': 'Running command',
+      'execute_command': 'Running command',
+      'create_entities': 'Storing to memory',
+      'search_nodes': 'Searching memory',
+      'open_nodes': 'Reading memory',
+      'add_observations': 'Adding observations',
+      'create_relations': 'Linking entities',
+      'delete_entities': 'Cleaning memory',
+      'delete_observations': 'Removing observations',
+      'delete_relations': 'Removing links',
+      'read_graph': 'Reading knowledge graph',
+      'add': 'Adding to collection',
+      'query': 'Querying database',
+      'get': 'Retrieving data',
+      'peek': 'Peeking at data',
+      'get_collection': 'Getting collection',
+      'list_collections': 'Listing collections',
+      'resolve-library-id': 'Looking up library',
+      'get-library-docs': 'Fetching documentation',
+      'list_skills': 'Listing skills',
+      'read_skill': 'Reading skill',
+      'analyze_image': 'Analyzing image',
+      'sleep': 'Waiting',
+    };
+
+    const desc = friendly[action];
+    if (desc) {
+      return server ? `${desc} <span style="color:var(--muted);font-size:11px">via ${esc(server)}</span>` : desc;
+    }
+
+    // Fallback: humanize the action name
+    const humanized = action.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return server ? `${humanized} <span style="color:var(--muted);font-size:11px">via ${esc(server)}</span>` : humanized;
+  }
+
+  // ─── Interactive prompts ───
+  function renderInputPrompt(ev) {
+    const block = document.createElement('div');
+    block.className = 'prompt-block';
+    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Input:')}</div>`;
+    const inp = document.createElement('textarea');
+    inp.rows = 1;
+    inp.style.cssText = 'width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--font-mono);font-size:12px;outline:none;resize:none;';
+    if (ev.default) inp.placeholder = ev.default;
+    const btn = document.createElement('button'); btn.textContent = 'Submit'; btn.style.marginTop = '6px';
+    const submit = () => { const val = inp.value.trim() || ev.default || ''; sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${esc(val)}</div>`; };
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+    btn.addEventListener('click', submit);
+    block.appendChild(inp); block.appendChild(btn);
+    output.appendChild(block); scrollToBottom(); inp.focus();
+  }
+
+  function renderConfirm(ev) {
+    const block = document.createElement('div');
+    block.className = 'prompt-block';
+    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Confirm?')}</div>`;
+    const respond = (val) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${val}</div>`; };
+    const y = document.createElement('button'); y.textContent = 'Yes'; y.addEventListener('click', () => respond('y'));
+    const n = document.createElement('button'); n.textContent = 'No'; n.addEventListener('click', () => respond('n'));
+    block.appendChild(y); block.appendChild(n);
+    output.appendChild(block); scrollToBottom();
+  }
+
+  function renderSelect(ev, multi = false) {
+    const block = document.createElement('div');
+    block.className = 'prompt-block';
+    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Select:')}</div>`;
+    const choices = ev.choices || [];
+    const selected = new Set();
+    choices.forEach((choice, i) => {
+      const btn = document.createElement('button');
+      btn.textContent = `${i + 1}. ${choice}`;
+      if (multi) {
+        btn.addEventListener('click', () => {
+          if (selected.has(i + 1)) { selected.delete(i + 1); btn.style.borderColor = ''; btn.style.background = ''; }
+          else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(100,180,220,0.1)'; }
+        });
+      } else {
+        btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${esc(choice)}</div>`; });
+      }
+      block.appendChild(btn);
+    });
+    if (multi) {
+      const s = document.createElement('button'); s.textContent = 'Submit'; s.style.marginTop = '6px';
+      s.addEventListener('click', () => {
+        const val = Array.from(selected).sort().join(',');
+        sendRaw(val || '1');
+        block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${Array.from(selected).sort().map(i => choices[i-1]).join(', ')}</div>`;
+      });
+      block.appendChild(document.createElement('br')); block.appendChild(s);
+    }
+    output.appendChild(block); scrollToBottom();
+  }
+
+  function renderTable(ev) {
+    const rows = ev.rows || [];
+    let h = '<div class="table-block"><table>';
+    h += `<thead><tr><th colspan="2">${esc(ev.title || '')}</th></tr></thead><tbody>`;
+    for (const r of rows) h += `<tr><td style="color:var(--muted)">${esc(r.key || '')}</td><td>${esc(r.value || '')}</td></tr>`;
+    h += '</tbody></table></div>';
+    appendHTML(h);
+  }
+
+  // ─── Sending ───
+  function sendRaw(text) {
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(text);
+  }
+
+  function send(text) {
+    if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
+    if (text.trim().toLowerCase() === '/clear') { appendText('/clear is disabled in web mode', 'event-warning'); return; }
+
+    // Build message with pending attachments
+    let fullMsg = text;
+    if (pendingFiles.length > 0) {
+      const refs = pendingFiles.map(f => `[file: ${f.path}]`).join('\n');
+      fullMsg = refs + '\n' + text;
+    }
+
+    ws.send(fullMsg);
+
+    // Render user bubble
+    const el = document.createElement('div');
+    el.className = 'user-msg';
+    let inner = '';
+    for (const f of pendingFiles) {
+      inner += renderUploadPreviewHTML(f.name, f.size, f.thumbUrl);
+    }
+    inner += `<div>${esc(text)}</div>`;
+    el.innerHTML = `<span class="bubble">${inner}</span>`;
+    output.appendChild(el);
+    scrollToBottom();
+
+    // Clear pending
+    pendingFiles = [];
+    attachmentsStrip.innerHTML = '';
+  }
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (isAgentBusy) { sendRaw('__CANCEL__'); appendText('⏹ Cancel signal sent', 'event-warning'); return; }
+      const text = input.value.trim();
+      if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
+    }
+  });
+
+  actionBtn.addEventListener('click', () => {
+    if (isAgentBusy) { sendRaw('__CANCEL__'); appendText('⏹ Cancel signal sent', 'event-warning'); return; }
+    const text = input.value.trim();
+    if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
+  });
+
+  function autoResize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
+  input.addEventListener('input', autoResize);
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
+      sendRaw('__CANCEL__');
+      appendText('⏹ Cancel signal sent', 'event-warning');
+    }
+  });
+
+  // ─── File uploads ───
+  const IMAGE_EXTS = new Set(['.png','.jpg','.jpeg','.gif','.webp','.bmp','.svg']);
+
+  function getExt(name) { const d = name.lastIndexOf('.'); return d >= 0 ? name.substring(d).toLowerCase() : ''; }
+
+  function formatSize(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b/1048576).toFixed(1) + ' MB';
+    return (b/1073741824).toFixed(1) + ' GB';
+  }
+
+  /** Encode path segments individually, preserving slashes. */
+  function encodePath(p) {
+    return p.split(/[\\/]/).map(s => encodeURIComponent(s)).join('/');
+  }
+
+  function renderUploadPreviewHTML(name, size, thumbUrl) {
+    const ext = getExt(name);
+    const isImg = IMAGE_EXTS.has(ext);
+    const short = name.split(/[\\/]/).pop() || name;
+    const sz = formatSize(size || 0);
+    if (isImg && thumbUrl) {
+      return `<div class="upload-preview"><img src="${thumbUrl}" alt="" /><div><div class="upload-name">${esc(short)}</div><div class="upload-size">${sz}</div></div></div>`;
+    }
+    const label = ext ? ext.replace('.','') : 'file';
+    return `<div class="upload-preview"><div class="file-icon">${esc(label)}</div><div><div class="upload-name">${esc(short)}</div><div class="upload-size">${sz}</div></div></div>`;
+  }
+
+  function addPendingFile(path, name, size, thumbUrl) {
+    pendingFiles.push({ path, name, size, thumbUrl });
+    // Render in attachments strip
+    const chip = document.createElement('div');
+    chip.className = 'upload-preview';
+    chip.style.cursor = 'pointer';
+    chip.title = 'Click to remove';
+    const ext = getExt(name);
+    const isImg = IMAGE_EXTS.has(ext);
+    const short = name.split(/[\\/]/).pop() || name;
+    if (isImg && thumbUrl) {
+      chip.innerHTML = `<img src="${thumbUrl}" alt="" /><div class="upload-name" style="max-width:120px">${esc(short)}</div>`;
+    } else {
+      const label = ext ? ext.replace('.','') : 'file';
+      chip.innerHTML = `<div class="file-icon" style="width:24px;height:24px;font-size:8px">${esc(label)}</div><div class="upload-name" style="max-width:120px">${esc(short)}</div>`;
+    }
+    const idx = pendingFiles.length - 1;
+    chip.addEventListener('click', () => { pendingFiles.splice(idx, 1); chip.remove(); });
+    attachmentsStrip.appendChild(chip);
+    input.focus();
+  }
+
+  function showUploadNotify(msg) {
+    const n = document.createElement('div'); n.className = 'upload-notify'; n.textContent = msg;
+    document.body.appendChild(n); setTimeout(() => n.remove(), 3000);
+  }
+
+  async function uploadFile(file, targetDir) {
+    const dir = targetDir || 'uploads';
+    const formData = new FormData();
+    formData.append('file', file);
+
+    let thumbUrl = null;
+    if (IMAGE_EXTS.has(getExt(file.name))) {
+      try { thumbUrl = await new Promise(r => { const rd = new FileReader(); rd.onload = () => r(rd.result); rd.onerror = () => r(null); rd.readAsDataURL(file); }); } catch {}
+    }
+
+    try {
+      const resp = await fetch(`/api/upload?dir=${encodeURIComponent(dir)}`, { method: 'POST', body: formData });
+      const data = await resp.json();
+      if (data.filename) {
+        showUploadNotify(`Uploaded: ${data.name || file.name}`);
+        addPendingFile(data.filename, data.name || file.name, data.size || file.size, thumbUrl);
+        if (sidebarOpen && currentTab === 'sandbox') loadFileList(currentPath);
+      } else { showUploadNotify('Upload failed'); }
+    } catch (err) { console.error(err); showUploadNotify('Upload error'); }
+  }
+
+  async function uploadBase64(base64, filename, targetDir) {
+    const dir = targetDir || 'uploads';
+    const ext = getExt(filename);
+    const isImg = IMAGE_EXTS.has(ext);
+    const size = Math.round((base64.length - (base64.indexOf(',') + 1)) * 0.75);
+
+    try {
+      const resp = await fetch(`/api/upload?dir=${encodeURIComponent(dir)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64, filename })
+      });
+      const data = await resp.json();
+      if (data.filename) {
+        showUploadNotify(`Uploaded: ${data.name || filename}`);
+        addPendingFile(data.filename, data.name || filename, data.size || size, isImg ? base64 : null);
+        if (sidebarOpen && currentTab === 'sandbox') loadFileList(currentPath);
+      } else { showUploadNotify('Upload failed'); }
+    } catch (err) { console.error(err); showUploadNotify('Upload error'); }
+  }
+
+  uploadBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => { const f = e.target.files[0]; if (f) uploadFile(f); fileInput.value = ''; });
+
+  document.addEventListener('paste', async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.kind === 'file') {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const ext = file.name ? file.name.split('.').pop() : (file.type.split('/')[1] || 'bin');
+            await uploadBase64(reader.result, `paste_${Date.now()}.${ext}`);
+          };
+          reader.readAsDataURL(file);
+        }
+        break;
+      }
+    }
+  });
+
+  // ─── Drag-drop: main window ───
+  let dragCounter = 0;
+  let sidebarDragActive = false;
+  const dropOverlay = document.createElement('div');
+  dropOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(100,180,220,0.08);border:2px dashed var(--accent);z-index:999;display:none;align-items:center;justify-content:center;pointer-events:none;';
+  dropOverlay.innerHTML = '<div style="color:var(--accent);font-family:var(--font-mono);font-size:16px;font-weight:600">Drop files to upload</div>';
+  document.body.appendChild(dropOverlay);
+
+  document.addEventListener('dragenter', (e) => { e.preventDefault(); dragCounter++; if (!sidebarDragActive) dropOverlay.style.display = 'flex'; });
+  document.addEventListener('dragleave', (e) => { e.preventDefault(); dragCounter--; if (dragCounter <= 0) { dragCounter = 0; dropOverlay.style.display = 'none'; } });
+  document.addEventListener('dragover', (e) => e.preventDefault());
+  document.addEventListener('drop', async (e) => {
+    e.preventDefault(); dragCounter = 0; dropOverlay.style.display = 'none';
+    if (sidebarDragActive) return;
+    if (e.dataTransfer?.files) { for (const f of e.dataTransfer.files) await uploadFile(f); }
+  });
+
+  // ─── Drag-drop: sidebar ───
+  sidebarContent.addEventListener('dragenter', (e) => { e.preventDefault(); e.stopPropagation(); if (currentTab !== 'sandbox') return; sidebarDragActive = true; dropOverlay.style.display = 'none'; sidebarContent.classList.add('drag-over'); });
+  sidebarContent.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); if (!sidebarContent.contains(e.relatedTarget)) { sidebarDragActive = false; sidebarContent.classList.remove('drag-over'); } });
+  sidebarContent.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+  sidebarContent.addEventListener('drop', async (e) => {
+    e.preventDefault(); e.stopPropagation(); sidebarDragActive = false; sidebarContent.classList.remove('drag-over');
+    if (currentTab !== 'sandbox') return;
+    if (e.dataTransfer?.files) { for (const f of e.dataTransfer.files) await uploadFile(f, currentPath || 'uploads'); }
+  });
+
+  // ─── Sidebar ───
+  function toggleSidebar() {
+    sidebarOpen = !sidebarOpen;
+    sidebar.classList.toggle('open', sidebarOpen);
+    app.classList.toggle('sidebar-open', sidebarOpen);
+    sidebarToggle.classList.toggle('active', sidebarOpen);
+    if (sidebarOpen) loadFileList();
+  }
+  sidebarToggle.addEventListener('click', toggleSidebar);
+  sidebarClose.addEventListener('click', toggleSidebar);
+
+  document.querySelectorAll('.sidebar-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      currentTab = tab.dataset.tab; currentPath = '';
+      document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active'); loadFileList();
+    });
+  });
+
+  async function loadFileList(subpath = '') {
+    sidebarContent.innerHTML = '<div class="loading">Loading...</div>';
+    const url = subpath ? `/api/list/${currentTab}/${encodePath(subpath)}` : `/api/list/${currentTab}`;
+    try {
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (data.error) { sidebarContent.innerHTML = `<div class="error-msg">${esc(data.error)}</div>`; return; }
+      currentPath = data.path || '';
+      let html = '';
+      if (currentPath) {
+        const parent = currentPath.split(/[\\/]/).slice(0,-1).join('/');
+        html += `<div class="file-path"><button class="back-btn" data-path="${esc(parent)}">←</button><span>${esc(currentPath)}</span></div>`;
+      }
+      if (data.items?.length) {
+        html += '<div class="file-list">';
+        for (const item of data.items) {
+          html += `<div class="file-item ${item.isDir ? 'dir' : 'file'}" data-path="${esc(item.path)}" data-isdir="${item.isDir}" title="${esc(item.name)}">
+            <span class="icon">${item.isDir ? '📁' : '📄'}</span>
+            <span class="name">${esc(item.name)}</span>
+            ${item.size ? `<span class="size">${formatSize(item.size)}</span>` : ''}
+            ${!item.isDir ? `<button class="dl-btn" data-dl="${esc(item.path)}" title="Download">⬇</button>` : ''}
+          </div>`;
+        }
+        html += '</div>';
+      } else if (!currentPath) { html += '<div class="loading">Empty</div>'; }
+      sidebarContent.innerHTML = html;
+
+      sidebarContent.querySelectorAll('.file-item').forEach(el => {
+        el.addEventListener('click', (e) => {
+          if (e.target.closest('.dl-btn')) return;
+          if (el.dataset.isdir === 'true') loadFileList(el.dataset.path);
+          else window.open(`/api/download/${currentTab}/${encodePath(el.dataset.path)}`, '_blank');
+        });
+      });
+      sidebarContent.querySelectorAll('.dl-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const a = document.createElement('a');
+          a.href = `/api/download/${currentTab}/${encodePath(btn.dataset.dl)}`;
+          a.download = btn.dataset.dl.split(/[\\/]/).pop() || 'file';
+          document.body.appendChild(a); a.click(); a.remove();
+        });
+      });
+      sidebarContent.querySelector('.back-btn')?.addEventListener('click', (e) => loadFileList(e.target.dataset.path));
+    } catch (err) { sidebarContent.innerHTML = `<div class="error-msg">Error: ${esc(err.message)}</div>`; }
+  }
+
+  // ─── Boot ───
+  connect();
+})();
+</script>
+</body>
+</html>
