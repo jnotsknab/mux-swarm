@@ -677,8 +677,8 @@ mux-swarm separates [configuration](#configuration) and execution into control p
 ```mermaid
 graph TD
     subgraph Control Planes
-        Config["config.json<br/><small>Providers · MCP Servers · Filesystem · Docker</small>"]
-        Swarm["swarm.json<br/><small>Roles · Models · ModelOpts · Delegation · Tool Scope</small>"]
+        Config["config.json<br/><small>Providers · MCP Servers · Filesystem · Daemon Triggers</small>"]
+        Swarm["swarm.json<br/><small>Roles · Models · ModelOpts · Delegation · Hooks</small>"]
         Prompts["Prompts/Agents<br/><small>Behavior Contracts · Workflows · Constraints</small>"]
     end
 
@@ -686,20 +686,41 @@ graph TD
     Swarm --> Runtime
     Prompts --> Runtime
 
-    Runtime["mux-swarm CLI"] --> Orchestrator
+    subgraph MuxSwarmRuntime["Mux-Swarm Runtime"]
+        Runtime["mux-swarm OS"] --> Engine["Execution Engine"]
+        Runtime --> Daemon["Daemon<br/><small>Watch · Cron · Status</small>"]
+        Runtime --> Serve["Web UI<br/><small>--serve · WebSocket</small>"]
+        Runtime --> Watchdog["Watchdog<br/><small>Process Guard</small>"]
+        Runtime --> Hooks["Hook Worker<br/><small>Persistent · Async · Blocking</small>"]
+    end
 
-    subgraph Default Swarm Execution
+    Engine --> SingleAgent["Single Agent<br/><small>/agent · /stateless</small>"]
+    Engine --> Orchestrator["Swarm Orchestrator<br/><small>/swarm · /pswarm</small>"]
+    Daemon -->|fires goals| Engine
+    Serve -->|user input| Engine
+
+    subgraph AgentExecution["Agent Execution"]
         Orchestrator --> WebAgent
         Orchestrator --> CodeAgent
         Orchestrator --> MemoryAgent
+        SingleAgent --> MuxAgent["MuxAgent"]
     end
 
-    WebAgent --> MCP1["MCP Tools<br/><small>BraveSearch · Fetch</small>"]
-    CodeAgent --> MCP2["MCP Tools<br/><small>Filesystem · PythonRepl</small>"]
-    MemoryAgent --> MCP3["MCP Tools<br/><small>ChromaDB · Memory</small>"]
+    subgraph ToolLayer["Tool Layer"]
+        WebAgent --> MCP1["BraveSearch · Fetch"]
+        CodeAgent --> MCP2["Filesystem · PythonRepl"]
+        MemoryAgent --> MCP3["ChromaDB · Memory"]
+        MuxAgent --> MCP4["All Scoped Tools"]
+    end
 
     MCP3 -.->|persist| Knowledge[(Memory Layers)]
     Orchestrator -.->|compact| Orchestrator
+
+    WebAgent -->|lifecycle events| Hooks
+    CodeAgent -->|lifecycle events| Hooks
+    MemoryAgent -->|lifecycle events| Hooks
+    MuxAgent -->|lifecycle events| Hooks
+    Hooks -->|TTS · Logging · Notifications| External["External Systems"]
 ```
 
 ### Orchestration Lifecycle
