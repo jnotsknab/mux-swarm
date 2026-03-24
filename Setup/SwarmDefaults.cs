@@ -385,15 +385,13 @@ public static class SwarmDefaults
             var fullPath = Path.Combine(PlatformContext.BaseDirectory, dockerPath);
             return File.Exists(fullPath) ? dockerPath : promptPath;
         }
-        else
-        {
-            // Strip _docker suffix if present
-            if (!name.EndsWith("_docker")) return promptPath;
+        
+        // Strip _docker suffix if present
+        if (!name.EndsWith("_docker")) return promptPath;
 
-            var standardName = $"{name[..^7]}{ext}";
-            var standardPath = Path.Combine(dir, standardName).Replace("\\", "/");
-            return standardPath;
-        }
+        var standardName = $"{name[..^7]}{ext}";
+        var standardPath = Path.Combine(dir, standardName).Replace("\\", "/");
+        return standardPath;
     }
 
     private class SwarmModelSet
