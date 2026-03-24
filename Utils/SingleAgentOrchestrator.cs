@@ -242,6 +242,7 @@ public static class SingleAgentOrchestrator
                 agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
                 agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
                 agentChatOptions.Seed = modelChatOpts.Seed;
+                agentChatOptions.Reasoning = modelChatOpts.Reasoning;
                 agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
             }
         }

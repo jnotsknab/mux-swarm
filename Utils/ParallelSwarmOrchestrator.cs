@@ -354,6 +354,7 @@ public static class ParallelSwarmOrchestrator
                     agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
                     agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
                     agentChatOptions.Seed = modelChatOpts.Seed;
+                    agentChatOptions.Reasoning = modelChatOpts.Reasoning;
                     agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
@@ -510,6 +511,7 @@ public static class ParallelSwarmOrchestrator
             orchChatOptions.FrequencyPenalty = orchModelOpts.FrequencyPenalty;
             orchChatOptions.PresencePenalty = orchModelOpts.PresencePenalty;
             orchChatOptions.Seed = orchModelOpts.Seed;
+            orchChatOptions.Reasoning = orchModelOpts.Reasoning;
             orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
 
