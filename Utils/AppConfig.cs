@@ -9,6 +9,9 @@ public class AppConfig
 
     [JsonPropertyName("isUsingDockerForExec")]
     public bool IsUsingDockerForExec { get; set; } = false;
+    
+    [JsonPropertyName("serveAddress")]
+    public string ServeAddress { get; set; } = "0.0.0.0";
 
     [JsonPropertyName("mcpServers")]
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();

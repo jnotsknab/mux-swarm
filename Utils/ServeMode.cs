@@ -70,7 +70,7 @@ public static class ServeMode
         var wwwroot = ResolveWwwroot();
 
         var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+        builder.WebHost.UseUrls($"http://{App.Config.ServeAddress}:{port}");
         builder.Logging.ClearProviders();
 
         var app = builder.Build();
@@ -123,15 +123,18 @@ public static class ServeMode
         });
 
         await Task.Delay(200);
-        MuxConsole.WriteSuccess($"Web UI available at http://localhost:{port}");
+        MuxConsole.WriteSuccess($"Web UI available at http://{App.Config.ServeAddress}:{port}");
 
-        // Show all network interfaces
+        // Show all network interfaces if bound to 0.0.0.0
         try
         {
-            foreach (var ip in System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName())
-                         .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork))
+            if (App.Config.ServeAddress == "0.0.0.0")
             {
-                MuxConsole.WriteInfo($"  Also available at http://{ip}:{port}");
+                foreach (var ip in System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName())
+                             .Where(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork))
+                {
+                    MuxConsole.WriteInfo($"  Also available at http://{ip}:{port}");
+                }
             }
         }
         catch { /* non-fatal */ }

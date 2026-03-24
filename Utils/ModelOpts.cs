@@ -31,8 +31,10 @@ public class ModelOpts
 
     [JsonPropertyName("additionalParams")]
     public Dictionary<string, object>? AdditionalParams { get; set; }
-
-
+    
+    [JsonPropertyName("reasoning")]
+    public ReasoningConfig? Reasoning { get; set; }
+    
     /// <summary>
     /// Builds a ChatOptions from non-null fields.
     /// Returns null if every field is default.
@@ -43,7 +45,7 @@ public class ModelOpts
             MaxOutputTokens is null && FrequencyPenalty is null &&
             PresencePenalty is null && Seed is null && AdditionalParams is null)
             return null;
-
+        
         ChatOptions opts = new ChatOptions
         {
             Temperature = Temperature,
@@ -54,6 +56,32 @@ public class ModelOpts
             PresencePenalty = PresencePenalty,
             Seed = Seed
         };
+        
+        if (Reasoning is not null)
+        {
+            opts.Reasoning = new ReasoningOptions
+            {
+                Effort = Reasoning.Effort?.ToLowerInvariant() switch
+                {
+                    "none" => ReasoningEffort.None,
+                    "low" => ReasoningEffort.Low,
+                    "med" => ReasoningEffort.Medium,
+                    "medium" => ReasoningEffort.Medium,
+                    "high" => ReasoningEffort.High,
+                    "extrahigh" => ReasoningEffort.ExtraHigh,
+                    "extra_high" => ReasoningEffort.ExtraHigh,
+                    _ => null
+                },
+                Output = Reasoning.Output?.ToLowerInvariant() switch
+                {
+                    "none" => ReasoningOutput.None,
+                    "summary" => ReasoningOutput.Summary,
+                    "full" => ReasoningOutput.Full,
+                    _ => null
+                }
+                
+            };
+        }
 
         if (AdditionalParams is { Count: > 0 })
         {
