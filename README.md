@@ -616,26 +616,43 @@ Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `m
 | `presencePenalty` | float | -2.0–2.0 | Penalizes any token that has appeared at all. Encourages topic diversity. |
 | `seed` | long | — | Attempts deterministic output for identical inputs. Provider support varies. |
 
+
+### Reasoning Options
+
+Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `reasoning` block for controlling model reasoning behavior. Both fields are optional.
+```json
+"reasoning": {
+  "effort": "high",
+  "output": "full"
+}
+```
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| effort | `none`, `low`, `medium`, `high`, `extra_high` | Controls how much computational effort the model puts into reasoning before responding. |
+| output | `none`, `summary`, `full` | Controls whether reasoning traces are included in the response. |
+
 **Tuning guidelines:**
-- **Orchestrators:** Low temperature (0.2–0.4) for consistent planning and delegation decisions.
-- **Code agents:** Moderate temperature (0.3–0.5) for accurate but flexible code generation.
-- **Research/general agents:** Higher temperature (0.5–0.7) for varied, comprehensive responses.
-- **Compaction agents:** Low temperature (0.1–0.3) for faithful summarization.
+- **Orchestrators:** Low temperature (0.2–0.4), medium reasoning effort, no reasoning output. Consistent planning without trace bloat.
+- **Code based agents:** Moderate temperature (0.3–0.5), high reasoning effort, full output. Complex tasks benefit from deep visible reasoning.
+- **Research/general agents:** Higher temperature (0.5–0.7), medium reasoning effort. Varied responses with moderate thinking.
+- **Memory/utility agents:** Low temperature, low or no reasoning. CRUD operations where thinking adds latency without value.
+- **Compaction agents:** Low temperature (0.1–0.3), no reasoning. Faithful summarization, not problem-solving.
 
-#### Provider-Specific Parameters (`additionalParams`)
+### Provider-Specific Parameters (additionalParams)
 
-For parameters not covered by the standard `modelOpts` fields, use `additionalParams` to pass arbitrary key-value pairs directly to the provider via `ChatOptions.AdditionalProperties`. This is a pass-through, the runtime does not validate these values.
+For parameters not covered by the standard `modelOpts` fields or the `reasoning` block, use `additionalParams` to pass arbitrary key-value pairs directly to the provider via `ChatOptions.AdditionalProperties`. This is a pass-through — the runtime does not validate these values.
 ```json
 "modelOpts": {
   "temperature": 0.3,
   "maxOutputTokens": 4096,
   "additionalParams": {
-    "reasoning_effort": "high"
+    "top_a": 0.08
   }
 }
 ```
 
-Use the correct convention for your provider (e.g. `reasoning_effort` for OpenAI, `enable_thinking` for models that support it via OpenRouter).
+Use this for provider-specific features not covered by the standard fields (e.g. `top_a`, `min_p`, `repetition_penalty`).
 
 ### Execution Limits (`executionLimits`)
 
