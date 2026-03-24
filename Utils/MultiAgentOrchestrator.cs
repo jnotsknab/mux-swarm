@@ -1336,8 +1336,9 @@ public static class MultiAgentOrchestrator
             {
                 stuckCount++;
                 if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
-                    return ($"[{specialist.Def.Name} stuck after {stuckCount} empty responses]", "failure",
-                            "Agent produced no output repeatedly", null);
+                    return (fullResponseAccumulator.ToString(), "partial",
+                        $"{specialist.Def.Name} reached max stuck count ({stuckCount}) with no further output",
+                        null);
 
                 subProgress.Add($"[System] No output on iteration {i + 1}. You must take an action or call signal_task_complete.");
                 continue;

@@ -2,7 +2,7 @@
 
 /// <summary>
 /// Builds the instruction preamble injected before every sub-agent task.
-/// Centralizes the skill, sleep, and filesystem write rules.
+/// Centralizes various rules defined as well as specified user info from Config.json
 /// </summary>
 public static class PreambleBuilder
 {
