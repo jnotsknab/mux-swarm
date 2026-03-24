@@ -59,98 +59,83 @@ All artifacts must end up in:
 
     {{paths.sandbox}}
 
-Docker cannot reliably mount:
-
--   UNC paths
--   Network drives
--   Non-local mounts
--   External volumes
-
-So we use a **local-then-copy pattern**.
-
 ------------------------------------------------------------------------
 
-# LOCAL-THEN-COPY (OS Native)
+# OUTPUT METHOD: docker cp (Standard)
+
+`docker cp` is the standard method for retrieving output from containers.
+It is more reliable than volume mounts, which can fail with UNC paths,
+network drives, permission issues, and path translation between host and
+container.
+
+The pattern: run a named container (without `--rm`), copy output to
+sandbox, then remove the container.
 
 ------------------------------------------------------------------------
 
 # WINDOWS (PowerShell)
 
-## 1️⃣ Create local temp output
+## 1️⃣ Run container (named, no --rm)
 
 ``` powershell
-$LocalOutput = Join-Path $env:TEMP "container-output"
-New-Item -ItemType Directory -Force -Path $LocalOutput | Out-Null
-```
-
-------------------------------------------------------------------------
-
-## 2️⃣ Run container
-
-``` powershell
-docker run --rm `
-  -v "${LocalOutput}:/output" `
+docker run --name mux-task `
   -v "{{paths.skills}}:/workspace" `
   python-runtime-image `
   python /workspace/script.py
 ```
 
-------------------------------------------------------------------------
-
-## 3️⃣ Copy to sandbox
+## 2️⃣ Copy output to sandbox
 
 ``` powershell
-Copy-Item -Path (Join-Path $LocalOutput "*") `
-          -Destination "{{paths.sandbox}}" `
-          -Recurse -Force
+docker cp mux-task:/output/. "{{paths.sandbox}}"
 ```
 
-------------------------------------------------------------------------
-
-## 4️⃣ Cleanup
+## 3️⃣ Cleanup
 
 ``` powershell
-Remove-Item -Recurse -Force $LocalOutput
+docker rm mux-task
 ```
 
 ------------------------------------------------------------------------
 
 # macOS / LINUX (Bash)
 
-## 1️⃣ Create local temp output
+## 1️⃣ Run container (named, no --rm)
 
 ``` bash
-LocalOutput="$(mktemp -d)/container-output"
-mkdir -p "$LocalOutput"
-```
-
-------------------------------------------------------------------------
-
-## 2️⃣ Run container
-
-``` bash
-docker run --rm \
-  -v "$LocalOutput:/output" \
+docker run --name mux-task \
   -v "{{paths.skills}}:/workspace" \
   python-runtime-image \
   python /workspace/script.py
 ```
 
-------------------------------------------------------------------------
-
-## 3️⃣ Copy to sandbox
+## 2️⃣ Copy output to sandbox
 
 ``` bash
-cp -R "$LocalOutput"/. "{{paths.sandbox}}"
+docker cp mux-task:/output/. "{{paths.sandbox}}"
+```
+
+## 3️⃣ Cleanup
+
+``` bash
+docker rm mux-task
 ```
 
 ------------------------------------------------------------------------
 
-## 4️⃣ Cleanup
+# Why docker cp over volume mounts for output
 
-``` bash
-rm -rf "$LocalOutput"
-```
+Volume mounts (`-v host:container`) fail or behave unexpectedly with:
+
+-   UNC paths (`\\server\share`)
+-   Network drives
+-   Non-local mounts
+-   Windows path translation edge cases
+-   Permission mismatches between host and container
+
+`docker cp` avoids all of these by copying from the stopped container's
+filesystem directly. Input mounts (read-only workspace/scripts) are still
+fine as volume mounts since they use known local paths.
 
 ------------------------------------------------------------------------
 
@@ -205,29 +190,43 @@ print("Saved report.docx")
 Works on all OS:
 
 ``` bash
-docker run --rm \
-  -v "$LocalOutput:/output" \
+docker run --name mux-task \
   -v "{{paths.skills}}:/workspace" \
   python-runtime-image \
   bash -c "pip install some-package && python /workspace/script.py"
 ```
 
+Then `docker cp` and `docker rm` as above.
+
 (On Windows, use PowerShell multiline format.)
+
+------------------------------------------------------------------------
+
+# Multiple Output Files
+
+`docker cp` with the `/output/.` source copies the entire directory
+contents. No need to specify individual files:
+
+``` bash
+docker cp mux-task:/output/. "{{paths.sandbox}}"
+```
+
+This copies all files and subdirectories from `/output/` into the sandbox.
 
 ------------------------------------------------------------------------
 
 # Rules
 
 -   Python, Node, git, shell scripts MUST run in Docker
--   Never mount UNC/network paths directly into Docker
--   Always use local-then-copy for sandbox output
--   Always use `--rm`
+-   Use `docker cp` to retrieve output (not volume mounts for output)
+-   Use named containers (no `--rm`) so `docker cp` can run after exit
+-   Always `docker rm` after copying output
 -   Always write to `/output/` inside container
--   Always clean up temp directory
 -   Never use `--privileged`
 -   Never mount entire drives
 -   Do not use Docker for plain file writes
 -   If script fails → fix and retry (do not rerun unchanged)
+-   Input scripts/workspace can use volume mounts (`-v`) with known local paths
 
 ------------------------------------------------------------------------
 
@@ -236,7 +235,6 @@ docker run --rm \
   Component   Windows         macOS      Linux
   ----------- --------------- ---------- ----------
   Shell       PowerShell      bash/zsh   bash
-  Temp Dir    `$env:TEMP`     `mktemp`   `mktemp`
-  Copy        `Copy-Item`     `cp -R`    `cp -R`
-  Cleanup     `Remove-Item`   `rm -rf`   `rm -rf`
+  Copy out    `docker cp`     `docker cp`  `docker cp`
+  Cleanup     `docker rm`     `docker rm`  `docker rm`
   Docker      Same            Same       Same
