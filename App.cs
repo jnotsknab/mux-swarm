@@ -147,7 +147,14 @@ public class App
             _mcpStrictMode = parsed.McpStrictOverride.Value;
             MuxConsole.WriteInfo($"MCP Strict Mode set to: {_mcpStrictMode}");
         }
-
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "runtime_ready",
+            Text = "Mux Swarm Runtime Startup Has Completed",
+            Timestamp = DateTimeOffset.UtcNow
+        });
+        
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
             return await HandleParsedRun(parsed);
 
