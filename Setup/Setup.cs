@@ -568,7 +568,7 @@ public static class Setup
         MuxConsole.WriteLine();
         return true;
     }
-
+    
     private static void StepPrintSummary()
     {
         _appConfig.SetupCompleted = true;
@@ -594,20 +594,12 @@ public static class Setup
         */
         MuxConsole.WriteLine();
     }
-
-    // ─────────────────────────────────────────────────────────────
-    // PUBLIC DELEGATES (kept for backward compat)
-    // ─────────────────────────────────────────────────────────────
-
+    
     public static bool IsBinaryAvailable(string binary) => BinaryResolver.IsBinaryAvailable(binary);
 
     public static bool TryFindBinaryPath(string binary, out string? fullPath) =>
         BinaryResolver.TryFindBinaryPath(binary, out fullPath);
-
-    // ─────────────────────────────────────────────────────────────
-    // UTILITIES
-    // ─────────────────────────────────────────────────────────────
-
+    
     private static List<string> ParsePaths(string input)
     {
         var result = new List<string>();

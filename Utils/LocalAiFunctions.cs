@@ -4,10 +4,10 @@ namespace MuxSwarm.Utils;
 
 public static class LocalAiFunctions
 {
-    //TODO: Convert to get to methods
     public static AIFunction ListSkillsTool = null!;
     public static AIFunction ReadSkillTool = null!;
     public static AIFunction SleepTool = null!;
+    public static AIFunction MuxRefreshTool = null!;
 
     static LocalAiFunctions()
     {
@@ -133,6 +133,30 @@ public static class LocalAiFunctions
             },
             name: "system_sleep",
             description: "Pause execution for N minutes without consuming tokens. Use between polling cycles, while waiting for long-running processes, or for scheduled intervals."
+        );
+        
+        MuxRefreshTool = AIFunctionFactory.Create(
+            method: async (
+                [System.ComponentModel.Description("True to refresh skills.")] bool refreshSkills,
+                [System.ComponentModel.Description("True to refresh MCP servers.")] bool refreshMcpServers,
+                [System.ComponentModel.Description("True to refresh Config.json and Swarm.json.")] bool refreshConfigs
+            ) =>
+            {
+                if (refreshSkills) CliCmdUtils.ReloadSkills();
+                if (refreshMcpServers) await CliCmdUtils.ReloadMcpServersAsync(App.InitMcpServersAsync, App.ConfigPath);
+                
+                if (refreshConfigs)
+                {
+                    App.Config = Setup.Setup.LoadConfig(App.ConfigPath);
+                    App.SwarmConfig = Setup.Setup.LoadSwarm();
+                }
+                return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete. ";
+                
+            },
+            name: "mux_refresh",
+            description: "Refresh the Mux-Swarm runtime. Selectively reload skills, MCP servers, and/or config files (config.json, swarm.json). " +
+             "Call this after writing or modifying a skill file, updating swarm topology, changing model assignments, or adding MCP servers. " +
+             "Changes take effect immediately without restarting the runtime."
         );
     }
 }

@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
+using MuxSwarm.State;
 
 namespace MuxSwarm.Utils;
 
@@ -180,8 +181,21 @@ public static class ServeMode
                         StdinCancelMonitor.Instance?.FireCancel();
                         continue;
                     }
-                    if (!string.IsNullOrEmpty(msg))
-                        await _inputChannel.Writer.WriteAsync(msg);
+
+                    if (string.IsNullOrEmpty(msg))
+                        continue;
+                    
+                    await _inputChannel.Writer.WriteAsync(msg);
+                    HookWorker.Enqueue(new HookEvent
+                    {
+                        Event = "user_input",
+                        Agent = "Unknown",
+                        Text = msg,
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+    
+                    BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = msg }));
+                    
                 }
             }
         }

@@ -12,7 +12,7 @@ namespace MuxSwarm;
 public class App
 {
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
-    private static readonly string ConfigPath = PlatformContext.ConfigPath;
+    public static readonly string ConfigPath = PlatformContext.ConfigPath;
     private static bool _showToolCallResults;
     private static IList<McpClientTool>? _mcpTools;
     private static string? _cliModelOverride;
@@ -818,7 +818,7 @@ public class App
         return $"{s[..2]}***{s[^2..]} (len={s.Length})";
     }
 
-    private static async Task<bool> InitMcpServersAsync(AppConfig config)
+    public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
         _mcpTools = new List<McpClientTool>();
 

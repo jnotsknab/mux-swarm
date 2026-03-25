@@ -330,8 +330,8 @@ public static class ParallelSwarmOrchestrator
                 );
 
                 var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
+                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
+                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, .. filteredTools];
 
                 var agentChatOptions = new ChatOptions
                 {
@@ -491,6 +491,7 @@ public static class ParallelSwarmOrchestrator
             LocalAiFunctions.ListSkillsTool,
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
+            LocalAiFunctions.MuxRefreshTool,
             ..orchestratorFilteredTools
         ];
 

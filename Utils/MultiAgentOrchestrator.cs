@@ -370,8 +370,8 @@ public static class MultiAgentOrchestrator
                 );
 
                 var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
+                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
+                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, .. filteredTools];
 
                 var agentChatOptions = new ChatOptions
                 {
@@ -479,6 +479,7 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.ListSkillsTool,
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
+            LocalAiFunctions.MuxRefreshTool,
             ..orchestratorFilteredTools
         ];
 
@@ -1073,7 +1074,7 @@ public static class MultiAgentOrchestrator
             MuxConsole.WriteWarning($"Max orchestrator iterations ({maxOrchestratorIterations}) reached.");
     }
 
-    // ── SubAgent Execution Logic ──────────────────────────────────────────
+    // SubAgent Execution Logic
 
     private static async Task<(string RawResult, string? Status, string? Summary, string? Artifacts)> RunSubAgentAsync(
         (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def) specialist,
