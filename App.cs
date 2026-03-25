@@ -25,7 +25,7 @@ public class App
     private static int servePort;
 
     public static AppConfig Config = new();
-    public static SwarmConfig SwarmConfig = new();
+    public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
 
 
@@ -85,7 +85,7 @@ public class App
         }
 
         //Shouldnt be null
-        SwarmConfig = LoadSwarm() ?? throw new InvalidOperationException();
+        SwarmConfig = LoadSwarm();
 
         //Load and populate exec limits from swarm cfg
         FetchSetExecLimits();
@@ -402,8 +402,9 @@ public class App
                     break;
 
                 case "/refresh":
-                    await CliCmdUtils.ReloadMcpServersAsync(InitMcpServersAsync, ConfigPath);
-                    CliCmdUtils.ReloadSkills();
+                    Config = LoadConfig(ConfigPath);
+                    SwarmConfig = LoadSwarm();
+                    await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     break;
 
                 case var cmd when cmd.StartsWith("/report"):
