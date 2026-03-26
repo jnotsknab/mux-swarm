@@ -11,83 +11,8 @@ namespace MuxSwarm;
 
 public class App
 {
-    private static readonly string HelpText = string.Join("\n",
-        "Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime & Operating Environment",
-        "",
-        "Slash Commands",
-        "  /swarm          Launch interactive multi agent swarm loop",
-        "  /pswarm         Launch parallel swarm — concurrent batch dispatch for independent tasks",
-        "  /agent          Launch interactive single agent loop",
-        "  /stateless      Stateless single agent loop, ideal for one-off tasks",
-        "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
-        "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
-        "  /compact        Compact current session context (applies to single agent loops only)",
-        "  /model          View current models set for your swarm",
-        "  /setmodel       Change the model for any agent, orchestrator, or compaction agent in your swarm config",
-        "  /swap           Swap the active agent for single-agent mode",
-        "  /provider       View or switch the active LLM provider",
-        "  /limits         Display current execution limits for orchestration and agents",
-        "  /tools          List available MCP tools across enabled servers",
-        "  /skills         List available local skills",
-        "  /memory         View knowledge graph",
-        "  /sessions       List all saved sessions with type and agent count",
-        "  /dockerexec     Toggle Docker execution mode",
-        "  /delimiter      Toggle multi-line input delimiter",
-        "  /dbg            Enable tool call output (applies to stdio mode only)",
-        "  /nodbg          Disable tool call output (applies to stdio mode only)",
-        "  /setup          Run initial setup / reconfigure",
-        "  /reloadskills   Refresh skills directory for any mid process changes",
-        "  /refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills",
-        "  /report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes",
-        "  /report <id>    Audit a specific session by timestamp",
-        "  /clear          Clear screen",
-        "  /status         View current system status: provider, models, tools, skills, and sessions",
-        "  /exit           Exit Mux-Swarm",
-        "",
-        "CLI Usage",
-        "  mux-swarm \"<goal>\"",
-        "  mux-swarm <goal.txt>",
-        "  mux-swarm --goal \"<goal>\"",
-        "  mux-swarm --goal <goal.txt>",
-        "",
-        "  Continuous mode:",
-        "  mux-swarm --continuous --goal \"<goal>\" --goal-id my-run",
-        "  mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600",
-        "",
-        "  Parallel mode:",
-        "  mux-swarm --parallel --goal \"<goal>\"",
-        "  mux-swarm --parallel --continuous --goal \"<goal>\" --goal-id batch-run",
-        "",
-        "  Ex:",
-        @"  mux-swarm --continuous --goal-id overnight-research --goal C:\goals\research.txt --min-delay 600 --persist-interval 120 --watchdog --docker-exec true --stdio",
-        "",
-        "CLI Flags",
-        "  --goal <text|file>         Explicit goal",
-        "  --continuous               Continuous autonomous mode",
-        "  --parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential",
-        "  --max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)",
-        "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
-        "  --workflow <file>          Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
-        "  --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)",
-        "  --goal-id <id>             Attach goal/session id",
-        "  --min-delay <secs>         Min delay between loops (default 300)",
-        "  --persist-interval <s>     Persist session every N seconds",
-        "  --session-retention <n>    Keep last N sessions (default 10)",
-        "  --stdio                    Machine-readable output (no ANSI)",
-        "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
-        "  --watchdog                 Enable external watchdog (auto-restart on crash)",
-        "  --serve <port>             Start embedded web UI (default 6723)",
-        "  --daemon                   Start daemon mode (file watch, cron, status triggers from config.json)",
-        "  --register                 Register mux-swarm as an OS service (survives reboots)",
-        "  --remove                   Unregister mux-swarm OS service",
-        "  --mcp-strict <true|false>  Require all MCPs (default true)",
-        "  --docker-exec <true|false> Route exec via docker skills",
-        "  --cfg <path>               Override Config.json path for scoped instance",
-        "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
-        "  --report <session-id>      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
-
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
-    private static readonly string ConfigPath = PlatformContext.ConfigPath;
+    public static readonly string ConfigPath = PlatformContext.ConfigPath;
     private static bool _showToolCallResults;
     private static IList<McpClientTool>? _mcpTools;
     private static string? _cliModelOverride;
@@ -100,7 +25,7 @@ public class App
     private static int servePort;
 
     public static AppConfig Config = new();
-    public static SwarmConfig SwarmConfig = new();
+    public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
 
 
@@ -144,7 +69,7 @@ public class App
         Config = LoadConfig(ConfigPath);
 
 
-        MuxConsole.WriteSplashScreen(version: "0.8.0");
+        MuxConsole.WriteSplashScreen(version: "0.8.2");
 
         if (!Config.SetupCompleted)
         {
@@ -160,7 +85,7 @@ public class App
         }
 
         //Shouldnt be null
-        SwarmConfig = LoadSwarm() ?? throw new InvalidOperationException();
+        SwarmConfig = LoadSwarm();
 
         //Load and populate exec limits from swarm cfg
         FetchSetExecLimits();
@@ -222,7 +147,14 @@ public class App
             _mcpStrictMode = parsed.McpStrictOverride.Value;
             MuxConsole.WriteInfo($"MCP Strict Mode set to: {_mcpStrictMode}");
         }
-
+        
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "runtime_ready",
+            Text = "Mux Swarm Runtime Startup Has Completed",
+            Timestamp = DateTimeOffset.UtcNow
+        });
+        
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
             return await HandleParsedRun(parsed);
 
@@ -299,7 +231,7 @@ public class App
             switch (userInput)
             {
                 case "/help":
-                    MuxConsole.PrintHelp(HelpText);
+                    MuxConsole.PrintHelp(Help.HelpText);
                     break;
 
                 case "/exit":
@@ -477,8 +409,9 @@ public class App
                     break;
 
                 case "/refresh":
-                    await CliCmdUtils.ReloadMcpServersAsync(InitMcpServersAsync, ConfigPath);
-                    CliCmdUtils.ReloadSkills();
+                    Config = LoadConfig(ConfigPath);
+                    SwarmConfig = LoadSwarm();
+                    await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     break;
 
                 case var cmd when cmd.StartsWith("/report"):
@@ -623,7 +556,7 @@ public class App
             {
                 case "--help":
                 case "-h":
-                    MuxConsole.PrintHelp(HelpText);
+                    MuxConsole.PrintHelp(Help.HelpText);
                     Environment.Exit(0);
                     break;
 
@@ -892,7 +825,7 @@ public class App
         return $"{s[..2]}***{s[^2..]} (len={s.Length})";
     }
 
-    private static async Task<bool> InitMcpServersAsync(AppConfig config)
+    public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
         _mcpTools = new List<McpClientTool>();
 

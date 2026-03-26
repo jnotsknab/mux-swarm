@@ -515,6 +515,13 @@ public static class CliCmdUtils
             MuxConsole.WriteError("One or more MCP servers failed to reconnect.");
     }
 
+    public static async Task HandleFullReload(Func<AppConfig, Task<bool>> initMcpServers,
+        string configPath)
+    {
+        await ReloadMcpServersAsync(initMcpServers, configPath);
+        ReloadSkills();
+    }
+
     /// <summary>
     /// Generates report files from session data stored in the sessions directory.
     /// </summary>

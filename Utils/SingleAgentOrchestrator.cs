@@ -217,7 +217,7 @@ public static class SingleAgentOrchestrator
 
         var singleAgentTools = (IList<AITool>)
         [
-            listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool,
+            listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool,
             .. (analyzeImageTool != null ? new[] { analyzeImageTool } : Array.Empty<AITool>()),
             .. filteredTools
         ];

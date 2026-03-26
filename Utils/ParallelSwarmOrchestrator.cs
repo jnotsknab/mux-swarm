@@ -37,8 +37,6 @@ public static class ParallelSwarmOrchestrator
 
     private record RetryState(int AttemptCount, string? LastFailureReason);
 
-    // ── Helpers mirroring MultiAgentOrchestrator ──────────────────────────
-
     private static IList<AITool> GetOrchestratorFilteredToolsFromConfig(IList<AITool> mcpTools)
     {
         if (!File.Exists(SwarmConfPath))
@@ -151,7 +149,7 @@ public static class ParallelSwarmOrchestrator
         return context.ToString();
     }
 
-    // ── Core Orchestration ───────────────────────────────────────────────
+    //Core Orchestration
 
     public static async Task RunAsync(
         Func<string, IChatClient> chatClientFactory,
@@ -260,7 +258,7 @@ public static class ParallelSwarmOrchestrator
             description: "Delegate a sub-task to a specialist agent by name. Cannot delegate to the Orchestrator."
         );
 
-        // ── 4. Build specialist agents ───────────────────────────────────
+        // Build specialist agents
 
         await MuxConsole.WithSpinnerAsync("Initializing specialist agents", async () =>
         {
@@ -332,8 +330,8 @@ public static class ParallelSwarmOrchestrator
                 );
 
                 var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, analyzeImageTool, .. filteredTools];
+                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
+                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, .. filteredTools];
 
                 var agentChatOptions = new ChatOptions
                 {
@@ -410,7 +408,7 @@ public static class ParallelSwarmOrchestrator
                          "an AgentName and a Task string."
         );
 
-        // ── 6. Build the orchestrator ────────────────────────────────────
+        //Build the orchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
@@ -444,7 +442,7 @@ public static class ParallelSwarmOrchestrator
                               A sleeping swarm costs nothing. Prefer sleep over rapid retries.
                               """;
 
-        // ── Load or create continuous state ──────────────────────────────
+        // Load or create continuous state
         CurrentStateMetadata? state = null;
         if (continuous)
         {
@@ -493,6 +491,7 @@ public static class ParallelSwarmOrchestrator
             LocalAiFunctions.ListSkillsTool,
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
+            LocalAiFunctions.MuxRefreshTool,
             ..orchestratorFilteredTools
         ];
 
@@ -1094,7 +1093,7 @@ public static class ParallelSwarmOrchestrator
             : compacted;
     }
 
-    // ── SubAgent Execution (mirrors MultiAgentOrchestrator.RunSubAgentAsync) ─
+    //SubAgent Execution (mirrors MultiAgentOrchestrator.RunSubAgentAsync)
 
     private static async Task<(string RawResult, string? Status, string? Summary, string? Artifacts)> RunSubAgentAsync(
         (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def) specialist,
