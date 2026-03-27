@@ -6,7 +6,7 @@ First-time setup walkthrough for Mux-Swarm.
 
 The only hard requirement is an **LLM provider API key** (any OpenAI-compatible endpoint) set as an environment variable.
 
-Everything else is config-driven. The default `config.json` ships with MCP servers that rely on **Node / npm** (`npx`) and **uvx / uv**, but these are not hard dependencies — they're just what the bundled MCP servers use. Mux-Swarm doesn't care how your MCP servers run. You can swap in any runtime, point to a binary you built yourself, launch a local MCP server you wrote from scratch, or connect to a remote HTTP/SSE endpoint. If it speaks MCP, it works.
+Everything else is config-driven. The default `config.json` ships with MCP servers that rely on **Node / npm** (`npx`) and **uvx / uv**, but these are not hard dependencies, they're just what the bundled MCP servers utilize. Mux-Swarm doesn't care how your MCP servers run. You can swap in any runtime, point to a binary you built yourself, launch a local MCP server you wrote from scratch, or connect to a remote HTTP/SSE endpoint. If it speaks MCP, it works.
 
 The default configuration also includes:
 
@@ -43,11 +43,11 @@ The wizard walks you through seven steps:
 
 ### Step 1 — Dependency Check
 
-The wizard checks for tooling used by the default MCP server configuration: `python`, `node`, `npm`, `npx`, `uv`, and `uvx`. If anything is missing, the wizard will offer to install it for you. If you're using the default config, accepting is the easiest path. If you've swapped in your own MCP servers or runtimes, missing defaults here won't affect you — the check is informational.
+The wizard checks for tooling used by the default MCP server configuration: `python`, `node`, `npm`, `npx`, `uv`, and `uvx`. If anything is missing, the wizard will offer to install it for you. If you're using the default config, accepting is the easiest path. If you've swapped in your own MCP servers or runtimes, missing defaults here won't affect you, the check is informational.
 
 ### Step 2 — File System Access
 
-Define the paths your agents are allowed to read and write. Provide one or more comma-separated paths, then select which path to use as the agent output sandbox — this is where agents will write files and artifacts.
+Define the paths your agents are allowed to read and write. Provide one or more comma-separated paths, then select which path to use as the agent output sandbox, this is where agents will write files and artifacts.
 
 ```
 Paths: ~/mux-sandbox
@@ -146,18 +146,19 @@ You can also use `/status` for a quick overview of your runtime configuration �
 
 ## Messaging Bridges (Optional)
 
-Mux-Swarm ships with Telegram and Discord bridges that let you interact with your agents from your phone or any device with a messaging app. Bridges run as daemon triggers, the runtime manages their lifecycle automatically.
+Mux-Swarm ships with Telegram, Discord, and Signal bridges that let you interact with your agents from your phone or any device with a messaging app. Bridges run as daemon triggers, the runtime manages their lifecycle automatically.
 
 ### Prerequisites
 
 - **uv** (already installed if you followed setup)
-- A bot token for your platform:
+- A bot token or account for your platform:
   - **Telegram**: Create a bot via [@BotFather](https://t.me/BotFather) and copy the token
   - **Discord**: Create an application at the [Discord Developer Portal](https://discord.com/developers/applications), add a bot, enable Message Content Intent, and copy the token. Invite the bot to your server with message permissions.
+  - **Signal**: A phone number registered with Signal and a self-hosted [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api) container (see below)
 
-### Step 1 -- Set your bot token
+### Step 1 -- Set your credentials
 
-Add the token to your shell profile so it persists across sessions:
+Add tokens/config to your shell profile so they persist across sessions:
 
 **Linux / macOS:**
 ```bash
@@ -172,6 +173,23 @@ source ~/.bashrc
 
 For Discord, use `DISCORD_BOT_TOKEN` instead. Discord also requires `DISCORD_CHANNEL_ID` set to the channel ID the bot should listen on.
 
+For Signal, set `SIGNAL_NUMBER` and `SIGNAL_API_URL`:
+```bash
+echo 'export SIGNAL_NUMBER="+1XXXXXXXXXX"' >> ~/.bashrc
+echo 'export SIGNAL_API_URL="http://localhost:8080"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Signal setup:** Signal requires a self-hosted REST API container. Start it with:
+```bash
+docker run -d --name signal-api \
+  -p 8080:8080 \
+  -v signal-cli-data:/home/.local/share/signal-cli \
+  bbernhard/signal-cli-rest-api
+```
+
+Then link it to your Signal account by opening `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm` in a browser and scanning the QR code with Signal on your phone (Settings > Linked Devices > Link New Device). Verify registration with `curl http://localhost:8080/v1/about`.
+
 ### Step 2 -- Add a bridge trigger
 
 Add a bridge entry to the `daemon.triggers` array in `Configs/config.json`:
@@ -182,7 +200,7 @@ Add a bridge entry to the `daemon.triggers` array in `Configs/config.json`:
   "id": "telegram-bridge",
   "type": "bridge",
   "command": "uv",
-  "args": "run Runtime/telegram_bridge.py",
+  "args": "run --project Runtime Runtime/telegram_bridge.py",
   "env": {
     "WHISPER_MODEL": "base"
   },
@@ -197,7 +215,7 @@ Add a bridge entry to the `daemon.triggers` array in `Configs/config.json`:
   "id": "discord-bridge",
   "type": "bridge",
   "command": "uv",
-  "args": "run Runtime/discord_bridge.py",
+  "args": "run --project Runtime Runtime/discord_bridge.py",
   "env": {
     "WHISPER_MODEL": "base"
   },
@@ -206,24 +224,57 @@ Add a bridge entry to the `daemon.triggers` array in `Configs/config.json`:
 }
 ```
 
-The runtime auto-injects the WebSocket URL so the bridge connects to the correct serve port. All other config (token, channel ID, allowed chats) comes from environment variables. You can override any value via the `env` block if needed.
+**Signal (CLI args):**
+```json
+{
+  "id": "signal-bridge",
+  "type": "bridge",
+  "command": "uv",
+  "args": "run --project Runtime Runtime/signal_bridge.py --number +1XXXXXXXXXX --api http://localhost:8080 --ws ws://localhost:6724/ws",
+  "restart": true,
+  "interval": 60
+}
+```
+
+**Signal (env vars):**
+```json
+{
+  "id": "signal-bridge",
+  "type": "bridge",
+  "command": "uv",
+  "args": "run --project Runtime Runtime/signal_bridge.py",
+  "env": {
+    "SIGNAL_NUMBER": "+1XXXXXXXXXX",
+    "SIGNAL_API_URL": "http://localhost:8080",
+    "WHISPER_MODEL": "base"
+  },
+  "restart": true,
+  "interval": 60
+}
+```
+
+Replace `+1XXXXXXXXXX` with your registered Signal number. Adjust the `--api` and `--ws` URLs if your signal-cli container or serve port differ.
+
+The runtime automatically resolves and injects the correct websocket URI so bridges connect to the correct endpoint. All other config (tokens, channel IDs, allowed users) come from environment variables. You can override any value via the `env` block if needed.
+
+The bridge starts automatically, connects to the runtime over WebSocket, and begins listening on your messaging platform. Send a message to your bot or linked number, and it arrives at the agent. Responses stream back.
 
 ### Step 3 -- Launch with daemon
 ```bash
 mux-swarm --serve --daemon
 ```
 
-The bridge starts automatically, connects to the runtime over WebSocket, and begins polling your messaging platform. Send a message to your bot, and it arrives at the agent. Responses stream back.
-
 ### Audio Transcription
 
-Both bridges support voice messages and audio attachments via local Whisper (no API key needed). FFmpeg is resolved automatically via the `static-ffmpeg` Python package. If you want to use a different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (options: `tiny`, `base`, `small`, `medium`, `large`, `turbo`).
+All three bridges support voice messages and audio attachments via local Whisper (no API key needed). FFmpeg is resolved automatically via the `static-ffmpeg` Python package. If you want to use a different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (options: `tiny`, `base`, `small`, `medium`, `large`, `turbo`).
 
 ### Restricting Access
 
 **Telegram:** Set `ALLOWED_CHAT_IDS` as a comma-separated list of Telegram chat IDs. Empty means open access. Get your chat ID by sending `/start` to the bot.
 
 **Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
+
+**Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
 
 ## Telemetry (Optional)
 

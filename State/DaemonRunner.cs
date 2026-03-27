@@ -99,7 +99,14 @@ public sealed class DaemonRunner : IAsyncDisposable
         {
             await Task.WhenAll(_workers).WaitAsync(TimeSpan.FromSeconds(10));
         }
-        catch { /* shutdown timeout or cancellation */ }
+        catch
+        {
+            foreach (var (_, proc) in _bridgeProcesses)
+            {
+                try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+                catch { }
+            }
+        }
 
         _cts.Dispose();
     }
