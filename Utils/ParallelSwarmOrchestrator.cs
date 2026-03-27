@@ -695,10 +695,21 @@ public static class ParallelSwarmOrchestrator
             {
                 MuxConsole.WriteInfo($"Iteration {state!.Iteration} complete. Enforced delay: {minDelaySeconds}s. Next run: {state.NextWakeAt:HH:mm:ss}");
 
-                await MuxConsole.WithSpinnerAsync($"Sleeping {minDelaySeconds}s until next iteration...", async () =>
+                using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                using var delayEsc = EscapeKeyListener.Start(delayCts, cancellationToken);
+
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), cancellationToken);
-                });
+                    await MuxConsole.WithSpinnerAsync($"Next iteration in {minDelaySeconds}s, press [ESC] to cancel", async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), delayCts.Token);
+                    });
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    MuxConsole.WriteSuccess("Continuous execution stopped by user.");
+                    break;
+                }
             }
         }
 

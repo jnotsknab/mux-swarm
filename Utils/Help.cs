@@ -10,6 +10,7 @@ public struct Help
         "  /pswarm         Launch parallel swarm — concurrent batch dispatch for independent tasks",
         "  /agent          Launch interactive single agent loop",
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
+        "  /continuous     Toggles continued autonomous execution on and off (shorthand /cont)",
         "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
         "  /compact        Compact current session context (applies to single agent loops only)",

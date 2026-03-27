@@ -702,11 +702,22 @@ public static class MultiAgentOrchestrator
             if (continuous)
             {
                 MuxConsole.WriteInfo($"Iteration {state!.Iteration} complete. Enforced delay: {minDelaySeconds}s. Next run: {state.NextWakeAt:HH:mm:ss}");
+                
+                using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                using var delayEsc = EscapeKeyListener.Start(delayCts, cancellationToken);
 
-                await MuxConsole.WithSpinnerAsync($"Sleeping {minDelaySeconds}s until next iteration...", async () =>
+                try
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), cancellationToken);
-                });
+                    await MuxConsole.WithSpinnerAsync($"Next iteration in {minDelaySeconds}s, press [ESC] to cancel", async () =>
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), delayCts.Token);
+                    });
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    MuxConsole.WriteSuccess("Continuous execution stopped by user.");
+                    break;
+                }
             }
         }
 
@@ -762,7 +773,7 @@ public static class MultiAgentOrchestrator
         return task + hint.ToString();
     }
 
-    // ── Cross-Agent Context Enrichment ───────────────────────────────────
+    //Cross-Agent Context Enrichment
 
     private static async Task<string> EnrichTaskWithCrossAgentContext(
         string originalTask,

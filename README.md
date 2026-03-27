@@ -170,6 +170,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 /pswarm         Launch parallel swarm loop and concurrent batch dispatch for independent tasks
 /agent          Launch interactive single agent loop
 /stateless      Stateless single agent loop, ideal for one-off tasks
+/continuous     Toggle continued autonomous execution on and off (/cont shorthand)
 /workflow       Run a deterministic workflow from a JSON file
 /resume         Resume a previous single-agent session
 /compact        Compact current session context (applies to single agent loops only)
@@ -427,14 +428,15 @@ Goal templates support `{file}`, `{filename}`, `{timestamp}`, and `{id}` substit
 
 Bridge triggers accept `command`, `args`, and an optional `env` block. The runtime auto-injects `MUX_WS_URL` with the correct serve port if not explicitly set. Bot tokens and other secrets should be set as environment variables in your shell, not in config. The `interval` field controls the restart delay in seconds if the process exits.
 
-Mux-Swarm ships with two bridges under `Runtime/`:
+Mux-Swarm ships with three bridges under `Runtime/`:
 
 | Bridge | Script | Token Env Var | Additional Env |
 |--------|--------|---------------|----------------|
 | Telegram | `telegram_bridge.py` | `TELEGRAM_BOT_TOKEN` | `WHISPER_MODEL`, `ALLOWED_CHAT_IDS` |
 | Discord | `discord_bridge.py` | `DISCORD_BOT_TOKEN` | `WHISPER_MODEL`, `DISCORD_CHANNEL_ID` |
+| Signal | `signal_bridge.py` | `SIGNAL_NUMBER` | `SIGNAL_API_URL`, `WHISPER_MODEL`, `ALLOWED_NUMBERS` |
 
-Community and first-party bridges for additional platforms (Slack, Matrix, WhatsApp) are planned. The bridge pattern is generic: any script that reads `MUX_WS_URL` and connects to the runtime WebSocket can serve as a bridge. See the bundled Telegram and Discord scripts as reference implementations.
+Community and first-party bridges for additional platforms (Slack, Matrix, WhatsApp) are planned. The bridge pattern is generic: any script that reads `MUX_WS_URL` and connects to the runtime WebSocket can serve as a bridge. See the bundled Telegram, Signal and Discord scripts as reference implementations.
 
 Both bridges support text messaging and audio transcription via local Whisper. FFmpeg is resolved automatically via the `static-ffmpeg` package (cross-platform). Bridge dependencies are managed by the `pyproject.toml` in `Runtime/`.
 

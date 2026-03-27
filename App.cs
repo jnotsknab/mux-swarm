@@ -11,25 +11,28 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static string Version = "0.9.0";
+    public static string Version = "0.9.1";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
+    
     private static bool _showToolCallResults;
     private static IList<McpClientTool>? _mcpTools;
     private static string? _cliModelOverride;
-    private static readonly Dictionary<string, McpClient> McpClients = new();
     private static bool _watchDogEnabled;
     private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
     public static int ServePort;
-
+    
+    public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
 
+    protected static bool ContinuousExec;
+    protected static int MinContDelay = 300;
 
     private static CancellationTokenSource GetOrResetCts()
     {
@@ -297,6 +300,8 @@ public class App
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                        continuous: ContinuousExec,
+                        minDelaySeconds: (uint)MinContDelay!,
                         agentModels: maModels,
                         cancellationToken: maCts.Token
                     );
@@ -310,6 +315,8 @@ public class App
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                        continuous: ContinuousExec,
+                        minDelaySeconds: (uint)MinContDelay!,
                         agentModels: pModels,
                         cancellationToken: pCts.Token
                     );
@@ -325,6 +332,8 @@ public class App
                         agentCts.Token,
                         maxIterations: 3,
                         mcpTools: _mcpTools,
+                        continuous: ContinuousExec,
+                        minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
@@ -340,12 +349,20 @@ public class App
                         statelessAgentCts.Token,
                         maxIterations: 3,
                         mcpTools: _mcpTools,
+                        continuous: ContinuousExec,
+                        minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false
                     );
                     break;
-
+                
+                case "/cont":
+                case "/continuous":
+                    ContinuousExec = !ContinuousExec;
+                    MinContDelay = CliCmdUtils.HandleContToggle(ContinuousExec);
+                    break;
+                
                 case "/workflow":
                     CliCmdUtils.HandleInteractiveWorkflow();
                     break;
@@ -363,6 +380,8 @@ public class App
                             maxIterations: 3,
                             mcpTools: _mcpTools,
                             showToolResultCalls: _showToolCallResults,
+                            continuous: ContinuousExec,
+                            minDelaySeconds: (uint)MinContDelay!,
                             chatClientFactory: modelId => CreateChatClient(modelId),
                             resumedSession: resumeData.Value.data,
                             resumedSessionDir: resumeData.Value.sessionDir
@@ -956,7 +975,7 @@ public class App
                     var command = ResolveConfigValue(serverConfig.Command ?? "", baseDir);
                     var args = serverConfig.Args?.Select(a => ResolveConfigValue(a, baseDir)).ToArray() ?? Array.Empty<string>();
 
-                    if (name == "Filesystem" && config.Filesystem.AllowedPaths?.Count > 0)
+                    if (name == "Filesystem" && config.Filesystem?.AllowedPaths?.Count > 0)
                     {
                         args = args
                             .Concat(config.Filesystem.AllowedPaths)
@@ -974,7 +993,7 @@ public class App
                     };
 
                     var transport = new StdioClientTransport(options);
-
+                    
                     if (VerboseInit)
                     {
                         MuxConsole.WriteMuted($"Starting {name}: {command} {string.Join(" ", args)}");

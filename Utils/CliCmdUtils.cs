@@ -522,6 +522,25 @@ public static class CliCmdUtils
         ReloadSkills();
     }
 
+    public static int HandleContToggle(bool toggle)
+    {
+        if (!toggle)
+        {
+            MuxConsole.WriteSuccess("Continuous execution has successfully been disabled!");
+            return 300;
+        }
+
+        int minDelay = int.Parse(MuxConsole.Prompt("Enter a minimum delay in seconds between continuous iterations (default 300) : ", "300"));
+        if (minDelay <= 0)
+        {
+            MuxConsole.WriteError("Minimum delay must be greater than 0, default of 300 utilized.");
+            return 300;
+        }
+                    
+        MuxConsole.WriteSuccess($"Continuous execution has successfully been enabled with a minimum delay of {minDelay} seconds between iterations!");
+        return minDelay;
+    }
+    
     /// <summary>
     /// Generates report files from session data stored in the sessions directory.
     /// </summary>

@@ -650,14 +650,31 @@ public static class SingleAgentOrchestrator
             if (incomingGoal != null && !continuous)
                 break;
 
+            if (continuous && wasInterrupted)
+            {
+                MuxConsole.WriteSuccess("Continuous execution stopped by user.");
+                break;
+            }
+            
             if (continuous)
             {
                 if (minDelaySeconds > 0)
-                {
-                    await MuxConsole.WithSpinnerAsync($"Next iteration in {minDelaySeconds}s", async () =>
+                {   
+                    using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    using var delayEsc = EscapeKeyListener.Start(delayCts, cancellationToken);
+                    
+                    try
                     {
-                        await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), cancellationToken);
-                    });
+                        await MuxConsole.WithSpinnerAsync($"Next iteration in {minDelaySeconds}s, press [ESC] to cancel", async () =>
+                        {
+                            await Task.Delay(TimeSpan.FromSeconds(minDelaySeconds), delayCts.Token);
+                        });
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        MuxConsole.WriteSuccess("Continuous execution stopped by user.");
+                        break;
+                    }
                 }
 
                 currentGoal = "Continue working on the task. If complete, summarize your results.";

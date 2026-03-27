@@ -60,11 +60,7 @@ public sealed class ProcessCleanup : IDisposable
         if (!PlatformContext.IsWindows)
             RegisterUnixSignalHandlers();
     }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // PUBLIC API
-    // ═════════════════════════════════════════════════════════════════════
-
+    
     /// <summary>
     /// Registers a process for cleanup. On Windows, assigns it to the job object.
     /// On Unix, tracks the PID for manual cleanup.
@@ -166,7 +162,11 @@ public sealed class ProcessCleanup : IDisposable
                 Debug.WriteLine($"[CLEANUP] Graceful shutdown failed for PID {pid}: {ex.Message}");
             }
         }
-
+        
+        //Dispose MCP Clients
+        Task.WhenAll(App.McpClients.Values.Select(c => c.DisposeAsync().AsTask()))
+            .Wait(TimeSpan.FromSeconds(5));
+        
         // Phase 2: Wait for grace period, then force kill survivors
         var deadline = DateTime.UtcNow + ShutdownGrace;
         foreach (var pid in pids)
@@ -195,7 +195,7 @@ public sealed class ProcessCleanup : IDisposable
             }
         }
 
-        // Phase 3: Kill the entire process tree from our own PID as fallback
+        // Kill the entire process tree from our own PID
         KillOwnProcessTree();
     }
 
@@ -209,11 +209,7 @@ public sealed class ProcessCleanup : IDisposable
             return [.. _trackedPids];
         }
     }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // WINDOWS JOB OBJECT
-    // ═════════════════════════════════════════════════════════════════════
-
+    
     private void InitWindowsJobObject()
     {
         if (!PlatformContext.IsWindows) return;
@@ -256,8 +252,6 @@ public sealed class ProcessCleanup : IDisposable
             Debug.WriteLine($"[CLEANUP] Job Object init failed: {ex.Message}");
         }
     }
-
-    // ── Windows P/Invoke ──
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
 
@@ -315,11 +309,7 @@ public sealed class ProcessCleanup : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
-
-    // ═════════════════════════════════════════════════════════════════════
-    // UNIX SIGNAL HANDLING
-    // ═════════════════════════════════════════════════════════════════════
-
+    
     private void RegisterUnixSignalHandlers()
     {
         if (PlatformContext.IsWindows) return;
@@ -339,11 +329,7 @@ public sealed class ProcessCleanup : IDisposable
             Environment.Exit(129); // 128 + 1 (SIGHUP)
         });
     }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // FALLBACK: KILL OWN PROCESS TREE
-    // ═════════════════════════════════════════════════════════════════════
-
+    
     /// <summary>
     /// Last resort: attempts to kill any remaining child processes of the current process.
     /// Uses platform-specific commands since .NET doesn't expose parent-child relationships easily.
@@ -393,10 +379,6 @@ public sealed class ProcessCleanup : IDisposable
             // Best effort — we're shutting down
         }
     }
-
-    // ═════════════════════════════════════════════════════════════════════
-    // IDisposable
-    // ═════════════════════════════════════════════════════════════════════
 
     public void Dispose()
     {
