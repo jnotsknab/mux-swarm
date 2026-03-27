@@ -20,7 +20,7 @@ public sealed class DaemonRunner : IAsyncDisposable
     private readonly List<Task> _workers = [];
     private readonly ConcurrentDictionary<string, DateTime> _lastFired = new();
     private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new();
-
+    private ConcurrentDictionary<string, Process> _bridgeProcesses = new();
     private Func<string, IChatClient>? _chatClientFactory;
     private IList<AITool>? _mcpTools;
     private Dictionary<string, string>? _agentModels;
@@ -77,6 +77,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                 "watch" => RunWatchLoop(trigger, ct),
                 "cron" => RunCronLoop(trigger, ct),
                 "status" => RunStatusLoop(trigger, ct),
+                "bridge" => RunBridgeLoop(trigger, ct),
                 _ => LogUnknownTrigger(trigger)
             };
 
@@ -378,9 +379,130 @@ public sealed class DaemonRunner : IAsyncDisposable
         }
     }
 
-    // =====================================================================
-    // Health check implementations
-    // =====================================================================
+    private async Task RunBridgeLoop(DaemonTrigger trigger, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(trigger.Command))
+        {
+            MuxConsole.WriteWarning($"[Daemon:{trigger.Id}] Bridge has no command configured.");
+            return;
+        }
+
+        var restartDelay = trigger.EffectiveInterval > 0 ? trigger.EffectiveInterval : 5;
+
+        MuxConsole.WriteSuccess(
+            $"[Daemon:{trigger.Id}] Bridge: {trigger.Command} (restart={trigger.Restart}, delay={restartDelay}s)");
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                Process? proc = null;
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = trigger.Command,
+                        Arguments = trigger.Args ?? "",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true,
+                        WorkingDirectory = PlatformContext.BaseDirectory
+                    };
+                    
+                    //handle expected defaults  
+                    if (!psi.EnvironmentVariables.ContainsKey("MUX_WS_URL"))
+                        psi.EnvironmentVariables["MUX_WS_URL"] = $"ws://localhost:{App.ServePort}/ws";
+                    
+                    // Merge env vars from trigger
+                    if (trigger.Env is { Count: > 0 })
+                    {
+                        foreach (var (k, v) in trigger.Env)
+                            psi.EnvironmentVariables[k] = v;
+                    }
+
+                    proc = Process.Start(psi);
+                    if (proc == null)
+                    {
+                        MuxConsole.WriteError($"[Daemon:{trigger.Id}] Failed to start bridge process.");
+                        break;
+                    }
+
+                    _bridgeProcesses[trigger.Id] = proc;
+
+                    MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Bridge started (PID {proc.Id})");
+
+                    HookWorker.Enqueue(new HookEvent
+                    {
+                        Event = "daemon_bridge",
+                        Summary = $"started:{trigger.Id}",
+                        Text = $"PID {proc.Id}",
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+
+                    // Pipe stdout/stderr to log
+                    _ = Task.Run(() => PipeLogs(trigger.Id, proc.StandardOutput, "OUT", ct), ct);
+                    _ = Task.Run(() => PipeLogs(trigger.Id, proc.StandardError, "ERR", ct), ct);
+
+                    // Wait for exit or cancellation
+                    await proc.WaitForExitAsync(ct);
+
+                    var exitCode = proc.ExitCode;
+                    MuxConsole.WriteWarning(
+                        $"[Daemon:{trigger.Id}] Bridge exited (code {exitCode})");
+
+                    HookWorker.Enqueue(new HookEvent
+                    {
+                        Event = "daemon_bridge",
+                        Summary = $"exited:{trigger.Id}",
+                        Text = $"Exit code {exitCode}",
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    MuxConsole.WriteError($"[Daemon:{trigger.Id}] Bridge error: {ex.Message}");
+                }
+                finally
+                {
+                    if (proc is { HasExited: false })
+                    {
+                        try { proc.Kill(entireProcessTree: true); }
+                        catch { /* best effort */ }
+                    }
+                    _bridgeProcesses.TryRemove(trigger.Id, out _);
+                }
+
+                if (!trigger.Restart || ct.IsCancellationRequested)
+                    break;
+
+                MuxConsole.WriteInfo(
+                    $"[Daemon:{trigger.Id}] Restarting bridge in {restartDelay}s...");
+                await Task.Delay(TimeSpan.FromSeconds(restartDelay), ct);
+            }
+        }
+        catch (OperationCanceledException) { /* shutdown */ }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"[Daemon:{trigger.Id}] Bridge loop fatal: {ex.Message}");
+        }
+    }
+
+    private static async Task PipeLogs(string id, StreamReader reader, string prefix, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(ct);
+                if (line == null) break;
+                MuxConsole.WriteMuted($"[Bridge:{id}:{prefix}] {line}");
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch { /* stream closed */ }
+    }
 
     private static async Task<(bool Healthy, string Detail)> RunHealthCheck(
         string check, CancellationToken ct)

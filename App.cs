@@ -22,7 +22,7 @@ public class App
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
-    private static int servePort;
+    public static int ServePort;
 
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
@@ -169,14 +169,14 @@ public class App
         {
             daemon = new DaemonRunner(Config.Daemon);
 
-            if (servePort > 0)
+            if (ServePort > 0)
             {
                 foreach (var trigger in Config.Daemon.Triggers
                              .Where(t => t.Type == "status" && t.Restart &&
-                                         t.Check != null && t.Check.Contains($":{servePort}")))
+                                         t.Check != null && t.Check.Contains($":{ServePort}")))
                 {
                     daemon.RegisterRestart(trigger.Check!,
-                        () => ServeMode.StartAsync(servePort));
+                        () => ServeMode.StartAsync(ServePort));
                 }
             }
 
@@ -692,8 +692,8 @@ public class App
                     }
                     break;
                 case "--serve":
-                    if (Common.TryNextUInt(args, ref i, out var sp)) servePort = (int)sp;
-                    else servePort = 6723;
+                    if (Common.TryNextUInt(args, ref i, out var sp)) ServePort = (int)sp;
+                    else ServePort = 6723;
                     break;
                 case "--daemon":
                     daemonMode = true;
@@ -728,7 +728,7 @@ public class App
             reportSessionId,
             reportAll,
             agentName,
-            servePort,
+            ServePort,
             daemonMode
         );
     }
