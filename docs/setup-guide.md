@@ -224,3 +224,38 @@ Both bridges support voice messages and audio attachments via local Whisper (no 
 **Telegram:** Set `ALLOWED_CHAT_IDS` as a comma-separated list of Telegram chat IDs. Empty means open access. Get your chat ID by sending `/start` to the bot.
 
 **Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
+
+## Telemetry (Optional)
+
+Mux-Swarm exports OpenTelemetry traces, logs, and metrics when configured. This gives you full visibility into agent sessions, tool calls, delegation chains, and token usage in any OTLP-compatible backend.
+
+### Quick Start with Jaeger
+
+Start a local Jaeger instance:
+```bash
+docker run -d --name jaeger -p 4317:4317 -p 16686:16686 jaegertracing/jaeger:latest
+```
+
+Add the telemetry block to `Configs/config.json`:
+```json
+"telemetry": {
+  "enabled": true,
+  "endpoint": "http://localhost:4317",
+  "protocol": "grpc",
+  "serviceName": "mux-swarm"
+}
+```
+
+Launch mux-swarm, run any agent session, then open `http://localhost:16686`. You'll see traces with the span tree: `runtime_startup` for init logs, and `agent_session > agent_turn > tool_call` for agent execution. Swarm mode adds `swarm_session > orchestrator_turn > delegation` wrapping the agent spans.
+
+### Verbosity Levels
+
+Control how much detail is exported via the `verbosity` field:
+
+- **minimal**: Spans only, no model or content tags
+- **standard** (default): Spans with model, agent, and tool tags
+- **verbose**: Full message content and tool args/results attached as span events (use for debugging, not production)
+
+### Enterprise Backends
+
+The telemetry config works with any OTLP receiver. For metrics (Prometheus, Grafana) alongside traces, add an OTEL Collector between mux-swarm and your backends. No code changes needed, just infrastructure config. See the [README telemetry section](../README.md#telemetry-telemetry) for the full schema.

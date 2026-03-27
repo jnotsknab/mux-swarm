@@ -544,6 +544,37 @@ Defines which external integrations are available, where the runtime can read/wr
 ```
 > **Enterprise Storage:** `allowedPaths` works with any storage that presents as a filesystem path — Azure Blob Storage ([BlobFuse](https://github.com/Azure/azure-storage-fuse)), AWS S3 ([Mountpoint](https://github.com/awslabs/mountpoint-s3), [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)), Google Cloud Storage ([GCS FUSE](https://cloud.google.com/storage/docs/cloud-storage-fuse/overview)), SMB/CIFS shares, and NFS mounts. Mount your cloud or network storage, add the mount path to `allowedPaths`, and agents read/write to it like any local directory. No code changes required.
 
+### Telemetry (`telemetry`)
+
+Optional OpenTelemetry configuration for exporting traces, logs, and metrics. All agent sessions, turns, tool calls, delegations, and orchestrator iterations emit OTEL spans. Structured logs attach as span events. Token counters, turn durations, and compaction metrics export as OTEL metrics.
+```json
+"telemetry": {
+  "enabled": true,
+  "endpoint": "http://localhost:4317",
+  "protocol": "grpc",
+  "serviceName": "mux-swarm",
+  "verbosity": "standard",
+  "headers": {}
+}
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `false` | Enable OTLP export. No overhead when disabled. |
+| `endpoint` | -- | OTLP receiver (Jaeger, OTEL Collector, Tempo, Datadog agent). |
+| `protocol` | `grpc` | `grpc` or `http/protobuf`. |
+| `serviceName` | `mux-swarm` | Service name in traces. Useful for multi-instance deployments. |
+| `verbosity` | `standard` | `minimal` (spans only), `standard` (spans + model tags), `verbose` (spans + full message content). |
+| `headers` | -- | Auth headers for hosted backends (e.g. `{"Authorization": "Basic ..."}`) |
+
+Resource attributes are set automatically: `host.name`, `os.type`, `service.version`, `service.instance.id`. The instance ID includes the serve port when running with `--serve`.
+
+**Quick start with Jaeger:**
+```bash
+docker run -d --name jaeger -p 4317:4317 -p 16686:16686 jaegertracing/jaeger:latest
+```
+
+Add the telemetry block to `config.json`, launch mux-swarm, run a session, then open `http://localhost:16686` to see the trace tree.
 
 ### `swarm.json` — Topology & Roles
 
@@ -817,24 +848,20 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ## Roadmap
 
+### Up Next
+
+- Additional platform bridges (Slack, Matrix, Signal, etc.)
+- Expanded OTEL coverage: memory read/write tracking, hook dispatch spans, workflow step spans, WS lifecycle in ServeMode
 ### Shipped
 
+- **v0.9.0 -- Enterprise Observability & Chat App Bridge Access**: OpenTelemetry tracing with native OTEL spans for agent sessions, turns, tool calls, orchestrator iterations, and delegations. Structured logs as span events with severity levels. Metrics counters and histograms for tokens, sessions, compaction, stuck counts, and tool call duration. Configurable telemetry block (endpoint, protocol, verbosity, headers) with OTLP export to Jaeger, Tempo, Datadog, or any compatible backend. Daemon bridge triggers for persistent sidecar process supervision with auto-restart and PID tracking. Bundled Telegram and Discord bridges with Whisper voice transcription, WebSocket auto-reconnect, and chat authorization.
 - **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
 - **v0.8.0 — Daemon Mode & OS Service Registration**: Background trigger loops via `--daemon` with file watch (FileSystemWatcher + cooldown), cron (zero-dependency 5-field parser), and status checks (HTTP, process, TCP) with auto-restart. OS service registration via `--register`/`--remove` for Windows (Task Scheduler XML), Linux (systemd + linger), and macOS (launchd). Full hook lifecycle with 10 events across all orchestrators. `additionalParams` pass-through for provider-specific model options.
 - **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async, blocking, and persistent dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
-- **v0.6.0 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
+- **v0.6.1 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
 - **v0.6.0 — Token Tracking & Execution Limits**: Accurate provider-reported token tracking across all orchestration modes. Configurable `executionLimits` block in swarm.json for tuning orchestration budgets, iteration caps, and retry policies. `/limits` command for runtime inspection.
 - **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
 - **v0.5.0 — Stdin Cancellation (stdio mode)**: Out-of-band `__CANCEL__` signal for graceful turn cancellation in piped/stdio integrations.
-
-### Up Next
-
-#### v0.9.0 -- Observability & Remote Access
-- OpenTelemetry tracing: native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
-- Daemon bridge triggers: process supervision for persistent sidecar processes with auto-restart and lifecycle hooks.
-- Bundled Telegram and Discord bridges with audio transcription via local Whisper.
-- MCP child process cleanup on shutdown to prevent orphaned processes.
-- Additional platform bridges (Slack, Matrix) planned.
 
 ### Community
 

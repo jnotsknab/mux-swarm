@@ -11,7 +11,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static string Version = "0.8.2";
+    public static string Version = "0.9.0";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
