@@ -1,0 +1,12 @@
+[project]
+name = "mux-swarm-runtime"
+version = "0.8.2"
+dependencies = [
+    "openai-whisper",
+    "python-telegram-bot",
+    "websockets",
+    "websocket-client",
+    "discord",
+    "pynacl>=1.6.2",
+    "static-ffmpeg",
+]
