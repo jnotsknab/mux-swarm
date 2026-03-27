@@ -143,3 +143,84 @@ You can also use `/status` for a quick overview of your runtime configuration â€
 - Explore [Configuration](../README.md#configuration) to customize providers, agent roles, model routing, and MCP server scoping
 - Add custom [Skills](../README.md#skills-skills) to extend agent capabilities
 - Use [Scoped Instances](../README.md#scoped-instances) for multi-user or multi-environment deployments
+
+## Messaging Bridges (Optional)
+
+Mux-Swarm ships with Telegram and Discord bridges that let you interact with your agents from your phone or any device with a messaging app. Bridges run as daemon triggers, the runtime manages their lifecycle automatically.
+
+### Prerequisites
+
+- **uv** (already installed if you followed setup)
+- A bot token for your platform:
+  - **Telegram**: Create a bot via [@BotFather](https://t.me/BotFather) and copy the token
+  - **Discord**: Create an application at the [Discord Developer Portal](https://discord.com/developers/applications), add a bot, enable Message Content Intent, and copy the token. Invite the bot to your server with message permissions.
+
+### Step 1 -- Set your bot token
+
+Add the token to your shell profile so it persists across sessions:
+
+**Linux / macOS:**
+```bash
+echo 'export TELEGRAM_BOT_TOKEN="your-token-here"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Windows (PowerShell):**
+```powershell
+[System.Environment]::SetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "your-token-here", "User")
+```
+
+For Discord, use `DISCORD_BOT_TOKEN` instead. Discord also requires `DISCORD_CHANNEL_ID` set to the channel ID the bot should listen on.
+
+### Step 2 -- Add a bridge trigger
+
+Add a bridge entry to the `daemon.triggers` array in `Configs/config.json`:
+
+**Telegram:**
+```json
+{
+  "id": "telegram-bridge",
+  "type": "bridge",
+  "command": "uv",
+  "args": "run Runtime/telegram_bridge.py",
+  "env": {
+    "WHISPER_MODEL": "base"
+  },
+  "restart": true,
+  "interval": 10
+}
+```
+
+**Discord:**
+```json
+{
+  "id": "discord-bridge",
+  "type": "bridge",
+  "command": "uv",
+  "args": "run Runtime/discord_bridge.py",
+  "env": {
+    "WHISPER_MODEL": "base"
+  },
+  "restart": true,
+  "interval": 10
+}
+```
+
+The runtime auto-injects the WebSocket URL so the bridge connects to the correct serve port. All other config (token, channel ID, allowed chats) comes from environment variables. You can override any value via the `env` block if needed.
+
+### Step 3 -- Launch with daemon
+```bash
+mux-swarm --serve --daemon
+```
+
+The bridge starts automatically, connects to the runtime over WebSocket, and begins polling your messaging platform. Send a message to your bot, and it arrives at the agent. Responses stream back.
+
+### Audio Transcription
+
+Both bridges support voice messages and audio attachments via local Whisper (no API key needed). FFmpeg is resolved automatically via the `static-ffmpeg` Python package. If you want to use a different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (options: `tiny`, `base`, `small`, `medium`, `large`, `turbo`).
+
+### Restricting Access
+
+**Telegram:** Set `ALLOWED_CHAT_IDS` as a comma-separated list of Telegram chat IDs. Empty means open access. Get your chat ID by sending `/start` to the bot.
+
+**Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.

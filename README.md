@@ -361,22 +361,24 @@ Features:
 - Mobile responsive
 
 The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience where Kestrel restarts automatically on crash.
-
 ### Daemon Mode (`--daemon`)
 
 The `--daemon` flag starts background trigger loops that fire goals into the runtime autonomously. Configure triggers in the `daemon` block of `config.json`. The daemon runs alongside the interactive loop and web UI, it does not block user interaction.
 ```bash
 mux-swarm --serve --daemon              # web UI + daemon triggers
-mux-swarm --serve --daemon --watchdog   # full always-on stack
+mux-swarm --serve --daemon --watchdog   # temporary always on stack
+mux-swarm --serve --daemon --watchdog --register # system level always on stack
 ```
 
-Three trigger types:
+Four trigger types:
 
-**Watch** — monitors a file path pattern via `FileSystemWatcher`. Fires a goal when matching files are created or modified, with per-file cooldown debounce.
+**Watch** -- monitors a file path pattern via `FileSystemWatcher`. Fires a goal when matching files are created or modified, with per-file cooldown debounce.
 
-**Cron** — standard 5-field cron expressions (`minute hour day month weekday`). Supports `*`, `*/N`, `N-M`, and `N,M,O`. Sleeps until next occurrence.
+**Cron** -- standard 5-field cron expressions (`minute hour day month weekday`). Supports `*`, `*/N`, `N-M`, and `N,M,O`. Sleeps until next occurrence.
 
-**Status** — health checks that monitor resources without firing goals. Supports `http://` (HEAD request), `process:name` (process lookup), and `tcp:host:port` (connect check). Optionally restarts failed resources via registered handlers.
+**Status** -- health checks that monitor resources without firing goals. Supports `http://` (HEAD request), `process:name` (process lookup), and `tcp:host:port` (connect check). Optionally restarts failed resources via registered handlers.
+
+**Bridge** -- spawns and supervises a long-lived child process. The runtime tracks the process directly, restarting it on exit if `restart` is enabled. No health check needed. Designed for messaging bridges (Telegram, Discord) but works for any persistent sidecar process.
 ```json
 {
   "daemon": {
@@ -404,15 +406,39 @@ Three trigger types:
         "restart": true,
         "interval": 30,
         "failThreshold": 3
+      },
+      {
+        "id": "telegram-bridge",
+        "type": "bridge",
+        "command": "uv",
+        "args": "run Runtime/discord_bridge.py",
+        "env": {
+          "WHISPER_MODEL": "base"
+        },
+        "restart": true,
+        "interval": 10
       }
     ]
   }
 }
 ```
 
-Goal templates support `{file}`, `{filename}`, `{timestamp}`, and `{id}` substitution. Each trigger specifies a `mode` (`agent`, `swarm`, or `pswarm`) to control which orchestrator handles the goal. All triggers run as independent tasks — a slow swarm goal does not block status checks or other triggers.
+Goal templates support `{file}`, `{filename}`, `{timestamp}`, and `{id}` substitution. Each trigger specifies a `mode` (`agent`, `swarm`, or `pswarm`) to control which orchestrator handles the goal. All triggers run as independent tasks -- a slow swarm goal does not block status checks or other triggers.
 
-Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`.
+Bridge triggers accept `command`, `args`, and an optional `env` block. The runtime auto-injects `MUX_WS_URL` with the correct serve port if not explicitly set. Bot tokens and other secrets should be set as environment variables in your shell, not in config. The `interval` field controls the restart delay in seconds if the process exits.
+
+Mux-Swarm ships with two bridges under `Runtime/`:
+
+| Bridge | Script | Token Env Var | Additional Env |
+|--------|--------|---------------|----------------|
+| Telegram | `telegram_bridge.py` | `TELEGRAM_BOT_TOKEN` | `WHISPER_MODEL`, `ALLOWED_CHAT_IDS` |
+| Discord | `discord_bridge.py` | `DISCORD_BOT_TOKEN` | `WHISPER_MODEL`, `DISCORD_CHANNEL_ID` |
+
+Community and first-party bridges for additional platforms (Slack, Matrix, WhatsApp) are planned. The bridge pattern is generic: any script that reads `MUX_WS_URL` and connects to the runtime WebSocket can serve as a bridge. See the bundled Telegram and Discord scripts as reference implementations.
+
+Both bridges support text messaging and audio transcription via local Whisper. FFmpeg is resolved automatically via the `static-ffmpeg` package (cross-platform). Bridge dependencies are managed by the `pyproject.toml` in `Runtime/`.
+
+Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`.
 
 ### OS Service Registration (`--register` / `--remove`)
 
@@ -793,6 +819,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Shipped
 
+- **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
 - **v0.8.0 — Daemon Mode & OS Service Registration**: Background trigger loops via `--daemon` with file watch (FileSystemWatcher + cooldown), cron (zero-dependency 5-field parser), and status checks (HTTP, process, TCP) with auto-restart. OS service registration via `--register`/`--remove` for Windows (Task Scheduler XML), Linux (systemd + linger), and macOS (launchd). Full hook lifecycle with 10 events across all orchestrators. `additionalParams` pass-through for provider-specific model options.
 - **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async, blocking, and persistent dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
 - **v0.6.0 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
@@ -802,8 +829,12 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 
 ### Up Next
 
-#### v0.9.0 — OpenTelemetry Tracing
-Native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
+#### v0.9.0 -- Observability & Remote Access
+- OpenTelemetry tracing: native OTEL spans for agent turns, tool calls, and orchestrator iterations. Token metrics export for enterprise observability integration with Jaeger, Tempo, Datadog, or any OTLP-compatible backend.
+- Daemon bridge triggers: process supervision for persistent sidecar processes with auto-restart and lifecycle hooks.
+- Bundled Telegram and Discord bridges with audio transcription via local Whisper.
+- MCP child process cleanup on shutdown to prevent orphaned processes.
+- Additional platform bridges (Slack, Matrix) planned.
 
 ### Community
 
