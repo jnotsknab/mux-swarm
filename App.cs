@@ -11,6 +11,8 @@ namespace MuxSwarm;
 
 public class App
 {
+    public static string Version = "0.9.0";
+    
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
     private static bool _showToolCallResults;
@@ -22,7 +24,7 @@ public class App
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
-    private static int servePort;
+    public static int ServePort;
 
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
@@ -60,6 +62,9 @@ public class App
         {
             HookWorker.Stop();
             ProcessCleanup.Instance.Shutdown();
+            OtelLogger.Info("Mux Swarm Process Finished");
+            OtelTracer.Shutdown();
+            OtelMetrics.Shutdown();
         };
 
         var hbPath = Path.Combine(BaseDir, "watchdog.heartbeat");
@@ -69,7 +74,7 @@ public class App
         Config = LoadConfig(ConfigPath);
 
 
-        MuxConsole.WriteSplashScreen(version: "0.8.2");
+        MuxConsole.WriteSplashScreen(version: Version);
 
         if (!Config.SetupCompleted)
         {
@@ -83,31 +88,58 @@ public class App
 
             Config = LoadConfig(ConfigPath);
         }
-
+        
+        Activity? startupSpan = null;
+        
+        if (OtelTracer.TryInit())
+        {
+            OtelMetrics.TryInit();
+            startupSpan = OtelTracer.GetSource().StartActivity("runtime_startup");
+            MuxConsole.WriteSuccess($"Telemetry is enabled, endpoint: {Config.Telemetry.Endpoint}");
+        }
+        
         //Shouldnt be null
         SwarmConfig = LoadSwarm();
 
         //Load and populate exec limits from swarm cfg
         FetchSetExecLimits();
-
+        var limits = ExecutionLimits.Current;
+        
+        OtelLogger.Info($"Agent Configuration Limits - Activity Timeout Seconds: {limits.ActivityTimeoutSeconds}, Compaction Char Budget: {limits.CompactionCharBudget}, " +
+                        $"Max Chars Per Compacted Msg: {limits.CompactionMaxMessageChars}, Cross Agent Context Budget: {limits.CrossAgentContextBudget}, " +
+                        $"Max Orchestrator Iterations: {limits.MaxOrchestratorIterations}, Max Stuck Count: {limits.MaxStuckCount}, " +
+                        $"Max Sub-Agent Iterations: {limits.MaxSubAgentIterations}, Max Sub-Task Retries{limits.MaxSubTaskRetries}, " +
+                        $"Progress Entry Budget: {limits.ProgressEntryBudget}, Progress Log Total Budget: {limits.ProgressLogTotalBudget}");
+        
+        
         InitLlmProvider();
         SkillLoader.LoadSkills();
-
+        
         bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
         if (!servInitResult)
         {
             MuxConsole.WriteError(_mcpStrictMode
                 ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
                 : "Failed to connect to any MCP servers. Exiting.");
-
+            
+            OtelLogger.Error(_mcpStrictMode
+                ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
+                : "Failed to connect to any MCP servers. Exiting.");
+            
             Environment.Exit(1);
         }
 
         MuxConsole.WriteSuccess(_mcpStrictMode
             ? "Established connection to all enabled MCP servers."
             : "Established connection to at least one MCP server.");
+        
+        OtelLogger.Info(_mcpStrictMode
+            ? "Established connection to all enabled MCP servers."
+            : "Established connection to at least one MCP server.");
 
-        HookWorker.Start(SwarmConfig.Hooks ?? []);
+        HookWorker.Start(SwarmConfig?.Hooks ?? []);
+        OtelLogger.Info("Hook Worker Started");
+        startupSpan?.Dispose();
     }
 
     public async Task<int> Run(string[] args)
@@ -140,12 +172,14 @@ public class App
         {
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
             MuxConsole.WriteInfo($"Docker Exec set to: {Config.IsUsingDockerForExec}");
+            OtelLogger.Info($"Docker Exec set to: {Config.IsUsingDockerForExec}");
         }
 
         if (parsed.McpStrictOverride.HasValue)
         {
             _mcpStrictMode = parsed.McpStrictOverride.Value;
             MuxConsole.WriteInfo($"MCP Strict Mode set to: {_mcpStrictMode}");
+            OtelLogger.Info($"MCP Strict Mode set to: {_mcpStrictMode}");
         }
         
         HookWorker.Enqueue(new HookEvent
@@ -155,12 +189,15 @@ public class App
             Timestamp = DateTimeOffset.UtcNow
         });
         
+        OtelLogger.Info("Runtime Ready Event Fired, Startup Completed Successfully");
+        
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
             return await HandleParsedRun(parsed);
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
+            OtelLogger.Info("Generated Session Reports From parsed --report arg");
             return Environment.ExitCode;
         }
         
@@ -169,14 +206,14 @@ public class App
         {
             daemon = new DaemonRunner(Config.Daemon);
 
-            if (servePort > 0)
+            if (ServePort > 0)
             {
                 foreach (var trigger in Config.Daemon.Triggers
                              .Where(t => t.Type == "status" && t.Restart &&
-                                         t.Check != null && t.Check.Contains($":{servePort}")))
+                                         t.Check != null && t.Check.Contains($":{ServePort}")))
                 {
                     daemon.RegisterRestart(trigger.Check!,
-                        () => ServeMode.StartAsync(servePort));
+                        () => ServeMode.StartAsync(ServePort));
                 }
             }
 
@@ -186,11 +223,15 @@ public class App
                 agentModels: LoadAgentModels());
 
             MuxConsole.WriteInfo("[Daemon] Running in background.");
+            OtelLogger.Info("Daemon enabled and initialized successfully in background");
         }
+        
+        OtelLogger.Info("Entered Main Interactive Loop");
         
         // Interactive loop
         while (!Environment.HasShutdownStarted)
-        {
+        {   
+            
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
             if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
@@ -204,6 +245,7 @@ public class App
                         {
                             _cts.Cancel();
                             MuxConsole.WriteInfo("Interrupted.");
+                            OtelLogger.Warn("User Deployed Cancel Signal Received, Mux Swarm Interrupted");
                         }
                     }
                     continue;
@@ -222,7 +264,8 @@ public class App
                     if (!_cts.IsCancellationRequested)
                     {
                         _cts.Cancel();
-                        MuxConsole.WriteInfo("Cancelled by client.");
+                        MuxConsole.WriteInfo("Cancelled by client");
+                        OtelLogger.Info("Piped Cancel Signal Received, Mux Swarm Interrupted");
                     }
                 }
                 continue;
@@ -692,8 +735,8 @@ public class App
                     }
                     break;
                 case "--serve":
-                    if (Common.TryNextUInt(args, ref i, out var sp)) servePort = (int)sp;
-                    else servePort = 6723;
+                    if (Common.TryNextUInt(args, ref i, out var sp)) ServePort = (int)sp;
+                    else ServePort = 6723;
                     break;
                 case "--daemon":
                     daemonMode = true;
@@ -728,7 +771,7 @@ public class App
             reportSessionId,
             reportAll,
             agentName,
-            servePort,
+            ServePort,
             daemonMode
         );
     }
@@ -1021,6 +1064,7 @@ public class App
 
         MuxConsole.WriteInfo($"Provider: {provider.Name}");
         MuxConsole.WriteInfo($"Endpoint: {normalizedEndpoint}");
+        OtelLogger.Info($"Initialized LLM Provider: {provider.Name}, endpoint is {normalizedEndpoint}");
     }
 
     private static string NormalizeOpenAiEndpoint(string endpoint)

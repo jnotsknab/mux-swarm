@@ -175,7 +175,7 @@ html, body {
 .stream-block {
   background: var(--bg-card); border-left: 2px solid var(--border);
   padding: 10px 14px; margin: 4px 0; border-radius: 0 4px 4px 0;
-  white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+  word-break: break-word; overflow-wrap: anywhere;
   font-size: 13px; line-height: 1.7; max-width: 100%; overflow-x: hidden;
 }
 .stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
@@ -318,7 +318,11 @@ html, body {
 .user-msg .bubble {
   display: inline-block; background: var(--bg-input); padding: 6px 12px;
   border-radius: 4px; max-width: 80%; text-align: left; word-break: break-word;
+  white-space: pre-wrap;
 }
+.user-msg .bubble pre { background: var(--bg); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.5; white-space: pre; }
+.user-msg .bubble pre code { background: none; padding: 0; }
+.user-msg .bubble code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 
 /* ── Mobile ── */
 @media (max-width: 640px) {
@@ -541,6 +545,19 @@ html, body {
       case 'error':   appendText(ev.message, 'event-error'); break;
       case 'info':    appendText(ev.message, 'event-info'); break;
       case 'debug':   appendText(ev.message, 'event-debug'); break;
+
+      case 'user_input': {
+        const txt = ev.text || '';
+        if (txt && txt !== lastLocalSend) {
+          const el = document.createElement('div');
+          el.className = 'user-msg';
+          el.innerHTML = `<span class="bubble"><div>${renderMarkdown(txt)}</div></span>`;
+          output.appendChild(el);
+          scrollToBottom();
+        }
+        lastLocalSend = '';
+        break;
+      }
       case 'body':
       case 'markup':
         if (ev.message && ev.message.length > 200) {
@@ -679,14 +696,106 @@ html, body {
   function esc(s) { const el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
 
   function renderMarkdown(raw) {
-    let h = esc(raw);
-    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => `<pre><code>${code}</code></pre>`);
-    h = h.replace(/`([^`]+)`/g, '<code>$1</code>');
-    h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    h = h.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    h = h.replace(/^### (.+)$/gm, '<strong style="color:var(--blue)">$1</strong>');
-    h = h.replace(/^## (.+)$/gm, '<strong style="color:var(--blue);font-size:14px">$1</strong>');
-    return h;
+    let lines = esc(raw).split('\n');
+    let result = [];
+    let inCode = false;
+    let codeBuf = [];
+    let inList = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i];
+
+      // Code blocks
+      if (line.trim().match(/^```/)) {
+        if (inCode) {
+          result.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>');
+          codeBuf = [];
+          inCode = false;
+        } else {
+          if (inList) { result.push('</div>'); inList = false; }
+          inCode = true;
+        }
+        continue;
+      }
+      if (inCode) { codeBuf.push(line); continue; }
+
+      // Horizontal rules
+      if (line.trim().match(/^(-{3,}|\*{3,}|_{3,})$/)) {
+        if (inList) { result.push('</div>'); inList = false; }
+        result.push('<div style="border-bottom:1px solid var(--border);margin:10px 0"></div>');
+        continue;
+      }
+
+      // Headers (h1-h4)
+      let hm = line.match(/^(#{1,4})\s+(.+)/);
+      if (hm) {
+        if (inList) { result.push('</div>'); inList = false; }
+        let lvl = hm[1].length;
+        let sizes = ['16px','14px','13px','12px'];
+        let colors = ['var(--blue)','var(--blue)','var(--fg)','var(--muted)'];
+        result.push('<div style="font-weight:700;font-size:' + sizes[lvl-1] + ';color:' + colors[lvl-1] + ';margin:8px 0 4px">' + inlineMd(hm[2]) + '</div>');
+        continue;
+      }
+
+      // List items
+      let lm = line.match(/^(\s*)([-*]|\d+\.)\s+(.+)/);
+      if (lm) {
+        if (!inList) { result.push('<div style="margin:4px 0;padding-left:4px">'); inList = true; }
+        let nested = lm[1].length > 1;
+        let bullet = nested ? '\u25E6' : '\u2022';
+        let pad = nested ? '24px' : '12px';
+        result.push('<div style="padding:1px 0 1px ' + pad + ';position:relative;color:var(--fg)"><span style="position:absolute;left:' + (nested ? '12px' : '0') + ';color:var(--blue);font-size:10px">' + bullet + '</span>' + inlineMd(lm[3]) + '</div>');
+        continue;
+      }
+
+      // Close list on non-list content
+      if (inList && line.trim() === '') { result.push('</div>'); inList = false; continue; }
+      if (inList && !lm) { result.push('</div>'); inList = false; }
+
+      // Table rows (basic pipe tables)
+      if (line.trim().match(/^\|.*\|$/)) {
+        // Skip separator rows
+        if (line.trim().match(/^\|[\s\-:|]+\|$/)) continue;
+        let cells = line.split('|').filter(c => c.trim());
+        let isHeader = i + 1 < lines.length && lines[i+1].trim().match(/^\|[\s\-:|]+\|$/);
+        let tag = isHeader ? 'strong' : 'span';
+        let isKV = cells.length === 2;
+        let html = '<div style="display:flex;gap:12px;padding:2px 0;font-size:12px">';
+        cells.forEach((c, idx) => {
+          let style;
+          if (isKV && idx === 0) {
+            style = 'white-space:nowrap;font-weight:600;color:var(--fg)';
+          } else {
+            style = 'flex:1;color:var(--fg)';
+          }
+          html += '<' + tag + ' style="' + style + '">' + inlineMd(c.trim()) + '</' + tag + '>';
+        });
+        html += '</div>';
+        result.push(html);
+        continue;
+      }
+
+      // Empty line
+      if (line.trim() === '') { result.push('<div style="height:6px"></div>'); continue; }
+
+      // Regular text
+      result.push('<div>' + inlineMd(line) + '</div>');
+    }
+
+    if (inList) result.push('</div>');
+    if (inCode && codeBuf.length) result.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>');
+    return result.join('');
+  }
+
+  function inlineMd(s) {
+    s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    s = s.replace(/_([^_]+)_/g, '<em>$1</em>');
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue)">$1</a>');
+    s = s.replace(/(^|[^"'])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue)">$2</a>');
+    return s;
   }
 
   /** Map raw MCP tool names like "Filesystem_read_file" to friendly descriptions */
@@ -817,6 +926,7 @@ html, body {
   }
 
   // ─── Sending ───
+  let lastLocalSend = '';
   function sendRaw(text) {
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(text);
@@ -834,6 +944,7 @@ html, body {
     }
 
     ws.send(fullMsg);
+    lastLocalSend = text;
 
     // Render user bubble
     const el = document.createElement('div');
@@ -842,7 +953,7 @@ html, body {
     for (const f of pendingFiles) {
       inner += renderUploadPreviewHTML(f.name, f.size, f.thumbUrl);
     }
-    inner += `<div>${esc(text)}</div>`;
+    inner += `<div>${renderMarkdown(text)}</div>`;
     el.innerHTML = `<span class="bubble">${inner}</span>`;
     output.appendChild(el);
     scrollToBottom();

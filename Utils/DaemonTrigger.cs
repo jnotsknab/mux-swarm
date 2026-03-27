@@ -15,11 +15,20 @@ public class DaemonTrigger
     /// <summary>Glob path for file watch triggers (supports {file} substitution in goal).</summary>
     [JsonPropertyName("path")]
     public string? Path { get; set; }
-
-
+    
+    /// <summary>Raw command for process based daemon triggers</summary>
+    [JsonPropertyName("command")]
+    public string? Command { get; set; }
+    
     /// <summary>Standard 5-field cron expression (minute hour day month weekday).</summary>
     [JsonPropertyName("schedule")]
     public string? Schedule { get; set; }
+    
+    [JsonPropertyName("env")]
+    public Dictionary<string, string>? Env { get; set; }
+    
+    [JsonPropertyName("args")]
+    public string? Args { get; set; }
     
     /// <summary>
     /// What to check. Prefixes:

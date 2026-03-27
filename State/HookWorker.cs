@@ -33,16 +33,6 @@ public static class HookWorker
     /// </summary>
     public static void Enqueue(HookEvent e) => Channel.Writer.TryWrite(e);
 
-    /// <summary>
-    /// Swap the active hook list at runtime (called on /refresh).
-    /// </summary>
-    public static void UpdateHooks(List<HookConfig> hooks)
-    {
-        StopPersistentHooks();
-        _hooks = hooks;
-        StartPersistentHooks();
-    }
-
     public static void Start(List<HookConfig> hooks)
     {
         if (_cts is not null) return;
