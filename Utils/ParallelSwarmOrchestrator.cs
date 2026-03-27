@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -197,6 +198,13 @@ public static class ParallelSwarmOrchestrator
             Text = incomingGoal,
             Timestamp = DateTimeOffset.UtcNow
         });
+        
+        using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
+        sessionSpan?.SetTag("mode", "pswarm");
+        sessionSpan?.SetTag("goal_id", goalId);
+        sessionSpan?.SetTag("continuous", continuous);
+        sessionSpan?.SetTag("max_parallelism", maxDegreeOfParallelism);
+        OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
         
         IChatClient? compactionClient = null;
         try
@@ -580,6 +588,9 @@ public static class ParallelSwarmOrchestrator
                     Text = goal,
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                
+                OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
+                
             }
 
             // Fresh sessions per goal
@@ -707,6 +718,15 @@ public static class ParallelSwarmOrchestrator
             Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
             Timestamp = DateTimeOffset.UtcNow
         });
+        
+        sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
+        sessionSpan?.SetTag("total_tokens", _swarmTokens);
+        sessionSpan?.SetTag("delegations", delegationResults.Count);
+
+        if (cancellationToken.IsCancellationRequested)
+            OtelMetrics.SessionsFailed.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
+        else
+            OtelMetrics.SessionsCompleted.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
     }
 
     //Goal Execution (Orchestrator Loop)
@@ -809,6 +829,7 @@ public static class ParallelSwarmOrchestrator
 
             ThinkingIndicator? thinking = null;
             bool currentlyStreaming = false;
+            var orchTurnSw = Stopwatch.StartNew();
 
             try
             {
@@ -821,7 +842,11 @@ public static class ParallelSwarmOrchestrator
                     MuxConsole.WriteAgentTurnHeader("Orchestrator");
                     thinking = MuxConsole.BeginThinking("Orchestrator");
                 }
-
+                
+                using var orchTurnSpan = OtelTracer.GetSource().StartActivity("orchestrator_turn");
+                orchTurnSpan?.SetTag("agent", "Orchestrator");
+                orchTurnSpan?.SetTag("iteration", i);
+                
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -857,6 +882,10 @@ public static class ParallelSwarmOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
+                            
+                            var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
+                            toolSpan?.SetTag("agent", "Orchestrator");
+                            toolSpan?.SetTag("tool", fc.Name);
 
                             if (!prodMode && currentlyStreaming)
                             {
@@ -877,6 +906,15 @@ public static class ParallelSwarmOrchestrator
                         }
                         else if (content is FunctionResultContent fr)
                         {
+                            var resultText = fr.Result?.ToString();
+                            Activity.Current?.SetTag("success", true);
+                            if (resultText != null)
+                                Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
+                            Activity.Current?.Stop();
+
+                            OtelMetrics.ToolCalls.Add(1,
+                                new KeyValuePair<string, object?>("agent", "Orchestrator"),
+                                new KeyValuePair<string, object?>("tool", fr.CallId));
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -894,14 +932,12 @@ public static class ParallelSwarmOrchestrator
                                     thinking.UpdateStatus(toolCalls);
                             }
 
-                            if (prodMode)
-                            {
-                                string resultText = fr.Result?.ToString() ?? "";
-                                Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
-                            }
-
                             if (toolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                thinking?.Dispose();
+                                thinking = null;
                                 goto streamComplete;
+                            }
                         }
                         else if (content is UsageContent usageContent)
                         {
@@ -909,6 +945,9 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
+                            OtelMetrics.RecordTokens("Orchestrator", "pswarm_orchestrator",
+                                usageContent.Details.InputTokenCount ?? 0,
+                                usageContent.Details.OutputTokenCount ?? 0);
                         }
                     }
                 }
@@ -943,6 +982,12 @@ public static class ParallelSwarmOrchestrator
                     Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                
+                orchTurnSw.Stop();
+                OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
+                OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
+                    new KeyValuePair<string, object?>("agent", "Orchestrator"));
+                OtelMetrics.OrchestratorIterations.Add(1);
             }
 
             MuxConsole.WriteLine();
@@ -961,6 +1006,7 @@ public static class ParallelSwarmOrchestrator
             {
                 stuckCount++;
                 MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{ExecutionLimits.Current.MaxStuckCount})");
+                OtelMetrics.AgentStuckCount.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
 
                 if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                 {
@@ -1027,7 +1073,14 @@ public static class ParallelSwarmOrchestrator
             retryRegistry.TryGetValue(retryKey, out retryState);
             attemptNumber = (retryState?.AttemptCount ?? 0) + 1;
         }
-
+        
+        using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
+        delegationSpan?.SetTag("from", callerName);
+        delegationSpan?.SetTag("to", agentName);
+        delegationSpan?.SetTag("attempt", attemptNumber);
+        delegationSpan?.SetTag("parallel", true);
+        var delegationSw = Stopwatch.StartNew();
+        
         MuxConsole.WriteDelegation(callerName, agentName, $"[Parallel] {task}");
 
         if (attemptNumber > 1)
@@ -1087,7 +1140,17 @@ public static class ParallelSwarmOrchestrator
                          $"Last reason: {retryState?.LastFailureReason ?? summary}. " +
                          "Consider a different approach or agent, or surface this to the user.";
         }
+        
+        delegationSw.Stop();
+        OtelMetrics.Delegations.Add(1,
+            new KeyValuePair<string, object?>("from", callerName),
+            new KeyValuePair<string, object?>("to", agentName));
+        OtelMetrics.DelegationDuration.Record(delegationSw.ElapsedMilliseconds,
+            new KeyValuePair<string, object?>("to", agentName));
 
+        if (!succeeded)
+            OtelMetrics.SubTaskRetries.Add(1, new KeyValuePair<string, object?>("agent", agentName));
+        
         return string.IsNullOrWhiteSpace(compacted)
             ? $"[{agentName} completed but returned no output]"
             : compacted;
@@ -1102,9 +1165,10 @@ public static class ParallelSwarmOrchestrator
         CancellationToken cancellationToken,
         bool prodMode = false)
     {
-        if (prodMode)
-            Console.WriteLine($"[[START_SUBAGENT]]{specialist.Def.Name}[[END_AGENT_NAME]]{subTask}[[END_TASK]]");
-
+        using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
+        subAgentSpan?.SetTag("agent", specialist.Def.Name);
+        subAgentSpan?.SetTag("mode", "parallel_sub_agent");
+        
         int stuckCount = 0;
         bool isFirstIteration = true;
 
@@ -1193,18 +1257,16 @@ public static class ParallelSwarmOrchestrator
 
             ThinkingIndicator? thinking = null;
             bool currentlyStreaming = false;
+            var turnSw = Stopwatch.StartNew();
 
             try
             {
-                if (prodMode)
-                {
-                    Console.Write("[[START_AGENT_TURN]]" + specialist.Def.Name + "[[END_AGENT_NAME]]");
-                }
-                else
-                {
-                    MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
-                    thinking = MuxConsole.BeginThinking(specialist.Def.Name);
-                }
+                MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
+                thinking = MuxConsole.BeginThinking(specialist.Def.Name);
+                
+                using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
+                turnSpan?.SetTag("agent", specialist.Def.Name);
+                turnSpan?.SetTag("iteration", i);
 
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
@@ -1246,6 +1308,10 @@ public static class ParallelSwarmOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
+                            
+                            var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
+                            toolSpan?.SetTag("agent", specialist.Def.Name);
+                            toolSpan?.SetTag("tool", fc.Name);
 
                             if (!prodMode && currentlyStreaming)
                             {
@@ -1280,7 +1346,17 @@ public static class ParallelSwarmOrchestrator
                         }
                         else if (content is FunctionResultContent fr)
                         {
+                            
+                            var resultText = fr.Result?.ToString();
+                            Activity.Current?.SetTag("success", true);
+                            if (resultText != null)
+                                Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
+                            Activity.Current?.Stop();
 
+                            OtelMetrics.ToolCalls.Add(1,
+                                new KeyValuePair<string, object?>("agent", specialist.Def.Name),
+                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                            
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_result",
@@ -1296,12 +1372,7 @@ public static class ParallelSwarmOrchestrator
                                 if (iterToolCalls.Count > 0)
                                     thinking.UpdateStatus(iterToolCalls);
                             }
-
-                            if (prodMode)
-                            {
-                                string resultText = fr.Result?.ToString() ?? "";
-                                Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
-                            }
+                            
                         }
                         else if (content is UsageContent usageContent)
                         {
@@ -1309,6 +1380,9 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
+                            OtelMetrics.RecordTokens(specialist.Def.Name, "parallel_sub_agent",
+                                usageContent.Details.InputTokenCount ?? 0,
+                                usageContent.Details.OutputTokenCount ?? 0);
                         }
                     }
                 }
@@ -1336,6 +1410,11 @@ public static class ParallelSwarmOrchestrator
                     Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                
+                turnSw.Stop();
+                OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", specialist.Def.Name));
+                OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
+                    new KeyValuePair<string, object?>("agent", specialist.Def.Name));
             }
 
             MuxConsole.WriteLine();

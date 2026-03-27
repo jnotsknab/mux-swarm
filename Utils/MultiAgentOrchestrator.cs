@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel;
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -21,6 +22,7 @@ public static class MultiAgentOrchestrator
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
+    private static string OrchestratorModelId;
 
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
@@ -172,6 +174,13 @@ public static class MultiAgentOrchestrator
             Text = incomingGoal,
             Timestamp = DateTimeOffset.UtcNow
         });
+        
+        using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
+        sessionSpan?.SetTag("mode", "swarm");
+        sessionSpan?.SetTag("goal_id", goalId);
+        sessionSpan?.SetTag("continuous", continuous);
+        sessionSpan?.SetTag("max_iterations", maxOrchestratorIterations);
+        OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
 
         IChatClient? compactionClient = null;
         try
@@ -206,7 +215,13 @@ public static class MultiAgentOrchestrator
             string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
             retryRegistry.TryGetValue(retryKey, out var retryState);
             int attemptNumber = (retryState?.AttemptCount ?? 0) + 1;
-
+            
+            using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
+            delegationSpan?.SetTag("from", callerName);
+            delegationSpan?.SetTag("to", agentName);
+            delegationSpan?.SetTag("attempt", attemptNumber);
+            var delegationSw = Stopwatch.StartNew();
+            
             MuxConsole.WriteDelegation(callerName, agentName, task);
 
             if (attemptNumber > 1)
@@ -265,7 +280,17 @@ public static class MultiAgentOrchestrator
                              $"Last reason: {retryState?.LastFailureReason ?? summary}. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
+            
+            delegationSw.Stop();
+            OtelMetrics.Delegations.Add(1,
+                new KeyValuePair<string, object?>("from", callerName),
+                new KeyValuePair<string, object?>("to", agentName));
+            OtelMetrics.DelegationDuration.Record(delegationSw.ElapsedMilliseconds,
+                new KeyValuePair<string, object?>("to", agentName));
 
+            if (!succeeded)
+                OtelMetrics.SubTaskRetries.Add(1, new KeyValuePair<string, object?>("agent", agentName));
+            
             return string.IsNullOrWhiteSpace(compacted)
                 ? $"[{agentName} completed but returned no output]"
                 : compacted;
@@ -430,7 +455,7 @@ public static class MultiAgentOrchestrator
                               A sleeping swarm costs nothing. Prefer sleep over rapid retries.
                               """;
 
-        // ── Load or create continuous state ──────────────────────────────
+        // Load or create continuous state
         CurrentStateMetadata? state = null;
         if (continuous)
         {
@@ -464,6 +489,7 @@ public static class MultiAgentOrchestrator
             orchestratorPrompt += $"\n\n{sessionContext}";
 
         string orchestratorModelId = agentModels["Orchestrator"];
+        OrchestratorModelId = orchestratorModelId;
         IChatClient orchestratorClient = chatClientFactory(orchestratorModelId);
 
         var orchestratorFilteredTools = GetOrchestratorFilteredToolsFromConfig(mcpTools);
@@ -567,6 +593,8 @@ public static class MultiAgentOrchestrator
                     Text = goal,
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
+
             }
 
             // Fresh sessions per iteration
@@ -698,6 +726,15 @@ public static class MultiAgentOrchestrator
             Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
             Timestamp = DateTimeOffset.UtcNow
         });
+        
+        sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
+        sessionSpan?.SetTag("total_tokens", _swarmTokens);
+        sessionSpan?.SetTag("delegations", delegationResults.Count);
+
+        if (cancellationToken.IsCancellationRequested)
+            OtelMetrics.SessionsFailed.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
+        else
+            OtelMetrics.SessionsCompleted.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
     }
 
 
@@ -780,7 +817,7 @@ public static class MultiAgentOrchestrator
         return context.ToString();
     }
 
-    // ── Goal Execution ───────────────────────────────────────────────────
+    // Goal Execution
 
     private static async Task RunOrchestratedGoalAsync(
         string goal,
@@ -886,19 +923,18 @@ public static class MultiAgentOrchestrator
             ThinkingIndicator? thinking = null;
             bool startedStreaming = false;
             bool currentlyStreaming = false;
-
+            var orchTurnSw = Stopwatch.StartNew();
+            
             try
             {
-                if (prodMode)
-                {
-                    Console.Write("[[START_AGENT_TURN]]Orchestrator[[END_AGENT_NAME]]");
-                }
-                else
-                {
-                    MuxConsole.WriteAgentTurnHeader("Orchestrator");
-                    thinking = MuxConsole.BeginThinking("Orchestrator");
-                }
-
+                MuxConsole.WriteAgentTurnHeader("Orchestrator");
+                thinking = MuxConsole.BeginThinking("Orchestrator");
+                
+                using var orchTurnSpan = OtelTracer.GetSource().StartActivity("orchestrator_turn");
+                orchTurnSpan?.SetTag("agent", "Orchestrator");
+                orchTurnSpan?.SetTag("iteration", i);
+                
+                
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -937,7 +973,11 @@ public static class MultiAgentOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-
+                            
+                            var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
+                            toolSpan?.SetTag("agent", "Orchestrator");
+                            toolSpan?.SetTag("tool", fc.Name);
+                            
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
                             if (!prodMode && currentlyStreaming)
@@ -967,6 +1007,16 @@ public static class MultiAgentOrchestrator
                                 Timestamp = DateTimeOffset.UtcNow
                             });
 
+                            var resultText = fr.Result?.ToString();
+                            Activity.Current?.SetTag("success", true);
+                            if (resultText != null)
+                                Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
+                            Activity.Current?.Stop();
+
+                            OtelMetrics.ToolCalls.Add(1,
+                                new KeyValuePair<string, object?>("agent", "Orchestrator"),
+                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                            
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -975,18 +1025,19 @@ public static class MultiAgentOrchestrator
                                     thinking.UpdateStatus(toolCalls);
                             }
 
-                            if (prodMode)
-                            {
-                                string resultText = fr.Result?.ToString() ?? "";
-                                Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
-                            }
-
                             if (toolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
+                            {
+                                thinking?.Dispose();
+                                thinking = null;
                                 goto streamComplete;
+                            }
                         }
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                            OtelMetrics.RecordTokens("Orchestrator", OrchestratorModelId,
+                                usageContent.Details.InputTokenCount ?? 0,
+                                usageContent.Details.OutputTokenCount ?? 0);
                         }
                     }
                 }
@@ -1027,6 +1078,12 @@ public static class MultiAgentOrchestrator
                     Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                
+                orchTurnSw.Stop();
+                OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
+                OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
+                    new KeyValuePair<string, object?>("agent", "Orchestrator"));
+                OtelMetrics.OrchestratorIterations.Add(1);
             }
 
             MuxConsole.WriteLine();
@@ -1042,6 +1099,7 @@ public static class MultiAgentOrchestrator
             {
                 stuckCount++;
                 MuxConsole.WriteWarning($"Orchestrator stuck — empty response ({stuckCount}/{ExecutionLimits.Current.MaxStuckCount})");
+                OtelMetrics.AgentStuckCount.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
 
                 if (stuckCount >= ExecutionLimits.Current.MaxStuckCount)
                 {
@@ -1083,9 +1141,10 @@ public static class MultiAgentOrchestrator
         CancellationToken cancellationToken,
         bool prodMode = false)
     {
-        if (prodMode)
-            Console.WriteLine($"[[START_SUBAGENT]]{specialist.Def.Name}[[END_AGENT_NAME]]{subTask}[[END_TASK]]");
-
+        using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
+        subAgentSpan?.SetTag("agent", specialist.Def.Name);
+        subAgentSpan?.SetTag("mode", "sub_agent");
+        
         int stuckCount = 0;
         bool isFirstIteration = true;
 
@@ -1177,21 +1236,18 @@ public static class MultiAgentOrchestrator
             ThinkingIndicator? thinking = null;
             bool startedStreaming = false;
             bool currentlyStreaming = false;
+            var turnSw = Stopwatch.StartNew();
 
             try
             {
-                if (prodMode)
-                {
-                    Console.Write("[[START_AGENT_TURN]]" + specialist.Def.Name + "[[END_AGENT_NAME]]");
-                }
-                else
-                {
-                    MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
-                    thinking = MuxConsole.BeginThinking(specialist.Def.Name);
-                }
-
-
-
+                MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
+                
+                using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
+                turnSpan?.SetTag("agent", specialist.Def.Name);
+                turnSpan?.SetTag("iteration", i);
+                
+                thinking = MuxConsole.BeginThinking(specialist.Def.Name);
+                
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
@@ -1235,6 +1291,11 @@ public static class MultiAgentOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
+                            
+                            var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
+                            toolSpan?.SetTag("agent", specialist.Def.Name);
+                            toolSpan?.SetTag("tool", fc.Name);
+                            
 
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
@@ -1279,7 +1340,17 @@ public static class MultiAgentOrchestrator
                                 Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
+                            
+                            var resultText = fr.Result?.ToString();
+                            Activity.Current?.SetTag("success", true);
+                            if (resultText != null)
+                                Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
+                            Activity.Current?.Stop();
 
+                            OtelMetrics.ToolCalls.Add(1,
+                                new KeyValuePair<string, object?>("agent", specialist.Def.Name),
+                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                            
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -1287,16 +1358,13 @@ public static class MultiAgentOrchestrator
                                 if (iterToolCalls.Count > 0)
                                     thinking.UpdateStatus(iterToolCalls);
                             }
-
-                            if (prodMode)
-                            {
-                                string resultText = fr.Result?.ToString() ?? "";
-                                Console.Write($"[[TOOL_RESULT]]{resultText}[[END_TOOL_RESULT]]");
-                            }
                         }
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
+                            OtelMetrics.RecordTokens(specialist.Def.Name, "sub_agent",
+                                usageContent.Details.InputTokenCount ?? 0,
+                                usageContent.Details.OutputTokenCount ?? 0);
                         }
                     }
                 }
@@ -1330,6 +1398,11 @@ public static class MultiAgentOrchestrator
                     Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
+                
+                turnSw.Stop();
+                OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", specialist.Def.Name));
+                OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
+                    new KeyValuePair<string, object?>("agent", specialist.Def.Name));
             }
 
             MuxConsole.WriteLine();

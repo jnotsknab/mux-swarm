@@ -4,6 +4,7 @@ using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using MuxSwarm.State;
+using System.Diagnostics;
 
 namespace MuxSwarm.Utils;
 
@@ -101,6 +102,8 @@ public static class SingleAgentOrchestrator
         
         
         var resolvedModelId = "";
+        using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
+        
         try
         {
             var swarmJson = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
@@ -120,9 +123,14 @@ public static class SingleAgentOrchestrator
                 Timestamp = DateTimeOffset.UtcNow
             });
             
-            resolvedModelId = match?.Model
-                              ?? swarm?.SingleAgent?.Model
-                              ?? "";
+            resolvedModelId = match?.Model ?? swarm?.SingleAgent?.Model ?? "";
+            
+            sessionSpan?.SetTag("agent", singleAgentDef?.Name);
+            sessionSpan?.SetTag("mode", persistSession ? "agent" : "stateless");
+            sessionSpan?.SetTag("model", resolvedModelId);
+            sessionSpan?.SetTag("goal_id", goalId);
+            OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef?.Name));
+            
         }
         catch { /* fall through */ }
 
@@ -166,7 +174,10 @@ public static class SingleAgentOrchestrator
             Text = initialGoal,
             Timestamp = DateTimeOffset.UtcNow
         });
-
+        
+        OtelMetrics.RecordAgentMessage(singleAgentDef?.Name ?? string.Empty, "user", initialGoal);
+        OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef?.Name ?? string.Empty));
+        
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
             MuxConsole.WriteError("[AGENT] singleAgent.promptPath not set in swarm.json.");
@@ -315,7 +326,11 @@ public static class SingleAgentOrchestrator
 
         pendingCompaction = false;
         async Task<bool> TryCompactAsync()
-        {
+        {   
+            using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
+            compactSpan?.SetTag("agent", singleAgentDef?.Name);
+            var compactSw = Stopwatch.StartNew();
+            
             var cc = ResolveCompactionClient();
             if (cc == null)
             {
@@ -341,6 +356,12 @@ public static class SingleAgentOrchestrator
                 conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
                     "Context restored. Ready to continue."));
             });
+
+            compactSw.Stop();
+            OtelMetrics.CompactionRuns.Add(1);
+            OtelMetrics.CompactionDuration.Record(compactSw.ElapsedMilliseconds);
+            if (beforeTokens > 0)
+                OtelMetrics.CompactionRatio.Record((double)_sessionTokens / beforeTokens);
 
             pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
@@ -407,6 +428,12 @@ public static class SingleAgentOrchestrator
                     turnCts.Token.ThrowIfCancellationRequested();
 
                     MuxConsole.WriteAgentTurnHeader(singleAgentDef.Name);
+                    
+                    using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
+                    turnSpan?.SetTag("agent", singleAgentDef.Name);
+                    turnSpan?.SetTag("model", resolvedModelId);
+                    turnSpan?.SetTag("iteration", i);
+                    var turnSw = Stopwatch.StartNew();
 
                     ThinkingIndicator? thinking = null;
                     bool startedStreaming = false;
@@ -467,7 +494,12 @@ public static class SingleAgentOrchestrator
                                         Tool = functionCall.Name,
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-
+                                    
+                                    var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
+                                    toolSpan?.SetTag("agent", singleAgentDef.Name);
+                                    toolSpan?.SetTag("tool", functionCall.Name);
+                                    toolSpan?.SetTag("args", functionCall.Arguments?.ToString()?[..Math.Min(functionCall.Arguments?.ToString()?.Length ?? 0, 4096)]);
+                                    
                                     if (currentlyStreaming)
                                     {
                                         currentlyStreaming = false;
@@ -483,7 +515,13 @@ public static class SingleAgentOrchestrator
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
-                                {
+                                {   
+                                    var resultText = functionResult.Result?.ToString();
+                                    Activity.Current?.SetTag("success", true);
+                                    if (resultText != null)
+                                        Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
+                                    Activity.Current?.Stop();
+                                    
                                     HookWorker.Enqueue(new HookEvent
                                     {
                                         Event = "tool_result",
@@ -504,6 +542,7 @@ public static class SingleAgentOrchestrator
                                 {
                                     var details = usageContent.Details;
                                     _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
+                                    OtelMetrics.RecordTokens(singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0);
                                 }
                             }
                         }
@@ -525,6 +564,14 @@ public static class SingleAgentOrchestrator
                             Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
                             Timestamp = DateTimeOffset.UtcNow
                         });
+                        
+                        turnSw.Stop();
+                        OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
+                        OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
+                            new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
+
+                        // Only Fires In Verbose Path
+                        OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "assistant", responseText.ToString());
                     }
 
                     MuxConsole.WriteAgentTurnFooter();
@@ -538,7 +585,7 @@ public static class SingleAgentOrchestrator
                     {
                         stuckCount++;
                         MuxConsole.WriteWarning($"Empty response ({stuckCount}/3)");
-
+                        OtelMetrics.AgentStuckCount.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         if (stuckCount >= 3)
                         {
                             MuxConsole.WriteError("Stuck repeatedly — aborting turn.");
@@ -656,6 +703,9 @@ public static class SingleAgentOrchestrator
                 Text = currentGoal,
                 Timestamp = DateTimeOffset.UtcNow
             });
+            
+            OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "user", currentGoal);
+            OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
 
         } while (!Environment.HasShutdownStarted);
 
@@ -669,5 +719,13 @@ public static class SingleAgentOrchestrator
             Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
             Timestamp = DateTimeOffset.UtcNow
         });
+        
+        sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
+        sessionSpan?.SetTag("final_tokens", _sessionTokens);
+
+        if (cancellationToken.IsCancellationRequested)
+            OtelMetrics.SessionsFailed.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
+        else
+            OtelMetrics.SessionsCompleted.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
     }
 }

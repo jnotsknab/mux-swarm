@@ -113,6 +113,7 @@ public static class SkillLoader
         }
 
         MuxConsole.WriteSuccess($"Loaded {_allSkills.Count} skills from {skillDirs.Count(Directory.Exists)} directorie(s)");
+        OtelLogger.Info($"Skill Loader loaded {_allSkills.Count} skills from {skillDirs.Count(Directory.Exists)} directorie(s)");
     }
 
     /// <summary>
