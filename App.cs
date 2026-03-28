@@ -1016,7 +1016,30 @@ public class App
             }
             catch (Exception ex)
             {
-                MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
+                if (ex.Message.Contains("EACCES", StringComparison.OrdinalIgnoreCase))
+                {
+                    MuxConsole.WriteError($"Failed to connect to {name}: permission denied.");
+        
+                    if (PlatformContext.IsWindows)
+                    {
+                        MuxConsole.WriteMuted("  Try running your terminal as Administrator, or reinstall Node.js with the default settings.");
+                    }
+                    else if (PlatformContext.IsMac)
+                    {
+                        MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm");
+                        MuxConsole.WriteMuted("  Or reinstall Node via Homebrew: brew install node");
+                    }
+                    else
+                    {
+                        MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
+                        MuxConsole.WriteMuted("  Or configure a user-level prefix: npm config set prefix '~/.npm-global'");
+                        MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
+                    }
+                }
+                else
+                {
+                    MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
+                }
             }
         }
 

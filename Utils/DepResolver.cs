@@ -367,10 +367,8 @@ public static class DepResolver
 
         return (true, proc.ExitCode, false);
     }
-
-    // ---------------------------
-    // Install commands + fallbacks (modern distros + Node 20+)
-    // ---------------------------
+    
+    //Install CMDS
 
     private static List<(string? cmd, string args)> GetInstallCommands(string depName)
     {

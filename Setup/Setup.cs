@@ -553,7 +553,7 @@ public static class Setup
                             else
                             {
                                 MuxConsole.WriteMuted($"  Temporary:  export {v}=\"your_api_key_here\"");
-                                MuxConsole.WriteMuted($"  Permanent:  echo 'export {v}=\"...\"' >> ~/.bashrc");
+                                MuxConsole.WriteMuted($"  Permanent:  echo 'export {v}=\"...\"' >> {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}");
                             }
                         }
                     }
