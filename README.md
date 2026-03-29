@@ -170,6 +170,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 /pswarm         Launch parallel swarm loop and concurrent batch dispatch for independent tasks
 /agent          Launch interactive single agent loop
 /stateless      Stateless single agent loop, ideal for one-off tasks
+/plan           Toggle plan mode, agents present a plan and ask for approval before executing
 /continuous     Toggle continued autonomous execution on and off (/cont shorthand)
 /workflow       Run a deterministic workflow from a JSON file
 /resume         Resume a previous single-agent session
@@ -201,6 +202,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ```
 --goal <text|file>         Goal input (text or file path)
 --agent <name>             Run in single-agent mode with the specified agent
+--plan                     Enable plan mode, agents confirm before executing (orchestrator and single agent only)
 --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
 --continuous               Enable continuous autonomous mode
 --goal-id <id>             Persistent goal/session identifier
