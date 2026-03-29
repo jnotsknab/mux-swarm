@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Mux-Swarm</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><path d='M30 70 L30 30 L50 50 L70 30 L70 70' fill='none' stroke='%23ffffff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='30' r='6' fill='%2364B4DC'/><circle cx='50' cy='50' r='6' fill='%2364B4DC'/><circle cx='70' cy='30' r='6' fill='%2364B4DC'/><circle cx='30' cy='70' r='6' fill='%2364B4DC'/><circle cx='70' cy='70' r='6' fill='%2364B4DC'/></svg>" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -64,11 +65,13 @@ html, body {
   align-items: center;
   gap: 16px;
   flex-shrink: 0;
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(16px);
+  box-shadow: inset 0 -1px 0 rgba(255,255,255,0.05);
   -webkit-backdrop-filter: blur(12px);
 }
 
-.header-logo { color: var(--text); font-weight: 600; font-size: 16px; letter-spacing: 0.02em; font-family: var(--font-sans); }
+.header-logo { color: var(--text); font-weight: 600; font-size: 16px; letter-spacing: 0.02em; font-family: var(--font-sans); text-decoration: none; transition: opacity 0.2s ease; }
+.header-logo:hover { opacity: 0.8; }
 
 .header-status { 
   font-size: 12px; 
@@ -91,7 +94,8 @@ html, body {
 }
 
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: all 0.3s ease; }
-.status-dot.connected { background: var(--green); box-shadow: 0 0 12px rgba(16, 185, 129, 0.4); }
+.status-dot.connected { background: var(--green); box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); animation: pulse-green 2s infinite; }
+@keyframes pulse-green { 0% { box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); } 50% { box-shadow: 0 0 12px 4px rgba(16, 185, 129, 0.5); } 100% { box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); } }
 .status-dot.error { background: var(--red); box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
 
 .header-actions { display: flex; gap: 8px; }
@@ -102,6 +106,7 @@ html, body {
   transition: all 0.2s ease; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
 .icon-btn:hover, .icon-btn.active { background: rgba(100, 180, 220, 0.1); color: var(--text); border-color: var(--border); }
+.icon-btn:active { transform: scale(0.92); }
 
 /* ── Sidebar ── */
 .sidebar {
@@ -109,7 +114,8 @@ html, body {
   background: var(--bg-card); border-left: 1px solid var(--border);
   display: flex; flex-direction: column; transform: translateX(100%);
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 100;
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.3), inset 1px 0 0 rgba(255,255,255,0.05);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.2);
 }
@@ -127,14 +133,14 @@ html, body {
 
 
 .sidebar-close {
-  background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
   color: var(--muted); font-size: 14px; cursor: pointer; padding: 4px 8px; line-height: 1;
   position: static; flex-shrink: 0;
 }
 .sidebar-close:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
 
 .sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
-.sidebar-content::-webkit-scrollbar { width: 6px; }
+.sidebar-content::-webkit-scrollbar { width: 4px; }
 .sidebar-content::-webkit-scrollbar-track { background: transparent; }
 .sidebar-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
 .sidebar-content:hover::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.4); }
@@ -173,12 +179,16 @@ html, body {
 
 /* ── Output ── */
 .output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
-.output::-webkit-scrollbar { width: 6px; }
+.output::-webkit-scrollbar { width: 4px; }
 .output::-webkit-scrollbar-track { background: transparent; }
 .output::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
 .output:hover::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.4); }
 
+
+
+
 /* ── Events ── */
+
 .event { 
   padding: 8px 12px; 
   margin: 8px 0;
@@ -199,28 +209,28 @@ html, body {
   background-color: rgba(16, 185, 129, 0.1);
   border: 1px solid rgba(16, 185, 129, 0.2);
 }
-.event-success::before { content: '✓'; font-weight: bold; }
+
 
 .event-warning { 
   color: var(--amber); 
   background-color: rgba(245, 158, 11, 0.1);
   border: 1px solid rgba(245, 158, 11, 0.2);
 }
-.event-warning::before { content: '!'; font-weight: bold; }
+
 
 .event-error { 
   color: var(--red); 
   background-color: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.2);
 }
-.event-error::before { content: '✗'; font-weight: bold; }
+
 
 .event-info { 
   color: var(--muted); 
   background-color: rgba(161, 161, 170, 0.05);
   border: 1px solid rgba(161, 161, 170, 0.1);
 }
-.event-info::before { content: 'ℹ'; font-size: 11px; margin-top: 1px; }
+
 
 .event-debug { 
   color: #71717a; 
@@ -228,7 +238,7 @@ html, body {
   background-color: rgba(39, 39, 42, 0.3);
   border: 1px dashed rgba(63, 63, 70, 0.5);
 }
-.event-debug::before { content: '⚙'; font-size: 14px; margin-top: 0px; display: flex; align-items: center; justify-content: center; }
+
 
 .event-body { 
   color: var(--text); 
@@ -271,7 +281,7 @@ html, body {
 .agent-turn { margin: 12px 0 4px; display: flex; align-items: center; gap: 8px; }
 .agent-badge {
   background: linear-gradient(135deg, rgba(39, 39, 42, 0.8), rgba(24, 24, 27, 0.9));
-  color: var(--agent); 
+  color: var(--accent); 
   font-size: 11px; 
   font-weight: 600;
   padding: 4px 10px; 
@@ -289,7 +299,7 @@ html, body {
   padding: 12px 16px; 
   margin: 8px 0 16px 0; 
   border-radius: 0 8px 8px 0;
-  word-break: break-word; 
+  word-break: break-all; 
   overflow-wrap: anywhere;
   font-size: 14px; 
   line-height: 1.6; 
@@ -298,7 +308,7 @@ html, body {
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 .stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
-.stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.5; }
+.stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.6; }
 .stream-block pre code { background: none; padding: 0; }
 
 /* ── Thinking bar (inside stream block) ── */
@@ -319,7 +329,7 @@ html, body {
 }
 .thinking-bar span {
   white-space: normal;
-  word-break: break-word;
+  word-break: break-all;
   line-height: 1.4;
 }
 .thinking-bar .bar {
@@ -407,13 +417,13 @@ html, body {
   padding: 12px; 
   white-space: pre-wrap; 
   font-size: 13px; 
-  word-break: break-word; 
+  word-break: break-all; 
   overflow-wrap: anywhere; 
   color: var(--text);
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
-.table-block { border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; overflow: hidden; }
+.table-block { border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; overflow: hidden; }
 .table-block table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table-block th { background: var(--bg-input); color: var(--blue); font-weight: 600; text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--border); letter-spacing: 0.02em; }
 .table-block td { padding: 3px 10px; border-bottom: 1px solid var(--border); }
@@ -421,13 +431,17 @@ html, body {
 
 /* ── Prompts ── */
 .prompt-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; }
-.prompt-block .prompt-text { color: var(--text); margin-bottom: 8px; font-size: 12px; }
+.prompt-block .prompt-text { color: var(--text); margin-bottom: 12px; font-size: 13px; line-height: 1.6; word-break: break-all; }
+.prompt-block .prompt-text pre { background: var(--bg-input); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 11px; }
+.prompt-block .prompt-text code { background: var(--bg-input); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+.prompt-block .prompt-text div { margin-bottom: 6px; }
 .prompt-block button {
   background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
   border-radius: 6px; padding: 8px 14px; font-family: var(--font-mono); font-size: 12px;
   cursor: pointer; margin: 2px 4px 2px 0; transition: all 0.15s; min-height: 36px;
 }
 .prompt-block button:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.prompt-block button:active { transform: scale(0.96); }
 
 /* ── Welcome card ── */
 .welcome-card {
@@ -445,7 +459,7 @@ html, body {
 /* ── Upload preview ── */
 .upload-preview {
   display: inline-flex; align-items: center; gap: 8px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
   padding: 6px 10px; margin: 2px 0; font-size: 12px;
 }
 .upload-preview img { width: 36px; height: 36px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); }
@@ -463,10 +477,10 @@ html, body {
 .input-area textarea {
   flex: 1; width: 100%; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px; font-family: var(--font-mono); font-size: 14px;
-  line-height: 1.5; resize: none; outline: none; min-height: 38px; max-height: 200px;
+  line-height: 1.6; resize: none; outline: none; min-height: 38px; max-height: 200px;
   transition: border-color 0.15s;
 }
-.input-area textarea:focus { border-color: var(--accent); }
+.input-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(100, 180, 220, 0.2); }
 .input-area textarea::placeholder { color: var(--muted); }
 
 /* ── Pending attachments strip ── */
@@ -476,49 +490,65 @@ html, body {
 .btn-group { display: flex; gap: 6px; flex-shrink: 0; }
 
 .send-btn {
-  background: var(--accent); color: var(--bg); border: none; border-radius: 4px;
+  background: var(--accent); color: var(--bg); border: none; border-radius: 6px;
   padding: 8px 14px; font-family: var(--font-mono); font-size: 12px; font-weight: 600;
   cursor: pointer; transition: all 0.15s; white-space: nowrap; min-height: 38px;
 }
 .send-btn:hover { opacity: 0.9; background: #7BC3E8; }
+.send-btn:active { transform: scale(0.96); }
 .send-btn.stop-mode { background: var(--red); }
 
 .upload-btn {
   background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: 8px 10px; font-family: var(--font-mono); font-size: 14px;
+  border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: 14px;
   cursor: pointer; transition: all 0.15s; min-height: 38px;
 }
 .upload-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.upload-btn:active { transform: scale(0.96); }
+
+
+.mic-btn {
+  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px 10px; font-family: var(--font-mono); font-size: 14px;
+  cursor: pointer; transition: all 0.15s; min-height: 38px;
+}
+.mic-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.mic-btn.recording {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
+  border-color: var(--red);
+  animation: pulse-red 1.5s infinite;
+}
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
 
 #fileInput { display: none; }
 
-.upload-notify {
-  position: fixed; bottom: 80px; right: 20px; background: var(--bg-card);
-  border: 1px solid var(--green); border-radius: 4px; padding: 8px 12px;
-  font-size: 12px; color: var(--green); animation: slideIn 0.2s ease; z-index: 200;
-}
-@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
 
 /* ── User message ── */
 .user-msg { text-align: right; padding: 8px 0; margin-bottom: 4px; }
 .user-msg .bubble {
   display: inline-block; 
-  background: linear-gradient(135deg, rgba(100, 180, 220, 0.15), rgba(100, 180, 220, 0.05)); 
+  background: linear-gradient(135deg, rgba(100, 180, 220, 0.2), rgba(100, 180, 220, 0.08)); 
   padding: 10px 14px;
   border-radius: 16px 16px 4px 16px; 
-  border: 1px solid rgba(100, 180, 220, 0.25);
+  border: 1px solid rgba(100, 180, 220, 0.35);
   border-right: 3px solid rgba(100, 180, 220, 0.5);
   max-width: 80%; 
   text-align: left; 
-  word-break: break-word;
+  word-break: break-all;
   white-space: pre-wrap;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   color: var(--text);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 .user-msg .bubble pre { background: var(--bg);
-  background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%); padding: 10px; border-radius: 4px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.5; white-space: pre; }
+  background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.6; white-space: pre; }
 .user-msg .bubble pre code { background: none; padding: 0; }
 .user-msg .bubble code { background: var(--bg);
   background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
@@ -529,8 +559,8 @@ html, body {
   .app { padding: 0 8px; padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
   .header { padding: 8px 0; gap: 8px; }
   .header-logo { font-size: 12px; }
-  .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
-  .panel-body { word-break: break-word; overflow-wrap: anywhere; }
+  .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-all; overflow-wrap: anywhere; }
+  .panel-body { word-break: break-all; overflow-wrap: anywhere; }
   .input-area { padding: 6px 0 8px; gap: 4px; }
   .input-area textarea { font-size: 16px; min-height: 44px; padding: 8px 10px; }
   .btn-group { gap: 4px; }
@@ -564,10 +594,10 @@ html, body {
   border-radius: 0 6px 6px 0;
   color: var(--muted);
   max-width: 85%;
-  word-break: break-word;
+  word-break: break-all;
 }
   .delegation { font-size: 11px; }
-  .event { font-size: 12px; word-break: break-word; }
+  .event { font-size: 12px; word-break: break-all; }
   .table-block { overflow-x: auto; }
   .user-msg .bubble { max-width: 90%; }
 }
@@ -580,8 +610,8 @@ html, body {
 .diff-container {
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.5;
-  background: #09090b; /* Very dark, almost black */
+  line-height: 1.6;
+  background: var(--bg);
   border-radius: 6px;
   border: 1px solid var(--border);
   border-left: 3px solid var(--blue);
@@ -592,7 +622,7 @@ html, body {
   flex-direction: column;
 }
 .diff-header {
-  background: #18181b; /* Slightly lighter header */
+  background: var(--bg-card);
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--text);
@@ -607,7 +637,7 @@ html, body {
   background: rgba(59, 130, 246, 0.15);
   color: var(--blue);
   padding: 4px 10px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid rgba(59, 130, 246, 0.3);
 }
 .diff-time {
@@ -618,7 +648,7 @@ html, body {
 .diff-content {
   padding: 12px;
   white-space: pre-wrap;
-  word-break: break-word;
+  word-break: break-all;
   overflow-y: auto;
   overflow-x: auto;
   max-height: 400px; /* Prevent massive blowouts */
@@ -644,32 +674,196 @@ html, body {
 .json-string { color: #4ade80; }
 .json-number { color: #f472b6; }
 .json-boolean { color: #fbbf24; }
+
+/* ── Theme Panel ── */
+.theme-panel {
+  position: absolute;
+  top: 60px;
+  right: 24px;
+  width: 280px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3), inset 1px 1px 0 rgba(255,255,255,0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 200;
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  transform-origin: top right;
+  animation: scaleIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.theme-panel.open { display: flex; }
+@keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+.theme-section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+
+.theme-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.theme-preset-btn {
+  background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px; font-size: 12px; color: var(--text); cursor: pointer;
+  display: flex; align-items: center; gap: 8px; transition: all 0.15s;
+}
+.theme-preset-btn:hover { border-color: var(--accent); background: rgba(100, 180, 220, 0.1); }
+.theme-preset-btn.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.preset-color-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2); }
+
+.theme-custom { display: flex; flex-direction: column; gap: 8px; }
+.color-picker-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text); }
+.color-picker-row input[type="color"] {
+  -webkit-appearance: none; border: none; width: 24px; height: 24px; border-radius: 6px;
+  cursor: pointer; padding: 0; background: transparent;
+}
+.color-picker-row input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.color-picker-row input[type="color"]::-webkit-color-swatch { border: 1px solid var(--border); border-radius: 6px; }
+
+
+.event-success::before { content: ''; }
+.event-warning::before { content: ''; }
+.event-error::before { content: ''; }
+.event-info::before { content: ''; }
+.event-debug::before { content: ''; }
+
+.event-success { padding-left: 32px; position: relative; }
+.event-success::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; }
+
+.event-warning { padding-left: 32px; position: relative; }
+.event-warning::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; }
+
+.event-error { padding-left: 32px; position: relative; }
+.event-error::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; }
+
+.event-info { padding-left: 32px; position: relative; }
+.event-info::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; }
+
+.event-debug { padding-left: 32px; position: relative; }
+.event-debug::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; }
+
+/* Reset body events so they don't get the icon padding */
+.event-body { padding-left: 0; }
+.event-body::after { display: none; }
+
+
+
+
+/* ── Loading Skeleton ── */
+#loadingSkeleton {
+  padding: 24px; display: flex; flex-direction: column; gap: 16px;
+  animation: pulse-op 1.5s ease-in-out infinite;
+}
+@keyframes pulse-op { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.skel-line { height: 12px; background: var(--bg-input); border-radius: 6px; }
+.skel-bubble { height: 60px; width: 70%; background: var(--bg-input); border-radius: 16px 16px 16px 4px; }
+
+/* ── Toasts ── */
+.toast-container { position: fixed; bottom: 80px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
+.toast {
+  background: var(--bg-card); border-left: 3px solid var(--border); border-radius: 6px; padding: 10px 14px;
+  font-size: 12px; color: var(--text); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto;
+}
+.toast.success { border-left-color: var(--green); }
+.toast.error { border-left-color: var(--red); }
+@keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes fadeOutRight { to { transform: translateX(100%); opacity: 0; } }
+
+/* ── Timestamps ── */
+.msg-time { font-size: 10px; color: var(--muted); opacity: 0.3; transition: opacity 0.2s; margin-top: 4px; display: block; }
+.user-msg:hover .msg-time, .agent-turn:hover .msg-time { opacity: 1; }
+
+/* ── Character Counter ── */
+.char-counter {
+  position: absolute; right: 12px; bottom: 12px; font-size: 10px; color: var(--muted);
+  background: var(--bg-card); padding: 2px 6px; border-radius: 6px; opacity: 0; transition: opacity 0.2s; pointer-events: none;
+}
+.char-counter.visible { opacity: 1; }
+.char-counter.warning { color: var(--amber); }
+.char-counter.danger { color: var(--red); font-weight: 600; }
+.input-wrapper { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+
+/* ── Command Palette ── */
+.cmd-palette {
+  position: absolute; bottom: 100%; left: 0; width: 100%; max-width: 300px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 -4px 16px rgba(0,0,0,0.2); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  margin-bottom: 8px; overflow-y: auto; max-height: 250px; display: none; z-index: 9999;
+}
+.cmd-palette::-webkit-scrollbar { width: 4px; }
+.cmd-palette::-webkit-scrollbar-track { background: transparent; }
+.cmd-palette::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+.cmd-item { padding: 8px 12px; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
+.cmd-item:hover, .cmd-item.selected { background: rgba(100, 180, 220, 0.15); }
+.cmd-item .cmd-name { color: var(--accent); font-weight: 600; }
+.cmd-item .cmd-desc { color: var(--muted); font-size: 11px; }
+
 </style>
 </head>
 <body>
 
+
+  <!-- Theme Panel -->
+  <div class="theme-panel" id="themePanel">
+    <div>
+      <div class="theme-section-title">Presets</div>
+      <div class="theme-presets" id="themePresets">
+        <!-- Injected via JS -->
+      </div>
+    </div>
+    <div>
+      <div class="theme-section-title">Custom Colors</div>
+      <div class="theme-custom">
+        <div class="color-picker-row">
+          <span>Background</span>
+          <input type="color" id="colorBg" title="Background Color">
+        </div>
+        <div class="color-picker-row">
+          <span>Text</span>
+          <input type="color" id="colorText" title="Text Color">
+        </div>
+        <div class="color-picker-row">
+          <span>Accent</span>
+          <input type="color" id="colorAccent" title="Accent Color">
+        </div>
+      </div>
+    </div>
+  </div>
+
+<div class="toast-container" id="toastContainer"></div>
 <div class="app-container">
   <div class="app" id="app">
     <div class="header">
-      <span class="header-logo">MUX-SWARM</span>
+      <a href="https://github.com/jnotsknab/mux-swarm" target="_blank" class="header-logo" title="View on GitHub">MUX-SWARM</a>
       <span class="header-status" id="statusBtn" title="Click to restart server">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">connecting...</span>
       </span>
       <div class="header-actions">
-        <button class="icon-btn" id="sidebarToggle" title="Toggle file browser">📁</button>
+        <button class="icon-btn" id="reconnectBtn" title="Force reconnect"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+        <button class="icon-btn" id="themeBtn" title="Theme Settings"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></button>
+        <button class="icon-btn" id="sidebarToggle" title="Toggle file browser"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
       </div>
     </div>
 
-    <div class="output" id="output"></div>
+    <div class="output" id="output">
+      <div id="loadingSkeleton">
+        <div class="skel-bubble"></div>
+        <div class="skel-line" style="width:40%"></div>
+        <div class="skel-line" style="width:60%"></div>
+      </div>
+    </div>
 
     <div class="input-area">
-      <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;">
+      <div class="input-wrapper">
         <div class="attachments-strip" id="attachments"></div>
-        <textarea id="input" rows="1" placeholder="Type a message or /command..." autofocus></textarea>
+        <textarea id="input" name="main-chat-input" rows="1" placeholder="Type a message or /command..." autofocus></textarea>
+        <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
       <div class="btn-group">
-        <button class="upload-btn" id="uploadBtn" title="Upload file">📎</button>
+        <button class="mic-btn" id="micBtn" title="Voice Input">🎤</button>
+        <button class="upload-btn" id="uploadBtn" title="Upload file"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="fileInput" />
         <button class="send-btn" id="actionBtn">Send</button>
       </div>
@@ -696,10 +890,147 @@ html, body {
   const input = $('input');
   const actionBtn = $('actionBtn');
   const uploadBtn = $('uploadBtn');
+  const micBtn = $('micBtn');
   const fileInput = $('fileInput');
+
+  // ─── Speech Recognition ───
+  let recognition = null;
+  let isRecording = false;
+  let silenceTimer = null;
+  const SILENCE_DELAY_MS = 3000; // 3 seconds of silence before auto-send
+  
+  // Global reference to active prompt handler
+  window.activeVoiceHandler = null;
+
+  if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    function resetSilenceTimer() {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (isRecording) {
+        silenceTimer = setTimeout(() => {
+          // If there is an active prompt, let it handle the silence
+          if (window.activeVoiceHandler) {
+             window.activeVoiceHandler();
+             return; // Do NOT stop recording, just submit
+          }
+          
+          // Otherwise, handle normal chat input
+          if (input && input.value.trim() !== '') {
+            if (isAgentBusy) return; // Wait for agent to finish
+            
+            const text = input.value.trim();
+            if (text || pendingFiles.length > 0) {
+              send(text);
+              input.value = '';
+              autoResize();
+            }
+            // DO NOT STOP RECORDING - Continuous dictation
+          }
+        }, SILENCE_DELAY_MS);
+      }
+    }
+
+    recognition.onstart = () => {
+      isRecording = true;
+      micBtn.classList.add('recording');
+      resetSilenceTimer();
+    };
+
+    recognition.onresult = (event) => {
+      let interimTranscript = '';
+      let finalTranscript = '';
+
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
+        }
+      }
+
+      // Reset timer on any speech detected
+      if (finalTranscript || interimTranscript) {
+        resetSilenceTimer();
+      }
+
+      // Append final text
+      if (finalTranscript) {
+        // Only target a prompt input if we actively have a voice handler waiting for it
+        let targetInput = input;
+        
+        if (window.activeVoiceHandler) {
+            // Find the LAST active prompt on the page (the current one)
+            const prompts = document.querySelectorAll('.prompt-block textarea:not([disabled]):not(.voice-hidden-input)');
+            if (prompts.length > 0) {
+                targetInput = prompts[prompts.length - 1]; // Use the most recent one
+            }
+        }
+        
+        const currentVal = targetInput.value;
+        const separator = (currentVal && !currentVal.endsWith(' ')) ? ' ' : '';
+        targetInput.value = currentVal + separator + finalTranscript;
+        
+        if (targetInput === input) autoResize();
+      }
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'no-speech') {
+        // Ignore no-speech errors, they happen naturally when silent
+        return;
+      }
+      console.error('Speech recognition error', event.error);
+      console.log('Mic Error: ' + event.error);
+      stopRecording();
+    };
+
+    recognition.onend = () => {
+      if (isRecording) {
+        // Restart immediately for continuous listening
+        try { recognition.start(); } catch(e) { }
+      }
+    };
+  } else {
+    micBtn.style.display = 'none'; // Hide if not supported
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    micBtn.classList.remove('recording');
+    if (silenceTimer) {
+      clearTimeout(silenceTimer);
+      silenceTimer = null;
+    }
+    if (recognition) {
+      try { recognition.stop(); } catch(e) {}
+    }
+  }
+
+  micBtn.addEventListener('click', () => {
+    if (!recognition) {
+      console.log('Voice input not supported in this browser');
+      return;
+    }
+    
+    if (isRecording) {
+      stopRecording();
+    } else {
+      try {
+        recognition.start();
+      } catch(e) {
+        console.error(e);
+      }
+    }
+  });
   const statusDot = $('statusDot');
   const statusText = $('statusText');
   const statusBtn = $('statusBtn');
+  const reconnectBtn = $('reconnectBtn');
   const app = $('app');
   const sidebar = $('sidebar');
   const sidebarToggle = $('sidebarToggle');
@@ -707,7 +1038,148 @@ html, body {
   const sidebarContent = $('sidebarContent');
   const attachmentsStrip = $('attachments');
 
+// ─── SVG Icons (Lucide Style) ───
+const icons = {
+  refresh: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
+  palette: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
+  folder: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+  file: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  download: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`,
+  paperclip: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`,
+  zap: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  arrowUpRight: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
+  check: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
+  x: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
+  alertTriangle: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+  info: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
+  settings: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+  hourglass: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>`,
+  stop: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>`
+};
+
+
+  // ─── Theme Panel & Custom Colors ───
+  const themePanel = $('themePanel');
+  const themeBtn = $('themeBtn');
+  const themePresetsContainer = $('themePresets');
+  const colorBg = $('colorBg');
+  const colorText = $('colorText');
+  const colorAccent = $('colorAccent');
+
+  const themes = [
+    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC' } },
+    { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7' } },
+    { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf' } },
+    { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e' } }
+  ];
+
+  let currentThemeId = 'zinc';
+  let customOverrides = {}; // { '--bg': '#...', ... }
+
+  function hexToRgbA(hex, alpha) {
+      let c;
+      if(/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)){
+          c= hex.substring(1).split('');
+          if(c.length== 3){ c= [c[0], c[0], c[1], c[1], c[2], c[2]]; }
+          c= '0x'+c.join('');
+          return 'rgba('+[(c>>16)&255, (c>>8)&255, c&255].join(',')+','+alpha+')';
+      }
+      return hex;
+  }
+
+  function applyThemeState() {
+    const baseTheme = themes.find(t => t.id === currentThemeId) || themes[0];
+    
+    // Apply base vars
+    for (const [key, val] of Object.entries(baseTheme.vars)) {
+      document.documentElement.style.setProperty(key, val);
+    }
+    
+    // Apply custom overrides (if any)
+    for (const [key, val] of Object.entries(customOverrides)) {
+      document.documentElement.style.setProperty(key, val);
+      
+      // Auto-generate derived colors for custom BG so cards/inputs don't break
+      if (key === '--bg') {
+         document.documentElement.style.setProperty('--bg-card', hexToRgbA(val, 0.6));
+         document.documentElement.style.setProperty('--bg-input', hexToRgbA(val, 0.5));
+      }
+    }
+
+    // Update active preset button
+    document.querySelectorAll('.theme-preset-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.id === currentThemeId);
+    });
+
+    // Sync color pickers to actual current values
+    const computed = getComputedStyle(document.documentElement);
+    // Helper to convert rgb/rgba to hex for the native color picker
+    const rgb2hex = (rgb) => {
+       if (rgb.startsWith('#')) return rgb;
+       let a = rgb.split("(")[1].split(")")[0].split(",");
+       return "#" + a.map(x => { x = parseInt(x).toString(16); return (x.length==1) ? "0"+x : x; }).slice(0,3).join("");
+    };
+    
+    colorBg.value = rgb2hex(computed.getPropertyValue('--bg').trim());
+    colorText.value = rgb2hex(computed.getPropertyValue('--text').trim());
+    colorAccent.value = rgb2hex(computed.getPropertyValue('--accent').trim());
+
+    // Save state
+    localStorage.setItem('mux-theme-state', JSON.stringify({ id: currentThemeId, overrides: customOverrides }));
+  }
+
+  // Render preset buttons
+  themes.forEach(t => {
+    const btn = document.createElement('button');
+    btn.className = 'theme-preset-btn';
+    btn.dataset.id = t.id;
+    btn.innerHTML = `<div class="preset-color-dot" style="background: ${t.dot}"></div>${t.name}`;
+    btn.addEventListener('click', () => {
+      currentThemeId = t.id;
+      customOverrides = {}; // Reset custom colors when picking a preset
+      applyThemeState();
+    });
+    themePresetsContainer.appendChild(btn);
+  });
+
+  // Color picker listeners
+  const handleColorChange = (varName, inputEl) => {
+    customOverrides[varName] = inputEl.value;
+    applyThemeState();
+  };
+  colorBg.addEventListener('input', (e) => handleColorChange('--bg', e.target));
+  colorText.addEventListener('input', (e) => handleColorChange('--text', e.target));
+  colorAccent.addEventListener('input', (e) => handleColorChange('--accent', e.target));
+
+  // Toggle Panel
+  themeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    themePanel.classList.toggle('open');
+  });
+  
+  // Close panel when clicking outside
+  document.addEventListener('click', (e) => {
+    if (themePanel.classList.contains('open') && !themePanel.contains(e.target) && e.target !== themeBtn) {
+      themePanel.classList.remove('open');
+    }
+  });
+
+  // Load saved state on boot
+  try {
+    const saved = JSON.parse(localStorage.getItem('mux-theme-state'));
+    if (saved && saved.id) {
+      currentThemeId = saved.id;
+      customOverrides = saved.overrides || {};
+      applyThemeState();
+    }
+  } catch(e) {}
+
+
+  
+
+
   let ws = null;
+  let pingInterval = null;
   let currentStreamEl = null;
   let currentStreamText = '';
   let reconnectDelay = 1000;
@@ -715,6 +1187,7 @@ html, body {
   let currentTab = 'sandbox';
   let currentPath = '';
   let isAgentBusy = false;
+  let activeSessionMode = null; // Tracks /agent, /swarm, /pswarm, /stateless
   let pendingFiles = []; // [{path, name, thumbUrl}]
   
   // Persistent diffs area
@@ -733,6 +1206,16 @@ html, body {
       statusText.textContent = 'connected';
       reconnectDelay = 1000;
       showWelcome();
+      const skel = $('loadingSkeleton'); if (skel) skel.remove();
+      
+      // Keep-alive ping for mobile
+      if (pingInterval) clearInterval(pingInterval);
+      pingInterval = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(' '); // Send a single space to keep connection alive (ignored by runtime)
+        }
+      }, 30000); // 30 seconds
+      
       // Force repaint on iOS Safari — it defers DOM updates until user interaction
       requestAnimationFrame(() => { document.body.style.opacity = '0.999'; requestAnimationFrame(() => { document.body.style.opacity = '1'; }); });
     };
@@ -740,6 +1223,7 @@ html, body {
       statusDot.className = 'status-dot';
       statusText.textContent = 'disconnected';
       setBusy(false);
+      if (pingInterval) clearInterval(pingInterval);
       setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
@@ -852,14 +1336,41 @@ html, body {
 
       case 'user_input': {
         const txt = ev.text || '';
-        if (txt && txt !== lastLocalSend) {
+        if (txt) {
+          // Parse out [file: path] tags to render nice attachment chips
+          let displayTxt = txt;
+          let attachmentsHtml = '';
+          const fileRegex = /\[file:\s*(.+?)\]/g;
+          let match;
+          
+          while ((match = fileRegex.exec(txt)) !== null) {
+            const path = match[1];
+            const name = path.split(/[\\/]/).pop();
+            const ext = getExt(name);
+            const isImg = IMAGE_EXTS.has(ext);
+            
+            if (isImg) {
+              // Try to load the image from the server
+              const url = `/api/download/sandbox/${encodePath(path)}`;
+              attachmentsHtml += `<div class="upload-preview" style="margin-bottom:8px; display:inline-flex"><img src="${url}" alt="" style="max-width:200px; max-height:200px; width:auto; height:auto; object-fit:contain" /></div><br>`;
+            } else {
+              const label = ext ? ext.replace('.','') : 'file';
+              attachmentsHtml += `<div class="upload-preview" style="margin-bottom:8px; display:inline-flex"><div class="file-icon" style="width:24px;height:24px;font-size:8px">${esc(label)}</div><div class="upload-name" style="max-width:150px">${esc(name)}</div></div><br>`;
+            }
+          }
+          
+          // Remove the raw [file: ...] tags from the text
+          displayTxt = displayTxt.replace(/\[file:\s*(.+?)\]\n?/g, '').trim();
+          
           const el = document.createElement('div');
           el.className = 'user-msg';
-          el.innerHTML = `<span class="bubble"><div>${renderMarkdown(txt)}</div></span>`;
+          el.innerHTML = `<span class="bubble">${attachmentsHtml}<div>${renderMarkdown(displayTxt)}</div></span>`;
+          const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          el.innerHTML += `<span class="msg-time">${time}</span>`;
           output.appendChild(el);
           scrollToBottom();
         }
-        lastLocalSend = '';
+        lastLocalSend = ''; // Clear this so we always render server echo
         break;
       }
       case 'body':
@@ -876,7 +1387,8 @@ html, body {
         removeThinkingBar();
         finalizeStream();
         setBusy(true);
-        appendHTML(`<div class="agent-turn"><span class="agent-badge">${esc(ev.agent || 'Agent')}</span></div>`);
+        const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
         break;
 
       case 'agent_turn_end':
@@ -938,7 +1450,7 @@ html, body {
 
       case 'tool_call':
         removeThinkingBar();
-        appendHTML(`<div class="tool-call"><span class="tool-icon">⚡</span> <span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span></div>`);
+        appendHTML(`<div class="tool-call"><span class="tool-icon" style="display:flex;align-items:center;margin-top:1px">${icons.zap}</span> <span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span></div>`);
         break;
 
       case 'tool_result':
@@ -1060,11 +1572,11 @@ html, body {
         break;
 
       case 'delegation':
-        appendHTML(`<div class="delegation"><span class="deleg-icon">↗</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task.substring(0, 200))}</span>` : ''}</div>`);
+        appendHTML(`<div class="delegation"><span class="deleg-icon" style="display:flex;align-items:center;margin-top:1px">${icons.arrowUpRight}</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task.substring(0, 200))}</span>` : ''}</div>`);
         break;
 
       case 'task_complete':
-        appendHTML(`<div class="task-complete">✓ <span class="agent">${esc(ev.agent || '')}</span> <span style="color:var(--muted)">completed</span> ${ev.summary ? '— ' + esc(ev.summary) : ''}</div>`);
+        appendHTML(`<div class="task-complete"><span style="display:flex;align-items:center;margin-top:1px">${icons.check}</span> <span class="agent">${esc(ev.agent || '')}</span> <span style="color:var(--muted)">completed</span> ${ev.summary ? '— ' + esc(ev.summary) : ''}</div>`);
         break;
 
       case 'prompt':
@@ -1083,8 +1595,8 @@ html, body {
         appendHTML(`<div class="panel-block"><div class="panel-header">${esc(ev.title || '')}</div><div class="panel-body">${esc(ev.content || '')}</div></div>`);
         break;
 
-      case 'task_start': appendText('\u23f3 ' + (ev.message || ''), 'event-info'); break;
-      case 'task_done':  appendText('\u2713 ' + (ev.message || ''), 'event-success'); break;
+      case 'task_start': appendHTML(`<div class="event event-info" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`); break;
+      case 'task_done':  appendHTML(`<div class="event event-success" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(ev.message || "")}</span></div>`); break;
 
       default:
         if (ev.message) {
@@ -1311,13 +1823,15 @@ html, body {
   function renderInputPrompt(ev) {
     const block = document.createElement('div');
     block.className = 'prompt-block';
-    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Input:')}</div>`;
+    block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Input:")}</div>`;
     const inp = document.createElement('textarea');
+    inp.id = 'voice-prompt-input-' + Date.now();
+    inp.name = inp.id;
     inp.rows = 1;
     inp.style.cssText = 'width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--font-mono);font-size:12px;outline:none;resize:none;';
     if (ev.default) inp.placeholder = ev.default;
     const btn = document.createElement('button'); btn.textContent = 'Submit'; btn.style.marginTop = '6px';
-    const submit = () => { const val = inp.value.trim() || ev.default || ''; sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${esc(val)}</div>`; };
+    const submit = () => { const val = inp.value.trim() || ev.default || ''; sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(val)}</div></div>`; };
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
     btn.addEventListener('click', submit);
     block.appendChild(inp); block.appendChild(btn);
@@ -1327,8 +1841,8 @@ html, body {
   function renderConfirm(ev) {
     const block = document.createElement('div');
     block.className = 'prompt-block';
-    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Confirm?')}</div>`;
-    const respond = (val) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${val}</div>`; };
+    block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Confirm?")}</div>`;
+    const respond = (val) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${val}</div></div>`; };
     const y = document.createElement('button'); y.textContent = 'Yes'; y.addEventListener('click', () => respond('y'));
     const n = document.createElement('button'); n.textContent = 'No'; n.addEventListener('click', () => respond('n'));
     block.appendChild(y); block.appendChild(n);
@@ -1338,7 +1852,7 @@ html, body {
   function renderSelect(ev, multi = false) {
     const block = document.createElement('div');
     block.className = 'prompt-block';
-    block.innerHTML = `<div class="prompt-text">${esc(ev.prompt || 'Select:')}</div>`;
+    block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Select:")}</div>`;
     const choices = ev.choices || [];
     const selected = new Set();
     choices.forEach((choice, i) => {
@@ -1350,7 +1864,7 @@ html, body {
           else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(100,180,220,0.1)'; }
         });
       } else {
-        btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${esc(choice)}</div>`; });
+        btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(choice)}</div></div>`; });
       }
       block.appendChild(btn);
     });
@@ -1359,7 +1873,7 @@ html, body {
       s.addEventListener('click', () => {
         const val = Array.from(selected).sort().join(',');
         sendRaw(val || '1');
-        block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${esc(ev.prompt || '')} → ${Array.from(selected).sort().map(i => choices[i-1]).join(', ')}</div>`;
+        block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${Array.from(selected).sort().map(i => choices[i-1]).join(", ")}</div></div>`;
       });
       block.appendChild(document.createElement('br')); block.appendChild(s);
     }
@@ -1382,11 +1896,20 @@ html, body {
     ws.send(text);
   }
 
+  
   function send(text) {
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     if (text.trim().toLowerCase() === '/clear') { appendText('/clear is disabled in web mode', 'event-warning'); return; }
 
+    const cmd = text.trim().toLowerCase();
+    if (['/agent', '/swarm', '/pswarm', '/stateless'].includes(cmd)) {
+        activeSessionMode = cmd;
+    } else if (cmd === '/exit' || cmd === '/qc') {
+        activeSessionMode = null;
+    }
+
     // Build message with pending attachments
+
     let fullMsg = text;
     if (pendingFiles.length > 0) {
       const refs = pendingFiles.map(f => `[file: ${f.path}]`).join('\n');
@@ -1396,19 +1919,7 @@ html, body {
     ws.send(fullMsg);
     lastLocalSend = text;
 
-    // Render user bubble
-    const el = document.createElement('div');
-    el.className = 'user-msg';
-    let inner = '';
-    for (const f of pendingFiles) {
-      inner += renderUploadPreviewHTML(f.name, f.size, f.thumbUrl);
-    }
-    inner += `<div>${renderMarkdown(text)}</div>`;
-    el.innerHTML = `<span class="bubble">${inner}</span>`;
-    output.appendChild(el);
-    scrollToBottom();
-
-    // Clear pending
+    // Clear pending (rendering is now handled by incoming user_input event)
     pendingFiles = [];
     attachmentsStrip.innerHTML = '';
   }
@@ -1416,7 +1927,7 @@ html, body {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (isAgentBusy) { sendRaw('__CANCEL__'); appendText('⏹ Cancel signal sent', 'event-warning'); return; }
+      if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
       const text = input.value.trim();
       if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
     }
@@ -1425,7 +1936,7 @@ html, body {
   statusBtn.addEventListener('click', () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       if (confirm('Are you sure you want to restart the server?')) {
-        appendText('↻ Restarting server...', 'event-warning');
+        appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
         sendRaw('__CANCEL__');
         setTimeout(() => {
           sendRaw('/qc');
@@ -1440,7 +1951,7 @@ html, body {
   });
 
   actionBtn.addEventListener('click', () => {
-    if (isAgentBusy) { sendRaw('__CANCEL__'); appendText('⏹ Cancel signal sent', 'event-warning'); return; }
+    if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
     const text = input.value.trim();
     if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
   });
@@ -1451,7 +1962,7 @@ html, body {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
       sendRaw('__CANCEL__');
-      appendText('⏹ Cancel signal sent', 'event-warning');
+      appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`);
     }
   });
 
@@ -1506,9 +2017,16 @@ html, body {
     input.focus();
   }
 
-  function showUploadNotify(msg) {
-    const n = document.createElement('div'); n.className = 'upload-notify'; n.textContent = msg;
-    document.body.appendChild(n); setTimeout(() => n.remove(), 3000);
+  const toastContainer = $('toastContainer');
+  function showToast(msg, type = 'success') {
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.innerHTML = `<span style="display:flex;align-items:center;gap:8px">${type === 'success' ? icons.check : icons.x} ${esc(msg)}</span>`;
+    toastContainer.appendChild(t);
+    setTimeout(() => {
+      t.style.animation = 'fadeOutRight 0.3s forwards';
+      setTimeout(() => t.remove(), 300);
+    }, 4000);
   }
 
   async function uploadFile(file, targetDir) {
@@ -1525,11 +2043,11 @@ html, body {
       const resp = await fetch(`/api/upload?dir=${encodeURIComponent(dir)}`, { method: 'POST', body: formData });
       const data = await resp.json();
       if (data.filename) {
-        showUploadNotify(`Uploaded: ${data.name || file.name}`);
+        showToast(`Uploaded: ${data.name || file.name}`, "success");
         addPendingFile(data.filename, data.name || file.name, data.size || file.size, thumbUrl);
         if (sidebarOpen && currentTab === 'sandbox') loadFileList(currentPath);
-      } else { showUploadNotify('Upload failed'); }
-    } catch (err) { console.error(err); showUploadNotify('Upload error'); }
+      } else { showToast("Upload failed", "error"); }
+    } catch (err) { console.error(err); showToast("Upload error. Check connection.", "error"); }
   }
 
   async function uploadBase64(base64, filename, targetDir) {
@@ -1545,11 +2063,11 @@ html, body {
       });
       const data = await resp.json();
       if (data.filename) {
-        showUploadNotify(`Uploaded: ${data.name || filename}`);
+        showToast(`Uploaded: ${data.name || filename}`, "success");
         addPendingFile(data.filename, data.name || filename, data.size || size, isImg ? base64 : null);
         if (sidebarOpen && currentTab === 'sandbox') loadFileList(currentPath);
-      } else { showUploadNotify('Upload failed'); }
-    } catch (err) { console.error(err); showUploadNotify('Upload error'); }
+      } else { showToast("Upload failed", "error"); }
+    } catch (err) { console.error(err); showToast("Upload error. Check connection.", "error"); }
   }
 
   uploadBtn.addEventListener('click', () => fileInput.click());
@@ -1644,36 +2162,85 @@ html, body {
       if (data.items?.length) {
         html += '<div class="file-list">';
         for (const item of data.items) {
-          html += `<div class="file-item ${item.isDir ? 'dir' : 'file'}" data-path="${esc(item.path)}" data-isdir="${item.isDir}" title="${esc(item.name)}">
-            <span class="icon">${item.isDir ? '📁' : '📄'}</span>
-            <span class="name">${esc(item.name)}</span>
-            ${item.size ? `<span class="size">${formatSize(item.size)}</span>` : ''}
-            ${!item.isDir ? `<button class="dl-btn" data-dl="${esc(item.path)}" title="Download">⬇</button>` : ''}
+          html += `<div class="file-item-container" data-path="${esc(item.path)}" data-isdir="${item.isDir}" data-name="${esc(item.name)}">
+            <div class="file-item ${item.isDir ? 'dir' : 'file'}" title="${esc(item.name)}">
+              <span class="icon" style="display:flex;align-items:center">${item.isDir ? icons.folder : icons.file}</span>
+              <span class="name">${esc(item.name)}</span>
+              ${item.size ? `<span class="size">${formatSize(item.size)}</span>` : ''}
+              ${!item.isDir ? `<button class="dl-btn" data-dl="${esc(item.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : ''}
+            </div>
+            
           </div>`;
         }
         html += '</div>';
       } else if (!currentPath) { html += '<div class="loading">Empty</div>'; }
       sidebarContent.innerHTML = html;
 
-      sidebarContent.querySelectorAll('.file-item').forEach(el => {
-        el.addEventListener('click', (e) => {
-          if (e.target.closest('.dl-btn')) return;
-          if (el.dataset.isdir === 'true') loadFileList(el.dataset.path);
-          else window.open(`/api/download/${currentTab}/${encodePath(el.dataset.path)}`, '_blank');
-        });
-      });
-      sidebarContent.querySelectorAll('.dl-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const a = document.createElement('a');
-          a.href = `/api/download/${currentTab}/${encodePath(btn.dataset.dl)}`;
-          a.download = btn.dataset.dl.split(/[\\/]/).pop() || 'file';
-          document.body.appendChild(a); a.click(); a.remove();
+      sidebarContent.querySelectorAll('.file-item-container').forEach(container => {
+        const el = container.querySelector('.file-item');
+        el.addEventListener('click', async (e) => {
+          const dlBtn = e.target.closest('.dl-btn');
+          if (dlBtn) {
+            window.open(`/api/download/${currentTab}/${encodePath(dlBtn.dataset.dl)}`, '_blank');
+            return;
+          }
+          
+          const isDir = container.dataset.isdir === 'true';
+          const path = container.dataset.path;
+          const name = container.dataset.name;
+
+          if (isDir) {
+            // Normal directory navigation
+            loadFileList(path);
+          } else {
+            // File download
+            window.open(`/api/download/${currentTab}/${encodePath(path)}`, '_blank');
+          }
         });
       });
       sidebarContent.querySelector('.back-btn')?.addEventListener('click', (e) => loadFileList(e.target.dataset.path));
     } catch (err) { sidebarContent.innerHTML = `<div class="error-msg">Error: ${esc(err.message)}</div>`; }
   }
+
+  // ─── Mobile Visibility & Reconnect Logic ───
+  function forceReconnect() {
+    appendHTML(`<div class="event event-info" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Reconnecting...</span></div>`);
+    statusDot.className = 'status-dot';
+    statusText.textContent = 'reconnecting...';
+    
+    // Clean up existing connection
+    if (ws) {
+      // Remove onclose to prevent duplicate reconnect loops
+      ws.onclose = null; 
+      ws.close();
+      ws = null;
+    }
+    
+    // Reset backoff delay and reconnect immediately
+    if (pingInterval) clearInterval(pingInterval);
+    reconnectDelay = 1000;
+    connect();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      // When app comes to foreground, check if we need to reconnect immediately
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        reconnectDelay = 500; // Reset backoff
+        forceReconnect();
+      }
+    }
+  });
+
+  reconnectBtn.addEventListener('click', forceReconnect);
+
+  
+  // ─── Responsive Placeholder ───
+  function updatePlaceholder() {
+    input.placeholder = window.innerWidth <= 640 ? 'Message or /command...' : 'Type a message or /command...';
+  }
+  window.addEventListener('resize', updatePlaceholder);
+  updatePlaceholder();
 
   // ─── Boot ───
   connect();

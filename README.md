@@ -108,6 +108,12 @@ dotnet run --project MuxSwarm.csproj
 # Interactive
 mux-swarm
 
+# Web UI (recommended for interactive use across devices)
+mux-swarm --serve
+
+# Web UI + daemon + always-on
+mux-swarm --serve --daemon --register
+
 # Single goal
 mux-swarm --goal "Create a detailed report from the shareholder data in your sandbox and save it under an allowed path"
 
@@ -117,8 +123,21 @@ mux-swarm --continuous --goal "Monitor recent AI related news daily and keep a r
 # Parallel batch dispatch
 mux-swarm --parallel --goal "Research these five companies and produce individual summaries"
 ```
-
 See [Usage](#usage) for the full command reference and [CLI Flags](#cli-flags) for all options.
+
+## First Run (Web UI)
+
+For the best interactive experience, launch with the embedded web UI:
+```bash
+mux-swarm --serve
+```
+
+Open `http://localhost:6723` in your browser. The welcome card shows available commands. Type `/agent` to start a single-agent session, or `/swarm` for multi-agent orchestration. All slash commands work identically to the CLI.
+
+For always-on deployments with messaging bridges:
+```bash
+mux-swarm --serve --daemon
+```
 ---
 
 ## About
@@ -348,22 +367,26 @@ The `--serve` flag starts an embedded web interface alongside the normal agent r
 ```bash
 mux-swarm --serve           # default port 6723
 mux-swarm --serve 8080      # custom port
-mux-swarm --serve --watchdog  # resilient always-on operation
 ```
 
 The browser connects via WebSocket and receives the same NDJSON event stream that `--stdio` emits. User input flows back through the socket to the agent's input loop. No proxy, no subprocess, no second process. The web UI is a single `index.html` served from `Runtime/mux-web-app/`.
 
 Features:
 - Streaming agent responses with markdown rendering
-- Tool call activity with friendly action descriptions
-- Interactive prompts (select, confirm, input) rendered as clickable UI elements
+- Interactive plan mode prompts (confirm, select, text, multi-select)
+- Live Diffs panel with syntax-highlighted tool results in real time
+- Theme engine with presets (Zinc, Light, Ocean, Matrix) and custom color pickers
 - File browser sidebar for sandbox and session directories
 - File upload via drag-drop, file picker, or clipboard paste (Ctrl+V)
+- Tool call activity with friendly action descriptions
+- Loading skeleton, animated toasts, hover timestamps, character counter
 - Cancel active agent turns via Stop button or Escape key
+- Auto-reconnect on mobile with manual reconnect button
 - Accessible on LAN and Tailscale (binds to all interfaces)
-- Mobile responsive
+- Voice input via browser speech-to-text for hands-free interaction
+- Zero dependencies: single static HTML file, no build step, no npm
 
-The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience where Kestrel restarts automatically on crash.
+The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience or `--register` to persist as an OS service that survives reboots.
 ### Daemon Mode (`--daemon`)
 
 The `--daemon` flag starts background trigger loops that fire goals into the runtime autonomously. Configure triggers in the `daemon` block of `config.json`. The daemon runs alongside the interactive loop and web UI, it does not block user interaction.

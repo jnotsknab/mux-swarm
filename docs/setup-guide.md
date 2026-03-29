@@ -138,9 +138,11 @@ You can also use `/status` for a quick overview of your runtime configuration â€
 
 ## Next Steps
 
-- Launch the full multi-agent swarm: `/swarm`
-- Try parallel dispatch: `/pswarm` or `mux-swarm --parallel --goal "<goal>"`
+- **Launch the web UI**: `mux-swarm --serve` and open `http://localhost:6723`
+- **Launch the full multi-agent swarm**: `/swarm`
+- **Try parallel dispatch**: `/pswarm` or `mux-swarm --parallel --goal "<goal>"`
 - Explore [Configuration](../README.md#configuration) to customize providers, agent roles, model routing, and MCP server scoping
+- Enable plan mode with `/plan` for interactive approval before agent execution
 - Add custom [Skills](../README.md#skills-skills) to extend agent capabilities
 - Use [Scoped Instances](../README.md#scoped-instances) for multi-user or multi-environment deployments
 
