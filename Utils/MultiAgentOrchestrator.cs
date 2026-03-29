@@ -962,11 +962,13 @@ public static class MultiAgentOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-
+                    
+                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
                         {
+                            lastToolName = fc.Name;
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -994,9 +996,7 @@ public static class MultiAgentOrchestrator
                                 toolCalls.Add(fc.Name);
                                 thinking?.UpdateStatus(toolCalls);
                             }
-
-                            if (prodMode)
-                                Console.Write($"[[TOOL_CALL]]{fc.Name}[[END_TOOL_CALL]]");
+                            
                         }
                         else if (content is FunctionResultContent fr)
                         {
@@ -1009,6 +1009,9 @@ public static class MultiAgentOrchestrator
                             });
 
                             var resultText = fr.Result?.ToString();
+                            
+                            if (MuxConsole.StdioMode && resultText != null)
+                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText);
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1280,11 +1283,13 @@ public static class MultiAgentOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-
+                    
+                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
                         {
+                            lastToolName = fc.Name;
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -1343,11 +1348,15 @@ public static class MultiAgentOrchestrator
                             });
                             
                             var resultText = fr.Result?.ToString();
+                            
+                            if (MuxConsole.StdioMode && resultText != null)
+                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText);
+                            
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
                             Activity.Current?.Stop();
-
+                        
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", specialist.Def.Name),
                                 new KeyValuePair<string, object?>("tool", fr.CallId));

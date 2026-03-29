@@ -866,11 +866,13 @@ public static class ParallelSwarmOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-
+                    
+                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
                         {
+                            lastToolName = fc.Name;
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -896,13 +898,14 @@ public static class ParallelSwarmOrchestrator
                                 toolCalls.Add(fc.Name);
                                 thinking?.UpdateStatus(toolCalls);
                             }
-
-                            if (prodMode)
-                                Console.Write($"[[TOOL_CALL]]{fc.Name}[[END_TOOL_CALL]]");
                         }
                         else if (content is FunctionResultContent fr)
                         {
                             var resultText = fr.Result?.ToString();
+                            
+                            if (MuxConsole.StdioMode && resultText != null)
+                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText);
+                            
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1291,12 +1294,14 @@ public static class ParallelSwarmOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-
+                    
+                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
                         {
 
+                            lastToolName = fc.Name;
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -1344,6 +1349,10 @@ public static class ParallelSwarmOrchestrator
                         {
                             
                             var resultText = fr.Result?.ToString();
+                            
+                            if (MuxConsole.StdioMode && resultText != null)
+                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText);
+                            
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);

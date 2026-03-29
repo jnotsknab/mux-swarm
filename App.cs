@@ -11,7 +11,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static string Version = "0.9.1";
+    public static string Version = "0.9.2";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -340,6 +340,7 @@ public class App
                         maxIterations: 3,
                         mcpTools: _mcpTools,
                         continuous: ContinuousExec,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan, 
@@ -359,6 +360,7 @@ public class App
                         mcpTools: _mcpTools,
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -391,6 +393,7 @@ public class App
                             showToolResultCalls: _showToolCallResults,
                             shouldPlan: ShouldPlan, 
                             continuous: ContinuousExec,
+                            autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                             minDelaySeconds: (uint)MinContDelay!,
                             chatClientFactory: modelId => CreateChatClient(modelId),
                             resumedSession: resumeData.Value.data,
@@ -1234,6 +1237,7 @@ public class App
                 continuous: parsed.Continuous,
                 shouldPlan: ShouldPlan, 
                 goalId: parsed.GoalId,
+                autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
                 sessionRetention: parsed.SessionRetention,

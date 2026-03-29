@@ -178,7 +178,6 @@ public static class LocalAiFunctions
                 string? defaultValue = null
             ) =>
             {   
-                MuxConsole.WriteMuted($"[ask_user] question={question}, type={type}, options={options}, default={defaultValue}");
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
 
                 var tcs = new TaskCompletionSource<string>();

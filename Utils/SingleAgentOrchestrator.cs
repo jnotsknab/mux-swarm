@@ -81,7 +81,7 @@ public static class SingleAgentOrchestrator
         bool showToolResultCalls = false,
         bool shouldPlan = false,
         Func<string, IChatClient>? chatClientFactory = null,
-        int autoCompactTokenThreshold = 80_000,
+        int? autoCompactTokenThreshold = 80_000,
         bool persistSession = true,
         string? incomingGoal = null,
         bool continuous = false,
@@ -486,11 +486,14 @@ public static class SingleAgentOrchestrator
                                     Timestamp = DateTimeOffset.UtcNow
                                 });
                             }
-
+                            
+                            string? lastToolName = null;
                             foreach (AIContent content in update.Contents)
                             {
                                 if (content is FunctionCallContent functionCall)
-                                {
+                                {   
+                                    lastToolName = functionCall.Name;
+                                    
                                     HookWorker.Enqueue(new HookEvent
                                     {
                                         Event = "tool_call",
@@ -533,7 +536,10 @@ public static class SingleAgentOrchestrator
                                         Summary = functionResult.Result?.ToString(),
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-
+                                    
+                                    if (MuxConsole.StdioMode && resultText != null)
+                                        MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
+                                    
                                     if (!currentlyStreaming && thinking != null)
                                     {
                                         thinking.Dispose();

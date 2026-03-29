@@ -995,6 +995,12 @@ public static class MuxConsole
             Timestamp = DateTimeOffset.UtcNow
         });
     }
+    
+    public static void WriteToolResult(string agent, string tool, string fullResult)
+    {
+        if (StdioMode)
+            EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", fullResult)));
+    }
 
     public static void WriteTaskComplete(string agent, string summary)
     {
@@ -1067,6 +1073,11 @@ public static class MuxConsole
         commands.AppendLine($"  [{C.Prompt}]/workflow[/]      [{C.Muted}]Run a workflow file[/]");
         commands.AppendLine($"  [{C.Prompt}]/resume[/]        [{C.Muted}]Resume a previous session[/]");
         commands.AppendLine();
+        commands.AppendLine($"[{C.Step}]Execution[/]");
+        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+        commands.AppendLine($"  [{C.Prompt}]/plan[/]          [{C.Muted}]Toggle plan mode (confirm before exec)[/]");
+        commands.AppendLine($"  [{C.Prompt}]/continuous[/]    [{C.Muted}]Toggle autonomous execution[/]");
+        commands.AppendLine();
         commands.AppendLine($"[{C.Step}]Session[/]");
         commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
         commands.AppendLine($"  [{C.Prompt}]/compact[/]       [{C.Muted}]Compress context (single agent)[/]");
@@ -1114,6 +1125,7 @@ public static class MuxConsole
         cli.AppendLine($"  [{C.Prompt}]--parallel[/]               [{C.Muted}]Concurrent batch dispatch[/]");
         cli.AppendLine($"  [{C.Prompt}]--max-parallelism <n>[/]    [{C.Muted}]Max concurrent tasks (default 4)[/]");
         cli.AppendLine($"  [{C.Prompt}]--agent <name>[/]           [{C.Muted}]Single agent mode[/]");
+        cli.AppendLine($"  [{C.Prompt}]--plan[/]                   [{C.Muted}]Confirm before executing[/]");
         cli.AppendLine($"  [{C.Prompt}]--workflow <file>[/]        [{C.Muted}]Run workflow file[/]");
         cli.AppendLine($"  [{C.Prompt}]--provider <name>[/]        [{C.Muted}]Set LLM provider[/]");
         cli.AppendLine($"  [{C.Prompt}]--goal-id <id>[/]           [{C.Muted}]Session identifier[/]");
@@ -1122,12 +1134,17 @@ public static class MuxConsole
         cli.AppendLine($"  [{C.Prompt}]--session-retention <n>[/]  [{C.Muted}]Keep last N sessions[/]");
         cli.AppendLine($"  [{C.Prompt}]--stdio[/]                  [{C.Muted}]Machine-readable NDJSON[/]");
         cli.AppendLine($"  [{C.Prompt}]--delimiter <str>[/]        [{C.Muted}]Multi-line input delimiter[/]");
+        cli.AppendLine($"  [{C.Prompt}]--serve <port>[/]           [{C.Muted}]Start embedded web UI[/]");
+        cli.AppendLine($"  [{C.Prompt}]--daemon[/]                 [{C.Muted}]Start daemon mode[/]");
+        cli.AppendLine($"  [{C.Prompt}]--register[/]               [{C.Muted}]Register as OS service[/]");
+        cli.AppendLine($"  [{C.Prompt}]--remove[/]                 [{C.Muted}]Unregister OS service[/]");
         cli.AppendLine($"  [{C.Prompt}]--watchdog[/]               [{C.Muted}]External watchdog toggle[/]");
         cli.AppendLine($"  [{C.Prompt}]--mcp-strict[/]             [{C.Muted}]Require all MCPs (default true)[/]");
         cli.AppendLine($"  [{C.Prompt}]--docker-exec[/]            [{C.Muted}]Route exec via Docker[/]");
         cli.AppendLine($"  [{C.Prompt}]--cfg <path>[/]             [{C.Muted}]Override config.json[/]");
         cli.AppendLine($"  [{C.Prompt}]--swarmcfg <path>[/]        [{C.Muted}]Override swarm.json[/]");
         cli.Append($"  [{C.Prompt}]--report [[id]][/]            [{C.Muted}]Generate report(s) and exit[/]");
+
         var grid = new Grid();
         grid.AddColumn(new GridColumn().PadRight(3));
         grid.AddColumn(new GridColumn().Width(1).NoWrap());
@@ -1136,9 +1153,9 @@ public static class MuxConsole
         grid.AddColumn(new GridColumn().PadLeft(3));
         grid.AddRow(
             new Markup(commands.ToString()),
-            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
             new Markup(config.ToString()),
-            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
+            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
             new Markup(cli.ToString())
         );
 
