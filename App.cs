@@ -25,12 +25,13 @@ public class App
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
     public static int ServePort;
-    
+    private static DaemonRunner? _daemonRunner;
+
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
-
+    
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
     protected static bool ShouldPlan = false;
@@ -61,16 +62,20 @@ public class App
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
         };
-
-        AppDomain.CurrentDomain.ProcessExit += (_, e) =>
+        
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             HookWorker.Stop();
-            ProcessCleanup.Instance.Shutdown();
-            OtelLogger.Info("Mux Swarm Process Finished");
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
         };
-
+        
+        System.Runtime.InteropServices.PosixSignalRegistration.Create(
+            System.Runtime.InteropServices.PosixSignal.SIGTERM, _ =>
+            {
+                Process.GetCurrentProcess().Kill();
+            });
+        
         var hbPath = Path.Combine(BaseDir, "watchdog.heartbeat");
         if (File.Exists(hbPath))
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
@@ -205,23 +210,22 @@ public class App
             return Environment.ExitCode;
         }
         
-        DaemonRunner? daemon = null;
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
-            daemon = new DaemonRunner(Config.Daemon);
-
+            _daemonRunner = new DaemonRunner(Config.Daemon);
+            
             if (ServePort > 0)
             {
                 foreach (var trigger in Config.Daemon.Triggers
                              .Where(t => t.Type == "status" && t.Restart &&
                                          t.Check != null && t.Check.Contains($":{ServePort}")))
                 {
-                    daemon.RegisterRestart(trigger.Check!,
+                    _daemonRunner.RegisterRestart(trigger.Check!,
                         () => ServeMode.StartAsync(ServePort));
                 }
             }
 
-            daemon.Start(
+            _daemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 mcpTools: _mcpTools!.Cast<AITool>().ToList(),
                 agentModels: LoadAgentModels());
@@ -513,8 +517,8 @@ public class App
             }
         }
         
-        if (daemon != null)
-            await daemon.DisposeAsync();
+        if (_daemonRunner != null)
+            await _daemonRunner.DisposeAsync();
         
         return Environment.ExitCode;
     }

@@ -167,17 +167,18 @@ public static class LocalAiFunctions
                 [System.ComponentModel.Description(
                     "Question type: 'text' for free-form input (default), 'confirm' for yes/no, " +
                     "'select' for single choice from the options list, 'multi_select' for multiple choices.")]
-                string? type,
+                string? type = "text",
 
                 [System.ComponentModel.Description(
                     "Comma-separated list of options for 'select' or 'multi_select' types. Ignored for 'text' and 'confirm'.")]
-                string? options,
+                string? options = null,
 
                 [System.ComponentModel.Description(
                     "Default value if the user provides no input. For 'confirm', use 'yes' or 'no'.")]
-                string? defaultValue
+                string? defaultValue = null
             ) =>
-            {
+            {   
+                MuxConsole.WriteMuted($"[ask_user] question={question}, type={type}, options={options}, default={defaultValue}");
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
 
                 var tcs = new TaskCompletionSource<string>();
