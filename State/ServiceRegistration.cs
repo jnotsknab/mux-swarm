@@ -218,6 +218,21 @@ public static class ServiceRegistration
                         envLines.AppendLine($"Environment={key}={value}");
                 }
             }
+            
+            //daemon block env args
+            if (config.Daemon?.Triggers != null)
+            {
+                foreach (var trigger in config.Daemon.Triggers)
+                {
+                    if (trigger.Env == null) continue;
+                    foreach (var (key, _) in trigger.Env)
+                    {
+                        var value = Environment.GetEnvironmentVariable(key);
+                        if (!string.IsNullOrEmpty(value) && !envLines.ToString().Contains($"Environment={key}="))
+                            envLines.AppendLine($"Environment={key}={value}");
+                    }
+                }
+            }
         }
         catch { /* best effort */ }
 
@@ -256,6 +271,20 @@ public static class ServiceRegistration
                         env[key] = value;
                 }
             }
+            
+            if (config.Daemon?.Triggers != null)
+            {
+                foreach (var trigger in config.Daemon.Triggers)
+                {
+                    if (trigger.Env == null) continue;
+                    foreach (var (key, _) in trigger.Env)
+                    {
+                        var value = Environment.GetEnvironmentVariable(key);
+                        if (!string.IsNullOrEmpty(value))
+                            env[key] = value;
+                    }
+                }
+            }
         }
         catch { /* best effort */ }
 
@@ -288,8 +317,10 @@ public static class ServiceRegistration
             Type=simple
             WorkingDirectory={workDir}
             ExecStart={execStart}
+            KillMode=control-group
+            TimeoutStopSec=3
             Restart=always
-            RestartSec=10
+            RestartSec=15
             {envLines.ToString().TrimEnd()}
 
             [Install]
@@ -408,6 +439,8 @@ public static class ServiceRegistration
                 <true/>
                 <key>KeepAlive</key>
                 <true/>
+                <key>ExitTimeOut</key>
+                <integer>3</integer>
             {envXml.ToString().TrimEnd()}
                 <key>StandardOutPath</key>
                 <string>{Path.Combine(logDir, "mux-swarm.stdout.log")}</string>

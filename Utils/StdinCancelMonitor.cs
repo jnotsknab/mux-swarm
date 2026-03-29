@@ -17,7 +17,12 @@ public sealed class StdinCancelMonitor : IDisposable
     private volatile bool _disposed;
 
     public static StdinCancelMonitor? Instance { get; private set; }
+    
+    private volatile bool _paused;
 
+    public void Pause() => _paused = true;
+    public void Resume() => _paused = false;
+    
     /// <summary>
     /// Start the monitor. Call once at app startup when --stdio is active.
     /// </summary>
@@ -66,7 +71,7 @@ public sealed class StdinCancelMonitor : IDisposable
     /// Use this instead of Console.ReadLine() everywhere.
     /// </summary>
     public string? ReadLine(CancellationToken cancellationToken = default)
-    {
+    {   
         return _lineQueue.Take(cancellationToken);
     }
 
@@ -99,7 +104,13 @@ public sealed class StdinCancelMonitor : IDisposable
         try
         {
             while (!_disposed)
-            {
+            {   
+                if (_paused)
+                {
+                    Thread.Sleep(50);
+                    continue;
+                }
+                
                 var line = Console.ReadLine();
 
                 // EOF — stdin closed (container shutting down)

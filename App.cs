@@ -25,14 +25,16 @@ public class App
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
     public static int ServePort;
-    
+    private static DaemonRunner? _daemonRunner;
+
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
-
+    
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
+    protected static bool ShouldPlan = false;
 
     private static CancellationTokenSource GetOrResetCts()
     {
@@ -60,16 +62,20 @@ public class App
             ProcessCleanup.Instance.Shutdown();
             Environment.Exit(130);
         };
-
-        AppDomain.CurrentDomain.ProcessExit += (_, e) =>
+        
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             HookWorker.Stop();
-            ProcessCleanup.Instance.Shutdown();
-            OtelLogger.Info("Mux Swarm Process Finished");
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
         };
-
+        
+        System.Runtime.InteropServices.PosixSignalRegistration.Create(
+            System.Runtime.InteropServices.PosixSignal.SIGTERM, _ =>
+            {
+                Process.GetCurrentProcess().Kill();
+            });
+        
         var hbPath = Path.Combine(BaseDir, "watchdog.heartbeat");
         if (File.Exists(hbPath))
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
@@ -204,23 +210,22 @@ public class App
             return Environment.ExitCode;
         }
         
-        DaemonRunner? daemon = null;
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
-            daemon = new DaemonRunner(Config.Daemon);
-
+            _daemonRunner = new DaemonRunner(Config.Daemon);
+            
             if (ServePort > 0)
             {
                 foreach (var trigger in Config.Daemon.Triggers
                              .Where(t => t.Type == "status" && t.Restart &&
                                          t.Check != null && t.Check.Contains($":{ServePort}")))
                 {
-                    daemon.RegisterRestart(trigger.Check!,
+                    _daemonRunner.RegisterRestart(trigger.Check!,
                         () => ServeMode.StartAsync(ServePort));
                 }
             }
 
-            daemon.Start(
+            _daemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 mcpTools: _mcpTools!.Cast<AITool>().ToList(),
                 agentModels: LoadAgentModels());
@@ -301,6 +306,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
+                        shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
                         agentModels: maModels,
                         cancellationToken: maCts.Token
@@ -316,6 +322,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
+                        shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
                         agentModels: pModels,
                         cancellationToken: pCts.Token
@@ -335,6 +342,7 @@ public class App
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
                     break;
@@ -352,6 +360,7 @@ public class App
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false
                     );
@@ -380,6 +389,7 @@ public class App
                             maxIterations: 3,
                             mcpTools: _mcpTools,
                             showToolResultCalls: _showToolCallResults,
+                            shouldPlan: ShouldPlan, 
                             continuous: ContinuousExec,
                             minDelaySeconds: (uint)MinContDelay!,
                             chatClientFactory: modelId => CreateChatClient(modelId),
@@ -392,7 +402,20 @@ public class App
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
-
+                case "/plan":
+                    ShouldPlan = !ShouldPlan;
+                    if (ShouldPlan)
+                    {
+                        MuxConsole.WriteSuccess("Plan Mode enabled");
+                        MuxConsole.WriteMuted("Agents will present a plan and ask for approval before executing.");
+                        MuxConsole.WriteMuted("Applies to orchestrators and single agent mode only.");
+                    }
+                    else
+                    {
+                        MuxConsole.WriteSuccess("Plan Mode disabled");
+                        MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
+                    }
+                    break;
                 case "/tools":
                     if (_mcpTools != null) Common.LogAvailableTools(_mcpTools);
                     break;
@@ -494,8 +517,8 @@ public class App
             }
         }
         
-        if (daemon != null)
-            await daemon.DisposeAsync();
+        if (_daemonRunner != null)
+            await _daemonRunner.DisposeAsync();
         
         return Environment.ExitCode;
     }
@@ -693,7 +716,10 @@ public class App
                     if (!string.IsNullOrWhiteSpace(an))
                         agentName = an;
                     break;
-
+                
+                case "--plan":
+                    ShouldPlan = true;
+                    break;
                 case "--clear":
                     Console.Clear();
                     break;
@@ -1016,7 +1042,30 @@ public class App
             }
             catch (Exception ex)
             {
-                MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
+                if (ex.Message.Contains("EACCES", StringComparison.OrdinalIgnoreCase))
+                {
+                    MuxConsole.WriteError($"Failed to connect to {name}: permission denied.");
+        
+                    if (PlatformContext.IsWindows)
+                    {
+                        MuxConsole.WriteMuted("  Try running your terminal as Administrator, or reinstall Node.js with the default settings.");
+                    }
+                    else if (PlatformContext.IsMac)
+                    {
+                        MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm");
+                        MuxConsole.WriteMuted("  Or reinstall Node via Homebrew: brew install node");
+                    }
+                    else
+                    {
+                        MuxConsole.WriteMuted("  Try Running: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
+                        MuxConsole.WriteMuted("  Or configure a user-level prefix: npm config set prefix '~/.npm-global'");
+                        MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
+                    }
+                }
+                else
+                {
+                    MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
+                }
             }
         }
 
@@ -1183,6 +1232,7 @@ public class App
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 incomingGoal: parsed.Goal,
                 continuous: parsed.Continuous,
+                shouldPlan: ShouldPlan, 
                 goalId: parsed.GoalId,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
@@ -1201,6 +1251,7 @@ public class App
                 prodMode: parsed.ProdMode,
                 incomingGoal: parsed.Goal,
                 continuous: parsed.Continuous,
+                shouldPlan: ShouldPlan, 
                 goalId: parsed.GoalId,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
@@ -1217,6 +1268,7 @@ public class App
             prodMode: parsed.ProdMode,
             incomingGoal: parsed.Goal,
             continuous: parsed.Continuous,
+            shouldPlan: ShouldPlan, 
             goalId: parsed.GoalId,
             minDelaySeconds: parsed.MinDelay,
             persistIntervalSeconds: parsed.PersistInterval,

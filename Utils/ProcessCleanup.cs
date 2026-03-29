@@ -56,9 +56,16 @@ public sealed class ProcessCleanup : IDisposable
 
         // Also handle unhandled exceptions
         AppDomain.CurrentDomain.UnhandledException += (_, _) => Shutdown();
-
+        
         if (!PlatformContext.IsWindows)
-            RegisterUnixSignalHandlers();
+        {
+            PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx =>
+            {
+                ctx.Cancel = true;
+                Shutdown();
+                Environment.Exit(129);
+            });
+        }
     }
     
     /// <summary>
@@ -310,25 +317,6 @@ public sealed class ProcessCleanup : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
     
-    private void RegisterUnixSignalHandlers()
-    {
-        if (PlatformContext.IsWindows) return;
-
-        // PosixSignalRegistration is available in .NET 6+
-        PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
-        {
-            ctx.Cancel = true;
-            Shutdown();
-            Environment.Exit(143); // 128 + 15 (SIGTERM)
-        });
-
-        PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx =>
-        {
-            ctx.Cancel = true;
-            Shutdown();
-            Environment.Exit(129); // 128 + 1 (SIGHUP)
-        });
-    }
     
     /// <summary>
     /// Last resort: attempts to kill any remaining child processes of the current process.
