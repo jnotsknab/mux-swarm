@@ -132,7 +132,7 @@ public static class MuxConsole
         {
             var sb = new StringBuilder();
             while (true)
-            {
+            {   
                 var line = StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
                 if (line is null || line.Trim() == MultiLineDelimiter) break;
                 sb.AppendLine(line);
@@ -142,7 +142,46 @@ public static class MuxConsole
 
         return StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
     }
+    
+    public static string AskText(string question, string? defaultValue)
+    {
+        string response = MuxConsole.Prompt(question, defaultValue);
+        return string.IsNullOrWhiteSpace(response)
+            ? "User provided no input."
+            : $"User response: {response}";
+    }
 
+    public static string AskSelect(string question, string? options)
+    {
+        var choices = ParseOptions(options);
+        if (choices.Count == 0)
+            return "Error: 'select' type requires at least one option in the options parameter.";
+
+        string selected = MuxConsole.Select(question, choices);
+        return $"User selected: {selected}";
+    }
+
+    public static string AskMultiSelect(string question, string? options)
+    {
+        var choices = ParseOptions(options);
+        if (choices.Count == 0)
+            return "Error: 'multi_select' type requires at least one option in the options parameter.";
+
+        var selected = MuxConsole.MultiSelect(question, choices);
+        return $"User selected: {string.Join(", ", selected)}";
+    }
+    
+    public static List<string> ParseOptions(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return [];
+
+        return raw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => s.Length > 0)
+            .ToList();
+    }
+    
     /// <summary>
     /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
     /// No external dependencies or image files required.
@@ -634,6 +673,13 @@ public static class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        if (StdioMode)
+        {
+            EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));
+            var input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
+            return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
+        }
+
         if (InputOverride != Console.In)
         {
             string input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
@@ -654,13 +700,6 @@ public static class MuxConsole
             }
             var result = sb.ToString().Trim();
             return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
-        }
-
-        if (StdioMode)
-        {
-            EmitJson("input_request", D(("prompt", message), ("default", defaultValue)));
-            var input = InputOverride.ReadLine()?.Trim() ?? string.Empty;
-            return string.IsNullOrEmpty(input) && defaultValue != null ? defaultValue : input;
         }
 
         var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")

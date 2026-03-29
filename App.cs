@@ -33,6 +33,7 @@ public class App
 
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
+    protected static bool ShouldPlan = false;
 
     private static CancellationTokenSource GetOrResetCts()
     {
@@ -301,6 +302,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
+                        shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
                         agentModels: maModels,
                         cancellationToken: maCts.Token
@@ -316,6 +318,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
+                        shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
                         agentModels: pModels,
                         cancellationToken: pCts.Token
@@ -335,6 +338,7 @@ public class App
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
                     break;
@@ -352,6 +356,7 @@ public class App
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false
                     );
@@ -380,6 +385,7 @@ public class App
                             maxIterations: 3,
                             mcpTools: _mcpTools,
                             showToolResultCalls: _showToolCallResults,
+                            shouldPlan: ShouldPlan, 
                             continuous: ContinuousExec,
                             minDelaySeconds: (uint)MinContDelay!,
                             chatClientFactory: modelId => CreateChatClient(modelId),
@@ -392,7 +398,20 @@ public class App
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
-
+                case "/plan":
+                    ShouldPlan = !ShouldPlan;
+                    if (ShouldPlan)
+                    {
+                        MuxConsole.WriteSuccess("Plan Mode enabled");
+                        MuxConsole.WriteMuted("Agents will present a plan and ask for approval before executing.");
+                        MuxConsole.WriteMuted("Applies to orchestrators and single agent mode only.");
+                    }
+                    else
+                    {
+                        MuxConsole.WriteSuccess("Plan Mode disabled");
+                        MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
+                    }
+                    break;
                 case "/tools":
                     if (_mcpTools != null) Common.LogAvailableTools(_mcpTools);
                     break;
@@ -693,7 +712,10 @@ public class App
                     if (!string.IsNullOrWhiteSpace(an))
                         agentName = an;
                     break;
-
+                
+                case "--plan":
+                    ShouldPlan = true;
+                    break;
                 case "--clear":
                     Console.Clear();
                     break;
@@ -1031,7 +1053,7 @@ public class App
                     }
                     else
                     {
-                        MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
+                        MuxConsole.WriteMuted("  Try Running: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
                         MuxConsole.WriteMuted("  Or configure a user-level prefix: npm config set prefix '~/.npm-global'");
                         MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
                     }
@@ -1206,6 +1228,7 @@ public class App
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 incomingGoal: parsed.Goal,
                 continuous: parsed.Continuous,
+                shouldPlan: ShouldPlan, 
                 goalId: parsed.GoalId,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
@@ -1224,6 +1247,7 @@ public class App
                 prodMode: parsed.ProdMode,
                 incomingGoal: parsed.Goal,
                 continuous: parsed.Continuous,
+                shouldPlan: ShouldPlan, 
                 goalId: parsed.GoalId,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
@@ -1240,6 +1264,7 @@ public class App
             prodMode: parsed.ProdMode,
             incomingGoal: parsed.Goal,
             continuous: parsed.Continuous,
+            shouldPlan: ShouldPlan, 
             goalId: parsed.GoalId,
             minDelaySeconds: parsed.MinDelay,
             persistIntervalSeconds: parsed.PersistInterval,

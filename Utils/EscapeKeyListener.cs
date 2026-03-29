@@ -9,12 +9,18 @@ public sealed class EscapeKeyListener : IDisposable
 {
     private readonly CancellationTokenSource _listenerCts;
     private int _disposed;
+    private static volatile bool _paused;
+
 
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
     }
+    
 
+    public static void Pause() => _paused = true;
+    public static void Resume() => _paused = false;
+    
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
@@ -25,6 +31,11 @@ public sealed class EscapeKeyListener : IDisposable
             {
                 while (!listenerCts.Token.IsCancellationRequested)
                 {
+                    if (_paused)
+                    {
+                        Thread.Sleep(50);
+                        continue;
+                    }
                     if (!Console.IsInputRedirected && Console.KeyAvailable)
                     {
                         var key = Console.ReadKey(intercept: true);
