@@ -26,6 +26,7 @@ public sealed class DaemonRunner : IAsyncDisposable
     private Dictionary<string, string>? _agentModels;
 
     private readonly Dictionary<string, Func<Task>> _restartHandlers = new(StringComparer.OrdinalIgnoreCase);
+    private volatile bool _killed;
 
     private static readonly HttpClient HttpClient = new()
     {
@@ -47,6 +48,18 @@ public sealed class DaemonRunner : IAsyncDisposable
         _restartHandlers[checkPattern] = handler;
     }
 
+    public void ForceKill()
+    {
+        _killed = true;
+        _cts.Cancel();
+    
+        foreach (var (_, proc) in _bridgeProcesses)
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+            catch { /* best effort */ }
+        }
+    }
+    
     /// <summary>
     /// Start all trigger loops. Non-blocking -- returns immediately.
     /// </summary>
@@ -493,12 +506,13 @@ public sealed class DaemonRunner : IAsyncDisposable
                     }
                     _bridgeProcesses.TryRemove(trigger.Id, out _);
                 }
-
-                if (!trigger.Restart || ct.IsCancellationRequested)
+                
+                if (!trigger.Restart || ct.IsCancellationRequested || _killed)
                     break;
-
+                
                 MuxConsole.WriteInfo(
                     $"[Daemon:{trigger.Id}] Restarting bridge in {restartDelay}s...");
+               
                 await Task.Delay(TimeSpan.FromSeconds(restartDelay), ct);
             }
         }
