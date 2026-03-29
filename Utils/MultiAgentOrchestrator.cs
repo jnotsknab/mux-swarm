@@ -111,6 +111,7 @@ public static class MultiAgentOrchestrator
         bool prodMode = false,
         string? incomingGoal = null,
         bool continuous = false,
+        bool shouldPlan = false,
         string? goalId = null,
         uint minDelaySeconds = 300,
         uint persistIntervalSeconds = 60,
@@ -435,25 +436,13 @@ public static class MultiAgentOrchestrator
         //Build the orchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
-
+        
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
+        
         string agentRoster = string.Join("\n", agentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
         orchestratorPrompt += $"\n\nAvailable agents:\n{agentRoster}";
-
-        orchestratorPrompt += """
-
-
-                              ## Sleep Tool
-                              You have access to `system_sleep(seconds)` which pauses execution without consuming tokens or timing out.
-
-                              Use it when:
-                              - Waiting between polling cycles (check a condition, sleep, recheck)
-                              - A delegated task involves a long-running process and you need to wait before following up
-                              - Pacing a continuous loop to avoid hammering APIs or burning tokens
-
-                              In continuous or extended mode goals, sleep is your primary mechanism for controlling loop cadence.
-                              A sleeping swarm costs nothing. Prefer sleep over rapid retries.
-                              """;
+        
 
         // Load or create continuous state
         CurrentStateMetadata? state = null;
@@ -508,7 +497,8 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.MuxRefreshTool,
             ..orchestratorFilteredTools
         ];
-
+        
+        if (shouldPlan) orchestratorTools.Add(LocalAiFunctions.AskUserTool);
         var orchChatOptions = new ChatOptions
         {
             Instructions = orchestratorPrompt,

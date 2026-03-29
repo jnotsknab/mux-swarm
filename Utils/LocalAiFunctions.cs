@@ -8,6 +8,7 @@ public static class LocalAiFunctions
     public static AIFunction ReadSkillTool = null!;
     public static AIFunction SleepTool = null!;
     public static AIFunction MuxRefreshTool = null!;
+    public static AIFunction AskUserTool = null!;
 
     static LocalAiFunctions()
     {
@@ -46,12 +47,10 @@ public static class LocalAiFunctions
                 var modelId = visionModel;
                 if (string.IsNullOrEmpty(modelId))
                 {
-                    // Fall back to current agent's model
                     var agentDef = SingleAgentOrchestrator.GetCurrSingleAgentDef();
                     if (agentDef != null)
                     {
                         var models = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
-                        // Use whatever the caller's model is — best effort
                     }
                     modelId = App.ActiveProvider != null ? null : null;
                 }
@@ -134,7 +133,7 @@ public static class LocalAiFunctions
             name: "system_sleep",
             description: "Pause execution for N minutes without consuming tokens. Use between polling cycles, while waiting for long-running processes, or for scheduled intervals."
         );
-        
+
         MuxRefreshTool = AIFunctionFactory.Create(
             method: async (
                 [System.ComponentModel.Description("True to refresh skills.")] bool refreshSkills,
@@ -144,19 +143,96 @@ public static class LocalAiFunctions
             {
                 if (refreshSkills) CliCmdUtils.ReloadSkills();
                 if (refreshMcpServers) await CliCmdUtils.ReloadMcpServersAsync(App.InitMcpServersAsync, App.ConfigPath);
-                
+
                 if (refreshConfigs)
                 {
                     App.Config = Setup.Setup.LoadConfig(App.ConfigPath);
                     App.SwarmConfig = Setup.Setup.LoadSwarm();
                 }
                 return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete. ";
-                
+
             },
             name: "mux_refresh",
             description: "Refresh the Mux-Swarm runtime. Selectively reload skills, MCP servers, and/or config files (config.json, swarm.json). " +
              "Call this after writing or modifying a skill file, updating swarm topology, changing model assignments, or adding MCP servers. " +
              "Changes take effect immediately without restarting the runtime."
+        );
+
+        AskUserTool = AIFunctionFactory.Create(
+            method: async (
+                [System.ComponentModel.Description(
+                    "The question to present to the user. Be specific about what you need to proceed.")]
+                string question,
+
+                [System.ComponentModel.Description(
+                    "Question type: 'text' for free-form input (default), 'confirm' for yes/no, " +
+                    "'select' for single choice from the options list, 'multi_select' for multiple choices.")]
+                string? type,
+
+                [System.ComponentModel.Description(
+                    "Comma-separated list of options for 'select' or 'multi_select' types. Ignored for 'text' and 'confirm'.")]
+                string? options,
+
+                [System.ComponentModel.Description(
+                    "Default value if the user provides no input. For 'confirm', use 'yes' or 'no'.")]
+                string? defaultValue
+            ) =>
+            {
+                var normalized = (type ?? "text").Trim().ToLowerInvariant();
+
+                var tcs = new TaskCompletionSource<string>();
+
+                var thread = new Thread(() =>
+                {
+                    try
+                    {
+                        MuxConsole.WriteLine();
+                        MuxConsole.WriteMarkup(
+                            $"  [#{MuxConsole.PromptColor}]\u27f5  Agent is requesting your input[/]",
+                            "Agent is requesting your input");
+
+                        string result = normalized switch
+                        {
+                            "confirm" => MuxConsole.Confirm(question,
+                                defaultValue?.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase) ?? true)
+                                ? "User confirmed: yes" : "User declined: no",
+                            "select" => MuxConsole.AskSelect(question, options),
+                            "multi_select" => MuxConsole.AskMultiSelect(question, options),
+                            _ => MuxConsole.AskText(question, defaultValue)
+                        };
+
+                        tcs.TrySetResult(result);
+                    }
+                    catch (Exception ex)
+                    {
+                        tcs.TrySetResult($"Error reading input: {ex.Message}");
+                    }
+                })
+                {
+                    IsBackground = true,
+                    Name = "AskUser-IO"
+                };
+
+                StdinCancelMonitor.Instance?.Pause();
+                EscapeKeyListener.Pause();
+                try
+                {
+                    thread.Start();
+                    return await tcs.Task;
+                }
+                finally
+                {
+                    EscapeKeyListener.Resume();
+                    StdinCancelMonitor.Instance?.Resume();
+                }
+            },
+            name: "ask_user",
+            description:
+                "Pause and ask the user a question. Use when you need clarification, want to confirm a plan " +
+                "before executing, need the user to choose between approaches, or require info that cannot be " +
+                "inferred from context. Supports 'text' (free-form), 'confirm' (yes/no), 'select' (pick one), " +
+                "and 'multi_select' (pick several). Do NOT use for trivial decisions you can make yourself. " +
+                "DO use before destructive operations or when multiple valid approaches exist."
         );
     }
 }

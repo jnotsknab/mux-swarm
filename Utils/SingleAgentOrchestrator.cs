@@ -79,6 +79,7 @@ public static class SingleAgentOrchestrator
         int maxIterations = 15,
         IList<McpClientTool>? mcpTools = null,
         bool showToolResultCalls = false,
+        bool shouldPlan = false,
         Func<string, IChatClient>? chatClientFactory = null,
         int autoCompactTokenThreshold = 80_000,
         bool persistSession = true,
@@ -189,7 +190,8 @@ public static class SingleAgentOrchestrator
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
             App.Config.IsUsingDockerForExec,
-            continuous);
+            continuous,
+            shouldPlan);
 
         systemPrompt = preamble + "\n\n" + systemPrompt;
 
@@ -232,7 +234,9 @@ public static class SingleAgentOrchestrator
             .. (analyzeImageTool != null ? new[] { analyzeImageTool } : Array.Empty<AITool>()),
             .. filteredTools
         ];
-
+        
+        if (shouldPlan) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
+        
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,

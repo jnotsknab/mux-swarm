@@ -88,7 +88,13 @@ public sealed class DaemonRunner : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-
+        
+        foreach (var (_, proc) in _bridgeProcesses)
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+            catch { /* best effort */ }
+        }
+        
         HookWorker.Enqueue(new HookEvent
         {
             Event = "daemon_stop",
@@ -107,6 +113,13 @@ public sealed class DaemonRunner : IAsyncDisposable
                 catch { }
             }
         }
+        
+        foreach (var (_, proc) in _bridgeProcesses)
+        {
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+            catch { /* best effort */ }
+        }
+        
 
         _cts.Dispose();
     }
