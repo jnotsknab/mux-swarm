@@ -552,7 +552,9 @@ public static class SingleAgentOrchestrator
                                 {
                                     var details = usageContent.Details;
                                     _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
-                                    OtelMetrics.RecordTokens(singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0);
+                                    OtelMetrics.RecordTokens(
+                                        singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
+                                        );
                                 }
                             }
                         }

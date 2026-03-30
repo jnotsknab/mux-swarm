@@ -22,7 +22,7 @@ public static class MultiAgentOrchestrator
     private static readonly string FallbackOrchPromptPath = Path.Combine(PromptsDir, "orchestrator.md");
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
-    private static string OrchestratorModelId;
+    private static string _orchestratorModelId;
 
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
@@ -478,7 +478,7 @@ public static class MultiAgentOrchestrator
             orchestratorPrompt += $"\n\n{sessionContext}";
 
         string orchestratorModelId = agentModels["Orchestrator"];
-        OrchestratorModelId = orchestratorModelId;
+        _orchestratorModelId = orchestratorModelId;
         IChatClient orchestratorClient = chatClientFactory(orchestratorModelId);
 
         var orchestratorFilteredTools = GetOrchestratorFilteredToolsFromConfig(mcpTools);
@@ -1039,9 +1039,10 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            OtelMetrics.RecordTokens("Orchestrator", OrchestratorModelId,
-                                usageContent.Details.InputTokenCount ?? 0,
-                                usageContent.Details.OutputTokenCount ?? 0);
+                            OtelMetrics.RecordTokens(
+                                "Orchestrator", _orchestratorModelId, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
+                            );
                         }
                     }
                 }
@@ -1372,9 +1373,10 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            OtelMetrics.RecordTokens(specialist.Def.Name, "sub_agent",
-                                usageContent.Details.InputTokenCount ?? 0,
-                                usageContent.Details.OutputTokenCount ?? 0);
+                            OtelMetrics.RecordTokens(
+                                specialist.Def.Name, specialist.Agent.Id, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
+                            );
                         }
                     }
                 }

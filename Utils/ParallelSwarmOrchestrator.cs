@@ -22,6 +22,8 @@ public static class ParallelSwarmOrchestrator
     private static readonly object _stateLock = new();
     private static bool _sessionDirty;
     private static uint _swarmTokens;
+    private static string _orchestratorModelId = string.Empty;
+
 
     private record ParallelTaskRequest(
         [Description("Name of the agent to assign (e.g., CodeAgent, WebAgent)")] string AgentName,
@@ -467,6 +469,7 @@ public static class ParallelSwarmOrchestrator
             orchestratorPrompt += $"\n\n{sessionContext}";
 
         string orchestratorModelId = agentModels["Orchestrator"];
+        _orchestratorModelId = orchestratorModelId;
         IChatClient orchestratorClient = chatClientFactory(orchestratorModelId);
 
         var orchestratorFilteredTools = GetOrchestratorFilteredToolsFromConfig(mcpTools);
@@ -944,9 +947,10 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            OtelMetrics.RecordTokens("Orchestrator", "pswarm_orchestrator",
-                                usageContent.Details.InputTokenCount ?? 0,
-                                usageContent.Details.OutputTokenCount ?? 0);
+                            OtelMetrics.RecordTokens(
+                                "Orchestrator", _orchestratorModelId, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
+                            );
                         }
                     }
                 }
@@ -1385,9 +1389,10 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            OtelMetrics.RecordTokens(specialist.Def.Name, "parallel_sub_agent",
-                                usageContent.Details.InputTokenCount ?? 0,
-                                usageContent.Details.OutputTokenCount ?? 0);
+                            OtelMetrics.RecordTokens(
+                                specialist.Def.Name, specialist.Agent.Id, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
+                            );
                         }
                     }
                 }

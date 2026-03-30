@@ -14,7 +14,11 @@ public static class OtelMetrics
     // Token economics
     public static readonly Counter<long> TokensInput = Meter.CreateCounter<long>("mux.tokens.input");
     public static readonly Counter<long> TokensOutput = Meter.CreateCounter<long>("mux.tokens.output");
+    public static readonly Counter<long> TokensCached = Meter.CreateCounter<long>("mux.tokens.cached");
+
     public static readonly Counter<long> TokensTotal = Meter.CreateCounter<long>("mux.tokens.total");
+    public static readonly Counter<long> TokensReasoning = Meter.CreateCounter<long>("mux.tokens.reasoning");
+
     public static readonly Counter<long> TokensCompacted = Meter.CreateCounter<long>("mux.tokens.compacted");
 
     // Agent lifecycle
@@ -88,16 +92,23 @@ public static class OtelMetrics
 
     // Convenience methods that respect verbosity
 
-    public static void RecordTokens(string agent, string model, long input, long output)
+    public static void RecordTokens(string agent, string model, long? input, long? output, long? cached, long? reasoning, long? total)
     {
         var tags = new TagList { { "agent", agent } };
 
         if (App.Config.Telemetry.VerbosityLevel >= TelemetryVerbosity.Standard)
             tags.Add("model", model);
-
-        TokensInput.Add(input, tags);
-        TokensOutput.Add(output, tags);
-        TokensTotal.Add(input + output, tags);
+        
+        if (input != null)
+            TokensInput.Add((long)input, tags);
+        if (output != null)
+            TokensOutput.Add((long)output, tags);
+        if (cached != null)
+            TokensCached.Add((long)cached, tags);
+        if (reasoning != null)
+            TokensReasoning.Add((long)reasoning, tags);
+        if (total != null)
+            TokensTotal.Add((long)total, tags);
     }
 
     public static void RecordToolCall(string agent, string tool, double durationMs, bool success, string? args = null, string? result = null)
@@ -128,18 +139,6 @@ public static class OtelMetrics
 
             Activity.Current?.AddEvent(new ActivityEvent("tool_call_detail", tags: eventTags));
         }
-    }
-
-    public static void RecordAgentTurn(string agent, string model, double durationMs, long inputTokens, long outputTokens)
-    {
-        var tags = new TagList { { "agent", agent } };
-
-        if (App.Config.Telemetry.VerbosityLevel >= TelemetryVerbosity.Standard)
-            tags.Add("model", model);
-
-        AgentTurns.Add(1, tags);
-        AgentTurnDuration.Record(durationMs, tags);
-        RecordTokens(agent, model, inputTokens, outputTokens);
     }
 
     public static void RecordAgentMessage(string agent, string role, string content)
