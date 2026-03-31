@@ -25,6 +25,7 @@ public class HookConfig
     public string Command { get; set; } = string.Empty;
 
     [JsonPropertyName("when")]
+    [JsonConverter(typeof(SingleOrArrayConverter<HookClause>))]
     public List<HookClause> When { get; set; } = [];
 
     /// <summary>
