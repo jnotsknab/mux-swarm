@@ -25,7 +25,7 @@ public class HookConfig
     public string Command { get; set; } = string.Empty;
 
     [JsonPropertyName("when")]
-    public HookClause When { get; set; } = new();
+    public List<HookClause> When { get; set; } = [];
 
     /// <summary>
     /// Only applies to Blocking mode. Defaults to 30s.

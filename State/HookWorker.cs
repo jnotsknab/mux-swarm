@@ -299,17 +299,24 @@ public static class HookWorker
 
     private static bool Matches(HookConfig hook, HookEvent e)
     {
-        if (!string.Equals(hook.When.Event, e.Event, StringComparison.OrdinalIgnoreCase))
-            return false;
+        foreach (var clause in hook.When)
+        {
+            bool match = true;
 
-        if (hook.When.Agent is not null &&
-            !string.Equals(hook.When.Agent, e.Agent, StringComparison.OrdinalIgnoreCase))
-            return false;
+            if (!string.Equals(clause.Event, e.Event, StringComparison.OrdinalIgnoreCase))
+                match = false;
 
-        if (hook.When.Tool is not null &&
-            !string.Equals(hook.When.Tool, e.Tool, StringComparison.OrdinalIgnoreCase))
-            return false;
+            if (match && clause.Agent is not null &&
+                !string.Equals(clause.Agent, e.Agent, StringComparison.OrdinalIgnoreCase))
+                match = false;
 
-        return true;
+            if (match && clause.Tool is not null &&
+                !string.Equals(clause.Tool, e.Tool, StringComparison.OrdinalIgnoreCase))
+                match = false;
+
+            if (match) return true;
+        }
+
+        return false;
     }
 }
