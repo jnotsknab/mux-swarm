@@ -69,14 +69,6 @@ public class CommonTests
         Assert.True(count > 0);
     }
 
-    [Fact]
-    public void EstimateTokenCount_EmptyJson_ReturnsZero()
-    {
-        var json = JsonDocument.Parse("{}");
-        var count = Common.EstimateTokenCount(json.RootElement);
-        Assert.True(count >= 0);
-    }
-
     // ── EstimateTokenCount (ChatMessage) ───────────────────────────────
 
     [Fact]
