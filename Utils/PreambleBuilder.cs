@@ -1,4 +1,4 @@
-﻿namespace MuxSwarm.Utils;
+namespace MuxSwarm.Utils;
 
 /// <summary>
 /// Builds the instruction preamble injected before every sub-agent task.
@@ -20,7 +20,7 @@ public static class PreambleBuilder
             if (!string.IsNullOrWhiteSpace(userInfo.Info)) preamble += $" {userInfo.Info}";
             preamble += "\n\n";
         }
-        
+
         if (shouldPlan)
             preamble += @"
             ## Planning Mode (MANDATORY — EXECUTE NOTHING UNTIL APPROVED)
@@ -52,7 +52,7 @@ public static class PreambleBuilder
             preamble = "CRITICAL: You MUST call read_skill(\"docker-sandbox\") as your VERY FIRST action. "
                 + "No exceptions. Do not check directories or execute any code before reading docker-sandbox. "
                 + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n"
-                +  "NOTE: YOU HAVE 4 MEMORY LAYERS THE FILESYSTEM, VECTOR DB AND KNOWLEDGE GRAPH, AND MEMORY.md in sandbox (create if it doesnt exist).";
+                +  "NOTE: YOU HAVE 4 MEMORY LAYERS — see MEMORY.md system reference above for details.";
         }
 
         if (continuousMode)
@@ -92,6 +92,14 @@ public static class PreambleBuilder
             WINDOW OF PREVIOUS SESSIONS, THEREFORE IT IS MOST OFTEN BETTER FOR YOU TO SIGNAL COMPLETION FOR EACH ACTIONABLE TASK OF A LARGE GOALS
             TO ALLOW LONG RUNNING USE WITH MINIMAL CONTEXT BLOAT
             ";
+
+        // Load base MEMORY.md for agent system reference
+        var memoryMdPath = Path.Combine(PlatformContext.BaseDirectory, "Runtime", "MEMORY.md");
+        if (File.Exists(memoryMdPath))
+        {
+            var memoryContent = File.ReadAllText(memoryMdPath);
+            preamble += "## System Reference (MEMORY.md)\n" + memoryContent + "\n\n";
+        }
 
         preamble += @"
         ## Sleep Tool
