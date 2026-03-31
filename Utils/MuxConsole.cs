@@ -312,6 +312,7 @@ public static class MuxConsole
                 right.AppendLine($"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Parallel concurrent dispatch[/]");
                 right.AppendLine($"  [{C.Prompt}]/agent[/]       [{C.Muted}]Single-agent conversation[/]");
                 right.AppendLine($"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off stateless task[/]");
+                right.AppendLine($"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your operator profile[/]");
                 right.AppendLine($"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Run a workflow file[/]");
                 right.AppendLine($"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]");
                 right.AppendLine();
@@ -1101,6 +1102,7 @@ public static class MuxConsole
         config.AppendLine($"  [{C.Prompt}]/memory[/]        [{C.Muted}]View knowledge graph[/]");
         config.AppendLine($"  [{C.Prompt}]/status[/]        [{C.Muted}]Full system status[/]");
         config.AppendLine($"  [{C.Prompt}]/setup[/]         [{C.Muted}]Reconfigure[/]");
+        config.AppendLine($"  [{C.Prompt}]/onboard[/]       [{C.Muted}]Create or update BRAIN.md and MEMORY.md[/]");
         config.AppendLine($"  [{C.Prompt}]/refresh[/]       [{C.Muted}]Reload config, MCPs, skills[/]");
         config.AppendLine($"  [{C.Prompt}]/reloadskills[/]  [{C.Muted}]Refresh skills only[/]");
         config.AppendLine($"  [{C.Prompt}]/dockerexec[/]    [{C.Muted}]Toggle Docker exec mode[/]");

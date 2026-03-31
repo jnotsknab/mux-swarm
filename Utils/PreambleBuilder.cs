@@ -49,12 +49,23 @@ public static class PreambleBuilder
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
         if (hasSkills && isUsingDockerForExec)
         {
-            preamble = "CRITICAL: You MUST call read_skill(\"docker-sandbox\") as your VERY FIRST action. "
+            preamble += "CRITICAL: You MUST call read_skill(\"docker-sandbox\") as your VERY FIRST action. "
                 + "No exceptions. Do not check directories or execute any code before reading docker-sandbox. "
-                + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n"
-                +  "NOTE: YOU HAVE 4 MEMORY LAYERS THE FILESYSTEM, VECTOR DB AND KNOWLEDGE GRAPH, AND MEMORY.md in sandbox (create if it doesnt exist).";
+                + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n";
         }
+        
+        preamble += $@"
+        ## Memory Layers
+        You have access to multiple memory layers. Use the appropriate layer for the task:
 
+        1. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what exists.
+        2. **Vector DB (ChromaDB)** -- semantic search over prior knowledge. Use for recall without loading full histories.
+        3. **Knowledge Graph** -- entities, relationships, structured facts. Use for deterministic queries where relationships matter.
+        4. **BRAIN.md** -- shared context all agents inherit. Located at {PlatformContext.ContextDirectory}/BRAIN.md. Contains operator identity, communication preferences, and standing directives that apply across all sessions. If it exists, read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for anything related to your role, specialization, or task execution strategy.
+        5. **MEMORY.md** -- shared working context. Located at {PlatformContext.ContextDirectory}/MEMORY.md. Contains active projects, goals, environment details, and constraints. Reference this for task-relevant decisions. If it exists, read it before your first action.
+        6. **DOCS.md** -- system reference documentation. Located at {PlatformContext.ContextDirectory}/DOCS.md. Contains configuration formats, daemon trigger schemas, bridge setup instructions, CLI flags, and service registration details. Read this before modifying any config files. 
+        Priority order for conflicting instructions: agent system prompt > BRAIN.md > inferred context.
+        ";
         if (continuousMode)
             preamble += @"
             ## CRITICAL: Continuous Mode Grounding & Hallucination Mitigation (MANDATORY)
