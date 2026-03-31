@@ -7,7 +7,7 @@
 <h1>Mux-Swarm</h1>
 <p>A CLI-native agentic OS for multi-agent orchestration, parallel execution, deterministic workflows, and tool-native AI operations. Process management, crash recovery, scoped isolation, layered memory, and a skills runtime. Define your config. Launch your swarm. The ceiling is yours.</p>
 
-[![Build](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml/badge.svg)](https://github.com/jnotsknab/mux-swarm/actions/workflows/ci.yml)
+[![Build](https://img.shields.io/badge/CI-Depot-blue)](https://depot.dev)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
 [![OS](https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
 [![License](https://img.shields.io/badge/license-See%20LICENSE-lightgrey)](#license)
