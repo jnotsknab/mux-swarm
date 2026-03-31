@@ -10,6 +10,7 @@ public static class TokenInjector
         content = content.Replace("{{paths.skills}}", App.Config.Filesystem.SkillsPath ?? "");
         content = content.Replace("{{paths.sessions}}", App.Config.Filesystem.SessionsPath ?? "");
         content = content.Replace("{{paths.base}}", PlatformContext.BaseDirectory);
+        content = content.Replace("{{paths.context}}", PlatformContext.ContextDirectory);
         content = content.Replace("{{paths.config}}", PlatformContext.ConfigDirectory);
         content = content.Replace("{{paths.prompts}}", PlatformContext.PromptsDirectory);
         content = content.Replace("{{user}}", Environment.UserName);

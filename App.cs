@@ -234,8 +234,20 @@ public class App
             OtelLogger.Info("Daemon enabled and initialized successfully in background");
         }
         
-        OtelLogger.Info("Entered Main Interactive Loop");
+        if (OnboardRequested)
+        {
+            OnboardRequested = false;
+            var onboardModel = LoadSingleAgentModel();
+            var onboardCts = GetOrResetCts();
+            await CliCmdUtils.HandleOnboard(
+                chatClientFactory: modelId => CreateChatClient(modelId),
+                singleAgentModel: onboardModel,
+                mcpTools: _mcpTools,
+                ct: onboardCts.Token
+            );
+        }
         
+        OtelLogger.Info("Entered Main Interactive Loop");
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {   
@@ -347,7 +359,18 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId)
                     );
                     break;
-
+                
+                case "/onboard":
+                    Config = LoadConfig(ConfigPath);
+                    var onboardModel = LoadSingleAgentModel();
+                    var onboardCts = GetOrResetCts();
+                    await CliCmdUtils.HandleOnboard(
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        singleAgentModel: onboardModel,
+                        mcpTools: _mcpTools,
+                        ct: onboardCts.Token
+                    );
+                    break;
                 case "/stateless":
                     Config = LoadConfig(ConfigPath);
                     var statelessAgent = LoadSingleAgentModel();
@@ -1240,8 +1263,7 @@ public class App
                 autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
-                sessionRetention: parsed.SessionRetention,
-                prodMode: parsed.ProdMode);
+                sessionRetention: parsed.SessionRetention);
             return Environment.ExitCode;
         }
 

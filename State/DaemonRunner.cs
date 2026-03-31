@@ -646,8 +646,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                         mcpTools: _mcpTools
                             .Cast<ModelContextProtocol.Client.McpClientTool>().ToList(),
                         chatClientFactory: _chatClientFactory,
-                        incomingGoal: goal,
-                        prodMode: true);
+                        incomingGoal: goal);
                     break;
             }
 
