@@ -1,6 +1,27 @@
 # MEMORY.md — Agent System Reference
 
-This file provides baseline context for Mux agents operating within this swarm. It is read at session start and serves as the agent's primary system reference.
+This file provides baseline context for Mux agents operating within this swarm. It is read at session start via the PreambleBuilder and serves as the agent's primary system reference.
+
+## Runtime Reference Files
+
+Additional scoped reference files live alongside this one in the Runtime directory. Agents should read these when relevant to the current task:
+
+| File | Purpose |
+|------|---------|
+| `Runtime/MEMORY.md` | This file — system overview, config, CLI, limits |
+| `Runtime/USERMEM.md` | **User-specific** — identity, preferences, conventions, project context. Populated during `/setup` and updated over time. Agents should read this to personalize responses and respect user patterns. |
+
+Additional `.md` files may be added to `Runtime/` by the user or by agents to capture scoped knowledge (e.g., project-specific notes, workflow documentation, troubleshooting logs). Agents should check for new files in this directory when context suggests relevant prior work may exist.
+
+## Documentation
+
+The full project documentation lives in the repository:
+
+- **README** — [github.com/jnotsknab/mux-swarm](https://github.com/jnotsknab/mux-swarm) (root README.md)
+- **Setup Guide** — `docs/setup-guide.md` in the repo (first-run wizard walkthrough)
+- **Examples & Demos** — `docs/examples.md` in the repo
+
+For questions beyond what this file covers, consult the repo README and docs directory.
 
 ## What Is Mux-Swarm
 
@@ -17,6 +38,7 @@ Mux-Swarm is a CLI-native agentic OS for multi-agent orchestration. It manages p
 | Skills | `~/.local/share/Mux-Swarm/Skills/` |
 | Sessions | `~/.local/share/Mux-Swarm/Sessions/` |
 | Sandbox (agent output) | User-defined during `/setup` |
+| Runtime files | `Runtime/` (this directory — MEMORY.md, USERMEM.md, etc.) |
 
 ## Config Architecture
 
@@ -30,7 +52,7 @@ Mux-Swarm is a CLI-native agentic OS for multi-agent orchestration. It manages p
 1. **In-context** — Compressed agent results passed between orchestration steps.
 2. **Semantic** — ChromaDB vector store for similarity search across past sessions and documents.
 3. **Structured** — Knowledge graph (entities, relations, observations) for persistent facts.
-4. **Filesystem** — Files as a message bus; agents read/write artifacts to the sandbox path.
+4. **Filesystem** — Files as a message bus; agents read/write artifacts to the sandbox path and Runtime directory.
 
 Agents should query memory before acting on tasks with prior context. Cross-reference filesystem with vector/structured stores for accuracy.
 
@@ -149,9 +171,12 @@ mux-swarm --cfg ./custom-config.json --swarmcfg ./custom-swarm.json
 
 ## Agent Guidelines
 
-- Query memory before acting on tasks with prior context.
+- Read `Runtime/USERMEM.md` at session start to understand user identity and preferences.
+- Query memory (ChromaDB, knowledge graph) before acting on tasks with prior context.
+- Check `Runtime/` for additional scoped `.md` files that may contain relevant prior work.
 - Write artifacts to the configured sandbox path.
 - Use skills when available — they encode established workflows.
 - Report errors with context for recovery across sessions.
 - Store durable findings in the knowledge graph and ChromaDB.
 - Respect filesystem allowlists — never write outside configured paths.
+- For deeper questions, consult the repo README and `docs/` directory.
