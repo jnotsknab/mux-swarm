@@ -25,7 +25,7 @@ public class App
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
     public static int ServePort;
-    private static DaemonRunner? _daemonRunner;
+    public static DaemonRunner? DaemonRunner;
 
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
@@ -35,7 +35,7 @@ public class App
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
     protected static bool ShouldPlan = false;
-
+    
     private static CancellationTokenSource GetOrResetCts()
     {
         lock (CtsLock)
@@ -66,6 +66,7 @@ public class App
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             HookWorker.Stop();
+            DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
         };
@@ -151,6 +152,8 @@ public class App
         startupSpan?.Dispose();
     }
 
+    public static IList<McpClientTool>? GetMcpTools() => _mcpTools;
+    
     public async Task<int> Run(string[] args)
     {
         try
@@ -212,7 +215,7 @@ public class App
         
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
-            _daemonRunner = new DaemonRunner(Config.Daemon);
+            DaemonRunner = new DaemonRunner(Config.Daemon);
             
             if (ServePort > 0)
             {
@@ -220,15 +223,15 @@ public class App
                              .Where(t => t.Type == "status" && t.Restart &&
                                          t.Check != null && t.Check.Contains($":{ServePort}")))
                 {
-                    _daemonRunner.RegisterRestart(trigger.Check!,
+                    DaemonRunner.RegisterRestart(trigger.Check!,
                         () => ServeMode.StartAsync(ServePort));
                 }
             }
 
-            _daemonRunner.Start(
+            DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 mcpTools: _mcpTools!.Cast<AITool>().ToList(),
-                agentModels: LoadAgentModels());
+                agentModels: Common.LoadAgentModels());
 
             MuxConsole.WriteInfo("[Daemon] Running in background.");
             OtelLogger.Info("Daemon enabled and initialized successfully in background");
@@ -311,7 +314,7 @@ public class App
 
                 case "/swarm":
                     Config = LoadConfig(ConfigPath);
-                    var maModels = LoadAgentModels();
+                    var maModels = Common.LoadAgentModels();
                     var maCts = GetOrResetCts();
 
                     await MultiAgentOrchestrator.RunAsync(
@@ -327,7 +330,7 @@ public class App
 
                 case "/pswarm":
                     Config = LoadConfig(ConfigPath);
-                    var pModels = LoadAgentModels();
+                    var pModels = Common.LoadAgentModels();
                     var pCts = GetOrResetCts();
 
                     await ParallelSwarmOrchestrator.RunAsync(
@@ -449,7 +452,7 @@ public class App
                 case "/model":
                     var currentModel = LoadSingleAgentModel();
                     MuxConsole.WriteInfo($"Single agent model: {currentModel}");
-                    var models = LoadAgentModels();
+                    var models = Common.LoadAgentModels();
                     foreach (var kvp in models)
                         MuxConsole.WriteInfo($"  {kvp.Key} -> {kvp.Value}");
                     break;
@@ -469,7 +472,7 @@ public class App
                     break;
 
                 case "/status":
-                    CliCmdUtils.HandleStatus(_mcpTools, LoadAgentModels());
+                    CliCmdUtils.HandleStatus(_mcpTools, Common.LoadAgentModels());
                     break;
 
                 case "/disabletools":
@@ -543,43 +546,12 @@ public class App
             }
         }
         
-        if (_daemonRunner != null)
-            await _daemonRunner.DisposeAsync();
+        if (DaemonRunner != null)
+            await DaemonRunner.DisposeAsync();
         
         return Environment.ExitCode;
     }
-
-    private Dictionary<string, string> LoadAgentModels()
-    {
-        var agentModels = new Dictionary<string, string>();
-
-        if (File.Exists(MultiAgentOrchestrator.SwarmConfPath))
-        {
-            var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
-            var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
-
-            if (swarm?.Orchestrator != null && !string.IsNullOrEmpty(swarm.Orchestrator.Model))
-                agentModels["Orchestrator"] = swarm.Orchestrator.Model;
-
-            if (swarm?.CompactionAgent != null && !string.IsNullOrEmpty(swarm.CompactionAgent.Model))
-                agentModels["Compaction"] = swarm.CompactionAgent.Model;
-
-            if (swarm?.Agents != null)
-            {
-                foreach (var agent in swarm.Agents)
-                {
-                    if (!string.IsNullOrEmpty(agent.Name) && !string.IsNullOrEmpty(agent.Model))
-                        agentModels[agent.Name] = agent.Model;
-                }
-            }
-        }
-
-        if (!agentModels.ContainsKey("Orchestrator"))
-            agentModels["Orchestrator"] = "x-ai/grok-4.1-fast";
-
-        return agentModels;
-    }
-
+    
     private string LoadSingleAgentModel()
     {
         if (!string.IsNullOrEmpty(_cliModelOverride))
@@ -587,7 +559,7 @@ public class App
 
         if (SingleAgentOrchestrator.AgentDef != null)
         {
-            var agentModels = LoadAgentModels();
+            var agentModels = Common.LoadAgentModels();
             if (agentModels.TryGetValue(SingleAgentOrchestrator.AgentDef.Name, out var model))
                 return model;
         }
@@ -1219,7 +1191,7 @@ public class App
         );
     }
 
-    private static IChatClient CreateChatClient(string modelId)
+    public static IChatClient CreateChatClient(string modelId)
     {
         return CreateOpenAiClient()
             .GetChatClient(modelId)
@@ -1228,14 +1200,12 @@ public class App
             .UseFunctionInvocation()
             .Build();
     }
-
-
-
+    
     private async Task<int> HandleParsedRun(ParsedArgs? parsed)
     {
         var cliCts = GetOrResetCts();
 
-        var agentModels = LoadAgentModels();
+        var agentModels = Common.LoadAgentModels();
         if (parsed != null && !string.IsNullOrWhiteSpace(parsed.AgentName))
         {
             var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);

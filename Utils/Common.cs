@@ -358,7 +358,39 @@ public static class Common
 
         return $"You are a helpful AI assistant. (Prompt file missing: {expected})";
     }
+    
+    public static Dictionary<string, string> LoadAgentModels()
+    {
+        var agentModels = new Dictionary<string, string>();
 
+        if (File.Exists(MultiAgentOrchestrator.SwarmConfPath))
+        {
+            var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
+            var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
+
+            if (swarm?.Orchestrator != null && !string.IsNullOrEmpty(swarm.Orchestrator.Model))
+                agentModels["Orchestrator"] = swarm.Orchestrator.Model;
+
+            if (swarm?.CompactionAgent != null && !string.IsNullOrEmpty(swarm.CompactionAgent.Model))
+                agentModels["Compaction"] = swarm.CompactionAgent.Model;
+
+            if (swarm?.Agents != null)
+            {
+                foreach (var agent in swarm.Agents)
+                {
+                    if (!string.IsNullOrEmpty(agent.Name) && !string.IsNullOrEmpty(agent.Model))
+                        agentModels[agent.Name] = agent.Model;
+                }
+            }
+        }
+
+        if (!agentModels.ContainsKey("Orchestrator"))
+            agentModels["Orchestrator"] = "x-ai/grok-4.1-fast";
+
+        return agentModels;
+    }
+    
+    
     private static IEnumerable<string> GetPromptCandidates(string normalizedPath)
     {
         // 1) absolute path (or already rooted)
