@@ -26,6 +26,11 @@
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
         </Content>
 
+        <Content Include="Context\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+        
         <Content Include="Configs\**\*.*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
@@ -56,6 +61,8 @@
         <None Remove="Configs\**" />
         <None Remove="Skills\**" />
         <None Remove="Sessions\**" />
+        <Compile Remove="Context\**" />
+        <None Remove="Context\**" />
     </ItemGroup>
 
     <ItemGroup>

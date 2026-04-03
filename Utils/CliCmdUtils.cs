@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using MuxSwarm.Setup;
@@ -515,6 +516,55 @@ public static class CliCmdUtils
             MuxConsole.WriteError("One or more MCP servers failed to reconnect.");
     }
 
+    public static async Task HandleOnboard(
+        Func<string, IChatClient> chatClientFactory,
+        string singleAgentModel,
+        IList<McpClientTool>? mcpTools,
+        CancellationToken ct)
+    {
+        var contextDirectory = PlatformContext.ContextDirectory;
+        var onboardPromptPath = Path.Combine(contextDirectory, "ONBOARD.md");
+
+        if (!File.Exists(onboardPromptPath))
+        {
+            MuxConsole.WriteError($"ONBOARD.md not found at: {onboardPromptPath}");
+            return;
+        }
+
+        var brainPath = Path.Combine(contextDirectory, "BRAIN.md");
+        var memoryPath = Path.Combine(contextDirectory, "MEMORY.md");
+        bool existing = File.Exists(brainPath) || File.Exists(memoryPath);
+
+        if (existing)
+        {
+            var confirm = MuxConsole.Prompt("Existing BRAIN.md/MEMORY.md found. Update? (y/n): ");
+            if (!confirm.Trim().Equals("y", StringComparison.OrdinalIgnoreCase))
+            {
+                MuxConsole.WriteMuted("Onboarding cancelled.");
+                return;
+            }
+        }
+
+        var rawPrompt = File.ReadAllText(onboardPromptPath);
+        var resolvedPrompt = TokenInjector.InjectTokens(rawPrompt);
+
+        MuxConsole.WriteInfo("Starting onboarding session...");
+        MuxConsole.WriteMuted(existing
+            ? $"Updating existing profile in: {contextDirectory}"
+            : $"Files will be written to: {contextDirectory}");
+
+        MuxConsole.InputOverride = new FallbackReader("Begin onboarding.");
+
+        await SingleAgentOrchestrator.ChatAgentAsync(
+            client: chatClientFactory(singleAgentModel),
+            ct,
+            maxIterations: 3,
+            mcpTools: mcpTools,
+            continuous: false,
+            systemPromptOverride: resolvedPrompt
+        );
+    }
+    
     public static async Task HandleFullReload(Func<AppConfig, Task<bool>> initMcpServers,
         string configPath)
     {
