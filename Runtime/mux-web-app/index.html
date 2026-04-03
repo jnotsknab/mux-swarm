@@ -108,6 +108,21 @@ html, body {
 .icon-btn:hover, .icon-btn.active { background: rgba(100, 180, 220, 0.1); color: var(--text); border-color: var(--border); }
 .icon-btn:active { transform: scale(0.92); }
 
+
+/* ── Sidebar Resizer ── */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  left: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 101;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging {
+  background: rgba(59, 130, 246, 0.2);
+}
+
 /* ── Sidebar ── */
 .sidebar {
   position: fixed; top: 0; right: 0; width: var(--sidebar-width); height: 100vh; height: 100dvh;
@@ -178,7 +193,7 @@ html, body {
 .sidebar-content.drag-over { background: rgba(100,180,220,0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
 
 /* ── Output ── */
-.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
+.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; display: flex; flex-direction: column; justify-content: flex-end; }
 .output::-webkit-scrollbar { width: 4px; }
 .output::-webkit-scrollbar-track { background: transparent; }
 .output::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -206,8 +221,8 @@ html, body {
 
 .event-success { 
   color: var(--green); 
-  background-color: rgba(16, 185, 129, 0.1);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  background-color: rgba(16, 185, 129, 0.05);
+  border: 1px solid rgba(16, 185, 129, 0.1);
 }
 
 
@@ -299,7 +314,7 @@ html, body {
   padding: 12px 16px; 
   margin: 8px 0 16px 0; 
   border-radius: 0 8px 8px 0;
-  word-break: break-all; 
+  word-break: break-word; 
   overflow-wrap: anywhere;
   font-size: 14px; 
   line-height: 1.6; 
@@ -329,7 +344,7 @@ html, body {
 }
 .thinking-bar span {
   white-space: normal;
-  word-break: break-all;
+  word-break: break-word;
   line-height: 1.4;
 }
 .thinking-bar .bar {
@@ -417,7 +432,7 @@ html, body {
   padding: 12px; 
   white-space: pre-wrap; 
   font-size: 13px; 
-  word-break: break-all; 
+  word-break: break-word; 
   overflow-wrap: anywhere; 
   color: var(--text);
   line-height: 1.6;
@@ -431,7 +446,7 @@ html, body {
 
 /* ── Prompts ── */
 .prompt-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; }
-.prompt-block .prompt-text { color: var(--text); margin-bottom: 12px; font-size: 13px; line-height: 1.6; word-break: break-all; }
+.prompt-block .prompt-text { color: var(--text); margin-bottom: 12px; font-size: 13px; line-height: 1.6; word-break: break-word; }
 .prompt-block .prompt-text pre { background: var(--bg-input); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 11px; }
 .prompt-block .prompt-text code { background: var(--bg-input); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
 .prompt-block .prompt-text div { margin-bottom: 6px; }
@@ -531,7 +546,7 @@ html, body {
 
 /* ── User message ── */
 .user-msg { text-align: right; padding: 8px 0; margin-bottom: 4px; }
-.user-msg .bubble {
+.user-msg .bubble { max-width: 100%; overflow-x: auto;
   display: inline-block; 
   background: linear-gradient(135deg, rgba(100, 180, 220, 0.2), rgba(100, 180, 220, 0.08)); 
   padding: 10px 14px;
@@ -540,7 +555,7 @@ html, body {
   border-right: 3px solid rgba(100, 180, 220, 0.5);
   max-width: 80%; 
   text-align: left; 
-  word-break: break-all;
+  word-break: break-word;
   white-space: pre-wrap;
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   color: var(--text);
@@ -559,8 +574,8 @@ html, body {
   .app { padding: 0 8px; padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
   .header { padding: 8px 0; gap: 8px; }
   .header-logo { font-size: 12px; }
-  .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-all; overflow-wrap: anywhere; }
-  .panel-body { word-break: break-all; overflow-wrap: anywhere; }
+  .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
+  .panel-body { word-break: break-word; overflow-wrap: anywhere; }
   .input-area { padding: 6px 0 8px; gap: 4px; }
   .input-area textarea { font-size: 16px; min-height: 44px; padding: 8px 10px; }
   .btn-group { gap: 4px; }
@@ -594,12 +609,12 @@ html, body {
   border-radius: 0 6px 6px 0;
   color: var(--muted);
   max-width: 85%;
-  word-break: break-all;
+  word-break: break-word;
 }
   .delegation { font-size: 11px; }
-  .event { font-size: 12px; word-break: break-all; }
+  .event { font-size: 12px; word-break: break-word; }
   .table-block { overflow-x: auto; }
-  .user-msg .bubble { max-width: 90%; }
+  .user-msg .bubble { max-width: 100%; overflow-x: auto; max-width: 90%; }
 }
 
 @media (min-width: 1200px) {
@@ -647,8 +662,8 @@ html, body {
 }
 .diff-content {
   padding: 12px;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  word-break: normal;
   overflow-y: auto;
   overflow-x: auto;
   max-height: 400px; /* Prevent massive blowouts */
@@ -770,12 +785,12 @@ html, body {
 @keyframes fadeOutRight { to { transform: translateX(100%); opacity: 0; } }
 
 /* ── Timestamps ── */
-.msg-time { font-size: 10px; color: var(--muted); opacity: 0.3; transition: opacity 0.2s; margin-top: 4px; display: block; }
+.msg-time { font-size: 10px; color: #9ca3af; opacity: 0.3; transition: opacity 0.2s; margin-top: 4px; display: block; }
 .user-msg:hover .msg-time, .agent-turn:hover .msg-time { opacity: 1; }
 
 /* ── Character Counter ── */
 .char-counter {
-  position: absolute; right: 12px; bottom: 12px; font-size: 10px; color: var(--muted);
+  position: absolute; right: 12px; bottom: 12px; font-size: 10px; color: #9ca3af;
   background: var(--bg-card); padding: 2px 6px; border-radius: 6px; opacity: 0; transition: opacity 0.2s; pointer-events: none;
 }
 .char-counter.visible { opacity: 1; }
@@ -805,7 +820,10 @@ html, body {
 
 
   <!-- Theme Panel -->
-  <div class="theme-panel" id="themePanel">
+  
+    </div>
+
+    <div class="theme-panel" id="themePanel">
     <div>
       <div class="theme-section-title">Presets</div>
       <div class="theme-presets" id="themePresets">
@@ -871,6 +889,7 @@ html, body {
   </div>
 
   <div class="sidebar" id="sidebar">
+    <div class="sidebar-resizer" id="sidebarResizer"></div>
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
@@ -1058,14 +1077,8 @@ const icons = {
 };
 
 
-  // ─── Theme Panel & Custom Colors ───
-  const themePanel = $('themePanel');
-  const themeBtn = $('themeBtn');
-  const themePresetsContainer = $('themePresets');
-  const colorBg = $('colorBg');
-  const colorText = $('colorText');
-  const colorAccent = $('colorAccent');
-
+  
+  
   const themes = [
     { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC' } },
     { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7' } },
@@ -1139,7 +1152,8 @@ const icons = {
       customOverrides = {}; // Reset custom colors when picking a preset
       applyThemeState();
     });
-    themePresetsContainer.appendChild(btn);
+    const themePresetsContainer = document.getElementById("themePresets");
+    if (themePresetsContainer) themePresetsContainer.appendChild(btn);
   });
 
   // Color picker listeners
@@ -1204,6 +1218,8 @@ const icons = {
     ws.onopen = () => {
       statusDot.className = 'status-dot connected';
       statusText.textContent = 'connected';
+      
+
       reconnectDelay = 1000;
       showWelcome();
       const skel = $('loadingSkeleton'); if (skel) skel.remove();
@@ -1222,6 +1238,8 @@ const icons = {
     ws.onclose = () => {
       statusDot.className = 'status-dot';
       statusText.textContent = 'disconnected';
+      
+
       setBusy(false);
       if (pingInterval) clearInterval(pingInterval);
       setTimeout(connect, reconnectDelay);
@@ -1310,6 +1328,13 @@ const icons = {
   // ─── Event dispatcher ───
   function handleEvent(ev) {
     switch (ev.type) {
+
+      case 'token_update':
+        if (ev.tokens !== undefined && $('settingsTokens')) {
+          $('settingsTokens').textContent = ev.tokens.toLocaleString();
+        }
+        break;
+
       case 'splash':
       case 'banner':
         break; // suppressed
@@ -1527,7 +1552,8 @@ const icons = {
              const lines = resultText.split('\n');
              
              // Basic diff detection
-             const isDiff = lines.some(l => l.startsWith('@@ ') || (l.startsWith('+') && !l.startsWith('+++')) || (l.startsWith('-') && !l.startsWith('---')));
+             const hasDiffHeaders = lines.some(l => l.startsWith('@@ ')) || (lines.some(l => l.startsWith('--- ')) && lines.some(l => l.startsWith('+++ ')));
+             const isDiff = hasDiffHeaders;
              
              if (isDiff) {
                 for (const line of lines) {
@@ -1596,7 +1622,9 @@ const icons = {
         break;
 
       case 'task_start': appendHTML(`<div class="event event-info" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`); break;
-      case 'task_done':  appendHTML(`<div class="event event-success" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(ev.message || "")}</span></div>`); break;
+      case 'task_done':
+        
+  appendHTML(`<div class="event event-success" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(ev.message || "")}</span></div>`); break;
 
       default:
         if (ev.message) {
@@ -1699,17 +1727,19 @@ const icons = {
         let isHeader = i + 1 < lines.length && lines[i+1].trim().match(/^\|[\s\-:|]+\|$/);
         let tag = isHeader ? 'strong' : 'span';
         let isKV = cells.length === 2;
-        let html = '<div style="display:flex;gap:12px;padding:2px 0;font-size:12px">';
+        let html = '<div style="overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;"><div style="display:grid;grid-template-columns:repeat(' + cells.length + ', minmax(150px, 1fr));gap:16px;padding:6px 12px;font-size:13px;border-bottom:1px solid ' + (isHeader ? 'var(--blue)' : 'var(--border)') + ';' + (isHeader ? 'background:var(--bg-input);' : '') + '">';
         cells.forEach((c, idx) => {
           let style;
-          if (isKV && idx === 0) {
-            style = 'white-space:nowrap;font-weight:600;color:var(--fg)';
+          if (isHeader) {
+            style = 'font-weight:700;color:var(--blue);letter-spacing:0.02em;';
+          } else if (isKV && idx === 0) {
+            style = 'font-weight:600;color:var(--fg);';
           } else {
-            style = 'flex:1;color:var(--fg)';
+            style = 'color:var(--text);';
           }
           html += '<' + tag + ' style="' + style + '">' + inlineMd(c.trim()) + '</' + tag + '>';
         });
-        html += '</div>';
+        html += '</div></div>';
         result.push(html);
         continue;
       }
@@ -2119,6 +2149,41 @@ const icons = {
     if (currentTab !== 'sandbox') return;
     if (e.dataTransfer?.files) { for (const f of e.dataTransfer.files) await uploadFile(f, currentPath || 'uploads'); }
   });
+
+  
+  // ─── Sidebar Resizing ───
+  const sidebarResizer = $('sidebarResizer');
+  let isResizing = false;
+
+  if (sidebarResizer) {
+    sidebarResizer.addEventListener('mousedown', (e) => {
+      if (window.innerWidth <= 768) return; // Disable on mobile
+      isResizing = true;
+      sidebarResizer.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none'; // Prevent text selection
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      // Calculate new width: window width minus mouse X position
+      let newWidth = window.innerWidth - e.clientX;
+      // Set min and max bounds for the sidebar width
+      if (newWidth < 250) newWidth = 250;
+      if (newWidth > window.innerWidth * 0.8) newWidth = window.innerWidth * 0.8;
+      
+      document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+    });
+
+    window.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        sidebarResizer.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
 
   // ─── Sidebar ───
   function toggleSidebar() {
