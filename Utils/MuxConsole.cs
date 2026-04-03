@@ -145,7 +145,7 @@ public static class MuxConsole
     
     public static string AskText(string question, string? defaultValue)
     {
-        string response = MuxConsole.Prompt(question, defaultValue);
+        string response = Prompt(question, defaultValue);
         return string.IsNullOrWhiteSpace(response)
             ? "User provided no input."
             : $"User response: {response}";
@@ -177,7 +177,7 @@ public static class MuxConsole
             return [];
 
         return raw
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(s => s.Length > 0)
             .ToList();
     }

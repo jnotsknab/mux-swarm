@@ -133,9 +133,27 @@ Controls background trigger loops. Requires `--daemon` flag to activate.
 }
 ```
 
-## Daemon Trigger Types
+## Daemon Triggers
 
 There are exactly four trigger types: `watch`, `cron`, `status`, and `bridge`. No other values are valid.
+
+### Common Trigger Fields
+
+Every trigger shares these base fields:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `id` | string | `""` | Unique identifier for this trigger |
+| `type` | string | `""` | One of: `watch`, `cron`, `status`, `bridge` |
+| `mode` | string | `"agent"` | Orchestration mode for goal execution: `agent`, `swarm`, or `pswarm` |
+| `agent` | string? | null | Optional agent name override for single-agent mode goals |
+| `interval` | uint | 30 | Seconds between polls (status), restart delay (bridge), or debounce (watch) |
+| `cooldown` | uint | 0 | Alias for interval on watch triggers. If set (>0), takes precedence over interval |
+| `restart` | bool | false | Whether to restart on failure (status) or on exit (bridge) |
+| `goal` | string? | null | Goal text for watch/cron triggers. Supports template variables |
+| `failThreshold` | int | 3 | Consecutive status check failures before alerting (0 = alert every failure) |
+
+Effective interval logic: if `cooldown > 0`, use cooldown; otherwise use `interval`.
 
 ### watch
 
@@ -152,10 +170,11 @@ Monitors a file path pattern. Fires a goal when matching files are created or mo
 }
 ```
 
-- `path` -- glob pattern to watch
-- `goal` -- template with `{file}`, `{filename}`, `{timestamp}`, `{id}` substitution
-- `mode` -- `agent`, `swarm`, or `pswarm`
-- `cooldown` -- seconds before re-triggering on the same file
+Required fields: `path`
+
+Goal template variables: `{file}` (full path), `{filename}` (name only), `{timestamp}` (yyyy-MM-dd HH:mm:ss), `{id}` (trigger id)
+
+Behavior: uses `FileSystemWatcher` on the directory with the glob as filter. Watches for `Created` and `Changed` events. Files are debounced per `cooldown`/`interval` -- the same file will not re-trigger within the cooldown window. A 500ms delay is applied after detecting a change to allow writes to complete.
 
 ### cron
 
@@ -170,6 +189,12 @@ Standard 5-field cron expressions (minute hour day month weekday). Supports `*`,
   "mode": "swarm"
 }
 ```
+
+Required fields: `schedule`
+
+Goal template variables: `{timestamp}`, `{id}`
+
+Behavior: calculates the next occurrence from the cron expression, sleeps until that time, fires the goal, then loops. If no future occurrence exists, the trigger stops.
 
 ### status
 
@@ -186,10 +211,14 @@ Health checks that monitor resources. Does not fire goals. Optionally restarts f
 }
 ```
 
+Required fields: `check`
+
 Check formats:
-- `http://host:port` -- HEAD request
-- `process:name` -- process lookup
-- `tcp:host:port` -- TCP connect check
+- `http://host:port` or `https://...` -- HTTP HEAD request (10s timeout)
+- `process:name` -- process lookup by name
+- `tcp:host:port` -- TCP connect check (5s timeout)
+
+Behavior: polls at `interval` seconds. Tracks consecutive failures per trigger. Only alerts when `failThreshold` consecutive failures are reached (default 3, set to 0 to alert on every failure). On alert with `restart: true`, invokes any registered restart handler for the check pattern. Logs recovery when a previously failing check succeeds.
 
 ### bridge
 
@@ -209,14 +238,21 @@ Spawns and supervises a long-lived child process. Designed for messaging bridges
 }
 ```
 
-- `type` -- MUST be `bridge` (not `discord_bridge`, not `telegram_bridge`, just `bridge`)
-- `command` -- the executable to run
-- `args` -- command arguments as a single string
-- `env` -- optional environment variables injected into the child process
-- `restart` -- whether to restart the process if it exits
-- `interval` -- restart delay in seconds
+Required fields: `command`
 
-The runtime auto-injects `MUX_WS_URL` with the correct serve port. Bot tokens and secrets should be set as environment variables in the operator's shell, not in config.
+| Field | Type | Description |
+|---|---|---|
+| `command` | string | The executable to run |
+| `args` | string? | Command arguments as a single string |
+| `env` | dict? | Environment variables injected into the child process |
+| `restart` | bool | Whether to restart the process if it exits |
+| `interval` | uint | Restart delay in seconds (default 30) |
+
+Behavior: starts the process with `UseShellExecute=false`, redirects stdout/stderr to daemon log with `[Bridge:id:OUT]` and `[Bridge:id:ERR]` prefixes. Working directory is set to the mux-swarm base directory. The runtime auto-injects `MUX_WS_URL` (e.g. `ws://localhost:6723/ws`) into the process environment. If the process exits and `restart` is true, waits `interval` seconds then restarts. On daemon shutdown, all bridge processes are killed with `entireProcessTree: true`.
+
+IMPORTANT: The `type` field MUST be `bridge`. Not `discord_bridge`, not `telegram_bridge`, just `bridge`. The bridge type is generic; what makes it a Telegram or Discord bridge is the `command` and `args` pointing to the appropriate Python script.
+
+Bot tokens and secrets should be set as environment variables in the operator's shell, not in config.
 
 ## Bridge Setup
 
@@ -436,6 +472,14 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --help, -h                 Show help
 ```
 
+Flags can be combined. Common stacks:
+
+- Interactive with web UI: `mux-swarm --serve`
+- Web UI + background triggers: `mux-swarm --serve --daemon`
+- Always-on resilient stack: `mux-swarm --serve --daemon --watchdog --register`
+- Headless autonomous: `mux-swarm --daemon --continuous`
+- One-shot goal: `mux-swarm --goal "do the thing"`
+
 ## Interactive Commands
 
 ```
@@ -539,7 +583,14 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
-10 supported events: `session_start`, `session_end`, `user_input`, `text_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`.
+12 supported events: `session_start`, `session_end`, `user_input`, `text_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `daemon_start`, `daemon_stop`.
+
+Daemon-specific hook events emitted automatically:
+- `daemon_start` -- fired when daemon starts with trigger count
+- `daemon_stop` -- fired on daemon shutdown
+- `daemon_trigger` -- fired when a watch or cron trigger activates (summary includes trigger type and id)
+- `daemon_status` -- fired on health check state changes (recovered, unhealthy, restarted, restart_failed)
+- `daemon_bridge` -- fired on bridge process start and exit
 
 ## Security Recommendations
 

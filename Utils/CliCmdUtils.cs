@@ -553,7 +553,7 @@ public static class CliCmdUtils
             ? $"Updating existing profile in: {contextDirectory}"
             : $"Files will be written to: {contextDirectory}");
 
-        MuxConsole.InputOverride = new StringReader("Begin onboarding.");
+        MuxConsole.InputOverride = new FallbackReader("Begin onboarding.");
 
         await SingleAgentOrchestrator.ChatAgentAsync(
             client: chatClientFactory(singleAgentModel),

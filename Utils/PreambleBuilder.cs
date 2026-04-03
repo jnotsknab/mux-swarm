@@ -61,7 +61,7 @@ public static class PreambleBuilder
         1. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what exists.
         2. **Vector DB (ChromaDB)** -- semantic search over prior knowledge. Use for recall without loading full histories.
         3. **Knowledge Graph** -- entities, relationships, structured facts. Use for deterministic queries where relationships matter.
-        4. **BRAIN.md** -- shared context all agents inherit. Located at {PlatformContext.ContextDirectory}/BRAIN.md. Contains operator identity, communication preferences, and standing directives that apply across all sessions. If it exists, read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for anything related to your role, specialization, or task execution strategy.
+        4. **BRAIN.md** -- shared context all agents inherit. Located at {PlatformContext.ContextDirectory}/BRAIN.md. Contains agent identity / name and conventions, communication preferences, and standing directives that apply across all sessions. If it exists, read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for anything related to your role, specialization, or task execution strategy.
         5. **MEMORY.md** -- shared working context. Located at {PlatformContext.ContextDirectory}/MEMORY.md. Contains active projects, goals, environment details, and constraints. Reference this for task-relevant decisions. If it exists, read it before your first action.
         6. **DOCS.md** -- system reference documentation. Located at {PlatformContext.ContextDirectory}/DOCS.md. Contains configuration formats, daemon trigger schemas, bridge setup instructions, CLI flags, and service registration details. Read this before modifying any config files. 
         Priority order for conflicting instructions: agent system prompt > BRAIN.md > inferred context.
@@ -81,12 +81,12 @@ public static class PreambleBuilder
             2) PERSISTED STATE (if provided)
                - Use as the canonical iteration/phase metadata, but validate against filesystem artifacts.
 
-            3) MEMORY STORES (Knowledge Graph + Vector Store/ChromaDB)
+            3) MEMORY STORES (Knowledge Graph + Vector Store/ChromaDB + Memory md files + Filesystem Msg Bus)
                - Use for decisions, historical context, and intent.
                - If memory conflicts with filesystem about whether an artifact exists/is current, filesystem wins.
 
             ### Reconciliation Rules (MANDATORY)
-            - Never claim a phase/subtask is complete unless the artifact is VERIFIED on disk.
+            - Never claim a phase/subtask is complete unless the artifact is VERIFIED on disk and functional if the task calls for it.
             - Never redo a completed phase unless filesystem verification shows the artifact is missing, outdated, or invalid.
             - If filesystem and memory disagree:
               - Resolve using filesystem as truth for artifacts.
@@ -141,8 +141,7 @@ public static class PreambleBuilder
 
         Any file operation that does not follow this rule is invalid.
         ";
-
-
+        
         return preamble;
     }
 

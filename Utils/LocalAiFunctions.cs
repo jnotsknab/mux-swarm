@@ -1,4 +1,5 @@
 ﻿using Microsoft.Extensions.AI;
+using MuxSwarm.State;
 
 namespace MuxSwarm.Utils;
 
@@ -9,7 +10,9 @@ public static class LocalAiFunctions
     public static AIFunction SleepTool = null!;
     public static AIFunction MuxRefreshTool = null!;
     public static AIFunction AskUserTool = null!;
-
+    
+    private static readonly SemaphoreSlim _askUserGate = new(1, 1);
+    
     static LocalAiFunctions()
     {
         CreateSkillFuncs();
@@ -138,7 +141,8 @@ public static class LocalAiFunctions
             method: async (
                 [System.ComponentModel.Description("True to refresh skills.")] bool refreshSkills,
                 [System.ComponentModel.Description("True to refresh MCP servers.")] bool refreshMcpServers,
-                [System.ComponentModel.Description("True to refresh Config.json and Swarm.json.")] bool refreshConfigs
+                [System.ComponentModel.Description("True to refresh Config.json and Swarm.json.")] bool refreshConfigs,
+                [System.ComponentModel.Description("True to refresh / restart the Mux Swarm Daemon")] bool refreshDaemon
             ) =>
             {
                 if (refreshSkills) CliCmdUtils.ReloadSkills();
@@ -149,6 +153,29 @@ public static class LocalAiFunctions
                     App.Config = Setup.Setup.LoadConfig(App.ConfigPath);
                     App.SwarmConfig = Setup.Setup.LoadSwarm();
                 }
+
+                if (refreshDaemon)
+                {
+                    App.DaemonRunner?.DisposeAsync();
+                    if (App.Config.Daemon != null) App.DaemonRunner = new(App.Config.Daemon);
+                    
+                    if (App.ServePort > 0)
+                    {
+                        foreach (var trigger in App.Config.Daemon.Triggers
+                                     .Where(t => t.Type == "status" && t.Restart &&
+                                                 t.Check != null && t.Check.Contains($":{App.ServePort}")))
+                        {
+                            App.DaemonRunner?.RegisterRestart(trigger.Check!,
+                                () => ServeMode.StartAsync(App.ServePort));
+                        }
+                    }
+
+                    App.DaemonRunner?.Start(
+                        chatClientFactory: modelId => App.CreateChatClient(modelId),
+                        mcpTools: App.GetMcpTools()!.Cast<AITool>().ToList(),
+                        agentModels: Common.LoadAgentModels());
+                }
+                
                 return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete. ";
 
             },
@@ -170,7 +197,8 @@ public static class LocalAiFunctions
                 string? type = "text",
 
                 [System.ComponentModel.Description(
-                    "Comma-separated list of options for 'select' or 'multi_select' types. Ignored for 'text' and 'confirm'.")]
+                    "Options separated by '|' for 'select' or 'multi_select' types. " +
+                    "Example: 'Yes, go ahead|Not yet|Skip this step'. Ignored for 'text' and 'confirm'.")]
                 string? options = null,
 
                 [System.ComponentModel.Description(
@@ -178,19 +206,20 @@ public static class LocalAiFunctions
                 string? defaultValue = null
             ) =>
             {   
+                
+                if (!MuxConsole.StdioMode && MuxConsole.InputOverride != Console.In)
+                    MuxConsole.InputOverride = Console.In;
+                
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
-
+        
                 var tcs = new TaskCompletionSource<string>();
-
-                var thread = new Thread(() =>
+                
+                var thread = new Thread( () =>
                 {
                     try
                     {
                         MuxConsole.WriteLine();
-                        MuxConsole.WriteMarkup(
-                            $"  [#{MuxConsole.PromptColor}]\u27f5  Agent is requesting your input[/]",
-                            "Agent is requesting your input");
-
+                        
                         string result = normalized switch
                         {
                             "confirm" => MuxConsole.Confirm(question,
@@ -198,7 +227,11 @@ public static class LocalAiFunctions
                                 ? "User confirmed: yes" : "User declined: no",
                             "select" => MuxConsole.AskSelect(question, options),
                             "multi_select" => MuxConsole.AskMultiSelect(question, options),
-                            _ => MuxConsole.AskText(question, defaultValue)
+                            _ => ((Func<string>)(() =>
+                            {
+                                var r = MuxConsole.AskText(question, defaultValue);
+                                return r;
+                            }))()
                         };
 
                         tcs.TrySetResult(result);
@@ -212,16 +245,23 @@ public static class LocalAiFunctions
                     IsBackground = true,
                     Name = "AskUser-IO"
                 };
-
+                
+                await _askUserGate.WaitAsync();
                 StdinCancelMonitor.Instance?.Pause();
                 EscapeKeyListener.Pause();
                 try
                 {
                     thread.Start();
-                    return await tcs.Task;
+                    var result = await tcs.Task;
+                    
+                    while (Console.KeyAvailable)
+                        Console.ReadKey(true);
+                    
+                    return result;
                 }
                 finally
                 {
+                    _askUserGate.Release();
                     EscapeKeyListener.Resume();
                     StdinCancelMonitor.Instance?.Resume();
                 }
