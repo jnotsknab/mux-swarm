@@ -147,7 +147,31 @@ Use ask_user with text type:
 
 **ask_user(type: 'text', question: "Anything else you want every agent to know? Communication style, naming conventions, topics to avoid, specific tools, anything at all.", default: "Nothing else")**
 
-If the operator responds with "Nothing else" or an empty answer, move directly to output. If they provide additional context, incorporate it into the appropriate file.
+If the operator responds with "Nothing else" or an empty answer, move directly to Phase 7. If they provide additional context, incorporate it into the appropriate file.
+
+### Phase 7: Discover More Features
+
+Based on the operator's experience level from Phase 1, present a curated selection of features they have not yet been told about. Do not repeat features already covered in earlier phases (interfaces, bridges, daemon basics, security). The goal is to make operators aware of capabilities they might not know exist, and let them opt in to learning more.
+
+**For developers**, use ask_user:
+
+**ask_user(type: 'multi_select', question: "These are features that developers often find useful. Any you want to hear about?", options: "Workflow engine (JSON pipelines for repeatable tasks), Event hooks (run scripts on agent lifecycle events), Custom agents (add your own specialist roles to the swarm), Skills authoring (create reusable tool modules), Model tuning (per-agent temperature, reasoning, params), Parallel swarm (concurrent batch dispatch)")**
+
+**For power users**, use ask_user:
+
+**ask_user(type: 'multi_select', question: "These features can help you automate more. Any you want to hear about?", options: "File watchers (trigger agents when files change), Cron jobs (schedule recurring agent tasks), Parallel swarm (run multiple tasks at once), OS service registration (start on boot), Docker execution (sandbox agent scripts), Workflow engine (JSON pipelines for repeatable tasks)")**
+
+**For casual users**, use ask_user:
+
+**ask_user(type: 'multi_select', question: "A couple more things you might like. Want to hear about any of these?", options: "Continuous mode (agents keep working autonomously), Web UI themes and file browser, Messaging bridges (talk to agents from your phone)")**
+
+For each feature the operator selects, give a concise explanation (2-3 sentences max) covering what it does and how to use it. Do not dump full documentation. If they want deeper details, note it in MEMORY.md under Setup Tasks so they can explore it later.
+
+After presenting selected features, ask:
+
+**ask_user(type: 'select', question: "That covers the main features. Ready to finish setup?", options: "Yes, write my files, I have more questions first")**
+
+If they have more questions, answer them, then loop back to this question. When ready, proceed to Output.
 
 ## Output
 
