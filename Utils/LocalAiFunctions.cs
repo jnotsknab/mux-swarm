@@ -206,10 +206,6 @@ public static class LocalAiFunctions
                 string? defaultValue = null
             ) =>
             {   
-                
-                if (!MuxConsole.StdioMode && MuxConsole.InputOverride != Console.In)
-                    MuxConsole.InputOverride = Console.In;
-                
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
         
                 var tcs = new TaskCompletionSource<string>();
