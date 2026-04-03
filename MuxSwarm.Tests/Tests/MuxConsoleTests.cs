@@ -36,7 +36,7 @@ public class MuxConsoleTests
     [Fact]
     public void ParseOptions_MultipleOptions_ReturnsAllItems()
     {
-        var result = MuxConsole.ParseOptions("alpha, beta, gamma");
+        var result = MuxConsole.ParseOptions("alpha| beta| gamma");
         Assert.Equal(3, result.Count);
         Assert.Equal("alpha", result[0]);
         Assert.Equal("beta", result[1]);
@@ -46,7 +46,7 @@ public class MuxConsoleTests
     [Fact]
     public void ParseOptions_TrimsWhitespace()
     {
-        var result = MuxConsole.ParseOptions("  a , b , c  ");
+        var result = MuxConsole.ParseOptions("  a | b | c  ");
         Assert.Equal(3, result.Count);
         Assert.Equal("a", result[0]);
         Assert.Equal("b", result[1]);
@@ -56,7 +56,7 @@ public class MuxConsoleTests
     [Fact]
     public void ParseOptions_SkipsEmptyEntries()
     {
-        var result = MuxConsole.ParseOptions("a,,b,,,c");
+        var result = MuxConsole.ParseOptions("a||b|||c");
         Assert.Equal(3, result.Count);
     }
 
