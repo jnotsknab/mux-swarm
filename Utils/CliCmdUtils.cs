@@ -77,7 +77,10 @@ public static class CliCmdUtils
             "",
             "  All Modes",
             $"    Max Stuck Count:              {l.MaxStuckCount}",
-            $"    Activity Timeout:             {l.ActivityTimeoutSeconds}s"
+            $"    Activity Timeout:             {l.ActivityTimeoutSeconds}s",
+            
+            "  Context Injection Posture",
+            $"    Mode:              {l.ContextInjection}"
         );
         MuxConsole.WritePanel("Execution Limits", lines);
     }
@@ -570,6 +573,34 @@ public static class CliCmdUtils
     {
         await ReloadMcpServersAsync(initMcpServers, configPath);
         ReloadSkills();
+    }
+
+    public static void HandleContextInject()
+    {
+        var choice = MuxConsole.Select("Auto-inject context for this session", new[]
+        {
+            "Full memory (BRAIN.md + MEMORY.md)",
+            "Working memory only (MEMORY.md)",
+            "None (preamble and system prompt only)",
+            "Custom (file path or inline text)"
+        });
+
+        AutoInject.Current = choice switch
+        {
+            "Full memory (BRAIN.md + MEMORY.md)" => AutoInject.Mode.Full,
+            "Working memory only (MEMORY.md)" => AutoInject.Mode.WorkingMemory,
+            "None (preamble and system prompt only)" => AutoInject.Mode.None,
+            _ => AutoInject.Mode.Custom
+        };
+
+        if (AutoInject.Current == AutoInject.Mode.Custom)
+        {
+            var input = MuxConsole.AskText("File path or text to inject", null);
+
+            AutoInject.CustomContent = File.Exists(input) ? File.ReadAllText(input) : input;
+        }
+        
+        MuxConsole.WriteSuccess($"Auto-inject set to, new sessions will be affected: {AutoInject.Current}");
     }
 
     public static int HandleContToggle(bool toggle)

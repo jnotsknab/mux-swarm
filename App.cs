@@ -394,6 +394,9 @@ public class App
                     );
                     break;
                 
+                case "/addcontext":
+                    CliCmdUtils.HandleContextInject();
+                    break;
                 case "/cont":
                 case "/continuous":
                     ContinuousExec = !ContinuousExec;

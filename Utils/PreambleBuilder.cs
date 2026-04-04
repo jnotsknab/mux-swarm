@@ -142,6 +142,40 @@ public static class PreambleBuilder
         Any file operation that does not follow this rule is invalid.
         ";
         
+        //add injected context from /addcontext cmd if applicable
+        string? content = null;
+        var brainPath = Path.Combine(PlatformContext.ContextDirectory, "BRAIN.md");
+        var memPath = Path.Combine(PlatformContext.ContextDirectory, "MEMORY.md");
+        switch (AutoInject.Current)
+        {
+            case AutoInject.Mode.None:
+                break;
+            case AutoInject.Mode.Full:
+                content = "[INJECTED CONTEXT FROM BRAIN.md]\n";
+                if (File.Exists(brainPath))
+                    content += File.ReadAllText(brainPath);
+                
+                content += "[INJECTED CONTEXT FROM MEMORY.md]\n";
+                if (File.Exists(memPath))
+                    content += File.ReadAllText(memPath);
+                
+                content += "[END OF INJECTED CONTEXT]\n";
+                break;
+            case AutoInject.Mode.WorkingMemory:
+                content = "[INJECTED CONTEXT FROM MEMORY.md]\n";
+                if (File.Exists(memPath))
+                    content += File.ReadAllText(memPath);
+                
+                content += "[END OF INJECTED CONTEXT]\n";
+                break;
+            case AutoInject.Mode.Custom:
+                content = "[INJECTED CONTEXT FROM CUSTOM USER ADDED CONTENT]\n";
+                content += AutoInject.CustomContent;
+                content += "[END OF INJECTED CONTEXT]\n";
+                break;
+        }
+
+        preamble += content;
         return preamble;
     }
 

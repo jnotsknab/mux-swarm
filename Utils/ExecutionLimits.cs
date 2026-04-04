@@ -29,7 +29,10 @@ public class ExecutionLimits
 
     [JsonPropertyName("compactionCharBudget")]
     public int CompactionCharBudget { get; set; } = 6000;
-
+    
+    [JsonPropertyName("contextInjection")]
+    public string ContextInjection { get; set; } = "full";
+    
     [JsonPropertyName("compactionMaxMessageChars")]
     public int CompactionMaxMessageChars { get; set; } = 2500;
 
