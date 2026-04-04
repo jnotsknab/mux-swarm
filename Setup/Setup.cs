@@ -8,7 +8,8 @@ namespace MuxSwarm.Setup;
 public static class Setup
 {
     private static AppConfig _appConfig = new();
-
+    public static bool OnboardRequested { get; set; }
+    
     public static readonly JsonSerializerOptions CfgSerialOpts = new()
     {
         WriteIndented = true,
@@ -43,7 +44,6 @@ public static class Setup
             EnsureConfigInitialized();
             return _appConfig;
         }
-
         var cfgDir = Path.GetDirectoryName(configPath);
         if (!string.IsNullOrEmpty(cfgDir))
             Directory.CreateDirectory(cfgDir);
@@ -66,6 +66,13 @@ public static class Setup
 
         EnsureConfigInitialized();
         SwarmDefaults.EnsurePresent(_appConfig);
+        
+        if (_appConfig.Filesystem?.AllowedPaths != null 
+            && !_appConfig.Filesystem.AllowedPaths.Contains(PlatformContext.ContextDirectory))
+        {
+            _appConfig.Filesystem.AllowedPaths.Add(PlatformContext.ContextDirectory);
+        }
+
         return _appConfig;
     }
 
@@ -137,6 +144,14 @@ public static class Setup
         MuxConsole.WriteRule();
 
         StepPrintSummary();
+        
+        MuxConsole.WriteBody("Would you like to set up your operator profile now?");
+        MuxConsole.WriteMuted("This teaches your agents who you are, how you work, and what to remember.");
+        MuxConsole.WriteMuted("You can always run /onboard later.");
+        MuxConsole.WriteLine();
+
+        OnboardRequested = MuxConsole.Confirm("Run onboarding?", defaultValue: false);
+
         return true;
     }
 
@@ -145,16 +160,16 @@ public static class Setup
     {
         MuxConsole.WriteStep(1, "Dependency Check");
 
-        var deps = new[]
+        var deps = new List<DepResolver.Dep>()
         {
-            new DepResolver.Dep("python", "Some skills and tooling rely on Python"),
-            new DepResolver.Dep("node", "Required for npx-based MCP servers"),
-            new DepResolver.Dep("npm", "Required for npx-based MCP servers"),
-            new DepResolver.Dep("npx", "Required for MCP servers (memory/filesystem/shell)"),
-            new DepResolver.Dep("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
-            new DepResolver.Dep("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
+            new ("python", "Some skills and tooling rely on Python"),
+            new ("node", "Required for npx-based MCP servers"),
+            new ("npm", "Required for npx-based MCP servers"),
+            new ("npx", "Required for MCP servers (memory/filesystem/shell)"),
+            new ("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
+            new ("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
         };
-
+        
         var verbose = Debugger.IsAttached || Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE") == "1";
 
         var results = DepResolver.EnsureDepsInteractive(
@@ -163,7 +178,23 @@ public static class Setup
             findBinary: BinaryResolver.FindBinary,
             verbose: verbose
         );
-
+        
+        string choice = MuxConsole.Prompt("Install playwright debs for web browser functionality? (y/n)", "n");
+        if (choice.ToLowerInvariant() == "y")
+        {
+            MuxConsole.WriteInfo("Installing Playwright browsers and system dependencies...");
+            var (ok, exitCode, timedOut) = PlatformContext.IsWindows
+                ? DepResolver.RunProcessInheritConsole(
+                    "cmd", "/c npx -y playwright install --with-deps chromium", TimeSpan.FromMinutes(5))
+                : DepResolver.RunProcessInheritConsole(
+                    "npx", "-y playwright install --with-deps chromium", TimeSpan.FromMinutes(5));
+    
+            if (ok && exitCode == 0)
+                MuxConsole.WriteSuccess("Playwright installed successfully.");
+            else
+                MuxConsole.WriteWarning("Playwright installation failed. Browser agent may not work.");
+        }
+        
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
         McpServerDefaults.PatchCommandsFromDepResults(_appConfig, results);
 
@@ -238,6 +269,7 @@ public static class Setup
         _appConfig.Filesystem.AllowedPaths.Add(_appConfig.Filesystem.SessionsPath);
         _appConfig.Filesystem.AllowedPaths.Add(_appConfig.Filesystem.PromptsPath);
         _appConfig.Filesystem.AllowedPaths.Add(_appConfig.Filesystem.ConfigDir);
+        _appConfig.Filesystem.AllowedPaths.Add(PlatformContext.ContextDirectory);
 
         return true;
     }
@@ -308,6 +340,9 @@ public static class Setup
 
         MuxConsole.WriteSuccess($"Knowledge graph set to: {memoryFile}");
 
+        if (!Directory.Exists(PlatformContext.ContextDirectory))
+            Directory.CreateDirectory(PlatformContext.ContextDirectory);
+        
         return true;
     }
 
@@ -583,15 +618,12 @@ public static class Setup
             ("Swarm",         PlatformContext.SwarmPath),
             ("OS",            Common.GetOsFriendlyName()),
             ("Shell",         PlatformContext.Shell),
-            ("Sandbox",       _appConfig.Filesystem?.SandboxPath ?? "—"),
+            ("Sandbox",       _appConfig.Filesystem?.SandboxPath ?? "-"),
             ("Allowed paths", string.Join(", ", _appConfig.Filesystem?.AllowedPaths ?? [])),
-            ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "—"),
-            ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "—"),
+            ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "-"),
+            ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "-"),
         });
-
-        /*
-        MuxConsole.WriteSuccess("Setup complete. Run 'mux-swarm' to start.");
-        */
+        
         MuxConsole.WriteLine();
     }
     

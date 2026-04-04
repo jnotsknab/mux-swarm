@@ -122,13 +122,20 @@ internal sealed class CronExpression
                 var rangeParts = trimmed.Split('-', 2);
                 var start = int.Parse(rangeParts[0]);
                 var end = int.Parse(rangeParts[1]);
+                if (start < min || end > max)
+                    throw new ArgumentOutOfRangeException(nameof(field),
+                        $"Range {start}-{end} is out of bounds [{min}-{max}]");
                 for (int i = start; i <= end; i++)
                     values.Add(i);
                 continue;
             }
 
             // N -- single value
-            values.Add(int.Parse(trimmed));
+            var val = int.Parse(trimmed);
+            if (val < min || val > max)
+                throw new ArgumentOutOfRangeException(nameof(field),
+                    $"Value {val} is out of bounds [{min}-{max}]");
+            values.Add(val);
         }
 
         return values;

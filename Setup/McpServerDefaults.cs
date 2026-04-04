@@ -84,6 +84,16 @@ public static class McpServerDefaults
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });
+        
+        //web browser / automation (optional)
+        AddIfMissing("Playwright", new McpServerConfig
+        {
+            Type = "stdio",
+            Command = "npx",
+            Args = new[] { "-y", "@playwright/mcp@latest", "--headless", "--no-sandbox", "--caps", "core,pdf,network,storage" },
+            Env = new Dictionary<string, string?>(),
+            Enabled = true
+        });
 
         // OS-specific
         if (PlatformContext.IsWindows)

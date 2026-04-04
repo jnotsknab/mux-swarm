@@ -6,7 +6,13 @@
         <LangVersion>14</LangVersion>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-    </PropertyGroup>
+        <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MuxSwarm.Tests" />
+  </ItemGroup>
 
     <ItemGroup>
 
@@ -20,6 +26,11 @@
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
         </Content>
 
+        <Content Include="Context\**\*.*">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+        
         <Content Include="Configs\**\*.*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
@@ -50,15 +61,17 @@
         <None Remove="Configs\**" />
         <None Remove="Skills\**" />
         <None Remove="Sessions\**" />
+        <Compile Remove="Context\**" />
+        <None Remove="Context\**" />
     </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Agents.AI" Version="1.0.0-preview.260205.1" />
         <FrameworkReference Include="Microsoft.AspNetCore.App" />
-        <PackageReference Include="Microsoft.Extensions.AI" Version="10.2.0" />
-        <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.3.0" />
+        <PackageReference Include="Microsoft.Extensions.AI" Version="10.4.1" />
+        <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1" />
         <PackageReference Include="ModelContextProtocol" Version="0.8.0-preview.1" />
-        <PackageReference Include="OpenAI" Version="2.8.0" />
+        <PackageReference Include="OpenAI" Version="2.10.0" />
         <PackageReference Include="OpenTelemetry" Version="1.15.0" />
         <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
         <PackageReference Include="Spectre.Console" Version="0.54.0" />

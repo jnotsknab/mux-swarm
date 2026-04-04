@@ -80,6 +80,7 @@ public static class SingleAgentOrchestrator
         IList<McpClientTool>? mcpTools = null,
         bool showToolResultCalls = false,
         bool shouldPlan = false,
+        string? systemPromptOverride = null,
         Func<string, IChatClient>? chatClientFactory = null,
         int? autoCompactTokenThreshold = 80_000,
         bool persistSession = true,
@@ -89,7 +90,6 @@ public static class SingleAgentOrchestrator
         uint minDelaySeconds = 0,
         uint persistIntervalSeconds = 0,
         uint sessionRetention = 0,
-        bool prodMode = false,
         JsonElement? resumedSession = null,
         string? resumedSessionDir = null)
     {
@@ -185,7 +185,7 @@ public static class SingleAgentOrchestrator
             return;
         }
 
-        var systemPrompt = await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath);
+        var systemPrompt = string.IsNullOrEmpty(systemPromptOverride) ? await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath): systemPromptOverride;
 
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
@@ -235,8 +235,7 @@ public static class SingleAgentOrchestrator
             .. filteredTools
         ];
         
-        if (shouldPlan) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
-        
+        if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);        
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,

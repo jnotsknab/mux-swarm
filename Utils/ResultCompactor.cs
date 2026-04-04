@@ -118,15 +118,15 @@ public static class ResultCompactor
         ChatOptions? chatOptions = null)
     {
         int charBudget = ExecutionLimits.Current.CompactionCharBudget;
-        int maxMsgChars = ExecutionLimits.Current.CompactionMaxMessageChars;
-
+        int? maxContentPassed = App.SwarmConfig?.CompactionAgent?.ModelOpts?.MaxOutputTokens;
+        
         var transcript = new StringBuilder();
         foreach (var msg in history)
         {
             string role = msg.Role == ChatRole.User ? "User" : "Agent";
             string text = msg.Text ?? "";
-            if (text.Length > maxMsgChars)
-                text = text[..maxMsgChars] + "...";
+            if (text.Length > maxContentPassed)
+                text = text[(Range)(..maxContentPassed)] + "...";
             transcript.AppendLine($"[{role}]: {text}");
         }
 
@@ -159,9 +159,14 @@ public static class ResultCompactor
 
             var response = await chatClient.GetResponseAsync(messages, chatOptions);
             summary = response.Text ?? transcript.ToString();
+            
+            var extracted = ExtractTopLines(transcript.ToString(), charBudget / 2);
+            summary += $"\n\n[EXTRACTED REFERENCES]\n{extracted}\n[END REFERENCES]";
+            
         }
-        catch
-        {
+        catch (Exception ex)
+        {   
+            MuxConsole.WriteMuted($"  [Compaction] LLM summary failed, using extractive fallback: {ex.Message}");
             summary = ExtractTopLines(transcript.ToString(), charBudget);
         }
 
@@ -257,7 +262,8 @@ public static class ResultCompactor
     {
         try
         {
-            string input = text.Length > 4000 ? text[..4000] + "\n[...truncated]" : text;
+            int? max = App.SwarmConfig?.CompactionAgent?.ModelOpts?.MaxOutputTokens;
+            string input = text.Length > max ? text[(Range)(..max)] + "\n[...truncated]" : text;
 
             var messages = new List<ChatMessage>
             {
