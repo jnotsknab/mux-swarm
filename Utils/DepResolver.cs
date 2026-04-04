@@ -331,7 +331,7 @@ public static class DepResolver
     /// <summary>
     /// Run process with inherited stdio so user sees output (apt, brew, etc).
     /// </summary>
-    private static (bool ok, int exitCode, bool timedOut) RunProcessInheritConsole(
+    internal static (bool ok, int exitCode, bool timedOut) RunProcessInheritConsole(
         string fileName,
         string arguments,
         TimeSpan timeout)
