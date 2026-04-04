@@ -1201,7 +1201,6 @@ public class App
             .GetChatClient(modelId)
             .AsIChatClient()
             .AsBuilder()
-            .UseImageGeneration()
             .UseFunctionInvocation()
             .Build();
     }
