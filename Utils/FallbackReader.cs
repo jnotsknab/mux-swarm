@@ -1,19 +1,20 @@
 ﻿namespace MuxSwarm.Utils;
 
-public class FallbackReader(string seedLine) : TextReader
+public class FallbackReader(string seedLine, TextReader? fallback = null) : TextReader
 {
     private readonly StringReader _seed = new(seedLine);
+    private readonly TextReader _fallback = fallback ?? Console.In;
     private bool _exhausted;
 
     public override string? ReadLine()
     {
-        if (_exhausted) return Console.In.ReadLine();
+        if (_exhausted) return _fallback.ReadLine();
         var line = _seed.ReadLine();
-        if (line != null) return line;
         _exhausted = true;
-        MuxConsole.InputOverride = Console.In;
-        return Console.In.ReadLine();
+        MuxConsole.InputOverride = _fallback;
+        if (line != null) return line;
+        return _fallback.ReadLine();
     }
 
-    public override int Read() => _exhausted ? Console.In.Read() : _seed.Read();
+    public override int Read() => _exhausted ? _fallback.Read() : _seed.Read();
 }

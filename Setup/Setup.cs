@@ -160,16 +160,16 @@ public static class Setup
     {
         MuxConsole.WriteStep(1, "Dependency Check");
 
-        var deps = new[]
+        var deps = new List<DepResolver.Dep>()
         {
-            new DepResolver.Dep("python", "Some skills and tooling rely on Python"),
-            new DepResolver.Dep("node", "Required for npx-based MCP servers"),
-            new DepResolver.Dep("npm", "Required for npx-based MCP servers"),
-            new DepResolver.Dep("npx", "Required for MCP servers (memory/filesystem/shell)"),
-            new DepResolver.Dep("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
-            new DepResolver.Dep("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
+            new ("python", "Some skills and tooling rely on Python"),
+            new ("node", "Required for npx-based MCP servers"),
+            new ("npm", "Required for npx-based MCP servers"),
+            new ("npx", "Required for MCP servers (memory/filesystem/shell)"),
+            new ("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
+            new ("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
         };
-
+        
         var verbose = Debugger.IsAttached || Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE") == "1";
 
         var results = DepResolver.EnsureDepsInteractive(
@@ -178,7 +178,23 @@ public static class Setup
             findBinary: BinaryResolver.FindBinary,
             verbose: verbose
         );
-
+        
+        string choice = MuxConsole.Prompt("Install playwright debs for web browser functionality? (y/n)", "n");
+        if (choice.ToLowerInvariant() == "y")
+        {
+            MuxConsole.WriteInfo("Installing Playwright browsers and system dependencies...");
+            var (ok, exitCode, timedOut) = PlatformContext.IsWindows
+                ? DepResolver.RunProcessInheritConsole(
+                    "cmd", "/c npx -y playwright install --with-deps chromium", TimeSpan.FromMinutes(5))
+                : DepResolver.RunProcessInheritConsole(
+                    "npx", "-y playwright install --with-deps chromium", TimeSpan.FromMinutes(5));
+    
+            if (ok && exitCode == 0)
+                MuxConsole.WriteSuccess("Playwright installed successfully.");
+            else
+                MuxConsole.WriteWarning("Playwright installation failed. Browser agent may not work.");
+        }
+        
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
         McpServerDefaults.PatchCommandsFromDepResults(_appConfig, results);
 

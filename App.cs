@@ -11,7 +11,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static string Version = "0.9.2";
+    public static string Version = "0.9.4";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -1187,11 +1187,15 @@ public class App
 
         return new OpenAI.OpenAIClient(
             new ApiKeyCredential(apiKey),
-            new OpenAI.OpenAIClientOptions { Endpoint = new Uri(normalized) }
+            new OpenAI.OpenAIClientOptions
+            {
+                Endpoint = new Uri(normalized),
+                NetworkTimeout = TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds)
+            }
         );
     }
 
-    public static IChatClient CreateChatClient(string modelId)
+    public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
     {
         return CreateOpenAiClient()
             .GetChatClient(modelId)

@@ -206,10 +206,6 @@ public static class LocalAiFunctions
                 string? defaultValue = null
             ) =>
             {   
-                
-                if (!MuxConsole.StdioMode && MuxConsole.InputOverride != Console.In)
-                    MuxConsole.InputOverride = Console.In;
-                
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
         
                 var tcs = new TaskCompletionSource<string>();
@@ -246,24 +242,13 @@ public static class LocalAiFunctions
                     Name = "AskUser-IO"
                 };
                 
-                await _askUserGate.WaitAsync();
-                StdinCancelMonitor.Instance?.Pause();
-                EscapeKeyListener.Pause();
                 try
                 {
                     thread.Start();
-                    var result = await tcs.Task;
-                    
-                    while (Console.KeyAvailable)
-                        Console.ReadKey(true);
-                    
-                    return result;
+                    return await tcs.Task;
                 }
                 finally
                 {
-                    _askUserGate.Release();
-                    EscapeKeyListener.Resume();
-                    StdinCancelMonitor.Instance?.Resume();
                 }
             },
             name: "ask_user",

@@ -88,7 +88,10 @@ public static class SwarmDefaults
             )
         {
             PrintUnknownProviderWarning(swarmPath);
-            return false;
+            models.OrchestratorModel = "model-id-here";
+            models.AgentModel = "model-id-here";
+            models.CompactionModel = "model-id-here";
+            models.LightModel = "model-id-here";
         }
 
         static string P(string file) => Path.Combine("Prompts", "Agents", file).Replace("\\", "/");
@@ -108,7 +111,7 @@ public static class SwarmDefaults
         if (HasEnabled("ReplShellMcp")) singleAgentServers.Add("ReplShellMcp");
 
 
-        var orchestratorToolPatterns = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
+        var filteredFsPattern = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
 
         var agents = new List<object>();
 
@@ -128,6 +131,25 @@ public static class SwarmDefaults
                 mcpServers = mcp,
                 canDelegate = true,
                 toolPatterns = Array.Empty<string>()
+            });
+        }
+        
+        // BrowserAgent
+        {
+            var mcp = new List<string>();
+            if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
+            if (HasEnabled("Playwright")) mcp.Add("Playwright");
+            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            
+            agents.Add(new
+            {
+                name = "BrowserAgent",
+                description = "Handles full web automation through headless playwright, simulating real user action, crawling sites in detail, etc.",
+                promptPath = P("browser_agent.md"),
+                model = models.AgentModel,
+                mcpServers = mcp,
+                canDelegate = true,
+                toolPatterns = filteredFsPattern
             });
         }
 
@@ -216,7 +238,7 @@ public static class SwarmDefaults
             {
                 promptPath = P("od_fast.md"),
                 model = models.OrchestratorModel,
-                toolPatterns = orchestratorToolPatterns
+                toolPatterns = filteredFsPattern
             },
             agents
         };
@@ -247,6 +269,8 @@ public static class SwarmDefaults
         Console.WriteLine("    Ollama:      llama3");
         Console.WriteLine();
         Console.ResetColor();
+        
+        Thread.Sleep(TimeSpan.FromSeconds(10));
     }
 
     /// <summary>
@@ -396,9 +420,9 @@ public static class SwarmDefaults
 
     private class SwarmModelSet
     {
-        public string OrchestratorModel { get; init; } = "";
-        public string AgentModel { get; init; } = "";
-        public string LightModel { get; init; } = "";
-        public string CompactionModel { get; init; } = "";
+        public string OrchestratorModel { get; set; } = "";
+        public string AgentModel { get; set; } = "";
+        public string LightModel { get; set; } = "";
+        public string CompactionModel { get; set; } = "";
     }
 }
