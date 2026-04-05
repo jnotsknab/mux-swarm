@@ -11,6 +11,7 @@ public struct Help
         "  /agent          Launch interactive single agent loop",
         "  /onboard        Create or update your operator profile (BRAIN.md + MEMORY.md)",
         "  /stateless      Stateless single agent loop, ideal for one-off tasks",
+        "  /addcontext     Allows configuration of what context each agent is injected with (supports custom overrides)",
         "  /plan           Toggle plan mode, agents present a plan and ask for approval before executing",
         "  /continuous     Toggles continued autonomous execution on and off (shorthand /cont)",
         "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",

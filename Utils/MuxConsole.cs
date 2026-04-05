@@ -997,10 +997,44 @@ public static class MuxConsole
         });
     }
     
-    public static void WriteToolResult(string agent, string tool, string fullResult)
-    {
-        if (StdioMode)
-            EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", fullResult)));
+    public static void WriteToolResult(string agent, string tool, string fullResult, bool swarm = false)
+    {  
+        //no need to display this unnecessary
+        //TODO: We have to filter out .AIContent[] as there is currently no check for if the returned function content is a flat obj or not, update logic in agent orchestrators to check for dict etc
+        if (fullResult.Length <= 0 || fullResult.Trim().Equals("Task marked as complete.", StringComparison.OrdinalIgnoreCase)
+            || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase)) return;
+        
+        
+        if (!StdioMode)
+        {   
+            fullResult = Common.ExtractMcpText(fullResult);
+            
+            var display = fullResult.Length > 2000
+                ? Esc(fullResult[..2000]) + "\n[dim]... truncated[/]"
+                : Esc(fullResult);
+
+            if (swarm)
+            {
+                display = fullResult.Length > 500
+                    ? Esc(fullResult[..500]) + "\n[dim]... truncated[/]"
+                    : Esc(fullResult);
+            }
+
+            var panel = new Panel($"[grey]{display}[/]")
+            {
+                Header = new PanelHeader($"[{C.Accent}] {Esc(tool)} [/]", Justify.Left),
+                Border = BoxBorder.Rounded,
+                BorderStyle = new Style(Color.Grey37),
+                Padding = new Padding(2, 1),
+                Expand = false
+            };
+            
+            WriteRule();
+            AnsiConsole.Write(panel);
+            WriteRule();
+            return;
+        }
+        EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", fullResult)));
     }
 
     public static void WriteTaskComplete(string agent, string summary)
@@ -1095,6 +1129,7 @@ public static class MuxConsole
         config.AppendLine($"  [{C.Prompt}]/model[/]         [{C.Muted}]View current models[/]");
         config.AppendLine($"  [{C.Prompt}]/setmodel[/]      [{C.Muted}]Change agent/orchestrator model[/]");
         config.AppendLine($"  [{C.Prompt}]/swap[/]          [{C.Muted}]Swap active single agent[/]");
+        config.AppendLine($"  [{C.Prompt}]/addcontext[/]    [{C.Muted}]Configure context each agent is injected with[/]");
         config.AppendLine($"  [{C.Prompt}]/provider[/]      [{C.Muted}]View or switch LLM provider[/]");
         config.AppendLine($"  [{C.Prompt}]/limits[/]        [{C.Muted}]View execution limits[/]");
         config.AppendLine($"  [{C.Prompt}]/tools[/]         [{C.Muted}]List MCP tools[/]");

@@ -11,7 +11,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static string Version = "0.9.4";
+    public static readonly string Version = "0.9.5";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -394,6 +394,9 @@ public class App
                     );
                     break;
                 
+                case "/addcontext":
+                    CliCmdUtils.HandleContextInject();
+                    break;
                 case "/cont":
                 case "/continuous":
                     ContinuousExec = !ContinuousExec;

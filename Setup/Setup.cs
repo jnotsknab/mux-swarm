@@ -88,6 +88,14 @@ public static class Setup
                 var swarm = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
                 if (swarm?.ExecutionLimits != null)
                     ExecutionLimits.Current = swarm.ExecutionLimits;
+                
+                AutoInject.Current = ExecutionLimits.Current.ContextInjection.ToLowerInvariant() switch
+                {
+                    "full" => AutoInject.Mode.Full,
+                    "standard" => AutoInject.Mode.WorkingMemory,
+                    "custom" => AutoInject.Mode.Custom,
+                    _ => AutoInject.Mode.None
+                };
             }
         }
         catch { /* defaults */ }

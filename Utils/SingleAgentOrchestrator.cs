@@ -447,6 +447,7 @@ public static class SingleAgentOrchestrator
                         thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
 
                         var calledTools = new List<string>();
+                        string? lastToolName = null;
 
                         using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
 
@@ -486,7 +487,6 @@ public static class SingleAgentOrchestrator
                                 });
                             }
                             
-                            string? lastToolName = null;
                             foreach (AIContent content in update.Contents)
                             {
                                 if (content is FunctionCallContent functionCall)
@@ -536,7 +536,7 @@ public static class SingleAgentOrchestrator
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
                                     
-                                    if (MuxConsole.StdioMode && resultText != null)
+                                    if (resultText != null)
                                         MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
                                     
                                     if (!currentlyStreaming && thinking != null)
