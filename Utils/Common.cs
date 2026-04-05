@@ -390,6 +390,24 @@ public static class Common
         return agentModels;
     }
     
+    public static string ExtractMcpText(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            if (doc.RootElement.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+            {
+                var texts = content.EnumerateArray()
+                    .Where(e => e.TryGetProperty("type", out var t) && t.GetString() == "text")
+                    .Select(e => e.GetProperty("text").GetString())
+                    .Where(t => t != null);
+                var joined = string.Join("\n", texts);
+                if (!string.IsNullOrEmpty(joined)) return joined;
+            }
+        }
+        catch { /* not MCP JSON, return as-is */ }
+        return raw;
+    }
     
     private static IEnumerable<string> GetPromptCandidates(string normalizedPath)
     {

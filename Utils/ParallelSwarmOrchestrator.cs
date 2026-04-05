@@ -748,6 +748,7 @@ public static class ParallelSwarmOrchestrator
         _sessionDirty = true;
         var progressLog = new List<string>();
         List<string> toolCalls = [];
+        string? lastToolName = null;
         bool goalComplete = false;
         int stuckCount = 0;
         bool isFirstIteration = true;
@@ -870,7 +871,6 @@ public static class ParallelSwarmOrchestrator
                         });
                     }
                     
-                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
@@ -906,8 +906,8 @@ public static class ParallelSwarmOrchestrator
                         {
                             var resultText = fr.Result?.ToString();
                             
-                            if (MuxConsole.StdioMode && resultText != null)
-                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText);
+                            if (resultText != null)
+                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText, true);
                             
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
@@ -1260,6 +1260,7 @@ public static class ParallelSwarmOrchestrator
 
             ThinkingIndicator? thinking = null;
             bool currentlyStreaming = false;
+            string? lastToolName = null;
             var turnSw = Stopwatch.StartNew();
 
             try
@@ -1299,7 +1300,6 @@ public static class ParallelSwarmOrchestrator
                         });
                     }
                     
-                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
@@ -1354,8 +1354,8 @@ public static class ParallelSwarmOrchestrator
                             
                             var resultText = fr.Result?.ToString();
                             
-                            if (MuxConsole.StdioMode && resultText != null)
-                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText);
+                            if (resultText != null)
+                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText, true);
                             
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
