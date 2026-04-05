@@ -1129,6 +1129,7 @@ public static class MuxConsole
         config.AppendLine($"  [{C.Prompt}]/model[/]         [{C.Muted}]View current models[/]");
         config.AppendLine($"  [{C.Prompt}]/setmodel[/]      [{C.Muted}]Change agent/orchestrator model[/]");
         config.AppendLine($"  [{C.Prompt}]/swap[/]          [{C.Muted}]Swap active single agent[/]");
+        config.AppendLine($"  [{C.Prompt}]/addcontext[/]    [{C.Muted}]Configure context each agent is injected with[/]");
         config.AppendLine($"  [{C.Prompt}]/provider[/]      [{C.Muted}]View or switch LLM provider[/]");
         config.AppendLine($"  [{C.Prompt}]/limits[/]        [{C.Muted}]View execution limits[/]");
         config.AppendLine($"  [{C.Prompt}]/tools[/]         [{C.Muted}]List MCP tools[/]");
