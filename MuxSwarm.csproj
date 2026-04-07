@@ -7,8 +7,16 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
+        <Version>0.9.5</Version>
+        <FileVersion>0.9.5</FileVersion>
+        <AssemblyVersion>0.9.0</AssemblyVersion>
 
-  </PropertyGroup>
+        <Product>Mux-Swarm</Product>
+        <Company>github.com/jnotsknab</Company>
+        <Description>Highly Configurable Agentic Swarm OS Harness</Description>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <AssemblyTitle>Mux-Swarm Engine</AssemblyTitle>
+    </PropertyGroup>
 
   <ItemGroup>
     <InternalsVisibleTo Include="MuxSwarm.Tests" />
