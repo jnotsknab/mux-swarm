@@ -595,12 +595,21 @@ public static class CliCmdUtils
 
         if (AutoInject.Current == AutoInject.Mode.Custom)
         {
-            var input = MuxConsole.AskText("File path or text to inject", null);
-
-            AutoInject.CustomContent = File.Exists(input) ? File.ReadAllText(input) : input;
+            var input = MuxConsole.AskText("File path(s) comma separated or text to inject", null);
+            string[] segments = input.Split(",", StringSplitOptions.TrimEntries);
+            if (segments.Any(s => File.Exists(s)))
+            {
+                AutoInject.CustomContent = string.Join("\n", segments.Select(s =>
+                    File.Exists(s) ? File.ReadAllText(s) : s));
+                
+                MuxConsole.WriteSuccess($"Auto-inject set , new sessions will be affected: {AutoInject.Current}");
+                return;
+            }
+            
+            AutoInject.CustomContent = input;
         }
         
-        MuxConsole.WriteSuccess($"Auto-inject set to, new sessions will be affected: {AutoInject.Current}");
+        MuxConsole.WriteSuccess($"Auto-inject set, new sessions will be affected: {AutoInject.Current}");
     }
 
     public static int HandleContToggle(bool toggle)

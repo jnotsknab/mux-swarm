@@ -373,6 +373,9 @@ public static class Common
 
             if (swarm?.CompactionAgent != null && !string.IsNullOrEmpty(swarm.CompactionAgent.Model))
                 agentModels["Compaction"] = swarm.CompactionAgent.Model;
+            
+            if (swarm?.VisionAgent != null && !string.IsNullOrEmpty(swarm.VisionAgent.Model))
+                agentModels["Vision"] = swarm.VisionAgent.Model;
 
             if (swarm?.Agents != null)
             {

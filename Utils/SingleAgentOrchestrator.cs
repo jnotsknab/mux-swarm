@@ -223,9 +223,12 @@ public static class SingleAgentOrchestrator
             description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
                          "Read the relevant skill BEFORE starting a task to follow its best practices."
         );
-
-        var analyzeImageTool = chatClientFactory != null && !string.IsNullOrEmpty(resolvedModelId)
-            ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, resolvedModelId)
+        
+        var swarmVision = App.SwarmConfig?.VisionAgent;
+        var visionModelId = swarmVision?.Model;
+        
+        var analyzeImageTool = chatClientFactory != null && !string.IsNullOrEmpty(visionModelId)
+            ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, visionModelId)
             : null;
 
         var singleAgentTools = (IList<AITool>)
