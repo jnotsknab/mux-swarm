@@ -15,4 +15,8 @@ public class ProviderConfig
 
     [JsonPropertyName("endpoint")]
     public string? Endpoint { get; set; }
+    
+    [JsonPropertyName("headers")]
+    public Dictionary<string, string>? Headers { get; set; }
+    
 }

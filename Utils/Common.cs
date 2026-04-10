@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Agents.AI;
@@ -481,6 +482,20 @@ public static class Common
         return s;
     }
 
+    public static string ExpandEnvVars(string value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+        
+        return Regex.Replace(value, @"\$\{([^}]+)\}", match =>
+        {
+            string? val = Environment.GetEnvironmentVariable(match.Groups[1].Value);
+            
+            //return expanded string in header if no match (hardcoded header val)
+            return val ?? match.Value;
+        });
+        
+    }
+    
     private static string RepairDoubleAgents(string path)
     {
         // Normalize to '/'

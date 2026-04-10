@@ -1,10 +1,12 @@
 ﻿using System.ClientModel;
+using System.ClientModel.Primitives;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using MuxSwarm.State;
 using MuxSwarm.Utils;
+using OpenAI;
 using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm;
@@ -1173,7 +1175,7 @@ public class App
         return builder.Uri.ToString().TrimEnd('/');
     }
 
-    private static OpenAI.OpenAIClient CreateOpenAiClient()
+    private static OpenAIClient CreateOpenAiClient()
     {
         if (ActiveProvider == null)
             InitLlmProvider();
@@ -1185,15 +1187,22 @@ public class App
             : "no-key";
 
         var normalized = NormalizeOpenAiEndpoint(provider?.Endpoint ?? "https://openrouter.ai/api/v1");
+        var opts = new OpenAIClientOptions
+        {
+            Endpoint = new Uri(normalized),
+            NetworkTimeout = TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds)
+        };
 
-        return new OpenAI.OpenAIClient(
-            new ApiKeyCredential(apiKey),
-            new OpenAI.OpenAIClientOptions
-            {
-                Endpoint = new Uri(normalized),
-                NetworkTimeout = TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds)
-            }
-        );
+        if (provider?.Headers?.Count > 0)
+        {
+            var resolvedHeaders = new Dictionary<string, string>();
+            foreach (var kvp in provider.Headers)
+                resolvedHeaders[kvp.Key] = Common.ExpandEnvVars(kvp.Value);
+            
+            opts.AddPolicy(new CustomHeaderPolicy(resolvedHeaders), PipelinePosition.PerCall);
+        }
+        
+        return new OpenAIClient(new ApiKeyCredential(apiKey), opts);
     }
 
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
