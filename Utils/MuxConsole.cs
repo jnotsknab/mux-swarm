@@ -667,7 +667,7 @@ public static class MuxConsole
         });
     }
 
-    public static string Prompt(string message, string? defaultValue = null)
+    public static string Prompt(string message, string? defaultValue = null, bool secret = false)
     {
         lock (ConsoleLock)
         {
@@ -706,6 +706,8 @@ public static class MuxConsole
         var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
             .PromptStyle(new Style(Color.White));
 
+        if (secret) prompt.Secret();
+        
         if (defaultValue != null)
             prompt.DefaultValue(defaultValue).DefaultValueStyle(new Style(Color.Grey));
         else

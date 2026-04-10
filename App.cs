@@ -1110,8 +1110,7 @@ public class App
                     MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {provider.ApiKeyEnvVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
                 }
                 MuxConsole.WriteBody("  2. Set it for this session only:");
-
-                var input = MuxConsole.PromptSecret("Paste API key (hidden)");
+                var input = MuxConsole.Prompt("Paste API key (hidden) or press Enter if no key is necessary", secret: true);
                 if (!string.IsNullOrEmpty(input))
                 {
                     Environment.SetEnvironmentVariable(provider.ApiKeyEnvVar, input, EnvironmentVariableTarget.Process);
@@ -1120,8 +1119,7 @@ public class App
                 }
                 else
                 {
-                    MuxConsole.WriteError("No API key provided. Agent commands will fail until a key is set.");
-                    return;
+                    MuxConsole.WriteWarning("No API key provided. LLM Invocations may fail unless no key is needed.");
                 }
             }
 
