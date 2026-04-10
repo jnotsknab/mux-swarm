@@ -364,7 +364,12 @@ public static class MultiAgentOrchestrator
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
                 IChatClient client = chatClientFactory(modelId);
 
-                var analyzeImageTool = LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, modelId);
+                VisionConfig? swarmVision = App.SwarmConfig?.VisionAgent;
+                var visionModelId = swarmVision?.Model;
+
+                var analyzeImageTool = !string.IsNullOrEmpty(visionModelId)
+                    ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, visionModelId)
+                    : null;
 
                 var listSkillsTool = AIFunctionFactory.Create(
                     method: () =>
@@ -395,9 +400,10 @@ public static class MultiAgentOrchestrator
                                  "Read the relevant skill BEFORE starting a task to follow its best practices."
                 );
 
-                var agentTools = def.CanDelegate
-                    ? (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, subAgentDelegateTool, .. filteredTools]
-                    : (IList<AITool>)[taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool, analyzeImageTool, .. filteredTools];
+                var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
+                if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
+                if (def.CanDelegate) agentTools.Add(subAgentDelegateTool);
+                agentTools.AddRange(filteredTools);
 
                 var agentChatOptions = new ChatOptions
                 {
