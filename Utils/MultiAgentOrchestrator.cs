@@ -847,6 +847,7 @@ public static class MultiAgentOrchestrator
         _sessionDirty = true;
         var progressLog = new List<string>();
         List<string> toolCalls = [];
+        string? lastToolName = null;
         bool goalComplete = false;
         int stuckCount = 0;
         bool isFirstIteration = true;
@@ -963,7 +964,6 @@ public static class MultiAgentOrchestrator
                         });
                     }
                     
-                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
@@ -1010,8 +1010,8 @@ public static class MultiAgentOrchestrator
 
                             var resultText = fr.Result?.ToString();
                             
-                            if (MuxConsole.StdioMode && resultText != null)
-                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText);
+                            if (resultText != null)
+                                MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText, true);
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1240,6 +1240,7 @@ public static class MultiAgentOrchestrator
 
             ThinkingIndicator? thinking = null;
             bool startedStreaming = false;
+            string? lastToolName = null;
             bool currentlyStreaming = false;
             var turnSw = Stopwatch.StartNew();
 
@@ -1285,7 +1286,6 @@ public static class MultiAgentOrchestrator
                         });
                     }
                     
-                    string? lastToolName = null;
                     foreach (var content in update.Contents)
                     {
                         if (content is FunctionCallContent fc)
@@ -1350,8 +1350,8 @@ public static class MultiAgentOrchestrator
                             
                             var resultText = fr.Result?.ToString();
                             
-                            if (MuxConsole.StdioMode && resultText != null)
-                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText);
+                            if (resultText != null)
+                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText, true);
                             
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
