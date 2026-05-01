@@ -13,7 +13,10 @@ public class SwarmConfig
 
     [JsonPropertyName("compactionAgent")]
     public CompacterConfig? CompactionAgent { get; set; }
-
+    
+    [JsonPropertyName("visionAgent")]
+    public VisionConfig? VisionAgent { get; set; }
+    
     [JsonPropertyName("singleAgent")]
     public AgentConfig? SingleAgent { get; set; }
 

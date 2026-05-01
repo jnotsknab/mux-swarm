@@ -243,12 +243,16 @@ public static class LocalAiFunctions
                 };
                 
                 try
-                {
+                {   
+                    EscapeKeyListener.Pause();
+                    StdinCancelMonitor.Instance?.Pause();
                     thread.Start();
                     return await tcs.Task;
                 }
                 finally
                 {
+                    EscapeKeyListener.Resume();
+                    StdinCancelMonitor.Instance?.Resume();
                 }
             },
             name: "ask_user",
