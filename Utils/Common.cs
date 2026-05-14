@@ -158,7 +158,7 @@ public static class Common
                     }
 
                     if (agent.McpServers.Count == 0 && agent.ToolPatterns.Count == 0)
-                        include = true;
+                        include = false;
 
                     if (include)
                         filtered.Add(tool);
@@ -284,7 +284,7 @@ public static class Common
                     }
                 }
                 if (agent.McpServers.Count == 0 && agent.ToolPatterns.Count == 0)
-                    include = true;
+                    include = false;
                 if (include) filtered.Add(tool);
             }
             return filtered;
@@ -584,14 +584,14 @@ public static class Common
 
             Directory.CreateDirectory(sessionSubDir);
 
-            var serialized = orchestratorAgent.SerializeSession(orchestratorSession);
+            var serialized = await orchestratorAgent.SerializeSessionAsync(orchestratorSession);
             await File.WriteAllTextAsync(
                 Path.Combine(sessionSubDir, "orchestrator_session.json"),
                 serialized.GetRawText());
 
             foreach (var (name, (agent, session, _)) in specialists)
             {
-                serialized = agent.SerializeSession(session);
+                serialized = await agent.SerializeSessionAsync(session);
                 await File.WriteAllTextAsync(
                     Path.Combine(sessionSubDir, $"{name.ToLower().Replace(" ", "_")}_session.json"),
                     serialized.GetRawText());
@@ -640,7 +640,7 @@ public static class Common
 
             Directory.CreateDirectory(sessionSubDir);
 
-            var serialized = agent.SerializeSession(session);
+            var serialized = await agent.SerializeSessionAsync(session);
             await File.WriteAllTextAsync(
                 Path.Combine(sessionSubDir, "agent_session.json"),
                 serialized.GetRawText());
