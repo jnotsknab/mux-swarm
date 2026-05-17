@@ -491,7 +491,31 @@ public static class SingleAgentOrchestrator
                             }
                             
                             foreach (AIContent content in update.Contents)
-                            {
+                            {   
+                                if (content is TextReasoningContent reasoningContent)
+                                {
+                                    if (string.IsNullOrEmpty(reasoningContent.Text))
+                                        continue;
+                                    
+                                    if (currentlyStreaming)
+                                    {
+                                        MuxConsole.EndStreaming();
+                                        currentlyStreaming = false;
+                                    }
+
+                                    MuxConsole.WriteMuted(reasoningContent.Text);
+
+                                    HookWorker.Enqueue(new HookEvent
+                                    {
+                                        Event = "thinking_chunk",
+                                        Agent = singleAgentDef.Name,
+                                        Text = reasoningContent.Text,
+                                        Timestamp = DateTimeOffset.UtcNow
+                                    });
+                                    
+                                    continue;
+                                }
+                                
                                 if (content is FunctionCallContent functionCall)
                                 {   
                                     lastToolName = functionCall.Name;
