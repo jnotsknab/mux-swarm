@@ -977,25 +977,29 @@ public static class MultiAgentOrchestrator
                         {
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
-                                    
-                            if (currentlyStreaming)
+
+                            if (!currentlyStreaming)
                             {
-                                MuxConsole.EndStreaming();
-                                currentlyStreaming = false;
+                                thinking?.Dispose();
+                                thinking = null;
+                                MuxConsole.BeginStreaming();
+                                currentlyStreaming = true;
+                                startedStreaming = true;
                             }
 
-                            MuxConsole.WriteMuted(reasoningContent.Text);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
 
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "thinking_chunk",
-                                Agent ="Orchestrator",
+                                Agent = "Orchestrator",
                                 Text = reasoningContent.Text,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
                                     
                             continue;
                         }
+                        
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
@@ -1323,14 +1327,17 @@ public static class MultiAgentOrchestrator
                         {
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
-                                    
-                            if (currentlyStreaming)
+
+                            if (!currentlyStreaming)
                             {
-                                MuxConsole.EndStreaming();
-                                currentlyStreaming = false;
+                                thinking?.Dispose();
+                                thinking = null;
+                                MuxConsole.BeginStreaming();
+                                currentlyStreaming = true;
+                                startedStreaming = true;
                             }
 
-                            MuxConsole.WriteMuted(reasoningContent.Text);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
 
                             HookWorker.Enqueue(new HookEvent
                             {

@@ -496,14 +496,17 @@ public static class SingleAgentOrchestrator
                                 {
                                     if (string.IsNullOrEmpty(reasoningContent.Text))
                                         continue;
-                                    
-                                    if (currentlyStreaming)
+
+                                    if (!currentlyStreaming)
                                     {
-                                        MuxConsole.EndStreaming();
-                                        currentlyStreaming = false;
+                                        thinking?.Dispose();
+                                        thinking = null;
+                                        MuxConsole.BeginStreaming();
+                                        currentlyStreaming = true;
+                                        startedStreaming = true;
                                     }
 
-                                    MuxConsole.WriteMuted(reasoningContent.Text);
+                                    MuxConsole.WriteStream(reasoningContent.Text, muted: true);
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
