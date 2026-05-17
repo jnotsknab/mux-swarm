@@ -43,7 +43,7 @@ public class ModelOpts
     {
         if (Temperature is null && TopP is null && TopK is null &&
             MaxOutputTokens is null && FrequencyPenalty is null &&
-            PresencePenalty is null && Seed is null && AdditionalParams is null)
+            PresencePenalty is null && Seed is null && AdditionalParams is null && Reasoning is null)
             return null;
         
         ChatOptions opts = new ChatOptions

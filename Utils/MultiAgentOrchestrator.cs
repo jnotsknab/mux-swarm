@@ -971,7 +971,31 @@ public static class MultiAgentOrchestrator
                     }
                     
                     foreach (var content in update.Contents)
-                    {
+                    {   
+                        
+                        if (content is TextReasoningContent reasoningContent)
+                        {
+                            if (string.IsNullOrEmpty(reasoningContent.Text))
+                                continue;
+                                    
+                            if (currentlyStreaming)
+                            {
+                                MuxConsole.EndStreaming();
+                                currentlyStreaming = false;
+                            }
+
+                            MuxConsole.WriteMuted(reasoningContent.Text);
+
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event = "thinking_chunk",
+                                Agent ="Orchestrator",
+                                Text = reasoningContent.Text,
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                                    
+                            continue;
+                        }
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
@@ -1293,7 +1317,32 @@ public static class MultiAgentOrchestrator
                     }
                     
                     foreach (var content in update.Contents)
-                    {
+                    {   
+                        
+                        if (content is TextReasoningContent reasoningContent)
+                        {
+                            if (string.IsNullOrEmpty(reasoningContent.Text))
+                                continue;
+                                    
+                            if (currentlyStreaming)
+                            {
+                                MuxConsole.EndStreaming();
+                                currentlyStreaming = false;
+                            }
+
+                            MuxConsole.WriteMuted(reasoningContent.Text);
+
+                            HookWorker.Enqueue(new HookEvent
+                            {
+                                Event = "thinking_chunk",
+                                Agent = specialist.Def.Name,
+                                Text = reasoningContent.Text,
+                                Timestamp = DateTimeOffset.UtcNow
+                            });
+                                    
+                            continue;
+                        }
+                        
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
