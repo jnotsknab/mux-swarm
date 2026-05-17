@@ -23,12 +23,66 @@
   --red:      #ef4444; /* Red 500 */
   --agent:    #8b5cf6; /* Violet 500 */
   --accent:   #64B4DC; /* Accent Blue */
+  --accent-rgb: 100, 180, 220;
   --accent-fg: #09090b; /* Zinc 950 */
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
   --sidebar-width: 320px;
   --radius: 0.5rem;
 }
+
+
+/* When the theme panel is open, dim/hide the floating preview FAB so it doesn't overlay it */
+body:has(.theme-panel.open) .mux-preview-fab { opacity: 0; pointer-events: none; transition: opacity 0.15s; }
+
+/* ── Per-preset icon treatment (option B: icon style varies with preset) ── */
+/* Default: keep what's there. Catppuccin = softer/rounder strokes; Nord = thinner;
+   Tokyo Night = sharper accent tint; Matrix = bold mono; Latte adjusts for light bg. */
+:root { --icon-stroke: 2; --icon-linecap: round; --icon-linejoin: round; --icon-tint: var(--text); }
+
+svg { stroke-width: var(--icon-stroke); stroke-linecap: var(--icon-linecap); stroke-linejoin: var(--icon-linejoin); }
+.icon-btn svg, .send-btn svg, .mic-btn svg, .upload-btn svg,
+.code-copy-btn svg, .mux-preview-btn svg, .mux-preview-fab svg,
+.dl-btn svg, .sidebar-tab svg, #muxSettingsBtn svg { stroke: currentColor; }
+
+/* Catppuccin family: softer strokes (1.75) and rounded everything. */
+body[data-theme-preset="mocha"],
+body[data-theme-preset="macchiato"],
+body[data-theme-preset="frappe"],
+body[data-theme-preset="latte"] {
+  --icon-stroke: 1.75;
+  --icon-linecap: round;
+  --icon-linejoin: round;
+}
+
+/* Tokyo Night: crisp 2px, slight glow tint on accent icons. */
+body[data-theme-preset="tokyonight"] {
+  --icon-stroke: 2;
+  --icon-linecap: round;
+  --icon-linejoin: round;
+}
+body[data-theme-preset="tokyonight"] .icon-btn svg,
+body[data-theme-preset="tokyonight"] .mux-preview-btn svg {
+  filter: drop-shadow(0 0 4px rgba(125, 207, 255, 0.25));
+}
+
+/* Nord: thinner geometric strokes. */
+body[data-theme-preset="nord"] {
+  --icon-stroke: 1.5;
+  --icon-linecap: square;
+  --icon-linejoin: miter;
+}
+
+/* Matrix: heavy mono icons matching the bold green text. */
+body[data-theme-preset="matrix"] {
+  --icon-stroke: 2.25;
+  --icon-linecap: square;
+  --icon-linejoin: miter;
+}
+
+/* Light/Latte: ensure icon stroke uses dark text color, no glow. */
+body[data-theme-preset="light"] svg,
+body[data-theme-preset="latte"] svg { stroke: currentColor; }
 
 html, body {
   height: 100%;
@@ -101,11 +155,12 @@ html, body {
 .header-actions { display: flex; gap: 8px; }
 
 .icon-btn {
-  background: transparent; color: var(--muted); border: 1px solid transparent;
+  background: transparent; color: var(--text); opacity: 1; border: 1px solid transparent;
   border-radius: var(--radius); padding: 6px 10px; font-size: 16px; cursor: pointer;
   transition: all 0.2s ease; line-height: 1; display: flex; align-items: center; justify-content: center;
 }
-.icon-btn:hover, .icon-btn.active { background: rgba(100, 180, 220, 0.1); color: var(--text); border-color: var(--border); }
+.icon-btn:hover, .icon-btn.active { color: var(--accent); background: rgba(var(--accent-rgb), 0.12); border-color: rgba(var(--accent-rgb), 0.25); }
+
 .icon-btn:active { transform: scale(0.92); }
 
 
@@ -193,7 +248,7 @@ html, body {
 .sidebar-content.drag-over { background: rgba(100,180,220,0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
 
 /* ── Output ── */
-.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; display: flex; flex-direction: column; justify-content: flex-end; }
+.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
 .output::-webkit-scrollbar { width: 4px; }
 .output::-webkit-scrollbar-track { background: transparent; }
 .output::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -325,6 +380,12 @@ html, body {
 .stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 .stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.6; }
 .stream-block pre code { background: none; padding: 0; }
+.code-block { position: relative; }
+.code-block pre { margin: 8px 0; }
+.code-copy-btn { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.25); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; cursor: pointer; display: inline-flex; align-items: center; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; z-index: 2; }
+.code-block:hover .code-copy-btn, .code-copy-btn:focus { opacity: 1; }
+.code-copy-btn:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
+.code-copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
 
 /* ── Thinking bar (inside stream block) ── */
 .thinking-bar {
@@ -488,14 +549,23 @@ html, body {
 
 /* ── Input area ── */
 .input-area { border-top: 1px solid var(--border); padding: 10px 0; flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; }
+.input-area .btn-group { align-self: flex-end; }
 
 .input-area textarea {
   flex: 1; width: 100%; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px; font-family: var(--font-mono); font-size: 14px;
-  line-height: 1.6; resize: none; outline: none; min-height: 38px; max-height: 200px;
+  line-height: 1.6; resize: none; outline: none; min-height: 44px; max-height: 360px;
   transition: border-color 0.15s;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
-.input-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(100, 180, 220, 0.2); }
+.input-area textarea::-webkit-scrollbar { width: 8px; }
+.input-area textarea::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+.input-area textarea::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+.input-area textarea:hover::-webkit-scrollbar-thumb,
+.input-area textarea:focus::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
+.input-area textarea::-webkit-scrollbar-button { display: none; }
+.input-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.22); }
 .input-area textarea::placeholder { color: var(--muted); }
 
 /* ── Pending attachments strip ── */
@@ -577,7 +647,7 @@ html, body {
   .stream-block { padding: 8px 10px; font-size: 12px; word-break: break-word; overflow-wrap: anywhere; }
   .panel-body { word-break: break-word; overflow-wrap: anywhere; }
   .input-area { padding: 6px 0 8px; gap: 4px; }
-  .input-area textarea { font-size: 16px; min-height: 44px; padding: 8px 10px; }
+  .input-area textarea { font-size: 16px; min-height: 44px; max-height: 280px; padding: 8px 10px; }
   .btn-group { gap: 4px; }
   .send-btn { min-height: 44px; padding: 8px 10px; font-size: 11px; }
   .upload-btn { min-height: 44px; padding: 8px; font-size: 12px; }
@@ -661,7 +731,7 @@ html, body {
   font-size: 10px;
 }
 .diff-content {
-  padding: 12px;
+  padding: 6px 8px;
   white-space: pre;
   word-break: normal;
   overflow-y: auto;
@@ -672,6 +742,26 @@ html, body {
 .diff-content::-webkit-scrollbar-track { background: transparent; }
 .diff-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
 .diff-content:hover::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.4); }
+
+/* Custom scrollbar for the live-diffs panel scroll container */
+#diffs-content-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#diffs-content-area::-webkit-scrollbar { width: 8px; }
+#diffs-content-area::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+#diffs-content-area::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+#diffs-content-area:hover::-webkit-scrollbar-thumb,
+#diffs-content-area:focus::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  background-clip: content-box;
+}
+#diffs-content-area::-webkit-scrollbar-button { display: none; }
 
 /* Line styles */
 .diff-line { padding: 0 4px; border-radius: 2px; min-height: 18px; }
@@ -692,10 +782,13 @@ html, body {
 
 /* ── Theme Panel ── */
 .theme-panel {
-  position: absolute;
+  position: fixed;
   top: 60px;
-  right: 24px;
-  width: 280px;
+  right: 16px;
+  width: 320px;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+  overflow: hidden;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -715,10 +808,10 @@ html, body {
 
 .theme-section-title { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
 
-.theme-presets { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.theme-presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .theme-preset-btn {
   background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
-  padding: 8px; font-size: 12px; color: var(--text); cursor: pointer;
+  padding: 8px 10px; font-size: 12px; min-height: 36px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; justify-content: flex-start; color: var(--text); cursor: pointer;
   display: flex; align-items: center; gap: 8px; transition: all 0.15s;
 }
 .theme-preset-btn:hover { border-color: var(--accent); background: rgba(100, 180, 220, 0.1); }
@@ -742,19 +835,19 @@ html, body {
 .event-debug::before { content: ''; }
 
 .event-success { padding-left: 32px; position: relative; }
-.event-success::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; }
+.event-success::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg data-icon="check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg data-icon="check" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>') no-repeat center; }
 
 .event-warning { padding-left: 32px; position: relative; }
-.event-warning::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; }
+.event-warning::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg data-icon="alert" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg data-icon="alert" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>') no-repeat center; }
 
 .event-error { padding-left: 32px; position: relative; }
-.event-error::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; }
+.event-error::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg data-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg data-icon="x" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>') no-repeat center; }
 
 .event-info { padding-left: 32px; position: relative; }
-.event-info::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; }
+.event-info::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg data-icon="circle" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg data-icon="circle" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>') no-repeat center; }
 
 .event-debug { padding-left: 32px; position: relative; }
-.event-debug::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; }
+.event-debug::after { content: ''; position: absolute; left: 10px; top: 10px; width: 14px; height: 14px; background: currentColor; -webkit-mask: url('data:image/svg+xml;utf8,<svg data-icon="settings" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; mask: url('data:image/svg+xml;utf8,<svg data-icon="settings" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>') no-repeat center; }
 
 /* Reset body events so they don't get the icon padding */
 .event-body { padding-left: 0; }
@@ -859,9 +952,9 @@ html, body {
         <span id="statusText">connecting...</span>
       </span>
       <div class="header-actions">
-        <button class="icon-btn" id="reconnectBtn" title="Force reconnect"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
-        <button class="icon-btn" id="themeBtn" title="Theme Settings"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></button>
-        <button class="icon-btn" id="sidebarToggle" title="Toggle file browser"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
+        <button class="icon-btn" id="reconnectBtn" title="Force reconnect"><svg data-icon="refresh" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg></button>
+        <button class="icon-btn" id="themeBtn" title="Theme Settings"><svg data-icon="palette" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></button>
+        <button class="icon-btn" id="sidebarToggle" title="Toggle file browser"><svg data-icon="sidebar" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button>
       </div>
     </div>
 
@@ -880,8 +973,8 @@ html, body {
         <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
       <div class="btn-group">
-        <button class="mic-btn" id="micBtn" title="Voice Input">🎤</button>
-        <button class="upload-btn" id="uploadBtn" title="Upload file"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
+        <button class="mic-btn" id="micBtn" title="Voice Input"><svg data-icon="mic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></button>
+        <button class="upload-btn" id="uploadBtn" title="Upload file"><svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="fileInput" />
         <button class="send-btn" id="actionBtn">Send</button>
       </div>
@@ -946,7 +1039,6 @@ html, body {
             if (text || pendingFiles.length > 0) {
               send(text);
               input.value = '';
-              autoResize();
             }
             // DO NOT STOP RECORDING - Continuous dictation
           }
@@ -994,7 +1086,6 @@ html, body {
         const separator = (currentVal && !currentVal.endsWith(' ')) ? ' ' : '';
         targetInput.value = currentVal + separator + finalTranscript;
         
-        if (targetInput === input) autoResize();
       }
     };
 
@@ -1059,31 +1150,38 @@ html, body {
 
 // ─── SVG Icons (Lucide Style) ───
 const icons = {
-  refresh: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
-  palette: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
-  folder: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
-  file: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`,
-  download: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`,
-  paperclip: `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`,
-  zap: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
-  arrowUpRight: `<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
-  check: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
-  x: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
-  alertTriangle: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
-  info: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
-  settings: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
-  hourglass: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>`,
-  stop: `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>`
+  refresh: `<svg data-icon="refresh" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
+  palette: `<svg data-icon="palette" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>`,
+  folder: `<svg data-icon="folder" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-1.22-1.8A2 2 0 0 0 7.53 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>`,
+  file: `<svg data-icon="file" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`,
+  download: `<svg data-icon="download" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`,
+  paperclip: `<svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`,
+  zap: `<svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+  arrowUpRight: `<svg data-icon="arrow-up-right" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
+  check: `<svg data-icon="check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
+  x: `<svg data-icon="x" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`,
+  alertTriangle: `<svg data-icon="alert" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>`,
+  info: `<svg data-icon="circle" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`,
+  settings: `<svg data-icon="settings" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+  hourglass: `<svg data-icon="hourglass" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>`,
+  stop: `<svg data-icon="square" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>`,
+  copy: `<svg data-icon="copy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`
 };
 
 
   
   
   const themes = [
-    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC' } },
-    { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7' } },
-    { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf' } },
-    { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e' } }
+    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC', '--accent-rgb': '100, 180, 220' } },
+    { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7', '--accent-rgb': '2, 132, 199' } },
+    { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf', '--accent-rgb': '45, 212, 191' } },
+    { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e', '--accent-rgb': '34, 197, 94' } },
+    { id: 'mocha', name: 'Mocha', dot: '#1e1e2e', vars: { '--bg': '#1e1e2e', '--bg-card': 'rgba(49, 50, 68, 0.6)', '--bg-input': 'rgba(69, 71, 90, 0.5)', '--border': 'rgba(88, 91, 112, 0.4)', '--text': '#cdd6f4', '--muted': '#a6adc8', '--blue': '#89b4fa', '--green': '#a6e3a1', '--amber': '#f9e2af', '--red': '#f38ba8', '--agent': '#cba6f7', '--accent': '#cba6f7', '--accent-rgb': '203, 166, 247' } },
+    { id: 'macchiato', name: 'Macchiato', dot: '#24273a', vars: { '--bg': '#24273a', '--bg-card': 'rgba(54, 58, 79, 0.6)', '--bg-input': 'rgba(73, 77, 100, 0.5)', '--border': 'rgba(91, 96, 120, 0.4)', '--text': '#cad3f5', '--muted': '#a5adcb', '--blue': '#8aadf4', '--green': '#a6da95', '--amber': '#eed49f', '--red': '#ed8796', '--agent': '#c6a0f6', '--accent': '#8aadf4', '--accent-rgb': '138, 173, 244' } },
+    { id: 'frappe', name: 'Frappé', dot: '#303446', vars: { '--bg': '#303446', '--bg-card': 'rgba(65, 69, 89, 0.6)', '--bg-input': 'rgba(81, 87, 109, 0.5)', '--border': 'rgba(98, 104, 128, 0.4)', '--text': '#c6d0f5', '--muted': '#a5adce', '--blue': '#8caaee', '--green': '#a6d189', '--amber': '#e5c890', '--red': '#e78284', '--agent': '#ca9ee6', '--accent': '#ef9f76', '--accent-rgb': '239, 159, 118' } },
+    { id: 'latte', name: 'Latte', dot: '#eff1f5', vars: { '--bg': '#eff1f5', '--bg-card': 'rgba(220, 224, 232, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.85)', '--border': 'rgba(172, 176, 190, 0.4)', '--text': '#4c4f69', '--muted': '#6c6f85', '--blue': '#1e66f5', '--green': '#40a02b', '--amber': '#df8e1d', '--red': '#d20f39', '--agent': '#8839ef', '--accent': '#7287fd', '--accent-rgb': '114, 135, 253' } },
+    { id: 'tokyonight', name: 'Tokyo Night', dot: '#1a1b26', vars: { '--bg': '#1a1b26', '--bg-card': 'rgba(36, 40, 59, 0.6)', '--bg-input': 'rgba(52, 59, 88, 0.5)', '--border': 'rgba(86, 95, 137, 0.4)', '--text': '#c0caf5', '--muted': '#9aa5ce', '--blue': '#7aa2f7', '--green': '#9ece6a', '--amber': '#e0af68', '--red': '#f7768e', '--agent': '#bb9af7', '--accent': '#7dcfff', '--accent-rgb': '125, 207, 255' } },
+    { id: 'nord', name: 'Nord', dot: '#2e3440', vars: { '--bg': '#2e3440', '--bg-card': 'rgba(59, 66, 82, 0.6)', '--bg-input': 'rgba(67, 76, 94, 0.5)', '--border': 'rgba(76, 86, 106, 0.4)', '--text': '#eceff4', '--muted': '#d8dee9', '--blue': '#81a1c1', '--green': '#a3be8c', '--amber': '#ebcb8b', '--red': '#bf616a', '--agent': '#b48ead', '--accent': '#88c0d0', '--accent-rgb': '136, 192, 208' } }
   ];
 
   let currentThemeId = 'zinc';
@@ -1102,6 +1200,7 @@ const icons = {
 
   function applyThemeState() {
     const baseTheme = themes.find(t => t.id === currentThemeId) || themes[0];
+    document.body.dataset.themePreset = baseTheme.id;
     
     // Apply base vars
     for (const [key, val] of Object.entries(baseTheme.vars)) {
@@ -1185,8 +1284,10 @@ const icons = {
       currentThemeId = saved.id;
       customOverrides = saved.overrides || {};
       applyThemeState();
+    } else {
+      applyThemeState();
     }
-  } catch(e) {}
+  } catch(e) { applyThemeState(); }
 
 
   
@@ -1207,7 +1308,7 @@ const icons = {
   // Persistent diffs area
   const diffsArea = document.createElement('div');
   diffsArea.id = 'diffs-content-area';
-  diffsArea.style.cssText = 'padding: 16px; height: 100%; overflow-y: auto;';
+  diffsArea.style.cssText = 'padding: 8px; height: 100%; overflow-y: auto;';
   diffsArea.innerHTML = '<div class="event" id="diffs-waiting" style="text-align:center; margin-top: 20px;">Waiting for live diffs...</div>';
 
   // ─── WebSocket ───
@@ -1675,7 +1776,7 @@ const icons = {
       // Code blocks
       if (line.trim().match(/^```/)) {
         if (inCode) {
-          result.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>');
+          result.push('<div class="code-block"><button class="code-copy-btn" title="Copy" aria-label="Copy code">' + icons.copy + '</button><pre><code>' + codeBuf.join('\n') + '</code></pre></div>');
           codeBuf = [];
           inCode = false;
         } else {
@@ -1752,7 +1853,7 @@ const icons = {
     }
 
     if (inList) result.push('</div>');
-    if (inCode && codeBuf.length) result.push('<pre><code>' + codeBuf.join('\n') + '</code></pre>');
+    if (inCode && codeBuf.length) result.push('<div class="code-block"><button class="code-copy-btn" title="Copy" aria-label="Copy code">' + icons.copy + '</button><pre><code>' + codeBuf.join('\n') + '</code></pre></div>');
     return result.join('');
   }
 
@@ -1955,11 +2056,15 @@ const icons = {
   }
 
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    const sendMode = document.body.dataset.sendOnEnter || 'enter'; // 'enter' | 'ctrl'
+    const wantsSend = (sendMode === 'ctrl')
+      ? (e.key === 'Enter' && (e.ctrlKey || e.metaKey))
+      : (e.key === 'Enter' && !e.shiftKey);
+    if (wantsSend) {
       e.preventDefault();
       if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
       const text = input.value.trim();
-      if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
+      if (text || pendingFiles.length > 0) { send(text); input.value = ''; }
     }
   });
 
@@ -1983,11 +2088,10 @@ const icons = {
   actionBtn.addEventListener('click', () => {
     if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
     const text = input.value.trim();
-    if (text || pendingFiles.length > 0) { send(text); input.value = ''; autoResize(); }
+    if (text || pendingFiles.length > 0) { send(text); input.value = ''; }
   });
 
-  function autoResize() { input.style.height = 'auto'; input.style.height = Math.min(input.scrollHeight, 200) + 'px'; }
-  input.addEventListener('input', autoResize);
+
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
@@ -2048,6 +2152,35 @@ const icons = {
   }
 
   const toastContainer = $('toastContainer');
+
+  // Delegated copy-to-clipboard for code blocks
+  document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.code-copy-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const block = btn.closest('.code-block');
+    const code = block ? block.querySelector('code') : null;
+    if (!code) return;
+    const text = code.innerText;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      const original = btn.innerHTML;
+      btn.classList.add('copied');
+      btn.innerHTML = icons.check;
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = original; }, 1200);
+    } catch (err) {
+      showToast('Copy failed', 'error');
+    }
+  });
+
   function showToast(msg, type = 'success') {
     const t = document.createElement('div');
     t.className = `toast ${type}`;
@@ -2191,7 +2324,14 @@ const icons = {
     sidebar.classList.toggle('open', sidebarOpen);
     app.classList.toggle('sidebar-open', sidebarOpen);
     sidebarToggle.classList.toggle('active', sidebarOpen);
-    if (sidebarOpen) loadFileList();
+    if (sidebarOpen) {
+      if (currentTab === 'diffs') {
+        sidebarContent.innerHTML = '';
+        sidebarContent.appendChild(diffsArea);
+      } else {
+        loadFileList();
+      }
+    }
   }
   sidebarToggle.addEventListener('click', toggleSidebar);
   sidebarClose.addEventListener('click', toggleSidebar);
@@ -2311,6 +2451,1128 @@ const icons = {
   connect();
 })();
 </script>
+
+<!-- ─── Live Preview Panel (composable, additive) ─── -->
+<style>
+  .mux-preview-fab {
+    position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
+    z-index: 9998;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: var(--bg-card, #1a1a1f); color: var(--muted, #71717a);
+    border: 1px solid var(--border, #2a2a30);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    display: flex; align-items: center; justify-content: center;
+    cursor: grab; opacity: 0.55;
+    transition: opacity 0.15s, background 0.15s, color 0.15s;
+    touch-action: none;
+    user-select: none;
+  }
+  .mux-preview-fab.placed { transform: none; }
+  .mux-preview-fab.dragging { cursor: grabbing; opacity: 1; transition: none; }
+  .mux-preview-fab .mux-fab-resize {
+    position: absolute; right: -4px; bottom: -4px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--border, #2a2a30); border: 1px solid var(--bg, #0f0f12);
+    cursor: nwse-resize; opacity: 0; transition: opacity 0.15s;
+    touch-action: none;
+  }
+  .mux-preview-fab .mux-fab-resize::after {
+    /* Larger invisible hit area for touch */
+    content: ''; position: absolute; inset: -10px; border-radius: 50%;
+  }
+  .mux-preview-fab:hover .mux-fab-resize { opacity: 1; }
+  /* Touch / coarse-pointer devices: always show, make it larger */
+  @media (hover: none), (pointer: coarse) {
+    .mux-preview-fab .mux-fab-resize {
+      width: 20px; height: 20px; right: -6px; bottom: -6px; opacity: 0.9;
+    }
+    .mux-preview-fab .mux-fab-resize::after { inset: -14px; }
+  }
+  .mux-preview-fab:hover { background: var(--accent, #64b4dc); color: #fff; opacity: 1; }
+  .mux-preview-fab:not(.placed):hover { transform: translateY(-50%) scale(1.08); }
+  .mux-preview-fab.placed:hover { transform: scale(1.08); }
+  .mux-preview-fab svg { width: 16px; height: 16px; }
+
+  .mux-preview-panel {
+    position: fixed; z-index: 9999;
+    background: var(--bg, #0f0f12); color: var(--text, #e4e4e7);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 8px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    display: none; flex-direction: column;
+    overflow: hidden;
+    width: 720px; height: 540px; top: 80px; left: 80px;
+    min-width: 280px; min-height: 200px;
+  }
+  .mux-preview-panel.open { display: flex; }
+  .mux-preview-panel.maximized {
+    top: 0 !important; left: 0 !important;
+    width: 100vw !important; height: 100vh !important;
+    border-radius: 0;
+  }
+
+  .mux-preview-header {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px;
+    background: var(--bg-card, #1a1a1f);
+    border-bottom: 1px solid var(--border, #2a2a30);
+    cursor: grab; user-select: none; flex: 0 0 auto;
+  }
+  .mux-preview-header:active { cursor: grabbing; }
+  .mux-preview-header .grip { color: var(--muted, #71717a); display: flex; align-items: center; padding: 0 2px; }
+  .mux-preview-url {
+    flex: 1; min-width: 0;
+    background: var(--bg, #0f0f12);
+    border: 1px solid var(--border, #2a2a30);
+    color: var(--text, #e4e4e7);
+    border-radius: 4px;
+    padding: 6px 8px; font-size: 12px;
+    font-family: var(--font-mono, monospace);
+    outline: none;
+  }
+  .mux-preview-url:focus { border-color: var(--accent, #64b4dc); }
+  .mux-preview-btn {
+    background: transparent; border: 1px solid transparent;
+    color: var(--muted, #71717a);
+    width: 28px; height: 28px; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex: 0 0 auto;
+  }
+  .mux-preview-btn:hover { background: rgba(255,255,255,0.05); color: var(--text, #e4e4e7); }
+  .mux-preview-btn svg { width: 14px; height: 14px; }
+
+  .mux-preview-body {
+    flex: 1; min-height: 0; position: relative;
+    background: var(--bg, #0f0f12);
+    overflow: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border, #2a2a30) transparent;
+  }
+  .mux-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
+  .mux-preview-body::-webkit-scrollbar-track { background: transparent; }
+  .mux-preview-body::-webkit-scrollbar-thumb {
+    background: var(--border, #2a2a30); border-radius: 4px;
+    border: 2px solid transparent; background-clip: content-box;
+  }
+  .mux-preview-body:hover::-webkit-scrollbar-thumb { background: var(--muted, #71717a); background-clip: content-box; }
+  .mux-preview-body::-webkit-scrollbar-button { display: none; }
+
+  .mux-preview-body iframe { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+  .mux-preview-body img.mux-preview-media,
+  .mux-preview-body video.mux-preview-media { max-width: 100%; max-height: 100%; display: block; margin: auto; }
+  .mux-preview-body audio.mux-preview-media { width: 100%; margin-top: 16px; }
+  .mux-preview-body pre.mux-preview-text {
+    margin: 0; padding: 12px; white-space: pre-wrap; word-break: break-word;
+    font-family: var(--font-mono, monospace); font-size: 12px; color: var(--text, #e4e4e7);
+  }
+  .mux-preview-empty {
+    display: flex; align-items: center; justify-content: center;
+    height: 100%; color: var(--muted, #71717a); font-size: 13px;
+    padding: 24px; text-align: center;
+  }
+
+  .mux-preview-resize {
+    position: absolute; right: 2px; bottom: 2px;
+    width: 16px; height: 16px; cursor: nwse-resize;
+    color: var(--muted, #71717a); opacity: 0.6;
+    display: flex; align-items: flex-end; justify-content: flex-end;
+  }
+  .mux-preview-resize:hover { opacity: 1; }
+  .mux-preview-resize svg { width: 12px; height: 12px; }
+
+  body.mux-preview-dragging,
+  body.mux-preview-resizing { user-select: none; cursor: inherit; }
+
+
+  /* Hover hint on file rows for click-vs-rightclick affordance */
+  /* Cursor-following hint pill (single global element) */
+  #mux-cursor-hint {
+    position: fixed; z-index: 10001; pointer-events: none;
+    background: var(--bg-card, #1a1a1f);
+    color: var(--text, #e4e4e7);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 10px; line-height: 1; letter-spacing: 0.02em;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(-50%);
+    transition: opacity 0.1s;
+    white-space: nowrap;
+  }
+  #mux-cursor-hint.show { opacity: 0.95; }
+
+  @media (max-width: 640px) {
+    .mux-preview-fab { right: 6px; top: 50%; transform: translateY(-50%); width: 32px; height: 32px; }
+    .mux-preview-fab:not(.placed):hover { transform: translateY(-50%) scale(1.08); }
+    .mux-preview-fab.placed:hover { transform: scale(1.08); }
+    .mux-preview-panel {
+      top: 0 !important; left: 0 !important;
+      width: 100vw !important; height: 100vh !important;
+      border-radius: 0;
+    }
+    .mux-preview-header { cursor: default; }
+    .mux-preview-header .grip { display: none; }
+    .mux-preview-resize { display: none; }
+  }
+</style>
+
+<button class="mux-preview-fab" id="muxPreviewFab" title="Drag to move • Resize from corner • Click to open" aria-label="Preview panel">
+  <svg data-icon="monitor" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="14" rx="2"/>
+    <path d="M8 21h8M12 18v3"/>
+  </svg>
+  <span class="mux-fab-resize" id="muxPreviewFabResize" aria-hidden="true"></span>
+</button>
+
+<div class="mux-preview-panel" id="muxPreviewPanel" role="dialog" aria-label="Preview">
+  <div class="mux-preview-header" id="muxPreviewHeader">
+    <span class="grip" aria-hidden="true">
+      <svg data-icon="grip" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+    </span>
+    <input type="text" class="mux-preview-url" id="muxPreviewUrl" placeholder="URL or /api/download/sandbox/path  •  Press Enter" spellcheck="false"/>
+    <button class="mux-preview-btn" id="muxPreviewGo" title="Load">
+      <svg data-icon="chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+    </button>
+    <button class="mux-preview-btn" id="muxPreviewReload" title="Reload">
+      <svg data-icon="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+    </button>
+    <button class="mux-preview-btn" id="muxPreviewExternal" title="Open in new tab">
+      <svg data-icon="external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+    </button>
+    <button class="mux-preview-btn" id="muxPreviewPopout" title="Pop out to window">
+      <svg data-icon="popout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M21 8v13H8"/></svg>
+    </button>
+    <button class="mux-preview-btn" id="muxPreviewMax" title="Maximize / restore">
+      <svg data-icon="square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+    </button>
+    <button class="mux-preview-btn" id="muxPreviewClose" title="Close">
+      <svg data-icon="x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div class="mux-preview-body" id="muxPreviewBody">
+    <div class="mux-preview-empty">Enter a URL above, or open from the file list.<br/>Supports webpages, images, video, audio, PDF, and text.</div>
+  </div>
+  <div class="mux-preview-resize" id="muxPreviewResize" title="Drag to resize">
+    <svg data-icon="corner-resize" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="10" x2="10" y2="2"/><line x1="5" y1="10" x2="10" y2="5"/><line x1="8" y1="10" x2="10" y2="8"/></svg>
+  </div>
+</div>
+
+<script>
+(function(){
+  const panel   = document.getElementById('muxPreviewPanel');
+  const fab     = document.getElementById('muxPreviewFab');
+  const header  = document.getElementById('muxPreviewHeader');
+  const urlIn   = document.getElementById('muxPreviewUrl');
+  const goBtn   = document.getElementById('muxPreviewGo');
+  const rldBtn  = document.getElementById('muxPreviewReload');
+  const extBtn  = document.getElementById('muxPreviewExternal');
+  const popBtn  = document.getElementById('muxPreviewPopout');
+  const maxBtn  = document.getElementById('muxPreviewMax');
+  const closeBt = document.getElementById('muxPreviewClose');
+  const body    = document.getElementById('muxPreviewBody');
+  const resizer = document.getElementById('muxPreviewResize');
+
+  let currentUrl = '';
+  const isMobile = () => window.matchMedia('(max-width: 640px)').matches;
+
+  function classify(src) {
+    const u = (src || '').split('?')[0].split('#')[0].toLowerCase();
+    const ext = u.includes('.') ? u.split('.').pop() : '';
+    if (['png','jpg','jpeg','gif','webp','bmp','svg','ico','avif'].indexOf(ext) >= 0) return 'image';
+    if (['mp4','webm','mov','mkv','m4v'].indexOf(ext) >= 0) return 'video';
+    if (['mp3','wav','ogg','flac','m4a','aac'].indexOf(ext) >= 0) return 'audio';
+    if (ext === 'pdf') return 'iframe';
+    if (['txt','md','log','json','yaml','yml','toml','ini','csv','tsv','xml','js','ts','jsx','tsx','css','html','htm','py','rs','go','java','c','cpp','h','hpp','sh','bat','ps1'].indexOf(ext) >= 0) return 'text';
+    return 'iframe';
+  }
+
+  async function renderInto(src, kind) {
+    body.innerHTML = '<div class="mux-preview-empty">Loading...</div>';
+    try {
+      if (kind === 'image') {
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.className = 'mux-preview-media'; img.src = src; img.alt = '';
+        body.appendChild(img);
+      } else if (kind === 'video') {
+        body.innerHTML = '';
+        const v = document.createElement('video');
+        v.className = 'mux-preview-media'; v.src = src; v.controls = true;
+        body.appendChild(v);
+      } else if (kind === 'audio') {
+        body.innerHTML = '';
+        const a = document.createElement('audio');
+        a.className = 'mux-preview-media'; a.src = src; a.controls = true;
+        body.appendChild(a);
+      } else if (kind === 'text') {
+        const resp = await fetch(src);
+        const txt = await resp.text();
+        body.innerHTML = '';
+        const pre = document.createElement('pre');
+        pre.className = 'mux-preview-text';
+        pre.textContent = txt;
+        body.appendChild(pre);
+      } else {
+        body.innerHTML = '';
+        const f = document.createElement('iframe');
+        f.src = src;
+        f.referrerPolicy = 'no-referrer';
+        f.sandbox = 'allow-scripts allow-forms allow-popups allow-same-origin';
+        body.appendChild(f);
+      }
+    } catch (e) {
+      body.innerHTML = '<div class="mux-preview-empty">Failed to load: ' + (e && e.message ? e.message : 'unknown error') + '</div>';
+    }
+  }
+
+  function normalize(input) {
+    if (!input) return '';
+    const t = input.trim();
+    if (/^(https?:|data:|blob:|\/)/i.test(t)) return t;
+    return 'https://' + t;
+  }
+
+  function load(src, opts) {
+    opts = opts || {};
+    const url = normalize(src);
+    if (!url) return;
+    currentUrl = url;
+    urlIn.value = url;
+    const kind = opts.kind || classify(url);
+    renderInto(url, kind);
+  }
+
+  function openPanel() {
+    if (!isMobile() && !panel.style.left) {
+      panel.style.left = Math.max(40, (window.innerWidth - 720) / 2) + 'px';
+      panel.style.top  = Math.max(40, (window.innerHeight - 540) / 2) + 'px';
+    }
+    panel.classList.add('open');
+    setTimeout(() => urlIn.focus(), 50);
+  }
+  function closePanel() { panel.classList.remove('open'); }
+
+  // Drag/resize state for the FAB itself
+  let fabDidInteract = false;
+  fab.addEventListener('click', (e) => {
+    if (fabDidInteract) { fabDidInteract = false; e.preventDefault(); e.stopPropagation(); return; }
+    openPanel();
+  });
+
+  (function initFabDragResize(){
+    const LS_KEY = 'muxPreviewFab.pos';
+    const fabResize = document.getElementById('muxPreviewFabResize');
+
+    function applyState(st){
+      if (!st) return;
+      fab.classList.add('placed');
+      if (typeof st.left === 'number') fab.style.left = st.left + 'px';
+      if (typeof st.top === 'number')  fab.style.top  = st.top  + 'px';
+      fab.style.right = 'auto';
+      if (typeof st.size === 'number') { fab.style.width = st.size + 'px'; fab.style.height = st.size + 'px'; }
+    }
+    function save(){
+      const rect = fab.getBoundingClientRect();
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          left: rect.left, top: rect.top, size: rect.width
+        }));
+      } catch(_) {}
+    }
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) applyState(JSON.parse(raw));
+    } catch(_) {}
+
+    // Keep FAB on-screen across viewport changes
+    window.addEventListener('resize', () => {
+      if (!fab.classList.contains('placed')) return;
+      const rect = fab.getBoundingClientRect();
+      const maxL = window.innerWidth - rect.width - 2;
+      const maxT = window.innerHeight - rect.height - 2;
+      const left = Math.min(Math.max(2, rect.left), maxL);
+      const top  = Math.min(Math.max(2, rect.top),  maxT);
+      fab.style.left = left + 'px';
+      fab.style.top  = top  + 'px';
+      save();
+    });
+
+    // ── Drag ──
+    let dragging = false, dx = 0, dy = 0, downX = 0, downY = 0, moved = false;
+    fab.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('.mux-fab-resize')) return; // handled by resizer
+      dragging = true; moved = false;
+      const rect = fab.getBoundingClientRect();
+      dx = e.clientX - rect.left;
+      dy = e.clientY - rect.top;
+      downX = e.clientX; downY = e.clientY;
+      fab.setPointerCapture(e.pointerId);
+      fab.classList.add('dragging');
+    });
+    fab.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      if (!moved && (Math.abs(e.clientX - downX) > 3 || Math.abs(e.clientY - downY) > 3)) {
+        moved = true;
+        fab.classList.add('placed');
+        fab.style.right = 'auto';
+      }
+      if (!moved) return;
+      const w = fab.offsetWidth, h = fab.offsetHeight;
+      const left = Math.min(Math.max(2, e.clientX - dx), window.innerWidth  - w - 2);
+      const top  = Math.min(Math.max(2, e.clientY - dy), window.innerHeight - h - 2);
+      fab.style.left = left + 'px';
+      fab.style.top  = top  + 'px';
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      fab.classList.remove('dragging');
+      try { fab.releasePointerCapture(e.pointerId); } catch(_) {}
+      if (moved) { fabDidInteract = true; save(); }
+    };
+    fab.addEventListener('pointerup', endDrag);
+    fab.addEventListener('pointercancel', endDrag);
+
+    // ── Resize (corner handle) ──
+    let resizing = false, startSize = 0, startCX = 0, startCY = 0, anchorR = 0, anchorB = 0;
+    fabResize.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      resizing = true;
+      startSize = fab.offsetWidth;
+      const rect = fab.getBoundingClientRect();
+      anchorR = rect.right; anchorB = rect.bottom;
+      startCX = e.clientX; startCY = e.clientY;
+      fabResize.setPointerCapture(e.pointerId);
+      fab.classList.add('dragging');
+    });
+    fabResize.addEventListener('pointermove', (e) => {
+      if (!resizing) return;
+      const delta = Math.max(e.clientX - startCX, e.clientY - startCY);
+      const size  = Math.min(96, Math.max(24, startSize + delta));
+      fab.style.width = size + 'px';
+      fab.style.height = size + 'px';
+      // Keep bottom-right corner anchored (so it grows toward upper-left)
+      fab.classList.add('placed');
+      fab.style.right = 'auto';
+      fab.style.left = (anchorR - size) + 'px';
+      fab.style.top  = (anchorB - size) + 'px';
+    });
+    const endResize = (e) => {
+      if (!resizing) return;
+      resizing = false;
+      fab.classList.remove('dragging');
+      try { fabResize.releasePointerCapture(e.pointerId); } catch(_) {}
+      fabDidInteract = true;
+      save();
+    };
+    fabResize.addEventListener('pointerup', endResize);
+    fabResize.addEventListener('pointercancel', endResize);
+
+    // Double-click resize handle to reset
+    // ── Pinch-to-resize (touch) on the FAB body ──
+    const ptrs = new Map();
+    let pinchStartDist = 0, pinchStartSize = 0, pinchAnchorR = 0, pinchAnchorB = 0;
+    function dist(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
+    fab.addEventListener('pointerdown', (e) => {
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size === 2) {
+        // Start pinch
+        const pts = Array.from(ptrs.values());
+        pinchStartDist = dist(pts[0], pts[1]);
+        pinchStartSize = fab.offsetWidth;
+        const rect = fab.getBoundingClientRect();
+        pinchAnchorR = rect.right; pinchAnchorB = rect.bottom;
+        // Cancel any in-progress drag so pinch wins
+        try { fab.releasePointerCapture(e.pointerId); } catch(_) {}
+        fab.classList.add('dragging');
+      }
+    });
+    fab.addEventListener('pointermove', (e) => {
+      if (!ptrs.has(e.pointerId)) return;
+      ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (ptrs.size >= 2 && pinchStartDist > 0) {
+        const pts = Array.from(ptrs.values());
+        const d = dist(pts[0], pts[1]);
+        const ratio = d / pinchStartDist;
+        const size = Math.min(96, Math.max(24, Math.round(pinchStartSize * ratio)));
+        fab.classList.add('placed');
+        fab.style.right = 'auto';
+        fab.style.width = size + 'px';
+        fab.style.height = size + 'px';
+        fab.style.left = (pinchAnchorR - size) + 'px';
+        fab.style.top  = (pinchAnchorB - size) + 'px';
+        fabDidInteract = true;
+      }
+    });
+    const clearPtr = (e) => {
+      ptrs.delete(e.pointerId);
+      if (ptrs.size < 2) {
+        if (pinchStartDist > 0) {
+          pinchStartDist = 0;
+          fab.classList.remove('dragging');
+          save();
+        }
+      }
+    };
+    fab.addEventListener('pointerup', clearPtr);
+    fab.addEventListener('pointercancel', clearPtr);
+    fab.addEventListener('pointerleave', clearPtr);
+
+    fabResize.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      try { localStorage.removeItem(LS_KEY); } catch(_) {}
+      fab.classList.remove('placed');
+      fab.style.left = ''; fab.style.top = ''; fab.style.right = '';
+      fab.style.width = ''; fab.style.height = '';
+      fabDidInteract = true;
+    });
+  })();
+  closeBt.addEventListener('click', closePanel);
+  maxBtn.addEventListener('click', () => panel.classList.toggle('maximized'));
+  rldBtn.addEventListener('click', () => { if (currentUrl) load(currentUrl); });
+  extBtn.addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
+  popBtn.addEventListener('click', () => {
+    if (!currentUrl) return;
+    window.open(currentUrl, 'mux_preview_popout', 'width=900,height=700,noopener');
+  });
+  goBtn.addEventListener('click', () => load(urlIn.value));
+  urlIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); load(urlIn.value); } });
+
+  (function initDrag(){
+    let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
+    header.addEventListener('pointerdown', (e) => {
+      if (isMobile()) return;
+      if (e.target.closest('input, button')) return;
+      if (panel.classList.contains('maximized')) return;
+      dragging = true;
+      header.setPointerCapture(e.pointerId);
+      const rect = panel.getBoundingClientRect();
+      origX = rect.left; origY = rect.top;
+      startX = e.clientX; startY = e.clientY;
+      document.body.classList.add('mux-preview-dragging');
+    });
+    header.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const nx = origX + (e.clientX - startX);
+      const ny = origY + (e.clientY - startY);
+      const maxX = window.innerWidth  - 80;
+      const maxY = window.innerHeight - 40;
+      panel.style.left = Math.min(maxX, Math.max(-panel.offsetWidth + 80, nx)) + 'px';
+      panel.style.top  = Math.min(maxY, Math.max(0, ny)) + 'px';
+    });
+    const end = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      try { header.releasePointerCapture(e.pointerId); } catch(_) {}
+      document.body.classList.remove('mux-preview-dragging');
+    };
+    header.addEventListener('pointerup', end);
+    header.addEventListener('pointercancel', end);
+  })();
+
+  (function initResize(){
+    let resizing = false, startX = 0, startY = 0, origW = 0, origH = 0;
+    resizer.addEventListener('pointerdown', (e) => {
+      if (isMobile()) return;
+      if (panel.classList.contains('maximized')) return;
+      resizing = true;
+      resizer.setPointerCapture(e.pointerId);
+      const rect = panel.getBoundingClientRect();
+      origW = rect.width; origH = rect.height;
+      startX = e.clientX; startY = e.clientY;
+      document.body.classList.add('mux-preview-resizing');
+      e.preventDefault();
+    });
+    resizer.addEventListener('pointermove', (e) => {
+      if (!resizing) return;
+      const w = Math.max(280, origW + (e.clientX - startX));
+      const h = Math.max(200, origH + (e.clientY - startY));
+      panel.style.width  = Math.min(window.innerWidth  - 20, w) + 'px';
+      panel.style.height = Math.min(window.innerHeight - 20, h) + 'px';
+    });
+    const end = (e) => {
+      if (!resizing) return;
+      resizing = false;
+      try { resizer.releasePointerCapture(e.pointerId); } catch(_) {}
+      document.body.classList.remove('mux-preview-resizing');
+    };
+    resizer.addEventListener('pointerup', end);
+    resizer.addEventListener('pointercancel', end);
+  })();
+
+  // Cursor-following hint pill on file-row hover (composable, no per-row DOM edits).
+  (function bindCursorHint(){
+    const isCoarse = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+    if (isCoarse) return; // mobile/touch: hover hint isn't useful
+
+    const pill = document.createElement('div');
+    pill.id = 'mux-cursor-hint';
+    pill.textContent = 'click: download · right-click: preview';
+    document.body.appendChild(pill);
+
+    let activeRow = null;
+    function position(e){
+      // Place pill to the right of the cursor, vertically centered on it.
+      const x = e.clientX + 14;
+      const y = e.clientY;
+      // Keep within viewport
+      const maxX = window.innerWidth - pill.offsetWidth - 6;
+      pill.style.left = Math.min(x, maxX) + 'px';
+      pill.style.top  = y + 'px';
+    }
+    document.addEventListener('pointermove', (e) => {
+      const row = e.target.closest && e.target.closest('.file-item-container');
+      if (row && row.dataset.isdir !== 'true') {
+        if (activeRow !== row) {
+          activeRow = row;
+          pill.classList.add('show');
+        }
+        position(e);
+      } else if (activeRow) {
+        activeRow = null;
+        pill.classList.remove('show');
+      }
+    });
+    document.addEventListener('pointerleave', () => { activeRow = null; pill.classList.remove('show'); }, true);
+    // Hide while dragging/scrolling
+    window.addEventListener('scroll', () => { activeRow = null; pill.classList.remove('show'); }, true);
+  })();
+
+  // Integration: right-click / long-press on a file row opens the preview.
+  (function bindFileList(){
+    let lpTimer = null, lpTarget = null;
+    function previewRow(row){
+      if (!row || row.dataset.isdir === 'true') return;
+      const path = row.dataset.path;
+      if (!path) return;
+      const tab = (typeof window.currentTab !== 'undefined') ? window.currentTab : 'sandbox';
+      const enc = String(path).split(/[\\/]/).map(encodeURIComponent).join('/');
+      window.MuxPreview.show('/api/download/' + tab + '/' + enc);
+    }
+    document.addEventListener('contextmenu', (e) => {
+      const row = e.target.closest('.file-item-container');
+      if (!row) return;
+      e.preventDefault();
+      previewRow(row);
+    });
+    document.addEventListener('pointerdown', (e) => {
+      const row = e.target.closest('.file-item-container');
+      if (!row) return;
+      lpTarget = row;
+      clearTimeout(lpTimer);
+      lpTimer = setTimeout(() => { previewRow(lpTarget); lpTarget = null; }, 550);
+    });
+    const cancel = () => { clearTimeout(lpTimer); lpTarget = null; };
+    document.addEventListener('pointerup', cancel);
+    document.addEventListener('pointercancel', cancel);
+    document.addEventListener('pointermove', (e) => {
+      if (!lpTarget) return;
+      if (Math.abs(e.movementX) + Math.abs(e.movementY) > 6) cancel();
+    });
+  })();
+
+  window.MuxPreview = {
+    show(src, opts) { openPanel(); load(src, opts); },
+    open: openPanel, close: closePanel, load: load
+  };
+})();
+</script>
+
+<!-- ─── Settings Panel (composable, additive) ─── -->
+<style>
+  .mux-settings-backdrop {
+    position: fixed; inset: 0; z-index: 10000;
+    background: rgba(0,0,0,0.55);
+    display: none; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .mux-settings-backdrop.open { display: flex; }
+  .mux-settings {
+    width: 480px; max-width: 100%; max-height: 90vh;
+    background: var(--bg, #0f0f12); color: var(--text, #e4e4e7);
+    border: 1px solid var(--border, #2a2a30);
+    border-radius: 10px;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .mux-settings-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; border-bottom: 1px solid var(--border, #2a2a30);
+    background: var(--bg-card, #1a1a1f);
+  }
+  .mux-settings-head h3 { margin: 0; font-size: 13px; font-weight: 600; flex: 1; letter-spacing: 0.02em; }
+  .mux-settings-body {
+    flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px 16px;
+    scrollbar-width: thin; scrollbar-color: var(--border, #2a2a30) transparent;
+  }
+  .mux-settings-body::-webkit-scrollbar { width: 8px; }
+  .mux-settings-body::-webkit-scrollbar-track { background: transparent; }
+  .mux-settings-body::-webkit-scrollbar-thumb {
+    background: var(--border, #2a2a30); border-radius: 4px;
+    border: 2px solid transparent; background-clip: content-box;
+  }
+  .mux-settings-body:hover::-webkit-scrollbar-thumb { background: var(--muted, #71717a); background-clip: content-box; }
+
+  .mux-settings details { border-top: 1px solid var(--border, #2a2a30); padding: 6px 0; }
+  .mux-settings details:first-of-type { border-top: 0; }
+  .mux-settings summary {
+    cursor: pointer; user-select: none;
+    padding: 8px 4px; font-size: 12px; font-weight: 600;
+    color: var(--text, #e4e4e7); list-style: none;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .mux-settings summary::-webkit-details-marker { display: none; }
+  .mux-settings summary::before { content: '\25b8'; color: var(--muted, #71717a); font-size: 10px; transition: transform 0.15s; }
+  .mux-settings details[open] > summary::before { transform: rotate(90deg); }
+
+  .mux-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; font-size: 12px; }
+  .mux-row .lbl { color: var(--text, #e4e4e7); }
+  .mux-row .desc { color: var(--muted, #71717a); font-size: 11px; display: block; margin-top: 2px; }
+
+  .mux-toggle {
+    position: relative; width: 32px; height: 18px; flex: 0 0 auto;
+    background: var(--border, #2a2a30); border-radius: 10px;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .mux-toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--text, #e4e4e7); transition: transform 0.15s;
+  }
+  .mux-toggle.on { background: var(--accent, #64b4dc); }
+  .mux-toggle.on::after { transform: translateX(14px); }
+
+  .mux-seg { display: flex; gap: 0; border: 1px solid var(--border, #2a2a30); border-radius: 6px; overflow: hidden; flex: 0 0 auto; }
+  .mux-seg button {
+    background: transparent; color: var(--muted, #71717a);
+    border: 0; padding: 4px 8px; font-size: 11px; cursor: pointer; font-family: inherit;
+  }
+  .mux-seg button.active { background: var(--accent, #64b4dc); color: #fff; }
+
+  .mux-settings-foot {
+    display: flex; gap: 6px; padding: 8px 12px;
+    border-top: 1px solid var(--border, #2a2a30);
+    background: var(--bg-card, #1a1a1f); justify-content: flex-end;
+  }
+  .mux-settings-btn {
+    background: transparent; border: 1px solid var(--border, #2a2a30);
+    color: var(--text, #e4e4e7);
+    padding: 6px 10px; font-size: 11px; border-radius: 5px;
+    cursor: pointer; font-family: inherit;
+  }
+  .mux-settings-btn:hover { background: rgba(255,255,255,0.05); }
+  .mux-settings-btn.danger { color: #f87171; border-color: rgba(248,113,113,0.4); }
+
+  body.hide-tokens .mux-token-badge { display: none !important; }
+  body.hide-saved-banner .mux-save-banner { display: none !important; }
+  body.hide-timestamps .msg-time { display: none !important; }
+  body.hide-agent-badge .agent-badge { display: none !important; }
+  body.hide-char-counter .char-counter { display: none !important; }
+  body.hide-mic #micBtn { display: none !important; }
+  body.hide-upload #uploadBtn { display: none !important; }
+  body.hide-preview-fab .mux-preview-fab { display: none !important; }
+  body.lock-preview-fab .mux-preview-fab { cursor: pointer !important; touch-action: auto !important; }
+  body.lock-preview-fab .mux-preview-fab .mux-fab-resize { display: none !important; }
+
+  body.path-compact .mux-save-banner [data-full] { display: none; }
+  body:not(.path-compact) .mux-save-banner [data-compact] { display: none; }
+  body.path-redacted .mux-save-banner .mux-path-user { display: none; }
+  body.path-redacted .mux-save-banner .mux-path-redacted { display: inline; }
+  body:not(.path-redacted) .mux-save-banner .mux-path-redacted { display: none; }
+
+  @media (max-width: 640px) {
+    .mux-settings-backdrop { padding: 0; align-items: stretch; }
+    .mux-settings { width: 100%; max-height: 100vh; border-radius: 0; }
+  }
+</style>
+
+<button class="icon-btn" id="muxSettingsBtn" title="Settings" aria-label="Settings" style="display:none">
+  <svg data-icon="settings" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  </svg>
+</button>
+
+<div class="mux-settings-backdrop" id="muxSettingsBackdrop" role="dialog" aria-label="Settings">
+  <div class="mux-settings">
+    <div class="mux-settings-head">
+      <h3>Settings</h3>
+      <button class="mux-settings-btn" id="muxSettingsClose" title="Close">Close</button>
+    </div>
+    <div class="mux-settings-body" id="muxSettingsBody"></div>
+    <div class="mux-settings-foot">
+      <button class="mux-settings-btn danger" id="muxSettingsReset">Reset to defaults</button>
+      <button class="mux-settings-btn" id="muxSettingsExport">Export</button>
+      <button class="mux-settings-btn" id="muxSettingsImport">Import</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const LS_KEY = 'muxSettings.v1';
+  const DEFAULTS = {
+    showTokens: true,
+    showSavedBanner: true,
+    showTimestamps: true,
+    showAgentBadge: true,
+    showCharCounter: true,
+    showMic: true,
+    showUpload: true,
+    showPreviewFab: true,
+    lockPreviewFab: false,
+    sendOnEnter: 'enter',
+    pathMode: 'full'
+  };
+  function loadState(){
+    try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
+    catch(_) { return Object.assign({}, DEFAULTS); }
+  }
+  function saveState(st){ try { localStorage.setItem(LS_KEY, JSON.stringify(st)); } catch(_) {} }
+  let state = loadState();
+
+  function apply(){
+    const b = document.body;
+    b.classList.toggle('hide-tokens',        !state.showTokens);
+    b.classList.toggle('hide-saved-banner',  !state.showSavedBanner);
+    b.classList.toggle('hide-timestamps',    !state.showTimestamps);
+    b.classList.toggle('hide-agent-badge',   !state.showAgentBadge);
+    b.classList.toggle('hide-char-counter',  !state.showCharCounter);
+    b.classList.toggle('hide-mic',           !state.showMic);
+    b.classList.toggle('hide-upload',        !state.showUpload);
+    b.classList.toggle('hide-preview-fab',   !state.showPreviewFab);
+    b.classList.toggle('lock-preview-fab',    state.lockPreviewFab);
+    b.classList.toggle('path-compact',        state.pathMode === 'compact');
+    b.classList.toggle('path-redacted',       state.pathMode === 'redacted');
+    b.dataset.sendOnEnter = state.sendOnEnter;
+  }
+
+  function renderUI(){
+    const body = document.getElementById('muxSettingsBody');
+    body.innerHTML = '';
+    function section(title, rows){
+      const det = document.createElement('details'); det.open = true;
+      const sum = document.createElement('summary'); sum.textContent = title;
+      det.appendChild(sum); rows.forEach(r => det.appendChild(r));
+      body.appendChild(det);
+    }
+    function toggleRow(key, label, desc){
+      const row = document.createElement('div'); row.className = 'mux-row';
+      const wrap = document.createElement('div'); wrap.style.flex = '1';
+      const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = label;
+      wrap.appendChild(lbl);
+      if (desc) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = desc; wrap.appendChild(d); }
+      row.appendChild(wrap);
+      const tog = document.createElement('div'); tog.className = 'mux-toggle' + (state[key] ? ' on' : '');
+      tog.setAttribute('role','switch'); tog.setAttribute('aria-checked', !!state[key]);
+      tog.addEventListener('click', () => {
+        state[key] = !state[key];
+        tog.classList.toggle('on', state[key]);
+        tog.setAttribute('aria-checked', !!state[key]);
+        saveState(state); apply();
+      });
+      row.appendChild(tog);
+      return row;
+    }
+    function segRow(key, label, options, desc){
+      const row = document.createElement('div'); row.className = 'mux-row';
+      const wrap = document.createElement('div'); wrap.style.flex = '1';
+      const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = label;
+      wrap.appendChild(lbl);
+      if (desc) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = desc; wrap.appendChild(d); }
+      row.appendChild(wrap);
+      const seg = document.createElement('div'); seg.className = 'mux-seg';
+      options.forEach(opt => {
+        const b = document.createElement('button');
+        b.textContent = opt.label; b.dataset.v = opt.value;
+        if (state[key] === opt.value) b.classList.add('active');
+        b.addEventListener('click', () => {
+          state[key] = opt.value;
+          seg.querySelectorAll('button').forEach(x => x.classList.toggle('active', x.dataset.v === opt.value));
+          saveState(state); apply();
+        });
+        seg.appendChild(b);
+      });
+      row.appendChild(seg);
+      return row;
+    }
+    function actionRow(label, btnLabel, onClick, desc){
+      const row = document.createElement('div'); row.className = 'mux-row';
+      const wrap = document.createElement('div'); wrap.style.flex = '1';
+      const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = label;
+      wrap.appendChild(lbl);
+      if (desc) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = desc; wrap.appendChild(d); }
+      row.appendChild(wrap);
+      const b = document.createElement('button'); b.className = 'mux-settings-btn';
+      b.textContent = btnLabel; b.addEventListener('click', onClick);
+      row.appendChild(b);
+      return row;
+    }
+
+    section('Display', [
+      toggleRow('showTokens',       'Show tokens-in-context badge'),
+      toggleRow('showSavedBanner',  'Show session-saved banner'),
+      toggleRow('showTimestamps',   'Show message timestamps'),
+      toggleRow('showAgentBadge',   'Show agent name badges'),
+      toggleRow('showCharCounter',  'Show character counter'),
+    ]);
+    section('Paths & Privacy', [
+      segRow('pathMode', 'Session path display',
+        [{label:'Full', value:'full'}, {label:'Compact', value:'compact'}, {label:'Redact user', value:'redacted'}],
+        'Applies to the session-saved banner.'),
+    ]);
+    section('Composer', [
+      toggleRow('showMic',    'Show mic button'),
+      toggleRow('showUpload', 'Show upload button'),
+      segRow('sendOnEnter', 'Send shortcut',
+        [{label:'Enter', value:'enter'}, {label:'Ctrl+Enter', value:'ctrl'}],
+        'Enter: send (Shift+Enter newline). Ctrl/Cmd+Enter: send only with modifier.'),
+    ]);
+    section('Preview FAB', [
+      toggleRow('showPreviewFab', 'Show preview FAB'),
+      toggleRow('lockPreviewFab', 'Lock FAB position & size', 'Disables drag and resize handle.'),
+      actionRow('Reset FAB position/size', 'Reset', () => {
+        try { localStorage.removeItem('muxPreviewFab.pos'); } catch(_) {}
+        const fab = document.getElementById('muxPreviewFab');
+        if (fab) { fab.classList.remove('placed'); fab.style.cssText = ''; }
+      }),
+    ]);
+  }
+
+  const backdrop = document.getElementById('muxSettingsBackdrop');
+  function openPanel(){ renderUI(); backdrop.classList.add('open'); }
+  function closePanel(){ backdrop.classList.remove('open'); }
+  backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closePanel(); });
+  document.getElementById('muxSettingsClose').addEventListener('click', closePanel);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && backdrop.classList.contains('open')) closePanel(); });
+
+  document.getElementById('muxSettingsReset').addEventListener('click', () => {
+    state = Object.assign({}, DEFAULTS); saveState(state); apply(); renderUI();
+  });
+  document.getElementById('muxSettingsExport').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'mux-settings.json';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  });
+  document.getElementById('muxSettingsImport').addEventListener('click', () => {
+    const f = document.createElement('input'); f.type = 'file'; f.accept = 'application/json,.json';
+    f.addEventListener('change', () => {
+      const file = f.files && f.files[0]; if (!file) return;
+      const r = new FileReader();
+      r.onload = () => {
+        try {
+          const data = JSON.parse(r.result);
+          state = Object.assign({}, DEFAULTS, data); saveState(state); apply(); renderUI();
+        } catch(_) { alert('Invalid settings file'); }
+      };
+      r.readAsText(file);
+    });
+    f.click();
+  });
+
+  function mountGear(){
+    const host = document.querySelector('.header-actions');
+    const btn = document.getElementById('muxSettingsBtn');
+    if (!host || !btn) return false;
+    host.appendChild(btn);
+    btn.style.display = '';
+    btn.addEventListener('click', openPanel);
+    return true;
+  }
+  if (!mountGear()) {
+    const obs = new MutationObserver(() => { if (mountGear()) obs.disconnect(); });
+    obs.observe(document.body, { childList: true, subtree: true });
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function decorateMessages(root){
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll('.event, [class*="event"]').forEach(el => {
+      const txt = (el.textContent || '').trim();
+      if (!el.classList.contains('mux-token-badge') && /tokens?\s+in\s+context/i.test(txt) && txt.length < 80) {
+        el.classList.add('mux-token-badge');
+      }
+      if (!el.classList.contains('mux-save-banner') && /\bSaved to\b/i.test(txt) && txt.length < 500) {
+        el.classList.add('mux-save-banner');
+        enrichSaveBanner(el);
+      }
+    });
+  }
+  function enrichSaveBanner(el){
+    const m = el.textContent.match(/Saved to\s+([^\s][^\n]*)$/);
+    if (!m) return;
+    const fullPath = m[1].trim();
+    const winUserMatch = fullPath.match(/^([A-Za-z]:\\Users\\)([^\\]+)(\\.*)$/);
+    const nixUserMatch = fullPath.match(/^(\/home\/)([^/]+)(\/.*)$/);
+    const dots = '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+    const redacted = winUserMatch
+      ? winUserMatch[1] + dots + winUserMatch[3]
+      : (nixUserMatch ? nixUserMatch[1] + dots + nixUserMatch[3] : fullPath);
+    const compact = fullPath.split(/[\\/]/).slice(-3).join('/');
+    const before = el.innerHTML.replace(/Saved to\s+[^<]+$/, 'Saved to ');
+    el.innerHTML = before +
+      '<span class="mux-path mux-path-user" data-full>' + escapeHtml(fullPath) + '</span>' +
+      '<span class="mux-path mux-path-redacted">' + escapeHtml(redacted) + '</span>' +
+      '<span class="mux-path" data-compact>' + escapeHtml(compact) + '</span>' +
+      '';
+    el.dataset.fullPath = fullPath;
+  }
+
+  const outputRoot = document.querySelector('.output') || document.body;
+  decorateMessages(outputRoot);
+  const msgObs = new MutationObserver(muts => {
+    for (const m of muts) {
+      m.addedNodes.forEach(n => {
+        if (n.nodeType !== 1) return;
+        decorateMessages(n.parentNode || outputRoot);
+      });
+    }
+  });
+  msgObs.observe(outputRoot, { childList: true, subtree: true });
+
+  apply();
+
+  window.MuxSettings = {
+    open: openPanel,
+    close: closePanel,
+    get: () => Object.assign({}, state),
+    set: (patch) => { state = Object.assign({}, state, patch); saveState(state); apply(); }
+  };
+})();
+</script>
+
+<!-- ─── Icon registry + per-preset family swap ─── -->
+<script>
+(function(){
+  // Each pack: { viewBox, paths: { name: innerSVG } }
+  // Default behavior: if a name isn't in a non-default pack, fall back to keeping the original Lucide SVG inner HTML.
+  // This means partial packs are safe — anything missing stays Lucide.
+
+  // Phosphor Regular (1.5px stroke, viewBox 256). Hand-curated paths for our 24 names.
+  const phosphor = {
+    viewBox: '0 0 256 256',
+    attrs: { fill: 'none', stroke: 'currentColor', 'stroke-width': '16', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' },
+    paths: {
+      'mic':          '<rect x="96" y="32" width="64" height="120" rx="32"/><path d="M200 128a72 72 0 0 1-144 0"/><line x1="128" y1="200" x2="128" y2="232"/>',
+      'paperclip':    '<path d="M209.7 122.3 130 202a44 44 0 0 1-62.2-62.2l92-91.9a28 28 0 1 1 39.6 39.6l-89.2 89.2a12 12 0 0 1-17-17l81.8-81.8"/>',
+      'send':         '<line x1="128" y1="40" x2="128" y2="216"/><polyline points="56 112 128 40 200 112"/>',
+      'check':        '<polyline points="216 72 104 184 48 128"/>',
+      'x':            '<line x1="200" y1="56" x2="56" y2="200"/><line x1="200" y1="200" x2="56" y2="56"/>',
+      'copy':         '<rect x="40" y="40" width="144" height="144" rx="8"/><polyline points="72 184 72 216 216 216 216 72 184 72"/>',
+      'download':     '<line x1="128" y1="144" x2="128" y2="32"/><polyline points="216 144 216 208 40 208 40 144"/><polyline points="168 104 128 144 88 104"/>',
+      'refresh':      '<polyline points="176 40 224 40 224 88"/><path d="M191.9 96A88 88 0 1 1 128 40"/>',
+      'settings':     '<circle cx="128" cy="128" r="40"/><path d="m130.05 206.11h-4c-12 0-22-9-22-21v-6.7c0-5.4-3.5-10.1-8.3-12.7-1.1-.6-2.2-1.2-3.3-1.9-4.7-2.9-10.5-3.7-15.4-1.1l-.1.1-5.7 3.3c-10.4 6-23.7 2.5-29.7-7.8l-2-3.5c-6-10.4-2.5-23.6 7.8-29.6l5.5-3.3c4.7-2.7 7.1-8.1 6.8-13.5-.1-1.4-.1-2.7 0-4.1.3-5.5-2.1-10.8-6.9-13.5l-5.4-3.1c-10.3-6-13.8-19.3-7.8-29.6l2-3.5c6-10.3 19.3-13.8 29.6-7.8l5.6 3.2c4.7 2.7 10.5 2 15.2-.8 1.1-.7 2.3-1.3 3.4-1.9 4.9-2.5 8.4-7.2 8.4-12.7v-6.7c0-12 10-22 22-22h4c12 0 22 10 22 22v6.7c0 5.4 3.4 10.1 8.3 12.7 1.2.6 2.3 1.2 3.4 1.9 4.7 2.9 10.5 3.6 15.2.8l5.4-3.1c10.3-6 23.6-2.5 29.6 7.8l2 3.4c6 10.4 2.5 23.7-7.8 29.7l-5.5 3.1c-4.7 2.7-7.1 8.1-6.8 13.5.1 1.4.1 2.7 0 4.1-.3 5.5 2.1 10.8 6.9 13.5l5.4 3.1c10.3 6 13.8 19.3 7.8 29.6l-2 3.5c-6 10.3-19.3 13.8-29.6 7.8l-5.6-3.2c-4.7-2.7-10.5-1.9-15.2.8-1.1.7-2.3 1.3-3.4 1.9-4.9 2.5-8.4 7.2-8.4 12.7v6.7c-.1 12-10.1 22-22.1 22z"/>',
+      'palette':      '<circle cx="200" cy="156" r="12"/><circle cx="156" cy="76" r="12"/><circle cx="84" cy="60" r="12"/><circle cx="56" cy="124" r="12"/><path d="M200 128a72 72 0 1 0-72 72 24 24 0 0 0 24-24 16 16 0 0 1 16-16h16a16 16 0 0 0 16-16Z"/>',
+      'sidebar':      '<rect x="32" y="48" width="192" height="160" rx="8"/><line x1="96" y1="48" x2="96" y2="208"/>',
+      'monitor':      '<rect x="32" y="56" width="192" height="144" rx="8"/><line x1="96" y1="232" x2="160" y2="232"/><line x1="128" y1="200" x2="128" y2="232"/>',
+      'chevron-right':'<polyline points="96 48 176 128 96 208"/>',
+      'external-link':'<polyline points="216 104 216 40 152 40"/><line x1="144" y1="112" x2="216" y2="40"/><path d="M192 144v64a8 8 0 0 1-8 8H48a8 8 0 0 1-8-8V72a8 8 0 0 1 8-8h64"/>',
+      'popout':       '<rect x="40" y="40" width="120" height="120" rx="8"/><polyline points="184 96 216 96 216 216 96 216 96 184"/>',
+      'square':       '<rect x="40" y="40" width="176" height="176" rx="8"/>',
+      'corner-resize':'<polyline points="216 152 216 216 152 216"/><line x1="216" y1="216" x2="152" y2="152"/>',
+      'grip':         '<circle cx="92" cy="60" r="10"/><circle cx="92" cy="128" r="10"/><circle cx="92" cy="196" r="10"/><circle cx="164" cy="60" r="10"/><circle cx="164" cy="128" r="10"/><circle cx="164" cy="196" r="10"/>',
+      'alert':        '<path d="M114.3 38.32 18.66 200a16 16 0 0 0 13.7 24h191.3a16 16 0 0 0 13.71-24L141.7 38.32a16 16 0 0 0-27.4 0Z"/><line x1="128" y1="104" x2="128" y2="144"/><circle cx="128" cy="180" r="10" fill="currentColor" stroke="none"/>',
+      'folder':       '<path d="M40 200V72a8 8 0 0 1 8-8h64l24 24h80a8 8 0 0 1 8 8v104a8 8 0 0 1-8 8H48a8 8 0 0 1-8-8Z"/>',
+      'zap':          '<polygon points="160 16 144 96 200 120 96 240 112 160 56 136 160 16"/>',
+      'arrow-up-right':'<line x1="64" y1="192" x2="192" y2="64"/><polyline points="88 64 192 64 192 168"/>',
+      'hourglass':    '<line x1="56" y1="32" x2="200" y2="32"/><line x1="56" y1="224" x2="200" y2="224"/><path d="M64 32v40c0 32 64 32 64 56s-64 24-64 56v40"/><path d="M192 32v40c0 32-64 32-64 56s64 24 64 56v40"/>',
+      'file':         '<path d="M48 208V48a8 8 0 0 1 8-8h96l56 56v112a8 8 0 0 1-8 8H56a8 8 0 0 1-8-8Z"/><polyline points="152 40 152 96 208 96"/>',
+      'circle':       '<circle cx="128" cy="128" r="96"/>'
+    }
+  };
+
+  // Preset → pack map. (Phosphor Bold/Tabler/Heroicons Solid can be added later; for now we ship phosphor.)
+  const PRESET_PACK = {
+    zinc: null, ocean: null, light: null, latte: null, // null = leave original Lucide SVG inner HTML alone
+    mocha: 'phosphor', macchiato: 'phosphor', frappe: 'phosphor',
+    tokyonight: 'phosphor',   // (Phosphor Bold pack will replace this later)
+    nord: 'phosphor',         // (Tabler will replace this later)
+    matrix: 'phosphor'        // (Heroicons Solid will replace this later)
+  };
+
+  const PACKS = { phosphor };
+
+  // Cache the original Lucide HTML on first run so we can restore on theme switch.
+  function cacheOriginals(){
+    document.querySelectorAll('svg[data-icon]').forEach(svg => {
+      if (svg.dataset.iconOriginal === undefined) {
+        svg.dataset.iconOriginal = svg.innerHTML;
+        svg.dataset.iconOrigVb   = svg.getAttribute('viewBox') || '0 0 24 24';
+      }
+    });
+  }
+
+  function applyPack(packName){
+    cacheOriginals();
+    const pack = packName ? PACKS[packName] : null;
+    document.querySelectorAll('svg[data-icon]').forEach(svg => {
+      const name = svg.getAttribute('data-icon');
+      if (pack && pack.paths[name]) {
+        svg.setAttribute('viewBox', pack.viewBox);
+        if (pack.attrs) {
+          for (const k in pack.attrs) svg.setAttribute(k, pack.attrs[k]);
+        }
+        svg.innerHTML = pack.paths[name];
+      } else {
+        // Restore original
+        svg.setAttribute('viewBox', svg.dataset.iconOrigVb);
+        svg.innerHTML = svg.dataset.iconOriginal;
+      }
+    });
+  }
+
+  function currentPreset(){
+    return document.body.dataset.themePreset || 'zinc';
+  }
+
+  function syncToTheme(){
+    applyPack(PRESET_PACK[currentPreset()] || null);
+  }
+
+  // Run on boot + whenever themePreset changes
+  syncToTheme();
+  // Observe body data-attribute mutations
+  const obs = new MutationObserver(muts => {
+    for (const m of muts) {
+      if (m.type === 'attributes' && m.attributeName === 'data-theme-preset') {
+        syncToTheme(); break;
+      }
+    }
+  });
+  obs.observe(document.body, { attributes: true, attributeFilter: ['data-theme-preset'] });
+
+  // Watch for newly-added SVGs (e.g. injected by other modules) — re-apply pack to those.
+  const dom = new MutationObserver(muts => {
+    let dirty = false;
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        if (n.matches && n.matches('svg[data-icon]')) { dirty = true; break; }
+        if (n.querySelector && n.querySelector('svg[data-icon]')) { dirty = true; break; }
+      }
+      if (dirty) break;
+    }
+    if (dirty) syncToTheme();
+  });
+  dom.observe(document.body, { childList: true, subtree: true });
+
+  // Public API for future expansion
+  window.MuxIcons = {
+    setPack: applyPack,
+    registerPack(name, def){ PACKS[name] = def; if (currentPreset() && PRESET_PACK[currentPreset()] === name) syncToTheme(); },
+    mapPresetToPack(preset, pack){ PRESET_PACK[preset] = pack; if (currentPreset() === preset) syncToTheme(); }
+  };
+})();
+</script>
+
+
+
+
+
 </body>
 </html>
 <!-- test comment for live diffs -->

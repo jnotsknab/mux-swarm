@@ -537,7 +537,7 @@ public static class MuxConsole
         return BeginThinking(agentName);
     }
 
-    public static void WriteStream(string text)
+    public static void WriteStream(string text, bool muted = false)
     {
         if (string.IsNullOrEmpty(text)) return;
 
@@ -545,6 +545,10 @@ public static class MuxConsole
         {
             if (StdioMode)
                 EmitJson("stream", D(("text", text)));
+            else if (muted)
+                AnsiConsole.Markup(muted
+                    ? $"[grey italic]{Esc(text)}[/]"
+                    : Esc(text));
             else
                 AnsiConsole.Markup(Esc(text));
         }, clearIndicator: false);
