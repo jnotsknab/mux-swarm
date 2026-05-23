@@ -109,7 +109,19 @@ public static class CliCmdUtils
             : "Standard single-line input restored.");
     }
 
-
+    public static bool HandleToggleSingleModeSubAgents(bool current)
+    {
+        current = !current;
+        
+        if (current)
+        {
+            MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has been enabled.");
+            return current;
+        }
+        
+        MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has disabled.");
+        return current;
+    }
     /// <summary>
     /// Updates the single agent configuration by allowing the user to select from available agent definitions.
     /// </summary>

@@ -532,7 +532,7 @@ public static class Common
         if (v != null && bool.TryParse(v, out var b)) { i++; return b; }
         return null;
     }
-
+    
     public static void PruneOldSessions(string sessionDir, uint retention)
     {
         var dirs = Directory.GetDirectories(sessionDir)

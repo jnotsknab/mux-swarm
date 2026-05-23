@@ -23,14 +23,20 @@ public static class MultiAgentOrchestrator
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
     private static string _orchestratorModelId;
-
+    
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
 
+    public static Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)> Specialists = new();
+    
+    public static IChatClient? CompactionClient;
+    public static SwarmConfig? SwarmConfig;
+    private static List<Common.AgentDefinition> AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
+    
     /// <summary>
     /// Captures a compacted delegation result with structured metadata.
     /// </summary>
-    private record DelegationResult(
+    public record DelegationResult(
         string AgentName,
         string CompactedResult,
         string? Status,
@@ -118,15 +124,14 @@ public static class MultiAgentOrchestrator
         uint sessionRetention = 10,
         CancellationToken cancellationToken = default)
     {
-        var agentDefs = Common.GetAgentDefinitions(SwarmConfPath);
+        AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
 
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 
-        SwarmConfig? swarmConfig = null;
         try
         {
-            swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath));
+            SwarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(SwarmConfPath));
         }
         catch {/*Defaults*/ }
 
@@ -138,7 +143,7 @@ public static class MultiAgentOrchestrator
 
         // SkillLoader.LoadSkills();
 
-        var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
+        Specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
 
         var taskCompleteTool = AIFunctionFactory.Create(
             method: (
@@ -183,15 +188,14 @@ public static class MultiAgentOrchestrator
         sessionSpan?.SetTag("max_iterations", maxOrchestratorIterations);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
 
-        IChatClient? compactionClient = null;
         try
         {
             var compactionModel = agentModels.GetValueOrDefault("Compaction", agentModels["Orchestrator"]);
-            compactionClient = chatClientFactory(compactionModel);
+            CompactionClient = chatClientFactory(compactionModel);
         }
         catch { /* falls back to extractive only */ }
 
-        ChatOptions? compactionChatOptions = swarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
+        ChatOptions? compactionChatOptions = SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
 
         async Task<string> ExecuteDelegation(
             string agentName,
@@ -202,11 +206,11 @@ public static class MultiAgentOrchestrator
             if (restrictToSpecialists && agentName == "Orchestrator")
                 return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
 
-            if (!specialists.TryGetValue(agentName, out var specialist))
+            if (!Specialists.TryGetValue(agentName, out var specialist))
             {
                 var available = restrictToSpecialists
-                    ? string.Join(", ", specialists.Keys.Where(k => k != "Orchestrator"))
-                    : string.Join(", ", specialists.Keys);
+                    ? string.Join(", ", Specialists.Keys.Where(k => k != "Orchestrator"))
+                    : string.Join(", ", Specialists.Keys);
                 return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
             }
 
@@ -232,7 +236,7 @@ public static class MultiAgentOrchestrator
             await MuxConsole.WithSpinnerAsync($"Preparing context for {agentName}", async () =>
             {
                 enrichedTask = await EnrichTaskWithCrossAgentContext(
-                    task, agentName, delegationResults, compactionClient, compactionChatOptions);
+                    task, agentName, delegationResults, CompactionClient, compactionChatOptions);
 
                 if (attemptNumber > 1 && retryState != null)
                     enrichedTask = InjectRetryHint(enrichedTask, attemptNumber, retryState.LastFailureReason);
@@ -266,7 +270,7 @@ public static class MultiAgentOrchestrator
                     completionSummary: summary,
                     completionArtifacts: artifacts,
                     charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: compactionClient,
+                    chatClient: CompactionClient,
                     chatOptions: compactionChatOptions);
             });
 
@@ -325,13 +329,13 @@ public static class MultiAgentOrchestrator
         //Build specialist agents
         await MuxConsole.WithSpinnerAsync("Initializing specialist agents", async () =>
         {
-            foreach (var def in agentDefs)
+            foreach (var def in AgentDefs)
             {
                 string prompt = await Common.LoadPromptAsync(def.SystemPromptPath);
 
                 if (def.CanDelegate)
                 {
-                    var roster = agentDefs
+                    var roster = AgentDefs
                         .Where(a => a.Name != def.Name && a.Name != "Orchestrator")
                         .Select(a => $"- {a.Name}: {a.Description}")
                         .ToList();
@@ -341,15 +345,15 @@ public static class MultiAgentOrchestrator
 
                     prompt += """
 
-                              ## Memory Policy (MANDATORY)
+                                  ## Memory Policy (MANDATORY)
 
-                              **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+                                  **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
 
-                              **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Better safe than sorry when coming to your memory. Pass it:
-                              - Task name and outcome (success/failure)
-                              - Key findings or decisions made
-                              - Artifact paths written to NAS (if any)
-                              - A summary of what you did and which agents helped
+                                  **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Better safe than sorry when coming to your memory. Pass it:
+                                  - Task name and outcome (success/failure)
+                                  - Key findings or decisions made
+                                  - Artifact paths written to NAS (if any)
+                                  - A summary of what you did and which agents helped
 
                               """;
                 }
@@ -378,14 +382,12 @@ public static class MultiAgentOrchestrator
                         return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
                     },
                     name: "list_skills",
-                    description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill."
-                );
+                    description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill.");
 
                 var readSkillTool = AIFunctionFactory.Create(
                     method: (
                         [System.ComponentModel.Description("Name of the skill to load. Call list_skills first if you are unsure of available skill names.")]
-                        string skillName
-                    ) =>
+                        string skillName) =>
                     {
                         var content = SkillLoader.ReadSkill(skillName);
                         if (content != null)
@@ -397,9 +399,31 @@ public static class MultiAgentOrchestrator
                     },
                     name: "read_skill",
                     description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
-                                 "Read the relevant skill BEFORE starting a task to follow its best practices."
-                );
+                                 "Read the relevant skill BEFORE starting a task to follow its best practices.");
+                
+                var taskCompleteTool = AIFunctionFactory.Create(
+                    method: (
+                        [Description("Status of the task: 'success', 'failure', or 'partial'")] string status,
+                        [Description("Summary of what was accomplished or why it failed")] string summary,
+                        [Description("Optional comma-separated list of file paths or identifiers produced")] string? artifacts
+                    ) =>
+                    {
+                        if (status == "success")
+                            MuxConsole.WriteTaskComplete("Task", summary);
+                        else
+                            MuxConsole.WriteWarning($"Task {status}: {summary}");
 
+                        if (!string.IsNullOrEmpty(artifacts))
+                            MuxConsole.WriteMuted($"  Artifacts: {artifacts}");
+
+                        return "Task marked as complete.";
+                    },
+                    name: "signal_task_complete",
+                    description: "Call this when the current goal or sub-task is completed or has failed. " +
+                                 "Provide a status ('success', 'failure', or 'partial'), a summary of what was accomplished, " +
+                                 "and optionally any file paths or identifiers produced."
+                );
+                
                 var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
                 if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
                 if (def.CanDelegate) agentTools.Add(subAgentDelegateTool);
@@ -411,7 +435,7 @@ public static class MultiAgentOrchestrator
                     Tools = agentTools
                 };
 
-                var agentConfigOpts = swarmConfig?.Agents?
+                var agentConfigOpts = SwarmConfig?.Agents?
                     .FirstOrDefault(a => a.Name.Equals(def.Name, StringComparison.OrdinalIgnoreCase))
                     ?.ModelOpts;
 
@@ -435,7 +459,9 @@ public static class MultiAgentOrchestrator
                 });
 
                 var session = await agent.CreateSessionAsync();
-                specialists[def.Name] = (agent, session, def);
+                    
+                //agents initialized
+                Specialists[def.Name] = (agent, session, def);
             }
         });
 
@@ -445,7 +471,7 @@ public static class MultiAgentOrchestrator
         
         orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
         
-        string agentRoster = string.Join("\n", agentDefs.Select(d =>
+        string agentRoster = string.Join("\n", AgentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
         orchestratorPrompt += $"\n\nAvailable agents:\n{agentRoster}";
         
@@ -511,7 +537,7 @@ public static class MultiAgentOrchestrator
             Tools = orchestratorTools
         };
 
-        if (swarmConfig?.Orchestrator?.ModelOpts?.ToChatOptions() is { } orchModelOpts)
+        if (SwarmConfig?.Orchestrator?.ModelOpts?.ToChatOptions() is { } orchModelOpts)
         {
             orchChatOptions.Temperature = orchModelOpts.Temperature;
             orchChatOptions.TopP = orchModelOpts.TopP;
@@ -539,7 +565,7 @@ public static class MultiAgentOrchestrator
             async () =>
             {
                 if (!_sessionDirty || string.IsNullOrEmpty(currentIterationSessionDir)) return;
-                await Common.PersistSessionsAsync(orchestratorAgent, currentOrchestratorSession, specialists, currentIterationSessionDir);
+                await Common.PersistSessionsAsync(orchestratorAgent, currentOrchestratorSession, Specialists, currentIterationSessionDir);
             },
             intervalSeconds: (int)persistIntervalSeconds
         );
@@ -599,10 +625,10 @@ public static class MultiAgentOrchestrator
                 orchestratorSession = await orchestratorAgent.CreateSessionAsync();
                 currentOrchestratorSession = orchestratorSession;
 
-                foreach (var key in specialists.Keys)
+                foreach (var key in Specialists.Keys)
                 {
-                    var (agent, _, def) = specialists[key];
-                    specialists[key] = (agent, await agent.CreateSessionAsync(), def);
+                    var (agent, _, def) = Specialists[key];
+                    Specialists[key] = (agent, await agent.CreateSessionAsync(), def);
                 }
             });
 
@@ -637,9 +663,9 @@ public static class MultiAgentOrchestrator
                     goal: goal,
                     orchestratorAgent: orchestratorAgent,
                     orchestratorSession: orchestratorSession,
-                    specialists: specialists,
+                    specialists: Specialists,
                     delegationResults: delegationResults,
-                    compactionClient: compactionClient,
+                    compactionClient: CompactionClient,
                     maxOrchestratorIterations: continuous ? int.MaxValue : maxOrchestratorIterations,
                     maxSubAgentIterations: maxSubAgentIterations,
                     cancellationToken: goalCts.Token,
@@ -667,7 +693,7 @@ public static class MultiAgentOrchestrator
                     wasInterrupted ? "Persisting partial progress" : "Persisting sessions",
                     async () =>
                     {
-                        await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, specialists, currentIterationSessionDir);
+                        await Common.PersistSessionsAsync(orchestratorAgent, orchestratorSession, Specialists, currentIterationSessionDir);
                     });
 
                 MuxConsole.WriteMuted($"{_swarmTokens:N0} tokens used this goal");
@@ -745,6 +771,140 @@ public static class MultiAgentOrchestrator
     }
 
 
+    public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools)
+    {
+        foreach (var def in AgentDefs)
+        {
+            string prompt = await Common.LoadPromptAsync(def.SystemPromptPath);
+
+            if (def.CanDelegate)
+            {
+                var roster = AgentDefs
+                    .Where(a => a.Name != def.Name && a.Name != "Orchestrator")
+                    .Select(a => $"- {a.Name}: {a.Description}")
+                    .ToList();
+
+                prompt += "\n\n(NOTICE) You have sub-agent delegation enabled via the delegate_to_agent tool. Available agents you can delegate to:\n"
+                          + string.Join("\n", roster);
+
+                prompt += """
+
+                              ## Memory Policy (MANDATORY)
+
+                              **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+
+                              **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Better safe than sorry when coming to your memory. Pass it:
+                              - Task name and outcome (success/failure)
+                              - Key findings or decisions made
+                              - Artifact paths written to NAS (if any)
+                              - A summary of what you did and which agents helped
+
+                          """;
+            }
+
+            IList<AITool> filteredTools = def.ToolFilter(mcpTools);
+
+            if (filteredTools.Count == 0)
+                MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
+
+            string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
+            IChatClient client = chatClientFactory(modelId);
+
+            VisionConfig? swarmVision = App.SwarmConfig?.VisionAgent;
+            var visionModelId = swarmVision?.Model;
+
+            var analyzeImageTool = !string.IsNullOrEmpty(visionModelId)
+                ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, visionModelId)
+                : null;
+
+            var listSkillsTool = AIFunctionFactory.Create(
+                method: () =>
+                {
+                    var skills = SkillLoader.GetSkillMetadata(def.Name);
+                    return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
+                },
+                name: "list_skills",
+                description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill.");
+
+            var readSkillTool = AIFunctionFactory.Create(
+                method: (
+                    [System.ComponentModel.Description("Name of the skill to load. Call list_skills first if you are unsure of available skill names.")]
+                    string skillName) =>
+                {
+                    var content = SkillLoader.ReadSkill(skillName);
+                    if (content != null)
+                        return content;
+
+                    var available = SkillLoader.GetSkillMetadata(def.Name);
+                    var listing = string.Join("\n", available.Select(s => $"- {s.Name}: {s.Description}"));
+                    return $"Skill '{skillName}' not found. Here are the currently available skills — call read_skill again with a valid name:\n{listing}";
+                },
+                name: "read_skill",
+                description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
+                             "Read the relevant skill BEFORE starting a task to follow its best practices.");
+            
+            var taskCompleteTool = AIFunctionFactory.Create(
+                method: (
+                    [Description("Status of the task: 'success', 'failure', or 'partial'")] string status,
+                    [Description("Summary of what was accomplished or why it failed")] string summary,
+                    [Description("Optional comma-separated list of file paths or identifiers produced")] string? artifacts
+                ) =>
+                {
+                    if (status == "success")
+                        MuxConsole.WriteTaskComplete("Task", summary);
+                    else
+                        MuxConsole.WriteWarning($"Task {status}: {summary}");
+
+                    if (!string.IsNullOrEmpty(artifacts))
+                        MuxConsole.WriteMuted($"  Artifacts: {artifacts}");
+
+                    return "Task marked as complete.";
+                },
+                name: "signal_task_complete",
+                description: "Call this when the current goal or sub-task is completed or has failed. " +
+                             "Provide a status ('success', 'failure', or 'partial'), a summary of what was accomplished, " +
+                             "and optionally any file paths or identifiers produced."
+            );
+            
+            var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
+            if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
+            agentTools.AddRange(filteredTools);
+
+            var agentChatOptions = new ChatOptions
+            {
+                Instructions = prompt,
+                Tools = agentTools
+            };
+
+            var agentConfigOpts = SwarmConfig?.Agents?
+                .FirstOrDefault(a => a.Name.Equals(def.Name, StringComparison.OrdinalIgnoreCase))
+                ?.ModelOpts;
+
+            if (agentConfigOpts?.ToChatOptions() is { } modelChatOpts)
+            {
+                agentChatOptions.Temperature = modelChatOpts.Temperature;
+                agentChatOptions.TopP = modelChatOpts.TopP;
+                agentChatOptions.TopK = modelChatOpts.TopK;
+                agentChatOptions.MaxOutputTokens = modelChatOpts.MaxOutputTokens;
+                agentChatOptions.FrequencyPenalty = modelChatOpts.FrequencyPenalty;
+                agentChatOptions.PresencePenalty = modelChatOpts.PresencePenalty;
+                agentChatOptions.Seed = modelChatOpts.Seed;
+                agentChatOptions.Reasoning = modelChatOpts.Reasoning;
+                agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
+            }
+
+            var agent = client.AsAIAgent(new ChatClientAgentOptions
+            {
+                Name = def.Name,
+                ChatOptions = agentChatOptions
+            });
+
+            var session = await agent.CreateSessionAsync();
+                
+            //agents initialized
+            Specialists[def.Name] = (agent, session, def);
+        }
+    }
     private static string InjectRetryHint(string task, int attemptNumber, string? lastFailureReason)
     {
         var hint = new StringBuilder();
@@ -1173,7 +1333,7 @@ public static class MultiAgentOrchestrator
 
     // SubAgent Execution Logic
 
-    private static async Task<(string RawResult, string? Status, string? Summary, string? Artifacts)> RunSubAgentAsync(
+    public static async Task<(string RawResult, string? Status, string? Summary, string? Artifacts)> RunSubAgentAsync(
         (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def) specialist,
         string subTask,
         int maxIterations,

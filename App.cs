@@ -13,13 +13,13 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.9.6";
+    public static readonly string Version = "0.10.0";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
     
     private static bool _showToolCallResults;
-    private static IList<McpClientTool>? _mcpTools;
+    public static IList<McpClientTool>? McpTools;
     private static string? _cliModelOverride;
     private static bool _watchDogEnabled;
     private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
@@ -37,6 +37,9 @@ public class App
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
     protected static bool ShouldPlan = false;
+    
+    //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
+    protected static bool AllowSubagents = false;
     
     private static CancellationTokenSource GetOrResetCts()
     {
@@ -154,7 +157,7 @@ public class App
         startupSpan?.Dispose();
     }
 
-    public static IList<McpClientTool>? GetMcpTools() => _mcpTools;
+    public static IList<McpClientTool>? GetMcpTools() => McpTools;
     
     public async Task<int> Run(string[] args)
     {
@@ -232,7 +235,7 @@ public class App
 
             DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
-                mcpTools: _mcpTools!.Cast<AITool>().ToList(),
+                mcpTools: McpTools!.Cast<AITool>().ToList(),
                 agentModels: Common.LoadAgentModels());
 
             MuxConsole.WriteInfo("[Daemon] Running in background.");
@@ -247,7 +250,7 @@ public class App
             await CliCmdUtils.HandleOnboard(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 singleAgentModel: onboardModel,
-                mcpTools: _mcpTools,
+                mcpTools: McpTools,
                 ct: onboardCts.Token
             );
         }
@@ -321,7 +324,7 @@ public class App
 
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
-                        mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                        mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
                         shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
@@ -337,7 +340,7 @@ public class App
 
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
-                        mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                        mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                         continuous: ContinuousExec,
                         shouldPlan: ShouldPlan, 
                         minDelaySeconds: (uint)MinContDelay!,
@@ -355,16 +358,19 @@ public class App
                         client: CreateChatClient(singleAgentModel),
                         agentCts.Token,
                         maxIterations: 3,
-                        mcpTools: _mcpTools,
+                        mcpTools: McpTools,
                         continuous: ContinuousExec,
                         autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                         minDelaySeconds: (uint)MinContDelay!,
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan, 
-                        chatClientFactory: modelId => CreateChatClient(modelId)
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        allowSubAgents: AllowSubagents
                     );
                     break;
-                
+                case "/subagents":
+                    AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
+                    break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
                     var onboardModel = LoadSingleAgentModel();
@@ -372,7 +378,7 @@ public class App
                     await CliCmdUtils.HandleOnboard(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         singleAgentModel: onboardModel,
-                        mcpTools: _mcpTools,
+                        mcpTools: McpTools,
                         ct: onboardCts.Token
                     );
                     break;
@@ -385,14 +391,15 @@ public class App
                         client: CreateChatClient(statelessAgent),
                         statelessAgentCts.Token,
                         maxIterations: 3,
-                        mcpTools: _mcpTools,
+                        mcpTools: McpTools,
                         continuous: ContinuousExec,
                         minDelaySeconds: (uint)MinContDelay!,
                         autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
-                        persistSession: false
+                        persistSession: false,
+                        allowSubAgents: AllowSubagents
                     );
                     break;
                 
@@ -420,7 +427,7 @@ public class App
                             client: CreateChatClient(resumeModel),
                             resumeCts.Token,
                             maxIterations: 3,
-                            mcpTools: _mcpTools,
+                            mcpTools: McpTools,
                             showToolResultCalls: _showToolCallResults,
                             shouldPlan: ShouldPlan, 
                             continuous: ContinuousExec,
@@ -428,7 +435,8 @@ public class App
                             minDelaySeconds: (uint)MinContDelay!,
                             chatClientFactory: modelId => CreateChatClient(modelId),
                             resumedSession: resumeData.Value.data,
-                            resumedSessionDir: resumeData.Value.sessionDir
+                            resumedSessionDir: resumeData.Value.sessionDir,
+                            allowSubAgents: AllowSubagents
                         );
                     }
                     break;
@@ -451,7 +459,7 @@ public class App
                     }
                     break;
                 case "/tools":
-                    if (_mcpTools != null) Common.LogAvailableTools(_mcpTools);
+                    if (McpTools != null) Common.LogAvailableTools(McpTools);
                     break;
 
                 case "/model":
@@ -477,7 +485,7 @@ public class App
                     break;
 
                 case "/status":
-                    CliCmdUtils.HandleStatus(_mcpTools, Common.LoadAgentModels());
+                    CliCmdUtils.HandleStatus(McpTools, Common.LoadAgentModels());
                     break;
 
                 case "/disabletools":
@@ -516,7 +524,7 @@ public class App
                     break;
 
                 case "/memory":
-                    CliCmdUtils.ShowKnowledgeGraph(McpClients, _mcpTools);
+                    CliCmdUtils.ShowKnowledgeGraph(McpClients, McpTools);
                     break;
 
                 case "/skills":
@@ -918,7 +926,7 @@ public class App
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
-        _mcpTools = new List<McpClientTool>();
+        McpTools = new List<McpClientTool>();
 
         var baseDir = PlatformContext.BaseDirectory;
 
@@ -994,7 +1002,7 @@ public class App
 
                     var tools = await client.ListToolsAsync();
                     foreach (var tool in tools)
-                        _mcpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
+                        McpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
 
                     successCount++;
                     MuxConsole.WriteSuccess($"Loaded {tools.Count} tools from {name} (HTTP)");
@@ -1037,7 +1045,7 @@ public class App
 
                     var tools = await client.ListToolsAsync();
                     foreach (var tool in tools)
-                        _mcpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
+                        McpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
 
                     successCount++;
                     MuxConsole.WriteSuccess($"Loaded {tools.Count} tools from {name}");
@@ -1238,7 +1246,7 @@ public class App
             await SingleAgentOrchestrator.ChatAgentAsync(
                 client: CreateChatClient(mId),
                 cancellationToken: cliCts.Token,
-                mcpTools: _mcpTools,
+                mcpTools: McpTools,
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 incomingGoal: parsed.Goal,
                 continuous: parsed.Continuous,
@@ -1247,7 +1255,9 @@ public class App
                 autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
-                sessionRetention: parsed.SessionRetention);
+                sessionRetention: parsed.SessionRetention,
+                allowSubAgents: AllowSubagents
+                );
             return Environment.ExitCode;
         }
 
@@ -1255,7 +1265,7 @@ public class App
         {
             await ParallelSwarmOrchestrator.RunAsync(
                 chatClientFactory: modelId => CreateChatClient(modelId),
-                mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
                 agentModels: agentModels,
                 maxDegreeOfParallelism: parsed.MaxParallelism,
                 prodMode: parsed.ProdMode,
@@ -1273,7 +1283,7 @@ public class App
 
         await MultiAgentOrchestrator.RunAsync(
             chatClientFactory: modelId => CreateChatClient(modelId),
-            mcpTools: (_mcpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+            mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
             agentModels: agentModels,
             prodMode: parsed.ProdMode,
             incomingGoal: parsed.Goal,
@@ -1300,10 +1310,10 @@ public class App
         {
             var count = end - start + 1;
 
-            if (_mcpTools != null && start >= 0 && end < _mcpTools.Count)
+            if (McpTools != null && start >= 0 && end < McpTools.Count)
             {
                 for (int i = 0; i < count; i++)
-                    _mcpTools.RemoveAt(start);
+                    McpTools.RemoveAt(start);
 
                 MuxConsole.WriteSuccess($"Disabled tools {start} through {end}.");
                 return;
