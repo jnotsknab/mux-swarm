@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.ComponentModel;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
@@ -12,8 +13,13 @@ public static class SingleAgentOrchestrator
 {
 
     public static Common.AgentDefinition? AgentDef = null;
+    
+    //uncached tokens
+    private static uint _cachedTokens;
+    //total tokens in session (cached + uncached)
     private static uint _sessionTokens;
-    private static bool pendingCompaction;
+    
+    private static bool _pendingCompaction;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {
@@ -91,16 +97,17 @@ public static class SingleAgentOrchestrator
         uint persistIntervalSeconds = 0,
         uint sessionRetention = 0,
         JsonElement? resumedSession = null,
-        string? resumedSessionDir = null)
+        string? resumedSessionDir = null,
+        bool allowSubAgents = false)
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
         
         var singleAgentDef = GetCurrSingleAgentDef();
-        
-        if (singleAgentDef != null && singleAgentDef.CanDelegate)
-            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities. Delegation is not supported in single-agent mode and will be disabled. All other capabilities remain unaffected.");
-        
+        var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
+
+        if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents)
+            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents to enable delegation in single agent mode.");
         
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
@@ -230,7 +237,99 @@ public static class SingleAgentOrchestrator
         var analyzeImageTool = chatClientFactory != null && !string.IsNullOrEmpty(visionModelId)
             ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, visionModelId)
             : null;
+        
+        ChatOptions? compactChatOpts = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
 
+        async Task<string> ExecuteDelegation(
+            string agentName,
+            string task,
+            string callerName,
+            bool restrictToSpecialists)
+        {   
+            if (restrictToSpecialists && agentName == "Orchestrator")
+                return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
+
+            if (!MultiAgentOrchestrator.Specialists.TryGetValue(agentName, out var specialist))
+            {
+                var available = restrictToSpecialists
+                    ? string.Join(", ", MultiAgentOrchestrator.Specialists.Keys.Where(k => k != "Orchestrator"))
+                    : string.Join(", ", MultiAgentOrchestrator.Specialists.Keys);
+                return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
+            }
+
+            if (agentName == callerName)
+                return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
+
+            
+            using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
+            delegationSpan?.SetTag("from", callerName);
+            delegationSpan?.SetTag("to", agentName);
+            var delegationSw = Stopwatch.StartNew();
+            
+            MuxConsole.WriteDelegation(callerName, agentName, task);
+
+            
+            int attempts = 0;
+            var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
+                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false);
+
+            bool succeeded = status == "success";
+            attempts += 1;
+            
+            if (!succeeded)
+            {
+                if (attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
+                    MuxConsole.WriteError($"{agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} times on this sub-task.");
+            }
+
+            string compacted = "";
+            await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
+            {
+                compacted = await ResultCompactor.CompactAsync(
+                    rawResult,
+                    completionStatus: status,
+                    completionSummary: summary,
+                    completionArtifacts: artifacts,
+                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
+                    chatClient: MultiAgentOrchestrator.CompactionClient,
+                    chatOptions: compactChatOpts);
+            });
+
+            delegationResults.Add(new MultiAgentOrchestrator.DelegationResult(agentName, compacted, status, summary, artifacts));
+
+            if (!succeeded && attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
+            {
+                compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
+                             "Consider a different approach or agent, or surface this to the user.";
+            }
+            
+            delegationSw.Stop();
+            OtelMetrics.Delegations.Add(1,
+                new KeyValuePair<string, object?>("from", callerName),
+                new KeyValuePair<string, object?>("to", agentName));
+            OtelMetrics.DelegationDuration.Record(delegationSw.ElapsedMilliseconds,
+                new KeyValuePair<string, object?>("to", agentName));
+
+            if (!succeeded)
+                OtelMetrics.SubTaskRetries.Add(1, new KeyValuePair<string, object?>("agent", agentName));
+            
+            return string.IsNullOrWhiteSpace(compacted)
+                ? $"[{agentName} completed but returned no output]"
+                : compacted;
+        }
+        
+        var subAgentDelegateTool = AIFunctionFactory.Create(
+            method: async (
+                [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
+                [Description("The specific sub-task or instruction for the specialist agent")] string task
+            ) =>
+            {
+                return await ExecuteDelegation(agentName, task, "SubAgent", restrictToSpecialists: true);
+            },
+            name: "delegate_to_agent_lite",
+            description: "Delegate a sub-task to an agent by name. Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. Cannot delegate to the Orchestrator. Note: This version does not have retry logic for sub agents"
+        );
+        
         var singleAgentTools = (IList<AITool>)
         [
             listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool,
@@ -238,7 +337,15 @@ public static class SingleAgentOrchestrator
             .. filteredTools
         ];
         
-        if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);        
+        if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
+        
+        if (allowSubAgents)
+        {
+            singleAgentTools.Add(subAgentDelegateTool);
+            await MultiAgentOrchestrator.BuildSpecialists(Common.LoadAgentModels(), modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+        }
+        
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,
@@ -330,7 +437,7 @@ public static class SingleAgentOrchestrator
             return compactionClient;
         }
 
-        pendingCompaction = false;
+        _pendingCompaction = false;
         async Task<bool> TryCompactAsync()
         {   
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
@@ -369,10 +476,10 @@ public static class SingleAgentOrchestrator
             if (beforeTokens > 0)
                 OtelMetrics.CompactionRatio.Record((double)_sessionTokens / beforeTokens);
 
-            pendingCompaction = true;
+            _pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
-            return pendingCompaction;
+            return _pendingCompaction;
         }
 
         //Offer option to compact
@@ -454,14 +561,14 @@ public static class SingleAgentOrchestrator
 
                         using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
 
-                        if (pendingCompaction)
+                        if (_pendingCompaction)
                         {
                             messages.InsertRange(0, new[]
                             {
                                 conversationHistory[0],  // already has the header
                                 conversationHistory[1]   // Context restored. Ready to continue.
                             });
-                            pendingCompaction = false;
+                            _pendingCompaction = false;
                         }
 
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
@@ -581,6 +688,7 @@ public static class SingleAgentOrchestrator
                                 {
                                     var details = usageContent.Details;
                                     _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
+                                    _cachedTokens = (uint)(details.CachedInputTokenCount ?? 0);
                                     OtelMetrics.RecordTokens(
                                         singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
                                         );
@@ -685,7 +793,7 @@ public static class SingleAgentOrchestrator
                 lastPersistTime = DateTime.UtcNow;
             }
 
-            MuxConsole.WriteMuted($"{_sessionTokens:N0} tokens in context");
+            MuxConsole.WriteMuted($"Total Tokens: {_sessionTokens:N0} - Cached Tokens: {_cachedTokens:N0}");
 
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)

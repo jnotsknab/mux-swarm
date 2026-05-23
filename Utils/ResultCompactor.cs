@@ -70,21 +70,17 @@ public static class ResultCompactor
         IChatClient? chatClient = null,
         ChatOptions? chatOptions = null)
     {
-        // ── Tier 1: Structured fields (best case — already compact) ──
-        //TODO: Maybe make this less strict as there should always be a completion summary in theory.
+        // ── Tier 1: Structured prefix — prepend summary to rawResult, then fall through ──
         if (!string.IsNullOrWhiteSpace(completionSummary))
         {
-            var structured = new StringBuilder();
-            structured.Append($"[{completionStatus ?? "success"}] ");
-            structured.Append(completionSummary);
+            var prefix = new StringBuilder();
+            prefix.Append($"[{completionStatus ?? "success"}] ");
+            prefix.Append(completionSummary);
 
             if (!string.IsNullOrWhiteSpace(completionArtifacts))
-                structured.Append($" | artifacts: {completionArtifacts}");
+                prefix.Append($" | artifacts: {completionArtifacts}");
 
-            if (structured.Length <= charBudget)
-                return structured.ToString();
-
-            rawResult = structured.ToString();
+            rawResult = prefix + "\n\n" + rawResult;
         }
 
         // Short results don't need compaction
