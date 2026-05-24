@@ -13,7 +13,8 @@ public static class SingleAgentOrchestrator
 {
 
     public static Common.AgentDefinition? AgentDef = null;
-    
+
+    private static readonly Dictionary<string, string> Models = Common.LoadAgentModels();
     //uncached tokens
     private static uint _cachedTokens;
     //total tokens in session (cached + uncached)
@@ -98,16 +99,20 @@ public static class SingleAgentOrchestrator
         uint sessionRetention = 0,
         JsonElement? resumedSession = null,
         string? resumedSessionDir = null,
-        bool allowSubAgents = false)
+        bool allowSubAgents = false,
+        bool allowParallelSubAgents = false)
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
         
         var singleAgentDef = GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
+        var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
+        var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
+        var semaphore = new SemaphoreSlim(App.MaxDegreeParallelism);
 
-        if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents)
-            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents to enable delegation in single agent mode.");
+        if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents && !allowParallelSubAgents)
+            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
         
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
@@ -244,7 +249,8 @@ public static class SingleAgentOrchestrator
             string agentName,
             string task,
             string callerName,
-            bool restrictToSpecialists)
+            bool restrictToSpecialists,
+            bool parallel = false)
         {   
             if (restrictToSpecialists && agentName == "Orchestrator")
                 return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
@@ -318,16 +324,108 @@ public static class SingleAgentOrchestrator
                 : compacted;
         }
         
+        IChatClient? compactionClient = null;
+        ChatOptions? compactionChatOptions = null;
+        bool compactionResolved = false;
+
+        IChatClient? ResolveCompactionClient()
+        {
+            if (compactionResolved) return compactionClient;
+            compactionResolved = true;
+
+            if (chatClientFactory == null) return null;
+
+            try
+            {
+                var swarmJson = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
+                var swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
+
+                if (swarmConfig?.CompactionAgent != null)
+                {
+                    if (!string.IsNullOrEmpty(swarmConfig.CompactionAgent.Model))
+                        compactionClient = chatClientFactory(swarmConfig.CompactionAgent.Model);
+
+                    if (swarmConfig.CompactionAgent.AutoCompactTokenThreshold > 0)
+                        autoCompactTokenThreshold = swarmConfig.CompactionAgent.AutoCompactTokenThreshold;
+
+                    compactionChatOptions = swarmConfig.CompactionAgent.ModelOpts?.ToChatOptions();
+                }
+
+                var compactionModel = swarmConfig?.CompactionAgent?.Model;
+
+                if (!string.IsNullOrEmpty(compactionModel))
+                    compactionClient = chatClientFactory(compactionModel);
+            }
+            catch { /* no compaction available */ }
+
+            return compactionClient;
+        }
+        
         var subAgentDelegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
                 [Description("The specific sub-task or instruction for the specialist agent")] string task
             ) =>
-            {
-                return await ExecuteDelegation(agentName, task, "SubAgent", restrictToSpecialists: true);
+            {   
+                var specialists = MultiAgentOrchestrator.Specialists;
+                if (agentName == "Orchestrator")
+                    return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
+
+                if (!specialists.TryGetValue(agentName, out var specialist))
+                {
+                    var available = string.Join(", ", specialists.Keys.Where(k => k != "Orchestrator"));
+                    return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
+                }
+                
+                return await ExecuteDelegation(agentName, task, singleAgentDef.Name, restrictToSpecialists: true);
             },
             name: "delegate_to_agent_lite",
-            description: "Delegate a sub-task to an agent by name. Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. Cannot delegate to the Orchestrator. Note: This version does not have retry logic for sub agents"
+            description: "Delegate a sub-task to an agent by name. " +
+                         "Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. " +
+                         "Cannot delegate to the Orchestrator. Note: Synchronous Version - Tip: Execute once with random string if no agent names are known to return err output with available agents"
+        );
+        
+        var delegateParallelTool = AIFunctionFactory.Create(
+            method: async (
+                [Description("A list of agent assignments to run simultaneously")]
+                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
+            ) =>
+            {   
+                if (chatClientFactory == null)
+                    return "[Error] Cannot create chat client for agent, chat client is null";
+                
+                var specialists = MultiAgentOrchestrator.Specialists;
+                var assignmentList = assignments.ToList();
+                MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
+
+                var taskBatch = assignmentList.Select(async req =>
+                {
+                    await semaphore.WaitAsync(cancellationToken);
+                    try
+                    {
+                        return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
+                            req.AgentName, req.Task, singleAgentDef.Name,
+                            specialists, pDelegationResults, retryRegistry,
+                            chatClientFactory, Models, compactionClient, compactionChatOptions,
+                            maxIterations, false, ct: cancellationToken);
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
+                var results = await Task.WhenAll(taskBatch);
+
+                var synthesis = new StringBuilder();
+                synthesis.AppendLine("### PARALLEL BATCH COMPLETED ###");
+                foreach (var res in results) synthesis.AppendLine(res);
+                return synthesis.ToString();
+            },
+            name: "delegate_parallel",
+            description: "Executes multiple sub-tasks simultaneously. Use this for independent tasks like " +
+                         "researching different topics or auditing multiple files. Each assignment specifies " +
+                         "an AgentName and a Task string. Tip: Execute once with random string if no agent names are known to return err output with available agents"
         );
         
         var singleAgentTools = (IList<AITool>)
@@ -342,7 +440,14 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents)
         {
             singleAgentTools.Add(subAgentDelegateTool);
-            await MultiAgentOrchestrator.BuildSpecialists(Common.LoadAgentModels(), modelId => App.CreateChatClient(modelId),
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+        }
+
+        if (allowParallelSubAgents)
+        {
+            singleAgentTools.Add(delegateParallelTool);
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
         }
         
@@ -399,43 +504,6 @@ public static class SingleAgentOrchestrator
 
         if (resumedSession.HasValue)
             MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
-
-        IChatClient? compactionClient = null;
-        ChatOptions? compactionChatOptions = null;
-        bool compactionResolved = false;
-
-        IChatClient? ResolveCompactionClient()
-        {
-            if (compactionResolved) return compactionClient;
-            compactionResolved = true;
-
-            if (chatClientFactory == null) return null;
-
-            try
-            {
-                var swarmJson = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
-                var swarmConfig = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
-
-                if (swarmConfig?.CompactionAgent != null)
-                {
-                    if (!string.IsNullOrEmpty(swarmConfig.CompactionAgent.Model))
-                        compactionClient = chatClientFactory(swarmConfig.CompactionAgent.Model);
-
-                    if (swarmConfig.CompactionAgent.AutoCompactTokenThreshold > 0)
-                        autoCompactTokenThreshold = swarmConfig.CompactionAgent.AutoCompactTokenThreshold;
-
-                    compactionChatOptions = swarmConfig.CompactionAgent.ModelOpts?.ToChatOptions();
-                }
-
-                var compactionModel = swarmConfig?.CompactionAgent?.Model;
-
-                if (!string.IsNullOrEmpty(compactionModel))
-                    compactionClient = chatClientFactory(compactionModel);
-            }
-            catch { /* no compaction available */ }
-
-            return compactionClient;
-        }
 
         _pendingCompaction = false;
         async Task<bool> TryCompactAsync()
