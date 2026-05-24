@@ -442,22 +442,22 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 /* ── Agent turns ── */
 .agent-turn { margin: 12px 0 4px; display: flex; align-items: center; gap: 8px; }
 .agent-badge {
-  background: linear-gradient(135deg, rgba(39, 39, 42, 0.8), rgba(24, 24, 27, 0.9));
+  background: linear-gradient(135deg, var(--bg-input), var(--bg-card));
   color: var(--accent); 
   font-size: calc(11px * var(--ui-font-scale, 1)); 
   font-weight: 600;
   padding: 4px 10px; 
-  border-radius: 12px; 
-  border: 1px solid rgba(161, 161, 170, 0.2); 
+  border-radius: 12px;
+  border: 1px solid var(--border);
   letter-spacing: 0.02em;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
   text-transform: uppercase;
 }
 
 /* ── Stream block ── */
 .stream-block {
-  background: rgba(39, 39, 42, 0.3); 
-  border-left: 3px solid rgba(161, 161, 170, 0.4);
+  background: var(--bg-input);
+  border-left: 3px solid var(--border);
   padding: 12px 16px; 
   margin: 8px 0 16px 0; 
   border-radius: 0 8px 8px 0;
@@ -564,9 +564,9 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   margin: 6px 0;
   color: var(--muted); 
   font-size: calc(12px * var(--ui-font-scale, 1));
-  background: rgba(39, 39, 42, 0.4);
+  background: var(--bg-input);
   border-radius: 12px;
-  border: 1px solid rgba(63, 63, 70, 0.5);
+  border: 1px solid var(--border);
   width: fit-content;
   max-width: 95%;
   box-shadow: 0 2px 6px rgba(0,0,0,0.1);
@@ -818,21 +818,21 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 /* (No longer needed: pills are block-level fit-content rows.) */
 
 /* ── Panels / Tables ── */
-.panel-block { 
-  border: 1px solid rgba(63, 63, 70, 0.6); 
-  border-radius: 8px; 
-  margin: 12px 0; 
-  overflow: hidden; 
-  background: rgba(24, 24, 27, 0.8);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+.panel-block {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 12px 0;
+  overflow: hidden;
+  background: var(--bg-card);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
-.panel-header { 
-  background: rgba(39, 39, 42, 0.9); 
-  color: var(--blue); 
-  font-weight: 600; 
-  font-size: calc(13px * var(--ui-font-scale, 1)); 
-  padding: 8px 12px; 
-  border-bottom: 1px solid rgba(63, 63, 70, 0.6); 
+.panel-header {
+  background: var(--bg-input);
+  color: var(--accent, var(--blue));
+  font-weight: 600;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
@@ -852,15 +852,15 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .table-block td { padding: 3px 10px; border-bottom: 1px solid var(--border); }
 
 /* ── Skills list (panel:'Loaded Skills …') ── */
-.skills-panel { border: 1px solid rgba(63,63,70,0.6); border-radius: 8px; margin: 12px 0; overflow: hidden; background: rgba(24,24,27,0.8); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-.skills-panel-header { display:flex; align-items:center; justify-content:space-between; gap:12px; background: rgba(39,39,42,0.9); color: var(--blue); font-weight: 600; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 8px 12px; border-bottom: 1px solid rgba(63,63,70,0.6); text-transform: uppercase; letter-spacing: 0.04em; }
+.skills-panel { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; overflow: hidden; background: var(--bg-card); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.skills-panel-header { display:flex; align-items:center; justify-content:space-between; gap:12px; background: var(--bg-input); color: var(--accent, var(--blue)); font-weight: 600; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 8px 12px; border-bottom: 1px solid rgba(63,63,70,0.6); text-transform: uppercase; letter-spacing: 0.04em; }
 .skills-panel-header .count { color: var(--muted); font-weight: 500; font-size: calc(11px * var(--ui-font-scale, 1)); }
 .skills-grid { display: grid; grid-template-columns: minmax(160px, max-content) 1fr; max-height: 480px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .skills-grid::-webkit-scrollbar { width: 8px; }
 .skills-grid::-webkit-scrollbar-track { background: transparent; }
 .skills-grid::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
 .skills-grid:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
-.skills-grid .sk-name, .skills-grid .sk-desc { padding: 8px 14px; border-bottom: 1px solid rgba(63,63,70,0.35); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
+.skills-grid .sk-name, .skills-grid .sk-desc { padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.5; }
 .skills-grid .sk-name { color: var(--accent); font-weight: 600; white-space: nowrap; font-family: var(--font-mono); }
 .skills-grid .sk-desc { color: var(--text); word-break: break-word; overflow-wrap: anywhere; }
 .skills-grid > div:nth-last-child(-n+2) { border-bottom: none; }
@@ -868,17 +868,17 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .skills-empty { padding: 16px; color: var(--muted); font-style: italic; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
 
 /* ── Help panel (/help command reference) ── */
-.help-panel { border: 1px solid rgba(63,63,70,0.6); border-radius: 8px; margin: 12px 0; overflow: hidden; background: rgba(24,24,27,0.8); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-.help-panel-header { background: rgba(39,39,42,0.9); color: var(--blue); font-weight: 600; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 8px 12px; border-bottom: 1px solid rgba(63,63,70,0.6); text-transform: uppercase; letter-spacing: 0.04em; }
-.help-panel-tagline { padding: 10px 14px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); border-bottom: 1px solid rgba(63,63,70,0.35); font-style: italic; }
+.help-panel { border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; overflow: hidden; background: var(--bg-card); box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.help-panel-header { background: var(--bg-input); color: var(--accent, var(--blue)); font-weight: 600; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 8px 12px; border-bottom: 1px solid rgba(63,63,70,0.6); text-transform: uppercase; letter-spacing: 0.04em; }
+.help-panel-tagline { padding: 10px 14px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); border-bottom: 1px solid var(--border); font-style: italic; }
 .help-section { padding: 6px 0 10px; }
-.help-section:not(:last-child) { border-bottom: 1px solid rgba(63,63,70,0.35); }
+.help-section:not(:last-child) { border-bottom: 1px solid var(--border); }
 .help-section-title { padding: 10px 14px 6px; color: var(--accent); font-size: calc(11px * var(--ui-font-scale, 1)); font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
 .help-grid { display: grid; grid-template-columns: minmax(140px, max-content) 1fr; row-gap: 2px; column-gap: 16px; padding: 0 14px; }
 .help-grid .hk-key { color: var(--accent); font-family: var(--font-mono); font-size: calc(12.5px * var(--ui-font-scale, 1)); padding: 4px 0; white-space: nowrap; font-weight: 600; }
 .help-grid .hk-desc { color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); padding: 4px 0; line-height: 1.5; word-break: break-word; overflow-wrap: anywhere; }
 .help-pre { padding: 0 14px; }
-.help-pre pre { margin: 4px 0; padding: 8px 12px; background: rgba(0,0,0,0.25); border: 1px solid rgba(63,63,70,0.4); border-radius: 6px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; line-height: 1.55; }
+.help-pre pre { margin: 4px 0; padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); white-space: pre-wrap; word-break: break-word; overflow-x: auto; line-height: 1.55; }
 .table-block tr:last-child td { border-bottom: none; }
 
 /* ── Prompts ── */
@@ -897,16 +897,165 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 
 /* ── Welcome card ── */
 .welcome-card {
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 6px;
-  padding: 20px 24px; margin: 8px 0; max-width: 600px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  padding: 22px 24px; margin: 8px 0; max-width: 720px;
 }
-.welcome-card h2 { color: var(--blue); font-size: calc(16px * var(--ui-font-scale, 1)); font-weight: 600; margin-bottom: 12px; letter-spacing: 0.02em; }
-.welcome-card p { color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); margin-bottom: 12px; line-height: 1.6; }
+.welcome-card .welcome-head { margin-bottom: 16px; }
+.welcome-card h2 { color: var(--blue); font-size: calc(17px * var(--ui-font-scale, 1)); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.02em; }
+.welcome-card p { color: var(--muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); margin: 0; line-height: 1.55; }
+
+/* Starter cards (clickable) */
+.welcome-card .starter-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-bottom: 14px;
+}
+.welcome-card .starter-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  background: var(--bg-input, rgba(255,255,255,0.02));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 14px 12px;
+  cursor: pointer; text-align: left;
+  color: var(--text);
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+}
+.welcome-card .starter-card:hover {
+  border-color: var(--accent, var(--blue));
+  background: rgba(255,255,255,0.04);
+}
+.welcome-card .starter-card:active { transform: translateY(1px); }
+.welcome-card .starter-icon { font-size: calc(20px * var(--ui-font-scale, 1)); line-height: 0; margin-bottom: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent, #7dd3fc); opacity: 0.92; }
+.starter-icon svg { width: calc(22px * var(--ui-font-scale, 1)); height: calc(22px * var(--ui-font-scale, 1)); display: block; }
+.welcome-card .starter-title { font-weight: 600; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text); }
+.welcome-card .starter-sub { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--muted); line-height: 1.45; }
+.welcome-card .starter-cmd {
+  margin-top: 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--green);
+  background: rgba(0,0,0,0.18); padding: 2px 6px; border-radius: 4px;
+}
+
+/* "More commands" disclosure */
+.welcome-card .welcome-more { margin: 4px 0 0; }
+.welcome-card .welcome-more > summary {
+  cursor: pointer; user-select: none; list-style: none;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 0; color: var(--muted);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  border-top: 1px solid var(--border);
+}
+.welcome-card .welcome-more > summary::-webkit-details-marker { display: none; }
+.welcome-card .welcome-more > summary::before {
+  content: ''; width: 5px; height: 5px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(-45deg); transition: transform 0.18s ease;
+  margin-right: 6px;
+}
+.welcome-card .welcome-more[open] > summary::before { transform: rotate(45deg); }
+.welcome-card .welcome-more > summary span:first-child { font-weight: 600; color: var(--text); flex: 1; }
+.welcome-card .welcome-more .more-hint { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.welcome-card .cmd-section { margin-top: 10px; }
+.welcome-card .cmd-section-head {
+  text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  margin-bottom: 6px; font-weight: 600;
+}
 .welcome-card .cmd-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.welcome-card .cmd { color: var(--green); font-weight: 500; }
+.welcome-card .cmd { color: var(--green); font-weight: 500; font-family: var(--font-mono, ui-monospace, monospace); }
+.welcome-card .cmd[data-cmd] { cursor: pointer; border-radius: 3px; padding: 0 3px; margin: 0 -3px; transition: background 0.12s ease; }
+.welcome-card .cmd[data-cmd]:hover { background: rgba(var(--accent-rgb, 100,180,220), 0.12); }
 .welcome-card .desc { color: var(--muted); }
-.welcome-card .shortcut-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); }
+
+.welcome-card .shortcut-row { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); }
 .welcome-card kbd { background: var(--bg-input); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text); }
+
+/* ── Inline confirm card (session switch warning) ── */
+.mux-confirm-card {
+  background: rgba(245, 158, 11, 0.06);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 8px 0;
+  width: fit-content;
+  max-width: min(560px, 90%);
+  display: flex; flex-direction: column; gap: 10px;
+  animation: fadeIn 0.15s ease;
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+}
+.mux-confirm-card.resolved { opacity: 0.55; }
+.mux-confirm-head {
+  display: flex; align-items: center; gap: 8px;
+}
+.mux-confirm-tag {
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 5px;
+  background: rgba(245, 158, 11, 0.18);
+  color: var(--amber, #f59e0b);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 1.2;
+}
+.mux-confirm-title {
+  font-weight: 600; color: var(--text);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+.mux-confirm-body {
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.55;
+}
+.mux-confirm-body code {
+  background: rgba(0,0,0,0.22);
+  color: var(--green, #9ece6a);
+  padding: 1px 5px; border-radius: 3px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.95em;
+}
+.mux-confirm-actions {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.mux-confirm-btn {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.mux-confirm-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.18);
+}
+.mux-confirm-btn.primary {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--amber, #f59e0b);
+}
+.mux-confirm-btn.primary:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.28);
+  border-color: rgba(245, 158, 11, 0.65);
+}
+.mux-confirm-btn:disabled { cursor: default; }
+.mux-confirm-dontask {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  cursor: pointer;
+  user-select: none;
+}
+.mux-confirm-dontask input[type="checkbox"] {
+  width: 13px; height: 13px; margin: 0; cursor: pointer;
+  accent-color: var(--amber, #f59e0b);
+}
 
 /* ── Upload preview ── */
 .upload-preview {
@@ -1066,7 +1215,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
   .sidebar { padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
-  .welcome-card { padding: 12px 14px; }
+  .welcome-card { padding: 14px 16px; }
+  .welcome-card .starter-grid { grid-template-columns: 1fr; }
   .welcome-card .cmd-grid { grid-template-columns: 1fr; gap: 2px; }
   .welcome-card .shortcut-row { font-size: calc(10px * var(--ui-font-scale, 1)); }
   .tool-call { 
@@ -1085,7 +1235,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   font-size: calc(12px * var(--ui-font-scale, 1));
   padding: 6px 10px;
   margin: 4px 0 4px 16px;
-  background-color: rgba(39, 39, 42, 0.4);
+  background-color: var(--bg-input);
   border-left: 2px solid var(--border);
   border-radius: 0 6px 6px 0;
   color: var(--muted);
@@ -1816,27 +1966,104 @@ const icons = {
     if (welcomeShown) return;
     welcomeShown = true;
     const html = `<div class="welcome-card">
-      <h2>Mux-Swarm</h2>
-      <p>CLI-native agentic swarm OS. Pick a mode to get started.</p>
-      <div class="cmd-grid">
-        <span class="cmd">/agent</span><span class="desc">Single-agent conversation</span>
-        <span class="cmd">/swarm</span><span class="desc">Multi-agent orchestrated loop</span>
-        <span class="cmd">/pswarm</span><span class="desc">Parallel concurrent dispatch</span>
-        <span class="cmd">/stateless</span><span class="desc">One-off stateless task</span>
-        <span class="cmd">/subagents</span><span class="desc">Spawn sub-agents from a single-agent session</span>
-        <span class="cmd">/workflow</span><span class="desc">Run a workflow file</span>
-        <span class="cmd">/resume</span><span class="desc">Resume a previous session</span>
-        <span class="cmd">/status</span><span class="desc">View system status</span>
-        <span class="cmd">/tools</span><span class="desc">List available MCP tools</span>
-        <span class="cmd">/help</span><span class="desc">Full command reference</span>
+      <div class="welcome-head">
+        <h2>Mux-Swarm</h2>
+        <p>CLI-native agentic swarm OS. Pick how you want to start — click a card or type a command.</p>
       </div>
+
+      <div class="starter-grid">
+        <button class="starter-card" data-cmd="/agent" type="button">
+          <div class="starter-icon"><svg data-icon="user" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></div>
+          <div class="starter-title">Single agent</div>
+          <div class="starter-sub">Talk to one agent. Best for chat, code review, focused work.</div>
+          <div class="starter-cmd">/agent</div>
+        </button>
+        <button class="starter-card" data-cmd="/swarm" type="button">
+          <div class="starter-icon"><svg data-icon="network" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2 6.4 17"/><path d="M12 7.2 17.6 17"/><path d="M7.2 19h9.6"/></svg></div>
+          <div class="starter-title">Swarm</div>
+          <div class="starter-sub">Orchestrate multiple agents on a complex task end-to-end.</div>
+          <div class="starter-cmd">/swarm</div>
+        </button>
+        <button class="starter-card" data-cmd="/stateless" type="button">
+          <div class="starter-icon"><svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
+          <div class="starter-title">One-off task</div>
+          <div class="starter-sub">Fire-and-forget. No session, no history — fastest path to an answer.</div>
+          <div class="starter-cmd">/stateless</div>
+        </button>
+      </div>
+
+      <details class="welcome-more">
+        <summary><span>More commands</span><span class="more-hint">type <kbd>/</kbd> any time for the full palette</span></summary>
+        <div class="cmd-section">
+          <div class="cmd-section-head">Modes</div>
+          <div class="cmd-grid">
+            <span class="cmd" data-cmd="/agent">/agent</span><span class="desc">Single-agent conversation</span>
+            <span class="cmd" data-cmd="/swarm">/swarm</span><span class="desc">Multi-agent orchestrated loop</span>
+            <span class="cmd" data-cmd="/pswarm">/pswarm</span><span class="desc">Parallel concurrent dispatch</span>
+            <span class="cmd" data-cmd="/stateless">/stateless</span><span class="desc">One-off stateless task</span>
+            <span class="cmd" data-cmd="/workflow">/workflow</span><span class="desc">Run a workflow file</span>
+            <span class="cmd" data-cmd="/resume">/resume</span><span class="desc">Resume a previous session</span>
+          </div>
+        </div>
+        <div class="cmd-section">
+          <div class="cmd-section-head">Enhance a session</div>
+          <div class="cmd-grid">
+            <span class="cmd" data-cmd="/subagents">/subagents</span><span class="desc">Toggle sub-agent delegation (single-agent loop)</span>
+            <span class="cmd" data-cmd="/parasubagents">/parasubagents</span><span class="desc">Toggle parallel sub-agent delegation</span>
+            <span class="cmd" data-cmd="/plan">/plan</span><span class="desc">Toggle plan mode (confirm before executing)</span>
+            <span class="cmd" data-cmd="/continuous">/continuous</span><span class="desc">Toggle continuous autonomous execution</span>
+            <span class="cmd" data-cmd="/compact">/compact</span><span class="desc">Compact current session context</span>
+          </div>
+        </div>
+        <div class="cmd-section">
+          <div class="cmd-section-head">Inspect</div>
+          <div class="cmd-grid">
+            <span class="cmd" data-cmd="/status">/status</span><span class="desc">Provider, models, tools, skills, sessions</span>
+            <span class="cmd" data-cmd="/tools">/tools</span><span class="desc">List available MCP tools</span>
+            <span class="cmd" data-cmd="/skills">/skills</span><span class="desc">List available local skills</span>
+            <span class="cmd" data-cmd="/memory">/memory</span><span class="desc">View knowledge graph</span>
+            <span class="cmd" data-cmd="/sessions">/sessions</span><span class="desc">List all saved sessions</span>
+            <span class="cmd" data-cmd="/model">/model</span><span class="desc">View current models</span>
+          </div>
+        </div>
+        <div class="cmd-section">
+          <div class="cmd-section-head">Setup</div>
+          <div class="cmd-grid">
+            <span class="cmd" data-cmd="/onboard">/onboard</span><span class="desc">Create or update operator profile</span>
+            <span class="cmd" data-cmd="/setup">/setup</span><span class="desc">Run initial setup / reconfigure</span>
+            <span class="cmd" data-cmd="/provider">/provider</span><span class="desc">View or switch the active LLM provider</span>
+            <span class="cmd" data-cmd="/refresh">/refresh</span><span class="desc">Full Mux refresh (config, MCP, skills)</span>
+            <span class="cmd" data-cmd="/help">/help</span><span class="desc">Full command reference</span>
+          </div>
+        </div>
+      </details>
+
       <div class="shortcut-row">
-        <kbd>Enter</kbd> send &nbsp; <kbd>Shift+Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl+V</kbd> paste file &nbsp; 📎 upload
+        <kbd>Enter</kbd> send &nbsp; <kbd>Shift+Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl+V</kbd> paste file &nbsp; <kbd>📎</kbd> upload
       </div>
     </div>`;
     appendHTML(html);
-  }
 
+    // Wire up clickable starter cards & cmd chips: click inserts the command
+    // into the input (user can edit / press Enter); shift-click sends immediately.
+    try {
+      const cards = document.querySelectorAll('.welcome-card [data-cmd]');
+      cards.forEach(el => {
+        el.addEventListener('click', (e) => {
+          const cmd = el.getAttribute('data-cmd');
+          if (!cmd) return;
+          if (e.shiftKey) {
+            send(cmd);
+          } else {
+            input.value = cmd;
+            input.focus();
+            try { input.setSelectionRange(cmd.length, cmd.length); } catch(_) {}
+            try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch(_) {}
+          }
+        });
+      });
+    } catch (_) {}
+  }
   // ─── Busy state ───
   function setBusy(busy) {
     isAgentBusy = busy;
@@ -2015,6 +2242,16 @@ const icons = {
           suppressNextSkillsUserEcho = false;
           lastLocalSend = '';
           break;
+        }
+        // One-shot suppression set: auto /qc, plus commands the user triggered
+        // via the session-switch warning card (already shown in the card).
+        {
+          const _t = (txt || '').trim().toLowerCase();
+          if (_t && _suppressUserEchoOnce.has(_t)) {
+            _suppressUserEchoOnce.delete(_t);
+            lastLocalSend = '';
+            break;
+          }
         }
         if (txt) {
         // Track agent-session mode from server-echoed user input (authoritative)
@@ -2849,7 +3086,64 @@ const icons = {
   }
 
   
-  function send(text) {
+  // Slash commands that ARE safe to run while inside an agent session
+  // (they're handled by the in-session loop itself). Every other slash command
+  // implies leaving the session, so we transparently /qc first.
+  const IN_SESSION_SAFE_CMDS = new Set([
+    '/qc', '/exit', '/compact', '/skill', '/clear-screen', '/cls', '/clear-ui', '/clear'
+  ]);
+
+  function _muxGetSettings() {
+    try { return JSON.parse(localStorage.getItem('muxSettings.v1') || '{}'); }
+    catch(_) { return {}; }
+  }
+
+  // Inline confirm card. Resolves to true if user clicks Continue, false otherwise.
+  function confirmSessionSwitch(newCmd) {
+    return new Promise(resolve => {
+      const wrap = document.createElement('div');
+      // Dedicated class — we don't want the generic .event-warning pill styling
+      // or the auto-injected WARN pill-tag from the runtime decorator.
+      wrap.className = 'mux-confirm-card';
+      wrap.dataset.muxDecorated = '1'; // opt out of decorator
+      wrap.innerHTML = `
+        <div class="mux-confirm-head">
+          <span class="mux-confirm-tag">SESSION</span>
+          <span class="mux-confirm-title">Switch session?</span>
+        </div>
+        <div class="mux-confirm-body">
+          You're currently in <code>${esc(activeSessionMode || '/agent')}</code>.
+          Running <code>${esc(newCmd)}</code> will quit your current session.
+          Use <code>/resume</code> later to come back to it.
+        </div>
+        <div class="mux-confirm-actions">
+          <button type="button" data-act="ok"     class="mux-confirm-btn primary">Continue</button>
+          <button type="button" data-act="cancel" class="mux-confirm-btn">Cancel</button>
+          <label class="mux-confirm-dontask">
+            <input type="checkbox" data-act="dontask" /> Don't ask again
+          </label>
+        </div>`;
+      output.appendChild(wrap);
+      try { scrollToBottom(); } catch(_) {}
+      const finish = (ok) => {
+        const dontAsk = wrap.querySelector('input[data-act="dontask"]').checked;
+        if (dontAsk) {
+          try {
+            const s = _muxGetSettings();
+            s.warnSessionSwitch = false;
+            localStorage.setItem('muxSettings.v1', JSON.stringify(s));
+          } catch(_) {}
+        }
+        wrap.querySelectorAll('button').forEach(b => b.disabled = true);
+        wrap.classList.add('resolved');
+        resolve(ok);
+      };
+      wrap.querySelector('[data-act="ok"]').addEventListener('click', () => finish(true));
+      wrap.querySelector('[data-act="cancel"]').addEventListener('click', () => finish(false));
+    });
+  }
+
+  async function send(text) {
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     {
       const t = text.trim().toLowerCase();
@@ -2861,6 +3155,33 @@ const icons = {
     }
 
     const cmd = text.trim().toLowerCase();
+    const firstTok = cmd.split(/\s+/)[0];
+
+    // Auto-exit: if user runs an out-of-session command while inside an
+    // agent session, transparently /qc first (with optional warning).
+    // Anything that isn't /qc, /compact, /skill, or a screen-clear counts.
+    let _suppressUserCmdEcho = false;
+    if (activeSessionMode && firstTok.startsWith('/') && !IN_SESSION_SAFE_CMDS.has(firstTok)) {
+      const settings = _muxGetSettings();
+      const warn = settings.warnSessionSwitch !== false; // default true
+      if (warn) {
+        const ok = await confirmSessionSwitch(firstTok);
+        if (!ok) return;
+        // The warning card already shows the command — suppress the bubble too.
+        _suppressUserCmdEcho = true;
+      }
+      // Always drop the auto-issued /qc bubble.
+      _suppressUserEchoOnce.add('/qc');
+      sendRaw('/qc');
+      activeSessionMode = null;
+      try { sessionStorage.removeItem('muxActiveSessionMode'); } catch (_) {}
+      await new Promise(r => setTimeout(r, 350));
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    }
+    if (_suppressUserCmdEcho) {
+      _suppressUserEchoOnce.add(text.trim().toLowerCase());
+    }
+
     if (['/agent', '/swarm', '/pswarm', '/stateless', '/resume'].includes(cmd)) {
         activeSessionMode = cmd === '/resume' ? '/agent' : cmd;
         try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
@@ -2885,6 +3206,8 @@ const icons = {
 
     ws.send(fullMsg);
     lastLocalSend = text;
+    try { pushHistory(text); } catch(_) {}
+    cmdHistoryIdx = -1; cmdHistoryDraft = '';
 
     // Clear pending (rendering is now handled by incoming user_input event)
     pendingFiles = [];
@@ -2898,7 +3221,10 @@ const icons = {
     { cmd: '/pswarm',       desc: 'Launch parallel swarm — concurrent batch dispatch' },
     { cmd: '/agent',        desc: 'Launch interactive single-agent loop' },
     { cmd: '/stateless',    desc: 'Stateless single-agent loop for one-off tasks' },
-    { cmd: '/subagents',    desc: 'Spawn sub-agents from a single agent (lightweight alternative to /swarm or /pswarm)' },
+    { cmd: '/subagents',    desc: 'Toggle sub-agent delegation in standard single-agent loop for one-off specialist tasks' },
+    { cmd: '/sub',          desc: 'Shorthand for /subagents' },
+    { cmd: '/parasubagents',desc: 'Toggle parallel sub-agent delegation in standard single-agent loop for one-off specialist tasks' },
+    { cmd: '/psub',         desc: 'Shorthand for /parasubagents' },
     { cmd: '/onboard',      desc: 'Create or update your operator profile (BRAIN.md + MEMORY.md)' },
     { cmd: '/addcontext',   desc: 'Configure per-agent context injection' },
     { cmd: '/plan',         desc: 'Toggle plan mode (agents confirm before executing)' },
@@ -2925,6 +3251,8 @@ const icons = {
     { cmd: '/refresh',      desc: 'Full Mux refresh (config, MCP, skills)' },
     { cmd: '/report',       desc: 'Generate session audit report(s)' },
     { cmd: '/status',       desc: 'View provider, models, tools, skills, sessions' },
+    { cmd: '/qc',          desc: 'Quit the current agent session (only meaningful inside one)' },
+    { cmd: '/skill',       desc: 'Load a skill by name inside a session (e.g. /skill skill-name)' },
     { cmd: '/help',         desc: 'Full command reference' },
   ];
   // Commands available while inside an agent session (/agent, /swarm, /pswarm, /stateless)
@@ -2940,6 +3268,28 @@ const icons = {
   let cachedSkills = [];   // [{ name, desc }]
   let suppressNextSkillsPanel = false; // one-shot: drop the next 'Loaded Skills' panel render
   let suppressNextSkillsUserEcho = false; // one-shot: drop the server-echoed '/skills' user-message bubble from silent prime
+  // Set of exact user-input strings (lowercased) whose next server-echo we should drop.
+  // Used for transparent /qc and the user command that triggered the session-switch
+  // warning — both already have visual representation in the warning card.
+  const _suppressUserEchoOnce = new Set();
+  // Persistent command history for Up/Down recall in the composer. Auto-issued
+  // commands (e.g. transparent /qc) are NEVER added.
+  let cmdHistory = [];
+  let cmdHistoryIdx = -1;       // -1 = not browsing; otherwise index into cmdHistory
+  let cmdHistoryDraft = '';     // saved draft when user starts browsing history
+  try {
+    const _hist = localStorage.getItem('muxCmdHistory.v1');
+    if (_hist) cmdHistory = JSON.parse(_hist) || [];
+  } catch(_) {}
+  function pushHistory(text) {
+    if (!text) return;
+    const t = text.trim();
+    if (!t) return;
+    if (cmdHistory.length && cmdHistory[cmdHistory.length - 1] === t) return; // dedupe consecutive
+    cmdHistory.push(t);
+    if (cmdHistory.length > 200) cmdHistory.splice(0, cmdHistory.length - 200);
+    try { localStorage.setItem('muxCmdHistory.v1', JSON.stringify(cmdHistory)); } catch(_) {}
+  }
   try {
     const _cs = sessionStorage.getItem('muxCachedSkills');
     if (_cs) cachedSkills = JSON.parse(_cs) || [];
@@ -3013,7 +3363,7 @@ const icons = {
         .sort((a, b) => b.score - a.score);
       return scored.length ? scored : [{ cmd: '/skill', desc: 'No skill matches "' + sub + '"' }];
     }
-    const pool = activeSessionMode ? IN_AGENT_COMMANDS : SLASH_COMMANDS;
+    const pool = SLASH_COMMANDS;
     const q = query.replace(/^\//, '');
     return pool
       .map(c => ({ ...c, score: fuzzyScore(q, c.cmd.slice(1)) }))
@@ -3026,7 +3376,7 @@ const icons = {
       cmdPalette.innerHTML = '<div class="cmd-palette-empty">No matching commands</div>';
       return;
     }
-    const header = activeSessionMode ? ('In ' + activeSessionMode + ' session') : 'Slash commands';
+    const header = activeSessionMode ? ('Slash commands  ·  in ' + activeSessionMode + ' session') : 'Slash commands';
     const rows = paletteItems.map((c, i) =>
       '<div class="cmd-item' + (i === paletteActive ? ' active' : '') + '" data-idx="' + i + '" role="option">' +
         '<span class="cmd-name">' + c.cmd + '</span>' +
@@ -3113,6 +3463,48 @@ const icons = {
 
 
   input.addEventListener('keydown', (e) => {
+    // Up/Down history recall — only when the palette is closed and the input
+    // is single-line so we don't fight multi-line editing.
+    if (!paletteOpen && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const v = input.value;
+      const isMultiline = v.includes('\n');
+      if (!isMultiline && cmdHistory.length) {
+        if (e.key === 'ArrowUp') {
+          if (cmdHistoryIdx === -1) {
+            cmdHistoryDraft = v;
+            cmdHistoryIdx = cmdHistory.length - 1;
+          } else if (cmdHistoryIdx > 0) {
+            cmdHistoryIdx--;
+          } else {
+            return; // already at oldest
+          }
+          e.preventDefault();
+          input.value = cmdHistory[cmdHistoryIdx];
+          try { input.setSelectionRange(input.value.length, input.value.length); } catch(_) {}
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          if (cmdHistoryIdx === -1) return; // not browsing
+          if (cmdHistoryIdx < cmdHistory.length - 1) {
+            cmdHistoryIdx++;
+            e.preventDefault();
+            input.value = cmdHistory[cmdHistoryIdx];
+          } else {
+            cmdHistoryIdx = -1;
+            e.preventDefault();
+            input.value = cmdHistoryDraft || '';
+            cmdHistoryDraft = '';
+          }
+          try { input.setSelectionRange(input.value.length, input.value.length); } catch(_) {}
+          return;
+        }
+      }
+    }
+    // Any typing resets the history-browse state so new edits become a fresh draft.
+    if (cmdHistoryIdx !== -1 && e.key.length === 1) {
+      cmdHistoryIdx = -1; cmdHistoryDraft = '';
+    }
+
     const sendMode = document.body.dataset.sendOnEnter || 'enter'; // 'enter' | 'ctrl'
     const wantsSend = (sendMode === 'ctrl')
       ? (e.key === 'Enter' && (e.ctrlKey || e.metaKey))
@@ -5025,7 +5417,8 @@ const icons = {
     streamPreviewLines: 2,
     fontMono: 'JetBrains Mono',
     fontSans: 'IBM Plex Sans',
-    customFonts: []
+    customFonts: [],
+    warnSessionSwitch: true
   };
   function loadState(){
     try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
@@ -5343,6 +5736,10 @@ const icons = {
       sliderRow('cmdPaletteOpacity', 'Palette opacity', 0.4, 1.0, 0.05,
         'Adjust how solid the command palette appears.',
         (v) => Math.round(v * 100) + '%'),
+    ]);
+    section('Sessions', [
+      toggleRow('warnSessionSwitch', 'Warn before switching session',
+        'When you run any slash command (other than /qc, /compact, /skill, or a screen-clear) while already in an agent session, ask for confirmation before quitting the current session. Turn off to switch silently.'),
     ]);
     section('Preview FAB', [
       toggleRow('showPreviewFab', 'Show preview FAB'),
