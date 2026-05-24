@@ -33,6 +33,7 @@ public class App
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
     public static ProviderConfig? ActiveProvider;
+    public static int MaxDegreeParallelism = 4;
     
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
@@ -40,6 +41,7 @@ public class App
     
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
+    protected static bool AllowParallelSubAgents = false;
     
     private static CancellationTokenSource GetOrResetCts()
     {
@@ -365,11 +367,17 @@ public class App
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
-                        allowSubAgents: AllowSubagents
+                        allowSubAgents: AllowSubagents,
+                        allowParallelSubAgents: AllowParallelSubAgents
                     );
                     break;
+                case "/sub":
                 case "/subagents":
                     AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
+                    break;
+                case "/psub":
+                case "/parasubagents":
+                    AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
@@ -399,7 +407,8 @@ public class App
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false,
-                        allowSubAgents: AllowSubagents
+                        allowSubAgents: AllowSubagents,
+                        allowParallelSubAgents: AllowParallelSubAgents
                     );
                     break;
                 
@@ -436,11 +445,15 @@ public class App
                             chatClientFactory: modelId => CreateChatClient(modelId),
                             resumedSession: resumeData.Value.data,
                             resumedSessionDir: resumeData.Value.sessionDir,
-                            allowSubAgents: AllowSubagents
+                            allowSubAgents: AllowSubagents,
+                            allowParallelSubAgents: AllowParallelSubAgents
                         );
                     }
                     break;
-
+                
+                case "/maxp":
+                    CliCmdUtils.HandleMaxP();
+                    break;
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
@@ -1256,7 +1269,8 @@ public class App
                 minDelaySeconds: parsed.MinDelay,
                 persistIntervalSeconds: parsed.PersistInterval,
                 sessionRetention: parsed.SessionRetention,
-                allowSubAgents: AllowSubagents
+                allowSubAgents: AllowSubagents,
+                allowParallelSubAgents: AllowParallelSubAgents
                 );
             return Environment.ExitCode;
         }

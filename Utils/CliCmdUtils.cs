@@ -109,17 +109,23 @@ public static class CliCmdUtils
             : "Standard single-line input restored.");
     }
 
-    public static bool HandleToggleSingleModeSubAgents(bool current)
+    public static bool HandleToggleSingleModeSubAgents(bool current, bool parallel = false)
     {
         current = !current;
+
+        if (current && parallel)
+        {   
+            MuxConsole.WriteInfo("Parallel Sub-Agent Delegation for the standard /agent interface has been enabled.");
+            return current;
+        }
         
-        if (current)
+        if (current && !parallel)
         {
             MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has been enabled.");
             return current;
         }
         
-        MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has disabled.");
+        MuxConsole.WriteInfo($"{(parallel ? "Parallel " : "")}Sub-Agent Delegation for the standard /agent interface has been disabled.");
         return current;
     }
     /// <summary>
@@ -179,6 +185,27 @@ public static class CliCmdUtils
         }
     }
 
+    public static void HandleMaxP()
+    {
+        string input = MuxConsole.Prompt("Max number of parallel Agents: ", defaultValue: "4");
+        try
+        {
+            int maxP = int.Parse(input);
+
+            if (maxP > 0)
+            {
+                App.MaxDegreeParallelism = maxP;
+                MuxConsole.WriteSuccess($"Successfully updated Max Parallelism to: {maxP} - Agents with parallel delegation capabilities can now spawn up to {maxP} subagents at once.");
+                return;
+            }
+            MuxConsole.WriteError("Max Parallelism must be greater than 0");
+        }
+        catch (Exception _)
+        {
+            MuxConsole.WriteError("Error setting Max Parallel Agents, ensure value is a positive integer");
+        }
+    }
+    
     /// <summary>
     /// Updates the model identifier for a selected agent or component in the swarm configuration.
     /// </summary>

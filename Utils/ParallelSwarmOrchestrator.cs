@@ -25,12 +25,12 @@ public static class ParallelSwarmOrchestrator
     private static string _orchestratorModelId = string.Empty;
 
 
-    private record ParallelTaskRequest(
+    public record ParallelTaskRequest(
         [Description("Name of the agent to assign (e.g., CodeAgent, WebAgent)")] string AgentName,
         [Description("The specific sub-task or instruction for this agent")] string Task
     );
 
-    private record DelegationResult(
+    public record DelegationResult(
         string AgentName,
         string CompactedResult,
         string? Status,
@@ -38,7 +38,7 @@ public static class ParallelSwarmOrchestrator
         string? Artifacts
     );
 
-    private record RetryState(int AttemptCount, string? LastFailureReason);
+    public record RetryState(int AttemptCount, string? LastFailureReason);
 
     private static IList<AITool> GetOrchestratorFilteredToolsFromConfig(IList<AITool> mcpTools)
     {
@@ -185,7 +185,7 @@ public static class ParallelSwarmOrchestrator
         var specialists = new Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)>();
         var delegationResults = new List<DelegationResult>();
         var retryRegistry = new Dictionary<string, RetryState>();
-        var semaphore = new SemaphoreSlim(maxDegreeOfParallelism);
+        var semaphore = new SemaphoreSlim(App.MaxDegreeParallelism);
         _sessionDirty = false;
 
         HookWorker.Enqueue(new HookEvent
@@ -201,7 +201,7 @@ public static class ParallelSwarmOrchestrator
         sessionSpan?.SetTag("mode", "pswarm");
         sessionSpan?.SetTag("goal_id", goalId);
         sessionSpan?.SetTag("continuous", continuous);
-        sessionSpan?.SetTag("max_parallelism", maxDegreeOfParallelism);
+        sessionSpan?.SetTag("max_parallelism", App.MaxDegreeParallelism);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
         
         IChatClient? compactionClient = null;
@@ -1075,7 +1075,7 @@ public static class ParallelSwarmOrchestrator
     }
 
 
-    private static async Task<string> ExecuteParallelWorker(
+    public static async Task<string> ExecuteParallelWorker(
         string agentName,
         string task,
         string callerName,

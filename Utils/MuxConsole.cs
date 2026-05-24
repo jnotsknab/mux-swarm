@@ -1111,7 +1111,8 @@ public static class MuxConsole
         commands.AppendLine($"  [{C.Prompt}]/pswarm[/]        [{C.Muted}]Parallel concurrent dispatch[/]");
         commands.AppendLine($"  [{C.Prompt}]/agent[/]         [{C.Muted}]Single-agent conversation[/]");
         commands.AppendLine($"  [{C.Prompt}]/stateless[/]     [{C.Muted}]One-off stateless task[/]");
-        commands.AppendLine($"  [{C.Prompt}]/subagents[/]     [{C.Muted}]Toggle sub-agent delegation in single-agent conversation[/]");
+        commands.AppendLine($"  [{C.Prompt}]/subagents[/]     [{C.Muted}]Toggle sub-agent delegation in single-agent conversation, shorthand /sub[/]");
+        commands.AppendLine($"  [{C.Prompt}]/parasubagents[/] [{C.Muted}]Toggle parallel sub-agent delegation in single-agent conversation, shorthand /psub[/]");
         commands.AppendLine($"  [{C.Prompt}]/workflow[/]      [{C.Muted}]Run a workflow file[/]");
         commands.AppendLine($"  [{C.Prompt}]/resume[/]        [{C.Muted}]Resume a previous session[/]");
         commands.AppendLine();
