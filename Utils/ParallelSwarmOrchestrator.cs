@@ -1088,7 +1088,8 @@ public static class ParallelSwarmOrchestrator
         ChatOptions? compactionChatOptions,
         int maxSubAgentIterations,
         bool prodMode,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cleanSession = true)
     {
         if (!specialists.TryGetValue(agentName, out var specialist))
         {
@@ -1098,7 +1099,13 @@ public static class ParallelSwarmOrchestrator
 
         if (agentName == callerName)
             return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
-
+        
+        if (cleanSession)
+        {
+            var freshSesh = await specialist.Agent.CreateSessionAsync(ct);
+            specialist.Session = freshSesh;
+        }
+        
         string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
         RetryState? retryState;
         int attemptNumber;

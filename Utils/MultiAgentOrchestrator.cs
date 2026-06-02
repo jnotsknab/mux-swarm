@@ -1338,8 +1338,15 @@ public static class MultiAgentOrchestrator
         string subTask,
         int maxIterations,
         CancellationToken cancellationToken,
-        bool prodMode = false)
+        bool prodMode = false,
+        bool cleanSession = true)
     {
+        if (cleanSession)
+        {
+            var freshSesh = await specialist.Agent.CreateSessionAsync(cancellationToken);
+            specialist.Session = freshSesh;
+        }
+        
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");
