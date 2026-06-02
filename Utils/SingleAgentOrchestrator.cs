@@ -277,7 +277,7 @@ public static class SingleAgentOrchestrator
             
             int attempts = 0;
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
-                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false);
+                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false, cleanSession: true);
 
             bool succeeded = status == "success";
             attempts += 1;
@@ -407,7 +407,7 @@ public static class SingleAgentOrchestrator
                             req.AgentName, req.Task, singleAgentDef.Name,
                             specialists, pDelegationResults, retryRegistry,
                             chatClientFactory, Models, compactionClient, compactionChatOptions,
-                            maxIterations, false, ct: cancellationToken);
+                            maxIterations, false, ct: cancellationToken, cleanSession: true);
                     }
                     finally
                     {

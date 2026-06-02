@@ -1339,13 +1339,10 @@ public static class MultiAgentOrchestrator
         int maxIterations,
         CancellationToken cancellationToken,
         bool prodMode = false,
-        bool cleanSession = true)
+        bool cleanSession = false)
     {
         if (cleanSession)
-        {
-            var freshSesh = await specialist.Agent.CreateSessionAsync(cancellationToken);
-            specialist.Session = freshSesh;
-        }
+            specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
         
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
