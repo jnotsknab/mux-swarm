@@ -1338,8 +1338,12 @@ public static class MultiAgentOrchestrator
         string subTask,
         int maxIterations,
         CancellationToken cancellationToken,
-        bool prodMode = false)
+        bool prodMode = false,
+        bool cleanSession = false)
     {
+        if (cleanSession)
+            specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
+        
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");

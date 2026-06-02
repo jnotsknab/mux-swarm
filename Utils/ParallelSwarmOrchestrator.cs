@@ -1088,7 +1088,8 @@ public static class ParallelSwarmOrchestrator
         ChatOptions? compactionChatOptions,
         int maxSubAgentIterations,
         bool prodMode,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool cleanSession = false)
     {
         if (!specialists.TryGetValue(agentName, out var specialist))
         {
@@ -1098,7 +1099,10 @@ public static class ParallelSwarmOrchestrator
 
         if (agentName == callerName)
             return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
-
+        
+        if (cleanSession)
+            specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
+        
         string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
         RetryState? retryState;
         int attemptNumber;
@@ -1122,9 +1126,14 @@ public static class ParallelSwarmOrchestrator
             MuxConsole.WriteWarning($"RETRY {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
 
         // Enrich with cross-agent context (thread-safe snapshot inside)
-        string enrichedTask = await EnrichTaskWithCrossAgentContext(
-            task, agentName, delegationResults, compactionClient, compactionChatOptions);
+        string enrichedTask = task;
 
+        if (!cleanSession)
+        {
+            enrichedTask = await EnrichTaskWithCrossAgentContext(
+                task, agentName, delegationResults, compactionClient, compactionChatOptions);
+        }
+        
         if (attemptNumber > 1 && retryState != null)
             enrichedTask = InjectRetryHint(enrichedTask, attemptNumber, retryState.LastFailureReason);
 

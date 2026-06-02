@@ -37,6 +37,6 @@ public class ExecutionLimits
     public int CompactionMaxMessageChars { get; set; } = 2500;
 
     [JsonPropertyName("activityTimeoutSeconds")]
-    public int ActivityTimeoutSeconds { get; set; } = 180;
+    public int ActivityTimeoutSeconds { get; set; } = 1200;
 
 }
