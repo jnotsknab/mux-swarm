@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <script>window.__errs=[]; window.addEventListener("error", e => { window.__errs.push((e.message||"?") + " @ " + (e.filename||"") + ":" + e.lineno + ":" + e.colno); }); window.addEventListener("unhandledrejection", e => { window.__errs.push("rej: " + (e.reason && e.reason.message || e.reason)); });</script><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content">
 <title>Mux-Swarm</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><path d='M30 70 L30 30 L50 50 L70 30 L70 70' fill='none' stroke='%23ffffff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='30' r='6' fill='%2364B4DC'/><circle cx='50' cy='50' r='6' fill='%2364B4DC'/><circle cx='70' cy='30' r='6' fill='%2364B4DC'/><circle cx='30' cy='70' r='6' fill='%2364B4DC'/><circle cx='70' cy='70' r='6' fill='%2364B4DC'/></svg>" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -192,6 +192,8 @@ html, body {
 }
 
 .app.sidebar-open { margin-right: var(--sidebar-width); }
+/* Shrink the fixed floating composer so it stays within the content column when the sidebar is open */
+body:has(.app.sidebar-open) .input-area { --composer-right-inset: var(--sidebar-width); }
 
 /* ── Header ── */
 .header {
@@ -354,7 +356,11 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 .sidebar-close:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
 
-.sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
+.sidebar-content { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
+/* When the Live Diffs panel is mounted it owns the full height + its own internal
+   scrolling (sticky header + scrollable list), so the sidebar container must not
+   add padding or a second scroll context. */
+.sidebar-content:has(> #diffs-content-area) { padding: 0; overflow: hidden; }
 .sidebar-content::-webkit-scrollbar { width: 4px; }
 .sidebar-content::-webkit-scrollbar-track { background: transparent; }
 .sidebar-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -852,6 +858,10 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 /* Trivial stream-blocks (no chevron): reclaim chevron padding. */
 .stream-block.mux-coll-trivial { padding-right: 16px; }
+/* Whole-card collapse affordance: pointer when collapsed (click to expand); text cursor
+   when expanded so reading/selecting feels natural — the chevron still collapses it,
+   and a bare click on the body (no selection) also collapses it. */
+.stream-block.mux-coll-collapsed > .stream-body { cursor: pointer; }
 
 /* Show copy on hover of card or copy button focus (already defined globally) */
 
@@ -1127,15 +1137,42 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .upload-preview .upload-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
 .upload-preview .upload-size { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
 
-/* ── Input area ── */
-.input-area { border-top: 1px solid var(--border); padding: 10px 0; flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; }
+/* ── Input area (detached floating composer, Claude-desktop style) ── */
+:root { --kb-inset: 0px; }
+.input-area {
+  position: fixed;
+  /* Span the main content column: align to the .app side padding (24px desktop)
+     and shrink when the sidebar is open so it never sits under the file browser. */
+  left: 24px;
+  right: calc(24px + var(--composer-right-inset, 0px));
+  /* Pinned to the visual-viewport bottom. When the keyboard is up, --kb-inset
+     (set from visualViewport) lifts the bar flush above it; otherwise it rests
+     just above the safe-area inset. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 14px);
+  z-index: 60;
+  display: flex; gap: 8px; align-items: flex-end;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) calc(var(--composer-opacity, 0.62) * 100%), transparent);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.38), 0 1px 0 rgba(255,255,255,0.04) inset;
+  transition: bottom 0.18s ease, box-shadow 0.2s ease;
+}
+.input-area:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 10px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.25);
+}
 .input-area .btn-group { align-self: flex-end; }
+/* Reserve space so the last transcript line isn't hidden behind the floating bar */
+.output { padding-bottom: 96px; }
 
 .input-area textarea {
-  flex: 1; width: 100%; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 1.6; resize: none; outline: none; min-height: 44px; max-height: 360px;
-  transition: border-color 0.15s;
+  flex: 1; width: 100%; background: transparent; color: var(--text); border: 1px solid transparent;
+  border-radius: 10px; padding: 10px 12px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.6; resize: none; outline: none; min-height: 40px; max-height: 320px;
+  transition: border-color 0.15s, box-shadow 0.15s;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
@@ -1145,7 +1182,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .input-area textarea:hover::-webkit-scrollbar-thumb,
 .input-area textarea:focus::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
 .input-area textarea::-webkit-scrollbar-button { display: none; }
-.input-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.22); }
+.input-area textarea:focus { border-color: transparent; box-shadow: none; }
 .input-area textarea::placeholder { color: var(--muted); }
 
 /* ── Command palette (slash autocomplete) ── */
@@ -1184,32 +1221,37 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .attachments-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
 .attachments-strip:empty { display: none; }
 
-.btn-group { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-group { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
 
 .send-btn {
-  background: var(--accent); color: var(--bg); border: none; border-radius: 6px;
-  padding: 8px 14px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600;
-  cursor: pointer; transition: all 0.15s; white-space: nowrap; min-height: 38px;
+  background: var(--accent); color: var(--bg); border: 1px solid transparent; border-radius: 999px;
+  height: 40px; padding: 0 18px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600;
+  cursor: pointer; transition: background 0.15s, transform 0.1s, box-shadow 0.15s; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 8px rgba(var(--accent-rgb), 0.28);
 }
-.send-btn:hover { opacity: 0.9; background: #7BC3E8; }
+.send-btn:hover { background: #7BC3E8; }
 .send-btn:active { transform: scale(0.96); }
-.send-btn.stop-mode { background: var(--red); }
+.send-btn.stop-mode { background: var(--red); box-shadow: 0 2px 8px rgba(220,80,80,0.3); }
 
 .upload-btn {
-  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer; transition: all 0.15s; min-height: 38px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
 }
-.upload-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
-.upload-btn:active { transform: scale(0.96); }
+.upload-btn:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.upload-btn:active { transform: scale(0.94); }
 
 
 .mic-btn {
-  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: 8px 10px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer; transition: all 0.15s; min-height: 38px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
 }
-.mic-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.mic-btn:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.mic-btn:active { transform: scale(0.94); }
 .mic-btn.recording {
   background: rgba(239, 68, 68, 0.15);
   color: var(--red);
@@ -1259,11 +1301,18 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   .header-logo { font-size: calc(12px * var(--ui-font-scale, 1)); }
   .stream-block { padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); word-break: break-word; overflow-wrap: anywhere; }
   .panel-body { word-break: break-word; overflow-wrap: anywhere; }
-  .input-area { padding: 6px 0 8px; gap: 4px; }
+  .input-area {
+    left: 8px; right: 8px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 8px);
+    padding: 6px 8px; gap: 4px; border-radius: 14px;
+  }
+  /* Sidebar is a full-width overlay on mobile, so no right inset needed */
+  body:has(.app.sidebar-open) .input-area { --composer-right-inset: 0px; }
+  .output { padding-bottom: 88px; }
   .input-area textarea { font-size: calc(16px * var(--ui-font-scale, 1)); min-height: 44px; max-height: 280px; padding: 8px 10px; }
   .btn-group { gap: 4px; }
-  .send-btn { min-height: 44px; padding: 8px 10px; font-size: calc(11px * var(--ui-font-scale, 1)); }
-  .upload-btn { min-height: 44px; padding: 8px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; }
   .prompt-block button { min-height: 44px; padding: 8px 12px; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
@@ -1306,92 +1355,270 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 }
 
 /* ── Live Output / Diffs ── */
-.diff-container {
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.6;
-  background: var(--bg);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--blue);
-  margin-bottom: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  overflow: hidden;
+/* ─────────────────────────────────────────────────────────────
+   Live Diffs panel — clean, scannable change cards.
+   Shares the Sessions-tab aesthetic (restrained borders, pill
+   metadata, comfortable spacing) but is diff-first & distinct. */
+#diffs-content-area {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
 }
-.diff-header {
-  background: var(--bg-card);
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  font-weight: 600;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+/* Sticky header bar (mirrors the Sessions search/count row) */
+.diffs-bar {
+  flex: 0 0 auto;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  user-select: none;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
-.diff-header-badge {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--blue);
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+.diffs-bar-title {
+  font-family: var(--font-sans, inherit);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text);
 }
-.diff-time {
+.diffs-count {
+  display: inline-flex;
+  align-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(161,161,170,0.16);
   color: var(--muted);
-  font-weight: 400;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  justify-content: center;
 }
-.diff-content {
-  padding: 6px 8px;
-  white-space: pre;
-  word-break: normal;
+.diffs-bar.has-items .diffs-count {
+  background: color-mix(in srgb, var(--accent, #8b9cff) 18%, transparent);
+  color: var(--accent, #b8a3ff);
+}
+.diffs-bar-spacer { flex: 1 1 auto; }
+.diffs-clear {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.diffs-clear:hover { background: rgba(161,161,170,0.10); color: var(--text); border-color: var(--muted); }
+
+/* Scrollable card list */
+.diffs-list {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  overflow-x: auto;
-  max-height: 400px; /* Prevent massive blowouts */
+  overflow-x: hidden;
+  padding: 10px;
+  display: block;
 }
-.diff-content::-webkit-scrollbar { width: 6px; height: 6px; }
-.diff-content::-webkit-scrollbar-track { background: transparent; }
-.diff-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
-.diff-content:hover::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.4); }
 
-/* Custom scrollbar for the live-diffs panel scroll container */
-#diffs-content-area {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+/* Empty state */
+.diffs-empty {
+  margin: auto;
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--muted);
 }
-#diffs-content-area::-webkit-scrollbar { width: 8px; }
-#diffs-content-area::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
-#diffs-content-area::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+.diffs-empty-icon {
+  width: 34px; height: 34px;
+  margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: rgba(161,161,170,0.10);
+  color: var(--muted);
+  font-size: 16px;
 }
-#diffs-content-area:hover::-webkit-scrollbar-thumb,
-#diffs-content-area:focus::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  background-clip: content-box;
+.diffs-empty-text { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text); opacity: 0.85; }
+.diffs-empty-sub  { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); margin-top: 4px; }
+
+/* Change card */
+.diff-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card, var(--bg));
+  overflow: hidden;
+  flex: none;
+  margin-bottom: 8px;
 }
-#diffs-content-area::-webkit-scrollbar-button { display: none; }
+.diff-card:last-child { margin-bottom: 0; }
+.diff-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+}
 
-/* Line styles */
-.diff-line { padding: 0 4px; border-radius: 2px; min-height: 18px; }
-.diff-add { color: #4ade80; background: rgba(16, 185, 129, 0.1); }
-.diff-sub { color: #f87171; background: rgba(239, 68, 68, 0.1); }
-.diff-info { color: var(--blue); opacity: 0.8; font-style: italic; }
-.diff-context { color: var(--text); opacity: 0.9; }
+/* Collapsible diff card: clickable head + rotating chevron (budget-based) */
+.diff-card.mux-collapsible { position: relative; }
+.diff-card .diff-card-head { cursor: pointer; user-select: none; }
+.diff-card .diff-card-head:hover { background: rgba(255,255,255,0.03); }
+.diff-card.mux-coll-collapsed .diff-card-head { border-bottom-color: transparent; }
+.diff-chevron {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px;
+  color: var(--muted);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  transform: rotate(90deg);
+  transition: transform 0.22s ease;
+}
+.diff-card.mux-coll-collapsed .diff-chevron { transform: rotate(0deg); }
+/* The wrapped body animates open/closed via the generic mux-coll rules. */
+.diff-card > .mux-coll-body {
+  max-height: 100000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: opacity 0.2s ease;
+}
+.diff-card.mux-coll-collapsed > .mux-coll-body {
+  max-height: 0 !important;
+  opacity: 0;
+}
+.diff-tag {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.tag-diff  { background: rgba(74,222,128,0.14);  color: #4ade80; }
+.tag-json  { background: rgba(139,156,255,0.16); color: var(--accent, #b8a3ff); }
+.tag-shell { background: rgba(245,158,11,0.16);  color: var(--amber, #f59e0b); }
+.tag-text  { background: rgba(161,161,170,0.16); color: var(--muted); }
+.diff-tool {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-stat {
+  flex: 0 0 auto;
+  display: inline-flex; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ds-add { color: #4ade80; }
+.ds-sub { color: #f87171; }
+.diff-card-spacer { flex: 1 1 auto; }
+.diff-time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.diff-file {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;        /* keep the basename visible when truncating long paths */
+  text-align: left;
+}
 
-/* Shell specific styles */
-.shell-header { color: var(--amber); font-weight: 600; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px dashed var(--border); padding-bottom: 2px; display: inline-block;}
-.shell-status { color: var(--muted); font-style: italic; }
+/* Body container: clamp tall content, wrap everything (no horizontal scroll) */
+.diff-body {
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: 1.55;
+  padding: 6px 0;
+  overflow: hidden;
+}
+.diff-card.is-clamped .diff-body { max-height: 230px; -webkit-mask-image: linear-gradient(to bottom, #000 78%, transparent 100%); mask-image: linear-gradient(to bottom, #000 78%, transparent 100%); }
 
-/* JSON specific styles */
-.json-key { color: #60a5fa; }
-.json-string { color: #4ade80; }
-.json-number { color: #f472b6; }
+/* Diff code: aligned gutter + wrapped text, semantic red/green ONLY here */
+.diff-code { display: block; }
+.dl { display: flex; gap: 8px; padding: 0 10px; }
+.dl-g { flex: 0 0 auto; width: 0.8em; text-align: center; opacity: 0.7; user-select: none; }
+.dl-t { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+.dl-add { background: rgba(16,185,129,0.10); color: #86efac; }
+.dl-add .dl-g { color: #4ade80; }
+.dl-sub { background: rgba(239,68,68,0.10); color: #fca5a5; }
+.dl-sub .dl-g { color: #f87171; }
+.dl-ctx { color: var(--text); opacity: 0.85; }
+.dl-hunk { color: var(--blue); opacity: 0.85; padding: 2px 10px; font-style: italic; }
+
+/* JSON / plain text bodies: wrapped, no horizontal scrollbar */
+.diff-json, .diff-text {
+  margin: 0;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  opacity: 0.92;
+}
+.json-key     { color: var(--accent, #b8a3ff); }
+.json-string  { color: var(--text); opacity: 0.78; }
+.json-number  { color: #f0a868; }
+.json-boolean { color: var(--blue, #60a5fa); }
+
+/* Shell body */
+.diff-shell { padding: 0 10px; }
+.sh-head { color: var(--amber, #f59e0b); font-weight: 600; margin-top: 6px; margin-bottom: 2px; opacity: 0.9; }
+.sh-meta { color: var(--muted); }
+.sh-line { color: var(--text); opacity: 0.88; white-space: pre-wrap; word-break: break-word; }
+
+/* Show more / less toggle */
+.diff-more {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent, #b8a3ff);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.diff-more:hover { background: rgba(161,161,170,0.08); }
+
+/* List scrollbar */
+.diffs-list { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.diffs-list::-webkit-scrollbar { width: 8px; }
+.diffs-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+.diffs-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+.diffs-list:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
+
+/* Legacy fallback styles (kept so any old .diff-container still renders) */
+.diff-container { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; background: var(--bg-card, var(--bg)); border-radius: 8px; border: 1px solid var(--border); margin-bottom: 8px; overflow: hidden; }
+.diff-line { padding: 0 4px; }
+.diff-add { color: #4ade80; }
+.diff-sub { color: #f87171; }
 .json-boolean { color: #fbbf24; }
 
 /* ── Theme Panel ── */
@@ -1926,11 +2153,50 @@ const icons = {
 
   let pendingFiles = []; // [{path, name, thumbUrl}]
   
-  // Persistent diffs area
+  // Persistent diffs area: a sticky header (title + count + clear) over a
+  // scrollable list of clean change cards. Distinct from Sessions, but shares
+  // the restrained borders / pill-metadata / comfortable spacing aesthetic.
   const diffsArea = document.createElement('div');
   diffsArea.id = 'diffs-content-area';
-  diffsArea.style.cssText = 'padding: 8px; height: 100%; overflow-y: auto;';
-  diffsArea.innerHTML = '<div class="event" id="diffs-waiting" style="text-align:center; margin-top: 20px;">Waiting for live diffs...</div>';
+  diffsArea.innerHTML =
+    '<div class="diffs-bar">' +
+      '<span class="diffs-bar-title">Live Diffs</span>' +
+      '<span class="diffs-count" id="diffs-count">0 changes</span>' +
+      '<span class="diffs-bar-spacer"></span>' +
+      '<button type="button" class="diffs-clear" id="diffs-clear">Clear</button>' +
+    '</div>' +
+    '<div class="diffs-list" id="diffs-list">' +
+      '<div class="diffs-empty" id="diffs-waiting">' +
+        '<div class="diffs-empty-icon">\u2713</div>' +
+        '<div class="diffs-empty-text">No changes yet</div>' +
+        '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+      '</div>' +
+    '</div>';
+  // Wire the Clear button + count once.
+  (function wireDiffsBar(){
+    const clearBtn = diffsArea.querySelector('#diffs-clear');
+    const list = diffsArea.querySelector('#diffs-list');
+    function updateDiffsCount(){
+      const cnt = list ? list.querySelectorAll('.diff-card').length : 0;
+      const badge = diffsArea.querySelector('#diffs-count');
+      if (badge) badge.textContent = cnt + (cnt === 1 ? ' change' : ' changes');
+      const bar = diffsArea.querySelector('.diffs-bar');
+      if (bar) bar.classList.toggle('has-items', cnt > 0);
+    }
+    function renderDiffsEmpty(){
+      if (!list) return;
+      list.innerHTML =
+        '<div class="diffs-empty" id="diffs-waiting">' +
+          '<div class="diffs-empty-icon">\u2713</div>' +
+          '<div class="diffs-empty-text">No changes yet</div>' +
+          '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+        '</div>';
+    }
+    if (clearBtn) clearBtn.addEventListener('click', () => { renderDiffsEmpty(); updateDiffsCount(); });
+    // Expose for the event handler.
+    diffsArea._updateCount = updateDiffsCount;
+    diffsArea._renderEmpty = renderDiffsEmpty;
+  })();
 
   // ─── WebSocket ───
   function connect() {
@@ -2463,114 +2729,155 @@ const icons = {
           appendHTML(`<div class="tool-result">${esc(trunc)}</div>`);
         }
         
-        // Render detailed diff/result in the Live Diffs panel
+        // Render detailed diff/result in the Live Diffs panel (clean, scannable cards)
         let rawResult = ev.result || ev.output || ev.content || ev.text;
         if (rawResult) {
-          const waitingMsg = diffsArea.querySelector('#diffs-waiting');
+          const diffsList = diffsArea.querySelector('#diffs-list') || diffsArea;
+          const waitingMsg = diffsList.querySelector('#diffs-waiting');
           if (waitingMsg) waitingMsg.remove();
-          
-          const timeStr = new Date().toLocaleTimeString();
-          
-          // Strip "unknown" from tool name
-          let toolName = ev.tool || ev.function || 'Result';
-          toolName = toolName.replace(/unknown/ig, '').trim();
-          if (!toolName) toolName = 'Result';
-          
-          // Sanitize MCP JSON output if present
+
+          const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+          // Humanize the tool name: strip server prefixes / "unknown", lower-case,
+          // collapse underscores so "REPLSHELLMCP_EXECUTE_COMMAND_ASYNC" -> "execute command async".
+          let toolRaw = (ev.tool || ev.function || 'Result').replace(/unknown/ig, '').trim();
+          let toolName = toolRaw
+            .replace(/^[A-Za-z0-9]+(?:MCP|Mcp)_/, '')   // drop "ReplShellMcp_" style server prefix
+            .replace(/^mcp[_-]/i, '')
+            .replace(/_/g, ' ')
+            .trim();
+          if (!toolName) toolName = 'result';
+
+          // Sanitize MCP JSON output if present (extract text blocks).
           let resultText = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
           try {
             const parsed = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
             if (parsed && Array.isArray(parsed.content)) {
                const textBlocks = parsed.content.filter(c => c.type === 'text').map(c => c.text);
-               if (textBlocks.length > 0) {
-                 resultText = textBlocks.join('\n');
-               }
+               if (textBlocks.length > 0) resultText = textBlocks.join('\n');
             } else if (parsed && parsed.content && typeof parsed.content === 'string') {
                resultText = parsed.content;
             } else if (parsed && parsed.result && typeof parsed.result === 'string') {
                resultText = parsed.result;
             }
-          } catch (e) {
-            // Not JSON, leave as is
-          }
-          
-          let formattedContent = '';
-          
-          // Try to pretty-print if it's a JSON string
-          let isJson = false;
+          } catch (e) { /* not JSON, leave as is */ }
+
+          // Classify the payload so we can tag + style it distinctly.
+          let kind = 'TEXT';
           let jsonStr = resultText;
+          let isJson = false;
           if (typeof resultText === 'string' && (resultText.trim().startsWith('{') || resultText.trim().startsWith('['))) {
-             try {
-                const obj = JSON.parse(resultText);
-                jsonStr = JSON.stringify(obj, null, 2);
-                isJson = true;
-             } catch(e) {}
+             try { jsonStr = JSON.stringify(JSON.parse(resultText), null, 2); isJson = true; kind = 'JSON'; } catch (e) {}
           }
-          
+          const allLines = isJson ? [] : resultText.split('\n');
+          const hasDiffHeaders = !isJson && (
+             allLines.some(l => l.startsWith('@@ ')) ||
+             (allLines.some(l => l.startsWith('--- ')) && allLines.some(l => l.startsWith('+++ ')))
+          );
+          const isShell = !isJson && !hasDiffHeaders &&
+             allLines.some(l => /^(Status: |Job ID: |Command: |--- STDOUT ---|--- STDERR ---)/.test(l));
+          if (hasDiffHeaders) kind = 'DIFF';
+          else if (isShell) kind = 'SHELL';
+
+          // Build the body + (for diffs) extract a filename + add/remove counts.
+          let bodyHtml = '';
+          let fileName = '';
+          let addCount = 0, subCount = 0;
+
           if (isJson) {
-             // Simple JSON syntax highlighter
-             const highlighted = esc(jsonStr).replace(/("(\u[a-zA-Z0-9]{4}|\[^u]|[^\"])*"(\s*:)?|(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+             const highlighted = esc(jsonStr).replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
                 let cls = 'json-number';
-                if (/^"/.test(match)) {
-                    if (/:$/.test(match)) {
-                        cls = 'json-key';
-                    } else {
-                        cls = 'json-string';
-                    }
-                } else if (/true|false/.test(match)) {
-                    cls = 'json-boolean';
-                } else if (/null/.test(match)) {
-                    cls = 'json-boolean';
-                }
+                if (/^"/.test(match)) cls = /:$/.test(match) ? 'json-key' : 'json-string';
+                else if (/true|false|null/.test(match)) cls = 'json-boolean';
                 return '<span class="' + cls + '">' + match + '</span>';
-            });
-            formattedContent = `<div class="diff-line diff-context">${highlighted}</div>`;
-          } else {
-             const lines = resultText.split('\n');
-             
-             // Basic diff detection
-             const hasDiffHeaders = lines.some(l => l.startsWith('@@ ')) || (lines.some(l => l.startsWith('--- ')) && lines.some(l => l.startsWith('+++ ')));
-             const isDiff = hasDiffHeaders;
-             
-             if (isDiff) {
-                for (const line of lines) {
-                   if (line.startsWith('+') && !line.startsWith('+++')) {
-                      formattedContent += `<div class="diff-line diff-add">${esc(line)}</div>`;
-                   } else if (line.startsWith('-') && !line.startsWith('---')) {
-                      formattedContent += `<div class="diff-line diff-sub">${esc(line)}</div>`;
-                   } else if (line.startsWith('@@ ')) {
-                      formattedContent += `<div class="diff-line diff-info">${esc(line)}</div>`;
-                   } else {
-                      formattedContent += `<div class="diff-line diff-context">${esc(line)}</div>`;
-                   }
-                }
-             } else {
-                // Shell/Generic text formatting
-                for (let i=0; i<lines.length; i++) {
-                   const line = lines[i];
-                   if (line.startsWith('--- STDOUT ---') || line.startsWith('--- STDERR ---')) {
-                      formattedContent += `<div class="shell-header">${esc(line.replace(/---/g, '').trim())}</div>\n`;
-                   } else if (line.startsWith('Status: ') || line.startsWith('Job ID: ') || line.startsWith('Command: ')) {
-                      formattedContent += `<div class="shell-status">${esc(line)}</div>\n`;
-                   } else {
-                      formattedContent += `${esc(line)}\n`;
-                   }
+             });
+             bodyHtml = '<pre class="diff-json">' + highlighted + '</pre>';
+          } else if (hasDiffHeaders) {
+             // Pull a filename from the +++/--- headers. Prefer the +++ (new) path.
+             // Guard against shell wrappers: "--- STDOUT ---" / "--- STDERR ---" also start with
+             // "--- " but are NOT diff headers, so skip those and strip any trailing "\t<timestamp>".
+             const cleanPath = (raw) => {
+                if (!raw) return '';
+                let v = raw.split('\t')[0].trim();         // drop diff -u trailing timestamp
+                v = v.replace(/^b\//, '').replace(/^a\//, '');
+                if (!v || v === '/dev/null') return '';
+                if (/^(STDOUT|STDERR)\s*---\s*$/.test(v)) return ''; // shell wrapper, not a path
+                return v;
+             };
+             for (const l of allLines) {            // first pass: the +++ (new file) header
+                const m = l.match(/^\+\+\+\s+(.+)$/);
+                if (m) { const c = cleanPath(m[1]); if (c) { fileName = c; break; } }
+             }
+             if (!fileName) {                        // fallback: the --- (old file) header, skipping shell markers
+                for (const l of allLines) {
+                   if (/^---\s+(STDOUT|STDERR)\s*---/.test(l)) continue;
+                   const m = l.match(/^---\s+(.+)$/);
+                   if (m) { const c = cleanPath(m[1]); if (c) { fileName = c; break; } }
                 }
              }
+             let rows = '';
+             for (const line of allLines) {
+                if (line.startsWith('+++') || line.startsWith('---')) continue; // shown as filename header
+                if (line.startsWith('+')) { addCount++; rows += '<div class="dl dl-add"><span class="dl-g">+</span><span class="dl-t">' + esc(line.slice(1)) + '</span></div>'; }
+                else if (line.startsWith('-')) { subCount++; rows += '<div class="dl dl-sub"><span class="dl-g">\u2212</span><span class="dl-t">' + esc(line.slice(1)) + '</span></div>'; }
+                else if (line.startsWith('@@')) { rows += '<div class="dl dl-hunk"><span class="dl-t">' + esc(line) + '</span></div>'; }
+                else { rows += '<div class="dl dl-ctx"><span class="dl-g"> </span><span class="dl-t">' + esc(line.replace(/^ /, '')) + '</span></div>'; }
+             }
+             bodyHtml = '<div class="diff-code">' + rows + '</div>';
+          } else if (isShell) {
+             let rows = '';
+             for (const line of allLines) {
+                if (/^--- (STDOUT|STDERR) ---/.test(line)) rows += '<div class="sh-head">' + esc(line.replace(/---/g, '').trim()) + '</div>';
+                else if (/^(Status: |Job ID: |Command: )/.test(line)) rows += '<div class="sh-meta">' + esc(line) + '</div>';
+                else rows += '<div class="sh-line">' + esc(line) + '</div>';
+             }
+             bodyHtml = '<div class="diff-shell">' + rows + '</div>';
+          } else {
+             bodyHtml = '<pre class="diff-text">' + esc(resultText) + '</pre>';
           }
-          
-          const diffHtml = `
-            <div class="diff-container">
-              <div class="diff-header">
-                <span class="diff-header-badge">${esc(toolName)}</span>
-                <span class="diff-time">${timeStr}</span>
-              </div>
-              <div class="diff-content">${formattedContent.trim()}</div>
-            </div>
-          `;
-          
-          // Prepend so newest is at the top
-          diffsArea.insertAdjacentHTML('afterbegin', diffHtml);
+
+          // Budget-based auto-collapse, matching the agent-response card behavior:
+          // collapse by default only when content exceeds the configured threshold.
+          const collapseOn = document.body.classList.contains('collapse-cards-default');
+          const thr = parseInt(document.body.dataset.collapseThreshold || '200', 10) || 200;
+          const startCollapsed = collapseOn && (resultText.length > thr || (isJson ? jsonStr : resultText).indexOf('\n') !== -1) && resultText.length > thr;
+
+          const kindCls = 'tag-' + kind.toLowerCase();
+          const diffCount = (kind === 'DIFF')
+            ? '<span class="diff-stat"><span class="ds-add">+' + addCount + '</span><span class="ds-sub">\u2212' + subCount + '</span></span>'
+            : '';
+          const fileHtml = (kind === 'DIFF' && fileName)
+            ? '<div class="diff-file" title="' + esc(fileName) + '">' + esc(fileName) + '</div>'
+            : '';
+
+          const cardHtml =
+            '<div class="diff-card mux-collapsible' + (startCollapsed ? ' mux-coll-collapsed' : '') + '">' +
+              '<div class="diff-card-head" role="button" tabindex="0">' +
+                '<span class="diff-chevron" aria-hidden="true">\u203A</span>' +
+                '<span class="diff-tag ' + kindCls + '">' + kind + '</span>' +
+                '<span class="diff-tool" title="' + esc(toolRaw) + '">' + esc(toolName) + '</span>' +
+                diffCount +
+                '<span class="diff-card-spacer"></span>' +
+                '<span class="diff-time">' + esc(timeStr) + '</span>' +
+              '</div>' +
+              '<div class="mux-coll-body">' +
+                fileHtml +
+                '<div class="diff-body">' + bodyHtml + '</div>' +
+              '</div>' +
+            '</div>';
+
+          // Prepend so newest is at the top.
+          diffsList.insertAdjacentHTML('afterbegin', cardHtml);
+          const newCard = diffsList.firstElementChild;
+          if (newCard) {
+            const head = newCard.querySelector('.diff-card-head');
+            if (head) {
+              const toggle = () => newCard.classList.toggle('mux-coll-collapsed');
+              head.addEventListener('click', toggle);
+              head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+            }
+          }
+          if (typeof diffsArea._updateCount === 'function') { try { diffsArea._updateCount(); } catch (_) {} }
         }
         break;
 
@@ -2712,30 +3019,16 @@ const icons = {
     // Track elapsed seconds so the user can see *something* changing even if
     // animations are throttled (background tab, prefers-reduced-motion, etc.)
     el.dataset.muxCompactStarted = String(Date.now());
+    // Minimal: a single quiet spinner + label. No tag chip, no animated dots,
+    // no elapsed counter, no progress bar — keep it unobtrusive.
     el.innerHTML =
-      '<span class="pill-tag">WORKING</span>' +
       '<span class="mux-compact-icon mux-compact-spinner">' +
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-        'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>' +
       '</svg></span>' +
-      '<span class="mux-compact-label">Compacting conversation history' +
-        '<span class="mux-compact-dots"><i>.</i><i>.</i><i>.</i></span>' +
-      '</span>' +
-      '<span class="mux-compact-elapsed">0s</span>' +
-      '<span class="mux-compact-progress"><span></span></span>';
+      '<span class="mux-compact-label">Compacting\u2026</span>';
     output.appendChild(el);
-    // Tick the elapsed counter once per second; stops automatically when the
-    // node is removed by clearCompactingPlaceholder().
-    const elapsedEl = el.querySelector('.mux-compact-elapsed');
-    const tick = () => {
-      if (!el.isConnected) return;
-      const started = Number(el.dataset.muxCompactStarted) || Date.now();
-      const secs = Math.max(0, Math.round((Date.now() - started) / 1000));
-      if (elapsedEl) elapsedEl.textContent = secs + 's';
-      setTimeout(tick, 1000);
-    };
-    setTimeout(tick, 1000);
     if (typeof scrollToBottom === 'function') {
       try { scrollToBottom(); } catch (_) {}
     }
@@ -2880,10 +3173,13 @@ const icons = {
       });
       el.appendChild(btn);
 
-      // Click on the faded preview region toggles expand (only when collapsed).
+      // Click anywhere on the card body toggles collapse/expand (Claude Desktop style).
+      // Guards: never hijack clicks on links/buttons/inputs, and never toggle when the
+      // user is selecting text (so copying a response still works).
       body.addEventListener('click', (e) => {
-        if (!el.classList.contains('mux-coll-collapsed')) return;
-        if (e.target.closest('a, button')) return;
+        if (e.target.closest('a, button, input, textarea, select, label, .msg-copy-btn')) return;
+        const sel = window.getSelection && window.getSelection();
+        if (sel && sel.type === 'Range' && String(sel).length > 0) return; // text selection in progress
         btn.click();
       });
     });
@@ -4763,6 +5059,36 @@ const icons = {
   window.addEventListener('resize', updatePlaceholder);
   updatePlaceholder();
 
+  // ─── Native mobile keyboard handling (visualViewport) ───
+  // Pin the floating composer just above the on-screen keyboard instead of
+  // letting the browser shove the whole layout upward. We measure the gap
+  // between the layout viewport bottom and the visual viewport bottom and
+  // expose it as --kb-inset for the composer's `bottom` calc.
+  (function setupKeyboardInset() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement;
+    let raf = 0;
+    function update() {
+      raf = 0;
+      // Amount of the layout viewport currently covered (keyboard + UI chrome).
+      const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      root.style.setProperty('--kb-inset', covered + 'px');
+      // Keep the latest message in view while typing.
+      if (covered > 80) {
+        const out = document.getElementById('output');
+        if (out) out.scrollTop = out.scrollHeight;
+      }
+    }
+    function schedule() { if (!raf) raf = requestAnimationFrame(update); }
+    vv.addEventListener('resize', schedule);
+    vv.addEventListener('scroll', schedule);
+    // Re-sync when the composer gains focus (keyboard about to open).
+    input.addEventListener('focus', () => setTimeout(schedule, 50));
+    input.addEventListener('blur', () => { root.style.setProperty('--kb-inset', '0px'); });
+    update();
+  })();
+
   // ─── Boot ───
   connect();
 })();
@@ -6040,13 +6366,14 @@ const icons = {
     color: var(--text, #cfd6e0);
     font-variant-numeric: tabular-nums;
   }
-  .mux-compacted-summary .mux-compacted-label { opacity: 0.75; font-weight: 500 !important; }
+  .mux-compacted-summary { color: var(--muted, #9ca0aa); }
+  .mux-compacted-summary .mux-compacted-label { opacity: 0.7; font-weight: 500 !important; }
   .mux-compacted-summary .mux-compacted-num {
-    font-weight: 600 !important; color: var(--accent-cyan, #6ee7d6);
+    font-weight: 600 !important; color: var(--text, #cfd6e0); opacity: 0.9;
     font-family: var(--font-mono, ui-monospace, monospace);
   }
-  .mux-compacted-summary .mux-compacted-arrow { opacity: 0.55; }
-  .mux-compacted-summary .mux-compacted-unit { opacity: 0.7; font-weight: 500 !important; }
+  .mux-compacted-summary .mux-compacted-arrow { opacity: 0.45; }
+  .mux-compacted-summary .mux-compacted-unit { opacity: 0.6; font-weight: 500 !important; }
 
   /* Optimistic /compact placeholder: ALWAYS show while compaction is running.
      The placeholder is the user's only feedback that work is happening, so it
@@ -6057,141 +6384,42 @@ const icons = {
     display: flex !important;
   }
 
-  /* In-progress "Compacting conversation history" pill: animated shimmer + pulse */
+  /* In-progress compacting pill: minimal — a quiet rotating spinner + muted label.
+     No shimmer, pulse, tag chip, animated dots, elapsed timer, or progress bar. */
   .mux-compacting-status.is-active {
-    position: relative;
-    overflow: hidden;
-    animation: mux-compacting-pulse 1.6s ease-in-out infinite;
+    gap: 6px;
+    align-items: center;
+    color: var(--muted, #9ca0aa) !important;
+    background: rgba(161,161,170,0.08) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+    opacity: 0.85;
   }
-  .mux-compacting-status.is-active::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      100deg,
-      transparent 0%,
-      transparent 35%,
-      rgba(255,255,255,0.10) 50%,
-      transparent 65%,
-      transparent 100%
-    );
-    background-size: 220% 100%;
-    animation: mux-compacting-shimmer 1.8s linear infinite;
-    pointer-events: none;
-    border-radius: inherit;
+  .mux-compacting-status.is-active .mux-compact-label {
+    color: var(--muted, #9ca0aa);
+    font-size: calc(11px * var(--ui-font-scale, 1));
   }
-  .mux-compacting-status.is-active .pill-tag {
-    background: rgba(96,165,250,0.18);
-    color: var(--blue, #60a5fa);
-    animation: mux-compacting-tag-blink 1.4s ease-in-out infinite;
-  }
-  @keyframes mux-compacting-shimmer {
-    0%   { background-position: 220% 0; }
-    100% { background-position: -120% 0; }
-  }
-  @keyframes mux-compacting-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(96,165,250,0.00); }
-    50%      { box-shadow: 0 0 0 3px rgba(96,165,250,0.12); }
-  }
-  @keyframes mux-compacting-tag-blink {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.55; }
-  }
-  /* Spinning loader icon for the active compacting placeholder */
   .mux-compacting-status.is-active .mux-compact-spinner {
-    width: 14px; height: 14px;
+    width: 13px; height: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
   }
   .mux-compacting-status.is-active .mux-compact-spinner svg {
-    width: 14px; height: 14px;
+    width: 13px; height: 13px;
     animation: mux-compacting-spin 0.9s linear infinite;
     transform-origin: 50% 50%;
-    color: var(--blue, #60a5fa);
+    color: var(--muted, #9ca0aa);
+    opacity: 0.8;
     will-change: transform;
   }
   @keyframes mux-compacting-spin {
     from { transform: rotate(0deg); }
     to   { transform: rotate(360deg); }
   }
-  /* Animated trailing dots inside the label */
-  .mux-compacting-status.is-active .mux-compact-dots {
-    display: inline-block;
-    width: 1.4em;
-    text-align: left;
-    letter-spacing: 1px;
-    color: var(--blue, #60a5fa);
-  }
-  .mux-compacting-status.is-active .mux-compact-dots i {
-    font-style: normal;
-    opacity: 0.25;
-    animation: mux-compacting-dot 1.05s ease-in-out infinite;
-    will-change: opacity;
-  }
-  .mux-compacting-status.is-active .mux-compact-dots i:nth-child(2) { animation-delay: 0.18s; }
-  .mux-compacting-status.is-active .mux-compact-dots i:nth-child(3) { animation-delay: 0.36s; }
-  @keyframes mux-compacting-dot {
-    0%, 80%, 100% { opacity: 0.25; }
-    40%           { opacity: 1; }
-  }
-  /* Live elapsed counter: gives the user concrete proof the pill is alive
-     even if CSS animations are throttled (background tab, reduced motion). */
-  .mux-compacting-status.is-active .mux-compact-elapsed {
-    font-variant-numeric: tabular-nums;
-    font-size: calc(10px * var(--ui-font-scale, 1));
-    color: var(--blue, #60a5fa);
-    opacity: 0.85;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: rgba(96, 165, 250, 0.10);
-    margin-left: 2px;
-  }
-  /* Indeterminate progress bar across the bottom of the pill */
-  .mux-compacting-status.is-active .mux-compact-progress {
-    position: absolute;
-    left: 6px;
-    right: 6px;
-    bottom: 1px;
-    height: 3px;
-    border-radius: 3px;
-    background: rgba(96, 165, 250, 0.18);
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .mux-compacting-status.is-active .mux-compact-progress > span {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 40%;
-    height: 100%;
-    border-radius: inherit;
-    background: linear-gradient(90deg, transparent, var(--blue, #60a5fa) 50%, transparent);
-    animation: mux-compacting-bar 1.2s ease-in-out infinite;
-    will-change: transform;
-  }
-  @keyframes mux-compacting-bar {
-    0%   { transform: translateX(-110%); }
-    100% { transform: translateX(320%); }
-  }
   @media (prefers-reduced-motion: reduce) {
-    .mux-compacting-status.is-active,
-    .mux-compacting-status.is-active::before,
-    .mux-compacting-status.is-active .pill-tag,
-    .mux-compacting-status.is-active .mux-compact-spinner svg,
-    .mux-compacting-status.is-active .mux-compact-dots i,
-    .mux-compacting-status.is-active .mux-compact-progress > span {
+    .mux-compacting-status.is-active .mux-compact-spinner svg {
       animation: none !important;
     }
   }
-
-  /* diff-header-badge: inline uppercase chip used in diffs */
-  .diff-header-badge {
-    border-radius: 6px !important;
-    padding: 2px 7px !important;
-    font-size: calc(10px * var(--ui-font-scale, 1)) !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
-    font-weight: 700 !important;
-  }
-
 
   @media (max-width: 640px) {
     .mux-settings-backdrop { padding: 0; align-items: stretch; }
@@ -6238,6 +6466,7 @@ const icons = {
     pathMode: 'full',
     cmdPaletteEnabled: true,
     cmdPaletteOpacity: 1.0,
+    composerOpacity: 0.62,
     collapseCardsByDefault: true,
     collapseThreshold: 200,
     hideAllPills: false,
@@ -6312,6 +6541,7 @@ const icons = {
     b.dataset.sendOnEnter = state.sendOnEnter;
     b.classList.toggle('hide-cmd-palette',   !state.cmdPaletteEnabled);
     document.documentElement.style.setProperty('--cmd-palette-opacity', String(state.cmdPaletteOpacity));
+    document.documentElement.style.setProperty('--composer-opacity', String(state.composerOpacity != null ? state.composerOpacity : 0.62));
     b.classList.toggle('collapse-cards-default', !!state.collapseCardsByDefault);
     b.dataset.collapseThreshold = String(state.collapseThreshold || 200);
     b.classList.toggle('hide-compacting-pills', !!state.hideCompactingPills);
@@ -6529,6 +6759,9 @@ const icons = {
       fontUploadRow(),
     ]);
     section('Display', [
+      sliderRow('composerOpacity', 'Composer opacity', 0.3, 1.0, 0.02,
+        'Background opacity of the floating message bar. Lower = more translucent/glassy.',
+        (v) => Math.round(v * 100) + '%'),
       toggleRow('showTimestamps',   'Show message timestamps'),
       toggleRow('showAgentBadge',   'Show agent name badges'),
       toggleRow('showCharCounter',  'Show character counter'),
@@ -6665,32 +6898,32 @@ const icons = {
       // real text picks up extra whitespace / wrapping that breaks the strict
       // regex below.
       if (/Compacting\s+conversation\s+history/i.test(txt) && txt.length < 200) {
-        // Real event arrived: drop the optimistic /compact placeholder so we
-        // don't double-render.
+        // Both the in-progress and the check-marked "Compacting conversation
+        // history" pills are just raw ws-event echoes. The optimistic WORKING
+        // placeholder above already conveys progress and the "Compacted: X -> Y
+        // tokens" pill below conveys completion, so suppress both middle pills.
         try { clearCompactingPlaceholder(); } catch (_) {}
-        const hasCheckGlyph = /^\s*[\u2713\u2714\u2705]/.test(txt) ||
-                              !!el.querySelector('svg[data-icon="check"]');
-        const isCleanVariant = el.classList.contains('event-success') || hasCheckGlyph;
-        if (!isCleanVariant) {
-          // In-progress duplicate: hide it.
-          el.classList.add('mux-compacting-status', 'is-done-dup');
-          el.dataset.muxDecorated = '1';
-          return;
-        }
-        // Clean (check-marked) variant: mark as the active status row + animate.
-        el.classList.add('mux-compacting-status', 'is-active');
+        el.classList.add('mux-compacting-status', 'is-done-dup');
         el.dataset.muxDecorated = '1';
         return;
       }
 
       // "Compacted: X -> Y tokens" summary pill: normalize typography
       // (strip markdown <strong>/<b> bolding so numbers don't render oversized).
+      // Lenient pre-check: any element mentioning "Compacted: ... tokens"
+      // means compaction has finished, so always drop the WORKING placeholder
+      // (the strict regex below may miss due to wrapping / trailing nodes).
+      if (/Compacted\s*:\s*[\d,]+\s*(?:->|\u2192|\u21d2)\s*[\d,]+\s*tokens?/i.test(txt)) {
+        try { clearCompactingPlaceholder(); } catch (_) {}
+      }
       const compactedMatch = txt.match(/^\s*Compacted\s*:\s*([\d,]+)\s*(?:->|\u2192|\u21d2)\s*([\d,]+)\s*tokens?\s*$/i);
       if (!el.classList.contains('mux-compacted-summary') && compactedMatch) {
-        // Final summary arrived: ensure the optimistic placeholder is gone.
+        // Final summary arrived: drop the optimistic spinner placeholder so
+        // exactly one clean result line remains (no stacked busy pills).
         try { clearCompactingPlaceholder(); } catch (_) {}
         const fromN = compactedMatch[1];
         const toN   = compactedMatch[2];
+        el.classList.remove('mux-compacting-status', 'is-active', 'is-placeholder', 'is-done-dup');
         el.classList.add('mux-compacted-summary');
         // Rebuild content with neutral spans (no <strong>/<b>); keep existing DONE tag if any.
         const existingTag = el.querySelector(':scope > .pill-tag');
