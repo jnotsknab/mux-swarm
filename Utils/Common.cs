@@ -359,7 +359,7 @@ public static class Common
 
         return $"You are a helpful AI assistant. (Prompt file missing: {expected})";
     }
-    
+
     public static Dictionary<string, string> LoadAgentModels()
     {
         var agentModels = new Dictionary<string, string>();
@@ -374,7 +374,7 @@ public static class Common
 
             if (swarm?.CompactionAgent != null && !string.IsNullOrEmpty(swarm.CompactionAgent.Model))
                 agentModels["Compaction"] = swarm.CompactionAgent.Model;
-            
+
             if (swarm?.VisionAgent != null && !string.IsNullOrEmpty(swarm.VisionAgent.Model))
                 agentModels["Vision"] = swarm.VisionAgent.Model;
 
@@ -393,7 +393,7 @@ public static class Common
 
         return agentModels;
     }
-    
+
     public static string ExtractMcpText(string raw)
     {
         try
@@ -412,7 +412,7 @@ public static class Common
         catch { /* not MCP JSON, return as-is */ }
         return raw;
     }
-    
+
     private static IEnumerable<string> GetPromptCandidates(string normalizedPath)
     {
         // 1) absolute path (or already rooted)
@@ -485,17 +485,17 @@ public static class Common
     public static string ExpandEnvVars(string value)
     {
         if (string.IsNullOrEmpty(value)) return value;
-        
+
         return Regex.Replace(value, @"\$\{([^}]+)\}", match =>
         {
             string? val = Environment.GetEnvironmentVariable(match.Groups[1].Value);
-            
+
             //return expanded string in header if no match (hardcoded header val)
             return val ?? match.Value;
         });
-        
+
     }
-    
+
     private static string RepairDoubleAgents(string path)
     {
         // Normalize to '/'
@@ -532,7 +532,7 @@ public static class Common
         if (v != null && bool.TryParse(v, out var b)) { i++; return b; }
         return null;
     }
-    
+
     public static void PruneOldSessions(string sessionDir, uint retention)
     {
         var dirs = Directory.GetDirectories(sessionDir)

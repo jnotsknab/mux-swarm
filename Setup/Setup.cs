@@ -9,7 +9,7 @@ public static class Setup
 {
     private static AppConfig _appConfig = new();
     public static bool OnboardRequested { get; set; }
-    
+
     public static readonly JsonSerializerOptions CfgSerialOpts = new()
     {
         WriteIndented = true,
@@ -66,8 +66,8 @@ public static class Setup
 
         EnsureConfigInitialized();
         SwarmDefaults.EnsurePresent(_appConfig);
-        
-        if (_appConfig.Filesystem?.AllowedPaths != null 
+
+        if (_appConfig.Filesystem?.AllowedPaths != null
             && !_appConfig.Filesystem.AllowedPaths.Contains(PlatformContext.ContextDirectory))
         {
             _appConfig.Filesystem.AllowedPaths.Add(PlatformContext.ContextDirectory);
@@ -88,7 +88,7 @@ public static class Setup
                 var swarm = JsonSerializer.Deserialize<SwarmConfig>(swarmJson);
                 if (swarm?.ExecutionLimits != null)
                     ExecutionLimits.Current = swarm.ExecutionLimits;
-                
+
                 AutoInject.Current = ExecutionLimits.Current.ContextInjection.ToLowerInvariant() switch
                 {
                     "full" => AutoInject.Mode.Full,
@@ -152,7 +152,7 @@ public static class Setup
         MuxConsole.WriteRule();
 
         StepPrintSummary();
-        
+
         MuxConsole.WriteBody("Would you like to set up your operator profile now?");
         MuxConsole.WriteMuted("This teaches your agents who you are, how you work, and what to remember.");
         MuxConsole.WriteMuted("You can always run /onboard later.");
@@ -177,7 +177,7 @@ public static class Setup
             new ("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
             new ("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
         };
-        
+
         var verbose = Debugger.IsAttached || Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE") == "1";
 
         var results = DepResolver.EnsureDepsInteractive(
@@ -186,7 +186,7 @@ public static class Setup
             findBinary: BinaryResolver.FindBinary,
             verbose: verbose
         );
-        
+
         string choice = MuxConsole.Prompt("Install playwright debs for web browser functionality? (y/n)", "n");
         if (choice.ToLowerInvariant() == "y")
         {
@@ -196,13 +196,13 @@ public static class Setup
                     "cmd", "/c npx -y playwright install --with-deps chromium", TimeSpan.FromMinutes(5))
                 : DepResolver.RunProcessInheritConsole(
                     "npx", "-y playwright install --with-deps chromium", TimeSpan.FromMinutes(5));
-    
+
             if (ok && exitCode == 0)
                 MuxConsole.WriteSuccess("Playwright installed successfully.");
             else
                 MuxConsole.WriteWarning("Playwright installation failed. Browser agent may not work.");
         }
-        
+
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
         McpServerDefaults.PatchCommandsFromDepResults(_appConfig, results);
 
@@ -350,7 +350,7 @@ public static class Setup
 
         if (!Directory.Exists(PlatformContext.ContextDirectory))
             Directory.CreateDirectory(PlatformContext.ContextDirectory);
-        
+
         return true;
     }
 
@@ -611,7 +611,7 @@ public static class Setup
         MuxConsole.WriteLine();
         return true;
     }
-    
+
     private static void StepPrintSummary()
     {
         _appConfig.SetupCompleted = true;
@@ -631,15 +631,15 @@ public static class Setup
             ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "-"),
             ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "-"),
         });
-        
+
         MuxConsole.WriteLine();
     }
-    
+
     public static bool IsBinaryAvailable(string binary) => BinaryResolver.IsBinaryAvailable(binary);
 
     public static bool TryFindBinaryPath(string binary, out string? fullPath) =>
         BinaryResolver.TryFindBinaryPath(binary, out fullPath);
-    
+
     private static List<string> ParsePaths(string input)
     {
         var result = new List<string>();

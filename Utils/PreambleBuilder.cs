@@ -20,7 +20,7 @@ public static class PreambleBuilder
             if (!string.IsNullOrWhiteSpace(userInfo.Info)) preamble += $" {userInfo.Info}";
             preamble += "\n\n";
         }
-        
+
         if (shouldPlan)
             preamble += @"
             ## Planning Mode (MANDATORY — EXECUTE NOTHING UNTIL APPROVED)
@@ -53,7 +53,7 @@ public static class PreambleBuilder
                 + "No exceptions. Do not check directories or execute any code before reading docker-sandbox. "
                 + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n";
         }
-        
+
         preamble += $@"
         ## Memory Layers
         You have access to multiple memory layers. Use the appropriate layer for the task:
@@ -141,7 +141,7 @@ public static class PreambleBuilder
 
         Any file operation that does not follow this rule is invalid.
         ";
-        
+
         //add injected context from /addcontext cmd if applicable
         string? content = null;
         var brainPath = Path.Combine(PlatformContext.ContextDirectory, "BRAIN.md");
@@ -154,18 +154,18 @@ public static class PreambleBuilder
                 content = "[INJECTED CONTEXT FROM BRAIN.md]\n";
                 if (File.Exists(brainPath))
                     content += File.ReadAllText(brainPath);
-                
+
                 content += "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
-                
+
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;
             case AutoInject.Mode.WorkingMemory:
                 content = "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
-                
+
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;
             case AutoInject.Mode.Custom:

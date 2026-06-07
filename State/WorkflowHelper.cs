@@ -7,13 +7,26 @@ public static class WorkflowHelper
 {
     public static Workflow Load(string path)
     {
-        path = path.Trim('"', '\'', ' ');
-
-        var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<Workflow>(json, new JsonSerializerOptions
+        try
         {
-            PropertyNameCaseInsensitive = true
-        }) ?? throw new InvalidOperationException($"Failed to parse workflow: {path}");
+            path = path.Trim('"', '\'', ' ');
+
+            var json = File.ReadAllText(path);
+            return JsonSerializer.Deserialize<Workflow>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? throw new InvalidOperationException($"Failed to parse workflow: {path}");
+        }
+        catch (FileNotFoundException _)
+        {
+            MuxConsole.WriteWarning($"Workflow file not found at, {path}");
+            return new Workflow();
+        }
+        catch (InvalidOperationException)
+        {
+            MuxConsole.WriteWarning($"Workflow file not valid schema, {path}");
+            return new Workflow();
+        }
     }
 
     public static void RunWorkflow(Workflow wf)

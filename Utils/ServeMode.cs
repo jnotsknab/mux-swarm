@@ -184,7 +184,7 @@ public static class ServeMode
 
                     if (string.IsNullOrEmpty(msg))
                         continue;
-                    
+
                     await _inputChannel.Writer.WriteAsync(msg);
                     HookWorker.Enqueue(new HookEvent
                     {
@@ -193,9 +193,9 @@ public static class ServeMode
                         Text = msg,
                         Timestamp = DateTimeOffset.UtcNow
                     });
-    
+
                     BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = msg }));
-                    
+
                 }
             }
         }

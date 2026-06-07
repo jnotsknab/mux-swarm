@@ -23,16 +23,16 @@ public static class MultiAgentOrchestrator
     private static bool _sessionDirty = false;
     private static uint _swarmTokens;
     private static string _orchestratorModelId;
-    
+
     /// <summary>Max chars for truncated tool results shown in the indicator.</summary>
     private const int ToolResultPreviewLength = 250;
 
     public static Dictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)> Specialists = new();
-    
+
     public static IChatClient? CompactionClient;
     public static SwarmConfig? SwarmConfig;
     private static List<Common.AgentDefinition> AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
-    
+
     /// <summary>
     /// Captures a compacted delegation result with structured metadata.
     /// </summary>
@@ -171,7 +171,7 @@ public static class MultiAgentOrchestrator
         var delegationResults = new List<DelegationResult>();
         var retryRegistry = new Dictionary<string, RetryState>();
         _sessionDirty = false;
-        
+
         HookWorker.Enqueue(new HookEvent
         {
             Event = "session_start",
@@ -180,7 +180,7 @@ public static class MultiAgentOrchestrator
             Text = incomingGoal,
             Timestamp = DateTimeOffset.UtcNow
         });
-        
+
         using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
         sessionSpan?.SetTag("mode", "swarm");
         sessionSpan?.SetTag("goal_id", goalId);
@@ -220,13 +220,13 @@ public static class MultiAgentOrchestrator
             string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
             retryRegistry.TryGetValue(retryKey, out var retryState);
             int attemptNumber = (retryState?.AttemptCount ?? 0) + 1;
-            
+
             using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
             delegationSpan?.SetTag("from", callerName);
             delegationSpan?.SetTag("to", agentName);
             delegationSpan?.SetTag("attempt", attemptNumber);
             var delegationSw = Stopwatch.StartNew();
-            
+
             MuxConsole.WriteDelegation(callerName, agentName, task);
 
             if (attemptNumber > 1)
@@ -285,7 +285,7 @@ public static class MultiAgentOrchestrator
                              $"Last reason: {retryState?.LastFailureReason ?? summary}. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
-            
+
             delegationSw.Stop();
             OtelMetrics.Delegations.Add(1,
                 new KeyValuePair<string, object?>("from", callerName),
@@ -295,7 +295,7 @@ public static class MultiAgentOrchestrator
 
             if (!succeeded)
                 OtelMetrics.SubTaskRetries.Add(1, new KeyValuePair<string, object?>("agent", agentName));
-            
+
             return string.IsNullOrWhiteSpace(compacted)
                 ? $"[{agentName} completed but returned no output]"
                 : compacted;
@@ -400,7 +400,7 @@ public static class MultiAgentOrchestrator
                     name: "read_skill",
                     description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
                                  "Read the relevant skill BEFORE starting a task to follow its best practices.");
-                
+
                 var taskCompleteTool = AIFunctionFactory.Create(
                     method: (
                         [Description("Status of the task: 'success', 'failure', or 'partial'")] string status,
@@ -423,7 +423,7 @@ public static class MultiAgentOrchestrator
                                  "Provide a status ('success', 'failure', or 'partial'), a summary of what was accomplished, " +
                                  "and optionally any file paths or identifiers produced."
                 );
-                
+
                 var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
                 if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
                 if (def.CanDelegate) agentTools.Add(subAgentDelegateTool);
@@ -459,7 +459,7 @@ public static class MultiAgentOrchestrator
                 });
 
                 var session = await agent.CreateSessionAsync();
-                    
+
                 //agents initialized
                 Specialists[def.Name] = (agent, session, def);
             }
@@ -468,13 +468,13 @@ public static class MultiAgentOrchestrator
         //Build the orchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
-        
+
         orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
-        
+
         string agentRoster = string.Join("\n", AgentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
         orchestratorPrompt += $"\n\nAvailable agents:\n{agentRoster}";
-        
+
 
         // Load or create continuous state
         CurrentStateMetadata? state = null;
@@ -529,7 +529,7 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.MuxRefreshTool,
             ..orchestratorFilteredTools
         ];
-        
+
         if (shouldPlan) orchestratorTools.Add(LocalAiFunctions.AskUserTool);
         var orchChatOptions = new ChatOptions
         {
@@ -607,7 +607,7 @@ public static class MultiAgentOrchestrator
 
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
-                
+
                 HookWorker.Enqueue(new HookEvent
                 {
                     Event = "user_input",
@@ -724,7 +724,7 @@ public static class MultiAgentOrchestrator
             if (continuous)
             {
                 MuxConsole.WriteInfo($"Iteration {state!.Iteration} complete. Enforced delay: {minDelaySeconds}s. Next run: {state.NextWakeAt:HH:mm:ss}");
-                
+
                 using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 using var delayEsc = EscapeKeyListener.Start(delayCts, cancellationToken);
 
@@ -751,7 +751,7 @@ public static class MultiAgentOrchestrator
             else
                 ContinuousStateManager.Clear(goalId!, SessionDir);
         }
-        
+
         HookWorker.Enqueue(new HookEvent
         {
             Event = "session_end",
@@ -759,7 +759,7 @@ public static class MultiAgentOrchestrator
             Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
             Timestamp = DateTimeOffset.UtcNow
         });
-        
+
         sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
         sessionSpan?.SetTag("total_tokens", _swarmTokens);
         sessionSpan?.SetTag("delegations", delegationResults.Count);
@@ -842,7 +842,7 @@ public static class MultiAgentOrchestrator
                 name: "read_skill",
                 description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
                              "Read the relevant skill BEFORE starting a task to follow its best practices.");
-            
+
             var taskCompleteTool = AIFunctionFactory.Create(
                 method: (
                     [Description("Status of the task: 'success', 'failure', or 'partial'")] string status,
@@ -865,7 +865,7 @@ public static class MultiAgentOrchestrator
                              "Provide a status ('success', 'failure', or 'partial'), a summary of what was accomplished, " +
                              "and optionally any file paths or identifiers produced."
             );
-            
+
             var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
             if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
             agentTools.AddRange(filteredTools);
@@ -900,7 +900,7 @@ public static class MultiAgentOrchestrator
             });
 
             var session = await agent.CreateSessionAsync();
-                
+
             //agents initialized
             Specialists[def.Name] = (agent, session, def);
         }
@@ -1092,17 +1092,17 @@ public static class MultiAgentOrchestrator
             bool startedStreaming = false;
             bool currentlyStreaming = false;
             var orchTurnSw = Stopwatch.StartNew();
-            
+
             try
             {
                 MuxConsole.WriteAgentTurnHeader("Orchestrator");
                 thinking = MuxConsole.BeginThinking("Orchestrator");
-                
+
                 using var orchTurnSpan = OtelTracer.GetSource().StartActivity("orchestrator_turn");
                 orchTurnSpan?.SetTag("agent", "Orchestrator");
                 orchTurnSpan?.SetTag("iteration", i);
-                
-                
+
+
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -1120,7 +1120,7 @@ public static class MultiAgentOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         responseText.Append(update.Text);
-                        
+
                         HookWorker.Enqueue(new HookEvent
                         {
                             Event = "text_chunk",
@@ -1129,10 +1129,10 @@ public static class MultiAgentOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-                    
+
                     foreach (var content in update.Contents)
-                    {   
-                        
+                    {
+
                         if (content is TextReasoningContent reasoningContent)
                         {
                             if (string.IsNullOrEmpty(reasoningContent.Text))
@@ -1156,10 +1156,10 @@ public static class MultiAgentOrchestrator
                                 Text = reasoningContent.Text,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                                    
+
                             continue;
                         }
-                        
+
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
@@ -1170,11 +1170,11 @@ public static class MultiAgentOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", "Orchestrator");
                             toolSpan?.SetTag("tool", fc.Name);
-                            
+
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
                             if (!prodMode && currentlyStreaming)
@@ -1190,7 +1190,7 @@ public static class MultiAgentOrchestrator
                                 toolCalls.Add(fc.Name);
                                 thinking?.UpdateStatus(toolCalls);
                             }
-                            
+
                         }
                         else if (content is FunctionResultContent fr)
                         {
@@ -1203,7 +1203,7 @@ public static class MultiAgentOrchestrator
                             });
 
                             var resultText = fr.Result?.ToString();
-                            
+
                             if (resultText != null)
                                 MuxConsole.WriteToolResult("Orchestrator", lastToolName ?? "unknown", resultText, true);
                             Activity.Current?.SetTag("success", true);
@@ -1214,7 +1214,7 @@ public static class MultiAgentOrchestrator
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", "Orchestrator"),
                                 new KeyValuePair<string, object?>("tool", fr.CallId));
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -1241,7 +1241,7 @@ public static class MultiAgentOrchestrator
                     }
                 }
 
-                streamComplete:;
+            streamComplete:;
 
                 if (prodMode)
                 {
@@ -1269,7 +1269,7 @@ public static class MultiAgentOrchestrator
                 }
 
                 thinking?.Dispose();
-                
+
                 HookWorker.Enqueue(new HookEvent
                 {
                     Event = "turn_end",
@@ -1277,7 +1277,7 @@ public static class MultiAgentOrchestrator
                     Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
-                
+
                 orchTurnSw.Stop();
                 OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
                 OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
@@ -1343,11 +1343,11 @@ public static class MultiAgentOrchestrator
     {
         if (cleanSession)
             specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
-        
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");
-        
+
         int stuckCount = 0;
         bool isFirstIteration = true;
 
@@ -1445,13 +1445,13 @@ public static class MultiAgentOrchestrator
             try
             {
                 MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
-                
+
                 using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
                 turnSpan?.SetTag("agent", specialist.Def.Name);
                 turnSpan?.SetTag("iteration", i);
-                
+
                 thinking = MuxConsole.BeginThinking(specialist.Def.Name);
-                
+
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
 
                 await foreach (var update in specialist.Agent
@@ -1474,7 +1474,7 @@ public static class MultiAgentOrchestrator
 
                         MuxConsole.WriteStream(update.Text);
                         iterResponse.Append(update.Text);
-                        
+
                         HookWorker.Enqueue(new HookEvent
                         {
                             Event = "text_chunk",
@@ -1483,10 +1483,10 @@ public static class MultiAgentOrchestrator
                             Timestamp = DateTimeOffset.UtcNow
                         });
                     }
-                    
+
                     foreach (var content in update.Contents)
-                    {   
-                        
+                    {
+
                         if (content is TextReasoningContent reasoningContent)
                         {
                             if (string.IsNullOrEmpty(reasoningContent.Text))
@@ -1510,10 +1510,10 @@ public static class MultiAgentOrchestrator
                                 Text = reasoningContent.Text,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                                    
+
                             continue;
                         }
-                        
+
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
@@ -1524,11 +1524,11 @@ public static class MultiAgentOrchestrator
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", specialist.Def.Name);
                             toolSpan?.SetTag("tool", fc.Name);
-                            
+
 
                             // If we were streaming text and now a tool call arrives,
                             // transition back to thinking mode so the indicator reappears.
@@ -1573,21 +1573,21 @@ public static class MultiAgentOrchestrator
                                 Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
-                            
+
                             var resultText = fr.Result?.ToString();
-                            
+
                             if (resultText != null)
                                 MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText, true);
-                            
+
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
                                 Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
                             Activity.Current?.Stop();
-                        
+
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", specialist.Def.Name),
                                 new KeyValuePair<string, object?>("tool", fr.CallId));
-                            
+
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
@@ -1628,7 +1628,7 @@ public static class MultiAgentOrchestrator
                 }
 
                 thinking?.Dispose();
-                
+
                 HookWorker.Enqueue(new HookEvent
                 {
                     Event = "turn_end",
@@ -1636,7 +1636,7 @@ public static class MultiAgentOrchestrator
                     Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
-                
+
                 turnSw.Stop();
                 OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", specialist.Def.Name));
                 OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,

@@ -13,7 +13,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.10.0";
+    public static readonly string Version = "0.10.3";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -43,6 +43,10 @@ public class App
     protected static bool AllowSubagents = false;
     protected static bool AllowParallelSubAgents = false;
     
+    // Background MCP server initialization; awaited lazily before first tool use.
+    protected static Task<bool>? McpInitTask;
+    private static int _mcpReadyGate;
+
     private static CancellationTokenSource GetOrResetCts()
     {
         lock (CtsLock)
@@ -54,6 +58,39 @@ public class App
             }
             return _cts;
         }
+    }
+
+    // Awaits the background MCP init (idempotent). On total connection failure,
+    // reports the error and exits — preserving the original strict/non-strict
+    // semantics, just deferred from startup to first tool use.
+    private static async Task EnsureMcpReadyAsync()
+    {
+        var task = McpInitTask;
+        if (task == null)
+            return;
+
+        bool ok = await task;
+
+        // Only evaluate the failure/exit path once.
+        if (Interlocked.Exchange(ref _mcpReadyGate, 1) != 0)
+            return;
+
+        if (!ok)
+        {
+            MuxConsole.WriteError(_mcpStrictMode
+                ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
+                : "Failed to connect to any MCP servers. Exiting.");
+
+            OtelLogger.Error(_mcpStrictMode
+                ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
+                : "Failed to connect to any MCP servers. Exiting.");
+
+            Environment.Exit(1);
+        }
+
+        OtelLogger.Info(_mcpStrictMode
+            ? "Established connection to all enabled MCP servers."
+            : "Established connection to at least one MCP server.");
     }
 
     public App()
@@ -132,27 +169,10 @@ public class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
-        bool servInitResult = InitMcpServersAsync(Config).GetAwaiter().GetResult();
-        if (!servInitResult)
-        {
-            MuxConsole.WriteError(_mcpStrictMode
-                ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
-                : "Failed to connect to any MCP servers. Exiting.");
-            
-            OtelLogger.Error(_mcpStrictMode
-                ? "Failed to connect to all enabled MCP servers (strict mode). Exiting."
-                : "Failed to connect to any MCP servers. Exiting.");
-            
-            Environment.Exit(1);
-        }
-
-        MuxConsole.WriteSuccess(_mcpStrictMode
-            ? "Established connection to all enabled MCP servers."
-            : "Established connection to at least one MCP server.");
-        
-        OtelLogger.Info(_mcpStrictMode
-            ? "Established connection to all enabled MCP servers."
-            : "Established connection to at least one MCP server.");
+        // Kick off MCP server connections in the background so the user is
+        // dropped into the interactive prompt immediately. Connection results
+        // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        McpInitTask = InitMcpServersAsync(Config);
 
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
@@ -211,7 +231,10 @@ public class App
         OtelLogger.Info("Runtime Ready Event Fired, Startup Completed Successfully");
         
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
+        {
+            await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
+        }
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
@@ -235,6 +258,7 @@ public class App
                 }
             }
 
+            await EnsureMcpReadyAsync();
             DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 mcpTools: McpTools!.Cast<AITool>().ToList(),
@@ -247,6 +271,7 @@ public class App
         if (OnboardRequested)
         {
             OnboardRequested = false;
+            await EnsureMcpReadyAsync();
             var onboardModel = LoadSingleAgentModel();
             var onboardCts = GetOrResetCts();
             await CliCmdUtils.HandleOnboard(
@@ -301,6 +326,11 @@ public class App
                 continue;
             }
 
+            // // Block only here (first real submission) on MCP readiness, so the
+            // // prompt itself appears instantly while servers connect in the
+            // // background. Idempotent after the first call.
+            // await EnsureMcpReadyAsync();
+
             switch (userInput)
             {
                 case "/help":
@@ -320,6 +350,7 @@ public class App
                     break;
 
                 case "/swarm":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var maModels = Common.LoadAgentModels();
                     var maCts = GetOrResetCts();
@@ -336,6 +367,7 @@ public class App
                     break;
 
                 case "/pswarm":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var pModels = Common.LoadAgentModels();
                     var pCts = GetOrResetCts();
@@ -352,6 +384,7 @@ public class App
                     break;
 
                 case "/agent":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var singleAgentModel = LoadSingleAgentModel();
                     var agentCts = GetOrResetCts();
@@ -391,6 +424,7 @@ public class App
                     );
                     break;
                 case "/stateless":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var statelessAgent = LoadSingleAgentModel();
                     var statelessAgentCts = GetOrResetCts();
@@ -971,132 +1005,150 @@ public class App
             }
         }
 
-        int enabledCount = config.McpServers.Count(kvp => kvp.Value.Enabled);
+        var enabledServers = config.McpServers.Where(kvp => kvp.Value.Enabled).ToList();
+        int enabledCount = enabledServers.Count;
+
+        // Connect to all enabled servers concurrently; shared collections are
+        // populated sequentially after the gather to avoid races on
+        // McpClients / McpTools. Success is logged only (no console output);
+        // failures are reported to the console inside ConnectMcpServerAsync.
+        var results = await Task.WhenAll(
+            enabledServers.Select(kvp => ConnectMcpServerAsync(kvp.Key, kvp.Value, baseDir, config)));
+
         int successCount = 0;
-
-        foreach (var (name, serverConfig) in config.McpServers)
+        foreach (var result in results)
         {
-            if (!serverConfig.Enabled)
-            {
-                if (VerboseInit) MuxConsole.WriteMuted($"Skipping {name} (disabled)");
+            if (result is null)
                 continue;
-            }
 
-            try
-            {
-                if (serverConfig.Type.Equals("http", StringComparison.OrdinalIgnoreCase))
-                {
-                    var urlTemplate = serverConfig.Url ?? "";
-                    var resolvedUrl = ResolveConfigValue(urlTemplate, baseDir);
+            McpClients[result.Name] = result.Client;
+            foreach (var tool in result.Tools)
+                McpTools?.Add(tool);
 
-                    var resolvedEnv = ResolveEnvVariables(serverConfig.Env, baseDir, name, verbose: VerboseInit);
+            successCount++;
+            OtelLogger.Info($"Loaded {result.Tools.Count} tools from {result.Name}{(result.IsHttp ? " (HTTP)" : "")}");
+        }
 
-                    foreach (var (envKey, envValue) in resolvedEnv)
-                    {
-                        if (string.IsNullOrEmpty(envValue)) continue;
-                        resolvedUrl = resolvedUrl.Replace($"${{{envKey}}}", envValue);
-                    }
-
-                    if (resolvedUrl.Contains("${") && VerboseInit)
-                        MuxConsole.WriteWarning($"{name} URL still contains unsubstituted tokens: {resolvedUrl}");
-
-                    var endpoint = new Uri(resolvedUrl);
-
-                    var options = new HttpClientTransportOptions
-                    {
-                        Name = name,
-                        Endpoint = endpoint,
-                        AdditionalHeaders = serverConfig.Headers
-                    };
-
-                    var transport = new HttpClientTransport(options);
-                    var client = await McpClient.CreateAsync(transport);
-                    McpClients[name] = client;
-
-                    var tools = await client.ListToolsAsync();
-                    foreach (var tool in tools)
-                        McpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
-
-                    successCount++;
-                    MuxConsole.WriteSuccess($"Loaded {tools.Count} tools from {name} (HTTP)");
-                }
-                else
-                {
-                    var command = ResolveConfigValue(serverConfig.Command ?? "", baseDir);
-                    var args = serverConfig.Args?.Select(a => ResolveConfigValue(a, baseDir)).ToArray() ?? Array.Empty<string>();
-
-                    if (name == "Filesystem" && config.Filesystem?.AllowedPaths?.Count > 0)
-                    {
-                        args = args
-                            .Concat(config.Filesystem.AllowedPaths)
-                            .ToArray();
-                    }
-
-                    var env = ResolveEnvVariables(serverConfig.Env, baseDir, name, verbose: VerboseInit);
-
-                    var options = new StdioClientTransportOptions
-                    {
-                        Name = name,
-                        Command = command,
-                        Arguments = args,
-                        EnvironmentVariables = env!
-                    };
-
-                    var transport = new StdioClientTransport(options);
-                    
-                    if (VerboseInit)
-                    {
-                        MuxConsole.WriteMuted($"Starting {name}: {command} {string.Join(" ", args)}");
-                        foreach (var (k, v) in env)
-                            MuxConsole.WriteMuted($"  ENV: '{k}' = '{MaskSecret(v)}'");
-                    }
-
-                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                    var client = await McpClient.CreateAsync(transport, cancellationToken: cts.Token);
-
-                    McpClients[name] = client;
-
-                    var tools = await client.ListToolsAsync();
-                    foreach (var tool in tools)
-                        McpTools?.Add(tool.WithName($"{name}_{tool.Name}"));
-
-                    successCount++;
-                    MuxConsole.WriteSuccess($"Loaded {tools.Count} tools from {name}");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (ex.Message.Contains("EACCES", StringComparison.OrdinalIgnoreCase))
-                {
-                    MuxConsole.WriteError($"Failed to connect to {name}: permission denied.");
-        
-                    if (PlatformContext.IsWindows)
-                    {
-                        MuxConsole.WriteMuted("  Try running your terminal as Administrator, or reinstall Node.js with the default settings.");
-                    }
-                    else if (PlatformContext.IsMac)
-                    {
-                        MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm");
-                        MuxConsole.WriteMuted("  Or reinstall Node via Homebrew: brew install node");
-                    }
-                    else
-                    {
-                        MuxConsole.WriteMuted("  Try Running: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
-                        MuxConsole.WriteMuted("  Or configure a user-level prefix: npm config set prefix '~/.npm-global'");
-                        MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
-                    }
-                }
-                else
-                {
-                    MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
-                }
-            }
+        if (VerboseInit)
+        {
+            foreach (var kvp in config.McpServers)
+                if (!kvp.Value.Enabled)
+                    MuxConsole.WriteMuted($"Skipping {kvp.Key} (disabled)");
         }
 
         if (_mcpStrictMode)
             return enabledCount > 0 && successCount == enabledCount;
 
         return successCount > 0;
+    }
+
+    private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
+
+    private static async Task<McpInitResult?> ConnectMcpServerAsync(string name, McpServerConfig serverConfig, string baseDir, AppConfig config)
+    {
+        try
+        {
+            if (serverConfig.Type.Equals("http", StringComparison.OrdinalIgnoreCase))
+            {
+                var urlTemplate = serverConfig.Url ?? "";
+                var resolvedUrl = ResolveConfigValue(urlTemplate, baseDir);
+
+                var resolvedEnv = ResolveEnvVariables(serverConfig.Env, baseDir, name, verbose: VerboseInit);
+
+                foreach (var (envKey, envValue) in resolvedEnv)
+                {
+                    if (string.IsNullOrEmpty(envValue)) continue;
+                    resolvedUrl = resolvedUrl.Replace($"${{{envKey}}}", envValue);
+                }
+
+                if (resolvedUrl.Contains("${") && VerboseInit)
+                    MuxConsole.WriteWarning($"{name} URL still contains unsubstituted tokens: {resolvedUrl}");
+
+                var endpoint = new Uri(resolvedUrl);
+
+                var httpOptions = new HttpClientTransportOptions
+                {
+                    Name = name,
+                    Endpoint = endpoint,
+                    AdditionalHeaders = serverConfig.Headers
+                };
+
+                var httpTransport = new HttpClientTransport(httpOptions);
+                var httpClient = await McpClient.CreateAsync(httpTransport);
+
+                var httpTools = await httpClient.ListToolsAsync();
+                var namedHttpTools = httpTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
+
+                return new McpInitResult(name, httpClient, namedHttpTools, IsHttp: true);
+            }
+            else
+            {
+                var command = ResolveConfigValue(serverConfig.Command ?? "", baseDir);
+                var args = serverConfig.Args?.Select(a => ResolveConfigValue(a, baseDir)).ToArray() ?? Array.Empty<string>();
+
+                if (name == "Filesystem" && config.Filesystem?.AllowedPaths?.Count > 0)
+                {
+                    args = args
+                        .Concat(config.Filesystem.AllowedPaths)
+                        .ToArray();
+                }
+
+                var env = ResolveEnvVariables(serverConfig.Env, baseDir, name, verbose: VerboseInit);
+
+                var stdioOptions = new StdioClientTransportOptions
+                {
+                    Name = name,
+                    Command = command,
+                    Arguments = args,
+                    EnvironmentVariables = env!
+                };
+
+                var stdioTransport = new StdioClientTransport(stdioOptions);
+
+                if (VerboseInit)
+                {
+                    MuxConsole.WriteMuted($"Starting {name}: {command} {string.Join(" ", args)}");
+                    foreach (var (k, v) in env)
+                        MuxConsole.WriteMuted($"  ENV: '{k}' = '{MaskSecret(v)}'");
+                }
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                var stdioClient = await McpClient.CreateAsync(stdioTransport, cancellationToken: cts.Token);
+
+                var stdioTools = await stdioClient.ListToolsAsync(cancellationToken: cts.Token);
+                var namedStdioTools = stdioTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
+
+                return new McpInitResult(name, stdioClient, namedStdioTools, IsHttp: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ex.Message.Contains("EACCES", StringComparison.OrdinalIgnoreCase))
+            {
+                MuxConsole.WriteError($"Failed to connect to {name}: permission denied.");
+
+                if (PlatformContext.IsWindows)
+                {
+                    MuxConsole.WriteMuted("  Try running your terminal as Administrator, or reinstall Node.js with the default settings.");
+                }
+                else if (PlatformContext.IsMac)
+                {
+                    MuxConsole.WriteMuted("  Try: sudo chown -R $(whoami) ~/.npm");
+                    MuxConsole.WriteMuted("  Or reinstall Node via Homebrew: brew install node");
+                }
+                else
+                {
+                    MuxConsole.WriteMuted("  Try Running: sudo chown -R $(whoami) ~/.npm ~/.npm-global");
+                    MuxConsole.WriteMuted("  Or configure a user-level prefix: npm config set prefix '~/.npm-global'");
+                    MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
+                }
+            }
+            else
+            {
+                MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
+            }
+            return null;
+        }
     }
 
     private static void InitLlmProvider()

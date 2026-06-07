@@ -10,9 +10,9 @@ public static class LocalAiFunctions
     public static AIFunction SleepTool = null!;
     public static AIFunction MuxRefreshTool = null!;
     public static AIFunction AskUserTool = null!;
-    
+
     private static readonly SemaphoreSlim _askUserGate = new(1, 1);
-    
+
     static LocalAiFunctions()
     {
         CreateSkillFuncs();
@@ -158,7 +158,7 @@ public static class LocalAiFunctions
                 {
                     App.DaemonRunner?.DisposeAsync();
                     if (App.Config.Daemon != null) App.DaemonRunner = new(App.Config.Daemon);
-                    
+
                     if (App.ServePort > 0)
                     {
                         foreach (var trigger in App.Config.Daemon.Triggers
@@ -175,7 +175,7 @@ public static class LocalAiFunctions
                         mcpTools: App.GetMcpTools()!.Cast<AITool>().ToList(),
                         agentModels: Common.LoadAgentModels());
                 }
-                
+
                 return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete. ";
 
             },
@@ -205,17 +205,17 @@ public static class LocalAiFunctions
                     "Default value if the user provides no input. For 'confirm', use 'yes' or 'no'.")]
                 string? defaultValue = null
             ) =>
-            {   
+            {
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
-        
+
                 var tcs = new TaskCompletionSource<string>();
-                
-                var thread = new Thread( () =>
+
+                var thread = new Thread(() =>
                 {
                     try
                     {
                         MuxConsole.WriteLine();
-                        
+
                         string result = normalized switch
                         {
                             "confirm" => MuxConsole.Confirm(question,
@@ -241,9 +241,9 @@ public static class LocalAiFunctions
                     IsBackground = true,
                     Name = "AskUser-IO"
                 };
-                
+
                 try
-                {   
+                {
                     EscapeKeyListener.Pause();
                     StdinCancelMonitor.Instance?.Pause();
                     thread.Start();

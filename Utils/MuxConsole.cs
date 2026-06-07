@@ -132,7 +132,7 @@ public static class MuxConsole
         {
             var sb = new StringBuilder();
             while (true)
-            {   
+            {
                 var line = StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
                 if (line is null || line.Trim() == MultiLineDelimiter) break;
                 sb.AppendLine(line);
@@ -142,7 +142,7 @@ public static class MuxConsole
 
         return StdinCancelMonitor.Instance?.ReadLine(ct) ?? Console.ReadLine();
     }
-    
+
     public static string AskText(string question, string? defaultValue)
     {
         string response = Prompt(question, defaultValue);
@@ -170,7 +170,7 @@ public static class MuxConsole
         var selected = MuxConsole.MultiSelect(question, choices);
         return $"User selected: {string.Join(", ", selected)}";
     }
-    
+
     public static List<string> ParseOptions(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw))
@@ -181,7 +181,7 @@ public static class MuxConsole
             .Where(s => s.Length > 0)
             .ToList();
     }
-    
+
     /// <summary>
     /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
     /// No external dependencies or image files required.
@@ -711,7 +711,7 @@ public static class MuxConsole
             .PromptStyle(new Style(Color.White));
 
         if (secret) prompt.Secret();
-        
+
         if (defaultValue != null)
             prompt.DefaultValue(defaultValue).DefaultValueStyle(new Style(Color.Grey));
         else
@@ -1002,19 +1002,19 @@ public static class MuxConsole
             Timestamp = DateTimeOffset.UtcNow
         });
     }
-    
+
     public static void WriteToolResult(string agent, string tool, string fullResult, bool swarm = false)
-    {  
+    {
         //no need to display this unnecessary
         //TODO: We have to filter out .AIContent[] as there is currently no check for if the returned function content is a flat obj or not, update logic in agent orchestrators to check for dict etc
         if (fullResult.Length <= 0 || fullResult.Trim().Equals("Task marked as complete.", StringComparison.OrdinalIgnoreCase)
             || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase)) return;
-        
-        
+
+
         if (!StdioMode)
-        {   
+        {
             fullResult = Common.ExtractMcpText(fullResult);
-            
+
             var display = fullResult.Length > 2000
                 ? Esc(fullResult[..2000]) + "\n[dim]... truncated[/]"
                 : Esc(fullResult);
@@ -1034,7 +1034,7 @@ public static class MuxConsole
                 Padding = new Padding(2, 1),
                 Expand = false
             };
-            
+
             WriteRule();
             AnsiConsole.Write(panel);
             WriteRule();

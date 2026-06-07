@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <script>window.__errs=[]; window.addEventListener("error", e => { window.__errs.push((e.message||"?") + " @ " + (e.filename||"") + ":" + e.lineno + ":" + e.colno); }); window.addEventListener("unhandledrejection", e => { window.__errs.push("rej: " + (e.reason && e.reason.message || e.reason)); });</script><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content">
 <title>Mux-Swarm</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><path d='M30 70 L30 30 L50 50 L70 30 L70 70' fill='none' stroke='%23ffffff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='30' r='6' fill='%2364B4DC'/><circle cx='50' cy='50' r='6' fill='%2364B4DC'/><circle cx='70' cy='30' r='6' fill='%2364B4DC'/><circle cx='30' cy='70' r='6' fill='%2364B4DC'/><circle cx='70' cy='70' r='6' fill='%2364B4DC'/></svg>" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -54,8 +54,15 @@ html, body,
    different visual sizes throughout the app). */
 .event, .diff-container,
 .task-complete, .task-complete .tc-summary,
-.delegation, .delegation .task {
+.delegation, .delegation .task,
+.stream-block, .stream-block p, .stream-block li,
+.stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
+}
+/* Code blocks inside agent cards keep a readable fixed leading - the user's
+   prose line-height shouldn't stretch monospace code listings. */
+.stream-block pre, .stream-block pre code {
+  line-height: 1.55 !important;
 }
 /* Status chips stay tight regardless of user line-height preference -
    they're inline indicators, not prose. */
@@ -192,6 +199,8 @@ html, body {
 }
 
 .app.sidebar-open { margin-right: var(--sidebar-width); }
+/* Shrink the fixed floating composer so it stays within the content column when the sidebar is open */
+body:has(.app.sidebar-open) .input-area { --composer-right-inset: var(--sidebar-width); }
 
 /* ── Header ── */
 .header {
@@ -269,7 +278,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   pointer-events: none;
 }
 
-.header-logo { color: var(--text); font-weight: 600; font-size: calc(16px * var(--ui-font-scale, 1)); letter-spacing: 0.02em; font-family: var(--font-sans); text-decoration: none; transition: opacity 0.2s ease; }
+.header-logo { color: var(--text); font-weight: 600; font-size: calc(16px * var(--ui-font-scale, 1)); letter-spacing: 0.02em; font-family: var(--font-sans); text-decoration: none; transition: opacity 0.2s ease; white-space: nowrap; flex-shrink: 0; }
 .header-logo:hover { opacity: 0.8; }
 
 .header-status { 
@@ -292,10 +301,17 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   color: var(--text);
 }
 
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); transition: all 0.3s ease; }
-.status-dot.connected { background: var(--green); box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); animation: pulse-green 2s infinite; }
-@keyframes pulse-green { 0% { box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); } 50% { box-shadow: 0 0 12px 4px rgba(16, 185, 129, 0.5); } 100% { box-shadow: 0 0 8px 2px rgba(16, 185, 129, 0.3); } }
-.status-dot.error { background: var(--red); box-shadow: 0 0 12px rgba(239, 68, 68, 0.4); }
+.status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0;
+  box-shadow: 0 0 0 0 transparent; transition: background 0.3s ease, box-shadow 0.3s ease; }
+/* Theme-aware glow: derive the halo from the live --green / --red vars rather than a
+   hardcoded emerald, so the ring always matches the dot across every theme. A tight,
+   subtle pulse reads as a crisp "live" indicator instead of a fuzzy blob. */
+.status-dot.connected { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); animation: pulse-green 2.4s ease-in-out infinite; }
+@keyframes pulse-green {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
+  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent); }
+}
+.status-dot.error { background: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 28%, transparent); animation: none; }
 
 .header-actions { display: flex; gap: 8px; }
 
@@ -354,7 +370,11 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 .sidebar-close:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
 
-.sidebar-content { flex: 1; overflow-y: auto; padding: 8px; }
+.sidebar-content { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
+/* When the Live Diffs panel is mounted it owns the full height + its own internal
+   scrolling (sticky header + scrollable list), so the sidebar container must not
+   add padding or a second scroll context. */
+.sidebar-content:has(> #diffs-content-area) { padding: 0; overflow: hidden; }
 .sidebar-content::-webkit-scrollbar { width: 4px; }
 .sidebar-content::-webkit-scrollbar-track { background: transparent; }
 .sidebar-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -549,9 +569,9 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .stream-block h3:first-child, .stream-block h4:first-child { margin-top: 0; }
 .stream-block h1 { font-size: calc(20px * var(--ui-font-scale, 1)); border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
 .stream-block h2 { font-size: calc(17px * var(--ui-font-scale, 1)); border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
-.stream-block h3 { font-size: calc(15px * var(--ui-font-scale, 1)); }
-.stream-block h4 { font-size: calc(14px * var(--ui-font-scale, 1)); color: var(--accent, #64b4dc); }
-.stream-block h5, .stream-block h6 { font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.stream-block h3 { font-size: calc(16px * var(--ui-font-scale, 1)); }
+.stream-block h4 { font-size: calc(15px * var(--ui-font-scale, 1)); color: var(--accent, #64b4dc); }
+.stream-block h5, .stream-block h6 { font-size: calc(14px * var(--ui-font-scale, 1)); color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .stream-block ul, .stream-block ol { margin: 0.5em 0; padding-left: 1.5em; }
 .stream-block li { margin: 0.25em 0; }
 .stream-block li::marker { color: var(--accent, #64b4dc); }
@@ -583,7 +603,8 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   font-family: var(--font-sans); font-weight: 700; color: var(--blue); margin: 0.6em 0 0.3em; line-height: 1.25;
 }
 .code-block { position: relative; }
-.code-block pre { margin: 8px 0; }
+.code-block pre { margin: 8px 0; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+.code-block pre code { background: none; border: 0; padding: 0; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.55; color: var(--text); }
 .code-copy-btn { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.25); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; cursor: pointer; display: inline-flex; align-items: center; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; z-index: 2; }
 .code-block:hover .code-copy-btn, .code-copy-btn:focus { opacity: 1; }
 .code-copy-btn:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
@@ -852,6 +873,96 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 /* Trivial stream-blocks (no chevron): reclaim chevron padding. */
 .stream-block.mux-coll-trivial { padding-right: 16px; }
+/* Below-threshold (trivial) cards never collapse, so they kept the loose base
+   8px/16px margin and read far apart from the tight collapsed stack. Match the
+   collapsed rhythm (margin 2px, compact padding) so short and collapsed cards
+   sit together evenly. Trivial cards stay on the medium brightness tier. */
+.stream-block.mux-coll-trivial {
+  margin: 2px 0;
+  padding: 8px 16px;
+}
+/* Whole-card collapse affordance: pointer when collapsed (click to expand); text cursor
+   when expanded so reading/selecting feels natural — the chevron still collapses it,
+   and a bare click on the body (no selection) also collapses it. */
+.stream-block.mux-coll-collapsed > .stream-body { cursor: pointer; }
+
+/* ════════════════════════════════════════════════════════════════════
+   Collapsed-card readability pass (2026-06-04)
+   Goal: make the collapsed stack easy to scan and visually distinct by
+   role, lift cards off the background, and quiet code chips so prose
+   reads first. All theme-aware via existing CSS vars.
+   ══════════════════════════════════════════════════════════════════ */
+
+/* 1) Role-coded left rail. The assistant card already has a 3px left rail
+      but it used the muted --border colour (invisible). Tint each card
+      family so you can tell role at a glance. */
+.stream-block            { border-left-color: rgba(var(--accent-rgb), 0.7); }
+.tool-call, .tool-result { border-left: 3px solid var(--amber);
+                           border-radius: 0 6px 6px 0; }
+.delegation              { border-left: 3px solid var(--agent);
+                           border-radius: 0 6px 6px 0; }
+.task-complete           { border-left: 3px solid var(--green); }
+.panel-block             { border-left: 3px solid var(--blue); }
+.diff-card               { border-left: 3px solid var(--accent); }
+
+/* 2) Declutter the stack (Claude-style): collapsed cards drop their box
+      chrome so a long chain reads as one continuous stream instead of a
+      ladder of enclosed capsules. Only the role-coded left rail + whitespace
+      separate items at rest; a subtle fill + ring appears on hover.
+      The card is FLAT at rest (no fill bump) so an expanded card is never
+      darker than its collapsed state. */
+.stream-block.mux-coll-collapsed {
+  background: transparent;          /* sit flat on the page at rest */
+  border-top: 0; border-right: 0; border-bottom: 0;  /* rail only */
+  border-radius: 0;                 /* square edges read as a stream */
+  box-shadow: none;
+  margin: 2px 0;                    /* tighter rhythm; rail does the separating */
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+.stream-block.mux-coll-collapsed:hover {
+  background: rgba(255,255,255,0.03);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.1);
+}
+/* Three-tier brightness hierarchy so state reads at a glance:
+     • collapsed (.mux-coll-collapsed)               -> dimmest / flat (above)
+     • below-threshold short (.mux-coll-trivial)      -> MEDIUM baseline
+     • manually-expanded (collapsible, open, !trivial)-> BRIGHTEST + accent ring
+   All non-collapsed cards keep the base panel look (bg-input + radius) so reading
+   material is never dimmer than collapsed. Trivial cards are the medium rest tier;
+   a card the user deliberately opened lights up a touch more with a stronger ring. */
+.stream-block.mux-collapsible:not(.mux-coll-collapsed) {
+  background:
+    linear-gradient(0deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03)),
+    var(--bg-input);
+  border-left-color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.22), 0 0 0 1px rgba(var(--accent-rgb), 0.10);
+}
+/* Brightest tier: a chevron-bearing card the user expanded (not a short trivial one).
+   ~4% extra lift + a stronger accent ring — the ring does the differentiating work
+   so it stays flat/stream-like rather than boxy (option B). */
+.stream-block.mux-collapsible:not(.mux-coll-collapsed):not(.mux-coll-trivial) {
+  background:
+    linear-gradient(0deg, rgba(255,255,255,0.085), rgba(255,255,255,0.085)),
+    var(--bg-input);
+  box-shadow: 0 1px 6px rgba(0,0,0,0.30), 0 0 0 1px rgba(var(--accent-rgb), 0.26);
+}
+
+/* 3) Quiet inline code chips while collapsed so the eye reads prose first,
+      not scattered cyan fragments. Restored to full styling when expanded. */
+.stream-block.mux-coll-collapsed code {
+  color: var(--text);
+  background: rgba(255,255,255,0.05);
+  border-color: transparent;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+/* 4) Chevron: a bit quieter at rest, crisp accent on card hover so the
+      affordance is obvious without shouting. */
+.stream-block.mux-coll-collapsed > .mux-coll-toggle { opacity: 0.45; }
+.stream-block.mux-coll-collapsed:hover > .mux-coll-toggle {
+  opacity: 1; color: var(--accent);
+}
 
 /* Show copy on hover of card or copy button focus (already defined globally) */
 
@@ -1127,15 +1238,42 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .upload-preview .upload-name { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
 .upload-preview .upload-size { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
 
-/* ── Input area ── */
-.input-area { border-top: 1px solid var(--border); padding: 10px 0; flex-shrink: 0; display: flex; gap: 8px; align-items: flex-end; }
+/* ── Input area (detached floating composer, Claude-desktop style) ── */
+:root { --kb-inset: 0px; }
+.input-area {
+  position: fixed;
+  /* Span the main content column: align to the .app side padding (24px desktop)
+     and shrink when the sidebar is open so it never sits under the file browser. */
+  left: 24px;
+  right: calc(24px + var(--composer-right-inset, 0px));
+  /* Pinned to the visual-viewport bottom. When the keyboard is up, --kb-inset
+     (set from visualViewport) lifts the bar flush above it; otherwise it rests
+     just above the safe-area inset. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 14px);
+  z-index: 60;
+  display: flex; gap: 8px; align-items: flex-end;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--bg) calc(var(--composer-opacity, 0.62) * 100%), transparent);
+  backdrop-filter: blur(18px) saturate(1.1);
+  -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: 0 8px 30px rgba(0,0,0,0.38), 0 1px 0 rgba(255,255,255,0.04) inset;
+  transition: bottom 0.18s ease, box-shadow 0.2s ease;
+}
+.input-area:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 10px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.25);
+}
 .input-area .btn-group { align-self: flex-end; }
+/* Reserve space so the last transcript line isn't hidden behind the floating bar */
+.output { padding-bottom: 96px; }
 
 .input-area textarea {
-  flex: 1; width: 100%; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 8px; padding: 12px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  line-height: 1.6; resize: none; outline: none; min-height: 44px; max-height: 360px;
-  transition: border-color 0.15s;
+  flex: 1; width: 100%; background: transparent; color: var(--text); border: 1px solid transparent;
+  border-radius: 10px; padding: 10px 12px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.6; resize: none; outline: none; min-height: 40px; max-height: 320px;
+  transition: border-color 0.15s, box-shadow 0.15s;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
@@ -1145,19 +1283,23 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .input-area textarea:hover::-webkit-scrollbar-thumb,
 .input-area textarea:focus::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
 .input-area textarea::-webkit-scrollbar-button { display: none; }
-.input-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.22); }
+.input-area textarea:focus { border-color: transparent; box-shadow: none; }
 .input-area textarea::placeholder { color: var(--muted); }
 
 /* ── Command palette (slash autocomplete) ── */
 .cmd-palette {
   position: absolute; left: 0; right: 0; bottom: calc(100% + 8px);
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
-  box-shadow: 0 10px 28px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.35);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  max-height: 280px; overflow-y: auto; z-index: 50;
+  /* Opacity slider drives the BACKGROUND alpha (not element opacity) so the
+     panel stays fully readable at max: 1.0 = solid zinc, lower = glassy.
+     Built on an opaque dark base so chat text never bleeds through. */
+  background: rgba(20, 20, 24, var(--cmd-palette-opacity, 1));
+  border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 12px 34px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
+  backdrop-filter: blur(18px) saturate(1.1); -webkit-backdrop-filter: blur(18px) saturate(1.1);
+  max-height: 280px; overflow-y: auto; z-index: 50; overflow-x: hidden;
   font-family: var(--font-mono); font-size: calc(13px * var(--ui-font-scale, 1));
   scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  display: none; opacity: var(--cmd-palette-opacity, 1);
+  display: none;
 }
 .cmd-palette.open { display: block; }
 body.hide-cmd-palette .cmd-palette { display: none !important; }
@@ -1166,50 +1308,77 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .cmd-palette::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
 .cmd-palette:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
 .cmd-palette-header {
-  padding: 6px 12px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); text-transform: uppercase;
-  letter-spacing: 0.05em; border-bottom: 1px solid var(--border); background: var(--bg);
-  position: sticky; top: 0;
+  padding: 7px 14px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); text-transform: uppercase;
+  letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
+  /* Opaque header strip so it reads clearly even when the panel is set glassy. */
+  background: rgba(16, 16, 20, 0.96);
+  border-radius: 16px 16px 0 0;
+  position: sticky; top: 0; z-index: 1;
 }
 .cmd-item {
-  display: flex; align-items: baseline; gap: 12px; padding: 7px 12px;
+  display: flex; align-items: baseline; gap: 12px; padding: 7px 14px;
   cursor: pointer; border-left: 2px solid transparent;
 }
+.cmd-item:last-child { border-radius: 0 0 16px 16px; }
 .cmd-item:hover { background: rgba(var(--accent-rgb), 0.08); }
 .cmd-item.active { background: rgba(var(--accent-rgb), 0.14); border-left-color: var(--accent); }
 .cmd-item .cmd-name { color: var(--accent); font-weight: 600; white-space: nowrap; min-width: 110px; }
 .cmd-item .cmd-desc { color: var(--muted); flex: 1; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.4; }
 .cmd-palette-empty { padding: 10px 12px; color: var(--muted); font-style: italic; font-size: calc(12px * var(--ui-font-scale, 1)); }
+/* Mobile: the side-by-side name/desc columns crunch the description into tall
+   skinny stacks on narrow viewports. Stack name above description, let the desc
+   use the full panel width, and lift opacity to fully solid so chat never bleeds
+   through behind the (taller) panel. */
+@media (max-width: 640px) {
+  .cmd-palette {
+    background: rgb(20, 20, 24);   /* force solid on mobile regardless of slider */
+    max-height: 50vh;
+  }
+  .cmd-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    padding: 8px 14px;
+  }
+  .cmd-item .cmd-name { min-width: 0; white-space: nowrap; }
+  .cmd-item .cmd-desc { flex: none; white-space: normal; font-size: calc(11.5px * var(--ui-font-scale, 1)); opacity: 0.92; }
+}
 
 /* ── Pending attachments strip ── */
 .attachments-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
 .attachments-strip:empty { display: none; }
 
-.btn-group { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-group { display: flex; gap: 6px; flex-shrink: 0; align-items: center; }
 
 .send-btn {
-  background: var(--accent); color: var(--bg); border: none; border-radius: 6px;
-  padding: 8px 14px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600;
-  cursor: pointer; transition: all 0.15s; white-space: nowrap; min-height: 38px;
+  background: var(--accent); color: var(--bg); border: 1px solid transparent; border-radius: 999px;
+  height: 40px; padding: 0 18px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600;
+  cursor: pointer; transition: background 0.15s, transform 0.1s, box-shadow 0.15s; white-space: nowrap;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 8px rgba(var(--accent-rgb), 0.28);
 }
-.send-btn:hover { opacity: 0.9; background: #7BC3E8; }
+.send-btn:hover { background: #7BC3E8; }
 .send-btn:active { transform: scale(0.96); }
-.send-btn.stop-mode { background: var(--red); }
+.send-btn.stop-mode { background: var(--red); box-shadow: 0 2px 8px rgba(220,80,80,0.3); }
 
 .upload-btn {
-  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; padding: 8px 10px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer; transition: all 0.15s; min-height: 38px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
 }
-.upload-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
-.upload-btn:active { transform: scale(0.96); }
+.upload-btn:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.upload-btn:active { transform: scale(0.94); }
 
 
 .mic-btn {
-  background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
-  border-radius: 4px; padding: 8px 10px; font-family: var(--font-mono); font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer; transition: all 0.15s; min-height: 38px;
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; width: 40px; height: 40px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.1s;
 }
-.mic-btn:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.mic-btn:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.mic-btn:active { transform: scale(0.94); }
 .mic-btn.recording {
   background: rgba(239, 68, 68, 0.15);
   color: var(--red);
@@ -1257,13 +1426,49 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   .app { padding: 0 8px; padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
   .header { padding: 8px 0; gap: 8px; }
   .header-logo { font-size: calc(12px * var(--ui-font-scale, 1)); }
+  /* ── Mobile header: brand+dot on the left, icon cluster on the right (Option A:
+     grouped-right, balanced edges). Drop the status word so nothing wraps/clips. ── */
+  .header {
+    gap: 6px;
+    padding-right: 22px; /* room for the absolute .header-toggle without stealing too
+                            much width from the 6-icon action row */
+  }
+  .header-logo { flex-shrink: 0; }
+  /* Status: dot only on mobile, sitting tight next to the brand as a 'live' indicator. */
+  .header-status { flex: 0 0 auto; margin-left: 0; padding: 4px 0; gap: 0; }
+  .header-status #statusText { display: none; }
+  /* Option B — spread the icons evenly across the remaining width so there's no dead
+     centre zone. NOTE: the actions group holds up to 6 buttons on a live page
+     (reconnect, clear, theme, sidebar + JS-injected node-graph & settings), so the
+     icons must stay compact here or the last one clips off the right edge. */
+  .header-actions {
+    flex: 1 1 auto;
+    justify-content: space-between;
+    margin-left: 8px;    /* breathing gap after the brand+dot */
+    gap: 0;              /* spacing comes from space-between, not gap */
+    min-width: 0;        /* allow the group to shrink within the flex row */
+  }
+  .header-actions .icon-btn { padding: 5px; flex: 0 0 auto; }
+  .header-actions .icon-btn svg { width: 18px; height: 18px; }
+  /* Collapse chevron: pinned in the top-right header corner. NOTE: .header-toggle is
+     position:absolute inside .app (which spans the full viewport height), so top:50%
+     would drop it to mid-screen — keep an explicit small top offset instead. */
+  .header-toggle { top: calc(env(safe-area-inset-top, 0px) + 10px); right: 6px; transform: none; }
+  body.header-collapsed .header-toggle { top: calc(env(safe-area-inset-top, 0px) + 6px); }
   .stream-block { padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); word-break: break-word; overflow-wrap: anywhere; }
   .panel-body { word-break: break-word; overflow-wrap: anywhere; }
-  .input-area { padding: 6px 0 8px; gap: 4px; }
+  .input-area {
+    left: 8px; right: 8px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 8px);
+    padding: 6px 8px; gap: 4px; border-radius: 14px;
+  }
+  /* Sidebar is a full-width overlay on mobile, so no right inset needed */
+  body:has(.app.sidebar-open) .input-area { --composer-right-inset: 0px; }
+  .output { padding-bottom: 88px; }
   .input-area textarea { font-size: calc(16px * var(--ui-font-scale, 1)); min-height: 44px; max-height: 280px; padding: 8px 10px; }
   .btn-group { gap: 4px; }
-  .send-btn { min-height: 44px; padding: 8px 10px; font-size: calc(11px * var(--ui-font-scale, 1)); }
-  .upload-btn { min-height: 44px; padding: 8px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; }
   .prompt-block button { min-height: 44px; padding: 8px 12px; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
@@ -1306,92 +1511,270 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 }
 
 /* ── Live Output / Diffs ── */
-.diff-container {
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 1.6;
-  background: var(--bg);
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--blue);
-  margin-bottom: 8px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-  overflow: hidden;
+/* ─────────────────────────────────────────────────────────────
+   Live Diffs panel — clean, scannable change cards.
+   Shares the Sessions-tab aesthetic (restrained borders, pill
+   metadata, comfortable spacing) but is diff-first & distinct. */
+#diffs-content-area {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: transparent;
 }
-.diff-header {
-  background: var(--bg-card);
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  color: var(--text);
-  font-weight: 600;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+/* Sticky header bar (mirrors the Sessions search/count row) */
+.diffs-bar {
+  flex: 0 0 auto;
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  user-select: none;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
-.diff-header-badge {
-  background: rgba(59, 130, 246, 0.15);
-  color: var(--blue);
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(59, 130, 246, 0.3);
+.diffs-bar-title {
+  font-family: var(--font-sans, inherit);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--text);
 }
-.diff-time {
+.diffs-count {
+  display: inline-flex;
+  align-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(161,161,170,0.16);
   color: var(--muted);
-  font-weight: 400;
-  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  justify-content: center;
 }
-.diff-content {
-  padding: 6px 8px;
-  white-space: pre;
-  word-break: normal;
+.diffs-bar.has-items .diffs-count {
+  background: color-mix(in srgb, var(--accent, #8b9cff) 18%, transparent);
+  color: var(--accent, #b8a3ff);
+}
+.diffs-bar-spacer { flex: 1 1 auto; }
+.diffs-clear {
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+.diffs-clear:hover { background: rgba(161,161,170,0.10); color: var(--text); border-color: var(--muted); }
+
+/* Scrollable card list */
+.diffs-list {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
-  overflow-x: auto;
-  max-height: 400px; /* Prevent massive blowouts */
+  overflow-x: hidden;
+  padding: 10px;
+  display: block;
 }
-.diff-content::-webkit-scrollbar { width: 6px; height: 6px; }
-.diff-content::-webkit-scrollbar-track { background: transparent; }
-.diff-content::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
-.diff-content:hover::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.4); }
 
-/* Custom scrollbar for the live-diffs panel scroll container */
-#diffs-content-area {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
+/* Empty state */
+.diffs-empty {
+  margin: auto;
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--muted);
 }
-#diffs-content-area::-webkit-scrollbar { width: 8px; }
-#diffs-content-area::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
-#diffs-content-area::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 4px;
-  border: 2px solid transparent;
-  background-clip: content-box;
+.diffs-empty-icon {
+  width: 34px; height: 34px;
+  margin: 0 auto 10px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 999px;
+  background: rgba(161,161,170,0.10);
+  color: var(--muted);
+  font-size: 16px;
 }
-#diffs-content-area:hover::-webkit-scrollbar-thumb,
-#diffs-content-area:focus::-webkit-scrollbar-thumb {
-  background: var(--muted);
-  background-clip: content-box;
+.diffs-empty-text { font-size: calc(13px * var(--ui-font-scale, 1)); font-weight: 600; color: var(--text); opacity: 0.85; }
+.diffs-empty-sub  { font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted); margin-top: 4px; }
+
+/* Change card */
+.diff-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card, var(--bg));
+  overflow: hidden;
+  flex: none;
+  margin-bottom: 8px;
 }
-#diffs-content-area::-webkit-scrollbar-button { display: none; }
+.diff-card:last-child { margin-bottom: 0; }
+.diff-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,0.015);
+}
 
-/* Line styles */
-.diff-line { padding: 0 4px; border-radius: 2px; min-height: 18px; }
-.diff-add { color: #4ade80; background: rgba(16, 185, 129, 0.1); }
-.diff-sub { color: #f87171; background: rgba(239, 68, 68, 0.1); }
-.diff-info { color: var(--blue); opacity: 0.8; font-style: italic; }
-.diff-context { color: var(--text); opacity: 0.9; }
+/* Collapsible diff card: clickable head + rotating chevron (budget-based) */
+.diff-card.mux-collapsible { position: relative; }
+.diff-card .diff-card-head { cursor: pointer; user-select: none; }
+.diff-card .diff-card-head:hover { background: rgba(255,255,255,0.03); }
+.diff-card.mux-coll-collapsed .diff-card-head { border-bottom-color: transparent; }
+.diff-chevron {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px;
+  color: var(--muted);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  transform: rotate(90deg);
+  transition: transform 0.22s ease;
+}
+.diff-card.mux-coll-collapsed .diff-chevron { transform: rotate(0deg); }
+/* The wrapped body animates open/closed via the generic mux-coll rules. */
+.diff-card > .mux-coll-body {
+  max-height: 100000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: opacity 0.2s ease;
+}
+.diff-card.mux-coll-collapsed > .mux-coll-body {
+  max-height: 0 !important;
+  opacity: 0;
+}
+.diff-tag {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.tag-diff  { background: rgba(74,222,128,0.14);  color: #4ade80; }
+.tag-json  { background: rgba(139,156,255,0.16); color: var(--accent, #b8a3ff); }
+.tag-shell { background: rgba(245,158,11,0.16);  color: var(--amber, #f59e0b); }
+.tag-text  { background: rgba(161,161,170,0.16); color: var(--muted); }
+.diff-tool {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.diff-stat {
+  flex: 0 0 auto;
+  display: inline-flex; gap: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.ds-add { color: #4ade80; }
+.ds-sub { color: #f87171; }
+.diff-card-spacer { flex: 1 1 auto; }
+.diff-time {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.diff-file {
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;        /* keep the basename visible when truncating long paths */
+  text-align: left;
+}
 
-/* Shell specific styles */
-.shell-header { color: var(--amber); font-weight: 600; margin-top: 8px; margin-bottom: 4px; border-bottom: 1px dashed var(--border); padding-bottom: 2px; display: inline-block;}
-.shell-status { color: var(--muted); font-style: italic; }
+/* Body container: clamp tall content, wrap everything (no horizontal scroll) */
+.diff-body {
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  line-height: 1.55;
+  padding: 6px 0;
+  overflow: hidden;
+}
+.diff-card.is-clamped .diff-body { max-height: 230px; -webkit-mask-image: linear-gradient(to bottom, #000 78%, transparent 100%); mask-image: linear-gradient(to bottom, #000 78%, transparent 100%); }
 
-/* JSON specific styles */
-.json-key { color: #60a5fa; }
-.json-string { color: #4ade80; }
-.json-number { color: #f472b6; }
+/* Diff code: aligned gutter + wrapped text, semantic red/green ONLY here */
+.diff-code { display: block; }
+.dl { display: flex; gap: 8px; padding: 0 10px; }
+.dl-g { flex: 0 0 auto; width: 0.8em; text-align: center; opacity: 0.7; user-select: none; }
+.dl-t { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+.dl-add { background: rgba(16,185,129,0.10); color: #86efac; }
+.dl-add .dl-g { color: #4ade80; }
+.dl-sub { background: rgba(239,68,68,0.10); color: #fca5a5; }
+.dl-sub .dl-g { color: #f87171; }
+.dl-ctx { color: var(--text); opacity: 0.85; }
+.dl-hunk { color: var(--blue); opacity: 0.85; padding: 2px 10px; font-style: italic; }
+
+/* JSON / plain text bodies: wrapped, no horizontal scrollbar */
+.diff-json, .diff-text {
+  margin: 0;
+  padding: 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  opacity: 0.92;
+}
+.json-key     { color: var(--accent, #b8a3ff); }
+.json-string  { color: var(--text); opacity: 0.78; }
+.json-number  { color: #f0a868; }
+.json-boolean { color: var(--blue, #60a5fa); }
+
+/* Shell body */
+.diff-shell { padding: 0 10px; }
+.sh-head { color: var(--amber, #f59e0b); font-weight: 600; margin-top: 6px; margin-bottom: 2px; opacity: 0.9; }
+.sh-meta { color: var(--muted); }
+.sh-line { color: var(--text); opacity: 0.88; white-space: pre-wrap; word-break: break-word; }
+
+/* Show more / less toggle */
+.diff-more {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--accent, #b8a3ff);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.diff-more:hover { background: rgba(161,161,170,0.08); }
+
+/* List scrollbar */
+.diffs-list { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.diffs-list::-webkit-scrollbar { width: 8px; }
+.diffs-list::-webkit-scrollbar-track { background: transparent; margin: 4px 0; }
+.diffs-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+.diffs-list:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
+
+/* Legacy fallback styles (kept so any old .diff-container still renders) */
+.diff-container { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; background: var(--bg-card, var(--bg)); border-radius: 8px; border: 1px solid var(--border); margin-bottom: 8px; overflow: hidden; }
+.diff-line { padding: 0 4px; }
+.diff-add { color: #4ade80; }
+.diff-sub { color: #f87171; }
 .json-boolean { color: #fbbf24; }
 
 /* ── Theme Panel ── */
@@ -1926,11 +2309,50 @@ const icons = {
 
   let pendingFiles = []; // [{path, name, thumbUrl}]
   
-  // Persistent diffs area
+  // Persistent diffs area: a sticky header (title + count + clear) over a
+  // scrollable list of clean change cards. Distinct from Sessions, but shares
+  // the restrained borders / pill-metadata / comfortable spacing aesthetic.
   const diffsArea = document.createElement('div');
   diffsArea.id = 'diffs-content-area';
-  diffsArea.style.cssText = 'padding: 8px; height: 100%; overflow-y: auto;';
-  diffsArea.innerHTML = '<div class="event" id="diffs-waiting" style="text-align:center; margin-top: 20px;">Waiting for live diffs...</div>';
+  diffsArea.innerHTML =
+    '<div class="diffs-bar">' +
+      '<span class="diffs-bar-title">Live Diffs</span>' +
+      '<span class="diffs-count" id="diffs-count">0 changes</span>' +
+      '<span class="diffs-bar-spacer"></span>' +
+      '<button type="button" class="diffs-clear" id="diffs-clear">Clear</button>' +
+    '</div>' +
+    '<div class="diffs-list" id="diffs-list">' +
+      '<div class="diffs-empty" id="diffs-waiting">' +
+        '<div class="diffs-empty-icon">\u2713</div>' +
+        '<div class="diffs-empty-text">No changes yet</div>' +
+        '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+      '</div>' +
+    '</div>';
+  // Wire the Clear button + count once.
+  (function wireDiffsBar(){
+    const clearBtn = diffsArea.querySelector('#diffs-clear');
+    const list = diffsArea.querySelector('#diffs-list');
+    function updateDiffsCount(){
+      const cnt = list ? list.querySelectorAll('.diff-card').length : 0;
+      const badge = diffsArea.querySelector('#diffs-count');
+      if (badge) badge.textContent = cnt + (cnt === 1 ? ' change' : ' changes');
+      const bar = diffsArea.querySelector('.diffs-bar');
+      if (bar) bar.classList.toggle('has-items', cnt > 0);
+    }
+    function renderDiffsEmpty(){
+      if (!list) return;
+      list.innerHTML =
+        '<div class="diffs-empty" id="diffs-waiting">' +
+          '<div class="diffs-empty-icon">\u2713</div>' +
+          '<div class="diffs-empty-text">No changes yet</div>' +
+          '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+        '</div>';
+    }
+    if (clearBtn) clearBtn.addEventListener('click', () => { renderDiffsEmpty(); updateDiffsCount(); });
+    // Expose for the event handler.
+    diffsArea._updateCount = updateDiffsCount;
+    diffsArea._renderEmpty = renderDiffsEmpty;
+  })();
 
   // ─── WebSocket ───
   function connect() {
@@ -1958,19 +2380,17 @@ const icons = {
       // Silently prime the cached skills list so the command palette can
       // offer '/skill <name>' completions without the user needing to run
       // /skills first. Suppress the visual panel for this priming request.
-      // Skip when the user is inside an agent session (same gating as /qc):
-      // sending /skills there would disrupt the agent's interactive context.
-      // Also skip when we already have a cached list from a prior session.
-      setTimeout(() => {
-        try {
-          if (!ws || ws.readyState !== WebSocket.OPEN) return;
-          if (activeSessionMode) return; // in /agent, /swarm, /pswarm, /stateless
-          if (Array.isArray(cachedSkills) && cachedSkills.length) return; // already primed
-          suppressNextSkillsPanel = true;
-          suppressNextSkillsUserEcho = true;
-          ws.send('/skills');
-        } catch (_) { suppressNextSkillsPanel = false; suppressNextSkillsUserEcho = false; }
-      }, 1500);
+      //
+      // We must NOT fire '/skills' if the user is inside an agent session —
+      // it would land in the live agent's interactive context. On a hard
+      // refresh mid-loop, the server replays session state (e.g. the
+      // 'Type /qc to exit' banner) asynchronously, and a blind timer can
+      // fire BEFORE that replay arrives — the original bug. Instead of
+      // guessing with a fixed delay, we arm a pending prime and let the
+      // event stream drive it: handleEvent() calls cancelSkillsPrime() the
+      // moment it sees any session-mode signal (replayed or live). The prime
+      // only fires after the connection settles AND no session was detected.
+      armSkillsPrime();
       
       // Keep-alive ping for mobile
       if (pingInterval) clearInterval(pingInterval);
@@ -2120,6 +2540,12 @@ const icons = {
   // ─── Busy state ───
   function setBusy(busy) {
     isAgentBusy = busy;
+    // Any agent activity (turn_start, stream, thinking, etc. — incl. events the
+    // server REPLAYS on a fresh mobile reopen mid-loop) routes through here. That
+    // makes this the single most reliable 'we are in a live agent loop' signal,
+    // independent of sessionStorage survival or activeSessionMode string parsing.
+    // Cancel any pending skills-prime so '/skills' can never land in the loop.
+    if (busy) { try { cancelSkillsPrime(); } catch (_) {} }
     actionBtn.textContent = busy ? 'Stop' : 'Send';
     actionBtn.className = busy ? 'send-btn stop-mode' : 'send-btn';
   }
@@ -2247,6 +2673,7 @@ const icons = {
       if (typeof _msg === 'string' && _msg) {
         if (_msg.indexOf('Type /qc to exit') !== -1) {
           if (!activeSessionMode) activeSessionMode = '/agent';
+          cancelSkillsPrime(); // in a session (incl. replayed on hard refresh) → never prime /skills
           try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
           if (paletteOpen) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); }
         } else if (_msg.indexOf('Exited from Chat interface') !== -1) {
@@ -2312,6 +2739,7 @@ const icons = {
           const _m = (txt || '').trim().toLowerCase().split(/\s+/)[0];
           if (['/agent','/swarm','/pswarm','/stateless','/resume'].includes(_m)) {
             activeSessionMode = _m === '/resume' ? '/agent' : _m;
+            cancelSkillsPrime(); // entering a session → never prime /skills
             try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
           } else if (_m === '/qc' || _m === '/exit') {
             activeSessionMode = null;
@@ -2463,114 +2891,155 @@ const icons = {
           appendHTML(`<div class="tool-result">${esc(trunc)}</div>`);
         }
         
-        // Render detailed diff/result in the Live Diffs panel
+        // Render detailed diff/result in the Live Diffs panel (clean, scannable cards)
         let rawResult = ev.result || ev.output || ev.content || ev.text;
         if (rawResult) {
-          const waitingMsg = diffsArea.querySelector('#diffs-waiting');
+          const diffsList = diffsArea.querySelector('#diffs-list') || diffsArea;
+          const waitingMsg = diffsList.querySelector('#diffs-waiting');
           if (waitingMsg) waitingMsg.remove();
-          
-          const timeStr = new Date().toLocaleTimeString();
-          
-          // Strip "unknown" from tool name
-          let toolName = ev.tool || ev.function || 'Result';
-          toolName = toolName.replace(/unknown/ig, '').trim();
-          if (!toolName) toolName = 'Result';
-          
-          // Sanitize MCP JSON output if present
+
+          const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+
+          // Humanize the tool name: strip server prefixes / "unknown", lower-case,
+          // collapse underscores so "REPLSHELLMCP_EXECUTE_COMMAND_ASYNC" -> "execute command async".
+          let toolRaw = (ev.tool || ev.function || 'Result').replace(/unknown/ig, '').trim();
+          let toolName = toolRaw
+            .replace(/^[A-Za-z0-9]+(?:MCP|Mcp)_/, '')   // drop "ReplShellMcp_" style server prefix
+            .replace(/^mcp[_-]/i, '')
+            .replace(/_/g, ' ')
+            .trim();
+          if (!toolName) toolName = 'result';
+
+          // Sanitize MCP JSON output if present (extract text blocks).
           let resultText = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
           try {
             const parsed = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
             if (parsed && Array.isArray(parsed.content)) {
                const textBlocks = parsed.content.filter(c => c.type === 'text').map(c => c.text);
-               if (textBlocks.length > 0) {
-                 resultText = textBlocks.join('\n');
-               }
+               if (textBlocks.length > 0) resultText = textBlocks.join('\n');
             } else if (parsed && parsed.content && typeof parsed.content === 'string') {
                resultText = parsed.content;
             } else if (parsed && parsed.result && typeof parsed.result === 'string') {
                resultText = parsed.result;
             }
-          } catch (e) {
-            // Not JSON, leave as is
-          }
-          
-          let formattedContent = '';
-          
-          // Try to pretty-print if it's a JSON string
-          let isJson = false;
+          } catch (e) { /* not JSON, leave as is */ }
+
+          // Classify the payload so we can tag + style it distinctly.
+          let kind = 'TEXT';
           let jsonStr = resultText;
+          let isJson = false;
           if (typeof resultText === 'string' && (resultText.trim().startsWith('{') || resultText.trim().startsWith('['))) {
-             try {
-                const obj = JSON.parse(resultText);
-                jsonStr = JSON.stringify(obj, null, 2);
-                isJson = true;
-             } catch(e) {}
+             try { jsonStr = JSON.stringify(JSON.parse(resultText), null, 2); isJson = true; kind = 'JSON'; } catch (e) {}
           }
-          
+          const allLines = isJson ? [] : resultText.split('\n');
+          const hasDiffHeaders = !isJson && (
+             allLines.some(l => l.startsWith('@@ ')) ||
+             (allLines.some(l => l.startsWith('--- ')) && allLines.some(l => l.startsWith('+++ ')))
+          );
+          const isShell = !isJson && !hasDiffHeaders &&
+             allLines.some(l => /^(Status: |Job ID: |Command: |--- STDOUT ---|--- STDERR ---)/.test(l));
+          if (hasDiffHeaders) kind = 'DIFF';
+          else if (isShell) kind = 'SHELL';
+
+          // Build the body + (for diffs) extract a filename + add/remove counts.
+          let bodyHtml = '';
+          let fileName = '';
+          let addCount = 0, subCount = 0;
+
           if (isJson) {
-             // Simple JSON syntax highlighter
-             const highlighted = esc(jsonStr).replace(/("(\u[a-zA-Z0-9]{4}|\[^u]|[^\"])*"(\s*:)?|(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+             const highlighted = esc(jsonStr).replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
                 let cls = 'json-number';
-                if (/^"/.test(match)) {
-                    if (/:$/.test(match)) {
-                        cls = 'json-key';
-                    } else {
-                        cls = 'json-string';
-                    }
-                } else if (/true|false/.test(match)) {
-                    cls = 'json-boolean';
-                } else if (/null/.test(match)) {
-                    cls = 'json-boolean';
-                }
+                if (/^"/.test(match)) cls = /:$/.test(match) ? 'json-key' : 'json-string';
+                else if (/true|false|null/.test(match)) cls = 'json-boolean';
                 return '<span class="' + cls + '">' + match + '</span>';
-            });
-            formattedContent = `<div class="diff-line diff-context">${highlighted}</div>`;
-          } else {
-             const lines = resultText.split('\n');
-             
-             // Basic diff detection
-             const hasDiffHeaders = lines.some(l => l.startsWith('@@ ')) || (lines.some(l => l.startsWith('--- ')) && lines.some(l => l.startsWith('+++ ')));
-             const isDiff = hasDiffHeaders;
-             
-             if (isDiff) {
-                for (const line of lines) {
-                   if (line.startsWith('+') && !line.startsWith('+++')) {
-                      formattedContent += `<div class="diff-line diff-add">${esc(line)}</div>`;
-                   } else if (line.startsWith('-') && !line.startsWith('---')) {
-                      formattedContent += `<div class="diff-line diff-sub">${esc(line)}</div>`;
-                   } else if (line.startsWith('@@ ')) {
-                      formattedContent += `<div class="diff-line diff-info">${esc(line)}</div>`;
-                   } else {
-                      formattedContent += `<div class="diff-line diff-context">${esc(line)}</div>`;
-                   }
-                }
-             } else {
-                // Shell/Generic text formatting
-                for (let i=0; i<lines.length; i++) {
-                   const line = lines[i];
-                   if (line.startsWith('--- STDOUT ---') || line.startsWith('--- STDERR ---')) {
-                      formattedContent += `<div class="shell-header">${esc(line.replace(/---/g, '').trim())}</div>\n`;
-                   } else if (line.startsWith('Status: ') || line.startsWith('Job ID: ') || line.startsWith('Command: ')) {
-                      formattedContent += `<div class="shell-status">${esc(line)}</div>\n`;
-                   } else {
-                      formattedContent += `${esc(line)}\n`;
-                   }
+             });
+             bodyHtml = '<pre class="diff-json">' + highlighted + '</pre>';
+          } else if (hasDiffHeaders) {
+             // Pull a filename from the +++/--- headers. Prefer the +++ (new) path.
+             // Guard against shell wrappers: "--- STDOUT ---" / "--- STDERR ---" also start with
+             // "--- " but are NOT diff headers, so skip those and strip any trailing "\t<timestamp>".
+             const cleanPath = (raw) => {
+                if (!raw) return '';
+                let v = raw.split('\t')[0].trim();         // drop diff -u trailing timestamp
+                v = v.replace(/^b\//, '').replace(/^a\//, '');
+                if (!v || v === '/dev/null') return '';
+                if (/^(STDOUT|STDERR)\s*---\s*$/.test(v)) return ''; // shell wrapper, not a path
+                return v;
+             };
+             for (const l of allLines) {            // first pass: the +++ (new file) header
+                const m = l.match(/^\+\+\+\s+(.+)$/);
+                if (m) { const c = cleanPath(m[1]); if (c) { fileName = c; break; } }
+             }
+             if (!fileName) {                        // fallback: the --- (old file) header, skipping shell markers
+                for (const l of allLines) {
+                   if (/^---\s+(STDOUT|STDERR)\s*---/.test(l)) continue;
+                   const m = l.match(/^---\s+(.+)$/);
+                   if (m) { const c = cleanPath(m[1]); if (c) { fileName = c; break; } }
                 }
              }
+             let rows = '';
+             for (const line of allLines) {
+                if (line.startsWith('+++') || line.startsWith('---')) continue; // shown as filename header
+                if (line.startsWith('+')) { addCount++; rows += '<div class="dl dl-add"><span class="dl-g">+</span><span class="dl-t">' + esc(line.slice(1)) + '</span></div>'; }
+                else if (line.startsWith('-')) { subCount++; rows += '<div class="dl dl-sub"><span class="dl-g">\u2212</span><span class="dl-t">' + esc(line.slice(1)) + '</span></div>'; }
+                else if (line.startsWith('@@')) { rows += '<div class="dl dl-hunk"><span class="dl-t">' + esc(line) + '</span></div>'; }
+                else { rows += '<div class="dl dl-ctx"><span class="dl-g"> </span><span class="dl-t">' + esc(line.replace(/^ /, '')) + '</span></div>'; }
+             }
+             bodyHtml = '<div class="diff-code">' + rows + '</div>';
+          } else if (isShell) {
+             let rows = '';
+             for (const line of allLines) {
+                if (/^--- (STDOUT|STDERR) ---/.test(line)) rows += '<div class="sh-head">' + esc(line.replace(/---/g, '').trim()) + '</div>';
+                else if (/^(Status: |Job ID: |Command: )/.test(line)) rows += '<div class="sh-meta">' + esc(line) + '</div>';
+                else rows += '<div class="sh-line">' + esc(line) + '</div>';
+             }
+             bodyHtml = '<div class="diff-shell">' + rows + '</div>';
+          } else {
+             bodyHtml = '<pre class="diff-text">' + esc(resultText) + '</pre>';
           }
-          
-          const diffHtml = `
-            <div class="diff-container">
-              <div class="diff-header">
-                <span class="diff-header-badge">${esc(toolName)}</span>
-                <span class="diff-time">${timeStr}</span>
-              </div>
-              <div class="diff-content">${formattedContent.trim()}</div>
-            </div>
-          `;
-          
-          // Prepend so newest is at the top
-          diffsArea.insertAdjacentHTML('afterbegin', diffHtml);
+
+          // Budget-based auto-collapse, matching the agent-response card behavior:
+          // collapse by default only when content exceeds the configured threshold.
+          const collapseOn = document.body.classList.contains('collapse-cards-default');
+          const thr = parseInt(document.body.dataset.collapseThreshold || '200', 10) || 200;
+          const startCollapsed = collapseOn && (resultText.length > thr || (isJson ? jsonStr : resultText).indexOf('\n') !== -1) && resultText.length > thr;
+
+          const kindCls = 'tag-' + kind.toLowerCase();
+          const diffCount = (kind === 'DIFF')
+            ? '<span class="diff-stat"><span class="ds-add">+' + addCount + '</span><span class="ds-sub">\u2212' + subCount + '</span></span>'
+            : '';
+          const fileHtml = (kind === 'DIFF' && fileName)
+            ? '<div class="diff-file" title="' + esc(fileName) + '">' + esc(fileName) + '</div>'
+            : '';
+
+          const cardHtml =
+            '<div class="diff-card mux-collapsible' + (startCollapsed ? ' mux-coll-collapsed' : '') + '">' +
+              '<div class="diff-card-head" role="button" tabindex="0">' +
+                '<span class="diff-chevron" aria-hidden="true">\u203A</span>' +
+                '<span class="diff-tag ' + kindCls + '">' + kind + '</span>' +
+                '<span class="diff-tool" title="' + esc(toolRaw) + '">' + esc(toolName) + '</span>' +
+                diffCount +
+                '<span class="diff-card-spacer"></span>' +
+                '<span class="diff-time">' + esc(timeStr) + '</span>' +
+              '</div>' +
+              '<div class="mux-coll-body">' +
+                fileHtml +
+                '<div class="diff-body">' + bodyHtml + '</div>' +
+              '</div>' +
+            '</div>';
+
+          // Prepend so newest is at the top.
+          diffsList.insertAdjacentHTML('afterbegin', cardHtml);
+          const newCard = diffsList.firstElementChild;
+          if (newCard) {
+            const head = newCard.querySelector('.diff-card-head');
+            if (head) {
+              const toggle = () => newCard.classList.toggle('mux-coll-collapsed');
+              head.addEventListener('click', toggle);
+              head.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+            }
+          }
+          if (typeof diffsArea._updateCount === 'function') { try { diffsArea._updateCount(); } catch (_) {} }
         }
         break;
 
@@ -2712,30 +3181,16 @@ const icons = {
     // Track elapsed seconds so the user can see *something* changing even if
     // animations are throttled (background tab, prefers-reduced-motion, etc.)
     el.dataset.muxCompactStarted = String(Date.now());
+    // Minimal: a single quiet spinner + label. No tag chip, no animated dots,
+    // no elapsed counter, no progress bar — keep it unobtrusive.
     el.innerHTML =
-      '<span class="pill-tag">WORKING</span>' +
       '<span class="mux-compact-icon mux-compact-spinner">' +
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
-        'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">' +
+        '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+        'stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M21 12a9 9 0 1 1-6.219-8.56"/>' +
       '</svg></span>' +
-      '<span class="mux-compact-label">Compacting conversation history' +
-        '<span class="mux-compact-dots"><i>.</i><i>.</i><i>.</i></span>' +
-      '</span>' +
-      '<span class="mux-compact-elapsed">0s</span>' +
-      '<span class="mux-compact-progress"><span></span></span>';
+      '<span class="mux-compact-label">Compacting\u2026</span>';
     output.appendChild(el);
-    // Tick the elapsed counter once per second; stops automatically when the
-    // node is removed by clearCompactingPlaceholder().
-    const elapsedEl = el.querySelector('.mux-compact-elapsed');
-    const tick = () => {
-      if (!el.isConnected) return;
-      const started = Number(el.dataset.muxCompactStarted) || Date.now();
-      const secs = Math.max(0, Math.round((Date.now() - started) / 1000));
-      if (elapsedEl) elapsedEl.textContent = secs + 's';
-      setTimeout(tick, 1000);
-    };
-    setTimeout(tick, 1000);
     if (typeof scrollToBottom === 'function') {
       try { scrollToBottom(); } catch (_) {}
     }
@@ -2880,10 +3335,13 @@ const icons = {
       });
       el.appendChild(btn);
 
-      // Click on the faded preview region toggles expand (only when collapsed).
+      // Click anywhere on the card body toggles collapse/expand (Claude Desktop style).
+      // Guards: never hijack clicks on links/buttons/inputs, and never toggle when the
+      // user is selecting text (so copying a response still works).
       body.addEventListener('click', (e) => {
-        if (!el.classList.contains('mux-coll-collapsed')) return;
-        if (e.target.closest('a, button')) return;
+        if (e.target.closest('a, button, input, textarea, select, label, .msg-copy-btn')) return;
+        const sel = window.getSelection && window.getSelection();
+        if (sel && sel.type === 'Range' && String(sel).length > 0) return; // text selection in progress
         btn.click();
       });
     });
@@ -2930,14 +3388,25 @@ const icons = {
         continue;
       }
 
-      // Headers (h1-h4)
-      let hm = line.match(/^(#{1,4})\s+(.+)/);
+      // Headers (h1-h6)
+      let hm = line.match(/^(#{1,6})\s+(.+)/);
       if (hm) {
         if (inList) { result.push('</div>'); inList = false; }
         let lvl = hm[1].length;
-        let sizes = ['16px','14px','13px','12px'];
-        let colors = ['var(--blue)','var(--blue)','var(--fg)','var(--muted)'];
-        result.push('<div style="font-weight:700;font-size:' + sizes[lvl-1] + ';color:' + colors[lvl-1] + ';margin:8px 0 4px">' + inlineMd(hm[2]) + '</div>');
+        // Sizes step down but every level stays >= 15px so headings dominate
+        // the 14px body-bold run-in labels. h4 uses the accent colour.
+        let sizes  = ['20px','17px','16px','15px','14px','14px'];
+        let colors = ['var(--blue)','var(--blue)','var(--blue)','var(--accent)','var(--muted)','var(--muted)'];
+        let extra  = (lvl >= 5) ? ';text-transform:uppercase;letter-spacing:0.05em' : '';
+        result.push('<div style="font-weight:700;font-size:' + sizes[lvl-1] + ';color:' + colors[lvl-1] + ';margin:10px 0 4px' + extra + '">' + inlineMd(hm[2]) + '</div>');
+        continue;
+      }
+
+      // Blockquotes
+      let bq = line.match(/^\s*&gt;\s?(.*)$/);
+      if (bq) {
+        if (inList) { result.push('</div>'); inList = false; }
+        result.push('<div style="border-left:3px solid var(--accent);padding:2px 0 2px 12px;margin:4px 0;color:var(--muted);font-style:italic">' + inlineMd(bq[1]) + '</div>');
         continue;
       }
 
@@ -2947,8 +3416,8 @@ const icons = {
         if (!inList) { result.push('<div style="margin:4px 0;padding-left:4px">'); inList = true; }
         let nested = lm[1].length > 1;
         let bullet = nested ? '\u25E6' : '\u2022';
-        let pad = nested ? '24px' : '12px';
-        result.push('<div style="padding:1px 0 1px ' + pad + ';position:relative;color:var(--fg)"><span style="position:absolute;left:' + (nested ? '12px' : '0') + ';color:var(--blue);font-size:10px">' + bullet + '</span>' + inlineMd(lm[3]) + '</div>');
+        let pad = nested ? '34px' : '20px';
+        result.push('<div style="padding:2px 0 2px ' + pad + ';position:relative;color:var(--text);font-size:inherit;line-height:inherit"><span style="position:absolute;left:' + (nested ? '16px' : '4px') + ';top:0;color:var(--accent);font-size:0.9em;line-height:inherit">' + bullet + '</span>' + inlineMd(lm[3]) + '</div>');
         continue;
       }
 
@@ -2996,13 +3465,27 @@ const icons = {
   try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; } catch(_) {}
 
   function inlineMd(s) {
+    // 1. Extract inline code spans FIRST so nothing inside backticks gets
+    //    emphasis/link-parsed. Restored verbatim at the end via placeholders.
+    var _codeSpans = [];
+    s = s.replace(/`([^`]+)`/g, function (_m, code) {
+      _codeSpans.push(code);
+      return '\u0000CODE' + (_codeSpans.length - 1) + '\u0000';
+    });
+    // 2. Bold first (greedy markers), then emphasis.
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
     s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-    s = s.replace(/_([^_]+)_/g, '<em>$1</em>');
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Underscore emphasis: only at word boundaries (CommonMark intraword rule),
+    // so identifiers/filenames like HANDOFF_webapp_cards stay literal.
+    s = s.replace(/(^|[^\w])_([^_]+)_(?=[^\w]|$)/g, '$1<em>$2</em>');
+    // 3. Links.
     s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue)">$1</a>');
     s = s.replace(/(^|[^"'])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" style="color:var(--blue);text-decoration:none;border-bottom:1px dotted var(--blue)">$2</a>');
+    // 4. Restore protected code spans as <code> (content is already esc()'d upstream).
+    s = s.replace(/\u0000CODE(\d+)\u0000/g, function (_m, idx) {
+      return '<code>' + _codeSpans[+idx] + '</code>';
+    });
     return s;
   }
 
@@ -3348,6 +3831,45 @@ const icons = {
   let cachedSkills = [];   // [{ name, desc }]
   let suppressNextSkillsPanel = false; // one-shot: drop the next 'Loaded Skills' panel render
   let suppressNextSkillsUserEcho = false; // one-shot: drop the server-echoed '/skills' user-message bubble from silent prime
+
+  // ─── Skills-cache prime (race-safe) ───
+  // Replaces the old blind setTimeout(1500) fire. armSkillsPrime() schedules a
+  // single silent '/skills' send, but only after the connection has settled and
+  // only if no agent session is detected. cancelSkillsPrime() is called from
+  // handleEvent() the instant any session-mode signal appears (live OR replayed
+  // on a hard refresh mid-loop), guaranteeing we never inject '/skills' into a
+  // live agent's input stream. If anything is ambiguous we bias toward skipping
+  // — the palette already shows a graceful "run /skills" fallback when unprimed.
+  let _skillsPrimeTimer = null;
+  let _skillsPrimeArmed = false;
+  function cancelSkillsPrime() {
+    _skillsPrimeArmed = false;
+    if (_skillsPrimeTimer) { clearTimeout(_skillsPrimeTimer); _skillsPrimeTimer = null; }
+  }
+  function armSkillsPrime() {
+    // Already have a cached list (restored from a prior session) → nothing to do.
+    if (Array.isArray(cachedSkills) && cachedSkills.length) return;
+    // Known to be in a session right now → never prime.
+    if (activeSessionMode) return;
+    cancelSkillsPrime();
+    _skillsPrimeArmed = true;
+    // Settle delay lets the server's session-state replay arrive first. If that
+    // replay indicates a session, handleEvent() will have already cancelled us.
+    _skillsPrimeTimer = setTimeout(() => {
+      _skillsPrimeTimer = null;
+      if (!_skillsPrimeArmed) return;            // cancelled by a session / busy signal
+      _skillsPrimeArmed = false;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (activeSessionMode) return;             // final guard: known in a session
+      if (isAgentBusy) return;                   // final guard: agent loop is active
+      if (Array.isArray(cachedSkills) && cachedSkills.length) return;
+      try {
+        suppressNextSkillsPanel = true;
+        suppressNextSkillsUserEcho = true;
+        ws.send('/skills');
+      } catch (_) { suppressNextSkillsPanel = false; suppressNextSkillsUserEcho = false; }
+    }, 2500); // longer settle for slow mobile reconnects; bias-to-skip covers a miss
+  }
   // Set of exact user-input strings (lowercased) whose next server-echo we should drop.
   // Used for transparent /qc and the user command that triggered the session-switch
   // warning — both already have visual representation in the warning card.
@@ -4763,6 +5285,36 @@ const icons = {
   window.addEventListener('resize', updatePlaceholder);
   updatePlaceholder();
 
+  // ─── Native mobile keyboard handling (visualViewport) ───
+  // Pin the floating composer just above the on-screen keyboard instead of
+  // letting the browser shove the whole layout upward. We measure the gap
+  // between the layout viewport bottom and the visual viewport bottom and
+  // expose it as --kb-inset for the composer's `bottom` calc.
+  (function setupKeyboardInset() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const root = document.documentElement;
+    let raf = 0;
+    function update() {
+      raf = 0;
+      // Amount of the layout viewport currently covered (keyboard + UI chrome).
+      const covered = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      root.style.setProperty('--kb-inset', covered + 'px');
+      // Keep the latest message in view while typing.
+      if (covered > 80) {
+        const out = document.getElementById('output');
+        if (out) out.scrollTop = out.scrollHeight;
+      }
+    }
+    function schedule() { if (!raf) raf = requestAnimationFrame(update); }
+    vv.addEventListener('resize', schedule);
+    vv.addEventListener('scroll', schedule);
+    // Re-sync when the composer gains focus (keyboard about to open).
+    input.addEventListener('focus', () => setTimeout(schedule, 50));
+    input.addEventListener('blur', () => { root.style.setProperty('--kb-inset', '0px'); });
+    update();
+  })();
+
   // ─── Boot ───
   connect();
 })();
@@ -4888,6 +5440,11 @@ const icons = {
   }
   .mux-preview-empty a { color: var(--accent, #64b4dc); text-decoration: none; }
   .mux-preview-empty a:hover { text-decoration: underline; }
+  .mux-reader-banner { padding: 6px 14px; font-size: 11px; color: var(--muted);
+  border-bottom: 1px solid var(--border); background: rgba(var(--accent-rgb),0.04);
+  position: sticky; top: 0; z-index: 1; }
+.mux-reader-banner a { color: var(--accent, #64b4dc); text-decoration: none; }
+.mux-reader-banner a:hover { text-decoration: underline; }
   .mux-iframe-fallback { position: absolute; left: 12px; right: 12px; bottom: 12px;
     background: rgba(0,0,0,0.7); border: 1px solid var(--border, #27272a); border-radius: 6px;
     padding: 12px 14px; backdrop-filter: blur(4px); }
@@ -5006,6 +5563,9 @@ const icons = {
     <button class="mux-preview-btn" id="muxPreviewReload" title="Reload">
       <svg data-icon="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
     </button>
+    <button class="mux-preview-btn" id="muxPreviewReader" title="Reader mode — fetch readable content for sites that block embedding">
+      <svg data-icon="book-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+    </button>
     <button class="mux-preview-btn" id="muxPreviewExternal" title="Open in new tab">
       <svg data-icon="external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
     </button>
@@ -5036,6 +5596,7 @@ const icons = {
   const goBtn   = document.getElementById('muxPreviewGo');
   const rldBtn  = document.getElementById('muxPreviewReload');
   const extBtn  = document.getElementById('muxPreviewExternal');
+  const readerBtn = document.getElementById('muxPreviewReader');
   const popBtn  = document.getElementById('muxPreviewPopout');
   const maxBtn  = document.getElementById('muxPreviewMax');
   const closeBt = document.getElementById('muxPreviewClose');
@@ -5086,13 +5647,20 @@ const icons = {
       f.addEventListener('load', () => { loaded = true; });
       setTimeout(() => {
         if (loaded) return;
-        // Still no load event after 6s — likely blocked by headers.
+        // Still no load event after 3.5s — likely blocked by headers. Offer reader mode.
         const note = document.createElement('div');
         note.className = 'mux-preview-empty mux-iframe-fallback';
-        note.innerHTML = 'This site may block embedding (X-Frame-Options / CSP).<br/>' +
-          '<a href="' + src.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">Open in new tab ↗</a>';
+        note.innerHTML = 'This site blocks embedding (X-Frame-Options / CSP).<br/>';
+        const rdr = document.createElement('a');
+        rdr.href = '#'; rdr.textContent = 'Open in Reader Mode \u2197';
+        rdr.style.marginRight = '14px';
+        rdr.addEventListener('click', (e) => { e.preventDefault(); renderReader(src); });
+        const tab = document.createElement('a');
+        tab.href = src; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
+        tab.textContent = 'Open in new tab \u2197';
+        note.appendChild(rdr); note.appendChild(tab);
         body.appendChild(note);
-      }, 6000);
+      }, 3500);
     }
   }
 
@@ -5207,6 +5775,56 @@ const icons = {
       }
     } catch (e) {
       body.innerHTML = '<div class="mux-preview-empty">Failed to load: ' + (e && e.message ? e.message : 'unknown error') + '</div>';
+    }
+  }
+
+  // ── Reader mode: fetch readable content for sites that block iframing. ──
+  // Frontend-only: routes through the public r.jina.ai reader (no API key),
+  // which returns clean Markdown for almost any URL. Rendered via renderMarkdown.
+  async function renderReader(src) {
+    const target = normalize(src);
+    if (!target) return;
+    currentUrl = target;
+    urlIn.value = target;
+    body.innerHTML = '<div class="mux-preview-empty">Reader mode \u2014 fetching readable content\u2026</div>';
+    // r.jina.ai accepts the full URL appended after a slash.
+    const readerUrl = 'https://r.jina.ai/' + target;
+    try {
+      const resp = await fetch(readerUrl, {
+        headers: { 'Accept': 'text/markdown, text/plain, */*' }
+      });
+      if (!resp.ok) throw new Error('reader returned ' + resp.status);
+      const txt = await resp.text();
+      if (!txt || !txt.trim()) throw new Error('empty content');
+      body.innerHTML = '';
+      const md = (typeof window !== 'undefined' && typeof window.renderMarkdown === 'function')
+        ? window.renderMarkdown
+        : (typeof renderMarkdown === 'function' ? renderMarkdown : null);
+      let html;
+      if (md) {
+        try { html = md(txt); }
+        catch (_) { html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>'; }
+      } else {
+        html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>';
+      }
+      const view = buildMarkdownView(html);
+      // Small reader-mode header strip so it's clear this is extracted content.
+      const banner = document.createElement('div');
+      banner.className = 'mux-reader-banner';
+      banner.innerHTML = 'Reader mode \u00b7 extracted content \u00b7 ' +
+        '<a href="' + target.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">view original \u2197</a>';
+      body.appendChild(banner);
+      body.appendChild(view);
+    } catch (e) {
+      body.innerHTML = '';
+      const note = document.createElement('div');
+      note.className = 'mux-preview-empty mux-iframe-fallback';
+      note.innerHTML = 'Reader mode failed: ' + (e && e.message ? e.message : 'unknown') + '<br/>';
+      const tab = document.createElement('a');
+      tab.href = target; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
+      tab.textContent = 'Open in new tab \u2197';
+      note.appendChild(tab);
+      body.appendChild(note);
     }
   }
 
@@ -5416,6 +6034,7 @@ const icons = {
   maxBtn.addEventListener('click', () => panel.classList.toggle('maximized'));
   rldBtn.addEventListener('click', () => { if (currentUrl) load(currentUrl); });
   extBtn.addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
+  readerBtn.addEventListener('click', () => { const u = currentUrl || normalize(urlIn.value); if (u) renderReader(u); });
   popBtn.addEventListener('click', () => {
     if (!currentUrl) return;
     window.open(currentUrl, 'mux_preview_popout', 'width=900,height=700,noopener');
@@ -5558,6 +6177,7 @@ const icons = {
 
   window.MuxPreview = {
     show(src, opts) { openPanel(); load(src, opts); },
+    reader(src) { openPanel(); renderReader(src); },
     open: openPanel, close: closePanel, load: load
   };
 })();
@@ -6040,13 +6660,14 @@ const icons = {
     color: var(--text, #cfd6e0);
     font-variant-numeric: tabular-nums;
   }
-  .mux-compacted-summary .mux-compacted-label { opacity: 0.75; font-weight: 500 !important; }
+  .mux-compacted-summary { color: var(--muted, #9ca0aa); }
+  .mux-compacted-summary .mux-compacted-label { opacity: 0.7; font-weight: 500 !important; }
   .mux-compacted-summary .mux-compacted-num {
-    font-weight: 600 !important; color: var(--accent-cyan, #6ee7d6);
+    font-weight: 600 !important; color: var(--text, #cfd6e0); opacity: 0.9;
     font-family: var(--font-mono, ui-monospace, monospace);
   }
-  .mux-compacted-summary .mux-compacted-arrow { opacity: 0.55; }
-  .mux-compacted-summary .mux-compacted-unit { opacity: 0.7; font-weight: 500 !important; }
+  .mux-compacted-summary .mux-compacted-arrow { opacity: 0.45; }
+  .mux-compacted-summary .mux-compacted-unit { opacity: 0.6; font-weight: 500 !important; }
 
   /* Optimistic /compact placeholder: ALWAYS show while compaction is running.
      The placeholder is the user's only feedback that work is happening, so it
@@ -6057,145 +6678,111 @@ const icons = {
     display: flex !important;
   }
 
-  /* In-progress "Compacting conversation history" pill: animated shimmer + pulse */
+  /* In-progress compacting pill: minimal — a quiet rotating spinner + muted label.
+     No shimmer, pulse, tag chip, animated dots, elapsed timer, or progress bar. */
   .mux-compacting-status.is-active {
-    position: relative;
-    overflow: hidden;
-    animation: mux-compacting-pulse 1.6s ease-in-out infinite;
+    gap: 6px;
+    align-items: center;
+    color: var(--muted, #9ca0aa) !important;
+    background: rgba(161,161,170,0.08) !important;
+    border-color: var(--border) !important;
+    box-shadow: none !important;
+    opacity: 0.85;
   }
-  .mux-compacting-status.is-active::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(
-      100deg,
-      transparent 0%,
-      transparent 35%,
-      rgba(255,255,255,0.10) 50%,
-      transparent 65%,
-      transparent 100%
-    );
-    background-size: 220% 100%;
-    animation: mux-compacting-shimmer 1.8s linear infinite;
-    pointer-events: none;
-    border-radius: inherit;
+  .mux-compacting-status.is-active .mux-compact-label {
+    color: var(--muted, #9ca0aa);
+    font-size: calc(11px * var(--ui-font-scale, 1));
   }
-  .mux-compacting-status.is-active .pill-tag {
-    background: rgba(96,165,250,0.18);
-    color: var(--blue, #60a5fa);
-    animation: mux-compacting-tag-blink 1.4s ease-in-out infinite;
-  }
-  @keyframes mux-compacting-shimmer {
-    0%   { background-position: 220% 0; }
-    100% { background-position: -120% 0; }
-  }
-  @keyframes mux-compacting-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(96,165,250,0.00); }
-    50%      { box-shadow: 0 0 0 3px rgba(96,165,250,0.12); }
-  }
-  @keyframes mux-compacting-tag-blink {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.55; }
-  }
-  /* Spinning loader icon for the active compacting placeholder */
   .mux-compacting-status.is-active .mux-compact-spinner {
-    width: 14px; height: 14px;
+    width: 13px; height: 13px;
+    display: inline-flex; align-items: center; justify-content: center;
   }
   .mux-compacting-status.is-active .mux-compact-spinner svg {
-    width: 14px; height: 14px;
+    width: 13px; height: 13px;
     animation: mux-compacting-spin 0.9s linear infinite;
     transform-origin: 50% 50%;
-    color: var(--blue, #60a5fa);
+    color: var(--muted, #9ca0aa);
+    opacity: 0.8;
     will-change: transform;
   }
   @keyframes mux-compacting-spin {
     from { transform: rotate(0deg); }
     to   { transform: rotate(360deg); }
   }
-  /* Animated trailing dots inside the label */
-  .mux-compacting-status.is-active .mux-compact-dots {
-    display: inline-block;
-    width: 1.4em;
-    text-align: left;
-    letter-spacing: 1px;
-    color: var(--blue, #60a5fa);
-  }
-  .mux-compacting-status.is-active .mux-compact-dots i {
-    font-style: normal;
-    opacity: 0.25;
-    animation: mux-compacting-dot 1.05s ease-in-out infinite;
-    will-change: opacity;
-  }
-  .mux-compacting-status.is-active .mux-compact-dots i:nth-child(2) { animation-delay: 0.18s; }
-  .mux-compacting-status.is-active .mux-compact-dots i:nth-child(3) { animation-delay: 0.36s; }
-  @keyframes mux-compacting-dot {
-    0%, 80%, 100% { opacity: 0.25; }
-    40%           { opacity: 1; }
-  }
-  /* Live elapsed counter: gives the user concrete proof the pill is alive
-     even if CSS animations are throttled (background tab, reduced motion). */
-  .mux-compacting-status.is-active .mux-compact-elapsed {
-    font-variant-numeric: tabular-nums;
-    font-size: calc(10px * var(--ui-font-scale, 1));
-    color: var(--blue, #60a5fa);
-    opacity: 0.85;
-    padding: 1px 6px;
-    border-radius: 4px;
-    background: rgba(96, 165, 250, 0.10);
-    margin-left: 2px;
-  }
-  /* Indeterminate progress bar across the bottom of the pill */
-  .mux-compacting-status.is-active .mux-compact-progress {
-    position: absolute;
-    left: 6px;
-    right: 6px;
-    bottom: 1px;
-    height: 3px;
-    border-radius: 3px;
-    background: rgba(96, 165, 250, 0.18);
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .mux-compacting-status.is-active .mux-compact-progress > span {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 40%;
-    height: 100%;
-    border-radius: inherit;
-    background: linear-gradient(90deg, transparent, var(--blue, #60a5fa) 50%, transparent);
-    animation: mux-compacting-bar 1.2s ease-in-out infinite;
-    will-change: transform;
-  }
-  @keyframes mux-compacting-bar {
-    0%   { transform: translateX(-110%); }
-    100% { transform: translateX(320%); }
-  }
   @media (prefers-reduced-motion: reduce) {
-    .mux-compacting-status.is-active,
-    .mux-compacting-status.is-active::before,
-    .mux-compacting-status.is-active .pill-tag,
-    .mux-compacting-status.is-active .mux-compact-spinner svg,
-    .mux-compacting-status.is-active .mux-compact-dots i,
-    .mux-compacting-status.is-active .mux-compact-progress > span {
+    .mux-compacting-status.is-active .mux-compact-spinner svg {
       animation: none !important;
     }
   }
 
-  /* diff-header-badge: inline uppercase chip used in diffs */
-  .diff-header-badge {
-    border-radius: 6px !important;
-    padding: 2px 7px !important;
-    font-size: calc(10px * var(--ui-font-scale, 1)) !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
-    font-weight: 700 !important;
-  }
-
-
   @media (max-width: 640px) {
     .mux-settings-backdrop { padding: 0; align-items: stretch; }
     .mux-settings { width: 100%; max-height: 100vh; border-radius: 0; }
+
+    /* ── Mobile settings layout ──
+       Compact controls (toggles, single buttons) stay on the same row as the
+       label, pinned right. Wide controls (sliders, selects, segmented) stack
+       full-width below the label so descriptions never wrap one word per line. */
+
+    .mux-row {
+      gap: 12px;
+      padding: 14px 16px;
+      align-items: center;
+    }
+    .mux-row > div:first-child { flex: 1 1 auto; min-width: 0; }
+    .mux-row .desc { margin-top: 4px; }
+
+    /* Toggle rows: label left, switch right, same line. */
+    .mux-row { position: relative; }
+    .mux-row > .mux-toggle {
+      flex: 0 0 38px; width: 38px; min-width: 38px; max-width: 38px;
+      align-self: center; margin-left: auto;
+    }
+
+    /* Single-button rows (e.g. Reset FAB): label left, button right. */
+    .mux-row > .mux-settings-btn { flex: 0 0 auto; }
+
+    /* Wide controls stack full-width below the label. */
+    .mux-row:has(> div:last-child input[type="range"]),
+    .mux-row:has(> select),
+    .mux-row:has(> .mux-seg) {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .mux-row:has(> div:last-child input[type="range"]) > div:first-child,
+    .mux-row:has(> select) > div:first-child,
+    .mux-row:has(> .mux-seg) > div:first-child { flex: none; width: 100%; }
+
+    /* Slider control row: slider fills, value chip pinned right. */
+    .mux-row > div:last-child:not(:first-child) {
+      width: 100%;
+      display: flex; align-items: center; justify-content: flex-end;
+    }
+    .mux-row > div:last-child:not(:first-child) input[type="range"] {
+      flex: 1 1 auto; width: auto; min-width: 0;
+    }
+    .mux-row .mux-range-value { flex: 0 0 auto; }
+
+    /* Select + segmented controls span full width. */
+    .mux-row > select { width: 100%; min-width: 0; }
+    .mux-row > .mux-seg { width: 100%; justify-content: stretch; }
+    .mux-row > .mux-seg button { flex: 1 1 0; text-align: center; }
+
+    /* Comfortable breathing room above the footer. */
+    .mux-settings-body { padding: 10px 16px 20px; }
+
+    /* Footer: wrap cleanly, even button sizing. */
+    .mux-settings-foot {
+      flex-wrap: wrap; gap: 8px; padding: 12px 16px;
+      justify-content: stretch;
+    }
+    .mux-settings-foot .mux-settings-btn {
+      flex: 1 1 auto; text-align: center; padding: 9px 12px;
+    }
+    .mux-settings-foot .mux-settings-btn.danger {
+      margin-right: 0; flex-basis: 100%;
+    }
   }
 </style>
 
@@ -6238,6 +6825,7 @@ const icons = {
     pathMode: 'full',
     cmdPaletteEnabled: true,
     cmdPaletteOpacity: 1.0,
+    composerOpacity: 0.62,
     collapseCardsByDefault: true,
     collapseThreshold: 200,
     hideAllPills: false,
@@ -6312,6 +6900,7 @@ const icons = {
     b.dataset.sendOnEnter = state.sendOnEnter;
     b.classList.toggle('hide-cmd-palette',   !state.cmdPaletteEnabled);
     document.documentElement.style.setProperty('--cmd-palette-opacity', String(state.cmdPaletteOpacity));
+    document.documentElement.style.setProperty('--composer-opacity', String(state.composerOpacity != null ? state.composerOpacity : 0.62));
     b.classList.toggle('collapse-cards-default', !!state.collapseCardsByDefault);
     b.dataset.collapseThreshold = String(state.collapseThreshold || 200);
     b.classList.toggle('hide-compacting-pills', !!state.hideCompactingPills);
@@ -6529,6 +7118,9 @@ const icons = {
       fontUploadRow(),
     ]);
     section('Display', [
+      sliderRow('composerOpacity', 'Composer opacity', 0.3, 1.0, 0.02,
+        'Background opacity of the floating message bar. Lower = more translucent/glassy.',
+        (v) => Math.round(v * 100) + '%'),
       toggleRow('showTimestamps',   'Show message timestamps'),
       toggleRow('showAgentBadge',   'Show agent name badges'),
       toggleRow('showCharCounter',  'Show character counter'),
@@ -6567,7 +7159,7 @@ const icons = {
     section('Command Palette', [
       toggleRow('cmdPaletteEnabled', 'Enable slash command hints',
         'Show the floating command palette when typing / at the start of the input.'),
-      sliderRow('cmdPaletteOpacity', 'Palette opacity', 0.4, 1.0, 0.05,
+      sliderRow('cmdPaletteOpacity', 'Palette opacity', 0.6, 1.0, 0.05,
         'Adjust how solid the command palette appears.',
         (v) => Math.round(v * 100) + '%'),
     ]);
@@ -6665,32 +7257,32 @@ const icons = {
       // real text picks up extra whitespace / wrapping that breaks the strict
       // regex below.
       if (/Compacting\s+conversation\s+history/i.test(txt) && txt.length < 200) {
-        // Real event arrived: drop the optimistic /compact placeholder so we
-        // don't double-render.
+        // Both the in-progress and the check-marked "Compacting conversation
+        // history" pills are just raw ws-event echoes. The optimistic WORKING
+        // placeholder above already conveys progress and the "Compacted: X -> Y
+        // tokens" pill below conveys completion, so suppress both middle pills.
         try { clearCompactingPlaceholder(); } catch (_) {}
-        const hasCheckGlyph = /^\s*[\u2713\u2714\u2705]/.test(txt) ||
-                              !!el.querySelector('svg[data-icon="check"]');
-        const isCleanVariant = el.classList.contains('event-success') || hasCheckGlyph;
-        if (!isCleanVariant) {
-          // In-progress duplicate: hide it.
-          el.classList.add('mux-compacting-status', 'is-done-dup');
-          el.dataset.muxDecorated = '1';
-          return;
-        }
-        // Clean (check-marked) variant: mark as the active status row + animate.
-        el.classList.add('mux-compacting-status', 'is-active');
+        el.classList.add('mux-compacting-status', 'is-done-dup');
         el.dataset.muxDecorated = '1';
         return;
       }
 
       // "Compacted: X -> Y tokens" summary pill: normalize typography
       // (strip markdown <strong>/<b> bolding so numbers don't render oversized).
+      // Lenient pre-check: any element mentioning "Compacted: ... tokens"
+      // means compaction has finished, so always drop the WORKING placeholder
+      // (the strict regex below may miss due to wrapping / trailing nodes).
+      if (/Compacted\s*:\s*[\d,]+\s*(?:->|\u2192|\u21d2)\s*[\d,]+\s*tokens?/i.test(txt)) {
+        try { clearCompactingPlaceholder(); } catch (_) {}
+      }
       const compactedMatch = txt.match(/^\s*Compacted\s*:\s*([\d,]+)\s*(?:->|\u2192|\u21d2)\s*([\d,]+)\s*tokens?\s*$/i);
       if (!el.classList.contains('mux-compacted-summary') && compactedMatch) {
-        // Final summary arrived: ensure the optimistic placeholder is gone.
+        // Final summary arrived: drop the optimistic spinner placeholder so
+        // exactly one clean result line remains (no stacked busy pills).
         try { clearCompactingPlaceholder(); } catch (_) {}
         const fromN = compactedMatch[1];
         const toN   = compactedMatch[2];
+        el.classList.remove('mux-compacting-status', 'is-active', 'is-placeholder', 'is-done-dup');
         el.classList.add('mux-compacted-summary');
         // Rebuild content with neutral spans (no <strong>/<b>); keep existing DONE tag if any.
         const existingTag = el.querySelector(':scope > .pill-tag');
@@ -7848,14 +8440,26 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       Pool.probe(n);
     });
 
+    let _centerRetries = 0;
     function center(){
       const ns = Store.nodes();
+      // The SVG has no measurable size when the panel is hidden (display:none on
+      // hard refresh) or before layout has flushed. Computing a transform against
+      // a 0x0 rect produces an off-center view that sticks until the user clicks
+      // the center button. Defer to the next frame instead, until the panel is
+      // actually visible and sized (bounded to avoid spinning forever).
+      const rect = svg.getBoundingClientRect();
+      if ((rect.width < 1 || rect.height < 1) && _centerRetries < 30) {
+        _centerRetries++;
+        requestAnimationFrame(center);
+        return;
+      }
+      _centerRetries = 0;
       if (!ns.length) { Store.setView({ x: 0, y: 0, k: 1 }); applyView(); return; }
       const minX = Math.min(...ns.map(n => n.x));
       const minY = Math.min(...ns.map(n => n.y));
       const maxX = Math.max(...ns.map(n => n.x + NODE_W));
       const maxY = Math.max(...ns.map(n => n.y + NODE_H));
-      const rect = svg.getBoundingClientRect();
       const pad = 60;
       const kx = (rect.width  - pad*2) / Math.max(1, (maxX - minX));
       const ky = (rect.height - pad*2) / Math.max(1, (maxY - minY));
@@ -8422,7 +9026,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   }
   Store.subscribe(refreshBadge); refreshBadge();
 
-  function openPanel(){ panel.classList.add('open'); savePanelState(); Canvas.render(); }
+  function openPanel(){
+    panel.classList.add('open'); savePanelState(); Canvas.render();
+    // Re-center after the panel is visible & laid out. The initial center()
+    // at startup may have no-op'd because the panel was hidden; centering here
+    // guarantees the graph is framed correctly every time it's opened, so the
+    // user never has to click the center button manually after a refresh.
+    requestAnimationFrame(() => Canvas.center());
+  }
   function closePanel(){ panel.classList.remove('open'); savePanelState(); }
 
   // Public open() also routes here.

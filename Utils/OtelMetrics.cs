@@ -75,7 +75,7 @@ public static class OtelMetrics
                 options.Endpoint = new Uri(App.Config.Telemetry.Endpoint);
                 options.Protocol = App.Config.Telemetry.ExportProtocol;
 
-                if (App.Config.Telemetry.Headers is { Count: > 0 }) 
+                if (App.Config.Telemetry.Headers is { Count: > 0 })
                     options.Headers = string.Join(",", App.Config.Telemetry.Headers.Select(h => $"{h.Key}={h.Value}"));
             })
             .Build();
@@ -98,7 +98,7 @@ public static class OtelMetrics
 
         if (App.Config.Telemetry.VerbosityLevel >= TelemetryVerbosity.Standard)
             tags.Add("model", model);
-        
+
         if (input != null)
             TokensInput.Add((long)input, tags);
         if (output != null)

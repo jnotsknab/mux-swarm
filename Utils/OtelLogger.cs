@@ -3,7 +3,7 @@
 namespace MuxSwarm.Utils;
 
 public static class OtelLogger
-{   
+{
     public static void Warn(string message)
     {
         Activity.Current?.AddEvent(new ActivityEvent("log",

@@ -56,7 +56,7 @@ public sealed class ProcessCleanup : IDisposable
 
         // Also handle unhandled exceptions
         AppDomain.CurrentDomain.UnhandledException += (_, _) => Shutdown();
-        
+
         if (!PlatformContext.IsWindows)
         {
             PosixSignalRegistration.Create(PosixSignal.SIGHUP, ctx =>
@@ -67,7 +67,7 @@ public sealed class ProcessCleanup : IDisposable
             });
         }
     }
-    
+
     /// <summary>
     /// Registers a process for cleanup. On Windows, assigns it to the job object.
     /// On Unix, tracks the PID for manual cleanup.
@@ -169,11 +169,11 @@ public sealed class ProcessCleanup : IDisposable
                 Debug.WriteLine($"[CLEANUP] Graceful shutdown failed for PID {pid}: {ex.Message}");
             }
         }
-        
+
         //Dispose MCP Clients
         Task.WhenAll(App.McpClients.Values.Select(c => c.DisposeAsync().AsTask()))
             .Wait(TimeSpan.FromSeconds(5));
-        
+
         // Phase 2: Wait for grace period, then force kill survivors
         var deadline = DateTime.UtcNow + ShutdownGrace;
         foreach (var pid in pids)
@@ -216,7 +216,7 @@ public sealed class ProcessCleanup : IDisposable
             return [.. _trackedPids];
         }
     }
-    
+
     private void InitWindowsJobObject()
     {
         if (!PlatformContext.IsWindows) return;
@@ -316,8 +316,8 @@ public sealed class ProcessCleanup : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
-    
-    
+
+
     /// <summary>
     /// Last resort: attempts to kill any remaining child processes of the current process.
     /// Uses platform-specific commands since .NET doesn't expose parent-child relationships easily.

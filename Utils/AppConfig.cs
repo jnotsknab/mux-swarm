@@ -9,7 +9,7 @@ public class AppConfig
 
     [JsonPropertyName("isUsingDockerForExec")]
     public bool IsUsingDockerForExec { get; set; } = false;
-    
+
     [JsonPropertyName("serveAddress")]
     public string ServeAddress { get; set; } = "0.0.0.0";
 
@@ -24,11 +24,11 @@ public class AppConfig
 
     [JsonPropertyName("userInfo")]
     public UserInfoConfig UserInfo { get; set; } = new();
-    
+
     [JsonPropertyName("telemetry")]
     public TelemetryConfig Telemetry { get; set; } = new();
 
-    [JsonPropertyName("daemon")] 
+    [JsonPropertyName("daemon")]
     public DaemonConfig? Daemon { get; set; } = new();
 
 

@@ -6,7 +6,7 @@ public class ReasoningConfig
 {
     [JsonPropertyName("effort")]
     public string? Effort { get; set; }
-    
+
     [JsonPropertyName("output")]
     public string? Output { get; set; }
 }
