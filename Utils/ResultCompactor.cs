@@ -115,7 +115,7 @@ public static class ResultCompactor
     {
         int charBudget = ExecutionLimits.Current.CompactionCharBudget;
         int? maxContentPassed = App.SwarmConfig?.CompactionAgent?.ModelOpts?.MaxOutputTokens;
-        
+
         var transcript = new StringBuilder();
         foreach (var msg in history)
         {
@@ -155,13 +155,13 @@ public static class ResultCompactor
 
             var response = await chatClient.GetResponseAsync(messages, chatOptions);
             summary = response.Text ?? transcript.ToString();
-            
+
             var extracted = ExtractTopLines(transcript.ToString(), charBudget / 2);
             summary += $"\n\n[EXTRACTED REFERENCES]\n{extracted}\n[END REFERENCES]";
-            
+
         }
         catch (Exception ex)
-        {   
+        {
             MuxConsole.WriteMuted($"  [Compaction] LLM summary failed, using extractive fallback: {ex.Message}");
             summary = ExtractTopLines(transcript.ToString(), charBudget);
         }

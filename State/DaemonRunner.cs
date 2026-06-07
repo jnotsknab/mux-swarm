@@ -52,14 +52,14 @@ public sealed class DaemonRunner : IAsyncDisposable
     {
         _killed = true;
         _cts.Cancel();
-    
+
         foreach (var (_, proc) in _bridgeProcesses)
         {
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
             catch { /* best effort */ }
         }
     }
-    
+
     /// <summary>
     /// Start all trigger loops. Non-blocking -- returns immediately.
     /// </summary>
@@ -101,13 +101,13 @@ public sealed class DaemonRunner : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-        
+
         foreach (var (_, proc) in _bridgeProcesses)
         {
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
             catch { /* best effort */ }
         }
-        
+
         HookWorker.Enqueue(new HookEvent
         {
             Event = "daemon_stop",
@@ -126,17 +126,17 @@ public sealed class DaemonRunner : IAsyncDisposable
                 catch { }
             }
         }
-        
+
         foreach (var (_, proc) in _bridgeProcesses)
         {
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
             catch { /* best effort */ }
         }
-        
+
 
         _cts.Dispose();
     }
-    
+
 
     private async Task RunWatchLoop(DaemonTrigger trigger, CancellationToken ct)
     {
@@ -304,7 +304,7 @@ public sealed class DaemonRunner : IAsyncDisposable
             MuxConsole.WriteError($"[Daemon:{trigger.Id}] Cron loop error: {ex.Message}");
         }
     }
-    
+
 
     private async Task RunStatusLoop(DaemonTrigger trigger, CancellationToken ct)
     {
@@ -442,11 +442,11 @@ public sealed class DaemonRunner : IAsyncDisposable
                         CreateNoWindow = true,
                         WorkingDirectory = PlatformContext.BaseDirectory
                     };
-                    
+
                     //handle expected defaults  
                     if (!psi.EnvironmentVariables.ContainsKey("MUX_WS_URL"))
                         psi.EnvironmentVariables["MUX_WS_URL"] = $"ws://localhost:{App.ServePort}/ws";
-                    
+
                     // Merge env vars from trigger
                     if (trigger.Env is { Count: > 0 })
                     {
@@ -506,13 +506,13 @@ public sealed class DaemonRunner : IAsyncDisposable
                     }
                     _bridgeProcesses.TryRemove(trigger.Id, out _);
                 }
-                
+
                 if (!trigger.Restart || ct.IsCancellationRequested || _killed)
                     break;
-                
+
                 MuxConsole.WriteInfo(
                     $"[Daemon:{trigger.Id}] Restarting bridge in {restartDelay}s...");
-               
+
                 await Task.Delay(TimeSpan.FromSeconds(restartDelay), ct);
             }
         }
@@ -591,7 +591,7 @@ public sealed class DaemonRunner : IAsyncDisposable
             return (false, ex.Message);
         }
     }
-    
+
     private async Task FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct)
     {
         if (_chatClientFactory is null || _mcpTools is null || _agentModels is null)
@@ -658,7 +658,7 @@ public sealed class DaemonRunner : IAsyncDisposable
             MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal execution failed: {ex.Message}");
         }
     }
-    
+
     private static string SubstituteGoalTemplate(
         string template, Dictionary<string, string> vars)
     {

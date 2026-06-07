@@ -367,7 +367,7 @@ public static class DepResolver
 
         return (true, proc.ExitCode, false);
     }
-    
+
     //Install CMDS
 
     private static List<(string? cmd, string args)> GetInstallCommands(string depName)

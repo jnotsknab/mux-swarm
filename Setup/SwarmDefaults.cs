@@ -133,14 +133,14 @@ public static class SwarmDefaults
                 toolPatterns = Array.Empty<string>()
             });
         }
-        
+
         // BrowserAgent
         {
             var mcp = new List<string>();
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Playwright")) mcp.Add("Playwright");
             if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
-            
+
             agents.Add(new
             {
                 name = "BrowserAgent",
@@ -269,7 +269,7 @@ public static class SwarmDefaults
         Console.WriteLine("    Ollama:      llama3");
         Console.WriteLine();
         Console.ResetColor();
-        
+
         Thread.Sleep(TimeSpan.FromSeconds(10));
     }
 
@@ -409,7 +409,7 @@ public static class SwarmDefaults
             var fullPath = Path.Combine(PlatformContext.BaseDirectory, dockerPath);
             return File.Exists(fullPath) ? dockerPath : promptPath;
         }
-        
+
         // Strip _docker suffix if present
         if (!name.EndsWith("_docker")) return promptPath;
 

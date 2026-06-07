@@ -78,7 +78,7 @@ public static class CliCmdUtils
             "  All Modes",
             $"    Max Stuck Count:              {l.MaxStuckCount}",
             $"    Activity Timeout:             {l.ActivityTimeoutSeconds}s",
-            
+
             "  Context Injection Posture",
             $"    Mode:              {l.ContextInjection}"
         );
@@ -114,17 +114,17 @@ public static class CliCmdUtils
         current = !current;
 
         if (current && parallel)
-        {   
+        {
             MuxConsole.WriteInfo("Parallel Sub-Agent Delegation for the standard /agent interface has been enabled.");
             return current;
         }
-        
+
         if (current && !parallel)
         {
             MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has been enabled.");
             return current;
         }
-        
+
         MuxConsole.WriteInfo($"{(parallel ? "Parallel " : "")}Sub-Agent Delegation for the standard /agent interface has been disabled.");
         return current;
     }
@@ -205,7 +205,7 @@ public static class CliCmdUtils
             MuxConsole.WriteError("Error setting Max Parallel Agents, ensure value is a positive integer");
         }
     }
-    
+
     /// <summary>
     /// Updates the model identifier for a selected agent or component in the swarm configuration.
     /// </summary>
@@ -606,7 +606,7 @@ public static class CliCmdUtils
             systemPromptOverride: resolvedPrompt
         );
     }
-    
+
     public static async Task HandleFullReload(Func<AppConfig, Task<bool>> initMcpServers,
         string configPath)
     {
@@ -640,14 +640,14 @@ public static class CliCmdUtils
             {
                 AutoInject.CustomContent = string.Join("\n", segments.Select(s =>
                     File.Exists(s) ? File.ReadAllText(s) : s));
-                
+
                 MuxConsole.WriteSuccess($"Auto-inject set , new sessions will be affected: {AutoInject.Current}");
                 return;
             }
-            
+
             AutoInject.CustomContent = input;
         }
-        
+
         MuxConsole.WriteSuccess($"Auto-inject set, new sessions will be affected: {AutoInject.Current}");
     }
 
@@ -665,11 +665,11 @@ public static class CliCmdUtils
             MuxConsole.WriteError("Minimum delay must be greater than 0, default of 300 utilized.");
             return 300;
         }
-                    
+
         MuxConsole.WriteSuccess($"Continuous execution has successfully been enabled with a minimum delay of {minDelay} seconds between iterations!");
         return minDelay;
     }
-    
+
     /// <summary>
     /// Generates report files from session data stored in the sessions directory.
     /// </summary>

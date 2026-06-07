@@ -26,7 +26,7 @@ public static class ServiceRegistration
     {
         "--register", "--remove"
     };
-    
+
     /// <summary>
     /// Register mux-swarm as an OS service. All CLI args (minus --register/--remove)
     /// are forwarded as the service launch args.
@@ -56,7 +56,7 @@ public static class ServiceRegistration
         else
             RemoveLinux();
     }
-    
+
     /// <summary>
     /// Resolves the actual binary path and install directory.
     /// Process.MainModule.FileName may point to a shim (ms.exe alias),
@@ -78,7 +78,7 @@ public static class ServiceRegistration
 
         return (exePath, installDir);
     }
-    
+
     private static void RegisterWindows(string exePath, string workDir, string serviceArgs)
     {
         // XML import gives us WorkingDirectory, RestartOnFailure,
@@ -163,7 +163,7 @@ public static class ServiceRegistration
                 MuxConsole.WriteMuted(result.StdErr.Trim());
         }
     }
-    
+
     private static string BuildServiceArgs(string[] originalArgs)
     {
         var filtered = new List<string>();
@@ -218,7 +218,7 @@ public static class ServiceRegistration
                         envLines.AppendLine($"Environment={key}={value}");
                 }
             }
-            
+
             //daemon block env args
             if (config.Daemon?.Triggers != null)
             {
@@ -271,7 +271,7 @@ public static class ServiceRegistration
                         env[key] = value;
                 }
             }
-            
+
             if (config.Daemon?.Triggers != null)
             {
                 foreach (var trigger in config.Daemon.Triggers)
@@ -488,7 +488,7 @@ public static class ServiceRegistration
             MuxConsole.WriteWarning($"LaunchAgent not found: {plistPath}");
         }
     }
-    
+
     /// <summary>
     /// Escape special XML characters in values embedded in XML templates.
     /// Prevents injection via crafted paths or arguments.

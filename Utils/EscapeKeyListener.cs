@@ -16,11 +16,11 @@ public sealed class EscapeKeyListener : IDisposable
     {
         _listenerCts = listenerCts;
     }
-    
+
 
     public static void Pause() => _paused = true;
     public static void Resume() => _paused = false;
-    
+
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);

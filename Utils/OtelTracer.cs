@@ -7,10 +7,10 @@ using OpenTelemetry.Trace;
 namespace MuxSwarm.Utils;
 
 public static class OtelTracer
-{   
+{
     private static readonly ActivitySource Source = new("MuxSwarm");
     private static TracerProvider? _provider;
-    
+
     public static ActivitySource GetSource() => Source;
 
     public static bool TryInit()
@@ -26,8 +26,8 @@ public static class OtelTracer
                     { "host.name", Environment.MachineName },
                     { "os.type", RuntimeInformation.OSDescription },
                     { "service.version", App.Version },
-                    { "service.instance.id", App.ServePort > 0 
-                        ? $"{Environment.MachineName}:{App.ServePort}" 
+                    { "service.instance.id", App.ServePort > 0
+                        ? $"{Environment.MachineName}:{App.ServePort}"
                         : Environment.MachineName }
                 }))
             .AddSource("MuxSwarm")

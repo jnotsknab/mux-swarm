@@ -19,7 +19,7 @@ public static class SingleAgentOrchestrator
     private static uint _cachedTokens;
     //total tokens in session (cached + uncached)
     private static uint _sessionTokens;
-    
+
     private static bool _pendingCompaction;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
@@ -104,7 +104,7 @@ public static class SingleAgentOrchestrator
     {
         MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
         MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
-        
+
         var singleAgentDef = GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
         var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
@@ -113,10 +113,10 @@ public static class SingleAgentOrchestrator
 
         if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents && !allowParallelSubAgents)
             MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
-        
+
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
-        
+
         try
         {
             var swarmJson = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
@@ -126,7 +126,7 @@ public static class SingleAgentOrchestrator
                 ? swarm?.Agents?.FirstOrDefault(a =>
                     a.Name != null && a.Name.Equals(singleAgentDef.Name, StringComparison.OrdinalIgnoreCase))
                 : null;
-            
+
             HookWorker.Enqueue(new HookEvent
             {
                 Event = "session_start",
@@ -135,15 +135,15 @@ public static class SingleAgentOrchestrator
                 Text = incomingGoal,
                 Timestamp = DateTimeOffset.UtcNow
             });
-            
+
             resolvedModelId = match?.Model ?? swarm?.SingleAgent?.Model ?? "";
-            
+
             sessionSpan?.SetTag("agent", singleAgentDef?.Name);
             sessionSpan?.SetTag("mode", persistSession ? "agent" : "stateless");
             sessionSpan?.SetTag("model", resolvedModelId);
             sessionSpan?.SetTag("goal_id", goalId);
             OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef?.Name));
-            
+
         }
         catch { /* fall through */ }
 
@@ -179,7 +179,7 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
             return;
         }
-        
+
         HookWorker.Enqueue(new HookEvent
         {
             Event = "user_input",
@@ -187,17 +187,17 @@ public static class SingleAgentOrchestrator
             Text = initialGoal,
             Timestamp = DateTimeOffset.UtcNow
         });
-        
+
         OtelMetrics.RecordAgentMessage(singleAgentDef?.Name ?? string.Empty, "user", initialGoal);
         OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef?.Name ?? string.Empty));
-        
+
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
             MuxConsole.WriteError("[AGENT] singleAgent.promptPath not set in swarm.json.");
             return;
         }
 
-        var systemPrompt = string.IsNullOrEmpty(systemPromptOverride) ? await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath): systemPromptOverride;
+        var systemPrompt = string.IsNullOrEmpty(systemPromptOverride) ? await Common.LoadPromptAsync(singleAgentDef.SystemPromptPath) : systemPromptOverride;
 
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
@@ -235,14 +235,14 @@ public static class SingleAgentOrchestrator
             description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
                          "Read the relevant skill BEFORE starting a task to follow its best practices."
         );
-        
+
         var swarmVision = App.SwarmConfig?.VisionAgent;
         var visionModelId = swarmVision?.Model;
-        
+
         var analyzeImageTool = chatClientFactory != null && !string.IsNullOrEmpty(visionModelId)
             ? LocalAiFunctions.CreateAnalyzeImageTool(chatClientFactory, visionModelId)
             : null;
-        
+
         ChatOptions? compactChatOpts = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
 
         async Task<string> ExecuteDelegation(
@@ -251,7 +251,7 @@ public static class SingleAgentOrchestrator
             string callerName,
             bool restrictToSpecialists,
             bool parallel = false)
-        {   
+        {
             if (restrictToSpecialists && agentName == "Orchestrator")
                 return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
 
@@ -266,22 +266,22 @@ public static class SingleAgentOrchestrator
             if (agentName == callerName)
                 return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
 
-            
+
             using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
             delegationSpan?.SetTag("from", callerName);
             delegationSpan?.SetTag("to", agentName);
             var delegationSw = Stopwatch.StartNew();
-            
+
             MuxConsole.WriteDelegation(callerName, agentName, task);
 
-            
+
             int attempts = 0;
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
                 specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false, cleanSession: true);
 
             bool succeeded = status == "success";
             attempts += 1;
-            
+
             if (!succeeded)
             {
                 if (attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
@@ -308,7 +308,7 @@ public static class SingleAgentOrchestrator
                 compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
-            
+
             delegationSw.Stop();
             OtelMetrics.Delegations.Add(1,
                 new KeyValuePair<string, object?>("from", callerName),
@@ -318,12 +318,12 @@ public static class SingleAgentOrchestrator
 
             if (!succeeded)
                 OtelMetrics.SubTaskRetries.Add(1, new KeyValuePair<string, object?>("agent", agentName));
-            
+
             return string.IsNullOrWhiteSpace(compacted)
                 ? $"[{agentName} completed but returned no output]"
                 : compacted;
         }
-        
+
         IChatClient? compactionClient = null;
         ChatOptions? compactionChatOptions = null;
         bool compactionResolved = false;
@@ -360,13 +360,13 @@ public static class SingleAgentOrchestrator
 
             return compactionClient;
         }
-        
+
         var subAgentDelegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
                 [Description("The specific sub-task or instruction for the specialist agent")] string task
             ) =>
-            {   
+            {
                 var specialists = MultiAgentOrchestrator.Specialists;
                 if (agentName == "Orchestrator")
                     return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
@@ -376,7 +376,7 @@ public static class SingleAgentOrchestrator
                     var available = string.Join(", ", specialists.Keys.Where(k => k != "Orchestrator"));
                     return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
                 }
-                
+
                 return await ExecuteDelegation(agentName, task, singleAgentDef.Name, restrictToSpecialists: true);
             },
             name: "delegate_to_agent_lite",
@@ -384,16 +384,16 @@ public static class SingleAgentOrchestrator
                          "Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. " +
                          "Cannot delegate to the Orchestrator. Note: Synchronous Version - Tip: Execute once with random string if no agent names are known to return err output with available agents"
         );
-        
+
         var delegateParallelTool = AIFunctionFactory.Create(
             method: async (
                 [Description("A list of agent assignments to run simultaneously")]
                 IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
             ) =>
-            {   
+            {
                 if (chatClientFactory == null)
                     return "[Error] Cannot create chat client for agent, chat client is null";
-                
+
                 var specialists = MultiAgentOrchestrator.Specialists;
                 var assignmentList = assignments.ToList();
                 MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
@@ -427,16 +427,16 @@ public static class SingleAgentOrchestrator
                          "researching different topics or auditing multiple files. Each assignment specifies " +
                          "an AgentName and a Task string. Tip: Execute once with random string if no agent names are known to return err output with available agents"
         );
-        
+
         var singleAgentTools = (IList<AITool>)
         [
             listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool,
             .. (analyzeImageTool != null ? new[] { analyzeImageTool } : Array.Empty<AITool>()),
             .. filteredTools
         ];
-        
+
         if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
-        
+
         if (allowSubAgents)
         {
             singleAgentTools.Add(subAgentDelegateTool);
@@ -450,7 +450,7 @@ public static class SingleAgentOrchestrator
             await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
         }
-        
+
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,
@@ -507,11 +507,11 @@ public static class SingleAgentOrchestrator
 
         _pendingCompaction = false;
         async Task<bool> TryCompactAsync()
-        {   
+        {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
             var compactSw = Stopwatch.StartNew();
-            
+
             var cc = ResolveCompactionClient();
             if (cc == null)
             {
@@ -609,7 +609,7 @@ public static class SingleAgentOrchestrator
                     turnCts.Token.ThrowIfCancellationRequested();
 
                     MuxConsole.WriteAgentTurnHeader(singleAgentDef.Name);
-                    
+
                     using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
                     turnSpan?.SetTag("agent", singleAgentDef.Name);
                     turnSpan?.SetTag("model", resolvedModelId);
@@ -664,9 +664,9 @@ public static class SingleAgentOrchestrator
                                     Timestamp = DateTimeOffset.UtcNow
                                 });
                             }
-                            
+
                             foreach (AIContent content in update.Contents)
-                            {   
+                            {
                                 if (content is TextReasoningContent reasoningContent)
                                 {
                                     if (string.IsNullOrEmpty(reasoningContent.Text))
@@ -690,14 +690,14 @@ public static class SingleAgentOrchestrator
                                         Text = reasoningContent.Text,
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-                                    
+
                                     continue;
                                 }
-                                
+
                                 if (content is FunctionCallContent functionCall)
-                                {   
+                                {
                                     lastToolName = functionCall.Name;
-                                    
+
                                     HookWorker.Enqueue(new HookEvent
                                     {
                                         Event = "tool_call",
@@ -705,12 +705,12 @@ public static class SingleAgentOrchestrator
                                         Tool = functionCall.Name,
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-                                    
+
                                     var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                                     toolSpan?.SetTag("agent", singleAgentDef.Name);
                                     toolSpan?.SetTag("tool", functionCall.Name);
                                     toolSpan?.SetTag("args", functionCall.Arguments?.ToString()?[..Math.Min(functionCall.Arguments?.ToString()?.Length ?? 0, 4096)]);
-                                    
+
                                     if (currentlyStreaming)
                                     {
                                         currentlyStreaming = false;
@@ -726,13 +726,13 @@ public static class SingleAgentOrchestrator
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
-                                {   
+                                {
                                     var resultText = functionResult.Result?.ToString();
                                     Activity.Current?.SetTag("success", true);
                                     if (resultText != null)
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
                                     Activity.Current?.Stop();
-                                    
+
                                     HookWorker.Enqueue(new HookEvent
                                     {
                                         Event = "tool_result",
@@ -740,10 +740,10 @@ public static class SingleAgentOrchestrator
                                         Summary = functionResult.Result?.ToString(),
                                         Timestamp = DateTimeOffset.UtcNow
                                     });
-                                    
+
                                     if (resultText != null)
                                         MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
-                                    
+
                                     if (!currentlyStreaming && thinking != null)
                                     {
                                         thinking.Dispose();
@@ -773,7 +773,7 @@ public static class SingleAgentOrchestrator
 
                         StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
-                        
+
                         HookWorker.Enqueue(new HookEvent
                         {
                             Event = "turn_end",
@@ -781,7 +781,7 @@ public static class SingleAgentOrchestrator
                             Summary = responseText.Length > 500 ? responseText.ToString(0, 500) + "..." : responseText.ToString(),
                             Timestamp = DateTimeOffset.UtcNow
                         });
-                        
+
                         turnSw.Stop();
                         OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
@@ -872,14 +872,14 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteSuccess("Continuous execution stopped by user.");
                 break;
             }
-            
+
             if (continuous)
             {
                 if (minDelaySeconds > 0)
-                {   
+                {
                     using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                     using var delayEsc = EscapeKeyListener.Start(delayCts, cancellationToken);
-                    
+
                     try
                     {
                         await MuxConsole.WithSpinnerAsync($"Next iteration in {minDelaySeconds}s, press [ESC] to cancel", async () =>
@@ -929,7 +929,7 @@ public static class SingleAgentOrchestrator
             }
 
             currentGoal = nextInput!;
-            
+
             HookWorker.Enqueue(new HookEvent
             {
                 Event = "user_input",
@@ -937,7 +937,7 @@ public static class SingleAgentOrchestrator
                 Text = currentGoal,
                 Timestamp = DateTimeOffset.UtcNow
             });
-            
+
             OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "user", currentGoal);
             OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
 
@@ -945,7 +945,7 @@ public static class SingleAgentOrchestrator
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);
-        
+
         HookWorker.Enqueue(new HookEvent
         {
             Event = "session_end",
@@ -953,7 +953,7 @@ public static class SingleAgentOrchestrator
             Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
             Timestamp = DateTimeOffset.UtcNow
         });
-        
+
         sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
         sessionSpan?.SetTag("final_tokens", _sessionTokens);
 

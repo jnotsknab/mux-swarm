@@ -84,7 +84,7 @@ public static class McpServerDefaults
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });
-        
+
         //web browser / automation (optional)
         AddIfMissing("Playwright", new McpServerConfig
         {

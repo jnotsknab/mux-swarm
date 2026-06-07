@@ -33,6 +33,6 @@ public class TelemetryConfig
 public enum TelemetryVerbosity
 {
     Minimal,
-    Standard, 
+    Standard,
     Verbose
 }
