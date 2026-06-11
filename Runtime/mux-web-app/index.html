@@ -301,17 +301,22 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   color: var(--text);
 }
 
-.status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0;
-  box-shadow: 0 0 0 0 transparent; transition: background 0.3s ease, box-shadow 0.3s ease; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0;
+  transition: background 0.3s ease; display: none; }
 /* Theme-aware glow: derive the halo from the live --green / --red vars rather than a
    hardcoded emerald, so the ring always matches the dot across every theme. A tight,
    subtle pulse reads as a crisp "live" indicator instead of a fuzzy blob. */
-.status-dot.connected { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); animation: pulse-green 2.4s ease-in-out infinite; }
-@keyframes pulse-green {
-  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
-  50%      { box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 12%, transparent); }
+.status-dot.connected { background: var(--green); }
+/* Typographic status: the word carries the state via color (chrome-less). */
+.status-dot.connected + #statusText { color: var(--green); }
+.status-dot.error + #statusText { color: var(--red); }
+#statusText {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 600;
 }
-.status-dot.error { background: var(--red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 28%, transparent); animation: none; }
+.status-dot.error { background: var(--red); }
 
 .header-actions { display: flex; gap: 8px; }
 
@@ -515,32 +520,33 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 /* ── Agent turns ── */
 .agent-turn { margin: 12px 0 4px; display: flex; align-items: center; gap: 8px; }
 .agent-badge {
-  background: linear-gradient(135deg, var(--bg-input), var(--bg-card));
-  color: var(--accent); 
-  font-size: calc(11px * var(--ui-font-scale, 1)); 
-  font-weight: 600;
-  padding: 4px 10px; 
-  border-radius: 12px;
-  border: 1px solid var(--border);
-  letter-spacing: 0.02em;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  /* Chrome-less: plain tracked label, no chip (matches flat stream). */
+  background: transparent;
+  color: var(--accent);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 700;
+  padding: 0;
+  border: none;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 /* ── Stream block ── */
 .stream-block {
-  background: var(--bg-input);
-  border-left: 3px solid var(--border);
+  /* Chrome-less (Claude Desktop style): text lays directly on the page bg.
+     No rail, no fill, no shadow — whitespace separates turns; the collapse
+     fade/unfade carries the state change. */
+  background: transparent;
+  border-left: none;
   padding: 12px 16px; 
   margin: 8px 0 16px 0; 
-  border-radius: 0 8px 8px 0;
+  border-radius: 8px;
   word-break: break-word; 
   overflow-wrap: anywhere;
-  font-size: calc(14px * var(--ui-font-scale, 1)); 
+  font-size: calc(15.5px * var(--ui-font-scale, 1)); 
   line-height: 1.6; 
   max-width: 100%; 
   overflow-x: hidden;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 .stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 .stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
@@ -634,16 +640,15 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   display: flex; 
   align-items: center; 
   gap: 10px; 
-  padding: 8px 12px; 
+  padding: 4px 0; 
   margin: 6px 0;
   color: var(--muted); 
   font-size: calc(12px * var(--ui-font-scale, 1));
-  background: var(--bg-input);
-  border-radius: 12px;
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
   width: fit-content;
   max-width: 95%;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  box-shadow: none;
 }
 .thinking-bar span {
   white-space: normal;
@@ -679,6 +684,60 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   border-left: 1px solid var(--border); margin-left: 4px;
 }
 
+/* Tool-call group: consecutive calls fold into one quiet, expandable cluster.
+   Chrome-less by design -- a muted header line, no card fill or outline. */
+.tool-group { margin: 4px 0; }
+/* Settings: hide tool calls in chat entirely (text-only mode). Results still
+   flow to the Live Diffs panel. CSS-only so toggling retroactively applies. */
+body.hide-tool-calls .tool-group,
+body.hide-tool-calls .tool-call,
+body.hide-tool-calls .tool-result,
+body.hide-tool-calls .tool-detail { display: none !important; }
+.tool-group-header {
+  display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+  padding: 3px 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1));
+  min-width: 0;
+}
+.tool-group-header:hover .tg-label { color: var(--text); }
+.tool-group-header .tg-zap { color: var(--accent); display: inline-flex; align-items: center; flex-shrink: 0; }
+.tool-group-header .tg-chev {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  transition: transform 0.15s ease; opacity: 0.6;
+}
+.tool-group.open .tg-chev { transform: rotate(90deg); }
+.tool-group-header .tg-label { flex-shrink: 0; }
+.tool-group-header .tg-latest {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  opacity: 0.65; min-width: 0; font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.tool-group.open .tg-latest { display: none; }
+.tool-group-body { display: none; padding-left: 18px; }
+.tool-group.open .tool-group-body { display: block; }
+/* Expandable call rows: click to reveal a trimmed result/diff preview */
+.tool-call.expandable { cursor: pointer; }
+.tool-call.expandable:hover { color: var(--text); }
+.tool-call .tc-chev {
+  display: inline-flex; align-items: center; flex-shrink: 0;
+  opacity: 0.45; transition: transform 0.15s ease;
+}
+.tool-call.open .tc-chev { transform: rotate(90deg); }
+.tool-detail {
+  display: none;
+  margin: 2px 0 6px 4px; padding: 6px 10px 6px 18px;
+  border-left: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  line-height: 1.5; color: var(--muted);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 260px; overflow-y: auto;
+}
+.tool-detail::-webkit-scrollbar { width: 4px; }
+.tool-detail::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.35); border-radius: 3px; }
+.tool-detail .td-add  { color: var(--green); }
+.tool-detail .td-del  { color: var(--red); }
+.tool-detail .td-hunk { color: var(--accent); opacity: 0.8; }
+.tool-detail .td-err  { color: var(--red); opacity: 0.85; }
+.tool-detail .td-more { opacity: 0.55; font-style: italic; }
+
 /* ── Delegation / Task ── */
 .delegation { 
   font-size: calc(12px * var(--ui-font-scale, 1)); 
@@ -704,7 +763,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   padding: 8px 12px;
   margin: 6px 0;
   background-color: rgba(16, 185, 129, 0.05);
-  border: 1px solid rgba(16, 185, 129, 0.15);
+  border: none;
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -896,14 +955,11 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 /* 1) Role-coded left rail. The assistant card already has a 3px left rail
       but it used the muted --border colour (invisible). Tint each card
       family so you can tell role at a glance. */
-.stream-block            { border-left-color: rgba(var(--accent-rgb), 0.7); }
 .tool-call, .tool-result { border-left: 3px solid var(--amber);
                            border-radius: 0 6px 6px 0; }
 .delegation              { border-left: 3px solid var(--agent);
                            border-radius: 0 6px 6px 0; }
-.task-complete           { border-left: 3px solid var(--green); }
 .panel-block             { border-left: 3px solid var(--blue); }
-.diff-card               { border-left: 3px solid var(--accent); }
 
 /* 2) Declutter the stack (Claude-style): collapsed cards drop their box
       chrome so a long chain reads as one continuous stream instead of a
@@ -913,14 +969,14 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
       darker than its collapsed state. */
 .stream-block.mux-coll-collapsed {
   background: transparent;          /* sit flat on the page at rest */
-  border-top: 0; border-right: 0; border-bottom: 0;  /* rail only */
-  border-radius: 0;                 /* square edges read as a stream */
+  border: 0;
+  border-radius: 8px;               /* rounds the hover highlight */
   box-shadow: none;
-  margin: 2px 0;                    /* tighter rhythm; rail does the separating */
+  margin: 2px 0;                    /* tight rhythm; whitespace separates */
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 .stream-block.mux-coll-collapsed:hover {
-  background: rgba(255,255,255,0.03);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
   box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.1);
 }
 /* Three-tier brightness hierarchy so state reads at a glance:
@@ -931,20 +987,17 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
    material is never dimmer than collapsed. Trivial cards are the medium rest tier;
    a card the user deliberately opened lights up a touch more with a stronger ring. */
 .stream-block.mux-collapsible:not(.mux-coll-collapsed) {
-  background:
-    linear-gradient(0deg, rgba(255,255,255,0.03), rgba(255,255,255,0.03)),
-    var(--bg-input);
-  border-left-color: var(--accent);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.22), 0 0 0 1px rgba(var(--accent-rgb), 0.10);
+  /* Open: stays flat — the preview unfade is the state change. */
+  background: transparent;
+  box-shadow: none;
 }
 /* Brightest tier: a chevron-bearing card the user expanded (not a short trivial one).
    ~4% extra lift + a stronger accent ring — the ring does the differentiating work
    so it stays flat/stream-like rather than boxy (option B). */
 .stream-block.mux-collapsible:not(.mux-coll-collapsed):not(.mux-coll-trivial) {
-  background:
-    linear-gradient(0deg, rgba(255,255,255,0.085), rgba(255,255,255,0.085)),
-    var(--bg-input);
-  box-shadow: 0 1px 6px rgba(0,0,0,0.30), 0 0 0 1px rgba(var(--accent-rgb), 0.26);
+  /* Deliberately expanded: a whisper of fill so the open card registers,
+     nothing more. Set to transparent if even this reads as a card. */
+  background: color-mix(in srgb, var(--text) 2.5%, transparent);
 }
 
 /* 3) Quiet inline code chips while collapsed so the eye reads prose first,
@@ -1436,6 +1489,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   .header-logo { flex-shrink: 0; }
   /* Status: dot only on mobile, sitting tight next to the brand as a 'live' indicator. */
   .header-status { flex: 0 0 auto; margin-left: 0; padding: 4px 0; gap: 0; }
+  .header-status .status-dot { display: block; }
   .header-status #statusText { display: none; }
   /* Option B — spread the icons evenly across the remaining width so there's no dead
      centre zone. NOTE: the actions group holds up to 6 buttons on a live page
@@ -1606,9 +1660,9 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 
 /* Change card */
 .diff-card {
-  border: 1px solid var(--border);
+  border: none;
   border-radius: 8px;
-  background: var(--bg-card, var(--bg));
+  background: color-mix(in srgb, var(--text) 3%, transparent);
   overflow: hidden;
   flex: none;
   margin-bottom: 8px;
@@ -1619,8 +1673,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
-  background: rgba(255,255,255,0.015);
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
 }
 
 /* Collapsible diff card: clickable head + rotating chevron (budget-based) */
@@ -1692,6 +1745,22 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   font-size: calc(10px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
+.diff-fname {
+  flex: 0 1 auto; min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sh-status {
+  flex: 0 0 auto;
+  font-size: calc(9px * var(--ui-font-scale, 1));
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.sh-status.ok  { color: var(--green); }
+.sh-status.run { color: var(--amber, #f59e0b); }
+.sh-status.err { color: var(--red); }
 .diff-file {
   padding: 5px 10px;
   border-bottom: 1px solid var(--border);
@@ -1983,7 +2052,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
-      <button class="sidebar-tab" data-tab="diffs">Live Diffs</button>
+      <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
       <button class="sidebar-close" id="sidebarClose">×</button>
     </div>
     <div class="sidebar-content" id="sidebarContent">
@@ -2293,7 +2362,10 @@ const icons = {
 
   let ws = null;
   let pingInterval = null;
-  let currentStreamEl = null;
+  // Per-agent stream buffers: parallel agents stream concurrently and a single
+  // shared buffer interleaves their chunks mid-word. Key by ev.agent ('' = main).
+  const _agentStreams = new Map(); // agent -> { el, text }
+  let currentStreamEl = null;      // last-touched stream el (thinking-bar anchor)
   let currentStreamText = '';
   let reconnectDelay = 1000;
   let sidebarOpen = false;
@@ -2316,16 +2388,16 @@ const icons = {
   diffsArea.id = 'diffs-content-area';
   diffsArea.innerHTML =
     '<div class="diffs-bar">' +
-      '<span class="diffs-bar-title">Live Diffs</span>' +
-      '<span class="diffs-count" id="diffs-count">0 changes</span>' +
+      '<span class="diffs-bar-title">Tool Output</span>' +
+      '<span class="diffs-count" id="diffs-count">0 results</span>' +
       '<span class="diffs-bar-spacer"></span>' +
       '<button type="button" class="diffs-clear" id="diffs-clear">Clear</button>' +
     '</div>' +
     '<div class="diffs-list" id="diffs-list">' +
       '<div class="diffs-empty" id="diffs-waiting">' +
         '<div class="diffs-empty-icon">\u2713</div>' +
-        '<div class="diffs-empty-text">No changes yet</div>' +
-        '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+        '<div class="diffs-empty-text">No output yet</div>' +
+        '<div class="diffs-empty-sub">Tool results, shell output &amp; file diffs will appear here.</div>' +
       '</div>' +
     '</div>';
   // Wire the Clear button + count once.
@@ -2335,7 +2407,7 @@ const icons = {
     function updateDiffsCount(){
       const cnt = list ? list.querySelectorAll('.diff-card').length : 0;
       const badge = diffsArea.querySelector('#diffs-count');
-      if (badge) badge.textContent = cnt + (cnt === 1 ? ' change' : ' changes');
+      if (badge) badge.textContent = cnt + (cnt === 1 ? ' result' : ' results');
       const bar = diffsArea.querySelector('.diffs-bar');
       if (bar) bar.classList.toggle('has-items', cnt > 0);
     }
@@ -2344,8 +2416,8 @@ const icons = {
       list.innerHTML =
         '<div class="diffs-empty" id="diffs-waiting">' +
           '<div class="diffs-empty-icon">\u2713</div>' +
-          '<div class="diffs-empty-text">No changes yet</div>' +
-          '<div class="diffs-empty-sub">Tool results &amp; file edits will appear here.</div>' +
+          '<div class="diffs-empty-text">No output yet</div>' +
+          '<div class="diffs-empty-sub">Tool results, shell output &amp; file diffs will appear here.</div>' +
         '</div>';
     }
     if (clearBtn) clearBtn.addEventListener('click', () => { renderDiffsEmpty(); updateDiffsCount(); });
@@ -2548,6 +2620,133 @@ const icons = {
     if (busy) { try { cancelSkillsPrime(); } catch (_) {} }
     actionBtn.textContent = busy ? 'Stop' : 'Send';
     actionBtn.className = busy ? 'send-btn stop-mode' : 'send-btn';
+  }
+
+  // ─── Tool-call grouping ───
+  // Consecutive tool calls/results fold into one quiet expandable cluster so
+  // long bursts (10+ calls) don't wall the chat. Open for the first 3 calls,
+  // auto-collapses at 4+ unless the user has toggled it manually. Any stream
+  // text or turn boundary breaks the group so ordering stays faithful.
+  let _toolGroup = null;
+  function breakToolGroup() { _toolGroup = null; }
+  function ensureToolGroup() {
+    if (_toolGroup && _toolGroup.el.isConnected) return _toolGroup;
+    const el = document.createElement('div');
+    el.className = 'tool-group open';
+    el.innerHTML =
+      '<div class="tool-group-header">' +
+        '<span class="tg-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>' +
+        '<span class="tg-zap">' + icons.zap + '</span>' +
+        '<span class="tg-label"></span>' +
+        '<span class="tg-latest"></span>' +
+      '</div>' +
+      '<div class="tool-group-body"></div>';
+    const g = { el, body: el.querySelector('.tool-group-body'),
+                label: el.querySelector('.tg-label'),
+                latest: el.querySelector('.tg-latest'),
+                count: 0, userToggled: false };
+    el.querySelector('.tool-group-header').addEventListener('click', () => {
+      g.userToggled = true;
+      el.classList.toggle('open');
+    });
+    output.appendChild(el);
+    _toolGroup = g;
+    return g;
+  }
+  let _lastToolCallRow = null;
+  function toolGroupingEnabled() {
+    // Settings IIFE communicates via a body class (no shared closure scope).
+    return !document.body.classList.contains('tool-grouping-off');
+  }
+  function addToolCallRow(html) {
+    const row = document.createElement('div');
+    row.className = 'tool-call';
+    row.innerHTML = html;
+    row._resultSeen = false;
+    if (!toolGroupingEnabled()) {
+      breakToolGroup();
+      output.appendChild(row);
+      _lastToolCallRow = row;
+      scrollToBottom();
+      return;
+    }
+    const g = ensureToolGroup();
+    g.count++;
+    g.body.appendChild(row);
+    _lastToolCallRow = row;
+    g.label.textContent = g.count === 1 ? '1 tool call' : (g.count + ' tool calls');
+    g.latest.textContent = '\u00b7 ' + (row.textContent || '').trim();
+    // Auto-collapse behavior + threshold come from settings (via body
+    // class/dataset — settings IIFE has no shared scope with this one).
+    const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
+    const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
+    if (!autoOff && g.count >= limit && !g.userToggled) g.el.classList.remove('open');
+    scrollToBottom();
+  }
+  function addToolResultRow(text) {
+    const row = document.createElement('div');
+    row.className = 'tool-result';
+    row.textContent = text;
+    if (_toolGroup && _toolGroup.el.isConnected) _toolGroup.body.appendChild(row);
+    else output.appendChild(row);
+  }
+  // Attach a trimmed result/diff preview under the most recent call row.
+  // Click the row to expand. Full output still lands in the Live Diffs panel.
+  function attachToolDetail(rawResult) {
+    const row = _lastToolCallRow;
+    if (!row || !row.isConnected || row._hasDetail) return;
+    // Sanitize MCP envelope: extract text blocks if present.
+    let text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+    try {
+      const parsed = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+      if (parsed && Array.isArray(parsed.content)) {
+        const tb = parsed.content.filter(c => c.type === 'text').map(c => c.text);
+        if (tb.length > 0) text = tb.join('\n');
+      } else if (parsed && typeof parsed.content === 'string') text = parsed.content;
+      else if (parsed && typeof parsed.result === 'string') text = parsed.result;
+    } catch (_) { /* not JSON */ }
+    if (!text || !text.trim()) return;
+    // Full output, scrollable (CSS max-height handles the viewport). Hard cap
+    // only as a DOM-size guard for pathological payloads.
+    const CAP = 100000;
+    let capped = 0;
+    if (text.length > CAP) { capped = text.length - CAP; text = text.slice(0, CAP); }
+    const lines = text.split('\n');
+    // Only treat +/- prefixes as diff lines when the payload actually IS a
+    // diff (hunk headers or ---/+++ file headers). Otherwise markdown bullets
+    // ("- item") and CLI flags would light up as removals.
+    const isDiff = lines.some(l => l.startsWith('@@ ')) ||
+      (lines.some(l => /^---\s+\S/.test(l) && !/^---\s+(STDOUT|STDERR)\s*---/.test(l)) &&
+       lines.some(l => /^\+\+\+\s+\S/.test(l)));
+    let html = lines.map(l => {
+      const e = esc(l);
+      if (isDiff && /^\+(?!\+\+)/.test(l)) return '<span class="td-add">' + e + '</span>';
+      if (isDiff && /^-(?!--)/.test(l))      return '<span class="td-del">' + e + '</span>';
+      if (isDiff && l.startsWith('@@'))      return '<span class="td-hunk">' + e + '</span>';
+      if (/^(--- STDERR ---|Error|error:)/.test(l)) return '<span class="td-err">' + e + '</span>';
+      return '<span>' + e + '</span>';
+    }).join('\n');
+    if (capped > 0) html += '\n<span class="td-more">\u2026 output truncated (' + capped + ' more chars)</span>';
+    const detail = document.createElement('div');
+    detail.className = 'tool-detail';
+    detail.innerHTML = html;
+    // Insert after the result-summary row if one followed the call, else right after the call.
+    let anchor = row;
+    if (row.nextElementSibling && row.nextElementSibling.classList.contains('tool-result')) {
+      anchor = row.nextElementSibling;
+    }
+    anchor.insertAdjacentElement('afterend', detail);
+    row._hasDetail = true;
+    row.classList.add('expandable');
+    const chev = document.createElement('span');
+    chev.className = 'tc-chev';
+    chev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+    row.insertBefore(chev, row.firstChild);
+    row.addEventListener('click', () => {
+      const open = detail.style.display !== 'block';
+      detail.style.display = open ? 'block' : 'none';
+      row.classList.toggle('open', open);
+    });
   }
 
   // ─── Thinking bar ───
@@ -2810,7 +3009,8 @@ const icons = {
 
       case 'agent_turn_start':
         removeThinkingBar();
-        finalizeStream();
+        finalizeStream(ev.agent);
+        breakToolGroup();
         setBusy(true);
         const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
@@ -2818,7 +3018,8 @@ const icons = {
 
       case 'agent_turn_end':
         removeThinkingBar();
-        finalizeStream();
+        finalizeStream(ev.agent);
+        breakToolGroup();
         setBusy(false);
         // Safety net: if a /compact placeholder is still showing when the turn
         // ends (compaction always wraps inside a turn), the real event matcher
@@ -2826,24 +3027,30 @@ const icons = {
         try { clearCompactingPlaceholder(); } catch (_) {}
         break;
 
-      case 'stream':
+      case 'stream': {
         setBusy(true);
         removeThinkingBar();
-        if (!currentStreamEl) {
-          currentStreamEl = document.createElement('div');
-          currentStreamEl.className = 'stream-block';
-          output.appendChild(currentStreamEl);
-          currentStreamText = '';
+        breakToolGroup();
+        const skey = String(ev.agent || '');
+        let st = _agentStreams.get(skey);
+        if (!st) {
+          st = { el: document.createElement('div'), text: '' };
+          st.el.className = 'stream-block';
+          if (skey) st.el.dataset.agent = skey;
+          output.appendChild(st.el);
+          _agentStreams.set(skey, st);
         }
-        currentStreamText += (ev.text || '');
-        currentStreamEl.innerHTML = renderMarkdown(currentStreamText);
-        attachMsgCopy(currentStreamEl, currentStreamText);
+        st.text += (ev.text || '');
+        st.el.innerHTML = renderMarkdown(st.text);
+        attachMsgCopy(st.el, st.text);
+        currentStreamEl = st.el; currentStreamText = st.text;
         scrollToBottom();
         break;
+      }
 
       case 'stream_end':
         removeThinkingBar();
-        finalizeStream();
+        finalizeStream(ev.agent);
         setBusy(false);
         break;
 
@@ -2857,15 +3064,18 @@ const icons = {
         // Parse "[calling: Tool_action, Tool_action2]" format from ThinkingIndicator
         const match = status.match(/\[calling:\s*(.+)\]/);
         if (match) {
-          // If it's calling tools, just show a clean list of the tool names being called
+          // Cumulative "[calling: a, b, c...]" list grows unbounded during long
+          // bursts -- show only the CURRENT (last) tool, humanized, plus a quiet
+          // running count instead of walling the bar with every name.
           const rawTools = match[1].split(',').map(t => {
               let name = t.trim();
               if (name.startsWith('default_api:')) name = name.substring(12);
               return name.replace(/unknown/ig, '').trim();
-          });
-          
-          let displayStr = rawTools.join(', ');
-          updateThinkingBar(ev.agent || '', `<span style="color:var(--blue)">Calling:</span> ${esc(displayStr)}`);
+          }).filter(Boolean);
+          const lastTool = rawTools[rawTools.length - 1] || '';
+          let html = friendlyToolName(lastTool, ev.agent || '', null);
+          if (rawTools.length > 1) html += ` <span style="opacity:0.55">\u00b7 call ${rawTools.length}</span>`;
+          updateThinkingBar(ev.agent || '', html);
         } else {
           // If it's raw thinking text, display it directly, no truncation
           let displayStr = status.replace(/\n/g, ' ').trim();
@@ -2880,19 +3090,27 @@ const icons = {
 
       case 'tool_call':
         removeThinkingBar();
-        appendHTML(`<div class="tool-call"><span class="tool-icon" style="display:flex;align-items:center;margin-top:1px">${icons.zap}</span> <span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span></div>`);
+        addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span>`);
         break;
 
       case 'tool_result':
       case 'function_result':
+        // Some runtime paths emit only tool_result (no tool_call event).
+        // Synthesize the call row so grouping/expansion still works.
+        if (ev.tool && (!_lastToolCallRow || !_lastToolCallRow.isConnected || _lastToolCallRow._resultSeen)) {
+          removeThinkingBar();
+          addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span>`);
+        }
+        if (_lastToolCallRow) _lastToolCallRow._resultSeen = true;
         // Display summary in main chat
         if (ev.summary) {
           const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
-          appendHTML(`<div class="tool-result">${esc(trunc)}</div>`);
+          addToolResultRow(trunc);
         }
         
         // Render detailed diff/result in the Live Diffs panel (clean, scannable cards)
         let rawResult = ev.result || ev.output || ev.content || ev.text;
+        if (rawResult) { try { attachToolDetail(rawResult); } catch (_) {} }
         if (rawResult) {
           const diffsList = diffsArea.querySelector('#diffs-list') || diffsArea;
           const waitingMsg = diffsList.querySelector('#diffs-waiting');
@@ -3008,6 +3226,20 @@ const icons = {
           const diffCount = (kind === 'DIFF')
             ? '<span class="diff-stat"><span class="ds-add">+' + addCount + '</span><span class="ds-sub">\u2212' + subCount + '</span></span>'
             : '';
+          // Head context: diffs show the file basename, shell shows its status —
+          // so collapsed cards answer "what/which/how did it go" at a glance.
+          let headExtra = '';
+          if (kind === 'DIFF' && fileName) {
+            const base = fileName.split(/[\\/]/).pop();
+            headExtra = '<span class="diff-fname" title="' + esc(fileName) + '">' + esc(base) + '</span>';
+          } else if (kind === 'SHELL') {
+            const stLine = allLines.find(l => l.startsWith('Status: '));
+            if (stLine) {
+              const st = stLine.slice(8).trim().toLowerCase();
+              const stCls = /complete|success|ok/.test(st) ? 'ok' : (/run/.test(st) ? 'run' : (/fail|error/.test(st) ? 'err' : ''));
+              headExtra = '<span class="sh-status ' + stCls + '">' + esc(st.split(/\s/)[0]) + '</span>';
+            }
+          }
           const fileHtml = (kind === 'DIFF' && fileName)
             ? '<div class="diff-file" title="' + esc(fileName) + '">' + esc(fileName) + '</div>'
             : '';
@@ -3018,6 +3250,7 @@ const icons = {
                 '<span class="diff-chevron" aria-hidden="true">\u203A</span>' +
                 '<span class="diff-tag ' + kindCls + '">' + kind + '</span>' +
                 '<span class="diff-tool" title="' + esc(toolRaw) + '">' + esc(toolName) + '</span>' +
+                headExtra +
                 diffCount +
                 '<span class="diff-card-spacer"></span>' +
                 '<span class="diff-time">' + esc(timeStr) + '</span>' +
@@ -3272,10 +3505,22 @@ const icons = {
     });
   }
 
-  function finalizeStream() {
-    if (currentStreamEl) {
-      try { decorateStreamBlock(currentStreamEl); } catch(_) {}
+  function finalizeStream(agent) {
+    if (agent !== undefined && agent !== null) {
+      const skey = String(agent || '');
+      const st = _agentStreams.get(skey);
+      if (st) {
+        try { decorateStreamBlock(st.el); } catch(_) {}
+        if (st.el === currentStreamEl) { currentStreamEl = null; currentStreamText = ''; }
+        _agentStreams.delete(skey);
+      }
+      return;
     }
+    // No agent: finalize all in-flight streams (clear-screen, reconnect, etc.)
+    for (const st of _agentStreams.values()) {
+      try { decorateStreamBlock(st.el); } catch(_) {}
+    }
+    _agentStreams.clear();
     currentStreamEl = null; currentStreamText = '';
   }
 
@@ -3347,13 +3592,27 @@ const icons = {
     });
   }
 
-  function scrollToBottom() {
+  // Smart follow-scroll: only auto-scroll while the user is pinned to the
+  // bottom. Scrolling up un-pins (reading history); returning near the bottom
+  // re-pins. Interactive prompts / user sends pass force=true.
+  let _scrollPinned = true;
+  output.addEventListener('scroll', () => {
+    const dist = output.scrollHeight - output.scrollTop - output.clientHeight;
+    _scrollPinned = dist < 48;
+  }, { passive: true });
+
+  function scrollToBottom(force) {
+    if (!force && !_scrollPinned) return;
     requestAnimationFrame(() => {
-      output.scrollTop = output.scrollHeight;
+      // instant (not CSS smooth): smooth-animating per stream chunk fires
+      // intermediate scroll events that can un-pin the follow state mid-flight.
+      output.scrollTo({ top: output.scrollHeight, behavior: 'instant' });
+      _scrollPinned = true;
       // iOS Safari paint nudge
       output.style.transform = 'translateZ(0)';
     });
   }
+  try { window.__muxScrollToBottom = scrollToBottom; } catch (_) {} // test/debug hook
 
   function esc(s) { const el = document.createElement('span'); el.textContent = s; return el.innerHTML; }
 
@@ -3415,8 +3674,9 @@ const icons = {
       if (lm) {
         if (!inList) { result.push('<div style="margin:4px 0;padding-left:4px">'); inList = true; }
         let nested = lm[1].length > 1;
-        let bullet = nested ? '\u25E6' : '\u2022';
-        let pad = nested ? '34px' : '20px';
+        let ordered = /^\d+\.$/.test(lm[2]);
+        let bullet = ordered ? lm[2] : (nested ? '\u25E6' : '\u2022');
+        let pad = nested ? '34px' : (ordered ? '26px' : '20px');
         result.push('<div style="padding:2px 0 2px ' + pad + ';position:relative;color:var(--text);font-size:inherit;line-height:inherit"><span style="position:absolute;left:' + (nested ? '16px' : '4px') + ';top:0;color:var(--accent);font-size:0.9em;line-height:inherit">' + bullet + '</span>' + inlineMd(lm[3]) + '</div>');
         continue;
       }
@@ -3587,7 +3847,7 @@ const icons = {
     inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
     btn.addEventListener('click', submit);
     block.appendChild(inp); block.appendChild(btn);
-    output.appendChild(block); scrollToBottom(); inp.focus();
+    output.appendChild(block); scrollToBottom(true); inp.focus();
   }
 
   function renderConfirm(ev) {
@@ -3598,7 +3858,7 @@ const icons = {
     const y = document.createElement('button'); y.textContent = 'Yes'; y.addEventListener('click', () => respond('y'));
     const n = document.createElement('button'); n.textContent = 'No'; n.addEventListener('click', () => respond('n'));
     block.appendChild(y); block.appendChild(n);
-    output.appendChild(block); scrollToBottom();
+    output.appendChild(block); scrollToBottom(true);
   }
 
   function renderSelect(ev, multi = false) {
@@ -3629,7 +3889,7 @@ const icons = {
       });
       block.appendChild(document.createElement('br')); block.appendChild(s);
     }
-    output.appendChild(block); scrollToBottom();
+    output.appendChild(block); scrollToBottom(true);
   }
 
   function renderTable(ev) {
@@ -3768,6 +4028,7 @@ const icons = {
     }
 
     ws.send(fullMsg);
+    _scrollPinned = true; // sending = follow the new turn
     lastLocalSend = text;
     try { pushHistory(text); } catch(_) {}
     cmdHistoryIdx = -1; cmdHistoryDraft = '';
@@ -4439,7 +4700,7 @@ const icons = {
       const data = await resp.json();
       if (data.error) { sidebarContent.innerHTML = `<div class="error-msg">${esc(data.error)}</div>`; return; }
       currentPath = data.path || '';
-      let html = '';
+      let html = '<div class="mux-find-bar"><input id="sbxFindInput" type="search" placeholder="Find files\u2026" autocomplete="off" spellcheck="false" /></div><div id="sbxBrowse">';
       if (currentPath) {
         const parent = currentPath.split(/[\\/]/).slice(0,-1).join('/');
         html += `<div class="file-path"><button class="back-btn" data-path="${esc(parent)}">←</button><span>${esc(currentPath)}</span></div>`;
@@ -4459,7 +4720,9 @@ const icons = {
         }
         html += '</div>';
       } else if (!currentPath) { html += '<div class="loading">Empty</div>'; }
+      html += '</div><div id="sbxFindResults" style="display:none"></div>';
       sidebarContent.innerHTML = html;
+      sbxBindFind();
 
       sidebarContent.querySelectorAll('.file-item-container').forEach(container => {
         const el = container.querySelector('.file-item');
@@ -4486,6 +4749,147 @@ const icons = {
       sidebarContent.querySelector('.back-btn')?.addEventListener('click', (e) => loadFileList(e.target.dataset.path));
     } catch (err) { sidebarContent.innerHTML = `<div class="error-msg">Error: ${esc(err.message)}</div>`; }
   }
+
+  // ——— Sandbox fuzzy find: progressive bounded BFS index over /api/list ———
+  const _sbxIdx = new Map(); // tab -> { entries, dirs, complete, building, ts, gen }
+  const SBX_SKIP = new Set(['.git','node_modules','__pycache__','.venv','venv','obj','bin','dist','.cache','chroma-db','.idea','.vs']);
+  const SBX_MAX_DIRS = 400, SBX_MAX_ENTRIES = 8000, SBX_MAX_DEPTH = 6, SBX_TTL = 120000;
+
+  function sbxGetIdx(tab) {
+    let ix = _sbxIdx.get(tab);
+    if (!ix || (!ix.building && Date.now() - ix.ts > SBX_TTL)) {
+      ix = { entries: [], dirs: 0, complete: false, building: false, ts: Date.now(), gen: ix ? ix.gen + 1 : 0 };
+      _sbxIdx.set(tab, ix);
+    }
+    return ix;
+  }
+
+  async function sbxBuildIndex(tab, onProgress) {
+    const ix = sbxGetIdx(tab);
+    if (ix.building || ix.complete) return ix;
+    ix.building = true;
+    const gen = ix.gen;
+    const queue = [{ p: '', d: 0 }];
+    async function visit(node) {
+      if (ix.gen !== gen) return;
+      let data;
+      try {
+        const url = node.p ? `/api/list/${tab}/${encodePath(node.p)}` : `/api/list/${tab}`;
+        data = await (await fetch(url)).json();
+      } catch { return; }
+      if (ix.gen !== gen || !data || data.error) return;
+      ix.dirs++;
+      for (const it of (data.items || [])) {
+        if (ix.entries.length >= SBX_MAX_ENTRIES) return;
+        ix.entries.push({ name: it.name, path: it.path, isDir: !!it.isDir, size: it.size || 0 });
+        if (it.isDir && node.d < SBX_MAX_DEPTH
+            && ix.dirs + queue.length < SBX_MAX_DIRS
+            && !SBX_SKIP.has(String(it.name).toLowerCase())) {
+          queue.push({ p: it.path, d: node.d + 1 });
+        }
+      }
+    }
+    while (queue.length && ix.gen === gen && ix.entries.length < SBX_MAX_ENTRIES) {
+      await Promise.all(queue.splice(0, 5).map(visit));
+      if (onProgress) onProgress(ix);
+    }
+    if (ix.gen === gen) {
+      ix.complete = queue.length === 0 || ix.entries.length >= SBX_MAX_ENTRIES;
+      ix.building = false;
+      ix.ts = Date.now();
+      if (onProgress) onProgress(ix);
+    }
+    return ix;
+  }
+
+  function sbxScore(q, e) {
+    const n = fuzzyScore(q, e.name);
+    const p = fuzzyScore(q, e.path);
+    if (n < 0 && p < 0) return -1;
+    return (n >= 0 ? n * 3 + 50 : 0) + (p >= 0 ? p : 0);
+  }
+
+  function sbxRenderResults(tab, q) {
+    const out = sidebarContent.querySelector('#sbxFindResults');
+    if (!out) return;
+    const ix = sbxGetIdx(tab);
+    const scored = [];
+    for (const e of ix.entries) {
+      const s = sbxScore(q, e);
+      if (s >= 0) scored.push([s, e]);
+    }
+    scored.sort((a, b) => b[0] - a[0]);
+    const top = scored.slice(0, 80);
+    let h = '';
+    for (const [, e] of top) {
+      const dir = e.path.split(/[\\/]/).slice(0, -1).join('/');
+      h += `<div class="file-item-container" data-path="${esc(e.path)}" data-isdir="${e.isDir}" data-name="${esc(e.name)}">
+        <div class="file-item ${e.isDir ? 'dir' : 'file'} mux-find-hit" title="${esc(e.path)}">
+          <span class="icon" style="display:flex;align-items:center">${e.isDir ? icons.folder : icons.file}</span>
+          <span class="name">${esc(e.name)}${dir ? `<span class="mux-find-path">${esc(dir)}</span>` : ''}</span>
+          ${e.size ? `<span class="size">${formatSize(e.size)}</span>` : ''}
+          ${!e.isDir ? `<button class="dl-btn" data-dl="${esc(e.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : ''}
+        </div>
+      </div>`;
+    }
+    const status = ix.building
+      ? `indexing\u2026 ${ix.entries.length.toLocaleString()} items / ${ix.dirs} dirs`
+      : `${ix.entries.length.toLocaleString()} items indexed`;
+    out.innerHTML = `<div class="mux-find-status">${top.length} match${top.length === 1 ? '' : 'es'} \u00b7 ${status}</div>`
+      + (h || '<div class="loading">No matches</div>');
+    out.querySelectorAll('.file-item-container').forEach(c => {
+      c.querySelector('.file-item').addEventListener('click', (e) => {
+        const dlBtn = e.target.closest('.dl-btn');
+        if (dlBtn) { window.open(`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`, '_blank'); return; }
+        if (c.dataset.isdir === 'true') loadFileList(c.dataset.path);
+        else window.open(`/api/download/${tab}/${encodePath(c.dataset.path)}`, '_blank');
+      });
+    });
+  }
+
+  function sbxBindFind() {
+    const inp = sidebarContent.querySelector('#sbxFindInput');
+    const browse = sidebarContent.querySelector('#sbxBrowse');
+    const out = sidebarContent.querySelector('#sbxFindResults');
+    if (!inp || !browse || !out) return;
+    const tab = currentTab;
+    let t = null;
+    inp.addEventListener('input', () => {
+      clearTimeout(t);
+      t = setTimeout(() => {
+        const q = inp.value.trim();
+        if (!q) { out.style.display = 'none'; browse.style.display = ''; return; }
+        browse.style.display = 'none'; out.style.display = '';
+        const ix = sbxGetIdx(tab);
+        if (!ix.complete && !ix.building) {
+          sbxBuildIndex(tab, () => {
+            const cq = inp.value.trim();
+            if (cq && sidebarContent.querySelector('#sbxFindResults')) sbxRenderResults(tab, cq);
+          });
+        }
+        sbxRenderResults(tab, q);
+      }, 120);
+    });
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { inp.value = ''; inp.dispatchEvent(new Event('input')); }
+    });
+  }
+
+  (function injectSbxFindCss() {
+    if (document.getElementById('muxSbxFindCss')) return;
+    const css = [
+      '.mux-find-bar { padding: 8px 10px; border-bottom: 1px solid var(--border, #27272a); }',
+      '.mux-find-bar input { width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.25); color: var(--text); border: 1px solid var(--border, #27272a); border-radius: 6px; padding: 5px 9px; font-size: calc(12px * var(--ui-font-scale, 1)); outline: none; }',
+      '.mux-find-bar input:focus { border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 2px rgba(100,180,220,0.15); }',
+      '.mux-find-status { padding: 6px 12px 4px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); text-transform: uppercase; letter-spacing: 0.04em; }',
+      '.mux-find-hit .name { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }',
+      '.mux-find-path { font-size: calc(9px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); font-family: var(--font-mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }'
+    ].join('\n');
+    const styleEl = document.createElement('style');
+    styleEl.id = 'muxSbxFindCss';
+    styleEl.textContent = css;
+    document.head.appendChild(styleEl);
+  })();
 
   // ─── Sessions tab: Claude-Desktop-style two-pane viewer ───
   const _sessionCache = new Map(); // folderName -> parsed agent_session.json
@@ -4533,6 +4937,25 @@ const icons = {
   }
 
   function _ellipsis(s, n) { s = String(s||''); return s.length > n ? s.slice(0, n-1) + '…' : s; }
+
+  // Searchable conversation text: user + assistant text blocks only.
+  // Tool calls/results and reasoning are skipped (noise + size).
+  const SESS_IDX_CAP = 200000; // chars per session
+  function _sessionSearchText(messages) {
+    let out = '';
+    for (const m of messages) {
+      const role = (m.role || m.Role || '').toLowerCase();
+      if (role !== 'user' && role !== 'assistant') continue;
+      for (const c of (m.contents || m.Contents || [])) {
+        const t = c && (c['$type'] || c.type || '');
+        if (t === 'text' && typeof c.text === 'string') {
+          out += c.text + '\n';
+          if (out.length >= SESS_IDX_CAP) return out.slice(0, SESS_IDX_CAP);
+        }
+      }
+    }
+    return out;
+  }
 
   async function loadSessionsView() {
     sidebarContent.innerHTML = '<div class="loading">Loading sessions…</div>';
@@ -4585,6 +5008,7 @@ const icons = {
       rowEls.set(name, row);
     }
 
+    const searchIdx = new Map(); // name -> { raw, lower } conversation text
     const queue = folders.slice();
     const CONC = 6;
     async function worker() {
@@ -4596,6 +5020,10 @@ const icons = {
           const json = await r.json();
           _sessionCache.set(name, json);
           const msgs = _sessionMessages(json);
+          try {
+            const txt = _sessionSearchText(msgs);
+            searchIdx.set(name, { raw: txt, lower: txt.toLowerCase() });
+          } catch(_) {}
           const row = rowEls.get(name);
           if (!row) continue;
           const snippet = _firstUserText(msgs) || '(empty)';
@@ -4612,13 +5040,41 @@ const icons = {
     }
     for (let i=0;i<CONC;i++) worker();
 
+    // Full-content search across user+assistant messages (index built by the
+    // snippet workers above — no extra fetching). Multi-term AND: every
+    // whitespace-separated term must appear somewhere in the conversation.
+    let _searchT = null;
     searchEl.addEventListener('input', () => {
-      const q = searchEl.value.trim().toLowerCase();
-      for (const [name,row] of rowEls) {
-        const snip = row.querySelector('.mux-sess-row-snippet').textContent.toLowerCase();
-        const hit = !q || name.toLowerCase().includes(q) || snip.includes(q);
-        row.style.display = hit ? '' : 'none';
-      }
+      clearTimeout(_searchT);
+      _searchT = setTimeout(() => {
+        const q = searchEl.value.trim().toLowerCase();
+        const terms = q.split(/\s+/).filter(Boolean);
+        for (const [name, row] of rowEls) {
+          const snipEl = row.querySelector('.mux-sess-row-snippet');
+          if (row.dataset.origSnippet === undefined) row.dataset.origSnippet = snipEl.textContent;
+          if (!terms.length) {
+            row.style.display = '';
+            snipEl.textContent = row.dataset.origSnippet;
+            continue;
+          }
+          const idx = searchIdx.get(name);
+          const nameL = name.toLowerCase();
+          const hay = idx ? idx.lower : snipEl.textContent.toLowerCase();
+          const hit = terms.every(t => nameL.includes(t) || hay.includes(t));
+          row.style.display = hit ? '' : 'none';
+          if (hit && idx) {
+            // Show match context: excerpt around the first term's first hit.
+            const pos = idx.lower.indexOf(terms[0]);
+            if (pos >= 0) {
+              const start = Math.max(0, pos - 50);
+              const ex = (start > 0 ? '\u2026' : '') + idx.raw.slice(start, pos + terms[0].length + 90).replace(/\s+/g, ' ');
+              snipEl.textContent = _ellipsis(ex, 140);
+            } else {
+              snipEl.textContent = row.dataset.origSnippet;
+            }
+          }
+        }
+      }, 100);
     });
 
     function selectSession(name) {
@@ -4664,8 +5120,7 @@ const icons = {
           ${reasoningBlocks ? `<span class="mux-sess-chip">${reasoningBlocks} reasoning</span>` : ''}
         </div>
         <div class="mux-sess-head-actions">
-          <button class="mux-sess-btn" data-act="resume">Resume</button>
-          <button class="mux-sess-btn" data-act="copy-id">Copy ID</button>
+                    <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
           <button class="mux-sess-btn" data-act="download">Download JSON</button>
         </div>
       </div>`;
@@ -4692,12 +5147,32 @@ const icons = {
           <div>Select a session to preview</div>
         </div>`;
     });
-    host.querySelector('[data-act="resume"]').addEventListener('click', () => {
-      const cmd = `/load ${name}`;
-      try { input.value = cmd; input.focus(); } catch(_) {}
-    });
-    host.querySelector('[data-act="copy-id"]').addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(name); } catch(_) {}
+    host.querySelector('[data-act="copy-id"]').addEventListener('click', async (e) => {
+      // name === timestamped session folder (e.g. 2026-06-10_22-19-20)
+      let copied = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(name);
+          copied = true;
+        }
+      } catch(_) {}
+      if (!copied) {
+        // Fallback for insecure origins (http over LAN/Tailscale) where
+        // navigator.clipboard is unavailable.
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = name;
+          ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+          document.body.appendChild(ta);
+          ta.select();
+          copied = document.execCommand('copy');
+          ta.remove();
+        } catch(_) {}
+      }
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      btn.textContent = copied ? 'Copied!' : 'Copy failed';
+      setTimeout(() => { btn.textContent = orig; }, 1400);
     });
     host.querySelector('[data-act="download"]').addEventListener('click', () => {
       window.open(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`, '_blank');
@@ -4812,7 +5287,10 @@ const icons = {
         font-size:calc(12px * var(--ui-font-scale, 1));
         outline:none;
       }
-      .mux-sess-search:focus { border-color: var(--accent, #64b4dc); }
+      .mux-sess-search:focus {
+        border-color: var(--accent, #64b4dc);
+        box-shadow: 0 0 0 2px rgba(100,180,220,0.15);
+      }
       .mux-sess-count {
         font-size:calc(10px * var(--ui-font-scale, 1));
         color:var(--muted, #71717a);
@@ -4910,7 +5388,10 @@ const icons = {
         transition: background 0.12s;
       }
       .mux-sess-row:hover { background: rgba(100,180,220,0.06); }
-      .mux-sess-row.active { background: rgba(100,180,220,0.14); }
+      .mux-sess-row.active {
+        background: rgba(100,180,220,0.1);
+        box-shadow: inset 2px 0 0 var(--accent, #64b4dc);
+      }
       .mux-sess-row-title {
         font-weight: 600;
         font-size: calc(12px * var(--ui-font-scale, 1));
@@ -5021,19 +5502,16 @@ const icons = {
 
       /* ── Message stream ─────────────────────────────────── */
       .mux-sess-body {
-        padding: 10px 14px 24px;
-        display: flex; flex-direction: column; gap: 10px;
+        padding: 14px 16px 28px;
+        display: flex; flex-direction: column; gap: 16px;
         max-width: 920px;
       }
       .mux-sess-msg {
-        border-left: 3px solid transparent;
-        padding: 6px 10px 6px 12px;
-        border-radius: 6px;
-        background: rgba(255,255,255,0.015);
+        padding: 2px 0;
         min-width: 0;
       }
       .mux-sess-msg-head {
-        display: flex; align-items: baseline; gap: 8px; margin-bottom: 3px;
+        display: flex; align-items: baseline; gap: 8px; margin-bottom: 5px;
       }
       .mux-sess-msg-role {
         font-size: calc(10px * var(--ui-font-scale, 1));
@@ -5054,15 +5532,14 @@ const icons = {
       }
 
       .mux-sess-role-user {
-        border-left-color: var(--accent, #64b4dc);
-        background: rgba(100,180,220,0.05);
+        background: rgba(100,180,220,0.045);
+        border-radius: 8px;
+        padding: 8px 12px;
       }
       .mux-sess-role-user .mux-sess-msg-role { color: var(--accent, #64b4dc); }
-      .mux-sess-role-assistant { border-left-color: rgba(180,180,180,0.45); }
       .mux-sess-role-assistant .mux-sess-msg-role { color: var(--text); }
-      .mux-sess-role-tool { border-left-color: rgba(140,180,140,0.55); }
       .mux-sess-role-tool .mux-sess-msg-role { color: #a3c79c; }
-      .mux-sess-role-system { border-left-color: rgba(200,160,80,0.5); }
+      .mux-sess-role-system .mux-sess-msg-role { color: #d2b46a; }
 
       /* Force text content to wrap so no horizontal scroll appears on long paths/URLs */
       .mux-sess-block {
@@ -5098,14 +5575,18 @@ const icons = {
 
       /* ── Collapsible tool blocks ────────────────────────── */
       details.mux-sess-block {
-        background: rgba(0,0,0,0.18);
-        border: 1px solid var(--border, #27272a);
-        border-radius: 6px;
+        background: color-mix(in srgb, var(--text) 3%, transparent);
+        border: none;
+        border-radius: 8px;
         padding: 0;
+        overflow: hidden;
+        transition: background 0.12s;
       }
+      details.mux-sess-block:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+      details.mux-sess-block[open] { background: color-mix(in srgb, var(--text) 4%, transparent); }
       details.mux-sess-block > summary {
         list-style: none; cursor: pointer;
-        padding: 5px 9px;
+        padding: 7px 10px;
         display: flex; align-items: center; gap: 7px;
         font-size: calc(11px * var(--ui-font-scale, 1));
         user-select: none;
@@ -5128,9 +5609,9 @@ const icons = {
         min-width: 0;
       }
       .mux-sess-arrow { color: var(--muted, #71717a); font-weight: 700; }
-      details.mux-sess-block-call > summary { background: rgba(100,180,220,0.06); }
-      details.mux-sess-block-result > summary { background: rgba(140,180,140,0.06); }
-      details.mux-sess-block-reasoning > summary { background: rgba(200,160,255,0.06); }
+      details.mux-sess-block-call > summary .mux-sess-arrow { color: var(--accent, #64b4dc); }
+      details.mux-sess-block-result > summary .mux-sess-arrow { color: #a3c79c; }
+      details.mux-sess-block-reasoning > summary { color: #c8a6ff; }
       details.mux-sess-block-reasoning .mux-sess-chip {
         background: rgba(200,160,255,0.15); color: #c8a6ff;
       }
@@ -5138,9 +5619,9 @@ const icons = {
       .mux-sess-code {
         font-family: var(--font-mono, monospace);
         font-size: calc(11px * var(--ui-font-scale, 1));
-        background: rgba(0,0,0,0.35);
-        border: 1px solid var(--border, #27272a);
-        border-radius: 6px;
+        background: rgba(0,0,0,0.3);
+        border: none;
+        border-radius: 8px;
         padding: 8px 10px;
         overflow: auto;
         max-height: 360px;
@@ -6598,16 +7079,15 @@ const icons = {
   .event-info    .pill-tag { background: rgba(161,161,170,0.16); color: var(--muted, #a1a1aa); }
   .event-debug   .pill-tag { background: rgba(113,113,122,0.18); color: #a1a1aa; }
 
-  /* Agent badge — match pill aesthetic */
+  /* Agent badge — chrome-less plain label (no chip; matches flat stream) */
   .agent-badge {
-    background: rgba(39, 39, 42, 0.65) !important;
-    border: 1px solid rgba(161, 161, 170, 0.22) !important;
+    background: transparent !important;
+    border: none !important;
     color: var(--accent, #a78bfa) !important;
-    font-size: calc(9px * var(--ui-font-scale, 1)) !important;
+    font-size: calc(10px * var(--ui-font-scale, 1)) !important;
     font-weight: 700 !important;
-    padding: 2px 8px !important;
-    border-radius: 999px !important;
-    letter-spacing: 0.06em !important;
+    padding: 0 !important;
+    letter-spacing: 0.08em !important;
     box-shadow: none !important;
     text-transform: uppercase !important;
     line-height: 1.2 !important;
@@ -6833,6 +7313,10 @@ const icons = {
     hideTaskCompletePills: false,
     hideDelegationPills: false,
     hideTaskStatusPills: false,
+    toolGrouping: true,
+    hideToolCalls: false,
+    toolGroupAutoCollapse: true,
+    toolGroupCollapseAt: 1,
     uiFontSize: 14,
     uiLineHeight: 1.6,
     uiSpacingScale: 1.0,
@@ -6908,6 +7392,10 @@ const icons = {
     b.classList.toggle('hide-task-complete-pills', !!state.hideTaskCompletePills);
     b.classList.toggle('hide-delegation-pills',  !!state.hideDelegationPills);
     b.classList.toggle('hide-task-status-pills', !!state.hideTaskStatusPills);
+    b.classList.toggle('tool-grouping-off',       !state.toolGrouping);
+    b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
+    b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
+    b.dataset.toolGroupCollapseAt = String(state.toolGroupCollapseAt || 1);
     // Typography
     const root = document.documentElement;
     root.style.setProperty('--ui-font-size', (state.uiFontSize || 14) + 'px');
@@ -7141,6 +7629,15 @@ const icons = {
         'Suppress "<Agent> delegated to <Agent>" cards.'),
       toggleRow('hideTaskStatusPills',   'Hide task status rows',
         'Suppress generic task_start/task_done status rows (hourglass/check inline events).'),
+      toggleRow('toolGrouping', 'Group tool calls',
+        'Fold consecutive tool calls into a collapsible "N tool calls" cluster. Off: flat rows.'),
+      toggleRow('hideToolCalls', 'Hide tool calls in chat',
+        'Suppress tool call rows entirely — text output only. Full results remain in the Live Diffs panel.'),
+      toggleRow('toolGroupAutoCollapse', 'Auto-collapse tool groups',
+        'Tool call groups fold to a one-line header once they grow. Off: groups stay open unless collapsed manually.'),
+      sliderRow('toolGroupCollapseAt', 'Auto-collapse after', 1, 20, 1,
+        'Number of tool calls before a group auto-collapses. 1 = always start collapsed.',
+        (v) => v + (v === 1 ? ' call' : ' calls')),
       toggleRow('showTokens',       'Show tokens-in-context badge'),
       toggleRow('showSavedBanner',  'Show session-saved banner'),
     ]);
@@ -7227,6 +7724,12 @@ const icons = {
 
   function escapeHtml(s){
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  // Local mirror: the real clearCompactingPlaceholder lives in the main app
+  // IIFE and is NOT in scope here. Calls below previously threw ReferenceError
+  // (swallowed by try/catch), leaving the /compact spinner stuck forever.
+  function clearCompactingPlaceholder(){
+    document.querySelectorAll('.mux-compacting-status.is-placeholder').forEach(n => { try { n.remove(); } catch(_){} });
   }
   function decorateMessages(root){
     if (!root || !root.querySelectorAll) return;
@@ -7658,7 +8161,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     radial-gradient(circle, rgba(var(--accent-rgb), 0.08) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--bg);
 }
-.mng-canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.mng-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .mng-canvas.panning { cursor: grabbing; }
 .mng-canvas .mng-node-card { cursor: pointer; transition: filter 0.15s; }
 .mng-canvas .mng-node-card:hover { filter: brightness(1.15); }
@@ -7694,10 +8197,16 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
               opacity 0.18s ease;
   /* Bound the side panel to its parent height and allow children that
      opt-in (e.g. .mng-bridge-section) to share that height. Sections
-     that don't grow are flex-shrink:0 below so they never collapse. */
-  overflow: hidden;
+     that don't grow are flex-shrink:0 below so they never collapse.
+     overflow-y:auto (not hidden): when fixed sections + bridge minimum
+     exceed the panel height (e.g. many nodes), the column scrolls so the
+     composer/Send is always reachable instead of being clipped. */
+  overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
 }
+.mng-side::-webkit-scrollbar { width: 4px; }
+.mng-side::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.35); border-radius: 3px; }
 .mng-side.collapsed {
   flex-basis: 0 !important;
   width: 0 !important;
@@ -7730,12 +8239,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-side-toggle:hover { color: var(--text); background: var(--bg-input); }
 .mng-side-toggle svg { width: 12px; height: 12px; transition: transform 0.25s ease; }
 .mng-body.side-collapsed .mng-side-toggle svg { transform: rotate(180deg); }
-.mng-side .mng-side-section { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.mng-side .mng-side-section { padding: 8px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .mng-side .mng-side-section.mng-bridge-section {
   /* Bridge claims the remaining vertical space so the chat scrolls within
      the side panel rather than being clipped by the modal. */
   flex: 1 1 auto;
-  min-height: 220px;
+  /* Never shrink below the bridge's own content minimum (targets + chat min
+     + pinned composer). If the side column runs out of room the COLUMN
+     scrolls (overflow-y:auto) — the composer is never clipped. */
+  min-height: min-content;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -7749,7 +8261,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 }
 /* When the bridge is visible, the Nodes list section yields some height
    to it: cap the list so it never starves the bridge of space. */
-.mng-side .mng-side-section .mng-list { max-height: 160px; }
+.mng-side .mng-side-section .mng-list { max-height: 110px; }
 .mng-side h4 { font-size: calc(10px * var(--ui-font-scale, 1)); text-transform: uppercase; color: var(--muted); letter-spacing: 0.08em; margin: 0 0 6px 0; font-weight: 600; }
 .mng-form { display: flex; flex-direction: column; gap: 6px; }
 .mng-input, .mng-select {
@@ -7783,7 +8295,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   text-transform: uppercase; letter-spacing: 0.06em;
 }
 .mng-side .mng-list-empty { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); padding: 6px 8px; }
-.mng-help { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.45; }
+.mng-help { color: var(--muted); font-size: calc(9.5px * var(--ui-font-scale, 1)); line-height: 1.4; opacity: 0.8; }
+/* Short viewports: tips are the first thing to go so the composer never is. */
+@media (max-height: 700px) {
+  .mng-side .mng-side-section:has(> .mng-help) { display: none; }
+}
 /* ── Bridge tab — trimmed-down main UI for cross-node conversations ── */
 .mng-bridge-section h4 { display: flex; align-items: baseline; gap: 6px; }
 .mng-bridge-sub { font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; }
@@ -7857,7 +8373,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   /* Fill the remaining vertical space inside the bridge section so the
      output scrolls in place — matching the main chat output behaviour. */
   flex: 1 1 auto;
-  min-height: 80px;
+  min-height: 56px;
   overflow-y: auto;
   background: var(--bg-input);
   border: 1px solid var(--border);
@@ -7956,10 +8472,71 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mng-panel {
     left: 0 !important; top: 0 !important;
     width: 100vw !important; height: 100vh !important;
+    height: 100dvh !important;
     border-radius: 0;
   }
-  .mng-side { width: 200px; min-width: 200px; }
   .mng-resize { display: none; }
+
+  /* Header: wrap actions to a second row, larger touch targets */
+  .mng-header { flex-wrap: wrap; row-gap: 4px; padding: 8px; cursor: default; }
+  .mng-header .mng-title { white-space: nowrap; }
+  .mng-header .mng-active-pill { max-width: 140px; }
+  .mng-btn { padding: 7px 10px; min-height: 36px; }
+
+  /* Body: canvas on top, side panel becomes a bottom sheet */
+  .mng-body { flex-direction: column; }
+  .mng-canvas-wrap { flex: 1 1 auto; min-height: 0; }
+  .mng-side {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: 0 0 min(46%, 380px) !important;
+    max-height: 70%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    transition: flex-basis 0.28s cubic-bezier(0.16,1,0.3,1), opacity 0.18s ease;
+  }
+  .mng-side.collapsed {
+    flex-basis: 0 !important;
+    max-height: 0;
+    border-top-color: transparent;
+  }
+  /* Desktop column-drag resizer is useless on touch */
+  .mng-side-resizer { display: none; }
+  /* Toggle becomes a sheet handle pinned above the bottom sheet */
+  .mng-side-toggle {
+    top: auto; left: auto;
+    right: 10px !important;
+    bottom: min(46%, 380px);
+    width: 44px; height: 28px;
+    border: 1px solid var(--border); border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    transition: bottom 0.28s cubic-bezier(0.16,1,0.3,1), color 0.15s, background 0.15s;
+  }
+  .mng-body.side-collapsed .mng-side-toggle { bottom: 0; }
+  .mng-side-toggle svg { transform: rotate(90deg); }
+  .mng-body.side-collapsed .mng-side-toggle svg { transform: rotate(-90deg); }
+
+  /* Touch-friendly inputs/rows; 16px stops iOS focus auto-zoom */
+  .mng-input, .mng-select { font-size: 16px; padding: 8px 10px; }
+  .mng-side .mng-list-item { padding: 9px 10px; }
+  .mng-canvas-wrap .mng-empty-hint { max-width: 80vw; }
+  /* Tips are noise on a phone */
+  .mng-side .mng-side-section:has(> .mng-help) { display: none; }
+
+  /* Bridge: desktop pins the composer via flex:1 + overflow:hidden, but in a
+     short bottom sheet that CLIPS the composer entirely. On mobile, stack
+     naturally: bounded chat, composer in normal flow, column scrolls. */
+  .mng-side .mng-side-section.mng-bridge-section {
+    flex: 0 0 auto;
+    min-height: 0;
+    overflow: visible;
+  }
+  .mng-side .mng-side-section.mng-bridge-section > .mng-form { flex: 0 0 auto; }
+  .mng-bridge-chat { flex: 0 0 auto; max-height: 150px; }
+  .mng-bridge-peers-list { max-height: 64px; }
+  .mng-bridge-msg { min-height: 44px; }
+  /* Larger tap targets for Send/Clear */
+  .mng-bridge-actions .mng-btn { min-height: 40px; }
 }
 </style>
 
@@ -8320,6 +8897,17 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     let panMode = false, panStart = null, panOrigin = null;
     let dragNode = null, dragOffset = null;
     let connectFrom = null, previewEdge = null;
+    // Multi-touch: track active pointers for pinch-to-zoom on mobile.
+    const activePointers = new Map();
+    let pinch = null; // { d0, k0, mid0:{x,y}, v0:{x,y} }
+    function pinchInfo(){
+      const pts = [...activePointers.values()];
+      const dx = pts[1].x - pts[0].x, dy = pts[1].y - pts[0].y;
+      return {
+        d: Math.hypot(dx, dy) || 1,
+        mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 }
+      };
+    }
 
     function screenToWorld(x, y){
       const v = Store.getView();
@@ -8331,6 +8919,20 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     }
 
     svg.addEventListener('pointerdown', (e) => {
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointers.size === 2) {
+        // Second finger down → switch to pinch; abandon any single-finger mode.
+        dragNode = null; dragOffset = null; panMode = false;
+        if (previewEdge && previewEdge.parentNode) previewEdge.parentNode.removeChild(previewEdge);
+        previewEdge = null; connectFrom = null;
+        svg.classList.remove('panning');
+        const v = Store.getView();
+        const pi = pinchInfo();
+        pinch = { d0: pi.d, k0: v.k, mid0: pi.mid, v0: { x: v.x, y: v.y } };
+        try { svg.setPointerCapture(e.pointerId); } catch(_){}
+        return;
+      }
+      if (activePointers.size > 2) return;
       const portEl = e.target.closest('circle.mng-node-port');
       const nodeEl = e.target.closest('g.mng-node-card');
       if (portEl) {
@@ -8365,6 +8967,22 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     });
 
     svg.addEventListener('pointermove', (e) => {
+      if (activePointers.has(e.pointerId)) {
+        activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      }
+      if (pinch && activePointers.size >= 2) {
+        const rect = svg.getBoundingClientRect();
+        const pi = pinchInfo();
+        const newK = Math.min(2.4, Math.max(0.35, pinch.k0 * (pi.d / pinch.d0)));
+        // Keep the world point under the initial midpoint anchored, then pan by midpoint drift.
+        const mx0 = pinch.mid0.x - rect.left, my0 = pinch.mid0.y - rect.top;
+        const wx = (mx0 - pinch.v0.x) / pinch.k0;
+        const wy = (my0 - pinch.v0.y) / pinch.k0;
+        const mx = pi.mid.x - rect.left, my = pi.mid.y - rect.top;
+        Store.setView({ x: mx - wx * newK, y: my - wy * newK, k: newK });
+        applyView();
+        return;
+      }
       if (connectFrom) {
         const a = Store.getNode(connectFrom);
         const w = screenToWorld(e.clientX, e.clientY);
@@ -8389,6 +9007,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
     svg.addEventListener('pointerup', (e) => {
       try { svg.releasePointerCapture(e.pointerId); } catch(_){}
+      activePointers.delete(e.pointerId);
+      if (pinch) {
+        if (activePointers.size < 2) pinch = null;
+        return;
+      }
       if (connectFrom) {
         const tgt = document.elementFromPoint(e.clientX, e.clientY);
         const targetCard = tgt && tgt.closest('g.mng-node-card');
@@ -8407,7 +9030,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       svg.classList.remove('panning');
     });
 
-    svg.addEventListener('pointercancel', () => {
+    svg.addEventListener('pointercancel', (e) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) pinch = null;
       dragNode = null; dragOffset = null; panMode = false;
       svg.classList.remove('panning');
       if (previewEdge && previewEdge.parentNode) previewEdge.parentNode.removeChild(previewEdge);
