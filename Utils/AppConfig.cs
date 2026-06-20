@@ -34,7 +34,30 @@ public class AppConfig
     [JsonPropertyName("serve")]
     public ServeConfig Serve { get; set; } = new();
 
+    [JsonPropertyName("ultra")]
+    public UltraConfig Ultra { get; set; } = new();
 
+
+}
+
+/// <summary>
+/// Settings for /ultra deep-reasoning mode. Additive; absent in older configs,
+/// in which case defaults apply. Default-off behavior is owned by the App toggle,
+/// not this block — these values only tune what /ultra does once enabled.
+/// </summary>
+public class UltraConfig
+{
+    /// <summary>
+    /// Numeric provider-native thinking budget injected (via AdditionalParams) on
+    /// providers that take one (e.g. Anthropic thinking.budget_tokens). Matches
+    /// Claude Code's ultrathink ceiling. Sidesteps the effort-enum xhigh path.
+    /// </summary>
+    [JsonPropertyName("thinkingBudget")]
+    public int ThinkingBudget { get; set; } = 31999;
+
+    /// <summary>When true, /ultra raises reasoning for delegated sub-agents too, not just the lead.</summary>
+    [JsonPropertyName("includeSubAgents")]
+    public bool IncludeSubAgents { get; set; } = true;
 }
 
 /// <summary>

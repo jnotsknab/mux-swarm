@@ -38,6 +38,12 @@ public class App
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
     protected static bool ShouldPlan = false;
+    // /ultra: composite deep-reasoning toggle (plan + max reasoning + ultra steering).
+    // Public so orchestrators and /api/status can read it without threading a new param.
+    public static bool UltraMode = false;
+    private static bool _ultraPriorPlan = false;
+    /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
+    public static bool PlanMode => ShouldPlan;
     
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
@@ -526,6 +532,26 @@ public class App
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
                     break;
+                case "/ultra":
+                case "/ultraplan":
+                    UltraMode = !UltraMode;
+                    if (UltraMode)
+                    {
+                        // Compose plan discipline + max reasoning. Capture prior plan state so
+                        // toggling /ultra off restores exactly what the user had before.
+                        _ultraPriorPlan = ShouldPlan;
+                        ShouldPlan = true;
+                        MuxConsole.WriteSuccess("Ultra Mode enabled");
+                        MuxConsole.WriteMuted($"Plan Mode forced on + maximum reasoning (thinking budget {App.Config.Ultra.ThinkingBudget}).");
+                        MuxConsole.WriteMuted("Agents decompose deeply, list assumptions, weigh alternatives, and self-review before finalizing.");
+                    }
+                    else
+                    {
+                        ShouldPlan = _ultraPriorPlan;
+                        MuxConsole.WriteSuccess("Ultra Mode disabled");
+                        MuxConsole.WriteMuted($"Reasoning and plan flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}).");
+                    }
+                    break;
                 case "/tools":
                     if (McpTools != null) Common.LogAvailableTools(McpTools);
                     break;
@@ -797,6 +823,11 @@ public class App
                     break;
                 
                 case "--plan":
+                    ShouldPlan = true;
+                    break;
+                case "--ultra":
+                case "--ultraplan":
+                    UltraMode = true;
                     ShouldPlan = true;
                     break;
                 case "--clear":

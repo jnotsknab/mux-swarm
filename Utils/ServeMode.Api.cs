@@ -550,6 +550,8 @@ public static partial class ServeMode
             tokens,
             tokenThreshold = threshold,
             tokenPct = Math.Round(pct, 1),
+            plan = App.PlanMode,
+            ultra = App.UltraMode,
         });
     }
 
@@ -590,6 +592,7 @@ public static partial class ServeMode
         new { cmd = "/undo",         desc = "Drop the last exchange from context",        inSessionSafe = true  },
         new { cmd = "/retry",        desc = "Re-run the last message",                   inSessionSafe = true  },
         new { cmd = "/skill",        desc = "Load a skill by name inside a session",      inSessionSafe = true  },
+        new { cmd = "/ultra",        desc = "Toggle deep-reasoning mode (plan + max reasoning + steering)", inSessionSafe = false },
     ];
 
     /// <summary>Heuristic binary guard: NUL byte in the sampled prefix.</summary>

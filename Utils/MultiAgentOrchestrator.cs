@@ -452,6 +452,10 @@ public static class MultiAgentOrchestrator
                     agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
+                // /ultra: raise delegated sub-agent reasoning too when configured.
+                if (App.UltraMode && App.Config.Ultra.IncludeSubAgents)
+                    UltraReasoning.Apply(agentChatOptions);
+
                 var agent = client.AsAIAgent(new ChatClientAgentOptions
                 {
                     Name = def.Name,
@@ -469,7 +473,7 @@ public static class MultiAgentOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", AgentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -549,6 +553,10 @@ public static class MultiAgentOrchestrator
             orchChatOptions.Reasoning = orchModelOpts.Reasoning;
             orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
+
+        // /ultra: the orchestrator is the lead agent in swarm mode — always escalate when on.
+        if (App.UltraMode)
+            UltraReasoning.Apply(orchChatOptions);
 
         var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
         {

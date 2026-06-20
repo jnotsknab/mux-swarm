@@ -211,7 +211,8 @@ public static class SingleAgentOrchestrator
             singleAgentDef.Name,
             App.Config.IsUsingDockerForExec,
             continuous,
-            shouldPlan);
+            shouldPlan,
+            App.UltraMode);
 
         systemPrompt = preamble + "\n\n" + systemPrompt;
 
@@ -483,6 +484,11 @@ public static class SingleAgentOrchestrator
                 agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
             }
         }
+
+        // /ultra: escalate reasoning to the provider max (numeric budget + effort tier).
+        // Applied last so it wins over swarm.json modelOpts for this session only.
+        if (App.UltraMode)
+            UltraReasoning.Apply(agentChatOptions);
 
         AIAgent? agent = client?.AsAIAgent(new ChatClientAgentOptions
         {
