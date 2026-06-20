@@ -1113,12 +1113,12 @@ public static class MultiAgentOrchestrator
                         if (!prodMode && !currentlyStreaming)
                         {
                             // Transition: thinking → streaming
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming("Orchestrator");
                             currentlyStreaming = true;
                             startedStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: "Orchestrator");
                         responseText.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1142,12 +1142,12 @@ public static class MultiAgentOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming("Orchestrator");
                                 currentlyStreaming = true;
                                 startedStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: "Orchestrator");
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1250,7 +1250,7 @@ public static class MultiAgentOrchestrator
                 else
                 {
                     if (currentlyStreaming)
-                        MuxConsole.EndStreaming();
+                        MuxConsole.EndStreaming("Orchestrator");
 
                     MuxConsole.WriteAgentTurnFooter();
                 }
@@ -1265,7 +1265,7 @@ public static class MultiAgentOrchestrator
                 // If we began streaming but hit an exception before EndStreaming, ensure we end it.
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming("Orchestrator"); } catch { /* ignore */ }
                 }
 
                 thinking?.Dispose();
@@ -1467,12 +1467,12 @@ public static class MultiAgentOrchestrator
                         if (!prodMode && !currentlyStreaming)
                         {
                             // Transition: thinking -> streaming
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming(specialist.Def.Name);
                             currentlyStreaming = true;
                             startedStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: specialist.Def.Name);
                         iterResponse.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1496,12 +1496,12 @@ public static class MultiAgentOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming(specialist.Def.Name);
                                 currentlyStreaming = true;
                                 startedStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: specialist.Def.Name);
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1614,7 +1614,7 @@ public static class MultiAgentOrchestrator
                 else
                 {
                     if (currentlyStreaming)
-                        MuxConsole.EndStreaming();
+                        MuxConsole.EndStreaming(specialist.Def.Name);
 
                     MuxConsole.WriteAgentTurnFooter();
                 }
@@ -1624,7 +1624,7 @@ public static class MultiAgentOrchestrator
                 // If we began streaming but hit an exception before EndStreaming, ensure we end it.
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming(specialist.Def.Name); } catch { /* ignore */ }
                 }
 
                 thinking?.Dispose();

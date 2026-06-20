@@ -146,6 +146,12 @@ html, body,
 .event, .diff-container,
 .task-complete, .task-complete .tc-summary,
 .delegation, .delegation .task,
+.stream-agent-label {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: .04em;
+  text-transform: uppercase; opacity: .65; margin: 0 0 .25rem 0;
+  padding-bottom: .15rem; border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
+}
+.stream-block[data-agent] { border-left: 2px solid var(--accent, #6aa3ff); padding-left: .6rem; margin-top: .5rem; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
@@ -3104,14 +3110,25 @@ const icons = {
         const skey = String(ev.agent || '');
         let st = _agentStreams.get(skey);
         if (!st) {
-          st = { el: document.createElement('div'), text: '' };
+          st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
-          if (skey) st.el.dataset.agent = skey;
+          if (skey) {
+            st.el.dataset.agent = skey;
+            // Label concurrent sub-agent streams so parallel output is legible.
+            const hdr = document.createElement('div');
+            hdr.className = 'stream-agent-label';
+            hdr.textContent = skey;
+            st.el.appendChild(hdr);
+            st.body = document.createElement('div');
+            st.body.className = 'stream-body';
+            st.el.appendChild(st.body);
+          }
           output.appendChild(st.el);
           _agentStreams.set(skey, st);
         }
         st.text += (ev.text || '');
-        st.el.innerHTML = renderMarkdown(st.text);
+        const target = st.body || st.el;
+        target.innerHTML = renderMarkdown(st.text);
         attachMsgCopy(st.el, st.text);
         currentStreamEl = st.el; currentStreamText = st.text;
         scrollToBottom();
