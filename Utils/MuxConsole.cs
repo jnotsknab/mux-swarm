@@ -21,6 +21,99 @@ public static class MuxConsole
     public static bool StdioMode { get; set; } = false;
 
     /// <summary>
+    /// Interactive render layer (v0.11.0). This is orthogonal to <see cref="StdioMode"/>:
+    /// stdio/serve always emits NDJSON and short-circuits BEFORE any render-mode branch,
+    /// so the machine/web contract is byte-identical regardless of this value.
+    /// <list type="bullet">
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Stdio"/> - reported when <see cref="StdioMode"/> is on.</item>
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Tui"/> - full-screen live renderer (interactive default on a capable TTY).</item>
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Classic"/> - pre-v0.11.0 line-by-line renderer (opt-out / non-capable fallback).</item>
+    /// </list>
+    /// </summary>
+    public static RenderMode RenderMode
+    {
+        get
+        {
+            // stdio/serve is sacrosanct and takes absolute precedence.
+            if (StdioMode) return RenderMode.Stdio;
+            return _interactiveRenderMode;
+        }
+    }
+
+    private static RenderMode _interactiveRenderMode = RenderMode.Classic;
+
+    /// <summary>
+    /// True when the active interactive renderer is the live full-screen TUI.
+    /// Always false in stdio/serve mode. Render helpers use this to decide whether to
+    /// route through the live layout; until the TUI layout lands it renders identically
+    /// to classic, so flipping the default is behaviorally safe.
+    /// </summary>
+    public static bool IsTui => !StdioMode && _interactiveRenderMode == RenderMode.Tui;
+
+    /// <summary>
+    /// Resolve the interactive render mode from an explicit preference plus terminal
+    /// capability. Call once at startup (after args/config are parsed) on the interactive
+    /// path. No effect on the stdio/serve contract — <see cref="RenderMode"/> still reports
+    /// <see cref="MuxSwarm.Utils.RenderMode.Stdio"/> whenever <see cref="StdioMode"/> is set.
+    /// </summary>
+    /// <param name="preference">"auto" (capability-aware), "tui" (force), or "classic" (force). Null/empty = "auto".</param>
+    public static void ResolveRenderMode(string? preference)
+    {
+        var pref = (preference ?? "auto").Trim().ToLowerInvariant();
+        _interactiveRenderMode = pref switch
+        {
+            "classic" => RenderMode.Classic,
+            "tui"     => RenderMode.Tui,
+            // "auto" and anything unrecognized: capability-aware default.
+            _ => IsTuiCapableTerminal() ? RenderMode.Tui : RenderMode.Classic
+        };
+    }
+
+    /// <summary>
+    /// Force the classic line renderer (e.g. the <c>/classic</c> toggle or <c>--classic</c> flag).
+    /// </summary>
+    public static void SetClassicRenderMode() => _interactiveRenderMode = RenderMode.Classic;
+
+    /// <summary>
+    /// Force the live TUI renderer (e.g. a <c>/tui</c> toggle or <c>--tui</c> flag). Falls back to
+    /// classic automatically on a non-capable terminal so a broken TUI is never shown.
+    /// </summary>
+    public static void SetTuiRenderMode()
+        => _interactiveRenderMode = IsTuiCapableTerminal() ? RenderMode.Tui : RenderMode.Classic;
+
+    /// <summary>
+    /// Heuristic terminal-capability probe driving the capability-aware default. A terminal
+    /// is considered TUI-capable when stdout is an interactive console (not redirected/piped),
+    /// not a dumb terminal, and not a known non-interactive CI environment.
+    /// </summary>
+    public static bool IsTuiCapableTerminal()
+    {
+        try
+        {
+            // Redirected/piped stdout or stdin => no live full-screen layout.
+            if (Console.IsOutputRedirected || Console.IsInputRedirected) return false;
+
+            // Dumb terminals can't render ANSI/alt-screen.
+            var term = Environment.GetEnvironmentVariable("TERM");
+            if (string.Equals(term, "dumb", StringComparison.OrdinalIgnoreCase)) return false;
+
+            // Common CI signal: default to the safe line renderer in automation.
+            if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Spectre's own capability check (ANSI support, interactivity).
+            if (!AnsiConsole.Profile.Capabilities.Ansi) return false;
+
+            return true;
+        }
+        catch
+        {
+            // Any probe failure => safest choice is the classic line renderer.
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Shared lock to prevent the thinking indicator's \r-based rendering
     /// from interleaving with streamed text output, which causes garbled lines.
     /// </summary>
@@ -1131,6 +1224,8 @@ public static class MuxConsole
         commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
         commands.AppendLine($"  [{C.Prompt}]/plan[/]          [{C.Muted}]Toggle plan mode (confirm before exec)[/]");
         commands.AppendLine($"  [{C.Prompt}]/continuous[/]    [{C.Muted}]Toggle autonomous execution[/]");
+        commands.AppendLine($"  [{C.Prompt}]/classic[/]       [{C.Muted}]Use the classic line renderer (opt out of TUI)[/]");
+        commands.AppendLine($"  [{C.Prompt}]/tui[/]           [{C.Muted}]Use the live full-screen TUI renderer[/]");
         commands.AppendLine();
         commands.AppendLine($"[{C.Step}]Session[/]");
         commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
@@ -1224,4 +1319,22 @@ public static class MuxConsole
 
         AnsiConsole.Write(panel);
     }
+}
+
+
+/// <summary>
+/// Interactive render mode for <see cref="MuxConsole"/> (v0.11.0). Distinct from the
+/// stdio/serve NDJSON path, which is selected by <see cref="MuxConsole.StdioMode"/> and
+/// always takes precedence.
+/// </summary>
+public enum RenderMode
+{
+    /// <summary>NDJSON line protocol for --stdio / --serve. Byte-identical, machine-parseable.</summary>
+    Stdio,
+
+    /// <summary>Full-screen live renderer (interactive default on a capable terminal).</summary>
+    Tui,
+
+    /// <summary>Pre-v0.11.0 line-by-line renderer (opt-out and non-capable-terminal fallback).</summary>
+    Classic
 }

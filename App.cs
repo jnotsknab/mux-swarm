@@ -43,6 +43,10 @@ public class App
     public static bool UltraMode = false;
     private static bool _ultraPriorPlan = false;
     private static bool _ultraPriorParaSub = false;
+
+    // Interactive render-mode preference from the CLI (--classic / --tui). Null = use
+    // console.renderMode config (default "auto"). Never affects stdio/serve output.
+    private static string? _cliRenderModeOverride = null;
     /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
     public static bool PlanMode => ShouldPlan;
     
@@ -204,6 +208,12 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
+
+        // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
+        // console.renderMode config; default "auto" is capability-aware. No effect on the
+        // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
+        MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
+
         
         if (_watchDogEnabled)
             Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
@@ -533,6 +543,33 @@ public class App
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
                     break;
+                case "/classic":
+                case "/tui":
+                    if (MuxConsole.StdioMode)
+                    {
+                        MuxConsole.WriteMuted("Render mode is fixed to stdio/serve in this session; ignoring.");
+                        break;
+                    }
+                    if (userInput == "/classic")
+                    {
+                        MuxConsole.SetClassicRenderMode();
+                        MuxConsole.WriteSuccess("Classic render mode enabled");
+                        MuxConsole.WriteMuted("Line-by-line renderer (pre-v0.11.0 interactive experience).");
+                    }
+                    else
+                    {
+                        MuxConsole.SetTuiRenderMode();
+                        if (MuxConsole.IsTui)
+                        {
+                            MuxConsole.WriteSuccess("Live TUI render mode enabled");
+                            MuxConsole.WriteMuted("Full-screen live renderer.");
+                        }
+                        else
+                        {
+                            MuxConsole.WriteWarning("Terminal is not TUI-capable; staying on classic renderer.");
+                        }
+                    }
+                    break;
                 case "/ultra":
                 case "/ultraplan":
                     UltraMode = !UltraMode;
@@ -838,6 +875,12 @@ public class App
                     ShouldPlan = true;
                     if (Config.Ultra.AutoSubAgents)
                         AllowParallelSubAgents = true;
+                    break;
+                case "--classic":
+                    _cliRenderModeOverride = "classic";
+                    break;
+                case "--tui":
+                    _cliRenderModeOverride = "tui";
                     break;
                 case "--clear":
                     Console.Clear();

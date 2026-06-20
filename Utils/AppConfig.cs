@@ -37,7 +37,28 @@ public class AppConfig
     [JsonPropertyName("ultra")]
     public UltraConfig Ultra { get; set; } = new();
 
+    [JsonPropertyName("console")]
+    public ConsoleConfig Console { get; set; } = new();
 
+
+}
+
+/// <summary>
+/// Console render-layer settings. Additive; absent in older configs, in which case
+/// defaults apply. Controls which interactive renderer MuxConsole uses. The stdio/serve
+/// NDJSON path is unaffected by this block - it always short-circuits first.
+/// </summary>
+public class ConsoleConfig
+{
+    /// <summary>
+    /// Interactive render mode preference: <c>"auto"</c> (capability-aware default -
+    /// live TUI on a capable interactive terminal, classic line renderer otherwise),
+    /// <c>"tui"</c> (force the full-screen live renderer), or <c>"classic"</c> (force the
+    /// pre-v0.11.0 line-by-line renderer). A <c>--classic</c>/<c>--tui</c> CLI flag or the
+    /// <c>/classic</c> toggle overrides this value at runtime. Ignored in stdio/serve mode.
+    /// </summary>
+    [JsonPropertyName("renderMode")]
+    public string RenderMode { get; set; } = "auto";
 }
 
 /// <summary>
