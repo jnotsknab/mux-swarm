@@ -69,21 +69,33 @@ public static partial class MuxConsole
     /// is used). Idempotent. Installs guaranteed teardown on process exit / Ctrl-C so the
     /// terminal is never left in a dirty state.
     /// </summary>
-    public static void EnableDockedFooter()
+    public static void EnableDockedFooter() => EnableDockedFooter(topLevel: false);
+
+    /// <summary>
+    /// Activate (or re-scope) the live-region driver. The driver persists for the whole
+    /// interactive REPL so the pinned footer + as-you-type palette are available everywhere -
+    /// at the top-level mode menu (<paramref name="topLevel"/> = true, repl command set) and
+    /// inside an agent/swarm session (false, in-session command set). When entering a session
+    /// the stale token cache is cleared so the footer never shows a prior session's counts.
+    /// Idempotent: if already active it just switches palette scope / resets the meter.
+    /// </summary>
+    public static void EnableDockedFooter(bool topLevel)
     {
         if (!IsTui || !DockedFooterEnabled) return;
         lock (ConsoleLock)
         {
-            if (_tuiActive) return;
             try
             {
-                _driver = new TuiDriver();
-                _tuiActive = true;
-                InstallTeardownHook_NoLock();
-                // Fresh session: clear any stale token cache from a prior session so the
-                // footer never shows old counts before the first usage update arrives.
+                if (_driver is null)
+                {
+                    _driver = new TuiDriver();
+                    _tuiActive = true;
+                    InstallTeardownHook_NoLock();
+                }
+                // Reset the meter when (re)entering any scope so menu shows "ready" and a new
+                // session starts from zero rather than inheriting the prior session's tokens.
                 _fTokens = 0; _fThreshold = 0;
-                _driver.SetPaletteScope(topLevel: false);
+                _driver.SetPaletteScope(topLevel);
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub);
             }
             catch
@@ -92,6 +104,13 @@ public static partial class MuxConsole
                 _driver = null;
             }
         }
+    }
+
+    /// <summary>Switch the driver's palette scope without tearing it down (menu &lt;-&gt; session).</summary>
+    public static void SetPaletteScope(bool topLevel)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetPaletteScope(topLevel); }
     }
 
     /// <summary>
@@ -146,12 +165,12 @@ public static partial class MuxConsole
 
     // --- streaming relays (called from MuxConsole.WriteStream / Begin/End) ----
 
-    internal static void TuiBeginStream() { if (ViaDriver) _driver!.BeginStream(); }
-    internal static void TuiStreamChunk(string text) { if (ViaDriver) _driver!.StreamChunk(text); }
-    internal static void TuiEndStream() { if (ViaDriver) _driver!.EndStream(); }
+    internal static void TuiBeginStream() { if (ViaDriver) lock (ConsoleLock) { _driver!.BeginStream(); } }
+    internal static void TuiStreamChunk(string text) { if (ViaDriver) lock (ConsoleLock) { _driver!.StreamChunk(text); } }
+    internal static void TuiEndStream() { if (ViaDriver) lock (ConsoleLock) { _driver!.EndStream(); } }
 
     /// <summary>Set/clear the driver's live "thinking/working" line (animated spinner).</summary>
-    internal static void TuiSetThinking(string? text) { if (ViaDriver) _driver!.SetThinking(text); }
+    internal static void TuiSetThinking(string? text) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetThinking(text); } }
 
     /// <summary>True when the driver is active - used to route the thinking indicator.</summary>
     internal static bool TuiDriverActive => ViaDriver;
@@ -160,7 +179,7 @@ public static partial class MuxConsole
     internal static string? TuiReadLine() => _driver?.ReadLine();
 
     /// <summary>Commit a single markup line into scrollback via the driver (caller guards with ViaDriver).</summary>
-    internal static void CommitToDriver(string markupLine) { if (ViaDriver) _driver!.CommitLine(markupLine); }
+    internal static void CommitToDriver(string markupLine) { if (ViaDriver) lock (ConsoleLock) { _driver!.CommitLine(markupLine); } }
 
     /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
     internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
@@ -171,7 +190,7 @@ public static partial class MuxConsole
     public static void RenderTuiSessionHeader(string agentName, string model, string provider)
     {
         if (!IsTui) return;
-        if (ViaDriver) { _driver!.Commit(TuiComponents.SessionHeader(agentName, model, provider)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.SessionHeader(agentName, model, provider)); } return; }
         WithConsole(() =>
         {
             var grid = new Grid().AddColumn().AddColumn();
@@ -206,7 +225,7 @@ public static partial class MuxConsole
     /// <summary>G4 - tool-call line with a running glyph.</summary>
     public static void RenderTuiToolCall(string agent, string tool, string? args)
     {
-        if (ViaDriver) { _driver!.Commit(TuiComponents.ToolCall(tool, args)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.ToolCall(tool, args)); } return; }
         WithConsole(() =>
         {
             string argHint = string.IsNullOrWhiteSpace(args)
@@ -222,7 +241,7 @@ public static partial class MuxConsole
         if (ViaDriver)
         {
             string clean = Trunc(CollapseWhitespace(summary), 120);
-            _driver!.CommitLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(clean)}[/]");
+            lock (ConsoleLock) { _driver!.CommitLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(clean)}[/]"); }
             return;
         }
         WithConsole(() =>
@@ -244,9 +263,12 @@ public static partial class MuxConsole
 
         if (ViaDriver)
         {
-            if (LooksLikeDiff(text)) { _driver!.Commit(TuiComponents.Diff(tool, text, width)); return; }
-            if (ToolOutputCompact && !err) { _driver!.Commit(TuiComponents.ToolResultCompact(text)); return; }
-            _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000));
+            lock (ConsoleLock)
+            {
+                if (LooksLikeDiff(text)) { _driver!.Commit(TuiComponents.Diff(tool, text, width)); }
+                else if (ToolOutputCompact && !err) { _driver!.Commit(TuiComponents.ToolResultCompact(text)); }
+                else _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000));
+            }
             return;
         }
 
@@ -274,7 +296,7 @@ public static partial class MuxConsole
     public static void RenderTuiDiff(string title, string diff)
     {
         if (!IsTui) return;
-        if (ViaDriver) { _driver!.Commit(TuiComponents.Diff(title, diff, _driver.Width)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.Diff(title, diff, _driver.Width)); } return; }
         WithConsole(() => RenderDiffBody(title, diff));
     }
 
@@ -310,7 +332,7 @@ public static partial class MuxConsole
     /// <summary>G8 - delegation rendered as a small from -> to tree.</summary>
     public static void RenderTuiDelegation(string fromAgent, string toAgent, string task, int truncLength)
     {
-        if (ViaDriver) { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); } return; }
         WithConsole(() =>
         {
             var tree = new Tree($"[{TC.Agent}]{Esc(fromAgent)}[/] [{TC.Dim}]delegates[/]")
@@ -339,7 +361,7 @@ public static partial class MuxConsole
     /// <summary>G4 - task-complete line with an ok glyph.</summary>
     public static void RenderTuiTaskComplete(string agent, string summary)
     {
-        if (ViaDriver) { _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); } return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine($"  [{TC.Ok}]\u2714[/] [{TC.Agent}]{Esc(agent)}[/] [{TC.Dim}]completed[/]  [{TC.Muted}]{Esc(Trunc(summary, 120))}[/]");
@@ -356,7 +378,7 @@ public static partial class MuxConsole
         if (!IsTui) return;
         if (ViaDriver)
         {
-            _driver!.Commit(TuiComponents.SlashPalette(filter, SlashPaletteEntries));
+            lock (ConsoleLock) { _driver!.Commit(TuiComponents.SlashPalette(filter, SlashPaletteEntries)); }
             return;
         }
         WithConsole(() =>

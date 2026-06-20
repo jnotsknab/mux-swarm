@@ -303,34 +303,41 @@ public class App
         }
         
         OtelLogger.Info("Entered Main Interactive Loop");
-        // The live-region TUI driver (pinned footer + input box) is activated INSIDE an
-        // agent/swarm session, not at this top-level mode-select menu. Activating it here
-        // was the root cause of the earlier stranded-footer / banner corruption: the menu
-        // and splash are plain inline output, so the menu stays a simple classic prompt.
+        // The live-region TUI driver (pinned footer + as-you-type slash palette) is active
+        // across the WHOLE interactive REPL - both this top-level mode-select menu and inside
+        // agent/swarm sessions. At the menu it runs in "top-level" palette scope (mode-select
+        // commands); sessions switch it to the in-session command set. No-op outside TUI.
+        MuxConsole.EnableDockedFooter(topLevel: true);
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {
-            // Back at the top-level menu: ensure any session's live-region driver is torn
-            // down so the menu/splash render as plain inline output (idempotent no-op when
-            // the driver was never active). This keeps the pinned footer scoped to sessions.
-            MuxConsole.DisableDockedFooter();
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            // Re-assert top-level scope each iteration: a returning session left it in the
+            // in-session scope, and the meter should read "ready" at the menu. Idempotent.
+            MuxConsole.EnableDockedFooter(topLevel: true);
 
-            if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
+            // When the live-region driver is active it owns the input box (pinned at the
+            // bottom) and its own key loop (Esc -> cancel), so skip the inline "> " prompt and
+            // the non-blocking Esc pre-check, which would otherwise steal a keystroke.
+            if (!MuxConsole.TuiActive)
             {
-                var key = Console.ReadKey(intercept: true);
-                if (key.Key == ConsoleKey.Escape)
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+
+                if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
                 {
-                    lock (CtsLock)
+                    var key = Console.ReadKey(intercept: true);
+                    if (key.Key == ConsoleKey.Escape)
                     {
-                        if (!_cts.IsCancellationRequested)
+                        lock (CtsLock)
                         {
-                            _cts.Cancel();
-                            MuxConsole.WriteInfo("Interrupted.");
-                            OtelLogger.Warn("User Deployed Cancel Signal Received, Mux Swarm Interrupted");
+                            if (!_cts.IsCancellationRequested)
+                            {
+                                _cts.Cancel();
+                                MuxConsole.WriteInfo("Interrupted.");
+                                OtelLogger.Warn("User Deployed Cancel Signal Received, Mux Swarm Interrupted");
+                            }
                         }
+                        continue;
                     }
-                    continue;
                 }
             }
 

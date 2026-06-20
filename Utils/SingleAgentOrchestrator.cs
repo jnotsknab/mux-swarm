@@ -170,9 +170,9 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         if (!MuxConsole.IsTui) MuxConsole.WriteLine();
-        // Activate the live-region TUI driver for this session (pinned footer + input box).
-        // No-op outside TUI / non-capable terminals / when the docked footer is disabled.
-        MuxConsole.EnableDockedFooter();
+        // Switch the (already-running) live-region driver into this session: in-session
+        // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
+        MuxConsole.EnableDockedFooter(topLevel: false);
         // G2: TUI session header card (no-op outside TUI render mode).
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",
@@ -192,7 +192,8 @@ public static class SingleAgentOrchestrator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            if (!MuxConsole.TuiActive)
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
             initialGoal = MuxConsole.ReadInput(cancellationToken) ?? "";
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1016,8 +1017,13 @@ public static class SingleAgentOrchestrator
             }
 
             RenderStatusBar();
-            MuxConsole.WriteRule();
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            // In TUI the pinned footer/input box separate turns; the classic rule + inline
+            // "> " prompt would inject a duplicate separator line, so emit them only in classic.
+            if (!MuxConsole.TuiActive)
+            {
+                MuxConsole.WriteRule();
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             string? nextInput = MuxConsole.ReadInput(cancellationToken);
@@ -1086,8 +1092,11 @@ public static class SingleAgentOrchestrator
 
                 // Re-prompt after handling a meta command.
                 RenderStatusBar();
-                MuxConsole.WriteRule();
-                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                if (!MuxConsole.TuiActive)
+                {
+                    MuxConsole.WriteRule();
+                    MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                }
 
                 cancellationToken.ThrowIfCancellationRequested();
                 nextInput = MuxConsole.ReadInput(cancellationToken);
