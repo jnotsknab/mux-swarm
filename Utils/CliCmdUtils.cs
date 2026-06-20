@@ -367,7 +367,7 @@ public static class CliCmdUtils
 
     }
 
-    public static (JsonElement data, string sessionDir)? HandleSessionResume()
+    public static (JsonElement data, string sessionDir)? HandleSessionResume(string? sessionId = null)
     {
         string sessionsDir = PlatformContext.SessionsDirectory;
 
@@ -386,6 +386,20 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteWarning("No single-agent sessions found.");
             return null;
+        }
+
+        // Non-interactive path: a session id was supplied (e.g. "/resume <id>" from
+        // the web app's Resume button). Match by folder name and skip the prompt.
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            var direct = sessionDirs.FirstOrDefault(d =>
+                Path.GetFileName(d).Equals(sessionId.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (direct == null)
+            {
+                MuxConsole.WriteWarning($"No resumable single-agent session found matching: {sessionId}");
+                return null;
+            }
+            return LoadResumeSession(direct);
         }
 
         var lines = string.Join("\n", sessionDirs.Select((d, i) =>
@@ -420,6 +434,12 @@ public static class CliCmdUtils
             return null;
         }
 
+        return LoadResumeSession(selectedDir);
+    }
+
+    /// <summary>Load a session's persisted state from its directory for resume.</summary>
+    private static (JsonElement data, string sessionDir)? LoadResumeSession(string selectedDir)
+    {
         var sessionFile = Directory.GetFiles(selectedDir, "*.json").First();
 
         try

@@ -25,6 +25,16 @@ namespace MuxSwarm
                     ArgValue(args, "--swarmcfg")
                 );
 
+                // Set StdioMode BEFORE constructing App. The App() constructor starts
+                // HookWorker, whose Start() shows a blocking console Confirm prompt for
+                // configured hooks unless StdioMode is set. In --serve / --stdio runs
+                // there is no interactive console to answer it, so without this the
+                // runtime hangs at startup whenever swarm.json has hooks. StdioMode was
+                // previously only set later (ParseArgs / ServeMode.StartAsync), after the
+                // constructor had already run — hence the ordering bug.
+                if (Array.IndexOf(args, "--stdio") >= 0 || Array.IndexOf(args, "--serve") >= 0)
+                    MuxConsole.StdioMode = true;
+
                 var app = new App();
                 return await app.Run(args);
             }

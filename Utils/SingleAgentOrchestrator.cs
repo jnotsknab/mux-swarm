@@ -22,6 +22,14 @@ public static class SingleAgentOrchestrator
 
     private static bool _pendingCompaction;
 
+    // Batch6: set after /undo or /retry rebuilds the provider session, so the next
+    // turn replays the trimmed conversationHistory into the fresh session (one-shot).
+    private static bool _pendingReseed;
+
+    // Batch6: exposed read-only to /api/status for a web context-usage meter.
+    internal static uint SessionTokens => _sessionTokens;
+    internal static int AutoCompactThreshold { get; private set; } = 80_000;
+
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {
         if (AgentDef != null && !fromCfg) return AgentDef;
@@ -524,6 +532,8 @@ public static class SingleAgentOrchestrator
                 : (uint)Common.EstimateTokenCount(conversationHistory);
             ChatMessage? compactedMsg = null;
 
+            ServeMode.EmitEvent(new { type = "compaction_start" });
+
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
@@ -547,6 +557,7 @@ public static class SingleAgentOrchestrator
             _pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
+            ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = _sessionTokens });
             return _pendingCompaction;
         }
 
@@ -562,6 +573,70 @@ public static class SingleAgentOrchestrator
                 if (MuxConsole.Confirm("Compact before continuing?"))
                     await TryCompactAsync();
             }
+        }
+
+        AutoCompactThreshold = autoCompactTokenThreshold ?? 80_000;
+
+        // Batch6: /undo and /retry rebuild the provider session from a trimmed local
+        // history (the SDK session is opaque/append-only), mirroring TryCompactAsync.
+        async Task RebuildSessionFromHistoryAsync()
+        {
+            session = await agent.CreateSessionAsync();
+            _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
+            _pendingReseed = conversationHistory.Count > 0;
+        }
+
+        // Batch6: /undo -- drop the last user+assistant exchange, rebuild the session.
+        async Task<bool> TryUndoAsync()
+        {
+            int lastAssistant = -1;
+            for (int i = conversationHistory.Count - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.Assistant) { lastAssistant = i; break; }
+            if (lastAssistant < 0)
+            {
+                MuxConsole.WriteWarning("Nothing to undo.");
+                return false;
+            }
+            int prevUser = -1;
+            for (int i = lastAssistant - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.User) { prevUser = i; break; }
+            int removeFrom = prevUser >= 0 ? prevUser : lastAssistant;
+            int removed = conversationHistory.Count - removeFrom;
+            conversationHistory.RemoveRange(removeFrom, removed);
+            await RebuildSessionFromHistoryAsync();
+            MuxConsole.WriteSuccess($"Undid last exchange ({removed} message(s) dropped). ~{_sessionTokens:N0} tokens remain.");
+            return true;
+        }
+
+        // Batch6: /retry -- trim the last assistant (and its user) so the user
+        // message can be re-run. Returns the user text to re-submit, or null.
+        string? TryPrepareRetry()
+        {
+            int lastAssistant = -1;
+            for (int i = conversationHistory.Count - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.Assistant) { lastAssistant = i; break; }
+            int searchFrom = lastAssistant >= 0 ? lastAssistant - 1 : conversationHistory.Count - 1;
+            int lastUser = -1;
+            for (int i = searchFrom; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.User) { lastUser = i; break; }
+            if (lastUser < 0)
+            {
+                MuxConsole.WriteWarning("Nothing to retry.");
+                return null;
+            }
+            string userText = conversationHistory[lastUser].Text ?? string.Empty;
+            conversationHistory.RemoveRange(lastUser, conversationHistory.Count - lastUser);
+            return userText;
+        }
+
+        // Batch6: /tokens -- context usage meter.
+        void PrintTokenUsage()
+        {
+            int threshold = autoCompactTokenThreshold ?? 80_000;
+            double pct = threshold > 0 ? (double)_sessionTokens / threshold * 100.0 : 0;
+            MuxConsole.WriteInfo(
+                $"Context: {_sessionTokens:N0} / {threshold:N0} tokens ({pct:F1}%) - "
+                + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
         }
 
         var lastPersistTime = DateTime.UtcNow;
@@ -637,6 +712,15 @@ public static class SingleAgentOrchestrator
                                 conversationHistory[1]   // Context restored. Ready to continue.
                             });
                             _pendingCompaction = false;
+                        }
+
+                        if (_pendingReseed)
+                        {
+                            // Batch6: replay trimmed history (everything before the current
+                            // goal, already re-added at line ~598) into the fresh session.
+                            if (conversationHistory.Count > 1)
+                                messages.InsertRange(0, conversationHistory.Take(conversationHistory.Count - 1));
+                            _pendingReseed = false;
                         }
 
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
@@ -911,9 +995,57 @@ public static class SingleAgentOrchestrator
                 break;
             }
 
-            if (nextInput!.Trim().Equals("/compact", StringComparison.OrdinalIgnoreCase))
+            // Batch6: in-session meta-command loop. These commands act on the live
+            // session without quitting it and without counting as a goal; loop until
+            // a real message arrives (or the user quits).
+            bool quitSession = false;
+            bool retryGoalSet = false;
+            while (true)
             {
-                await TryCompactAsync();
+                string metaCmd = nextInput!.Trim();
+                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryCompactAsync();
+                }
+                else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
+                {
+                    session = await agent.CreateSessionAsync();
+                    conversationHistory.Clear();
+                    _sessionTokens = 0;
+                    _cachedTokens = 0;
+                    _pendingCompaction = false;
+                    _pendingReseed = false;
+                    ServeMode.EmitEvent(new { type = "session_wiped" });
+                    MuxConsole.WriteSuccess("Session context wiped. Starting fresh.");
+                }
+                else if (metaCmd.Equals("/tokens", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase))
+                {
+                    PrintTokenUsage();
+                }
+                else if (metaCmd.Equals("/undo", StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryUndoAsync();
+                }
+                else if (metaCmd.Equals("/retry", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/redo", StringComparison.OrdinalIgnoreCase))
+                {
+                    var retryText = TryPrepareRetry();
+                    if (retryText != null)
+                    {
+                        await RebuildSessionFromHistoryAsync();
+                        currentGoal = retryText;
+                        retryGoalSet = true;
+                        MuxConsole.WriteInfo("Retrying last message...");
+                        break;
+                    }
+                }
+                else
+                {
+                    break; // real message (or unknown) -> fall through to goal handling
+                }
+
+                // Re-prompt after handling a meta command.
                 MuxConsole.WriteRule();
                 MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
@@ -924,11 +1056,16 @@ public static class SingleAgentOrchestrator
                 if (IsQuitCommand(nextInput))
                 {
                     MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
+                    quitSession = true;
                     break;
                 }
             }
 
-            currentGoal = nextInput!;
+            if (quitSession)
+                break;
+
+            if (!retryGoalSet)
+                currentGoal = nextInput!;
 
             HookWorker.Enqueue(new HookEvent
             {

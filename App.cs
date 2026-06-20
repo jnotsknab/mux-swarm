@@ -355,6 +355,8 @@ public class App
                     var maModels = Common.LoadAgentModels();
                     var maCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "swarm";
+                    try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -364,6 +366,7 @@ public class App
                         agentModels: maModels,
                         cancellationToken: maCts.Token
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
 
                 case "/pswarm":
@@ -372,6 +375,8 @@ public class App
                     var pModels = Common.LoadAgentModels();
                     var pCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "pswarm";
+                    try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -381,6 +386,7 @@ public class App
                         agentModels: pModels,
                         cancellationToken: pCts.Token
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
 
                 case "/agent":
@@ -389,6 +395,8 @@ public class App
                     var singleAgentModel = LoadSingleAgentModel();
                     var agentCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "agent";
+                    try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel),
                         agentCts.Token,
@@ -403,6 +411,7 @@ public class App
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 case "/sub":
                 case "/subagents":
@@ -429,6 +438,8 @@ public class App
                     var statelessAgent = LoadSingleAgentModel();
                     var statelessAgentCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "stateless";
+                    try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
                         statelessAgentCts.Token,
@@ -444,6 +455,7 @@ public class App
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 
                 case "/addcontext":
@@ -458,14 +470,22 @@ public class App
                 case "/workflow":
                     CliCmdUtils.HandleInteractiveWorkflow();
                     break;
-                case "/resume":
-                    var resumeData = CliCmdUtils.HandleSessionResume();
+                case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
+                    // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
+                    // session directly (used by the web app's Resume button over the WS).
+                    var resumeArg = rc.Length > "/resume".Length
+                        ? rc.Substring("/resume".Length).Trim()
+                        : null;
+                    var resumeData = CliCmdUtils.HandleSessionResume(
+                        string.IsNullOrWhiteSpace(resumeArg) ? null : resumeArg);
                     if (resumeData.HasValue)
                     {
                         Config = LoadConfig(ConfigPath);
                         var resumeModel = LoadSingleAgentModel();
                         var resumeCts = GetOrResetCts();
 
+                        ServeMode.ActiveMode = "agent";
+                        try {
                         await SingleAgentOrchestrator.ChatAgentAsync(
                             client: CreateChatClient(resumeModel),
                             resumeCts.Token,
@@ -482,6 +502,7 @@ public class App
                             allowSubAgents: AllowSubagents,
                             allowParallelSubAgents: AllowParallelSubAgents
                         );
+                        } finally { ServeMode.ActiveMode = "interactive"; }
                     }
                     break;
                 

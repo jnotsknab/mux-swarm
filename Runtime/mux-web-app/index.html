@@ -1,7 +1,98 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<script>window.__errs=[]; window.addEventListener("error", e => { window.__errs.push((e.message||"?") + " @ " + (e.filename||"") + ":" + e.lineno + ":" + e.colno); }); window.addEventListener("unhandledrejection", e => { window.__errs.push("rej: " + (e.reason && e.reason.message || e.reason)); });</script><meta charset="UTF-8">
+<script>window.__errs=[]; window.addEventListener("error", e => { window.__errs.push((e.message||"?") + " @ " + (e.filename||"") + ":" + e.lineno + ":" + e.colno); }); window.addEventListener("unhandledrejection", e => { window.__errs.push("rej: " + (e.reason && e.reason.message || e.reason)); });</script>
+<script>
+/* ===== MuxAuth (Batch 4 / D4): opt-in bearer token for /api + /ws ===== */
+(function(){
+  var KEY='mux.auth.token';
+  function get(){ try { return sessionStorage.getItem(KEY) || ''; } catch(_) { return ''; } }
+  function set(t){ try { t ? sessionStorage.setItem(KEY,t) : sessionStorage.removeItem(KEY); } catch(_){} }
+
+  // Wrap fetch: attach Authorization to same-origin /api requests when a token is held.
+  var _fetch = window.fetch.bind(window);
+  window.fetch = function(input, init){
+    try{
+      var url = (typeof input === 'string') ? input : (input && input.url) || '';
+      var isApi = url.indexOf('/api') === 0 || url.indexOf(location.origin + '/api') === 0;
+      var tok = get();
+      if (isApi && tok){
+        init = init || {};
+        var h = new Headers(init.headers || (typeof input!=='string' && input.headers) || {});
+        if (!h.has('Authorization')) h.set('Authorization', 'Bearer ' + tok);
+        init.headers = h;
+      }
+    }catch(_){}
+    return _fetch(input, init).then(function(resp){
+      if (resp && resp.status === 401 && (((typeof input==='string')?input:input.url)||'').indexOf('/api')!==-1){
+        window.MuxAuth && window.MuxAuth.prompt(true);
+      }
+      return resp;
+    });
+  };
+
+  // Modal login prompt. Returns once a token is stored.
+  function prompt(forced){
+    if (document.getElementById('muxAuthModal')) return;
+    var wrap=document.createElement('div'); wrap.id='muxAuthModal';
+    wrap.style.cssText='position:fixed;inset:0;z-index:100001;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);backdrop-filter:blur(4px)';
+    var box=document.createElement('div');
+    box.style.cssText='background:var(--bg-card,#1a1a1f);border:1px solid var(--border,#333);border-radius:12px;padding:22px;width:min(360px,90vw);font-family:var(--font-sans,system-ui);color:var(--text,#e4e4e7);box-shadow:0 14px 48px rgba(0,0,0,0.5)';
+    box.innerHTML='<div style="font-size:15px;font-weight:600;margin-bottom:4px">Authentication required</div>'
+      +'<div style="font-size:12px;color:var(--muted,#888);margin-bottom:14px">This Mux-Swarm server requires an access token.</div>';
+    var inp=document.createElement('input'); inp.type='password'; inp.placeholder='Access token';
+    inp.style.cssText='width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid var(--border,#444);border-radius:8px;background:var(--bg-input,#27272a);color:var(--text,#eee);font-size:13px;margin-bottom:6px';
+    var err=document.createElement('div'); err.style.cssText='font-size:11px;color:#e0556b;min-height:14px;margin-bottom:10px';
+    var row=document.createElement('div'); row.style.cssText='display:flex;gap:8px;justify-content:flex-end';
+    var ok=document.createElement('button'); ok.textContent='Connect';
+    ok.style.cssText='background:var(--accent,#0e639c);color:var(--accent-fg,#fff);border:none;border-radius:8px;padding:8px 16px;font-size:13px;cursor:pointer';
+    row.appendChild(ok);
+    box.appendChild(inp); box.appendChild(err); box.appendChild(row); wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    setTimeout(function(){ inp.focus(); }, 30);
+    async function submit(){
+      var t=inp.value.trim(); if(!t){ err.textContent='Enter a token.'; return; }
+      ok.disabled=true; err.textContent='Verifying\u2026';
+      try{
+        var r=await _fetch('/api/health',{headers:{'Authorization':'Bearer '+t}});
+        if(r.ok){ set(t); wrap.remove();
+          try{ if(typeof reconnectWs==='function') reconnectWs(); }catch(_){}
+          location.reload();
+        } else { err.textContent='Invalid token.'; ok.disabled=false; }
+      }catch(e){ err.textContent='Verification failed.'; ok.disabled=false; }
+    }
+    ok.addEventListener('click', submit);
+    inp.addEventListener('keydown', function(e){ if(e.key==='Enter') submit(); });
+  }
+
+  // Decorate a same-origin /api URL with the token query param, for direct-resource
+  // loads (img src, iframe src, window.open) that bypass the fetch() wrapper.
+  function decorate(u){
+    var t=get(); if(!t || !u) return u;
+    var isApi = (typeof u==='string') && (u.indexOf('/api')===0 || u.indexOf(location.origin+'/api')===0);
+    if(!isApi || /[?&]token=/.test(u)) return u;
+    return u + (u.indexOf('?')<0?'?':'&') + 'token=' + encodeURIComponent(t);
+  }
+
+  window.MuxAuth={
+    token:get, set:set, prompt:prompt, url:decorate,
+    // Append token to a /ws URL as a query param (used by the WS connect path).
+    wsUrl:function(base){ var t=get(); if(!t) return base; return base + (base.indexOf('?')<0?'?':'&') + 'token=' + encodeURIComponent(t); }
+  };
+
+  // On load, if the server says auth is required and we have no token, prompt.
+  window.addEventListener('DOMContentLoaded', function(){
+    if (get()) return;
+    _fetch('/api/config').then(function(r){
+      if (r.status===401){ prompt(true); return null; }
+      return r.json();
+    }).then(function(cfg){
+      if (cfg && cfg.serve && cfg.serve.authRequired && !get()) prompt(true);
+    }).catch(function(){});
+  });
+})();
+</script>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content">
 <title>Mux-Swarm</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><path d='M30 70 L30 30 L50 50 L70 30 L70 70' fill='none' stroke='%23ffffff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='30' r='6' fill='%2364B4DC'/><circle cx='50' cy='50' r='6' fill='%2364B4DC'/><circle cx='70' cy='30' r='6' fill='%2364B4DC'/><circle cx='30' cy='70' r='6' fill='%2364B4DC'/><circle cx='70' cy='70' r='6' fill='%2364B4DC'/></svg>" type="image/svg+xml">
@@ -2437,7 +2528,7 @@ const icons = {
         ? window.MuxNodeGraph.getActiveTarget() : null;
       if (tgt && tgt.host) { _wsHost = tgt.host; if (tgt.scheme) _wsScheme = tgt.scheme; }
     } catch (_) {}
-    ws = new WebSocket(`${_wsScheme}://${_wsHost}/ws`);
+    ws = new WebSocket((window.MuxAuth ? window.MuxAuth.wsUrl(`${_wsScheme}://${_wsHost}/ws`) : `${_wsScheme}://${_wsHost}/ws`));
     try { window.MuxNodeGraph && window.MuxNodeGraph.notifyConnect && window.MuxNodeGraph.notifyConnect(_wsHost); } catch (_) {}
 
     ws.onopen = () => {
@@ -2449,20 +2540,12 @@ const icons = {
       showWelcome();
       const skel = $('loadingSkeleton'); if (skel) skel.remove();
 
-      // Silently prime the cached skills list so the command palette can
-      // offer '/skill <name>' completions without the user needing to run
-      // /skills first. Suppress the visual panel for this priming request.
-      //
-      // We must NOT fire '/skills' if the user is inside an agent session —
-      // it would land in the live agent's interactive context. On a hard
-      // refresh mid-loop, the server replays session state (e.g. the
-      // 'Type /qc to exit' banner) asynchronously, and a blind timer can
-      // fire BEFORE that replay arrives — the original bug. Instead of
-      // guessing with a fixed delay, we arm a pending prime and let the
-      // event stream drive it: handleEvent() calls cancelSkillsPrime() the
-      // moment it sees any session-mode signal (replayed or live). The prime
-      // only fires after the connection settles AND no session was detected.
-      armSkillsPrime();
+      // Prime UI state from authoritative HTTP endpoints (B5c/B5d/B5e). This
+      // replaces the old hack of silently sending '/skills' over the WS to
+      // scrape the panel render, plus the banner-text scraping for session
+      // mode. The endpoints are read-only and never touch the agent input
+      // stream, so the whole arm/cancel/suppress race machinery is gone.
+      primeFromApi();
       
       // Keep-alive ping for mobile
       if (pingInterval) clearInterval(pingInterval);
@@ -2616,8 +2699,6 @@ const icons = {
     // server REPLAYS on a fresh mobile reopen mid-loop) routes through here. That
     // makes this the single most reliable 'we are in a live agent loop' signal,
     // independent of sessionStorage survival or activeSessionMode string parsing.
-    // Cancel any pending skills-prime so '/skills' can never land in the loop.
-    if (busy) { try { cancelSkillsPrime(); } catch (_) {} }
     actionBtn.textContent = busy ? 'Stop' : 'Send';
     actionBtn.className = busy ? 'send-btn stop-mode' : 'send-btn';
   }
@@ -2866,20 +2947,16 @@ const icons = {
 
   // ─── Event dispatcher ───
   function handleEvent(ev) {
-    // ─── Agent-session mode detection (authoritative, server-driven) ───
+    // ─── Agent-session mode transitions ───
+    // The session banners ('Type /qc to exit' / 'Exited from Chat interface') are
+    // used only as a CUE to re-sync from the authoritative /api/status endpoint —
+    // we no longer scrape their text to *infer* the mode. This keeps a hard-refresh
+    // mid-loop correct without coupling the UI to server log copy.
     try {
       const _msg = (ev && (ev.message || ev.text)) || '';
-      if (typeof _msg === 'string' && _msg) {
-        if (_msg.indexOf('Type /qc to exit') !== -1) {
-          if (!activeSessionMode) activeSessionMode = '/agent';
-          cancelSkillsPrime(); // in a session (incl. replayed on hard refresh) → never prime /skills
-          try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
-          if (paletteOpen) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); }
-        } else if (_msg.indexOf('Exited from Chat interface') !== -1) {
-          activeSessionMode = null;
-          try { sessionStorage.removeItem('muxActiveSessionMode'); } catch (_) {}
-          if (paletteOpen) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); }
-        }
+      if (typeof _msg === 'string' && _msg &&
+          (_msg.indexOf('Type /qc to exit') !== -1 || _msg.indexOf('Exited from Chat interface') !== -1)) {
+        refreshSessionMode().catch(() => {});
       }
     } catch (_) {}
     switch (ev.type) {
@@ -2916,12 +2993,6 @@ const icons = {
 
       case 'user_input': {
         const txt = ev.text || '';
-        // Silent skills-prime: drop the server-echoed '/skills' bubble exactly once.
-        if (suppressNextSkillsUserEcho && (txt || '').trim().toLowerCase() === '/skills') {
-          suppressNextSkillsUserEcho = false;
-          lastLocalSend = '';
-          break;
-        }
         // One-shot suppression set: auto /qc, plus commands the user triggered
         // via the session-switch warning card (already shown in the card).
         {
@@ -2938,7 +3009,6 @@ const icons = {
           const _m = (txt || '').trim().toLowerCase().split(/\s+/)[0];
           if (['/agent','/swarm','/pswarm','/stateless','/resume'].includes(_m)) {
             activeSessionMode = _m === '/resume' ? '/agent' : _m;
-            cancelSkillsPrime(); // entering a session → never prime /skills
             try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
           } else if (_m === '/qc' || _m === '/exit') {
             activeSessionMode = null;
@@ -2961,7 +3031,7 @@ const icons = {
             
             if (isImg) {
               // Try to load the image from the server
-              const url = `/api/download/sandbox/${encodePath(path)}`;
+              const url = (window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/sandbox/${encodePath(path)}`):`/api/download/sandbox/${encodePath(path)}`);
               attachmentsHtml += `<div class="upload-preview user-msg-image" style="margin-bottom:8px; display:inline-flex; padding:4px;"><img src="${url}" alt="" style="max-width:min(480px, 100%); max-height:420px; width:auto; height:auto; object-fit:contain; border-radius:4px; cursor:zoom-in;" onclick="window.open(this.src, '_blank')" /></div><br>`;
             } else {
               const label = ext ? ext.replace('.','') : 'file';
@@ -3280,6 +3350,15 @@ const icons = {
         appendHTML(`<div class="delegation"><span class="deleg-icon" style="display:flex;align-items:center;margin-top:1px">${icons.arrowUpRight}</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task)}</span>` : ''}</div>`);
         break;
 
+      // Batch6: /wipe cleared the live session context. Mirror Claude /clear by
+      // clearing the transcript view (reuses the screen-clear with undo toast).
+      case 'session_wiped':
+        try {
+          if (typeof window.__muxClearScreen === 'function') window.__muxClearScreen();
+        } catch (_) {}
+        appendText('Session context wiped. Starting fresh.', 'event-success');
+        break;
+
       case 'task_complete': {
         const summary = ev.summary ? String(ev.summary).trim() : '';
         // Suppress trivial/boilerplate task_complete cards that add no info (e.g. delegated sub-task completions).
@@ -3328,10 +3407,8 @@ const icons = {
       case 'panel': {
         const _title = ev.title || '';
         if (/^Loaded Skills/i.test(_title)) {
-          // Always refresh the cached skills list so /skill <name> completions stay current.
+          // Keep the completion cache fresh when the user runs /skills explicitly.
           try { updateCachedSkills(parseSkillsPanelContent(ev.content || '')); } catch (_) {}
-          // Suppress the visual render only when we silently primed the cache at startup.
-          if (suppressNextSkillsPanel) { suppressNextSkillsPanel = false; break; }
           renderSkillsPanel(_title, ev.content || '');
           break;
         }
@@ -3911,9 +3988,14 @@ const icons = {
   
   // Slash commands that ARE safe to run while inside an agent session
   // (they're handled by the in-session loop itself). Every other slash command
-  // implies leaving the session, so we transparently /qc first.
-  const IN_SESSION_SAFE_CMDS = new Set([
-    '/qc', '/exit', '/compact', '/skill', '/clear-screen', '/cls', '/clear-ui', '/clear'
+  // implies leaving the session, so we transparently /qc first. The server-side
+  // commands here are AUTHORITATIVELY refreshed from /api/commands (B5e) via
+  // updateCommandCatalog(); this hardcoded set is the fallback for older binaries.
+  // The screen-clear commands are handled purely client-side and are never in
+  // the server catalog, so they are always preserved.
+  const CLIENT_ONLY_SAFE_CMDS = ['/clear-screen', '/cls', '/clear-ui', '/clear', '/copy', '/yank'];
+  let IN_SESSION_SAFE_CMDS = new Set([
+    '/qc', '/exit', '/compact', '/wipe', '/tokens', '/undo', '/retry', '/skill', ...CLIENT_ONLY_SAFE_CMDS
   ]);
 
   function _muxGetSettings() {
@@ -3975,6 +4057,33 @@ const icons = {
         return;
       }
       if (t === '/clear') { appendText('/clear is disabled in web mode — use /clear-screen (Ctrl+L) to clear the view only', 'event-warning'); return; }
+      // Batch6: /copy — copy the last assistant message to the clipboard. Purely
+      // client-side; never sent to the agent.
+      if (t === '/copy' || t === '/yank') {
+        try {
+          const blocks = output ? output.querySelectorAll('.stream-block') : [];
+          const last = blocks && blocks.length ? blocks[blocks.length - 1] : null;
+          const body = last ? (last.querySelector('.stream-body') || last) : null;
+          const copyText = body ? (body.innerText || '').trim() : '';
+          if (!copyText) { appendText('Nothing to copy yet.', 'event-warning'); return; }
+          (async () => {
+            try {
+              if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(copyText);
+              } else {
+                const ta = document.createElement('textarea');
+                ta.value = copyText; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                document.execCommand('copy'); document.body.removeChild(ta);
+              }
+              if (typeof showToast === 'function') showToast('Copied last reply');
+            } catch (_) {
+              if (typeof showToast === 'function') showToast('Copy failed', 'error');
+            }
+          })();
+        } catch (_) {}
+        return;
+      }
     }
 
     const cmd = text.trim().toLowerCase();
@@ -4040,7 +4149,7 @@ const icons = {
 
   // ─── Slash command palette ───
   const cmdPalette = document.getElementById('cmdPalette');
-  const SLASH_COMMANDS = [
+  let SLASH_COMMANDS = [
     { cmd: '/swarm',        desc: 'Launch interactive multi-agent swarm loop' },
     { cmd: '/pswarm',       desc: 'Launch parallel swarm — concurrent batch dispatch' },
     { cmd: '/agent',        desc: 'Launch interactive single-agent loop' },
@@ -4057,6 +4166,11 @@ const icons = {
     { cmd: '/workflow',     desc: 'Run deterministic, replayable workflow file' },
     { cmd: '/resume',       desc: 'Resume a previous single-agent session' },
     { cmd: '/compact',      desc: 'Compact current session context' },
+    { cmd: '/wipe',         desc: 'Clear the current session context (fresh start)' },
+    { cmd: '/tokens',       desc: 'Show context token usage' },
+    { cmd: '/undo',         desc: 'Drop the last exchange from context' },
+    { cmd: '/retry',        desc: 'Re-run the last message' },
+    { cmd: '/copy',         desc: 'Copy the last assistant reply to the clipboard' },
     { cmd: '/model',        desc: 'View current models set for your swarm' },
     { cmd: '/setmodel',     desc: 'Change a model in your swarm config' },
     { cmd: '/swap',         desc: 'Swap the active agent (single-agent mode)' },
@@ -4083,6 +4197,11 @@ const icons = {
   const IN_AGENT_COMMANDS = [
     { cmd: '/qc',      desc: 'Quit current agent session and return to command interface' },
     { cmd: '/compact', desc: 'Compact current session context' },
+    { cmd: '/wipe',    desc: 'Clear the current session context (fresh start)' },
+    { cmd: '/tokens',  desc: 'Show context token usage' },
+    { cmd: '/undo',    desc: 'Drop the last exchange from context' },
+    { cmd: '/retry',   desc: 'Re-run the last message' },
+    { cmd: '/copy',    desc: 'Copy the last assistant reply to the clipboard' },
     { cmd: '/skill',   desc: 'Load a skill by name (e.g. /skill skill-name)' },
   ];
 
@@ -4090,46 +4209,58 @@ const icons = {
   // command palette can offer fuzzy-matched completions for '/skill <name>'
   // without having to re-run /skills every time the palette opens.
   let cachedSkills = [];   // [{ name, desc }]
-  let suppressNextSkillsPanel = false; // one-shot: drop the next 'Loaded Skills' panel render
-  let suppressNextSkillsUserEcho = false; // one-shot: drop the server-echoed '/skills' user-message bubble from silent prime
 
-  // ─── Skills-cache prime (race-safe) ───
-  // Replaces the old blind setTimeout(1500) fire. armSkillsPrime() schedules a
-  // single silent '/skills' send, but only after the connection has settled and
-  // only if no agent session is detected. cancelSkillsPrime() is called from
-  // handleEvent() the instant any session-mode signal appears (live OR replayed
-  // on a hard refresh mid-loop), guaranteeing we never inject '/skills' into a
-  // live agent's input stream. If anything is ambiguous we bias toward skipping
-  // — the palette already shows a graceful "run /skills" fallback when unprimed.
-  let _skillsPrimeTimer = null;
-  let _skillsPrimeArmed = false;
-  function cancelSkillsPrime() {
-    _skillsPrimeArmed = false;
-    if (_skillsPrimeTimer) { clearTimeout(_skillsPrimeTimer); _skillsPrimeTimer = null; }
+  // ─── API-driven UI priming (B5c/B5d/B5e) ───
+  // Pulls the skill catalog, the slash-command catalog, and the authoritative
+  // session mode from read-only HTTP endpoints. None of these touch the agent
+  // input stream, so there is no race to guard against and no echo to suppress
+  // — this replaces the entire old silent-'/skills' prime + banner-scrape hack.
+  // Endpoints are additive (v0.11.0+); on an older binary they 404 and we fall
+  // back to the bundled command table and the graceful "run /skills" palette hint.
+  function _apiUrl(pathPart) {
+    return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(pathPart) : pathPart;
   }
-  function armSkillsPrime() {
-    // Already have a cached list (restored from a prior session) → nothing to do.
-    if (Array.isArray(cachedSkills) && cachedSkills.length) return;
-    // Known to be in a session right now → never prime.
-    if (activeSessionMode) return;
-    cancelSkillsPrime();
-    _skillsPrimeArmed = true;
-    // Settle delay lets the server's session-state replay arrive first. If that
-    // replay indicates a session, handleEvent() will have already cancelled us.
-    _skillsPrimeTimer = setTimeout(() => {
-      _skillsPrimeTimer = null;
-      if (!_skillsPrimeArmed) return;            // cancelled by a session / busy signal
-      _skillsPrimeArmed = false;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (activeSessionMode) return;             // final guard: known in a session
-      if (isAgentBusy) return;                   // final guard: agent loop is active
-      if (Array.isArray(cachedSkills) && cachedSkills.length) return;
-      try {
-        suppressNextSkillsPanel = true;
-        suppressNextSkillsUserEcho = true;
-        ws.send('/skills');
-      } catch (_) { suppressNextSkillsPanel = false; suppressNextSkillsUserEcho = false; }
-    }, 2500); // longer settle for slow mobile reconnects; bias-to-skip covers a miss
+  async function primeFromApi() {
+    // Skills → completion cache for '/skill <name>'.
+    try {
+      const r = await fetch(_apiUrl('/api/skills'), { headers: { 'Accept': 'application/json' } });
+      if (r.ok) {
+        const data = await r.json();
+        const rows = (data && Array.isArray(data.items) ? data.items : [])
+          .map(s => ({ name: s.name, desc: s.description || '' }));
+        if (rows.length) updateCachedSkills(rows);
+      }
+    } catch (_) {}
+    // Command catalog → palette + in-session-safe gating.
+    try {
+      const r = await fetch(_apiUrl('/api/commands'), { headers: { 'Accept': 'application/json' } });
+      if (r.ok) {
+        const data = await r.json();
+        const items = (data && Array.isArray(data.items)) ? data.items : [];
+        if (items.length) updateCommandCatalog(items);
+      }
+    } catch (_) {}
+    // Authoritative session mode → replaces banner-text scraping.
+    try { await refreshSessionMode(); } catch (_) {}
+  }
+
+  // Pull authoritative session mode from /api/status. The server pins this
+  // around each orchestrator call, so it is correct even after a hard refresh
+  // mid-loop (the old code had to guess from replayed banner text).
+  async function refreshSessionMode() {
+    const r = await fetch(_apiUrl('/api/status'), { headers: { 'Accept': 'application/json' } });
+    if (!r.ok) return;
+    const data = await r.json();
+    const mode = (data && data.inSession && data.mode && data.mode !== 'interactive')
+      ? ('/' + data.mode) : null;
+    if (mode) {
+      activeSessionMode = mode;
+      try { sessionStorage.setItem('muxActiveSessionMode', activeSessionMode); } catch (_) {}
+    } else {
+      activeSessionMode = null;
+      try { sessionStorage.removeItem('muxActiveSessionMode'); } catch (_) {}
+    }
+    if (paletteOpen) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); }
   }
   // Set of exact user-input strings (lowercased) whose next server-echo we should drop.
   // Used for transparent /qc and the user command that triggered the session-switch
@@ -4169,6 +4300,21 @@ const icons = {
       else out.push({ name: line, desc: '' });
     }
     return out;
+  }
+
+  // B5e: apply the authoritative slash-command catalog from /api/commands.
+  // We refresh the in-session-safe GATING set (the correctness-critical bit that
+  // decides whether a command triggers a transparent /qc) from the server, always
+  // re-adding the client-only screen-clear commands. The palette DISPLAY list is
+  // left as the richer bundled table; the server catalog is a superset-safe source
+  // of truth for gating, not a UI downgrade.
+  function updateCommandCatalog(items) {
+    try {
+      const safe = items.filter(c => c && c.inSessionSafe && c.cmd).map(c => c.cmd);
+      if (safe.length) {
+        IN_SESSION_SAFE_CMDS = new Set([...safe, ...CLIENT_ONLY_SAFE_CMDS]);
+      }
+    } catch (_) {}
   }
 
   function updateCachedSkills(rows) {
@@ -4214,7 +4360,7 @@ const icons = {
       const sub = (skillMatch[1] || '').trim();
       const skills = cachedSkills || [];
       if (!skills.length) {
-        return [{ cmd: '/skill', desc: 'Skills not loaded yet — run /skills or wait a moment' }];
+        return [{ cmd: '/skill', desc: 'Skills not loaded yet — run /skills to populate' }];
       }
       const scored = skills
         .map(s => ({
@@ -4729,7 +4875,7 @@ const icons = {
         el.addEventListener('click', async (e) => {
           const dlBtn = e.target.closest('.dl-btn');
           if (dlBtn) {
-            window.open(`/api/download/${currentTab}/${encodePath(dlBtn.dataset.dl)}`, '_blank');
+            window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${currentTab}/${encodePath(dlBtn.dataset.dl)}`):`/api/download/${currentTab}/${encodePath(dlBtn.dataset.dl)}`), '_blank');
             return;
           }
           
@@ -4742,7 +4888,7 @@ const icons = {
             loadFileList(path);
           } else {
             // File download
-            window.open(`/api/download/${currentTab}/${encodePath(path)}`, '_blank');
+            window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${currentTab}/${encodePath(path)}`):`/api/download/${currentTab}/${encodePath(path)}`), '_blank');
           }
         });
       });
@@ -4840,9 +4986,9 @@ const icons = {
     out.querySelectorAll('.file-item-container').forEach(c => {
       c.querySelector('.file-item').addEventListener('click', (e) => {
         const dlBtn = e.target.closest('.dl-btn');
-        if (dlBtn) { window.open(`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`, '_blank'); return; }
+        if (dlBtn) { window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`):`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`), '_blank'); return; }
         if (c.dataset.isdir === 'true') loadFileList(c.dataset.path);
-        else window.open(`/api/download/${tab}/${encodePath(c.dataset.path)}`, '_blank');
+        else window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${tab}/${encodePath(c.dataset.path)}`):`/api/download/${tab}/${encodePath(c.dataset.path)}`), '_blank');
       });
     });
   }
@@ -5120,7 +5266,8 @@ const icons = {
           ${reasoningBlocks ? `<span class="mux-sess-chip">${reasoningBlocks} reasoning</span>` : ''}
         </div>
         <div class="mux-sess-head-actions">
-                    <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
+          <button class="mux-sess-btn primary" data-act="resume">Resume</button>
+          <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
           <button class="mux-sess-btn" data-act="download">Download JSON</button>
         </div>
       </div>`;
@@ -5174,8 +5321,45 @@ const icons = {
       btn.textContent = copied ? 'Copied!' : 'Copy failed';
       setTimeout(() => { btn.textContent = orig; }, 1400);
     });
+    // Resume: validate the session is resumable, then send '/resume <id>' over the
+    // WS (the resumed agent loop streams back over the same channel as /agent), and
+    // return the user to the chat view. The id is the timestamped session folder name.
+    const _resumeBtn = host.querySelector('[data-act="resume"]');
+    if (_resumeBtn) _resumeBtn.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Resuming…';
+      try {
+        // Pre-check via /api/sessions/{id}; tolerate older binaries (404 on route)
+        // by proceeding anyway — the runtime validates again on /resume <id>.
+        let resumable = true;
+        try {
+          const r = await fetch(_apiUrl(`/api/sessions/${encodeURIComponent(name)}`), { headers: { 'Accept': 'application/json' } });
+          if (r.ok) { const d = await r.json(); resumable = !!d.resumable; }
+        } catch (_) {}
+        if (!resumable) {
+          btn.textContent = 'Not resumable';
+          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
+          return;
+        }
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          btn.textContent = 'Not connected';
+          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
+          return;
+        }
+        // Hand off to the chat view and resume.
+        try { if (sidebar.classList.contains('open')) toggleSidebar(); } catch (_) {}
+        await send('/resume ' + name);
+        try { input.focus(); } catch (_) {}
+      } finally {
+        // Button lives in the sidebar which we just closed; restore state in case
+        // the user reopens before navigating away.
+        setTimeout(() => { try { btn.textContent = orig; btn.disabled = false; } catch (_) {} }, 1200);
+      }
+    });
     host.querySelector('[data-act="download"]').addEventListener('click', () => {
-      window.open(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`, '_blank');
+      window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`):`/api/download/sessions/${encodePath(name + '/agent_session.json')}`), '_blank');
     });
   }
 
@@ -5499,6 +5683,14 @@ const icons = {
         background: rgba(100,180,220,0.18);
         border-color: var(--accent, #64b4dc);
       }
+      .mux-sess-btn.primary {
+        background: var(--accent, #64b4dc);
+        border-color: var(--accent, #64b4dc);
+        color: var(--bg, #0b0d10);
+        font-weight: 600;
+      }
+      .mux-sess-btn.primary:hover { filter: brightness(1.08); }
+      .mux-sess-btn:disabled { opacity: 0.55; cursor: default; }
 
       /* ── Message stream ─────────────────────────────────── */
       .mux-sess-body {
@@ -6323,7 +6515,11 @@ const icons = {
     currentUrl = url;
     urlIn.value = url;
     const kind = opts.kind || classify(url);
-    renderInto(url, kind);
+    // Auth: decorate same-origin /api resources with the token so direct
+    // img/iframe/fetch loads succeed when serve.auth is enabled. The URL bar
+    // keeps showing the clean (token-free) url.
+    const fetchUrl = (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(url) : url;
+    renderInto(fetchUrl, kind);
   }
 
   function openPanel() {
@@ -6592,7 +6788,7 @@ const icons = {
 
     const pill = document.createElement('div');
     pill.id = 'mux-cursor-hint';
-    pill.textContent = 'click: download · right-click: preview';
+    pill.textContent = 'click: download · right-click: menu';
     document.body.appendChild(pill);
 
     let activeRow = null;
@@ -6623,29 +6819,73 @@ const icons = {
     window.addEventListener('scroll', () => { activeRow = null; pill.classList.remove('show'); }, true);
   })();
 
-  // Integration: right-click / long-press on a file row opens the preview.
+  // Integration: right-click / long-press on a file row opens a context menu
+  // (Open in editor / Preview / Download). Left-click still downloads.
   (function bindFileList(){
-    let lpTimer = null, lpTarget = null;
-    function previewRow(row){
-      if (!row || row.dataset.isdir === 'true') return;
-      const path = row.dataset.path;
+    let lpTimer = null, lpTarget = null, menuEl = null;
+    function tabOf(){ return (typeof window.currentTab !== 'undefined') ? window.currentTab : 'sandbox'; }
+    function encOf(path){ return String(path).split(/[\\/]/).map(encodeURIComponent).join('/'); }
+    function preview(path){ window.MuxPreview.show('/api/download/' + tabOf() + '/' + encOf(path)); }
+    function download(path){ window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url('/api/download/' + tabOf() + '/' + encOf(path)):'/api/download/' + tabOf() + '/' + encOf(path)), '_blank'); }
+    function openEditor(path, name){ window.MuxEditor && window.MuxEditor.open(tabOf(), path, name); }
+
+    function closeMenu(){ if (menuEl){ menuEl.remove(); menuEl = null;
+      document.removeEventListener('pointerdown', onDocDown, true);
+      window.removeEventListener('blur', closeMenu);
+      window.removeEventListener('scroll', closeMenu, true); } }
+    function onDocDown(e){ if (menuEl && !menuEl.contains(e.target)) closeMenu(); }
+
+    function showMenu(x, y, row){
+      closeMenu();
+      const path = row.dataset.path, name = row.dataset.name || '';
+      const isDir = row.dataset.isdir === 'true';
       if (!path) return;
-      const tab = (typeof window.currentTab !== 'undefined') ? window.currentTab : 'sandbox';
-      const enc = String(path).split(/[\\/]/).map(encodeURIComponent).join('/');
-      window.MuxPreview.show('/api/download/' + tab + '/' + enc);
+      const items = [];
+      if (!isDir){
+        if (tabOf() === 'sandbox') items.push({ label: 'Open in editor', icon: '✎', act: () => openEditor(path, name) });
+        items.push({ label: 'Preview', icon: '◉', act: () => preview(path) });
+        items.push({ label: 'Download', icon: '↓', act: () => download(path) });
+      } else {
+        items.push({ label: 'Open folder', icon: '▸', act: () => loadFileList(path) });
+      }
+      const m = document.createElement('div');
+      m.className = 'mux-ctx-menu';
+      items.forEach(it => {
+        const b = document.createElement('button');
+        b.className = 'mux-ctx-item';
+        b.innerHTML = '<span class="mux-ctx-ico">' + it.icon + '</span><span>' + it.label + '</span>';
+        b.addEventListener('click', () => { closeMenu(); it.act(); });
+        m.appendChild(b);
+      });
+      document.body.appendChild(m);
+      // position within viewport
+      const mw = m.offsetWidth, mh = m.offsetHeight;
+      m.style.left = Math.min(x, window.innerWidth - mw - 6) + 'px';
+      m.style.top  = Math.min(y, window.innerHeight - mh - 6) + 'px';
+      menuEl = m;
+      document.addEventListener('pointerdown', onDocDown, true);
+      window.addEventListener('blur', closeMenu);
+      window.addEventListener('scroll', closeMenu, true);
     }
+
     document.addEventListener('contextmenu', (e) => {
       const row = e.target.closest('.file-item-container');
       if (!row) return;
       e.preventDefault();
-      previewRow(row);
+      showMenu(e.clientX, e.clientY, row);
     });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
+
+    // Long-press (touch) opens the same menu at the row.
     document.addEventListener('pointerdown', (e) => {
       const row = e.target.closest('.file-item-container');
-      if (!row) return;
+      if (!row || e.pointerType === 'mouse') return;
       lpTarget = row;
       clearTimeout(lpTimer);
-      lpTimer = setTimeout(() => { previewRow(lpTarget); lpTarget = null; }, 550);
+      lpTimer = setTimeout(() => {
+        const r = lpTarget.getBoundingClientRect();
+        showMenu(r.left + 24, r.top + 24, lpTarget); lpTarget = null;
+      }, 550);
     });
     const cancel = () => { clearTimeout(lpTimer); lpTarget = null; };
     document.addEventListener('pointerup', cancel);
@@ -6654,6 +6894,23 @@ const icons = {
       if (!lpTarget) return;
       if (Math.abs(e.movementX) + Math.abs(e.movementY) > 6) cancel();
     });
+  })();
+
+  (function injectCtxMenuStyle(){
+    if (document.getElementById('mux-ctx-style')) return;
+    const st = document.createElement('style'); st.id = 'mux-ctx-style';
+    st.textContent = [
+      '.mux-ctx-menu{position:fixed;z-index:100000;min-width:170px;padding:5px;',
+      'background:var(--bg-card,#1a1a1f);border:1px solid var(--border,#333);border-radius:8px;',
+      'box-shadow:0 8px 28px rgba(0,0,0,0.45);display:flex;flex-direction:column;gap:1px;',
+      'font-family:var(--font-sans,inherit);backdrop-filter:blur(8px)}',
+      '.mux-ctx-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border:none;',
+      'background:transparent;color:var(--text,#e4e4e7);font-size:13px;text-align:left;',
+      'border-radius:5px;cursor:pointer;width:100%}',
+      '.mux-ctx-item:hover{background:rgba(var(--accent-rgb,100,180,220),0.14);color:var(--accent,#64b4dc)}',
+      '.mux-ctx-ico{width:16px;display:inline-flex;justify-content:center;opacity:.85;font-size:13px}'
+    ].join('');
+    document.head.appendChild(st);
   })();
 
   window.MuxPreview = {
@@ -7324,7 +7581,8 @@ const icons = {
     fontMono: 'JetBrains Mono',
     fontSans: 'IBM Plex Sans',
     customFonts: [],
-    warnSessionSwitch: true
+    warnSessionSwitch: true,
+    editorTheme: 'auto'
   };
   function loadState(){
     try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
@@ -7410,6 +7668,8 @@ const icons = {
     root.style.setProperty('--font-sans', sansStack);
     loadGoogleFont(state.fontMono);
     loadGoogleFont(state.fontSans);
+    // Let the code editor re-evaluate its theme when settings change.
+    try { window.MuxEditor && window.MuxEditor.refreshTheme && window.MuxEditor.refreshTheme(); } catch(_) {}
   }
 
   function renderUI(){
@@ -7663,6 +7923,13 @@ const icons = {
     section('Sessions', [
       toggleRow('warnSessionSwitch', 'Warn before switching session',
         'When you run any slash command (other than /qc, /compact, /skill, or a screen-clear) while already in an agent session, ask for confirmation before quitting the current session. Turn off to switch silently.'),
+    ]);
+    section('Editor', [
+      segRow('editorTheme', 'Editor theme', [
+        { label: 'Auto (match app)', value: 'auto' },
+        { label: 'Dark', value: 'vs-dark' },
+        { label: 'Light', value: 'vs' },
+      ], 'Right-click a sandbox file \u2192 Open in editor. Auto derives editor colors from your app theme.'),
     ]);
     section('Preview FAB', [
       toggleRow('showPreviewFab', 'Show preview FAB'),
@@ -9950,6 +10217,212 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 
+
+<!-- ===== MuxEditor (Batch 3 / C4): bundled Monaco IDE pane ===== -->
+<style>
+  #muxEditorOverlay{position:fixed;inset:0;z-index:99999;display:none;flex-direction:column;
+    background:var(--bg,#1e1e1e);color:var(--text,#ddd);font-family:var(--font-sans,inherit)}
+  #muxEditorOverlay.open{display:flex}
+  #muxEditorBar{display:flex;align-items:center;gap:10px;padding:8px 12px;
+    border-bottom:1px solid var(--border,#333);background:var(--bg-card,#252526);flex:0 0 auto}
+  #muxEditorBar .mux-ed-title{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;max-width:50vw;color:var(--text,#eee)}
+  #muxEditorBar .mux-ed-dirty{color:var(--accent,#e2c08d);margin-left:4px}
+  #muxEditorBar .spacer{flex:1}
+  #muxEditorBar button{background:var(--bg-input,#333);color:var(--text,inherit);
+    border:1px solid var(--border,#444);border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
+  #muxEditorBar button:hover{border-color:var(--accent,#888)}
+  #muxEditorBar button.primary{background:var(--accent,#0e639c);border-color:transparent;color:var(--accent-fg,#fff)}
+  #muxEditorBar button:disabled{opacity:.5;cursor:default}
+  #muxEditorHost{flex:1;min-height:0}
+  #muxEditorStatus{flex:0 0 auto;padding:4px 12px;font-size:11px;color:var(--muted,#888);
+    border-top:1px solid var(--border,#333);min-height:20px}
+</style>
+<div id="muxEditorOverlay" role="dialog" aria-label="Code editor">
+  <div id="muxEditorBar">
+    <span class="mux-ed-title" id="muxEditorTitle">untitled</span>
+    <span class="mux-ed-dirty" id="muxEditorDirty" style="display:none">●</span>
+    <span class="spacer"></span>
+    <button id="muxEditorSave" class="primary">Save</button>
+    <button id="muxEditorClose">Close</button>
+  </div>
+  <div id="muxEditorHost"></div>
+  <div id="muxEditorStatus"></div>
+</div>
+<script>
+(function(){
+  var ed=null, loaderStarted=false, monacoReady=false, themeDefined=false;
+  var cur={type:null,path:null,name:null,dirty:false,editable:false};
+  var ov=document.getElementById('muxEditorOverlay');
+  var hostEl=document.getElementById('muxEditorHost');
+  var titleEl=document.getElementById('muxEditorTitle');
+  var dirtyEl=document.getElementById('muxEditorDirty');
+  var statusEl=document.getElementById('muxEditorStatus');
+  var saveBtn=document.getElementById('muxEditorSave');
+  var closeBtn=document.getElementById('muxEditorClose');
+
+  function status(m){ statusEl.textContent=m||''; }
+  function setDirty(d){ cur.dirty=d; dirtyEl.style.display=d?'':'none';
+    saveBtn.disabled=!cur.editable||!d; }
+  var EXT_LANG={js:'javascript',mjs:'javascript',cjs:'javascript',ts:'typescript',jsx:'javascript',
+    tsx:'typescript',json:'json',html:'html',htm:'html',css:'css',scss:'scss',less:'less',
+    md:'markdown',markdown:'markdown',py:'python',cs:'csharp',java:'java',c:'c',h:'c',cpp:'cpp',
+    hpp:'cpp',cc:'cpp',go:'go',rs:'rust',rb:'ruby',php:'php',sh:'shell',bash:'shell',ps1:'powershell',
+    yaml:'yaml',yml:'yaml',toml:'ini',ini:'ini',cfg:'ini',conf:'ini',xml:'xml',sql:'sql',
+    dockerfile:'dockerfile',txt:'plaintext',log:'plaintext'};
+  function langFor(name){ var m=(name||'').toLowerCase().match(/\.([a-z0-9]+)$/);
+    if(!m) return 'plaintext'; return EXT_LANG[m[1]]||'plaintext'; }
+
+  // ---- theme derivation from the app's CSS variables ----
+  function cssVar(name,fallback){
+    var v=getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v||fallback;
+  }
+  function toHex(c){
+    if(!c) return null;
+    c=c.trim();
+    if(c[0]==='#'){
+      if(c.length===4) return '#'+c[1]+c[1]+c[2]+c[2]+c[3]+c[3];
+      return c.slice(0,7);
+    }
+    var m=c.match(/rgba?\(([^)]+)\)/);
+    if(m){ var p=m[1].split(',').map(function(x){return parseInt(x,10);});
+      return '#'+[p[0],p[1],p[2]].map(function(x){return ('0'+(x||0).toString(16)).slice(-2);}).join(''); }
+    return null;
+  }
+  function luminance(hex){
+    if(!hex||hex[0]!=='#'||hex.length<7) return 0;
+    var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+    return (0.2126*r+0.7152*g+0.0722*b)/255;
+  }
+  // returns a Monaco theme name to apply for the current settings + app theme
+  function resolveTheme(){
+    var pref='auto';
+    try{ var s=(window.MuxSettings&&window.MuxSettings.get())||{}; pref=s.editorTheme||'auto'; }catch(e){}
+    if(pref==='vs'||pref==='vs-dark') return pref;
+    // auto: build a custom theme from CSS vars; base on bg luminance
+    if(!monacoReady) return 'vs-dark';
+    var bg=toHex(cssVar('--bg','#09090b'))||'#1e1e1e';
+    var text=toHex(cssVar('--text','#e4e4e7'))||'#e4e4e7';
+    var accent=toHex(cssVar('--accent','#64b4dc'))||'#64b4dc';
+    var border=toHex(cssVar('--border','#2a2a30'))||'#333333';
+    var dark=luminance(bg)<0.5;
+    try{
+      monaco.editor.defineTheme('mux-app',{
+        base: dark?'vs-dark':'vs',
+        inherit:true,
+        rules:[],
+        colors:{
+          'editor.background':bg,
+          'editor.foreground':text,
+          'editorLineNumber.foreground': dark?'#5a5a66':'#b0b0b8',
+          'editorLineNumber.activeForeground':accent,
+          'editorCursor.foreground':accent,
+          'editor.selectionBackground':accent+'44',
+          'editor.lineHighlightBackground': dark?'#ffffff0a':'#0000000a',
+          'editorIndentGuide.background':border,
+          'editorGutter.background':bg,
+          'minimap.background':bg
+        }
+      });
+      themeDefined=true;
+      return 'mux-app';
+    }catch(e){ return dark?'vs-dark':'vs'; }
+  }
+  function applyTheme(){
+    if(!monacoReady) return;
+    try{ monaco.editor.setTheme(resolveTheme()); }catch(e){}
+  }
+
+  function ensureMonaco(cb){
+    if(monacoReady){ cb(); return; }
+    if(loaderStarted){ var iv=setInterval(function(){ if(monacoReady){clearInterval(iv);cb();} },50); return; }
+    loaderStarted=true; status('Loading editor\u2026');
+    var s=document.createElement('script'); s.src='/monaco/vs/loader.js';
+    s.onload=function(){
+      window.require.config({paths:{vs:'/monaco/vs'}});
+      window.MonacoEnvironment={ getWorkerUrl:function(){
+        return URL.createObjectURL(new Blob([
+          "self.MonacoEnvironment={baseUrl:'"+location.origin+"/monaco/'};",
+          "importScripts('"+location.origin+"/monaco/vs/base/worker/workerMain.js');"
+        ],{type:'text/javascript'})); } };
+      window.require(['vs/editor/editor.main'],function(){ monacoReady=true; status(''); cb(); });
+    };
+    s.onerror=function(){ status('Failed to load editor assets (/monaco/vs/loader.js).'); };
+    document.head.appendChild(s);
+  }
+
+  function mountEditor(content,language){
+    var theme=resolveTheme();
+    if(!ed){
+      ed=monaco.editor.create(hostEl,{value:content,language:language,automaticLayout:true,
+        theme:theme,readOnly:!cur.editable,fontSize:13,minimap:{enabled:true},
+        scrollBeyondLastLine:false,
+        fontFamily:cssVar('--font-mono','JetBrains Mono, Consolas, monospace')});
+      ed.onDidChangeModelContent(function(){ if(cur.editable) setDirty(true); });
+      ed.addCommand(monaco.KeyMod.CtrlCmd|monaco.KeyCode.KeyS,function(){ doSave(); });
+    } else {
+      var old=ed.getModel();
+      var nm=monaco.editor.createModel(content,language);
+      ed.setModel(nm); ed.updateOptions({readOnly:!cur.editable,theme:theme});
+      if(old) old.dispose();
+    }
+    applyTheme();
+    setDirty(false);
+  }
+
+  async function open(type,path,name){
+    cur.type=type; cur.path=path; cur.name=name||path;
+    titleEl.textContent=cur.name; titleEl.title=path;
+    ov.classList.add('open');
+    cur.editable=false;
+    try{ var cfg=await (await fetch('/api/config')).json();
+      cur.editable=(type==='sandbox') && !!(cfg.serve&&cfg.serve.editable); }catch(e){}
+    saveBtn.style.display=cur.editable?'':'none';
+    status('Loading '+cur.name+'\u2026');
+    var resp,data;
+    try{ resp=await fetch('/api/read/'+type+'/'+path.split('/').map(encodeURIComponent).join('/'));
+      data=await resp.json(); }catch(e){ status('Read failed: '+e.message); return; }
+    if(!resp.ok){ status('Error: '+((data&&data.error)||resp.status)); return; }
+    ensureMonaco(function(){
+      mountEditor(data.content||'',langFor(cur.name));
+      status((cur.editable?'Editable':'Read-only')+(data.truncated?' \u00b7 truncated (large file)':'')
+        +' \u00b7 '+(data.sizeBytes||0)+' bytes');
+    });
+  }
+
+  async function doSave(){
+    if(!cur.editable||!ed||!cur.dirty) return;
+    var content=ed.getValue(); saveBtn.disabled=true; status('Saving\u2026');
+    try{
+      var resp=await fetch('/api/save/'+cur.type+'/'+cur.path.split('/').map(encodeURIComponent).join('/'),
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
+      var data=await resp.json();
+      if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.sizeBytes||content.length)+' bytes \u00b7 '+new Date().toLocaleTimeString()); }
+      else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+    }catch(e){ status('Save failed: '+e.message); saveBtn.disabled=false; }
+  }
+
+  function close(){
+    if(cur.dirty && !confirm('Discard unsaved changes?')) return;
+    ov.classList.remove('open');
+  }
+
+  saveBtn.addEventListener('click',doSave);
+  closeBtn.addEventListener('click',close);
+  document.addEventListener('keydown',function(e){ if(e.key==='Escape'&&ov.classList.contains('open')) close(); });
+
+  // Re-theme live when the app theme preset changes.
+  try{
+    var mo=new MutationObserver(function(){ applyTheme(); });
+    mo.observe(document.body,{attributes:true,attributeFilter:['data-theme-preset']});
+    mo.observe(document.documentElement,{attributes:true,attributeFilter:['style']});
+  }catch(e){}
+
+  window.MuxEditor={ open:open, refreshTheme:applyTheme };
+})();
+</script>
+<!-- ===== /MuxEditor ===== -->
 </body>
 </html>
 <!-- test comment for live diffs -->

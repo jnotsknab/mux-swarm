@@ -29,7 +29,7 @@ namespace MuxSwarm.Utils;
 ///   /api/upload?dir=subdir           File upload (multipart or base64 JSON)
 ///   /*                               Static files from wwwroot
 /// </summary>
-public static class ServeMode
+public static partial class ServeMode
 {
     private static readonly ConcurrentDictionary<string, WebSocket> _clients = new();
     private static readonly Channel<string> _inputChannel = Channel.CreateUnbounded<string>(
@@ -45,6 +45,19 @@ public static class ServeMode
     private static string _sandboxRoot = "";
     private static string _sessionsRoot = "";
 
+    /// <summary>Process/serve start time (UTC), for /api/health uptime.</summary>
+    private static readonly DateTime _startedAtUtc = DateTime.UtcNow;
+
+    /// <summary>True once serve mode has started. Gates structured-event emission
+    /// so orchestrators can call <see cref="EmitEvent"/> unconditionally; it is a
+    /// no-op when running as a plain CLI (no WS clients).</summary>
+    internal static bool IsServing { get; private set; }
+
+    /// <summary>Resolved auth token (literal or env-var expanded). Empty when auth disabled.</summary>
+    private static string _authToken = "";
+    /// <summary>True when serve-layer auth is active (enabled AND a non-empty token resolved).</summary>
+    private static bool _authEnabled;
+
     /// <summary>
     /// Start Kestrel in the background, redirect I/O, then return.
     /// The caller (AppLoop) continues with its normal interactive loop,
@@ -53,6 +66,9 @@ public static class ServeMode
     public static async Task StartAsync(int port = 6723)
     {
         MuxConsole.StdioMode = true;
+        IsServing = true;
+
+        InitAuth();
 
         _sandboxRoot = App.Config.Filesystem?.SandboxPath ?? "";
         _sessionsRoot = PlatformContext.SessionsDirectory;
@@ -81,12 +97,33 @@ public static class ServeMode
             KeepAliveInterval = TimeSpan.FromSeconds(30),
         });
 
+        // Opt-in auth gate (D2/D3). When enabled, every /api/* request and the /ws
+        // upgrade must carry the bearer token. Static assets stay open so the web
+        // app can load and present its token prompt. No-op when auth disabled.
+        app.Use(async (context, next) =>
+        {
+            if (_authEnabled && RequiresAuth(context) && !IsAuthorized(context))
+            {
+                if (context.WebSockets.IsWebSocketRequest)
+                {
+                    context.Response.StatusCode = 401; // upgrade refused
+                    return;
+                }
+                context.Response.Headers.Append("WWW-Authenticate", "Bearer");
+                await WriteJson(context, 401, new { error = "Unauthorized" });
+                return;
+            }
+            await next();
+        });
+
         app.Map("/ws", HandleWebSocket);
 
         app.MapGet("/api/list/{type}", HandleListFiles);
         app.MapGet("/api/list/{type}/{**path}", HandleListFiles);
         app.MapGet("/api/download/{type}/{**path}", HandleDownload);
         app.MapPost("/api/upload", HandleUpload);
+
+        MapApiRoutes(app);
 
         if (wwwroot != null && Directory.Exists(wwwroot))
         {
@@ -98,6 +135,15 @@ public static class ServeMode
 
             app.MapFallback(async context =>
             {
+                // Unmatched /api/* must not fall through to the SPA shell.
+                // Kestrel normalizes "../" before routing, which can leave a
+                // traversal attempt unmatched; return a clean 404 JSON here.
+                if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase))
+                {
+                    await WriteJson(context, 404, new { error = "Not found" });
+                    return;
+                }
+
                 var indexPath = Path.Combine(wwwroot, "index.html");
                 if (File.Exists(indexPath))
                 {
@@ -366,6 +412,7 @@ public static class ServeMode
                 var filepath = Path.Combine(targetDir, uniqueName);
                 await File.WriteAllBytesAsync(filepath, fileBytes);
 
+                EmitAttachment(filepath, uniqueName);
                 await WriteJson(context, 200, new { filename = filepath, name = uniqueName, size = fileBytes.Length });
             }
             catch (FormatException)
@@ -402,6 +449,7 @@ public static class ServeMode
                     await file.CopyToAsync(stream);
                 }
 
+                EmitAttachment(filepath, uniqueName);
                 uploaded.Add(new
                 {
                     filename = filepath,
@@ -461,7 +509,7 @@ public static class ServeMode
     private static async Task WriteJson(HttpContext context, int status, object data)
     {
         context.Response.StatusCode = status;
-        context.Response.ContentType = "application/json";
+        context.Response.ContentType = "application/json; charset=utf-8";
         await context.Response.WriteAsync(JsonSerializer.Serialize(data, _jsonOpts));
     }
 
@@ -474,6 +522,112 @@ public static class ServeMode
         _replayBuffer.Enqueue(line);
         while (_replayBuffer.Count > MaxReplay)
             _replayBuffer.TryDequeue(out _);
+    }
+
+    // ---- Opt-in auth (D2/D3) ----------------------------------------------
+
+    /// <summary>
+    /// Resolve auth config at startup. The token may be a literal or an env-var
+    /// reference: <c>{VAR}</c>, <c>${VAR}</c>, or <c>$VAR</c>. Auth is only active
+    /// when enabled AND a non-empty token resolves.
+    /// </summary>
+    private static void InitAuth()
+    {
+        var auth = App.Config.Serve?.Auth;
+        if (auth is null || !auth.Enabled) { _authEnabled = false; _authToken = ""; return; }
+
+        _authToken = ResolveTokenValue(auth.Token);
+        _authEnabled = !string.IsNullOrEmpty(_authToken);
+
+        if (auth.Enabled && !_authEnabled)
+            MuxConsole.WriteWarning("serve.auth.enabled is true but no token resolved; auth is INACTIVE.");
+        else if (_authEnabled)
+            MuxConsole.WriteSuccess("Serve auth enabled (bearer token required for /api and /ws).");
+    }
+
+    /// <summary>Expand an env-var reference if present; otherwise return the literal.</summary>
+    private static string ResolveTokenValue(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        raw = raw.Trim();
+        string? name = null;
+        if (raw.Length > 2 && raw[0] == '{' && raw[^1] == '}') name = raw[1..^1];
+        else if (raw.Length > 3 && raw.StartsWith("${") && raw[^1] == '}') name = raw[2..^1];
+        else if (raw.Length > 1 && raw[0] == '$') name = raw[1..];
+        if (name != null)
+            return Environment.GetEnvironmentVariable(name)?.Trim() ?? "";
+        return raw;
+    }
+
+    /// <summary>Strict gate: all /api/* and the /ws upgrade require auth.</summary>
+    private static bool RequiresAuth(HttpContext context)
+    {
+        var path = context.Request.Path;
+        return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/ws", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Validate the presented token (constant-time). Accepts:
+    /// <c>Authorization: Bearer &lt;token&gt;</c>, WS <c>?token=</c> query param, or
+    /// the <c>Sec-WebSocket-Protocol</c> header value <c>bearer,&lt;token&gt;</c>.
+    /// </summary>
+    private static bool IsAuthorized(HttpContext context)
+    {
+        if (!_authEnabled) return true;
+
+        string? presented = null;
+
+        var authHeader = context.Request.Headers.Authorization.ToString();
+        if (!string.IsNullOrEmpty(authHeader) &&
+            authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            presented = authHeader["Bearer ".Length..].Trim();
+
+        if (presented == null && context.Request.Query.TryGetValue("token", out var qt))
+            presented = qt.ToString();
+
+        if (presented == null)
+        {
+            var proto = context.Request.Headers["Sec-WebSocket-Protocol"].ToString();
+            if (!string.IsNullOrEmpty(proto))
+            {
+                var parts = proto.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length == 2 && parts[0].Equals("bearer", StringComparison.OrdinalIgnoreCase))
+                    presented = parts[1];
+            }
+        }
+
+        if (string.IsNullOrEmpty(presented)) return false;
+
+        var a = Encoding.UTF8.GetBytes(presented);
+        var b = Encoding.UTF8.GetBytes(_authToken);
+        return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(a, b);
+    }
+
+    /// <summary>
+    /// Emit a structured JSON event frame to all WS clients (camelCase, NDJSON).
+    /// Additive: these frames sit alongside the existing text frames so legacy
+    /// clients (which try/catch JSON.parse) are unaffected. No-op when not serving.
+    /// </summary>
+    internal static void EmitEvent(object payload)
+    {
+        if (!IsServing) return;
+        try { BroadcastLine(JsonSerializer.Serialize(payload, _jsonOpts)); }
+        catch { /* serialization must never break the agent loop */ }
+    }
+
+    /// <summary>Classify an extension as an image for the attachment event.</summary>
+    private static bool IsImageExt(string ext) => ext.ToLowerInvariant() switch
+    {
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".webp" or ".bmp" or ".svg" or ".ico" => true,
+        _ => false,
+    };
+
+    /// <summary>Emit a B3 attachment event for an uploaded/saved file.</summary>
+    private static void EmitAttachment(string fullPath, string name)
+    {
+        var ext = Path.GetExtension(name);
+        EmitEvent(new { type = "attachment", path = fullPath, name, ext, isImage = IsImageExt(ext) });
     }
 
     private static void BroadcastLine(string line)

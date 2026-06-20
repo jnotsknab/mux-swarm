@@ -27,7 +27,8 @@ Top-level fields:
   "filesystem": { },
   "userInfo": { },
   "telemetry": { },
-  "daemon": { }
+  "daemon": { },
+  "serve": { }
 }
 ```
 
@@ -132,6 +133,33 @@ Controls background trigger loops. Requires `--daemon` flag to activate.
   "triggers": [ ]
 }
 ```
+
+### serve
+
+Serve-layer (web UI / HTTP API) settings. Entire object is optional; absent or
+partial configs fall back to safe defaults (read-only, no auth). Default keeps the
+runtime **zero-auth-by-design** behind an nginx perimeter.
+
+```json
+"serve": {
+  "editable": false,
+  "auth": { "enabled": false, "token": "", "scheme": "bearer" }
+}
+```
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `editable` | `false` | When true, IDE write endpoints (`POST /api/save`, `POST /api/fs`) are enabled for the **sandbox** root only. Sessions stay read-only. When false they return `403`. |
+| `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
+| `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |
+| `auth.scheme` | `"bearer"` | Auth scheme. |
+
+When `auth.enabled` is true, **all** `/api/*` requests and the `/ws` upgrade require
+the token (HTTP `Authorization: Bearer <token>`; WS `?token=<token>` query param or
+`Sec-WebSocket-Protocol: bearer,<token>`). Static assets stay open so the web app
+can load its login prompt. Token compare is constant-time, never logged, and never
+returned by `/api/config` (which exposes only a boolean `authRequired`). If enabled
+but no token resolves, auth stays inactive with a warning (never silently locks out).
 
 ## Daemon Triggers
 
@@ -545,6 +573,17 @@ Binds to all interfaces (0.0.0.0). Accessible on LAN, Tailscale, or any network 
 Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (Zinc, Light, Ocean, Matrix), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
 
 Combine with `--daemon` for background triggers alongside the web UI. Combine with `--register` for persistence across reboots.
+
+### In-app editor & auth
+
+The web UI includes a bundled **Monaco** code editor (offline, syntax highlighting
+for ~90 languages, theme-aware). Right-click a sandbox file → **Open in editor**.
+Saving requires `serve.editable: true` (see [serve](#serve)); otherwise the editor
+is read-only.
+
+Optional app-level auth is configured via `serve.auth` (see [serve](#serve)). The
+web app prompts for the token, stores it in `sessionStorage`, and attaches it to all
+API/WS calls. App auth complements (does not replace) an nginx perimeter.
 
 ## Workflow Engine
 
