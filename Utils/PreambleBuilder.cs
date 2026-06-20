@@ -6,7 +6,7 @@
 /// </summary>
 public static class PreambleBuilder
 {
-    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false)
+    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
     {
         var preamble = "";
 
@@ -44,6 +44,25 @@ public static class PreambleBuilder
             - If the task is trivial (single file read, simple question), skip planning and just do it
             - If the user approved a plan, follow it. Do not deviate without re-confirming
             - Use ask_user(type: 'select') when you need the user to choose between distinct approaches
+            ";
+
+        if (ultra)
+            preamble += @"
+            ## Ultra Mode — Maximum Thoroughness (DEEP REASONING)
+            You are operating in Ultra mode: invest your maximum reasoning budget. Optimize for
+            correctness and depth over speed. This is the highest-rigor mode the runtime offers.
+
+            ### Reasoning Discipline (MANDATORY)
+            1. Decompose the request into its smallest meaningful sub-problems before acting.
+            2. State your assumptions EXPLICITLY. Flag anything uncertain and how you would verify it.
+            3. Consider at least two distinct approaches; weigh trade-offs before committing to one.
+            4. Reason through edge cases, failure modes, and second-order consequences.
+            5. Before finalizing, run an explicit self-review pass: re-read your plan/output, look for
+               errors, gaps, and unstated assumptions, and correct them.
+            6. Prefer verified ground truth (filesystem, tool output) over recollection.
+
+            Be rigorous, not verbose: depth of thought, not padding. Surface the reasoning that
+            changes the decision; omit filler.
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
