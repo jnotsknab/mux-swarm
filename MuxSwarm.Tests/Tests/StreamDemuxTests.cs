@@ -9,6 +9,7 @@ namespace MuxSwarm.Tests.Tests;
 /// while parallel callers attach an agent label so the web app can separate concurrent
 /// sub-agent output.
 /// </summary>
+[Collection("ConsoleState")]
 public class StreamDemuxTests
 {
     private static string CaptureStdio(Action body)

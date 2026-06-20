@@ -2,6 +2,7 @@
 
 namespace MuxSwarm.Tests.Tests;
 
+[Collection("ConsoleState")]
 public class MuxConsoleTests
 {
     [Fact]
