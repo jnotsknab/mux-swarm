@@ -742,6 +742,27 @@ public static partial class MuxConsole
         return true;
     }
 
+    /// <summary>
+    /// Commit a titled block (header + indented detail lines) into scrollback via the live
+    /// region instead of drawing a bordered Spectre panel/table. Borderless panels never get
+    /// clipped at the footer and keep the cursor where it belongs. Returns false when the
+    /// driver is not active so the caller can fall back to its Spectre rendering. Each detail
+    /// line is already Spectre markup (caller escapes content). Claude-Code /context feel:
+    ///   header
+    ///     ⎿ line
+    ///     ⎿ line
+    /// </summary>
+    private static bool TuiCommitBlock(string headerMarkup, IEnumerable<string> detailMarkupLines)
+    {
+        if (!ViaDriver) return false;
+        var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] {headerMarkup}" };
+        foreach (var d in detailMarkupLines)
+            lines.Add($"    [{C.Muted}]\u23bf[/] {d}");
+        lines.Add("");
+        CommitLinesToDriver(lines);
+        return true;
+    }
+
     public static void WriteSuccess(string message)
     {
         WithConsole(() =>
@@ -981,6 +1002,16 @@ public static partial class MuxConsole
                 return;
             }
 
+            // TUI: borderless key/value block through the live region (no clipping, cursor safe).
+            if (ViaDriver)
+            {
+                var rowList = rows.ToList();
+                int keyW = rowList.Count == 0 ? 0 : rowList.Max(r => (r.Key ?? "").Length);
+                var detail = rowList.Select(r =>
+                    $"[{C.Info}]{Esc((r.Key ?? "").PadRight(keyW))}[/]  [{C.Prompt}]{Esc(r.Value ?? "")}[/]");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+            }
+
             var table = new Table()
                 .Border(TableBorder.Rounded)
                 .BorderStyle(new Style(Color.Grey35))
@@ -1005,6 +1036,16 @@ public static partial class MuxConsole
             {
                 EmitJson("panel", D(("title", title), ("content", content)));
                 return;
+            }
+
+            // TUI: commit a borderless titled block through the live region so it can never be
+            // clipped at the docked footer and the cursor stays put. Each content line becomes
+            // an indented detail row (Claude-Code feel). Falls back to a Spectre panel in classic.
+            if (ViaDriver)
+            {
+                var detail = (content ?? "").Replace("\r\n", "\n").Split('\n')
+                    .Select(l => $"[{C.Prompt}]{Esc(l.TrimEnd())}[/]");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
             }
 
             AnsiConsole.Write(new Panel($"[{C.Prompt}]{Esc(content)}[/]")

@@ -127,13 +127,16 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, string? effort = null)
     {
         var badges = new List<string> { $"[{Dim}]tui[/]" };
         if (plan)  badges.Add($"[{Plan}]plan[/]");
         if (ultra) badges.Add($"[{Ultra}]ultra[/]");
         if (psub)  badges.Add($"[{Accent}]psub[/]");
 
+        // Context meter: full bar+percent when a threshold is known; a bare token count when
+        // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
+        // threshold) so the footer never shows a noisy, meaningless "0 tokens".
         string meter;
         if (threshold > 0)
         {
@@ -145,11 +148,28 @@ internal static class TuiComponents
                          $"[{Dim}]" + new string('\u2501', Math.Max(0, width - filled)) + "[/]";
             meter = $"{bar} [{Muted}]{tokens:N0}/{threshold:N0} ({frac * 100:F0}%)[/]";
         }
-        else
+        else if (tokens > 0)
         {
             meter = $"[{Muted}]{tokens:N0} tokens[/]";
         }
-        return $"  {string.Join($" [{Dim}]\u00b7[/] ", badges)}   {meter}";
+        else
+        {
+            meter = "";
+        }
+
+        string left = string.Join($" [{Dim}]\u00b7[/] ", badges);
+        string effortChip = string.IsNullOrEmpty(effort) ? "" : $"  [{Dim}]\u00b7[/]  [{Warn}]\u25d0 {Esc(effort)}[/] [{Dim}]/effort[/]";
+        string right = string.IsNullOrEmpty(meter) ? "" : $"   {meter}";
+        return $"  {left}{right}{effortChip}";
+    }
+
+    /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),
+    /// used to separate the transcript from the docked footer/input band. Width is computed
+    /// at paint time so it tracks terminal resizes.</summary>
+    public static string FullRule(int width)
+    {
+        int w = Math.Max(8, width);
+        return $"[{Border}]{new string('\u2500', w)}[/]";
     }
 
     /// <summary>The input row shown in the live region while awaiting/editing input.</summary>

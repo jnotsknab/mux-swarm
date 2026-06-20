@@ -26,6 +26,7 @@ internal sealed class TuiDriver
     // footer state
     private uint _tokens, _threshold;
     private bool _plan, _ultra, _psub;
+    private string? _effort;   // reasoning-effort chip (low/med/high), null = hidden
 
     // streaming state - partial (un-newlined) tail shown live above the footer
     private readonly StringBuilder _streamTail = new();
@@ -50,6 +51,14 @@ internal sealed class TuiDriver
     /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
     public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.Session;
 
+    /// <summary>
+    /// Optional callback invoked when the user presses Shift+Tab inside the input box. It
+    /// should perform the mode cycle (e.g. advance reasoning effort + apply it live) and
+    /// return the new short label to show in the footer chip (or null to hide it). The
+    /// driver owns only the chip's display; the caller owns the actual mode state. When null,
+    /// Shift+Tab is ignored. Set by the session loop; cleared at the top-level menu.</summary>
+    public Func<string?>? OnModeCycle { get; set; }
+
     public TuiDriver(ITuiTerminal? term = null)
     {
         _term = term ?? new ConsoleTuiTerminal();
@@ -62,6 +71,15 @@ internal sealed class TuiDriver
     public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub)
     {
         _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub;
+        Repaint();
+    }
+
+    /// <summary>Set (or clear, with null) the reasoning-effort chip shown in the footer.</summary>
+    public void SetEffort(string? effort)
+    {
+        var e = string.IsNullOrWhiteSpace(effort) ? null : effort.Trim();
+        if (e == _effort) return;
+        _effort = e;
         Repaint();
     }
 
@@ -114,7 +132,7 @@ internal sealed class TuiDriver
         _streamTail.Clear();
         _streaming = false;
         if (hadTail)
-            _region.CommitAbove(new[] { tail }, BuildLiveFrame(Width));
+            _region.CommitAbove(new[] { TuiMarkdown.ToMarkup(tail) }, BuildLiveFrame(Width));
         else
             Repaint();
     }
@@ -133,7 +151,8 @@ internal sealed class TuiDriver
         {
             _streamTail.Clear();
             _streamTail.Append(s);
-            _region.CommitAbove(commit, BuildLiveFrame(Width));
+            var rendered = commit.Select(TuiMarkdown.ToMarkup).ToList();
+            _region.CommitAbove(rendered, BuildLiveFrame(Width));
         }
     }
 
@@ -149,17 +168,20 @@ internal sealed class TuiDriver
         var lines = new List<string>();
 
         if (_streaming && _streamTail.Length > 0)
-            lines.Add(_streamTail.ToString());
+            lines.Add(TuiMarkdown.ToMarkup(_streamTail.ToString()));
 
         if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
             lines.Add($"  [{TuiComponents.Warn}]{Spectre.Console.Markup.Escape(_thinkingText)}[/]");
 
-        int ruleW = Math.Clamp(width - 2, 8, 60);
-        lines.Add($"[{TuiComponents.Border}]{new string('\u2500', ruleW)}[/]");
-        lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub));
+        // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
+        lines.Add(TuiComponents.FullRule(width));
+        lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _effort));
 
         if (_inInput)
         {
+            // A second full-width rule gives the input/compose area its own visible band,
+            // clearly separated from the footer above it.
+            lines.Add(TuiComponents.FullRule(width));
             lines.Add(TuiComponents.InputRowWithCursor(_editor.Buffer, _editor.Cursor));
             if (_editor.IsSlashFilter)
                 lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries));
@@ -223,6 +245,12 @@ internal sealed class TuiDriver
                         _inInput = false;
                         _region.Clear();
                         return null;
+                    case LineEditSignal.ModeCycle:
+                        if (OnModeCycle is not null)
+                        {
+                            try { SetEffort(OnModeCycle()); } catch { /* ignore */ }
+                        }
+                        break;
                     case LineEditSignal.Continue:
                         Repaint();
                         break;

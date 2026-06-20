@@ -41,6 +41,23 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Footer_IdleZeroTokens_SuppressesMeter()
+    {
+        // 0 tokens + no threshold => no noisy "0 tokens" chip at all.
+        var f = TuiComponents.Footer(0, 0, false, false, false);
+        Assert.DoesNotContain("0 tokens", f);
+        Assert.Contains("tui", f);
+    }
+
+    [Fact]
+    public void Footer_EffortChip_ShownWhenProvided()
+    {
+        var f = TuiComponents.Footer(0, 0, false, false, false, effort: "high");
+        Assert.Contains("high", f);
+        Assert.Contains("/effort", f);
+    }
+
+    [Fact]
     public void Footer_BadgesReflectModes()
     {
         var f = TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true);
@@ -279,32 +296,38 @@ public class TuiDriverTests
     }
 
     [Fact]
-    public void TuiCommands_BothScopes_IncludeGlobalCommands()
+    public void TuiCommands_ReplScope_HasGlobalUtilities_AndModeLaunch()
     {
-        // /skills, /status, /help are global - must appear in BOTH menu and session palettes
-        // (the bug: /skills typed at the menu showed "no commands match").
-        foreach (var g in new[] { "/skills", "/status", "/help", "/tools", "/resume" })
-        {
+        // Canonical truth: these are handled by the App.cs top-level switch (REPL-only).
+        foreach (var g in new[] { "/skills", "/status", "/help", "/tools", "/resume", "/agent", "/swarm", "/plan", "/continuous" })
             Assert.Contains(TuiCommands.Repl, e => e.Cmd == g);
-            Assert.Contains(TuiCommands.Session, e => e.Cmd == g);
-        }
-    }
-
-    [Fact]
-    public void TuiCommands_ReplScope_HasModeLaunch_NotSessionOnly()
-    {
-        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/agent");
-        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/swarm");
-        Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/compact"); // session-only
+        // Session-native meta commands must NOT appear in the REPL palette.
+        Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/compact");
+        Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/wipe");
         Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/qc");
     }
 
     [Fact]
-    public void TuiCommands_SessionScope_HasSessionControls_NotModeLaunch()
+    public void TuiCommands_SessionScope_OnlyMetaLoopCommands()
     {
-        Assert.Contains(TuiCommands.Session, e => e.Cmd == "/compact");
-        Assert.Contains(TuiCommands.Session, e => e.Cmd == "/plan");
-        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/agent"); // repl-only
+        // Canonical truth: the in-session meta-loop (SingleAgentOrchestrator) only handles
+        // these. /plan, /agent, /swarm, /continuous are REPL-only and must NOT show in-session.
+        foreach (var s in new[] { "/compact", "/wipe", "/tokens", "/undo", "/retry", "/effort" })
+            Assert.Contains(TuiCommands.Session, e => e.Cmd == s);
+        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/agent");
         Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/swarm");
+        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/plan");
+        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/continuous");
+    }
+
+    [Fact]
+    public void TuiCommands_ScopeClassifiers_MatchCatalog()
+    {
+        Assert.True(TuiCommands.IsSessionNative("/compact"));
+        Assert.True(TuiCommands.IsSessionNative("/EFFORT"));   // case-insensitive
+        Assert.False(TuiCommands.IsSessionNative("/agent"));
+        Assert.True(TuiCommands.IsReplOnly("/agent"));
+        Assert.True(TuiCommands.IsReplOnly("/skills"));
+        Assert.False(TuiCommands.IsReplOnly("/compact"));
     }
 }

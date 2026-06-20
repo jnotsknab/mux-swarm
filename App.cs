@@ -315,6 +315,13 @@ public class App
             // in-session scope, and the meter should read "ready" at the menu. Idempotent.
             MuxConsole.EnableDockedFooter(topLevel: true);
 
+            // Slash-anywhere hand-off: a session the user just exited may have queued a
+            // REPL-only command (they typed it in-session and confirmed ending the session to
+            // run it). Dispatch it now as if typed at the menu, then clear it.
+            string? pendingFromSession = SingleAgentOrchestrator.PendingReplCommand;
+            if (pendingFromSession is not null)
+                SingleAgentOrchestrator.PendingReplCommand = null;
+
             // When the live-region driver is active it owns the input box (pinned at the
             // bottom) and its own key loop (Esc -> cancel), so skip the inline "> " prompt and
             // the non-blocking Esc pre-check, which would otherwise steal a keystroke.
@@ -341,7 +348,7 @@ public class App
                 }
             }
 
-            string? userInput = MuxConsole.ReadInput();
+            string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
                 continue;

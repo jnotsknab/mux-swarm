@@ -14,6 +14,13 @@ public static class SingleAgentOrchestrator
 
     public static Common.AgentDefinition? AgentDef = null;
 
+    /// <summary>
+    /// Slash-anywhere hand-off: when the user runs a REPL-only command inside a session and
+    /// confirms ending it, the session loop stores the command here and exits. The App.cs
+    /// menu loop dispatches it once after the session returns, then clears it. Null otherwise.
+    /// </summary>
+    public static string? PendingReplCommand = null;
+
     private static readonly Dictionary<string, string> Models = Common.LoadAgentModels();
     //uncached tokens
     private static uint _cachedTokens;
@@ -670,6 +677,54 @@ public static class SingleAgentOrchestrator
                 App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode);
         }
 
+        // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
+        // the already-built agentChatOptions.Reasoning in place so the next turn uses it,
+        // exactly like /ultra's escalation but user-cyclable. Order: low -> med -> high -> low.
+        // The same underlying state backs the typed /effort command and the Shift+Tab key, so
+        // they stay consistent. The footer chip reflects the current tier.
+        string[] effortTiers = { "low", "med", "high" };
+        int effortIdx = -1;   // -1 = unset (inherit config/model default), no chip shown
+        string ApplyEffortTier(string tier)
+        {
+            var eff = tier switch
+            {
+                "low"  => Microsoft.Extensions.AI.ReasoningEffort.Low,
+                "med"  => Microsoft.Extensions.AI.ReasoningEffort.Medium,
+                "high" => Microsoft.Extensions.AI.ReasoningEffort.High,
+                _      => Microsoft.Extensions.AI.ReasoningEffort.Medium
+            };
+            agentChatOptions.Reasoning = new Microsoft.Extensions.AI.ReasoningOptions
+            {
+                Effort = eff,
+                Output = agentChatOptions.Reasoning?.Output
+            };
+            return tier;
+        }
+        string CycleEffort()
+        {
+            effortIdx = (effortIdx + 1) % effortTiers.Length;
+            var tier = effortTiers[effortIdx];
+            ApplyEffortTier(tier);
+            return tier;
+        }
+        void SetEffortByName(string name)
+        {
+            var n = name.Trim().ToLowerInvariant();
+            n = n switch { "medium" => "med", "m" => "med", "l" => "low", "h" => "high", _ => n };
+            int idx = Array.IndexOf(effortTiers, n);
+            if (idx < 0)
+            {
+                MuxConsole.WriteWarning($"Unknown effort '{name}'. Use low, med, or high.");
+                return;
+            }
+            effortIdx = idx;
+            ApplyEffortTier(n);
+            MuxConsole.SetTuiEffort(n);
+            MuxConsole.WriteSuccess($"Reasoning effort set to {n}.");
+        }
+        // Register Shift+Tab to cycle effort and report the new chip label.
+        MuxConsole.SetTuiModeCycle(() => CycleEffort());
+
         var lastPersistTime = DateTime.UtcNow;
         (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
@@ -1085,6 +1140,35 @@ public static class SingleAgentOrchestrator
                         break;
                     }
                 }
+                else if (metaCmd.Equals("/effort", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/effort ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // "/effort" with no arg cycles; "/effort <tier>" sets explicitly.
+                    var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 1) SetEffortByName(parts[1]);
+                    else
+                    {
+                        var tier = CycleEffort();
+                        MuxConsole.SetTuiEffort(tier);
+                        MuxConsole.WriteSuccess($"Reasoning effort set to {tier}.");
+                    }
+                }
+                else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
+                {
+                    // Slash-anywhere (web-UI parity): the user typed a REPL-only command inside a
+                    // live session, where it does NOT work. Offer to end the session and run it at
+                    // the top-level menu. If they decline, stay in the session (treat as no-op).
+                    string cmdName = metaCmd.Split(' ', 2)[0];
+                    bool end = MuxConsole.Confirm(
+                        $"'{cmdName}' only runs at the main menu. End this session and run it there?", false);
+                    if (end)
+                    {
+                        PendingReplCommand = metaCmd;
+                        quitSession = true;
+                        break;
+                    }
+                    // declined: fall through to re-prompt (do not send the slash text to the agent)
+                }
                 else
                 {
                     break; // real message (or unknown) -> fall through to goal handling
@@ -1128,6 +1212,10 @@ public static class SingleAgentOrchestrator
             OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
 
         } while (!Environment.HasShutdownStarted);
+
+        // Clear the session-scoped TUI hooks so they do not leak to the top-level menu.
+        MuxConsole.SetTuiModeCycle(null);
+        MuxConsole.SetTuiEffort(null);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);

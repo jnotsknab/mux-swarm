@@ -15,6 +15,8 @@ internal enum LineEditSignal
     Cancel,
     /// <summary>Ctrl-D on an empty buffer; treat as EOF / exit.</summary>
     Eof,
+    /// <summary>Shift+Tab pressed; caller should cycle the active mode (e.g. reasoning effort).</summary>
+    ModeCycle,
     /// <summary>Key had no effect (e.g. unmapped control); no repaint needed.</summary>
     Ignored
 }
@@ -82,9 +84,12 @@ internal sealed class LineEditor
     {
         // Ctrl-C / Ctrl-D / Esc handling first.
         bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
+        bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
         if (ctrl && key.Key == ConsoleKey.C) return LineEditSignal.Cancel;
         if (key.Key == ConsoleKey.Escape) return LineEditSignal.Cancel;
         if (ctrl && key.Key == ConsoleKey.D) return IsEmpty ? LineEditSignal.Eof : LineEditSignal.Ignored;
+        // Shift+Tab cycles the active mode (reasoning effort) without typing a slash command.
+        if (shift && key.Key == ConsoleKey.Tab) return LineEditSignal.ModeCycle;
 
         switch (key.Key)
         {

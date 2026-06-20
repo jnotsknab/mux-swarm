@@ -181,8 +181,23 @@ public static partial class MuxConsole
     /// <summary>Commit a single markup line into scrollback via the driver (caller guards with ViaDriver).</summary>
     internal static void CommitToDriver(string markupLine) { if (ViaDriver) lock (ConsoleLock) { _driver!.CommitLine(markupLine); } }
 
+    /// <summary>Commit multiple markup lines into scrollback atomically via the driver.</summary>
+    internal static void CommitLinesToDriver(IReadOnlyList<string> markupLines) { if (ViaDriver) lock (ConsoleLock) { _driver!.Commit(markupLines); } }
+
     /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
     internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
+
+    /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
+    public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
+
+    /// <summary>
+    /// Register the Shift+Tab mode-cycle callback on the driver (e.g. cycle reasoning effort
+    /// and apply it live). The callback returns the new footer-chip label, or null to hide it.
+    /// Pass null to clear. No-op when the driver is not active.</summary>
+    public static void SetTuiModeCycle(Func<string?>? onCycle)
+    {
+        if (_driver is not null) _driver.OnModeCycle = onCycle;
+    }
 
     // --- render helpers (driver path + inline fallback) ----------------------
 
