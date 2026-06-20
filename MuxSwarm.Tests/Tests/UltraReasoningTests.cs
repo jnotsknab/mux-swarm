@@ -23,6 +23,13 @@ public class UltraReasoningTests
     }
 
     [Fact]
+    public void UltraConfig_Defaults_AutoSubAgentsIsTrue()
+    {
+        var cfg = new UltraConfig();
+        Assert.True(cfg.AutoSubAgents);
+    }
+
+    [Fact]
     public void AppConfig_Defaults_UltraIsPresent()
     {
         var config = new AppConfig();

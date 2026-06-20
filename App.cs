@@ -42,6 +42,7 @@ public class App
     // Public so orchestrators and /api/status can read it without threading a new param.
     public static bool UltraMode = false;
     private static bool _ultraPriorPlan = false;
+    private static bool _ultraPriorParaSub = false;
     /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
     public static bool PlanMode => ShouldPlan;
     
@@ -537,19 +538,25 @@ public class App
                     UltraMode = !UltraMode;
                     if (UltraMode)
                     {
-                        // Compose plan discipline + max reasoning. Capture prior plan state so
-                        // toggling /ultra off restores exactly what the user had before.
+                        // Compose plan discipline + max reasoning + heavy parallel delegation.
+                        // Capture prior flags so toggling /ultra off restores them exactly.
                         _ultraPriorPlan = ShouldPlan;
+                        _ultraPriorParaSub = AllowParallelSubAgents;
                         ShouldPlan = true;
+                        if (App.Config.Ultra.AutoSubAgents)
+                            AllowParallelSubAgents = true;
                         MuxConsole.WriteSuccess("Ultra Mode enabled");
                         MuxConsole.WriteMuted($"Plan Mode forced on + maximum reasoning (thinking budget {App.Config.Ultra.ThinkingBudget}).");
+                        if (App.Config.Ultra.AutoSubAgents)
+                            MuxConsole.WriteMuted("Parallel sub-agents enabled — agents fan parallelizable work out to isolated sub-agent sessions.");
                         MuxConsole.WriteMuted("Agents decompose deeply, list assumptions, weigh alternatives, and self-review before finalizing.");
                     }
                     else
                     {
                         ShouldPlan = _ultraPriorPlan;
+                        AllowParallelSubAgents = _ultraPriorParaSub;
                         MuxConsole.WriteSuccess("Ultra Mode disabled");
-                        MuxConsole.WriteMuted($"Reasoning and plan flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}).");
+                        MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
                     break;
                 case "/tools":
@@ -829,6 +836,8 @@ public class App
                 case "--ultraplan":
                     UltraMode = true;
                     ShouldPlan = true;
+                    if (Config.Ultra.AutoSubAgents)
+                        AllowParallelSubAgents = true;
                     break;
                 case "--clear":
                     Console.Clear();

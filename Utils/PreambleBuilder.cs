@@ -65,6 +65,21 @@ public static class PreambleBuilder
             changes the decision; omit filler.
             ";
 
+        if (ultra && App.Config.Ultra.AutoSubAgents)
+            preamble += @"
+            ### Aggressive Delegation (Ultra)
+            You have parallel sub-agent delegation enabled. Use it heavily. For any goal with
+            separable parts, PREFER fanning work out to sub-agents over doing everything yourself:
+            - Split independent investigations, file reads, research threads, and edits into discrete
+              sub-tasks and dispatch them to sub-agents in parallel.
+            - Each sub-agent runs in its OWN isolated session — delegating keeps your main context
+              lean and lets several lines of work progress at once.
+            - Reserve your own turns for synthesis, cross-cutting decisions, and final review of
+              what the sub-agents return.
+            - Default to delegating when a task is parallelizable or exploratory; only handle it
+              inline when it is trivial or inherently sequential.
+            ";
+
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
         if (hasSkills && isUsingDockerForExec)
         {

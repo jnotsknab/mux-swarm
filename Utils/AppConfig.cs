@@ -58,6 +58,15 @@ public class UltraConfig
     /// <summary>When true, /ultra raises reasoning for delegated sub-agents too, not just the lead.</summary>
     [JsonPropertyName("includeSubAgents")]
     public bool IncludeSubAgents { get; set; } = true;
+
+    /// <summary>
+    /// When true, /ultra auto-enables parallel sub-agent delegation for the session
+    /// (single-agent loop) and the steering preamble encourages fanning parallelizable
+    /// or investigative work out to sub-agents with isolated sessions. Prior toggle state
+    /// is captured and restored when /ultra is turned off. Set false for deep single-agent.
+    /// </summary>
+    [JsonPropertyName("autoSubAgents")]
+    public bool AutoSubAgents { get; set; } = true;
 }
 
 /// <summary>
