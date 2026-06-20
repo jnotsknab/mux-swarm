@@ -14,20 +14,22 @@ internal readonly record struct TuiStyle(
     bool Bold,
     bool Dim,
     bool Italic,
-    bool Underline)
+    bool Underline,
+    (byte R, byte G, byte B)? Bg = null)
 {
-    public static readonly TuiStyle None = new(null, false, false, false, false);
+    public static readonly TuiStyle None = new(null, false, false, false, false, null);
 
     /// <summary>SGR prefix emitting this style (empty when no attributes are set).</summary>
     public string ToAnsi()
     {
-        if (Fg is null && !Bold && !Dim && !Italic && !Underline) return "";
+        if (Fg is null && Bg is null && !Bold && !Dim && !Italic && !Underline) return "";
         var sb = new StringBuilder();
         if (Bold) sb.Append(Ansi.Bold);
         if (Dim) sb.Append(Ansi.Dim);
         if (Italic) sb.Append(Ansi.Italic);
         if (Underline) sb.Append(Ansi.Underline);
         if (Fg is { } c) sb.Append(Ansi.Fg(c.R, c.G, c.B));
+        if (Bg is { } bc) sb.Append(Ansi.Bg(bc.R, bc.G, bc.B));
         return sb.ToString();
     }
 }
@@ -122,11 +124,21 @@ internal static class TuiMarkup
     private static TuiStyle ResolveTag(string tag, TuiStyle parent)
     {
         var style = parent;
-        foreach (var tokRaw in tag.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        var toks = tag.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool bgNext = false;
+        foreach (var tokRaw in toks)
         {
             var tok = tokRaw.Trim().ToLowerInvariant();
+            if (bgNext)
+            {
+                var bg = ResolveColor(tok);
+                if (bg is { } bc) style = style with { Bg = bc };
+                bgNext = false;
+                continue;
+            }
             switch (tok)
             {
+                case "on": bgNext = true; break;
                 case "bold": case "b": style = style with { Bold = true }; break;
                 case "dim": style = style with { Dim = true }; break;
                 case "italic": case "i": style = style with { Italic = true }; break;

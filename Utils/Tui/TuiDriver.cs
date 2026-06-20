@@ -31,11 +31,37 @@ internal sealed class TuiDriver
     private readonly StringBuilder _streamTail = new();
     private bool _streaming;
 
+    // thinking/working spinner state - a single live line shown above the rule while the
+    // agent is reasoning or calling tools (replaces the inline \r spinner, which would
+    // fight the live region). Animated by the caller via SetThinking.
+    private string? _thinkingText;
+
     // input state - true only inside ReadLine's raw-mode loop
     private bool _inInput;
     private bool _shuttingDown;
 
-    private static readonly (string Cmd, string Desc)[] PaletteEntries =
+    /// <summary>Palette entries shown as-you-type. Defaults to the in-session set; the
+    /// caller may swap in the top-level (repl) set via <see cref="SetPaletteScope"/>.</summary>
+    private (string Cmd, string Desc)[] _paletteEntries = SessionPalette;
+
+    /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
+    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? ReplPalette : SessionPalette;
+
+    private static readonly (string Cmd, string Desc)[] ReplPalette =
+    {
+        ("/swarm", "Multi-agent orchestrated loop"),
+        ("/pswarm", "Parallel concurrent dispatch"),
+        ("/agent", "Single-agent conversation"),
+        ("/stateless", "One-off stateless task"),
+        ("/workflow", "Run a workflow file"),
+        ("/resume", "Resume a previous session"),
+        ("/onboard", "Set up your operator profile"),
+        ("/status", "Show system status"),
+        ("/help", "Full command reference"),
+        ("/exit", "Exit Mux-Swarm"),
+    };
+
+    private static readonly (string Cmd, string Desc)[] SessionPalette =
     {
         ("/plan", "Toggle plan mode (confirm before exec)"),
         ("/ultra", "Deep-reasoning mode (plan + max reasoning)"),
@@ -74,7 +100,8 @@ internal sealed class TuiDriver
     public void Commit(IReadOnlyList<string> markupLines)
     {
         if (markupLines.Count == 0) { Repaint(); return; }
-        _region.CommitAbove(markupLines);
+        _thinkingText = null;
+        _region.CommitAbove(markupLines, BuildLiveFrame(Width));
     }
 
     /// <summary>Commit a single markup line above the region.</summary>
@@ -82,7 +109,7 @@ internal sealed class TuiDriver
 
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { _streaming = true; _streamTail.Clear(); Repaint(); }
+    public void BeginStream() { _streaming = true; _thinkingText = null; _streamTail.Clear(); Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
@@ -97,15 +124,30 @@ internal sealed class TuiDriver
         Repaint();
     }
 
+    /// <summary>
+    /// Set (or clear, with null) the live "thinking/working" line shown above the rule.
+    /// Each call advances the spinner frame so repeated calls animate. Cleared automatically
+    /// when streaming begins or the next transcript content is committed.
+    /// </summary>
+    public void SetThinking(string? text)
+    {
+        if (text is null) { if (_thinkingText is null) return; _thinkingText = null; Repaint(); return; }
+        var t = text.Trim();
+        if (t == _thinkingText) return;   // avoid redundant repaints when nothing changed
+        _thinkingText = t;
+        Repaint();
+    }
+
     public void EndStream()
     {
-        if (_streamTail.Length > 0)
-        {
-            _region.CommitAbove(new[] { _streamTail.ToString() });
-            _streamTail.Clear();
-        }
+        bool hadTail = _streamTail.Length > 0;
+        string tail = _streamTail.ToString();
+        _streamTail.Clear();
         _streaming = false;
-        Repaint();
+        if (hadTail)
+            _region.CommitAbove(new[] { tail }, BuildLiveFrame(Width));
+        else
+            Repaint();
     }
 
     private void FlushCompleteStreamLines()
@@ -122,7 +164,7 @@ internal sealed class TuiDriver
         {
             _streamTail.Clear();
             _streamTail.Append(s);
-            _region.CommitAbove(commit);
+            _region.CommitAbove(commit, BuildLiveFrame(Width));
         }
     }
 
@@ -140,15 +182,18 @@ internal sealed class TuiDriver
         if (_streaming && _streamTail.Length > 0)
             lines.Add(_streamTail.ToString());
 
+        if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
+            lines.Add($"  [{TuiComponents.Warn}]{Spectre.Console.Markup.Escape(_thinkingText)}[/]");
+
         int ruleW = Math.Clamp(width - 2, 8, 60);
         lines.Add($"[{TuiComponents.Border}]{new string('\u2500', ruleW)}[/]");
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub));
 
         if (_inInput)
         {
-            lines.Add(TuiComponents.InputRow(_editor.Buffer));
+            lines.Add(TuiComponents.InputRowWithCursor(_editor.Buffer, _editor.Cursor));
             if (_editor.IsSlashFilter)
-                lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, PaletteEntries));
+                lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries));
         }
         return lines;
     }

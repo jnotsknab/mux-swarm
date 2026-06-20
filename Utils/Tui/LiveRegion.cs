@@ -198,6 +198,14 @@ internal sealed class LiveRegion
     /// part of normal terminal history while the footer stays pinned at the bottom.
     /// </summary>
     public void CommitAbove(IReadOnlyList<string> markupLines)
+        => CommitAbove(markupLines, null);
+
+    /// <summary>
+    /// Commit lines above the region and repaint the live region. When <paramref name="newLive"/>
+    /// is supplied it replaces the live-region contents before repainting, so callers can
+    /// commit + refresh the footer/input atomically (avoids repainting a stale frame).
+    /// </summary>
+    public void CommitAbove(IReadOnlyList<string> markupLines, IReadOnlyList<string>? newLive)
     {
         HideCursor();
         EraseLiveRegion();
@@ -210,6 +218,8 @@ internal sealed class LiveRegion
                 sb.Append('\n');
             }
         _term.Write(sb.ToString());
+        if (newLive is not null)
+            _live = newLive is List<string> l ? new List<string>(l) : newLive.ToList();
         PaintLiveRegion();
         _term.Flush();
     }

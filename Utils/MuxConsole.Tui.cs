@@ -80,6 +80,10 @@ public static partial class MuxConsole
                 _driver = new TuiDriver();
                 _tuiActive = true;
                 InstallTeardownHook_NoLock();
+                // Fresh session: clear any stale token cache from a prior session so the
+                // footer never shows old counts before the first usage update arrives.
+                _fTokens = 0; _fThreshold = 0;
+                _driver.SetPaletteScope(topLevel: false);
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub);
             }
             catch
@@ -145,6 +149,12 @@ public static partial class MuxConsole
     internal static void TuiBeginStream() { if (ViaDriver) _driver!.BeginStream(); }
     internal static void TuiStreamChunk(string text) { if (ViaDriver) _driver!.StreamChunk(text); }
     internal static void TuiEndStream() { if (ViaDriver) _driver!.EndStream(); }
+
+    /// <summary>Set/clear the driver's live "thinking/working" line (animated spinner).</summary>
+    internal static void TuiSetThinking(string? text) { if (ViaDriver) _driver!.SetThinking(text); }
+
+    /// <summary>True when the driver is active - used to route the thinking indicator.</summary>
+    internal static bool TuiDriverActive => ViaDriver;
 
     /// <summary>Read a line through the driver's pinned input box. Caller guards with TuiActive.</summary>
     internal static string? TuiReadLine() => _driver?.ReadLine();
@@ -373,6 +383,51 @@ public static partial class MuxConsole
             AnsiConsole.Write(table);
         });
     }
+
+    /// <summary>
+    /// Top-level (repl) slash-command palette - the mode-select commands relevant at the
+    /// main menu, distinct from the in-session command set. Rendered inline (the menu is not
+    /// driver-active). Mirrors the web app's context-aware command gating.
+    /// </summary>
+    public static void RenderReplSlashPalette(string? filter = null)
+    {
+        if (!IsTui) return;
+        WithConsole(() =>
+        {
+            var f = (filter ?? "").TrimStart('/').Trim().ToLowerInvariant();
+            var table = new Table()
+                .Border(TableBorder.Rounded)
+                .BorderStyle(new Style(HexColor(TC.Border)))
+                .Title($"[{TC.Accent}] commands [/]")
+                .AddColumn(new TableColumn($"[{TC.Muted}]command[/]"))
+                .AddColumn(new TableColumn($"[{TC.Muted}]description[/]"));
+            int shown = 0;
+            foreach (var (cmd, desc) in ReplPaletteEntries)
+            {
+                if (f.Length > 0 && !cmd.ToLowerInvariant().Contains(f) && !desc.ToLowerInvariant().Contains(f))
+                    continue;
+                table.AddRow($"[{TC.Accent}]{Esc(cmd)}[/]", $"[{TC.Text}]{Esc(desc)}[/]");
+                shown++;
+            }
+            if (shown == 0)
+                table.AddRow($"[{TC.Dim}]-[/]", $"[{TC.Dim}]no commands match '{Esc(f)}'[/]");
+            AnsiConsole.Write(table);
+        });
+    }
+
+    private static readonly (string Cmd, string Desc)[] ReplPaletteEntries =
+    {
+        ("/swarm",     "Multi-agent orchestrated loop"),
+        ("/pswarm",    "Parallel concurrent dispatch"),
+        ("/agent",     "Single-agent conversation"),
+        ("/stateless", "One-off stateless task"),
+        ("/workflow",  "Run a workflow file"),
+        ("/resume",    "Resume a previous session"),
+        ("/onboard",   "Set up your operator profile"),
+        ("/status",    "Show system status"),
+        ("/help",      "Full command reference"),
+        ("/exit",      "Exit Mux-Swarm"),
+    };
 
     private static readonly (string Cmd, string Desc)[] SlashPaletteEntries =
     {

@@ -551,10 +551,24 @@ public static partial class MuxConsole
             if (_isStreaming)
                 return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
 
-            // The live-region driver pins its own footer/input; a \r-based spinner would
-            // fight the live region, so suppress the inline indicator while it is active.
+            // The live-region driver pins its own footer/input; route the spinner into the
+            // driver's live "thinking" line (animated) instead of the inline \r renderer,
+            // which would fight the region. The indicator's status updates flow through the
+            // onStatusUpdate callback below.
             if (ViaDriver)
-                return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
+            {
+                var tuiInd = new ThinkingIndicator(
+                    // The indicator's animation loop composes a spinner+status line every
+                    // ~80ms and hands it to renderRaw; forward it to the driver's live
+                    // thinking line (stripping the leading CR the inline renderer used).
+                    renderRaw: raw => TuiSetThinking(raw.Replace("\r", "").TrimEnd()),
+                    clearLine: _ => TuiSetThinking(null),
+                    consoleLock: ConsoleLock,
+                    onDispose: () => TuiSetThinking(null));
+                _activeIndicator = tuiInd;
+                tuiInd.Start(agentName);
+                return tuiInd;
+            }
 
             StopActiveIndicator_NoLock();
         }
@@ -639,6 +653,8 @@ public static partial class MuxConsole
 
                 if (StdioMode)
                     EmitJson("stream_end");
+                else if (ViaDriver)
+                    TuiEndStream();
                 else
                 {
                     Console.WriteLine();

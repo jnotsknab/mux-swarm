@@ -110,8 +110,14 @@ public static class SingleAgentOrchestrator
         bool allowSubAgents = false,
         bool allowParallelSubAgents = false)
     {
-        MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
-        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
+        // The classic line renderer shows a titled banner + help line. In the live TUI the
+        // session header card (below) plays that role, so the banner/rule are suppressed to
+        // avoid a redundant double-header. Stdio/serve emit their own structured events.
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
+            MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
+        }
 
         var singleAgentDef = GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
@@ -163,7 +169,7 @@ public static class SingleAgentOrchestrator
         else
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
-        MuxConsole.WriteLine();
+        if (!MuxConsole.IsTui) MuxConsole.WriteLine();
         // Activate the live-region TUI driver for this session (pinned footer + input box).
         // No-op outside TUI / non-capable terminals / when the docked footer is disabled.
         MuxConsole.EnableDockedFooter();
@@ -172,7 +178,9 @@ public static class SingleAgentOrchestrator
             singleAgentDef?.Name ?? "Agent",
             resolvedModelId,
             App.ActiveProvider?.Name ?? "");
-        MuxConsole.WriteRule();
+        // The classic renderer separates the header from the transcript with a rule; the TUI
+        // header card already provides that separation, so skip the extra rule there.
+        if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
         string initialGoal;
         if (!string.IsNullOrWhiteSpace(incomingGoal))

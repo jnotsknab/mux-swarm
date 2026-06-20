@@ -366,9 +366,10 @@ public class App
 
                 case "/":
                 case "/?":
-                    // G6: slash-command palette / preview (TUI). Falls back to full help
-                    // in classic mode so the command is never a dead end.
-                    if (MuxConsole.IsTui) MuxConsole.RenderTuiSlashPalette();
+                    // G6: slash-command palette / preview. At the top-level menu the relevant
+                    // commands are the mode-select (repl) set, not the in-session set, so show
+                    // the repl-scoped palette. Falls back to full help in classic mode.
+                    if (MuxConsole.IsTui) MuxConsole.RenderReplSlashPalette();
                     else MuxConsole.PrintHelp(Help.HelpText);
                     break;
 

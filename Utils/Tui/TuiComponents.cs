@@ -156,6 +156,26 @@ internal static class TuiComponents
     public static string InputRow(string buffer)
         => $"  [{Accent}]\u203a[/] {(string.IsNullOrEmpty(buffer) ? $"[{Dim}]type a message, or / for commands\u2026[/]" : Esc(buffer))}";
 
+    /// <summary>
+    /// Input row with a synthetic block cursor at <paramref name="cursor"/>. The real
+    /// terminal cursor is hidden while the live region is painted, so we draw a reverse-video
+    /// cell at the edit position (Claude-Code style) to show where typing lands.
+    /// </summary>
+    public static string InputRowWithCursor(string buffer, int cursor)
+    {
+        const string cur = "#E0E0E0";
+        if (string.IsNullOrEmpty(buffer))
+            return $"  [{Accent}]\u203a[/] [black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]";
+
+        cursor = Math.Clamp(cursor, 0, buffer.Length);
+        string before = Esc(buffer[..cursor]);
+        if (cursor >= buffer.Length)
+            return $"  [{Accent}]\u203a[/] [{Text}]{before}[/][black on {cur}] [/]";
+        string at = Esc(buffer[cursor].ToString());
+        string after = Esc(buffer[(cursor + 1)..]);
+        return $"  [{Accent}]\u203a[/] [{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]";
+    }
+
     /// <summary>Slash-command palette rows filtered by the current as-you-type token.</summary>
     public static List<string> SlashPalette(string? filter, IReadOnlyList<(string Cmd, string Desc)> entries)
     {
