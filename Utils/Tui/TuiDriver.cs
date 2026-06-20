@@ -41,45 +41,14 @@ internal sealed class TuiDriver
     private bool _shuttingDown;
 
     /// <summary>Palette entries shown as-you-type. Defaults to the in-session set; the
-    /// caller may swap in the top-level (repl) set via <see cref="SetPaletteScope"/>.</summary>
-    private (string Cmd, string Desc)[] _paletteEntries = SessionPalette;
+    /// caller may swap in the top-level (repl) set via <see cref="SetPaletteScope"/>.
+    /// Both are filtered views of <see cref="TuiCommands.All"/> (the single canonical list
+    /// kept in sync with App.cs's command switch + Help.cs), so no command is ever missing
+    /// from the preview while a different one works.</summary>
+    private (string Cmd, string Desc)[] _paletteEntries = TuiCommands.Session;
 
     /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
-    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? ReplPalette : SessionPalette;
-
-    private static readonly (string Cmd, string Desc)[] ReplPalette =
-    {
-        ("/swarm", "Multi-agent orchestrated loop"),
-        ("/pswarm", "Parallel concurrent dispatch"),
-        ("/agent", "Single-agent conversation"),
-        ("/stateless", "One-off stateless task"),
-        ("/workflow", "Run a workflow file"),
-        ("/resume", "Resume a previous session"),
-        ("/onboard", "Set up your operator profile"),
-        ("/status", "Show system status"),
-        ("/help", "Full command reference"),
-        ("/exit", "Exit Mux-Swarm"),
-    };
-
-    private static readonly (string Cmd, string Desc)[] SessionPalette =
-    {
-        ("/plan", "Toggle plan mode (confirm before exec)"),
-        ("/ultra", "Deep-reasoning mode (plan + max reasoning)"),
-        ("/classic", "Switch to the classic line renderer"),
-        ("/tui", "Switch to the live TUI renderer"),
-        ("/verbose", "Toggle compact/full tool output"),
-        ("/compact", "Compact current session context"),
-        ("/tokens", "Show context/token usage"),
-        ("/undo", "Undo the last exchange"),
-        ("/retry", "Retry the last turn"),
-        ("/resume", "Resume a previous session"),
-        ("/swap", "Swap the active single-agent model"),
-        ("/skills", "List available local skills"),
-        ("/tools", "List available MCP tools"),
-        ("/status", "Show system status"),
-        ("/help", "Full command reference"),
-        ("/qc", "Exit the agent loop"),
-    };
+    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.Session;
 
     public TuiDriver(ITuiTerminal? term = null)
     {

@@ -502,6 +502,11 @@ public static class CliCmdUtils
             return;
         }
 
+        // TUI: clean per-skill preview (name + one-line description) via the live-region
+        // driver; classic/stdio fall back to the single panel.
+        if (MuxConsole.RenderTuiSkills(skills.Select(s => (s.Name, s.Description)).ToList()))
+            return;
+
         var maxNameLen = skills.Max(s => s.Name.Length);
         var text = string.Join("\n", skills.Select(s => $"  {s.Name.PadRight(maxNameLen)}   {s.Description}"));
         MuxConsole.WritePanel($"Loaded Skills ({skills.Count})", text);

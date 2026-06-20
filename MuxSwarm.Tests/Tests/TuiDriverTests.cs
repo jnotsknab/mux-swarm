@@ -277,4 +277,34 @@ public class TuiDriverTests
             new (string,string)[]{ ("/swarm","Multi-agent orchestrated loop") });
         Assert.Contains("/swarm", rows[0]);
     }
+
+    [Fact]
+    public void TuiCommands_BothScopes_IncludeGlobalCommands()
+    {
+        // /skills, /status, /help are global - must appear in BOTH menu and session palettes
+        // (the bug: /skills typed at the menu showed "no commands match").
+        foreach (var g in new[] { "/skills", "/status", "/help", "/tools", "/resume" })
+        {
+            Assert.Contains(TuiCommands.Repl, e => e.Cmd == g);
+            Assert.Contains(TuiCommands.Session, e => e.Cmd == g);
+        }
+    }
+
+    [Fact]
+    public void TuiCommands_ReplScope_HasModeLaunch_NotSessionOnly()
+    {
+        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/agent");
+        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/swarm");
+        Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/compact"); // session-only
+        Assert.DoesNotContain(TuiCommands.Repl, e => e.Cmd == "/qc");
+    }
+
+    [Fact]
+    public void TuiCommands_SessionScope_HasSessionControls_NotModeLaunch()
+    {
+        Assert.Contains(TuiCommands.Session, e => e.Cmd == "/compact");
+        Assert.Contains(TuiCommands.Session, e => e.Cmd == "/plan");
+        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/agent"); // repl-only
+        Assert.DoesNotContain(TuiCommands.Session, e => e.Cmd == "/swarm");
+    }
 }

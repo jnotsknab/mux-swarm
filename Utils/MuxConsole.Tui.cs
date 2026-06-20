@@ -437,38 +437,33 @@ public static partial class MuxConsole
         });
     }
 
-    private static readonly (string Cmd, string Desc)[] ReplPaletteEntries =
+    /// <summary>
+    /// Render the loaded skills as a clean per-skill preview (name + a one-line, width-aware
+    /// description) routed through the live-region driver when active, so it reads like the
+    /// web app's skill list instead of one giant wrapped panel. Returns false when not on the
+    /// TUI driver path so the caller can fall back to its classic panel.
+    /// </summary>
+    public static bool RenderTuiSkills(IReadOnlyList<(string Name, string Description)> skills)
     {
-        ("/swarm",     "Multi-agent orchestrated loop"),
-        ("/pswarm",    "Parallel concurrent dispatch"),
-        ("/agent",     "Single-agent conversation"),
-        ("/stateless", "One-off stateless task"),
-        ("/workflow",  "Run a workflow file"),
-        ("/resume",    "Resume a previous session"),
-        ("/onboard",   "Set up your operator profile"),
-        ("/status",    "Show system status"),
-        ("/help",      "Full command reference"),
-        ("/exit",      "Exit Mux-Swarm"),
-    };
+        if (!ViaDriver) return false;
+        int width = _driver!.Width;
+        int descBudget = Math.Max(24, width - 6 - skills.Max(s => s.Name.Length) - 3);
+        var rows = new List<string> { "", $"  [{TC.Accent}]\u2503[/] [{TC.Accent}]skills[/] [{TC.Dim}]({skills.Count})[/]" };
+        int nameW = skills.Max(s => s.Name.Length);
+        foreach (var (name, desc) in skills.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            string oneLine = Tui.TuiMarkup.TruncatePlain(
+                System.Text.RegularExpressions.Regex.Replace((desc ?? "").Trim(), @"\s+", " "), descBudget);
+            rows.Add($"  [{TC.Agent}]{Esc(name.PadRight(nameW))}[/]  [{TC.Muted}]{Esc(oneLine)}[/]");
+        }
+        rows.Add("");
+        lock (ConsoleLock) { _driver!.Commit(rows); }
+        return true;
+    }
 
-    private static readonly (string Cmd, string Desc)[] SlashPaletteEntries =
-    {
-        ("/plan",     "Toggle plan mode (confirm before exec)"),
-        ("/ultra",    "Deep-reasoning mode (plan + max reasoning + steering)"),
-        ("/classic",  "Switch to the classic line renderer"),
-        ("/tui",      "Switch to the live TUI renderer"),
-        ("/compact",  "Compact current session context"),
-        ("/tokens",   "Show context/token usage"),
-        ("/undo",     "Undo the last exchange"),
-        ("/retry",    "Retry the last turn"),
-        ("/resume",   "Resume a previous single-agent session"),
-        ("/swap",     "Swap the active single-agent model"),
-        ("/skills",   "List available local skills"),
-        ("/tools",    "List available MCP tools"),
-        ("/status",   "Show system status"),
-        ("/help",     "Full command reference"),
-        ("/qc",       "Exit the agent loop"),
-    };
+    private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.Repl;
+
+    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.Session;
 
     /// <summary>Collapsed result: first non-empty line + "(+N lines)" hint, dimmed.</summary>
     private static void RenderCompactResult(string text)
