@@ -164,6 +164,11 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         MuxConsole.WriteLine();
+        // G2: TUI session header card (no-op outside TUI render mode).
+        MuxConsole.RenderTuiSessionHeader(
+            singleAgentDef?.Name ?? "Agent",
+            resolvedModelId,
+            App.ActiveProvider?.Name ?? "");
         MuxConsole.WriteRule();
 
         string initialGoal;
@@ -645,6 +650,14 @@ public static class SingleAgentOrchestrator
                 + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
         }
 
+        // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
+        void RenderStatusBar()
+        {
+            uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
+            MuxConsole.RenderTuiStatusBar(_sessionTokens, threshold,
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode);
+        }
+
         var lastPersistTime = DateTime.UtcNow;
         (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
@@ -988,6 +1001,7 @@ public static class SingleAgentOrchestrator
                 continue;
             }
 
+            RenderStatusBar();
             MuxConsole.WriteRule();
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
@@ -1029,6 +1043,11 @@ public static class SingleAgentOrchestrator
                 {
                     PrintTokenUsage();
                 }
+                else if (metaCmd == "/" || metaCmd == "/?")
+                {
+                    // G6: slash-command palette / preview (TUI render mode).
+                    MuxConsole.RenderTuiSlashPalette();
+                }
                 else if (metaCmd.Equals("/undo", StringComparison.OrdinalIgnoreCase))
                 {
                     await TryUndoAsync();
@@ -1052,6 +1071,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 // Re-prompt after handling a meta command.
+                RenderStatusBar();
                 MuxConsole.WriteRule();
                 MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 

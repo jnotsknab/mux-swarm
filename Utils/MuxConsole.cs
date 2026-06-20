@@ -12,7 +12,7 @@ namespace MuxSwarm.Utils;
 ///
 /// Every file in the project should use MuxConsole instead of Console.Write/WriteLine.
 /// </summary>
-public static class MuxConsole
+public static partial class MuxConsole
 {
     /// <summary>
     /// When true, all output is NDJSON (one JSON object per line) suitable for piping / parsing.
@@ -1007,6 +1007,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_start", D(("agent", agentName))); }
+            else if (IsTui) { RenderTuiTurnHeader(agentName); }
             else
             {
                 AnsiConsole.WriteLine();
@@ -1041,6 +1042,7 @@ public static class MuxConsole
             {
                 EmitJson("delegation", D(("from", fromAgent), ("to", toAgent), ("task", task)));
             }
+            else if (IsTui) { RenderTuiDelegation(fromAgent, toAgent, task, truncLength); }
             else
             {
                 string truncTask = task.Length > truncLength ? task[..truncLength] + "..." : task;
@@ -1066,6 +1068,7 @@ public static class MuxConsole
             {
                 EmitJson("tool_call", D(("agent", agent), ("tool", tool), ("args", args)));
             }
+            else if (IsTui) { RenderTuiToolCall(agent, tool, args); }
             else
             {
                 AnsiConsole.MarkupLine($"  [{C.Muted}]--[/] [{C.Info}]{Esc(agent)}[/] [{C.Muted}]->[/] [{C.Accent}]{Esc(tool)}[/]");
@@ -1090,6 +1093,7 @@ public static class MuxConsole
             {
                 EmitJson("tool_result", D(("agent", agent), ("summary", summary)));
             }
+            else if (IsTui) { RenderTuiToolResultSummary(agent, summary); }
             else
             {
                 string clean = CollapseWhitespace(summary);
@@ -1117,6 +1121,8 @@ public static class MuxConsole
 
         if (!StdioMode)
         {
+            if (IsTui) { RenderTuiToolResultPanel(agent, tool, fullResult, swarm); return; }
+
             fullResult = Common.ExtractMcpText(fullResult);
 
             var display = fullResult.Length > 2000
@@ -1155,6 +1161,7 @@ public static class MuxConsole
             {
                 EmitJson("task_complete", D(("agent", agent), ("summary", summary)));
             }
+            else if (IsTui) { RenderTuiTaskComplete(agent, summary); }
             else
             {
                 AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Step}]{Esc(agent)}[/] [{C.Muted}]completed[/]  [{C.Info}]{Esc(summary)}[/]");

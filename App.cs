@@ -49,6 +49,7 @@ public class App
     private static string? _cliRenderModeOverride = null;
     /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
     public static bool PlanMode => ShouldPlan;
+    public static bool ParallelSubAgentsMode => AllowParallelSubAgents;
     
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
