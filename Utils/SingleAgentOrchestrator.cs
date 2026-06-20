@@ -964,7 +964,10 @@ public static class SingleAgentOrchestrator
                 lastPersistTime = DateTime.UtcNow;
             }
 
-            MuxConsole.WriteMuted($"Total Tokens: {_sessionTokens:N0} - Cached Tokens: {_cachedTokens:N0}");
+            // In TUI mode the docked footer already shows live token usage, so skip this
+            // redundant per-turn line; classic mode keeps it.
+            if (!MuxConsole.IsTui)
+                MuxConsole.WriteMuted($"Total Tokens: {_sessionTokens:N0} - Cached Tokens: {_cachedTokens:N0}");
 
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)

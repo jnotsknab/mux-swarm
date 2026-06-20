@@ -214,6 +214,8 @@ public class App
         // console.renderMode config; default "auto" is capability-aware. No effect on the
         // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
         MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
+        MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
+        MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
 
         
         if (_watchDogEnabled)
@@ -301,10 +303,15 @@ public class App
         }
         
         OtelLogger.Info("Entered Main Interactive Loop");
+        // G2/G7: dock the persistent status footer across the whole interactive interface
+        // (menu + sessions). No-op outside TUI / on non-capable terminals / when disabled.
+        MuxConsole.EnableDockedFooter();
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {   
-            
+            // Keep the docked footer current at the top-level menu (badges; tokens fill in
+            // once a session is active). Inline status bar is the opt-out fallback.
+            MuxConsole.RenderTuiStatusBar(0, 0, PlanMode, UltraMode, ParallelSubAgentsMode);
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
             if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
@@ -355,7 +362,16 @@ public class App
                     MuxConsole.PrintHelp(Help.HelpText);
                     break;
 
+                case "/":
+                case "/?":
+                    // G6: slash-command palette / preview (TUI). Falls back to full help
+                    // in classic mode so the command is never a dead end.
+                    if (MuxConsole.IsTui) MuxConsole.RenderTuiSlashPalette();
+                    else MuxConsole.PrintHelp(Help.HelpText);
+                    break;
+
                 case "/exit":
+                    MuxConsole.DisableDockedFooter();
                     MuxConsole.WriteInfo("Shutting down gracefully...");
                     _cts.Cancel();
                     ProcessCleanup.Instance.Dispose();
@@ -553,6 +569,7 @@ public class App
                     }
                     if (userInput == "/classic")
                     {
+                        MuxConsole.DisableDockedFooter();
                         MuxConsole.SetClassicRenderMode();
                         MuxConsole.WriteSuccess("Classic render mode enabled");
                         MuxConsole.WriteMuted("Line-by-line renderer (pre-v0.11.0 interactive experience).");
@@ -562,14 +579,21 @@ public class App
                         MuxConsole.SetTuiRenderMode();
                         if (MuxConsole.IsTui)
                         {
+                            MuxConsole.EnableDockedFooter();
                             MuxConsole.WriteSuccess("Live TUI render mode enabled");
-                            MuxConsole.WriteMuted("Full-screen live renderer.");
+                            MuxConsole.WriteMuted("Full-screen live renderer with docked status footer.");
                         }
                         else
                         {
                             MuxConsole.WriteWarning("Terminal is not TUI-capable; staying on classic renderer.");
                         }
                     }
+                    break;
+                case "/verbose":
+                    MuxConsole.ToolOutputCompact = !MuxConsole.ToolOutputCompact;
+                    MuxConsole.WriteSuccess(MuxConsole.ToolOutputCompact
+                        ? "Tool output: compact (collapsed one-line results)"
+                        : "Tool output: full (bordered result panels)");
                     break;
                 case "/ultra":
                 case "/ultraplan":

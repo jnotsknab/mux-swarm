@@ -1233,6 +1233,7 @@ public static partial class MuxConsole
         commands.AppendLine($"  [{C.Prompt}]/continuous[/]    [{C.Muted}]Toggle autonomous execution[/]");
         commands.AppendLine($"  [{C.Prompt}]/classic[/]       [{C.Muted}]Use the classic line renderer (opt out of TUI)[/]");
         commands.AppendLine($"  [{C.Prompt}]/tui[/]           [{C.Muted}]Use the live full-screen TUI renderer[/]");
+        commands.AppendLine($"  [{C.Prompt}]/verbose[/]       [{C.Muted}]Toggle compact/full tool output (TUI)[/]");
         commands.AppendLine();
         commands.AppendLine($"[{C.Step}]Session[/]");
         commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");

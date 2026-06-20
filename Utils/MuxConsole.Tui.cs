@@ -32,6 +32,141 @@ public static partial class MuxConsole
         public const string Border  = "#3A3A3A";
     }
 
+    /// <summary>
+    /// Runtime tool-output verbosity. True (default) collapses tool results to a one-line
+    /// summary with a "(+N lines)" hint, Claude-Code style; false renders the bordered
+    /// panel. Toggled by /verbose. Errors and diffs always expand regardless.
+    /// </summary>
+    public static bool ToolOutputCompact { get; set; } = true;
+
+    // --- G2/G7 docked status footer (ANSI scroll-region / DECSTBM) -----------
+    // A persistent bottom bar that stays pinned while the transcript scrolls above it,
+    // the way Claude Code keeps a docked footer across the whole interface. We reserve the
+    // bottom row, confine scrolling to the rows above via DECSTBM, and repaint the footer
+    // in place. This is opt-out via console.dockedFooter=false (then an inline status line
+    // is printed before each prompt instead). Only ever active when IsTui is true.
+
+    private static bool _footerActive;
+    private static int _footerRows;        // reserved bottom rows (1)
+    private static string _footerText = "";
+    private static readonly object FooterLock = new();
+
+    public static bool DockedFooterEnabled { get; set; } = true;
+    public static bool FooterActive => _footerActive;
+
+    /// <summary>
+    /// Enable the docked footer: install a scroll region covering all rows except the
+    /// reserved bottom one. Safe no-op outside TUI, on non-capable terminals, or if the
+    /// footer is disabled. Idempotent.
+    /// </summary>
+    public static void EnableDockedFooter()
+    {
+        if (!IsTui || !DockedFooterEnabled) return;
+        lock (FooterLock)
+        {
+            if (_footerActive) return;
+            try
+            {
+                int h = Console.WindowHeight;
+                if (h < 6) return; // too small to reserve a row sensibly
+                _footerRows = 1;
+                int scrollBottom = h - _footerRows; // 1-based last row of scroll region
+                // DECSTBM: set scroll region rows 1..scrollBottom; cursor home; park cursor in region.
+                Console.Out.Write($"\u001b[1;{scrollBottom}r");
+                Console.Out.Write($"\u001b[{scrollBottom};1H");
+                Console.Out.Flush();
+                _footerActive = true;
+                PaintFooter_NoLock();
+            }
+            catch { _footerActive = false; }
+        }
+    }
+
+    /// <summary>
+    /// Tear down the docked footer: reset the scroll region to the full screen and clear
+    /// the reserved row. Safe to call unconditionally (exit, /classic, mode switch).
+    /// </summary>
+    public static void DisableDockedFooter()
+    {
+        lock (FooterLock)
+        {
+            if (!_footerActive) return;
+            try
+            {
+                int h = Console.WindowHeight;
+                // Reset scroll region to full window.
+                Console.Out.Write("\u001b[r");
+                // Clear the reserved footer row.
+                Console.Out.Write($"\u001b[{h};1H\u001b[2K");
+                Console.Out.Flush();
+            }
+            catch { /* ignore */ }
+            _footerActive = false;
+        }
+    }
+
+    /// <summary>
+    /// Update + repaint the docked footer content (context meter + mode badges). When the
+    /// footer isn't active this is a no-op (the inline status bar path is used instead).
+    /// </summary>
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    {
+        if (!_footerActive) return;
+        lock (FooterLock)
+        {
+            _footerText = BuildStatusMarkup(tokens, threshold, plan, ultra, parallelSub);
+            // Detect terminal resize and re-arm the region so the footer tracks the bottom.
+            try
+            {
+                int h = Console.WindowHeight;
+                int scrollBottom = h - _footerRows;
+                Console.Out.Write($"\u001b[1;{scrollBottom}r");
+            }
+            catch { /* ignore */ }
+            PaintFooter_NoLock();
+        }
+    }
+
+    private static void PaintFooter_NoLock()
+    {
+        try
+        {
+            int h = Console.WindowHeight;
+            // Save cursor, jump to footer row, clear it, paint, restore cursor.
+            Console.Out.Write("\u001b7");                  // DECSC save cursor
+            Console.Out.Write($"\u001b[{h};1H\u001b[2K");  // goto last row, clear line
+            AnsiConsole.Markup(_footerText);
+            Console.Out.Write("\u001b8");                  // DECRC restore cursor
+            Console.Out.Flush();
+        }
+        catch { /* ignore */ }
+    }
+
+    private static string BuildStatusMarkup(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    {
+        var badges = new List<string> { $"[{TC.Dim}]tui[/]" };
+        if (plan)        badges.Add($"[{TC.Plan}]plan[/]");
+        if (ultra)       badges.Add($"[{TC.Ultra}]ultra[/]");
+        if (parallelSub) badges.Add($"[{TC.Accent}]psub[/]");
+
+        string meter;
+        if (threshold > 0)
+        {
+            double frac = Math.Clamp((double)tokens / threshold, 0, 1);
+            const int width = 16;
+            int filled = (int)Math.Round(frac * width);
+            string colour = frac < 0.6 ? TC.Ok : frac < 0.85 ? TC.Warn : TC.Err;
+            string bar = $"[{colour}]" + new string('\u2501', filled) + "[/]" +
+                         $"[{TC.Dim}]" + new string('\u2501', Math.Max(0, width - filled)) + "[/]";
+            meter = $"{bar} [{TC.Muted}]{tokens:N0}/{threshold:N0} ({frac * 100:F0}%)[/]";
+        }
+        else
+        {
+            meter = $"[{TC.Muted}]{tokens:N0} tokens[/]";
+        }
+        return $"  {string.Join($" [{TC.Dim}]\u00b7[/] ", badges)}   {meter}";
+    }
+
     /// <summary>G2/G7 - session header card shown when a TUI interactive loop starts.</summary>
     public static void RenderTuiSessionHeader(string agentName, string model, string provider)
     {
@@ -61,6 +196,13 @@ public static partial class MuxConsole
     public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
     {
         if (!IsTui) return;
+        // When the docked footer is active, update it in place instead of printing an
+        // inline status line (which would scroll away). Inline is the opt-out fallback.
+        if (_footerActive)
+        {
+            UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub);
+            return;
+        }
         WithConsole(() =>
         {
             var badges = new List<string>();
@@ -96,8 +238,8 @@ public static partial class MuxConsole
         {
             string argHint = string.IsNullOrWhiteSpace(args)
                 ? ""
-                : $"  [{TC.Dim}]{Esc(Trunc(CollapseWhitespace(args!), 72))}[/]";
-            AnsiConsole.MarkupLine($"  [{TC.Warn}]\u25cf[/] [{TC.Agent}]{Esc(agent)}[/] [{TC.Dim}]\u2192[/] [{TC.Accent}]{Esc(tool)}[/]{argHint}");
+                : $"[{TC.Dim}]({Esc(Trunc(CollapseWhitespace(args!), 56))})[/]";
+            AnsiConsole.MarkupLine($"  [{TC.Warn}]\u25cf[/] [{TC.Accent}]{Esc(tool)}[/]{argHint}");
         }, clearIndicator: false);
     }
 
@@ -106,8 +248,8 @@ public static partial class MuxConsole
     {
         WithConsole(() =>
         {
-            string clean = Trunc(CollapseWhitespace(summary), 140);
-            AnsiConsole.MarkupLine($"    [{TC.Ok}]\u2713[/] [{TC.Muted}]{Esc(clean)}[/]");
+            string clean = Trunc(CollapseWhitespace(summary), 120);
+            AnsiConsole.MarkupLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(clean)}[/]");
         });
     }
 
@@ -120,15 +262,22 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             string text = Common.ExtractMcpText(fullResult);
+            bool err = LooksLikeError(text);
+
+            // Diffs and errors always expand - the cases worth seeing in full.
             if (LooksLikeDiff(text))
             {
                 RenderDiffBody(tool, text);
                 return;
             }
+            if (ToolOutputCompact && !err)
+            {
+                RenderCompactResult(text);
+                return;
+            }
 
             int cap = swarm ? 500 : 2000;
             string body = text.Length > cap ? Esc(text[..cap]) + $"\n[{TC.Dim}]\u2026 truncated[/]" : Esc(text);
-            bool err = LooksLikeError(text);
             string glyph = err ? $"[{TC.Err}]\u2717[/]" : $"[{TC.Ok}]\u2713[/]";
 
             var panel = new Panel($"[{TC.Text}]{body}[/]")
@@ -266,6 +415,18 @@ public static partial class MuxConsole
         ("/help",     "Full command reference"),
         ("/qc",       "Exit the agent loop"),
     };
+
+    /// <summary>Collapsed result: first non-empty line + "(+N lines)" hint, dimmed.</summary>
+    private static void RenderCompactResult(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n')
+                        .Where(l => l.Trim().Length > 0).ToArray();
+        if (lines.Length == 0) return;
+        string first = Trunc(CollapseWhitespace(lines[0]), 110);
+        int more = lines.Length - 1;
+        string moreHint = more > 0 ? $" [{TC.Dim}](+{more} line{(more == 1 ? "" : "s")})[/]" : "";
+        AnsiConsole.MarkupLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(first)}[/]{moreHint}");
+    }
 
     // --- small helpers -------------------------------------------------------
 

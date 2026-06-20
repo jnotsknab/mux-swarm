@@ -17,6 +17,7 @@ public struct Help
         "  /plan           Toggle plan mode, agents present a plan and ask for approval before executing",
         "  /classic        Switch to the classic line-by-line renderer (opt out of the live TUI)",
         "  /tui            Switch to the live full-screen TUI renderer (capable terminals only)",
+        "  /verbose        Toggle TUI tool output between compact (collapsed) and full panels",
         "  /continuous     Toggles continued autonomous execution on and off (shorthand /cont)",
         "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",

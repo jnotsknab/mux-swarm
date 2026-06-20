@@ -59,6 +59,24 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("renderMode")]
     public string RenderMode { get; set; } = "auto";
+
+    /// <summary>
+    /// Tool-output verbosity in the TUI renderer. <c>"compact"</c> (default) collapses
+    /// each tool result to a one-line summary (Claude-Code style); errors and diffs still
+    /// expand. <c>"full"</c> renders the full bordered result panel. Toggled at runtime by
+    /// <c>/verbose</c>. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("toolOutput")]
+    public string ToolOutput { get; set; } = "compact";
+
+    /// <summary>
+    /// When true (default), the TUI pins a docked status footer (context meter + mode
+    /// badges) to the bottom of the terminal using an ANSI scroll region, the way Claude
+    /// Code keeps a persistent bottom bar. Set false to fall back to an inline status line
+    /// printed before each prompt. Ignored outside TUI render mode / on non-capable terminals.
+    /// </summary>
+    [JsonPropertyName("dockedFooter")]
+    public bool DockedFooter { get; set; } = true;
 }
 
 /// <summary>
