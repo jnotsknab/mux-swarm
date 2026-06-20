@@ -487,7 +487,7 @@ public static class MuxConsole
         }
     }
 
-    public static void BeginStreaming()
+    public static void BeginStreaming(string? agentName = null)
     {
         lock (ConsoleLock)
         {
@@ -496,7 +496,7 @@ public static class MuxConsole
         }
     }
 
-    public static void EndStreaming()
+    public static void EndStreaming(string? agentName = null)
     {
         lock (ConsoleLock)
         {
@@ -507,7 +507,12 @@ public static class MuxConsole
 
             if (StdioMode)
             {
-                EmitJson("stream_end");
+                // agent key added only when non-null so single-agent stream_end frames
+                // stay byte-identical (dictionary entries are not covered by WhenWritingNull).
+                if (agentName is null)
+                    EmitJson("stream_end");
+                else
+                    EmitJson("stream_end", D(("agent", agentName)));
                 return;
             }
 
@@ -537,14 +542,20 @@ public static class MuxConsole
         return BeginThinking(agentName);
     }
 
-    public static void WriteStream(string text, bool muted = false)
+    public static void WriteStream(string text, bool muted = false, string? agentName = null)
     {
         if (string.IsNullOrEmpty(text)) return;
 
         WithConsole(() =>
         {
             if (StdioMode)
-                EmitJson("stream", D(("text", text)));
+                // agent key is added only when non-null so single-agent stream frames are
+                // byte-identical; parallel callers pass the specialist name so the web app
+                // can demultiplex concurrent sub-agent streams. (Dictionary entries are not
+                // covered by WhenWritingNull, so the key must be omitted explicitly.)
+                EmitJson("stream", agentName is null
+                    ? D(("text", text))
+                    : D(("text", text), ("agent", agentName)));
             else if (muted)
                 AnsiConsole.Markup(muted
                     ? $"[grey italic]{Esc(text)}[/]"

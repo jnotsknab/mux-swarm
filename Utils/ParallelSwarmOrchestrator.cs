@@ -869,11 +869,11 @@ public static class ParallelSwarmOrchestrator
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming("Orchestrator");
                             currentlyStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: "Orchestrator");
                         responseText.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -896,11 +896,11 @@ public static class ParallelSwarmOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming("Orchestrator");
                                 currentlyStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: "Orchestrator");
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1001,7 +1001,7 @@ public static class ParallelSwarmOrchestrator
                     Console.Write("[[END_AGENT_TURN]]");
                 else
                 {
-                    if (currentlyStreaming) MuxConsole.EndStreaming();
+                    if (currentlyStreaming) MuxConsole.EndStreaming("Orchestrator");
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1014,7 +1014,7 @@ public static class ParallelSwarmOrchestrator
             {
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming("Orchestrator"); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
 
@@ -1333,11 +1333,11 @@ public static class ParallelSwarmOrchestrator
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming(specialist.Def.Name);
                             currentlyStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: specialist.Def.Name);
                         iterResponse.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1360,11 +1360,11 @@ public static class ParallelSwarmOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming(specialist.Def.Name);
                                 currentlyStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: specialist.Def.Name);
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1476,7 +1476,7 @@ public static class ParallelSwarmOrchestrator
                     Console.Write("[[END_AGENT_TURN]]");
                 else
                 {
-                    if (currentlyStreaming) MuxConsole.EndStreaming();
+                    if (currentlyStreaming) MuxConsole.EndStreaming(specialist.Def.Name);
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1484,7 +1484,7 @@ public static class ParallelSwarmOrchestrator
             {
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming(specialist.Def.Name); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
 
