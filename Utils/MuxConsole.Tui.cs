@@ -1,17 +1,21 @@
+using MuxSwarm.Utils.Tui;
 using Spectre.Console;
 
 namespace MuxSwarm.Utils;
 
 /// <summary>
-/// v0.11.0 Workstream G - the "tui" interactive render layer (Model A: enhanced inline
-/// chrome, Claude-Code-familiar). These helpers are only reached when
-/// <see cref="MuxConsole.IsTui"/> is true (capable interactive TTY, not stdio/serve).
-/// The classic line renderer remains the fallback and the stdio/serve NDJSON path is
-/// untouched - every caller branches on IsTui only AFTER the StdioMode short-circuit.
+/// v0.11.0 Workstream G - the "tui" interactive render layer (Option B: a frame-owned
+/// live-region renderer with the Claude-Code feel). When the TUI is active these helpers
+/// drive a single <see cref="TuiDriver"/>: finished transcript content is committed into
+/// the terminal's NATIVE scrollback while a pinned footer (context meter + mode badges)
+/// and the input box stay anchored at the bottom - WITHOUT a DECSTBM scroll region or the
+/// alternate screen buffer (both of which corrupted the earlier Model-A attempt). When the
+/// driver is not active (docked footer disabled, or a non-capable terminal) these methods
+/// fall back to inline Spectre chrome.
 ///
-/// "Inline chrome" means: the normal scrolling transcript is preserved (native terminal
-/// scrollback, G9), but tool calls, results, diffs, delegations and the input prompt are
-/// rendered as rich bordered cards with status glyphs, plus a context-meter status bar.
+/// All of this is only reached when <see cref="MuxConsole.IsTui"/> is true - i.e. an
+/// interactive capable TTY, never stdio/serve. Every caller branches on IsTui only AFTER
+/// the StdioMode short-circuit, so the machine/web NDJSON contract is untouched.
 /// </summary>
 public static partial class MuxConsole
 {
@@ -34,143 +38,130 @@ public static partial class MuxConsole
 
     /// <summary>
     /// Runtime tool-output verbosity. True (default) collapses tool results to a one-line
-    /// summary with a "(+N lines)" hint, Claude-Code style; false renders the bordered
-    /// panel. Toggled by /verbose. Errors and diffs always expand regardless.
+    /// summary with a "(+N lines)" hint, Claude-Code style; false renders the full panel.
+    /// Toggled by /verbose. Errors and diffs always expand regardless.
     /// </summary>
     public static bool ToolOutputCompact { get; set; } = true;
 
-    // --- G2/G7 docked status footer (ANSI scroll-region / DECSTBM) -----------
-    // A persistent bottom bar that stays pinned while the transcript scrolls above it,
-    // the way Claude Code keeps a docked footer across the whole interface. We reserve the
-    // bottom row, confine scrolling to the rows above via DECSTBM, and repaint the footer
-    // in place. This is opt-out via console.dockedFooter=false (then an inline status line
-    // is printed before each prompt instead). Only ever active when IsTui is true.
-
-    private static bool _footerActive;
-    private static int _footerRows;        // reserved bottom rows (1)
-    private static string _footerText = "";
-    private static readonly object FooterLock = new();
-
+    /// <summary>
+    /// When true (default) the live TUI pins a docked footer + input box via the frame-owned
+    /// <see cref="TuiDriver"/>. When false the TUI uses inline Spectre chrome with a status
+    /// line printed before each prompt (no pinned footer). Set from console.dockedFooter.
+    /// </summary>
     public static bool DockedFooterEnabled { get; set; } = true;
-    public static bool FooterActive => _footerActive;
+
+    // --- live-region driver --------------------------------------------------
+
+    private static TuiDriver? _driver;
+    private static bool _tuiActive;
+    private static bool _teardownHooked;
+
+    // Cached footer state so any render path can repaint the footer with current values.
+    private static uint _fTokens, _fThreshold;
+    private static bool _fPlan, _fUltra, _fPsub;
+
+    /// <summary>True when the frame-owned live-region driver is running.</summary>
+    public static bool TuiActive => _tuiActive && _driver is not null;
 
     /// <summary>
-    /// Enable the docked footer: install a scroll region covering all rows except the
-    /// reserved bottom one. Safe no-op outside TUI, on non-capable terminals, or if the
-    /// footer is disabled. Idempotent.
+    /// Activate the live-region TUI driver (pinned footer + input box). No-op outside TUI,
+    /// on a non-capable terminal, or when the docked footer is disabled (then inline chrome
+    /// is used). Idempotent. Installs guaranteed teardown on process exit / Ctrl-C so the
+    /// terminal is never left in a dirty state.
     /// </summary>
     public static void EnableDockedFooter()
     {
         if (!IsTui || !DockedFooterEnabled) return;
-        lock (FooterLock)
+        lock (ConsoleLock)
         {
-            if (_footerActive) return;
+            if (_tuiActive) return;
             try
             {
-                int h = Console.WindowHeight;
-                if (h < 6) return; // too small to reserve a row sensibly
-                _footerRows = 1;
-                int scrollBottom = h - _footerRows; // 1-based last row of scroll region
-                // DECSTBM: set scroll region rows 1..scrollBottom; cursor home; park cursor in region.
-                Console.Out.Write($"\u001b[1;{scrollBottom}r");
-                Console.Out.Write($"\u001b[{scrollBottom};1H");
-                Console.Out.Flush();
-                _footerActive = true;
-                PaintFooter_NoLock();
+                _driver = new TuiDriver();
+                _tuiActive = true;
+                InstallTeardownHook_NoLock();
+                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub);
             }
-            catch { _footerActive = false; }
+            catch
+            {
+                _tuiActive = false;
+                _driver = null;
+            }
         }
     }
 
     /// <summary>
-    /// Tear down the docked footer: reset the scroll region to the full screen and clear
-    /// the reserved row. Safe to call unconditionally (exit, /classic, mode switch).
+    /// Tear down the live-region driver and hand the terminal back cleanly (cursor shown,
+    /// no residue). Safe to call unconditionally (exit, /classic, mode switch). Idempotent.
     /// </summary>
     public static void DisableDockedFooter()
     {
-        lock (FooterLock)
+        lock (ConsoleLock)
         {
-            if (!_footerActive) return;
-            try
+            if (_driver is not null)
             {
-                int h = Console.WindowHeight;
-                // Reset scroll region to full window.
-                Console.Out.Write("\u001b[r");
-                // Clear the reserved footer row.
-                Console.Out.Write($"\u001b[{h};1H\u001b[2K");
-                Console.Out.Flush();
+                try { _driver.Shutdown(); } catch { /* ignore */ }
             }
-            catch { /* ignore */ }
-            _footerActive = false;
+            _driver = null;
+            _tuiActive = false;
         }
     }
 
-    /// <summary>
-    /// Update + repaint the docked footer content (context meter + mode badges). When the
-    /// footer isn't active this is a no-op (the inline status bar path is used instead).
-    /// </summary>
-    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    private static void InstallTeardownHook_NoLock()
     {
-        if (!_footerActive) return;
-        lock (FooterLock)
-        {
-            _footerText = BuildStatusMarkup(tokens, threshold, plan, ultra, parallelSub);
-            // Detect terminal resize and re-arm the region so the footer tracks the bottom.
-            try
-            {
-                int h = Console.WindowHeight;
-                int scrollBottom = h - _footerRows;
-                Console.Out.Write($"\u001b[1;{scrollBottom}r");
-            }
-            catch { /* ignore */ }
-            PaintFooter_NoLock();
-        }
-    }
-
-    private static void PaintFooter_NoLock()
-    {
+        if (_teardownHooked) return;
+        _teardownHooked = true;
         try
         {
-            int h = Console.WindowHeight;
-            // Save cursor, jump to footer row, clear it, paint, restore cursor.
-            Console.Out.Write("\u001b7");                  // DECSC save cursor
-            Console.Out.Write($"\u001b[{h};1H\u001b[2K");  // goto last row, clear line
-            AnsiConsole.Markup(_footerText);
-            Console.Out.Write("\u001b8");                  // DECRC restore cursor
-            Console.Out.Flush();
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                try { _driver?.Shutdown(); } catch { /* ignore */ }
+            };
+            Console.CancelKeyPress += (_, _) =>
+            {
+                try { _driver?.Shutdown(); } catch { /* ignore */ }
+            };
         }
         catch { /* ignore */ }
     }
 
-    private static string BuildStatusMarkup(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    /// <summary>
+    /// Update + repaint the docked footer content (context meter + mode badges). Caches the
+    /// values so subsequent commits keep the footer current. No-op when the driver is not
+    /// active.
+    /// </summary>
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
     {
-        var badges = new List<string> { $"[{TC.Dim}]tui[/]" };
-        if (plan)        badges.Add($"[{TC.Plan}]plan[/]");
-        if (ultra)       badges.Add($"[{TC.Ultra}]ultra[/]");
-        if (parallelSub) badges.Add($"[{TC.Accent}]psub[/]");
-
-        string meter;
-        if (threshold > 0)
-        {
-            double frac = Math.Clamp((double)tokens / threshold, 0, 1);
-            const int width = 16;
-            int filled = (int)Math.Round(frac * width);
-            string colour = frac < 0.6 ? TC.Ok : frac < 0.85 ? TC.Warn : TC.Err;
-            string bar = $"[{colour}]" + new string('\u2501', filled) + "[/]" +
-                         $"[{TC.Dim}]" + new string('\u2501', Math.Max(0, width - filled)) + "[/]";
-            meter = $"{bar} [{TC.Muted}]{tokens:N0}/{threshold:N0} ({frac * 100:F0}%)[/]";
-        }
-        else
-        {
-            meter = $"[{TC.Muted}]{tokens:N0} tokens[/]";
-        }
-        return $"  {string.Join($" [{TC.Dim}]\u00b7[/] ", badges)}   {meter}";
+        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub); }
     }
+
+    /// <summary>True when the driver should handle this render (active and on the TUI path).</summary>
+    private static bool ViaDriver => _tuiActive && _driver is not null && IsTui && !StdioMode;
+
+    // --- streaming relays (called from MuxConsole.WriteStream / Begin/End) ----
+
+    internal static void TuiBeginStream() { if (ViaDriver) _driver!.BeginStream(); }
+    internal static void TuiStreamChunk(string text) { if (ViaDriver) _driver!.StreamChunk(text); }
+    internal static void TuiEndStream() { if (ViaDriver) _driver!.EndStream(); }
+
+    /// <summary>Read a line through the driver's pinned input box. Caller guards with TuiActive.</summary>
+    internal static string? TuiReadLine() => _driver?.ReadLine();
+
+    /// <summary>Commit a single markup line into scrollback via the driver (caller guards with ViaDriver).</summary>
+    internal static void CommitToDriver(string markupLine) { if (ViaDriver) _driver!.CommitLine(markupLine); }
+
+    /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
+    internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
+
+    // --- render helpers (driver path + inline fallback) ----------------------
 
     /// <summary>G2/G7 - session header card shown when a TUI interactive loop starts.</summary>
     public static void RenderTuiSessionHeader(string agentName, string model, string provider)
     {
         if (!IsTui) return;
+        if (ViaDriver) { _driver!.Commit(TuiComponents.SessionHeader(agentName, model, provider)); return; }
         WithConsole(() =>
         {
             var grid = new Grid().AddColumn().AddColumn();
@@ -189,51 +180,23 @@ public static partial class MuxConsole
     }
 
     /// <summary>
-    /// G7 - context-meter + mode-badge status bar. Rendered inline just before an input
-    /// prompt in TUI mode so the user always sees context usage and active modes, the way
-    /// Claude Code pins a status line. Safe no-op outside TUI.
+    /// G7 - context-meter + mode-badge status bar. With the driver active this updates the
+    /// pinned footer in place; otherwise it prints an inline status line before the prompt.
     /// </summary>
     public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
     {
         if (!IsTui) return;
-        // When the docked footer is active, update it in place instead of printing an
-        // inline status line (which would scroll away). Inline is the opt-out fallback.
-        if (_footerActive)
-        {
-            UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub);
-            return;
-        }
+        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub); return; }
         WithConsole(() =>
         {
-            var badges = new List<string>();
-            badges.Add($"[{TC.Dim}]tui[/]");
-            if (plan)        badges.Add($"[{TC.Plan}]plan[/]");
-            if (ultra)       badges.Add($"[{TC.Ultra}]ultra[/]");
-            if (parallelSub) badges.Add($"[{TC.Accent}]psub[/]");
-
-            string meter;
-            if (threshold > 0)
-            {
-                double frac = Math.Clamp((double)tokens / threshold, 0, 1);
-                const int width = 16;
-                int filled = (int)Math.Round(frac * width);
-                string colour = frac < 0.6 ? TC.Ok : frac < 0.85 ? TC.Warn : TC.Err;
-                string bar = $"[{colour}]" + new string('\u2501', filled) + "[/]" +
-                             $"[{TC.Dim}]" + new string('\u2501', width - filled) + "[/]";
-                meter = $"{bar} [{TC.Muted}]{tokens:N0}/{threshold:N0} ({frac * 100:F0}%)[/]";
-            }
-            else
-            {
-                meter = $"[{TC.Muted}]{tokens:N0} tokens[/]";
-            }
-
-            AnsiConsole.MarkupLine($"  {string.Join($" [{TC.Dim}]\u00b7[/] ", badges)}   {meter}");
+            AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub));
         }, clearIndicator: false);
     }
 
-    /// <summary>G4 - tool-call line with a running glyph (compact, precedes the result panel).</summary>
+    /// <summary>G4 - tool-call line with a running glyph.</summary>
     public static void RenderTuiToolCall(string agent, string tool, string? args)
     {
+        if (ViaDriver) { _driver!.Commit(TuiComponents.ToolCall(tool, args)); return; }
         WithConsole(() =>
         {
             string argHint = string.IsNullOrWhiteSpace(args)
@@ -246,6 +209,12 @@ public static partial class MuxConsole
     /// <summary>G4 - collapsed one-line tool result with an ok glyph.</summary>
     public static void RenderTuiToolResultSummary(string agent, string summary)
     {
+        if (ViaDriver)
+        {
+            string clean = Trunc(CollapseWhitespace(summary), 120);
+            _driver!.CommitLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(clean)}[/]");
+            return;
+        }
         WithConsole(() =>
         {
             string clean = Trunc(CollapseWhitespace(summary), 120);
@@ -254,32 +223,31 @@ public static partial class MuxConsole
     }
 
     /// <summary>
-    /// G4/G5 - full tool result as a bordered panel with a status glyph. If the payload
-    /// looks like a unified/git-style diff it is routed to the diff renderer (G5).
+    /// G4/G5 - full tool result. Diffs and errors always expand; otherwise compact mode
+    /// collapses to a one-liner. Routes through the driver (commit to scrollback) when active.
     /// </summary>
     public static void RenderTuiToolResultPanel(string agent, string tool, string fullResult, bool swarm)
     {
+        string text = Common.ExtractMcpText(fullResult);
+        bool err = LooksLikeError(text);
+        int width = TuiActive ? _driver!.Width : AnsiConsole.Profile.Width;
+
+        if (ViaDriver)
+        {
+            if (LooksLikeDiff(text)) { _driver!.Commit(TuiComponents.Diff(tool, text, width)); return; }
+            if (ToolOutputCompact && !err) { _driver!.Commit(TuiComponents.ToolResultCompact(text)); return; }
+            _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000));
+            return;
+        }
+
         WithConsole(() =>
         {
-            string text = Common.ExtractMcpText(fullResult);
-            bool err = LooksLikeError(text);
-
-            // Diffs and errors always expand - the cases worth seeing in full.
-            if (LooksLikeDiff(text))
-            {
-                RenderDiffBody(tool, text);
-                return;
-            }
-            if (ToolOutputCompact && !err)
-            {
-                RenderCompactResult(text);
-                return;
-            }
+            if (LooksLikeDiff(text)) { RenderDiffBody(tool, text); return; }
+            if (ToolOutputCompact && !err) { RenderCompactResult(text); return; }
 
             int cap = swarm ? 500 : 2000;
             string body = text.Length > cap ? Esc(text[..cap]) + $"\n[{TC.Dim}]\u2026 truncated[/]" : Esc(text);
             string glyph = err ? $"[{TC.Err}]\u2717[/]" : $"[{TC.Ok}]\u2713[/]";
-
             var panel = new Panel($"[{TC.Text}]{body}[/]")
             {
                 Header = new PanelHeader($"{glyph} [{TC.Accent}]{Esc(tool)}[/]", Justify.Left),
@@ -292,10 +260,11 @@ public static partial class MuxConsole
         });
     }
 
-    /// <summary>G5 - public entry to render a diff as a syntax-tinted panel.</summary>
+    /// <summary>G5 - public entry to render a diff.</summary>
     public static void RenderTuiDiff(string title, string diff)
     {
         if (!IsTui) return;
+        if (ViaDriver) { _driver!.Commit(TuiComponents.Diff(title, diff, _driver.Width)); return; }
         WithConsole(() => RenderDiffBody(title, diff));
     }
 
@@ -328,9 +297,10 @@ public static partial class MuxConsole
         AnsiConsole.Write(panel);
     }
 
-    /// <summary>G8 - delegation rendered as a small tree so swarm/sub-agent fan-out is legible.</summary>
+    /// <summary>G8 - delegation rendered as a small from -> to tree.</summary>
     public static void RenderTuiDelegation(string fromAgent, string toAgent, string task, int truncLength)
     {
+        if (ViaDriver) { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); return; }
         WithConsole(() =>
         {
             var tree = new Tree($"[{TC.Agent}]{Esc(fromAgent)}[/] [{TC.Dim}]delegates[/]")
@@ -343,9 +313,10 @@ public static partial class MuxConsole
         });
     }
 
-    /// <summary>G2/G8 - agent turn header card.</summary>
+    /// <summary>G2/G8 - agent turn header.</summary>
     public static void RenderTuiTurnHeader(string agentName)
     {
+        if (ViaDriver) { _driver!.Commit(TuiComponents.TurnHeader(agentName, _driver.Width)); return; }
         WithConsole(() =>
         {
             AnsiConsole.WriteLine();
@@ -358,6 +329,7 @@ public static partial class MuxConsole
     /// <summary>G4 - task-complete line with an ok glyph.</summary>
     public static void RenderTuiTaskComplete(string agent, string summary)
     {
+        if (ViaDriver) { _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine($"  [{TC.Ok}]\u2714[/] [{TC.Agent}]{Esc(agent)}[/] [{TC.Dim}]completed[/]  [{TC.Muted}]{Esc(Trunc(summary, 120))}[/]");
@@ -365,13 +337,18 @@ public static partial class MuxConsole
     }
 
     /// <summary>
-    /// G6 - slash-command palette / preview. Renders a categorized, filterable card of
-    /// available commands. Invoked when the user submits a bare "/" or "/?" (Model A's
-    /// robust alternative to fragile raw-keystroke interception under blocking ReadInput).
+    /// G6 - slash-command palette / preview. With the driver active the palette renders
+    /// live beneath the input box as you type "/"; this explicit call commits a one-shot
+    /// palette card (used by the inline fallback and the bare-"/" submit path).
     /// </summary>
     public static void RenderTuiSlashPalette(string? filter = null)
     {
         if (!IsTui) return;
+        if (ViaDriver)
+        {
+            _driver!.Commit(TuiComponents.SlashPalette(filter, SlashPaletteEntries));
+            return;
+        }
         WithConsole(() =>
         {
             var f = (filter ?? "").TrimStart('/').Trim().ToLowerInvariant();
@@ -446,7 +423,6 @@ public static partial class MuxConsole
     {
         if (string.IsNullOrEmpty(text)) return false;
         if (text.Contains("@@ ") && text.Contains("@@")) return true;
-        // git-style header produced by the edit_file tool.
         if (text.Contains("--- ") && text.Contains("+++ ")) return true;
         return false;
     }

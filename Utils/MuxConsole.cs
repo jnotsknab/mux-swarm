@@ -209,6 +209,13 @@ public static partial class MuxConsole
 
     public static string? ReadInput(CancellationToken ct = default)
     {
+        // Live-region TUI owns the input box (pinned at the bottom). Only for real keyboard
+        // input without a multi-line delimiter; stdio/serve and workflow input are unaffected.
+        if (TuiActive && InputOverride == Console.In && !(UsingDelimiter && MultiLineDelimiter is not null))
+        {
+            return TuiReadLine();
+        }
+
         if (InputOverride != Console.In)
         {
             var line = InputOverride.ReadLine();
@@ -544,6 +551,11 @@ public static partial class MuxConsole
             if (_isStreaming)
                 return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
 
+            // The live-region driver pins its own footer/input; a \r-based spinner would
+            // fight the live region, so suppress the inline indicator while it is active.
+            if (ViaDriver)
+                return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
+
             StopActiveIndicator_NoLock();
         }
 
@@ -586,6 +598,7 @@ public static partial class MuxConsole
         {
             _isStreaming = true;
             StopActiveIndicator_NoLock();
+            TuiBeginStream();
         }
     }
 
@@ -608,6 +621,8 @@ public static partial class MuxConsole
                     EmitJson("stream_end", D(("agent", agentName)));
                 return;
             }
+
+            if (ViaDriver) { TuiEndStream(); return; }
 
             Console.WriteLine();
             try { Console.Out.Flush(); } catch { /* ignore */ }
@@ -649,6 +664,10 @@ public static partial class MuxConsole
                 EmitJson("stream", agentName is null
                     ? D(("text", text))
                     : D(("text", text), ("agent", agentName)));
+            else if (ViaDriver)
+                // Live-region TUI: feed the chunk to the driver, which commits complete
+                // lines into scrollback and shows the partial tail live above the footer.
+                TuiStreamChunk(text);
             else if (muted)
                 AnsiConsole.Markup(muted
                     ? $"[grey italic]{Esc(text)}[/]"
@@ -694,11 +713,25 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>
+    /// When the live-region driver is active, commit a single markup line into native
+    /// scrollback (above the pinned footer) and return true; otherwise return false so the
+    /// caller falls through to its normal AnsiConsole rendering. Keeps simple line writers
+    /// from painting underneath the live region and corrupting it.
+    /// </summary>
+    private static bool TuiCommit(string markupLine)
+    {
+        if (!ViaDriver) return false;
+        CommitToDriver(markupLine);
+        return true;
+    }
+
     public static void WriteSuccess(string message)
     {
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("success", message); return; }
+            if (TuiCommit($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]");
         });
     }
@@ -708,6 +741,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("warning", message); return; }
+            if (TuiCommit($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]");
         });
     }
@@ -717,6 +751,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("error", message); return; }
+            if (TuiCommit($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]");
         });
     }
@@ -726,6 +761,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("info", message); return; }
+            if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
         });
     }
@@ -735,6 +771,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("debug", message); return; }
+            if (TuiCommit($"  [{C.Muted}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Muted}]{Esc(message)}[/]");
         });
     }
@@ -744,6 +781,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("body", message); return; }
+            if (TuiCommit($"  [{C.Prompt}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Prompt}]{Esc(message)}[/]");
         });
     }
@@ -753,6 +791,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("markup", stdioFallback ?? StripMarkup(spectreMarkup)); return; }
+            if (TuiCommit(spectreMarkup)) return;
             AnsiConsole.MarkupLine(spectreMarkup);
         });
     }

@@ -164,6 +164,9 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         MuxConsole.WriteLine();
+        // Activate the live-region TUI driver for this session (pinned footer + input box).
+        // No-op outside TUI / non-capable terminals / when the docked footer is disabled.
+        MuxConsole.EnableDockedFooter();
         // G2: TUI session header card (no-op outside TUI render mode).
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",

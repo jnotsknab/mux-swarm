@@ -70,9 +70,12 @@ public class ConsoleConfig
     public string ToolOutput { get; set; } = "compact";
 
     /// <summary>
-    /// When true (default), the TUI pins a docked status footer (context meter + mode
-    /// badges) to the bottom of the terminal using an ANSI scroll region, the way Claude
-    /// Code keeps a persistent bottom bar. Set false to fall back to an inline status line
+    /// When true (default), the TUI runs the frame-owned live-region driver: a pinned
+    /// status footer (context meter + mode badges) and input box stay anchored at the
+    /// bottom while the transcript flows into the terminal's native scrollback above them,
+    /// the way Claude Code keeps a persistent bottom bar. This uses a log-update repaint
+    /// (no DECSTBM scroll region, no alternate screen), so scrollback is preserved and the
+    /// footer is never stranded. Set false to fall back to inline chrome with a status line
     /// printed before each prompt. Ignored outside TUI render mode / on non-capable terminals.
     /// </summary>
     [JsonPropertyName("dockedFooter")]

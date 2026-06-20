@@ -303,15 +303,17 @@ public class App
         }
         
         OtelLogger.Info("Entered Main Interactive Loop");
-        // G2/G7: dock the persistent status footer across the whole interactive interface
-        // (menu + sessions). No-op outside TUI / on non-capable terminals / when disabled.
-        MuxConsole.EnableDockedFooter();
+        // The live-region TUI driver (pinned footer + input box) is activated INSIDE an
+        // agent/swarm session, not at this top-level mode-select menu. Activating it here
+        // was the root cause of the earlier stranded-footer / banner corruption: the menu
+        // and splash are plain inline output, so the menu stays a simple classic prompt.
         // Interactive loop
         while (!Environment.HasShutdownStarted)
-        {   
-            // Keep the docked footer current at the top-level menu (badges; tokens fill in
-            // once a session is active). Inline status bar is the opt-out fallback.
-            MuxConsole.RenderTuiStatusBar(0, 0, PlanMode, UltraMode, ParallelSubAgentsMode);
+        {
+            // Back at the top-level menu: ensure any session's live-region driver is torn
+            // down so the menu/splash render as plain inline output (idempotent no-op when
+            // the driver was never active). This keeps the pinned footer scoped to sessions.
+            MuxConsole.DisableDockedFooter();
             MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
 
             if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
@@ -581,7 +583,7 @@ public class App
                         {
                             MuxConsole.EnableDockedFooter();
                             MuxConsole.WriteSuccess("Live TUI render mode enabled");
-                            MuxConsole.WriteMuted("Full-screen live renderer with docked status footer.");
+                            MuxConsole.WriteMuted("Live-region renderer with pinned footer + input box (takes effect in-session).");
                         }
                         else
                         {
