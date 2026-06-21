@@ -90,7 +90,7 @@ public class TuiRenderTests
         Assert.Contains("CodeAgent", plain);
         Assert.Contains("12 lines", plain);
         Assert.Contains("3 tools", plain);
-        Assert.Contains("ctrl+o expand", plain);
+        Assert.Contains("ctrl+e expand", plain);
         Assert.Contains("\u2713", plain);                        // success check glyph
     }
 
@@ -111,7 +111,7 @@ public class TuiRenderTests
         var plain = TuiMarkup.Plain(TuiComponents.SubAgentCollapsed("X", null, 0, 0, "#C9A26B"));
         Assert.DoesNotContain("line", plain);
         Assert.DoesNotContain("tool", plain);
-        Assert.Contains("ctrl+o expand", plain);
+        Assert.Contains("ctrl+e expand", plain);
     }
 
     [Fact]
@@ -132,5 +132,43 @@ public class TuiRenderTests
             Assert.Contains("hello", outp);                      // stream frame still emitted
         }
         finally { MuxConsole.CollapseSubAgents = prior; }
+    }
+
+    [Fact]
+    public void SubAgentActivity_OneLinePerAgent_WithSpinnerAndStatus()
+    {
+        var agents = new (string, string, string)[]
+        {
+            ("CodeAgent", "calling: read_file", "#82C49B"),
+            ("WebAgent",  "working",            "#7FB3D5"),
+        };
+        var rows = TuiComponents.SubAgentActivity(agents, frame: 3);
+        Assert.Equal(2, rows.Count);
+        Assert.Contains("CodeAgent", TuiMarkup.Plain(rows[0]));
+        Assert.Contains("calling: read_file", TuiMarkup.Plain(rows[0]));
+        Assert.Contains("WebAgent", TuiMarkup.Plain(rows[1]));
+        Assert.Contains("working", TuiMarkup.Plain(rows[1]));
+    }
+
+    [Fact]
+    public void SubAgentActivity_Empty_ReturnsNoLines()
+    {
+        Assert.Empty(TuiComponents.SubAgentActivity(System.Array.Empty<(string, string, string)>(), 0));
+    }
+
+    [Fact]
+    public void SubAgentActivity_DefaultsBlankStatusToWorking()
+    {
+        var rows = TuiComponents.SubAgentActivity(new (string, string, string)[] { ("X", "", "#C9A26B") }, 0);
+        Assert.Single(rows);
+        Assert.Contains("working", TuiMarkup.Plain(rows[0]));
+    }
+
+    [Fact]
+    public void SubAgentCollapsed_UsesCtrlEExpandHint()
+    {
+        var plain = TuiMarkup.Plain(TuiComponents.SubAgentCollapsed("CodeAgent", "success", 5, 2, "#82C49B"));
+        Assert.Contains("ctrl+e expand", plain);
+        Assert.DoesNotContain("ctrl+o", plain);
     }
 }

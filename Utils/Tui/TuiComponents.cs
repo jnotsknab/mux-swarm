@@ -287,9 +287,31 @@ internal static class TuiComponents
         var bits = new List<string>();
         if (lines > 0) bits.Add($"{lines} line{(lines == 1 ? "" : "s")}");
         if (tools > 0) bits.Add($"{tools} tool{(tools == 1 ? "" : "s")}");
-        bits.Add("ctrl+o expand");
+        bits.Add("ctrl+e expand");
         string hint = $" [{Dim}]({string.Join(", ", bits)})[/]";
         return $"  [{tintHex}]\u25b8[/] [{Agent}]{Esc(agent)}[/] {glyph}{hint}";
+    }
+
+    /// <summary>
+    /// Consolidated live activity for the currently-running collapsed sub-agents: one compact
+    /// line each (animated spinner in the agent's lane tint + name + concise status). Driven by
+    /// a single shared ticker so concurrent parallel agents animate in lockstep without the
+    /// flicker that competing per-agent spinners on one shared line produced. <paramref name="frame"/>
+    /// advances the spinner. Returns an empty list when no sub-agents are active.
+    /// </summary>
+    public static List<string> SubAgentActivity(
+        IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
+    {
+        var outp = new List<string>(agents.Count);
+        if (agents.Count == 0) return outp;
+        string spin = ThinkFrames[((frame % ThinkFrames.Length) + ThinkFrames.Length) % ThinkFrames.Length];
+        foreach (var (agent, status, tint) in agents)
+        {
+            string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
+            if (st.Length > 60) st = st[..59] + "\u2026";
+            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/]");
+        }
+        return outp;
     }
 
     /// <summary>Expanded tool result as a bordered card with a status glyph.</summary>

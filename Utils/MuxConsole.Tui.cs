@@ -77,13 +77,26 @@ public static partial class MuxConsole
         public required string Agent;
         public readonly System.Text.StringBuilder Buffer = new();
         public int ToolCalls;
-        public string? Status;   // set from signal_task_complete (success/failure/partial)
+        public string? Status;             // set from signal_task_complete (success/failure/partial)
+        public volatile string LiveStatus = "working";  // concise live activity for the panel line
     }
 
     private static readonly AsyncLocal<SubAgentCapture?> _capture = new();
 
+    // Registry of currently-running captured sub-agents, in start order. The consolidated live
+    // activity panel renders one line per entry; a single shared ticker animates them all,
+    // replacing the per-agent thinking spinners (which, run concurrently, fought over the one
+    // shared live line and flickered heavily). Guarded by _captureGate.
+    private static readonly object _captureGate = new();
+    private static readonly List<SubAgentCapture> _activeCaptures = new();
+    private static System.Threading.Timer? _subAgentTimer;
+    private static int _subAgentFrame;
+
     /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
     private static bool Capturing => _capture.Value is not null;
+
+    /// <summary>The active capture for this async flow, or null. Used by the gated sinks.</summary>
+    private static SubAgentCapture? CurrentCapture => _capture.Value;
 
     /// <summary>
     /// Begin capturing the calling sub-agent's live output so it collapses to one expandable
@@ -95,8 +108,15 @@ public static partial class MuxConsole
     {
         if (!CollapseSubAgents || StdioMode || !IsTui) return null;
         var cap = new SubAgentCapture { Agent = agent };
+        var prev = _capture.Value;       // restore on dispose so nested delegation is correct
         _capture.Value = cap;
-        return new CaptureScope(cap);
+        lock (_captureGate)
+        {
+            _activeCaptures.Add(cap);
+            EnsureSubAgentTicker_NoGate();
+        }
+        PushSubAgentActivity();
+        return new CaptureScope(cap, prev);
     }
 
     /// <summary>Record the sub-agent's completion status (from signal_task_complete) on the
@@ -106,18 +126,72 @@ public static partial class MuxConsole
         if (_capture.Value is { } cap && !string.IsNullOrEmpty(status)) cap.Status = status;
     }
 
+    /// <summary>Update the concise live-activity text for the active capture's panel line
+    /// (e.g. "working", "calling: read_file"). No-op when not capturing.</summary>
+    private static void SetCapturedLiveStatus(string status)
+    {
+        if (_capture.Value is { } cap && !string.IsNullOrEmpty(status))
+        {
+            cap.LiveStatus = status;
+            PushSubAgentActivity();
+        }
+    }
+
     private sealed class CaptureScope : IDisposable
     {
         private readonly SubAgentCapture _cap;
+        private readonly SubAgentCapture? _prev;
         private bool _done;
-        public CaptureScope(SubAgentCapture cap) => _cap = cap;
+        public CaptureScope(SubAgentCapture cap, SubAgentCapture? prev) { _cap = cap; _prev = prev; }
         public void Dispose()
         {
             if (_done) return;
             _done = true;
-            _capture.Value = null;
-            CommitCapturedSubAgent(_cap);
+            _capture.Value = _prev;
+            lock (_captureGate)
+            {
+                _activeCaptures.Remove(_cap);
+                if (_activeCaptures.Count == 0) StopSubAgentTicker_NoGate();
+            }
+            CommitCapturedSubAgent(_cap);   // commit the collapsed line for THIS agent
+            PushSubAgentActivity();          // refresh the panel (now without this agent)
         }
+    }
+
+    // --- consolidated live activity panel (single ticker, no per-agent flicker) --------------
+
+    /// <summary>Start the shared ~100ms ticker that animates the active-sub-agent panel. Caller
+    /// holds <see cref="_captureGate"/>. Idempotent.</summary>
+    private static void EnsureSubAgentTicker_NoGate()
+    {
+        _subAgentTimer ??= new System.Threading.Timer(
+            _ => PushSubAgentActivity(advanceFrame: true), null, 0, 100);
+    }
+
+    /// <summary>Stop + dispose the shared ticker. Caller holds <see cref="_captureGate"/>.</summary>
+    private static void StopSubAgentTicker_NoGate()
+    {
+        _subAgentTimer?.Dispose();
+        _subAgentTimer = null;
+    }
+
+    /// <summary>
+    /// Recompute the active-sub-agent snapshot from the registry and push it to the driver's
+    /// live region (one line per running agent). Reading LiveStatus here keeps the panel fresh;
+    /// the ticker calls this with advanceFrame=true to animate the shared spinner.
+    /// </summary>
+    private static void PushSubAgentActivity(bool advanceFrame = false)
+    {
+        if (!ViaDriver) return;
+        List<(string Agent, string Status, string Tint)> items;
+        lock (_captureGate)
+        {
+            if (advanceFrame) _subAgentFrame++;
+            items = _activeCaptures
+                .Select(c => (c.Agent, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
+                .ToList();
+        }
+        lock (ConsoleLock) { _driver!.SetSubAgentActivity(items, _subAgentFrame); }
     }
 
     /// <summary>Append captured text/reasoning to the active sub-agent buffer.</summary>
@@ -135,7 +209,7 @@ public static partial class MuxConsole
 
     /// <summary>
     /// Emit the collapsed, expandable summary line for a finished sub-agent capture. The full
-    /// buffered transcript is retained behind the line so Ctrl+O / NAV can expand it in place,
+    /// buffered transcript is retained behind the line so Ctrl+E / NAV can expand it in place,
     /// reusing the same machinery as large tool results. No-op when the driver is inactive.
     /// </summary>
     private static void CommitCapturedSubAgent(SubAgentCapture cap)

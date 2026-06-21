@@ -59,6 +59,12 @@ internal sealed class TuiDriver
     private string? _thinkingText;
     private int _thinkFrame;   // spinner animation cell, advanced on each SetThinking tick
 
+    // Consolidated active-sub-agent activity: one entry per running collapsed sub-agent, shown
+    // as a compact stacked panel above the footer while delegation runs. Pushed by MuxConsole's
+    // single shared ticker (no per-agent spinner), so concurrent parallel agents never flicker.
+    private IReadOnlyList<(string Agent, string Status, string Tint)> _subAgents = System.Array.Empty<(string, string, string)>();
+    private int _subAgentFrame;
+
     // pending tool call awaiting its result for a one-line merge. Shown live (running glyph)
     // above the footer while the tool runs, then committed as a single merged line when the
     // result lands. Flushed as its own committed line if any other content commits first.
@@ -254,7 +260,7 @@ internal sealed class TuiDriver
 
     /// <summary>
     /// Commit a collapsed sub-agent summary line that retains its full buffered transcript as
-    /// expandable data, so Ctrl+O / NAV can open it in place (same mechanism as a large tool
+    /// expandable data, so Ctrl+E / NAV can open it in place (same mechanism as a large tool
     /// result). The collapsed line is shown in live scrollback; the transcript lives in memory.
     /// </summary>
     public void CommitCollapsed(string collapsedLine, string agent, string fullTranscript)
@@ -398,6 +404,25 @@ internal sealed class TuiDriver
         Repaint();
     }
 
+    /// <summary>
+    /// Set the consolidated active-sub-agent activity snapshot (one entry per running collapsed
+    /// sub-agent). Rendered as a compact stacked panel above the footer; <paramref name="frame"/>
+    /// drives the shared spinner. An empty list clears the panel. Repaints only when the snapshot
+    /// actually changed, so the ticker does not thrash the region when nothing moved.
+    /// </summary>
+    public void SetSubAgentActivity(IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
+    {
+        bool changed = frame != _subAgentFrame || agents.Count != _subAgents.Count;
+        if (!changed)
+            for (int i = 0; i < agents.Count; i++)
+                if (agents[i].Agent != _subAgents[i].Agent || agents[i].Status != _subAgents[i].Status)
+                    { changed = true; break; }
+        if (!changed) return;
+        _subAgents = agents;
+        _subAgentFrame = frame;
+        Repaint();
+    }
+
     public void EndStream()
     {
         bool hadTail = _streamTail.Length > 0;
@@ -524,7 +549,11 @@ internal sealed class TuiDriver
         if (_streaming && _streamTail.Length > 0)
             lines.Add(TuiMarkdown.ToMarkup(_streamTail.ToString()));
 
-        if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
+        // Consolidated sub-agent activity panel takes precedence over the single thinking line:
+        // while one or more collapsed sub-agents run, show one animated line each (no flicker).
+        if (_subAgents.Count > 0)
+            lines.AddRange(TuiComponents.SubAgentActivity(_subAgents, _subAgentFrame));
+        else if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
             lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // A pending (unresolved) tool call is shown live with a running glyph until its

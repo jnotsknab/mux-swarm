@@ -96,7 +96,7 @@ public class ConsoleConfig
     /// and tool results) is collapsed into a single expandable transcript line instead of
     /// flowing inline, the way Claude Code collapses a launched Task. The sub-agent's thinking
     /// spinner still animates while it works (live progress), and the full transcript is kept
-    /// expandable in place (Ctrl+O). Keeps dense single-agent and parallel-swarm delegation
+    /// expandable in place (Ctrl+E). Keeps dense single-agent and parallel-swarm delegation
     /// from cluttering the terminal. Toggled at runtime by <c>/subagentview</c> (alias
     /// <c>/sav</c>). Has no effect in stdio/serve mode (the web app demultiplexes sub-agent
     /// streams) and is ignored outside TUI render mode.

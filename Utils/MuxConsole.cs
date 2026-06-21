@@ -534,6 +534,14 @@ public static partial class MuxConsole
     /// </summary>
     public static ThinkingIndicator BeginThinking(string agentName)
     {
+        // Captured (collapsed) sub-agent: do NOT start a competing per-agent spinner on the
+        // shared live line - with parallel delegation, N of them flicker against each other.
+        // Return an inert indicator whose status updates feed the consolidated activity panel.
+        if (Capturing)
+            return new ThinkingIndicator(
+                renderRaw: _ => { }, clearLine: _ => { }, consoleLock: ConsoleLock,
+                onStatusUpdate: status => SetCapturedLiveStatus(status));
+
         if (StdioMode)
         {
             EmitJson("thinking_start", D(("agent", agentName)));
@@ -647,6 +655,7 @@ public static partial class MuxConsole
 
     public static ThinkingIndicator ResumeThinking(string agentName)
     {
+        if (Capturing) return BeginThinking(agentName);
         lock (ConsoleLock)
         {
             if (_isStreaming)
