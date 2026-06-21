@@ -62,13 +62,33 @@ public static class Common
         return new List<AgentDefinition>();
     }
 
+    /// <summary>
+    /// Resolves the serialized chat-message array from a session document, tolerant of both
+    /// the current shape (<c>stateBag.InMemoryChatHistoryProvider.messages</c>) and the legacy
+    /// shape (<c>chatHistoryProviderState.messages</c>). Returns false if neither is present.
+    /// </summary>
+    public static bool TryGetSessionMessages(JsonElement root, out JsonElement messages)
+    {
+        if (root.TryGetProperty("stateBag", out var bag)
+            && bag.TryGetProperty("InMemoryChatHistoryProvider", out var prov)
+            && prov.TryGetProperty("messages", out messages)
+            && messages.ValueKind == JsonValueKind.Array)
+            return true;
+
+        if (root.TryGetProperty("chatHistoryProviderState", out var legacy)
+            && legacy.TryGetProperty("messages", out messages)
+            && messages.ValueKind == JsonValueKind.Array)
+            return true;
+
+        messages = default;
+        return false;
+    }
+
     public static List<ChatMessage> ExtractMessagesFromSession(JsonElement serializedSession)
     {
         var messages = new List<ChatMessage>();
 
-        if (serializedSession.TryGetProperty("chatHistoryProviderState", out var storeState)
-            && storeState.TryGetProperty("messages", out var msgArray)
-            && msgArray.ValueKind == JsonValueKind.Array)
+        if (TryGetSessionMessages(serializedSession, out var msgArray))
         {
 
             foreach (var msg in msgArray.EnumerateArray())
@@ -658,9 +678,8 @@ public static class Common
         try
         {
             var doc = JsonDocument.Parse(File.ReadAllText(sessionFile));
-            var messages = doc.RootElement
-                .GetProperty("chatHistoryProviderState")
-                .GetProperty("messages");
+            if (!TryGetSessionMessages(doc.RootElement, out var messages))
+                return "No preview";
 
             foreach (var msg in messages.EnumerateArray())
             {
