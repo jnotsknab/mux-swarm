@@ -207,4 +207,66 @@ public class TuiMarkdownTests
         Assert.Contains("**not bold**", plain);                 // literal, not bolded
         Assert.Contains("# ", plain);
     }
+
+    [Fact]
+    public void LooksLikeDiff_TrueForDiffOrPatchLang()
+    {
+        Assert.True(TuiMarkdown.LooksLikeDiff(new[] { "some text" }, "diff"));
+        Assert.True(TuiMarkdown.LooksLikeDiff(new[] { "some text" }, "patch"));
+        Assert.True(TuiMarkdown.LooksLikeDiff(new[] { "x" }, "DIFF"));
+    }
+
+    [Fact]
+    public void LooksLikeDiff_TrueOnUnifiedMarkers()
+    {
+        var lines = new[] { "@@ -1,3 +1,4 @@", " context", "-old", "+new" };
+        Assert.True(TuiMarkdown.LooksLikeDiff(lines, ""));
+        Assert.True(TuiMarkdown.LooksLikeDiff(new[] { "diff --git a/x b/x" }, null));
+        Assert.True(TuiMarkdown.LooksLikeDiff(new[] { "--- a/x", "+++ b/x" }, null));
+    }
+
+    [Fact]
+    public void LooksLikeDiff_TrueOnDensityWithoutHunkHeader()
+    {
+        // Agent-emitted diff hunk lacking an @@ header still detects via +/- density.
+        var lines = new[] { " keep this line", "-remove one", "+add one", "+add two", " trailing" };
+        Assert.True(TuiMarkdown.LooksLikeDiff(lines, ""));
+    }
+
+    [Fact]
+    public void LooksLikeDiff_FalseForOrdinaryCode()
+    {
+        var code = new[] { "int x = 1;", "x += 2;     // not a diff", "return x;" };
+        Assert.False(TuiMarkdown.LooksLikeDiff(code, "csharp"));
+        Assert.False(TuiMarkdown.LooksLikeDiff(new[] { "a", "b" }, ""));
+        Assert.False(TuiMarkdown.LooksLikeDiff(System.Array.Empty<string>(), ""));
+    }
+
+    [Fact]
+    public void DiffLine_ColorsAddedGreen_RemovedRed()
+    {
+        var add = TuiMarkdown.DiffLine("+new line");
+        var del = TuiMarkdown.DiffLine("-old line");
+        Assert.Contains("#78C88C", add);                         // DiffAdd green
+        Assert.Contains("#D46C6C", del);                         // DiffDel red
+        Assert.Contains("new line", TuiMarkup.Plain(add));
+        Assert.Contains("old line", TuiMarkup.Plain(del));
+    }
+
+    [Fact]
+    public void DiffLine_HunkAndMetaAndContext_Colored()
+    {
+        Assert.Contains("#64B4DC", TuiMarkdown.DiffLine("@@ -1 +1 @@"));   // hunk accent
+        Assert.Contains("#787878", TuiMarkdown.DiffLine("--- a/file"));    // meta muted
+        Assert.Contains("#787878", TuiMarkdown.DiffLine("+++ b/file"));    // meta muted
+        Assert.Contains("#A0A0A0", TuiMarkdown.DiffLine(" context line")); // context grey
+    }
+
+    [Fact]
+    public void DiffLine_RendersVerbatim_BracketsSurvive()
+    {
+        var plain = TuiMarkup.Plain(TuiMarkdown.DiffLine("+arr[0] = f(**x**)"));
+        Assert.Contains("arr[0]", plain);
+        Assert.Contains("**x**", plain);                         // literal, not bolded
+    }
 }

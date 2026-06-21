@@ -23,6 +23,11 @@ internal static class TuiMarkdown
     private const string Bullet = "#787878"; // list bullet (muted)
     private const string Link = "#64B4DC";   // links (accent, underlined)
     private const string CodeBg = "#1E1E1E"; // fenced code background
+    private const string DiffAdd = "#78C88C";  // diff added line (green, matches C.DiffAdd)
+    private const string DiffDel = "#D46C6C";  // diff removed line (red, matches C.DiffDel)
+    private const string DiffHunk = "#64B4DC"; // diff hunk header @@ (accent)
+    private const string DiffMeta = "#787878"; // diff file/meta headers (muted)
+    private const string DiffCtx = "#A0A0A0";  // diff context line (neutral grey)
 
     private static readonly Regex BoldStar = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);
@@ -215,5 +220,64 @@ internal static class TuiMarkdown
     {
         string body = Escape(raw ?? "");
         return $"  [{Code} on {CodeBg}] {body} [/]";
+    }
+
+    /// <summary>
+    /// True when a buffered fenced block should render as a colored diff rather than a plain code
+    /// band. Triggers on an explicit "diff"/"patch" info string, on canonical unified-diff markers
+    /// (@@ hunk header, "diff --git", "--- a/", "+++ b/", "index <sha>"), or on a strong density of
+    /// +/- prefixed lines (handles agent-emitted diffs that lack a real @@ header). Conservative on
+    /// the density path so ordinary code with a stray +/- is not miscolored.
+    /// </summary>
+    public static bool LooksLikeDiff(IReadOnlyList<string> lines, string? lang)
+    {
+        if (!string.IsNullOrEmpty(lang) &&
+            (lang.Equals("diff", StringComparison.OrdinalIgnoreCase) ||
+             lang.Equals("patch", StringComparison.OrdinalIgnoreCase)))
+            return true;
+        if (lines is null || lines.Count == 0) return false;
+
+        int nonEmpty = 0, pm = 0;
+        foreach (var raw in lines)
+        {
+            string l = raw ?? "";
+            if (l.Length == 0) continue;
+            nonEmpty++;
+            if (l.StartsWith("@@ ") || l.StartsWith("diff --git ") ||
+                l.StartsWith("--- a/") || l.StartsWith("+++ b/") ||
+                Regex.IsMatch(l, @"^index [0-9a-f]{7,}"))
+                return true;
+            char c = l[0];
+            // Count +/- prefixed lines, excluding the ++/-- file-marker doublets.
+            if ((c == '+' && !l.StartsWith("++")) || (c == '-' && !l.StartsWith("--")))
+                pm++;
+        }
+        // Density fallback: several +/- lines that make up a meaningful share of the block.
+        return nonEmpty >= 3 && pm >= 3 && pm * 100 >= nonEmpty * 35;
+    }
+
+    /// <summary>
+    /// Render one verbatim diff line on the dim code background, colored by its leading marker:
+    /// additions green, deletions red, @@ hunk headers accent, file/meta headers muted, and
+    /// context lines neutral grey. No Markdown inline transforms (diffs are literal); Spectre
+    /// brackets are escaped so payloads containing "[" / "]" render as-is.
+    /// </summary>
+    public static string DiffLine(string raw)
+    {
+        string s = raw ?? "";
+        string body = Escape(s);
+        string fg;
+        if (s.StartsWith("@@"))
+            fg = DiffHunk;
+        else if (s.StartsWith("+++") || s.StartsWith("---") ||
+                 s.StartsWith("diff ") || s.StartsWith("index "))
+            fg = DiffMeta;
+        else if (s.StartsWith("+"))
+            fg = DiffAdd;
+        else if (s.StartsWith("-"))
+            fg = DiffDel;
+        else
+            fg = DiffCtx;
+        return $"  [{fg} on {CodeBg}] {body} [/]";
     }
 }

@@ -473,6 +473,8 @@ internal sealed class TuiDriver
         var outl = new List<string>(code.Count == 0 ? 1 : code.Count);
         if (code.Count == 0)
             outl.Add(TuiMarkdown.CodeLine(""));   // empty fence still shows a thin band
+        else if (TuiMarkdown.LooksLikeDiff(code, _fenceLang))
+            foreach (var ln in code) outl.Add(TuiMarkdown.DiffLine(ln));  // git-style diff: per-line +/- coloring
         else
             foreach (var ln in code) outl.Add(TuiMarkdown.CodeLine(ln));
         CommitMirrored(Lane(outl));
