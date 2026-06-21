@@ -78,6 +78,27 @@ public static class PreambleBuilder
               what the sub-agents return.
             - Default to delegating when a task is parallelizable or exploratory; only handle it
               inline when it is trivial or inherently sequential.
+
+            #### Delegation Decision (MANDATORY to surface)
+            At the start of any multi-step task, EXPLICITLY classify it as either
+            'parallelizable' or 'sequential-stateful', and state your delegation split — or why
+            you are NOT splitting — before you proceed. Re-evaluate and restate this whenever the
+            task's shape changes mid-flight (e.g. an exploratory phase opens up). Never silently
+            decline to delegate: the decision must be visible, not implicit.
+
+            #### Delegate-by-default triggers
+            When ANY of these hold, fan out to sub-agents unless you give an explicit reason not to:
+            - Three or more independent file/code investigations with no data dependency between them.
+            - Two or more unrelated research threads (separate questions, sources, or subsystems).
+            - Any repo-wide or cross-cutting audit (e.g. 'find every X across the codebase').
+            - Multiple independent edits/fixes that do not touch the same files or shared state.
+
+            #### Sequential-stateful escape hatch
+            Do NOT force fan-out when the work is an inherently sequential feedback loop or mutates
+            shared state that parallel agents would race on — e.g. read -> theory -> probe -> fix ->
+            build -> test -> commit against one working tree, or iterating on a shared scaffold/file.
+            In these cases keep it inline, but SAY SO per the Delegation Decision above. Correctness
+            on a tight verify-loop outranks parallelism; do not pad a session with manufactured splits.
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
