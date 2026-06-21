@@ -801,7 +801,6 @@ public static class SingleAgentOrchestrator
         MuxConsole.SetTuiModeCycle(() => CycleEffort());
 
         var lastPersistTime = DateTime.UtcNow;
-        (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
         {
 
@@ -813,20 +812,10 @@ public static class SingleAgentOrchestrator
                 await TryCompactAsync();
             }
 
-            List<ChatMessage> messages;
-            if (lastInterruptedContext is { } ctx)
-            {
-                messages = [
-                    new(ChatRole.User, ctx.userMsg),
-                    new(ChatRole.Assistant, ctx.partialResponse + "\n\n[response interrupted by user]"),
-                    new(ChatRole.User, currentGoal)
-                ];
-                lastInterruptedContext = null;
-            }
-            else
-            {
-                messages = [new(ChatRole.User, currentGoal)];
-            }
+            // The interrupted exchange (if any) is now replayed from the session's own
+            // in-memory history (synced in the cancellation catch below), so the turn
+            // payload is always just the new goal.
+            List<ChatMessage> messages = [new(ChatRole.User, currentGoal)];
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
@@ -1074,15 +1063,23 @@ public static class SingleAgentOrchestrator
                 wasInterrupted = true;
 
                 string partial = responseText.ToString();
+                string interruptedAssistant = string.IsNullOrWhiteSpace(partial)
+                    ? "[no response — interrupted before agent replied]"
+                    : partial + "\n\n[interrupted by user]";
+
+                // The framework does NOT commit a cancelled run's messages to the session,
+                // so neither the user goal nor the partial response would survive
+                // persistence/resume. Inject both into the session's in-memory history
+                // (preserving prior tool-rich turns) so the interrupted exchange is durable.
+                if (!session.TryGetInMemoryChatHistory(out var sessionHistory) || sessionHistory is null)
+                    sessionHistory = new List<ChatMessage>();
+                sessionHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
+                sessionHistory.Add(new ChatMessage(ChatRole.Assistant, interruptedAssistant));
+                session.SetInMemoryChatHistory(sessionHistory);
+
+                // conversationHistory feeds compaction; keep the partial there too.
                 if (!string.IsNullOrWhiteSpace(partial))
-                {
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\n\n[interrupted by user]"));
-                    lastInterruptedContext = (currentGoal, partial);
-                }
-                else
-                {
-                    lastInterruptedContext = (currentGoal, "[no response — interrupted before agent replied]");
-                }
 
                 MuxConsole.WriteLine();
                 MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
@@ -1098,7 +1095,7 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInfo("Ready for next input.");
 
             bool shouldPersist = persistSession;
-            if (shouldPersist && persistIntervalSeconds > 0)
+            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted)
                 shouldPersist = (DateTime.UtcNow - lastPersistTime).TotalSeconds >= persistIntervalSeconds;
 
             if (shouldPersist)
