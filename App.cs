@@ -219,6 +219,7 @@ public class App
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
+        MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
 
         
         if (_watchDogEnabled)
@@ -621,6 +622,14 @@ public class App
                     MuxConsole.WriteSuccess(MuxConsole.ToolOutputCompact
                         ? "Tool output: compact (collapsed one-line results)"
                         : "Tool output: full (bordered result panels)");
+                    break;
+                case "/subagentview":
+                case "/sav":
+                    MuxConsole.CollapseSubAgents = !MuxConsole.CollapseSubAgents;
+                    Config.Console.CollapseSubAgents = MuxConsole.CollapseSubAgents;
+                    MuxConsole.WriteSuccess(MuxConsole.CollapseSubAgents
+                        ? "Sub-agent view: collapsed (delegated agents fold into one expandable line)"
+                        : "Sub-agent view: expanded (delegated agents stream inline)");
                     break;
                 case "/ultra":
                 case "/ultraplan":

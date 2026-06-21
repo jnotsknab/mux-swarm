@@ -1357,6 +1357,11 @@ public static class MultiAgentOrchestrator
         if (cleanSession)
             specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
 
+        // Collapse this sub-agent's live output into a single expandable transcript line when
+        // enabled (TUI only). Null scope = stream inline as before. AsyncLocal-scoped, so
+        // concurrent parallel sub-agents each capture independently.
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");
@@ -1571,6 +1576,7 @@ public static class MultiAgentOrchestrator
                                     completionSummary = summaryObj?.ToString();
                                 if (fc.Arguments.TryGetValue("artifacts", out var artifactsObj))
                                     completionArtifacts = artifactsObj?.ToString();
+                                MuxConsole.SetCapturedStatus(completionStatus);
                             }
 
                             if (!fc.Name.Equals("signal_task_complete", StringComparison.OrdinalIgnoreCase))

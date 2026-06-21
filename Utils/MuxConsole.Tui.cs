@@ -57,6 +57,112 @@ public static partial class MuxConsole
     /// </summary>
     public static int CollapseToolLines { get; set; } = 6;
 
+    /// <summary>
+    /// When true (default) a delegated sub-agent's live output is captured and collapsed into a
+    /// single expandable transcript line instead of streaming inline (Claude-Code Task style).
+    /// The sub-agent's thinking spinner still animates while it works. Set from
+    /// console.collapseSubAgents; toggled at runtime by /subagentview (alias /sav). Only affects
+    /// the live TUI - stdio/serve always streams (the web app demultiplexes sub-agent streams).
+    /// </summary>
+    public static bool CollapseSubAgents { get; set; } = true;
+
+    // --- sub-agent output capture (collapse-by-default) ----------------------
+    // While a delegated sub-agent runs, its streamed text / reasoning / tool-result summaries are
+    // buffered here instead of being committed to the transcript; on completion one collapsed,
+    // expandable line is emitted. AsyncLocal so each (possibly concurrent, parallel-swarm) sub-
+    // agent flow has its own isolated capture and siblings never cross-contaminate.
+
+    private sealed class SubAgentCapture
+    {
+        public required string Agent;
+        public readonly System.Text.StringBuilder Buffer = new();
+        public int ToolCalls;
+        public string? Status;   // set from signal_task_complete (success/failure/partial)
+    }
+
+    private static readonly AsyncLocal<SubAgentCapture?> _capture = new();
+
+    /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
+    private static bool Capturing => _capture.Value is not null;
+
+    /// <summary>
+    /// Begin capturing the calling sub-agent's live output so it collapses to one expandable
+    /// line. Returns a scope to dispose when the sub-agent finishes (commits the collapsed line),
+    /// or null when capture does not apply (collapse disabled, stdio/serve, or non-TUI) - in
+    /// which case the sub-agent streams inline as before. Safe to <c>using</c> the nullable.
+    /// </summary>
+    public static IDisposable? BeginSubAgentCapture(string agent)
+    {
+        if (!CollapseSubAgents || StdioMode || !IsTui) return null;
+        var cap = new SubAgentCapture { Agent = agent };
+        _capture.Value = cap;
+        return new CaptureScope(cap);
+    }
+
+    /// <summary>Record the sub-agent's completion status (from signal_task_complete) on the
+    /// active capture, so the collapsed line can show success/failure. No-op when not capturing.</summary>
+    public static void SetCapturedStatus(string? status)
+    {
+        if (_capture.Value is { } cap && !string.IsNullOrEmpty(status)) cap.Status = status;
+    }
+
+    private sealed class CaptureScope : IDisposable
+    {
+        private readonly SubAgentCapture _cap;
+        private bool _done;
+        public CaptureScope(SubAgentCapture cap) => _cap = cap;
+        public void Dispose()
+        {
+            if (_done) return;
+            _done = true;
+            _capture.Value = null;
+            CommitCapturedSubAgent(_cap);
+        }
+    }
+
+    /// <summary>Append captured text/reasoning to the active sub-agent buffer.</summary>
+    private static void CaptureAppend(string text) => _capture.Value?.Buffer.Append(text);
+
+    /// <summary>Record a captured tool-result summary line + bump the tool counter.</summary>
+    private static void CaptureToolResult(string summary)
+    {
+        if (_capture.Value is not { } cap) return;
+        cap.ToolCalls++;
+        string clean = CollapseWhitespace(summary ?? "");
+        if (clean.Length > 0)
+            cap.Buffer.Append('\n').Append("[tool] ").Append(clean.Length > 200 ? clean[..200] + "\u2026" : clean);
+    }
+
+    /// <summary>
+    /// Emit the collapsed, expandable summary line for a finished sub-agent capture. The full
+    /// buffered transcript is retained behind the line so Ctrl+O / NAV can expand it in place,
+    /// reusing the same machinery as large tool results. No-op when the driver is inactive.
+    /// </summary>
+    private static void CommitCapturedSubAgent(SubAgentCapture cap)
+    {
+        string body = cap.Buffer.ToString().Trim();
+        int lines = body.Length == 0 ? 0
+            : body.Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
+        string tint = TuiComponents.AgentTint(cap.Agent);
+        string collapsed = TuiComponents.SubAgentCollapsed(cap.Agent, cap.Status, lines, cap.ToolCalls, tint);
+
+        if (ViaDriver)
+        {
+            lock (ConsoleLock)
+            {
+                // Retain the full transcript expandable when there is anything to expand; otherwise
+                // commit a bare collapsed line (an empty sub-agent turn).
+                if (body.Length > 0)
+                    _driver!.CommitCollapsed(collapsed, cap.Agent, body);
+                else
+                    _driver!.CommitLine(collapsed);
+            }
+            return;
+        }
+        // Inline fallback (TUI without docked driver): just print the collapsed line.
+        WithConsole(() => AnsiConsole.MarkupLine(collapsed));
+    }
+
     // --- live-region driver --------------------------------------------------
 
     private static TuiDriver? _driver;

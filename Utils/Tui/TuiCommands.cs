@@ -70,6 +70,7 @@ internal static class TuiCommands
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/swap",         "Swap the active single-agent model", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
+        new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
 

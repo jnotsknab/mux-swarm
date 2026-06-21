@@ -109,6 +109,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "collapseSubAgents", Aliases = new[] { "subagentview", "sav", "collapsesub" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.CollapseSubAgents.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"collapseSubAgents expects a boolean (got '{v}').");
+                Cfg.Console.CollapseSubAgents = on;
+                MuxConsole.CollapseSubAgents = on;               // live
+                return Save($"collapseSubAgents = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
             Name = "ultra.thinkingBudget", Aliases = new[] { "thinkingbudget", "ultra.budget" }, ValueHint = "<int>",
             Get = () => Cfg.Ultra.ThinkingBudget.ToString(),
             Set = v =>

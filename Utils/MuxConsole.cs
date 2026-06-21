@@ -608,6 +608,7 @@ public static partial class MuxConsole
 
     public static void BeginStreaming(string? agentName = null)
     {
+        if (Capturing) return;   // captured sub-agent: no live stream region (output is buffered)
         lock (ConsoleLock)
         {
             _isStreaming = true;
@@ -618,6 +619,7 @@ public static partial class MuxConsole
 
     public static void EndStreaming(string? agentName = null)
     {
+        if (Capturing) return;   // captured sub-agent: nothing was streamed to end
         lock (ConsoleLock)
         {
             if (!_isStreaming)
@@ -670,6 +672,10 @@ public static partial class MuxConsole
     {
         if (string.IsNullOrEmpty(text)) return;
 
+        // Collapsed sub-agent: buffer the chunk for the expandable transcript instead of
+        // committing it inline. The thinking spinner keeps animating (live progress).
+        if (Capturing) { CaptureAppend(text); return; }
+
         WithConsole(() =>
         {
             if (StdioMode)
@@ -720,6 +726,7 @@ public static partial class MuxConsole
                 EmitJson("rule", label != null ? D(("label", label)) : null);
                 return;
             }
+            if (Capturing) return;   // collapsed sub-agent: no inline rules
 
             // Under the driver, a raw Spectre rule paints below the footer and desyncs the
             // live region. Commit a markup rule line through the driver instead.
@@ -872,6 +879,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) return;
+            if (Capturing) return;   // collapsed sub-agent: no inline blank lines
             // Under the live-region driver, raw AnsiConsole writes land BELOW the pinned
             // footer and desync the painted-row count, stranding frozen copies of the
             // footer/chip in scrollback. Commit a blank line through the driver instead.
@@ -1159,6 +1167,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_start", D(("agent", agentName))); }
+            else if (Capturing) { /* collapsed sub-agent: header folded into the summary line */ }
             else if (IsTui) { RenderTuiTurnHeader(agentName); }
             else
             {
@@ -1182,6 +1191,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_end"); return; }
+            if (Capturing) return;   // collapsed sub-agent: no inline turn spacer
             if (TuiCommit("")) return;
             AnsiConsole.WriteLine();
         }, clearIndicator: false);
@@ -1246,6 +1256,7 @@ public static partial class MuxConsole
             {
                 EmitJson("tool_result", D(("agent", agent), ("summary", summary)));
             }
+            else if (Capturing) { CaptureToolResult(summary); }
             else if (IsTui) { RenderTuiToolResultSummary(agent, summary); }
             else
             {
@@ -1271,6 +1282,9 @@ public static partial class MuxConsole
         if (fullResult.Length <= 0 || fullResult.Trim().Equals("Task marked as complete.", StringComparison.OrdinalIgnoreCase)
             || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase)) return;
 
+        // Collapsed sub-agent: fold the tool result into the buffered transcript (the hook
+        // below still fires) instead of rendering a panel/merged line inline.
+        if (Capturing) { CaptureToolResult($"{tool}: {Common.ExtractMcpText(fullResult)}"); return; }
 
         if (!StdioMode)
         {
@@ -1314,6 +1328,7 @@ public static partial class MuxConsole
             {
                 EmitJson("task_complete", D(("agent", agent), ("summary", summary)));
             }
+            else if (Capturing) { /* collapsed sub-agent: completion folded into the summary line */ }
             else if (IsTui) { RenderTuiTaskComplete(agent, summary); }
             else
             {
@@ -1390,6 +1405,7 @@ public static partial class MuxConsole
         commands.AppendLine($"  [{C.Prompt}]/stateless[/]     [{C.Muted}]One-off stateless task[/]");
         commands.AppendLine($"  [{C.Prompt}]/subagents[/]     [{C.Muted}]Toggle sub-agent delegation in single-agent conversation, shorthand /sub[/]");
         commands.AppendLine($"  [{C.Prompt}]/parasubagents[/] [{C.Muted}]Toggle parallel sub-agent delegation in single-agent conversation, shorthand /psub[/]");
+        commands.AppendLine($"  [{C.Prompt}]/subagentview[/]  [{C.Muted}]Toggle collapsed/expanded delegated sub-agent output, shorthand /sav[/]");
         commands.AppendLine($"  [{C.Prompt}]/workflow[/]      [{C.Muted}]Run a workflow file[/]");
         commands.AppendLine($"  [{C.Prompt}]/resume[/]        [{C.Muted}]Resume a previous session[/]");
         commands.AppendLine();

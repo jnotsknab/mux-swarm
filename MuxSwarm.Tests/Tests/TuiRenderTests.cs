@@ -1,5 +1,6 @@
 using System.Text;
 using MuxSwarm.Utils;
+using MuxSwarm.Utils.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -79,5 +80,57 @@ public class TuiRenderTests
         Assert.Equal(a, b);
         Assert.DoesNotContain("plan", a);
         Assert.DoesNotContain("ultra", a);
+    }
+
+    [Fact]
+    public void SubAgentCollapsed_ShowsAgentLinesToolsAndExpandHint()
+    {
+        var line = TuiComponents.SubAgentCollapsed("CodeAgent", "success", 12, 3, "#82C49B");
+        var plain = TuiMarkup.Plain(line);
+        Assert.Contains("CodeAgent", plain);
+        Assert.Contains("12 lines", plain);
+        Assert.Contains("3 tools", plain);
+        Assert.Contains("ctrl+o expand", plain);
+        Assert.Contains("\u2713", plain);                        // success check glyph
+    }
+
+    [Fact]
+    public void SubAgentCollapsed_FailureGlyph_AndSingularUnits()
+    {
+        var fail = TuiMarkup.Plain(TuiComponents.SubAgentCollapsed("WebAgent", "failure", 1, 1, "#7FB3D5"));
+        Assert.Contains("\u2717", fail);                         // failure cross
+        Assert.Contains("1 line", fail);
+        Assert.Contains("1 tool", fail);
+        Assert.DoesNotContain("1 lines", fail);
+        Assert.DoesNotContain("1 tools", fail);
+    }
+
+    [Fact]
+    public void SubAgentCollapsed_NoToolsOrLines_OmitsThoseBits()
+    {
+        var plain = TuiMarkup.Plain(TuiComponents.SubAgentCollapsed("X", null, 0, 0, "#C9A26B"));
+        Assert.DoesNotContain("line", plain);
+        Assert.DoesNotContain("tool", plain);
+        Assert.Contains("ctrl+o expand", plain);
+    }
+
+    [Fact]
+    public void BeginSubAgentCapture_NullInStdioMode_NeverSuppressesStreamEvents()
+    {
+        // The web app demultiplexes per-agent stream frames, so capture must NOT engage in
+        // stdio/serve mode even when collapse is enabled - sub-agents must still stream.
+        bool prior = MuxConsole.CollapseSubAgents;
+        try
+        {
+            MuxConsole.CollapseSubAgents = true;
+            string outp = CaptureStdio(() =>
+            {
+                using var scope = MuxConsole.BeginSubAgentCapture("CodeAgent");
+                Assert.Null(scope);                              // no capture in stdio mode
+                MuxConsole.WriteStream("hello", agentName: "CodeAgent");
+            });
+            Assert.Contains("hello", outp);                      // stream frame still emitted
+        }
+        finally { MuxConsole.CollapseSubAgents = prior; }
     }
 }

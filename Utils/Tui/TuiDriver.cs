@@ -252,6 +252,21 @@ internal sealed class TuiDriver
     /// <summary>Commit a single markup line above the region.</summary>
     public void CommitLine(string markupLine) => Commit(new[] { markupLine });
 
+    /// <summary>
+    /// Commit a collapsed sub-agent summary line that retains its full buffered transcript as
+    /// expandable data, so Ctrl+O / NAV can open it in place (same mechanism as a large tool
+    /// result). The collapsed line is shown in live scrollback; the transcript lives in memory.
+    /// </summary>
+    public void CommitCollapsed(string collapsedLine, string agent, string fullTranscript)
+    {
+        // Caller (MuxConsole.CommitCapturedSubAgent) holds ConsoleLock, matching the other
+        // driver commit methods which are not internally synchronized.
+        FlushPendingToolCall();
+        RetainExpandable(collapsedLine, agent, fullTranscript, error: false);
+        _region.CommitAbove(new[] { collapsedLine }, BuildLiveFrame(Width));
+        _pendingGap = true;
+    }
+
     // --- tool call/result merge ---------------------------------------------
 
     /// <summary>

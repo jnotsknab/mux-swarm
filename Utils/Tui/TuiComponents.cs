@@ -268,6 +268,30 @@ internal static class TuiComponents
         return new() { $"    [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}" };
     }
 
+    /// <summary>
+    /// Collapsed one-line summary for a finished delegated sub-agent (Claude-Code Task style):
+    /// a triangle glyph, the agent name in its lane tint, an optional status glyph, and a
+    /// "(N lines, M tools — ctrl+o expand)" hint. The full transcript is retained expandable by
+    /// the driver. <paramref name="status"/> is the signal_task_complete status when known.
+    /// </summary>
+    public static string SubAgentCollapsed(string agent, string? status, int lines, int tools, string tintHex)
+    {
+        string stat = (status ?? "").Trim().ToLowerInvariant();
+        string glyph = stat switch
+        {
+            "success" or "complete" or "completed" or "done" => $"[{Ok}]\u2713[/]",
+            "failure" or "failed" or "error"                 => $"[{Err}]\u2717[/]",
+            "partial"                                         => $"[{Warn}]\u2052[/]",
+            _                                                  => $"[{Muted}]\u2713[/]"
+        };
+        var bits = new List<string>();
+        if (lines > 0) bits.Add($"{lines} line{(lines == 1 ? "" : "s")}");
+        if (tools > 0) bits.Add($"{tools} tool{(tools == 1 ? "" : "s")}");
+        bits.Add("ctrl+o expand");
+        string hint = $" [{Dim}]({string.Join(", ", bits)})[/]";
+        return $"  [{tintHex}]\u25b8[/] [{Agent}]{Esc(agent)}[/] {glyph}{hint}";
+    }
+
     /// <summary>Expanded tool result as a bordered card with a status glyph.</summary>
     public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false)
     {

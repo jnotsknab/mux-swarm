@@ -1222,6 +1222,10 @@ public static class ParallelSwarmOrchestrator
         CancellationToken cancellationToken,
         bool prodMode = false)
     {
+        // Collapse this (concurrent) sub-agent's live output into one expandable transcript line
+        // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "parallel_sub_agent");
@@ -1424,6 +1428,7 @@ public static class ParallelSwarmOrchestrator
                                     completionSummary = summaryObj?.ToString();
                                 if (fc.Arguments.TryGetValue("artifacts", out var artifactsObj))
                                     completionArtifacts = artifactsObj?.ToString();
+                                MuxConsole.SetCapturedStatus(completionStatus);
                             }
 
                             if (!fc.Name.Equals("signal_task_complete", StringComparison.OrdinalIgnoreCase))
