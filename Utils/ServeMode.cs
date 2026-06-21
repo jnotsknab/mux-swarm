@@ -86,6 +86,10 @@ public static partial class ServeMode
 
         var wwwroot = ResolveWwwroot();
 
+        // Provision the Monaco editor asset tree on first startup (background,
+        // non-blocking). No-op when already present or disabled via serve.editor.
+        MonacoAssets.EnsureInBackground(wwwroot, App.Config.Serve.Editor);
+
         var builder = WebApplication.CreateSlimBuilder();
         builder.WebHost.UseUrls($"http://{App.Config.ServeAddress}:{port}");
         builder.Logging.ClearProviders();

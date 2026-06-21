@@ -127,6 +127,39 @@ public class ServeConfig
     /// <summary>Optional app-level auth for the serve layer. Default disabled.</summary>
     [JsonPropertyName("auth")]
     public ServeAuthConfig Auth { get; set; } = new();
+
+    /// <summary>Code editor (Monaco) asset provisioning for the serve layer.</summary>
+    [JsonPropertyName("editor")]
+    public ServeEditorConfig Editor { get; set; } = new();
+}
+
+/// <summary>
+/// Controls how the Monaco editor assets backing the in-browser IDE pane are
+/// provisioned. The ~13 MB minified asset tree is no longer vendored in the
+/// repo; instead it is fetched once at first startup and cached on disk under
+/// <c>Runtime/mux-web-app/monaco</c>. Additive; absent in older configs, in
+/// which case defaults apply (auto-fetch on).
+/// </summary>
+public class ServeEditorConfig
+{
+    /// <summary>
+    /// When true (default), the runtime downloads the Monaco asset bundle in the
+    /// background on first startup if it is not already present on disk. Set to
+    /// false to skip the fetch entirely -- for offline/air-gapped deployments
+    /// that vendor the assets manually, or where the editor pane is unused.
+    /// The fetch is a no-op when the assets already exist, so this is safe to
+    /// leave on. Never blocks startup.
+    /// </summary>
+    [JsonPropertyName("autoFetch")]
+    public bool AutoFetch { get; set; } = true;
+
+    /// <summary>
+    /// Pinned Monaco editor version to fetch from the npm registry. Must match a
+    /// published <c>monaco-editor</c> release. Changing this re-fetches into a
+    /// version-stamped cache on next startup.
+    /// </summary>
+    [JsonPropertyName("version")]
+    public string Version { get; set; } = "0.52.2";
 }
 
 /// <summary>
