@@ -42,6 +42,12 @@ internal sealed class TuiDriver
     // (or the stream end) breaks the run. See FlushTableBuffer.
     private readonly List<string> _tableBuf = new();
 
+    // Buffer for a fenced code block (``` ... ```). While inside a fence, raw lines are kept
+    // verbatim and rendered as a code panel on close; this is the code analog of _tableBuf.
+    private readonly List<string> _codeBuf = new();
+    private bool _inFence;
+    private string _fenceLang = "";
+
     // True after a tool call/result block commits, so the NEXT agent text block gets a single
     // blank-line separator above it (visual breathing room between a tool block and prose).
     // Consumed (and reset) the next time streamed assistant text is committed.
@@ -346,7 +352,7 @@ internal sealed class TuiDriver
 
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); Repaint(); }
+    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
@@ -385,6 +391,8 @@ internal sealed class TuiDriver
         _streaming = false;
         if (hadTail)
             CommitStreamLine(tail);
+        // An unterminated fence (model omitted the closing ```) is flushed so code still renders.
+        if (_inFence) FlushCodeBuffer();
         // Any table rows buffered up to the very end of the turn are rendered now.
         FlushTableBuffer();
         if (!hadTail) Repaint();
@@ -416,6 +424,24 @@ internal sealed class TuiDriver
     /// </summary>
     private void CommitStreamLine(string raw)
     {
+        // Fenced code takes precedence over every other block rule: while inside a fence, lines are
+        // captured verbatim (a closing fence flushes the block); an opening fence starts capture.
+        if (_inFence)
+        {
+            if (TuiMarkdown.IsFence(raw)) { FlushCodeBuffer(); return; }
+            _codeBuf.Add(raw);
+            return;
+        }
+        if (TuiMarkdown.IsFence(raw))
+        {
+            FlushTableBuffer();
+            ConsumeGap();
+            _inFence = true;
+            _fenceLang = TuiMarkdown.FenceInfo(raw);
+            _codeBuf.Clear();
+            return;
+        }
+
         if (TuiTable.IsTableRow(raw))
         {
             ConsumeGap();
@@ -438,6 +464,21 @@ internal sealed class TuiDriver
     }
 
     /// <summary>Render and commit any buffered table rows as one aligned, bordered block.</summary>
+    /// <summary>Render and commit a buffered fenced code block as a verbatim, dim-background panel.</summary>
+    private void FlushCodeBuffer()
+    {
+        _inFence = false;
+        var code = new List<string>(_codeBuf);
+        _codeBuf.Clear();
+        var outl = new List<string>(code.Count == 0 ? 1 : code.Count);
+        if (code.Count == 0)
+            outl.Add(TuiMarkdown.CodeLine(""));   // empty fence still shows a thin band
+        else
+            foreach (var ln in code) outl.Add(TuiMarkdown.CodeLine(ln));
+        CommitMirrored(Lane(outl));
+        _pendingGap = true;
+    }
+
     private void FlushTableBuffer()
     {
         if (_tableBuf.Count == 0) return;

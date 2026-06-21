@@ -131,4 +131,80 @@ public class TuiMarkdownTests
         var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("choose a path or b"));
         Assert.Equal("choose a path or b", plain);
     }
+    [Fact]
+    public void Link_RendersLabel_DropsUrl_Underlined()
+    {
+        var m = TuiMarkdown.ToMarkup("see [the docs](https://example.com/x) here");
+        var plain = TuiMarkup.Plain(m);
+        Assert.Equal("see the docs here", plain);
+        Assert.DoesNotContain("https://example.com", plain);   // URL dropped in terminal
+        Assert.DoesNotContain("(", plain);
+        Assert.Contains("underline", m);                        // styled as a link
+    }
+
+    [Fact]
+    public void Link_EmptyLabel_FallsBackToUrl()
+    {
+        var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("bare [](https://example.com/y) link"));
+        Assert.Contains("https://example.com/y", plain);
+    }
+
+    [Fact]
+    public void Image_RendersAltText_DropsUrl()
+    {
+        var m = TuiMarkdown.ToMarkup("look ![a cat](https://img/cat.png) there");
+        var plain = TuiMarkup.Plain(m);
+        Assert.Equal("look a cat there", plain);
+        Assert.DoesNotContain("img/cat.png", plain);
+        Assert.DoesNotContain("!", plain);                      // the image bang is consumed
+        Assert.Contains("italic", m);                           // alt text styled italic
+    }
+
+    [Fact]
+    public void TaskList_Checked_GetsCheckGlyph_NoBrackets()
+    {
+        var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("- [x] done thing"));
+        Assert.Contains("\u2713", plain);                       // check mark
+        Assert.Contains("done thing", plain);
+        Assert.DoesNotContain("[x]", plain);
+        Assert.DoesNotContain("[ ]", plain);
+    }
+
+    [Fact]
+    public void TaskList_Unchecked_GetsBoxGlyph_NoBrackets()
+    {
+        var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("- [ ] pending thing"));
+        Assert.Contains("\u2610", plain);                       // empty ballot box
+        Assert.Contains("pending thing", plain);
+        Assert.DoesNotContain("[ ]", plain);
+    }
+
+    [Fact]
+    public void Fence_IsDetected_WithAndWithoutLanguage()
+    {
+        Assert.True(TuiMarkdown.IsFence("```"));
+        Assert.True(TuiMarkdown.IsFence("```python"));
+        Assert.True(TuiMarkdown.IsFence("~~~"));
+        Assert.True(TuiMarkdown.IsFence("   ```js"));
+        Assert.False(TuiMarkdown.IsFence("`not a fence`"));
+        Assert.False(TuiMarkdown.IsFence("plain text"));
+    }
+
+    [Fact]
+    public void Fence_Info_ReturnsLanguage()
+    {
+        Assert.Equal("python", TuiMarkdown.FenceInfo("```python"));
+        Assert.Equal("", TuiMarkdown.FenceInfo("```"));
+        Assert.Equal("", TuiMarkdown.FenceInfo("not a fence"));
+    }
+
+    [Fact]
+    public void CodeLine_RendersVerbatim_NoMarkdownTransforms()
+    {
+        // Markdown-special chars inside code must NOT be transformed and brackets must survive.
+        var plain = TuiMarkup.Plain(TuiMarkdown.CodeLine("x = a[0] ** 2  # **not bold**"));
+        Assert.Contains("a[0]", plain);
+        Assert.Contains("**not bold**", plain);                 // literal, not bolded
+        Assert.Contains("# ", plain);
+    }
 }

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using MuxSwarm.State;
 using Spectre.Console;
@@ -286,13 +286,13 @@ public static partial class MuxConsole
     /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
     /// No external dependencies or image files required.
     /// </summary>
-    public static void WriteSplashScreen(string version)
+    public static void WriteSplashScreen(string version, string debugTag = "")
     {
         WithConsole(() =>
         {
             if (StdioMode)
             {
-                EmitJson("splash", D(("version", version)));
+                EmitJson("splash", string.IsNullOrEmpty(debugTag) ? D(("version", version)) : D(("version", version), ("debug", debugTag)));
                 return;
             }
 
@@ -300,7 +300,7 @@ public static partial class MuxConsole
 
             if (AnsiConsole.Profile.Width < 56)
             {
-                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]")
+                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}")
                     .RuleStyle(new Style(Color.Grey35))
                     .LeftJustified());
             }
@@ -346,7 +346,7 @@ public static partial class MuxConsole
 
                 sb.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 sb.AppendLine();
-                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
                 sb.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]");
 
                 var panel = new Panel(sb.ToString())
@@ -400,7 +400,7 @@ public static partial class MuxConsole
 
                 left.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 left.AppendLine();
-                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
                 left.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]");
 
                 var right = new StringBuilder();

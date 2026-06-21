@@ -21,12 +21,18 @@ internal static class TuiMarkdown
     private const string Head = "#64B4DC";   // headings (accent)
     private const string Code = "#D4A054";   // inline code (warn/amber)
     private const string Bullet = "#787878"; // list bullet (muted)
+    private const string Link = "#64B4DC";   // links (accent, underlined)
+    private const string CodeBg = "#1E1E1E"; // fenced code background
 
     private static readonly Regex BoldStar = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);
     private static readonly Regex ItalicStar = new(@"(?<![\*])\*(?!\s)(.+?)(?<!\s)\*(?![\*])", RegexOptions.Compiled);
     private static readonly Regex InlineCode = new(@"`([^`]+?)`", RegexOptions.Compiled);
     private static readonly Regex Strike = new(@"~~(.+?)~~", RegexOptions.Compiled);
+    // [text](url) and ![alt](url). Optional "title" after the url is tolerated and dropped.
+    private static readonly Regex MdLink = new(@"(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
+    // Fenced code delimiter: ``` or ~~~ (3+), optional info string (language).
+    private static readonly Regex FenceRe = new(@"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+\-.#]*)\s*$", RegexOptions.Compiled);
 
     /// <summary>Sentinels protect already-emitted markup tags from later escaping/regex.</summary>
     private const string LB = "\uE000";  // stands in for '['
@@ -48,6 +54,17 @@ internal static class TuiMarkdown
         {
             string body = Inline(h.Groups[2].Value);
             return $"{pad}[bold {Head}]{body}[/]";
+        }
+
+        // Task list: - [x] / - [ ] -> checkbox glyph (checked rendered before the plain UL rule,
+        // otherwise the "- " prefix is consumed and the "[x]" leaks through as literal text).
+        var task = Regex.Match(trimmed, @"^[-*+]\s+\[([ xX])\]\s+(.*)$");
+        if (task.Success)
+        {
+            bool done = task.Groups[1].Value is "x" or "X";
+            string glyph = done ? $"[{Head}]\u2713[/]" : $"[{Bullet}]\u2610[/]";
+            string body = Inline(task.Groups[2].Value);
+            return $"{pad}{glyph} {body}";
         }
 
         // Unordered list: -, *, + -> bullet glyph.
@@ -122,6 +139,20 @@ internal static class TuiMarkdown
         //    protected sentinel brackets so subsequent escaping leaves the tags intact.
         s = InlineCode.Replace(s, m => Tag("on #2A2A2A", Code, Escape(m.Groups[1].Value)));
 
+        // 1b) Links/images [text](url) -> styled label (the URL is dropped in the terminal; an
+        //     image ![alt](url) renders its alt text). Emitted with protected tags so the later
+        //     bracket-escape pass leaves them intact instead of showing raw "[text](url)".
+        s = MdLink.Replace(s, m =>
+        {
+            string label = m.Groups[2].Value;
+            if (string.IsNullOrEmpty(label)) label = m.Groups[3].Value; // bare-URL / empty alt
+            bool isImage = m.Groups[1].Value == "!";
+            string inner = Escape(label);
+            return isImage
+                ? Tag2("italic", inner)                                  // image alt -> italic
+                : $"{LB}{Link} underline{RB}{inner}{LB}/{RB}";           // link -> accent underline
+        });
+
         // 2) Bold then italic. Emit protected tags around escaped inner text.
         s = BoldStar.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
         s = BoldUnder.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
@@ -145,6 +176,7 @@ internal static class TuiMarkdown
     {
         if (string.IsNullOrEmpty(s)) return "";
         s = InlineCode.Replace(s, m => m.Groups[1].Value);
+        s = MdLink.Replace(s, m => string.IsNullOrEmpty(m.Groups[2].Value) ? m.Groups[3].Value : m.Groups[2].Value);
         s = BoldStar.Replace(s, m => m.Groups[1].Value);
         s = BoldUnder.Replace(s, m => m.Groups[1].Value);
         s = ItalicStar.Replace(s, m => m.Groups[1].Value);
@@ -159,4 +191,29 @@ internal static class TuiMarkdown
 
     // Build a protected two-attr span (e.g. fg + bg) for inline code: [fg on bg]text[/]
     private static string Tag(string bg, string fg, string inner) => $"{LB}{fg} {bg}{RB}{inner}{LB}/{RB}";
+
+    /// <summary>
+    /// True when a line is a fenced-code delimiter (``` or ~~~, 3+). The caller buffers the
+    /// lines between an opening and closing fence and renders them verbatim via <see cref="CodeLine"/>
+    /// instead of through <see cref="ToMarkup"/> (which would mangle code as Markdown).
+    /// </summary>
+    public static bool IsFence(string line) => line is not null && FenceRe.IsMatch(line);
+
+    /// <summary>Info string (language) of a fence line, or "" if none / not a fence.</summary>
+    public static string FenceInfo(string line)
+    {
+        var m = FenceRe.Match(line ?? "");
+        return m.Success ? m.Groups[2].Value : "";
+    }
+
+    /// <summary>
+    /// Render one verbatim code line: monospace content on a dim background, indented two spaces,
+    /// with NO Markdown inline transforms (code is literal). Spectre brackets are escaped so code
+    /// containing "[" / "]" is shown as-is. Trailing pad keeps the background bar visually contiguous.
+    /// </summary>
+    public static string CodeLine(string raw)
+    {
+        string body = Escape(raw ?? "");
+        return $"  [{Code} on {CodeBg}] {body} [/]";
+    }
 }

@@ -14,6 +14,8 @@ namespace MuxSwarm;
 public class App
 {
     public static readonly string Version = "0.10.3";
+    /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
+    public static readonly string DebugTag = "g11.17";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -140,7 +142,7 @@ public class App
         Config = LoadConfig(ConfigPath);
 
 
-        MuxConsole.WriteSplashScreen(version: Version);
+        MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
         if (!Config.SetupCompleted)
         {
