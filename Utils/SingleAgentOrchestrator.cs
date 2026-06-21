@@ -173,7 +173,9 @@ public static class SingleAgentOrchestrator
 
         if (filteredTools.Count == 0)
             MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
-        else
+        else if (!MuxConsole.IsTui)
+            // In TUI the count is folded into the session-header badge (see RenderTuiSessionHeader);
+            // the standalone success line is suppressed there to avoid duplicate chrome.
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
         if (!MuxConsole.IsTui) MuxConsole.WriteLine();
@@ -184,7 +186,11 @@ public static class SingleAgentOrchestrator
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",
             resolvedModelId,
-            App.ActiveProvider?.Name ?? "");
+            App.ActiveProvider?.Name ?? "",
+            filteredTools.Count);
+        // Seed the live "/tools" scrollable palette (the expandable view behind the
+        // session-header tool badge) with the agent's filtered tool catalog.
+        MuxConsole.SetTuiToolsCatalog(filteredTools.Select(t => (t.Name, t.Description ?? "")).ToList());
         // The classic renderer separates the header from the transcript with a rule; the TUI
         // header card already provides that separation, so skip the extra rule there.
         if (!MuxConsole.IsTui) MuxConsole.WriteRule();
@@ -490,6 +496,29 @@ public static class SingleAgentOrchestrator
             Tools = [.. singleAgentTools!]
         };
 
+        // G11: static context-overhead breakdown for the footer. On a FRESH session the context
+        // is dominated by the system prompt + the serialized tool/MCP schemas (names, descriptions,
+        // JSON parameter shapes), NOT the conversation - which is why a brand-new session can
+        // already read tens of thousands of tokens. Estimate each once (~2.5 chars/token, matching
+        // Common.EstimateTokenCount) and push to the docked footer so the user understands the baseline.
+        {
+            int sysChars = systemPrompt?.Length ?? 0;
+            int toolChars = 0;
+            foreach (var t in singleAgentTools!)
+            {
+                toolChars += t.Name?.Length ?? 0;
+                toolChars += t.Description?.Length ?? 0;
+                if (t is Microsoft.Extensions.AI.AIFunction fn)
+                {
+                    try { toolChars += fn.JsonSchema.GetRawText().Length; }
+                    catch { /* schema not serializable - skip */ }
+                }
+            }
+            uint sysTok = (uint)Math.Ceiling(sysChars / 2.5);
+            uint toolTok = (uint)Math.Ceiling(toolChars / 2.5);
+            MuxConsole.SetTuiTokenBreakdown(sysTok, toolTok);
+        }
+
         // Merge modelOpts from swarm.json if present
         var singleAgentOpts = GetSingleAgentModelOpts();
         if (singleAgentOpts is not null)
@@ -531,6 +560,10 @@ public static class SingleAgentOrchestrator
         var sessionTimestamp = resumedSessionDir != null
             ? Path.GetFileName(resumedSessionDir)
             : DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+
+        // Surface the active session id in the docked footer; the badge replaces the noisy
+        // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
+        MuxConsole.SetTuiSessionId(sessionTimestamp);
 
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
@@ -669,12 +702,39 @@ public static class SingleAgentOrchestrator
                 + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
         }
 
+        // G11: live token estimate during a streaming turn. The provider only reports the
+        // authoritative token count AFTER the turn completes, so the docked meter would otherwise
+        // sit frozen while a long response streams. We tick a throttled estimate = the last known
+        // session total + (chars streamed this turn / ~2.5), giving the user a live-growing meter
+        // that snaps to the real count when usage details arrive. Reset at the start of each turn.
+        long _liveTurnChars = 0;
+        DateTime _lastLivePush = DateTime.MinValue;
+        void ResetLiveTokenEstimate() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
+        void TickLiveTokens(int addedChars)
+        {
+            if (!MuxConsole.TuiActive) return;
+            _liveTurnChars += Math.Max(0, addedChars);
+            // Throttle to ~10 Hz so we don\u0027t repaint the whole region on every micro-chunk.
+            var now = DateTime.UtcNow;
+            if ((now - _lastLivePush).TotalMilliseconds < 100) return;
+            _lastLivePush = now;
+            uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
+            uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
+            uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
+            MuxConsole.RenderTuiStatusBar(displayEst, threshold,
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens);
+        }
+
         // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
         void RenderStatusBar()
         {
             uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
-            MuxConsole.RenderTuiStatusBar(_sessionTokens, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode);
+            // Show the displayed context as tokens minus cached (Claude-style): the system
+            // prompt is cached after the first turn, so excluding cached gives the user a
+            // truer picture of "live" context growth rather than a misleading static base.
+            uint displayTokens = _sessionTokens > _cachedTokens ? _sessionTokens - _cachedTokens : _sessionTokens;
+            MuxConsole.RenderTuiStatusBar(displayTokens, threshold,
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens);
         }
 
         // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
@@ -722,6 +782,21 @@ public static class SingleAgentOrchestrator
             MuxConsole.SetTuiEffort(n);
             MuxConsole.WriteSuccess($"Reasoning effort set to {n}.");
         }
+        // Seed the footer effort chip from the resolved reasoning config so it renders by
+        // default at session init (rather than only after a manual /effort). Maps the
+        // provider effort tier back to our low/med/high label; leaves it hidden if unset.
+        {
+            var seededEffort = agentChatOptions.Reasoning?.Effort;
+            string? seedTier =
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Low    ? "low"  :
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Medium ? "med"  :
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.High   ? "high" : null;
+            if (seedTier is not null)
+            {
+                effortIdx = Array.IndexOf(effortTiers, seedTier);
+                MuxConsole.SetTuiEffort(seedTier);
+            }
+        }
         // Register Shift+Tab to cycle effort and report the new chip label.
         MuxConsole.SetTuiModeCycle(() => CycleEffort());
 
@@ -758,7 +833,10 @@ public static class SingleAgentOrchestrator
             int stuckCount = 0;
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken);
+            // Esc cancels the turn; Ctrl+E expands the latest large tool result inline (mid-stream)
+        // without cancelling - so the user can read full output while the agent keeps working.
+        using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
+            onExpand: () => MuxConsole.TuiExpandLatestInline());
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
@@ -780,6 +858,7 @@ public static class SingleAgentOrchestrator
                     ThinkingIndicator? thinking = null;
                     bool startedStreaming = false;
                     bool currentlyStreaming = false;
+                    ResetLiveTokenEstimate();
 
                     try
                     {
@@ -825,6 +904,7 @@ public static class SingleAgentOrchestrator
 
                                 MuxConsole.WriteStream(update.Text);
                                 responseText.Append(update.Text);
+                                TickLiveTokens(update.Text.Length);
 
                                 HookWorker.Enqueue(new HookEvent
                                 {
@@ -852,6 +932,7 @@ public static class SingleAgentOrchestrator
                                     }
 
                                     MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                                    TickLiveTokens(reasoningContent.Text.Length);
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -1216,6 +1297,7 @@ public static class SingleAgentOrchestrator
         // Clear the session-scoped TUI hooks so they do not leak to the top-level menu.
         MuxConsole.SetTuiModeCycle(null);
         MuxConsole.SetTuiEffort(null);
+        MuxConsole.SetTuiSessionId(null);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);

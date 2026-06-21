@@ -292,4 +292,50 @@ public class TuiCoreTests
         while ((i = haystack.IndexOf(needle, i, StringComparison.Ordinal)) >= 0) { n++; i += needle.Length; }
         return n;
     }
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_SameRowCount_OnlyRewritesChangedRow()
+    {
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta", "gamma" });
+        term.Clear();
+
+        // Only the middle row changes; row count is unchanged => diff path.
+        lr.SetLive(new List<string> { "alpha", "BETA", "gamma" });
+        var outp = term.Output;
+        Assert.Contains("BETA", outp);
+        // The unchanged rows must NOT be rewritten.
+        Assert.DoesNotContain("alpha", outp);
+        Assert.DoesNotContain("gamma", outp);
+        // No full-region teardown on the diff path.
+        Assert.DoesNotContain(Ansi.EraseDown, outp);
+        Assert.Equal(3, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_NoChange_WritesNothing()
+    {
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+
+        lr.SetLive(new List<string> { "one", "two" }); // identical => no paint
+        Assert.Equal("", term.Output);
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_RowCountChange_FullRepaint()
+    {
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+
+        lr.SetLive(new List<string> { "only" }); // count change => full erase+repaint
+        Assert.Contains(Ansi.EraseDown, term.Output);
+        Assert.Equal(1, lr.PaintedRows);
+    }
 }

@@ -556,8 +556,13 @@ public static class ParallelSwarmOrchestrator
         if (!prodMode)
             MuxConsole.WriteMuted("Press [Escape] during execution to cancel the current goal.");
 
-        MuxConsole.WriteLine();
-        MuxConsole.WriteRule();
+        // The live TUI already docks a full-width rule above the footer; emitting another
+        // here would double the separator. Only draw the classic rule off the TUI path.
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteRule();
+        }
 
 
         while (!cancellationToken.IsCancellationRequested)

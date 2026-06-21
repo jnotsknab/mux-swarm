@@ -65,6 +65,9 @@ internal static class TuiCommands
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
         new("/setmodel",     "Change an agent/orchestrator model", Scope.ReplOnly),
+        new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
+        new("/config",       "Show all current config settings", Scope.ReplOnly),
+        new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/swap",         "Swap the active single-agent model", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
@@ -90,6 +93,21 @@ internal static class TuiCommands
         new("/help",         "Full command reference", Scope.ReplOnly),
         new("/exit",         "Exit Mux-Swarm", Scope.ReplOnly),
     };
+
+    /// <summary>
+    /// Commands that expect an inline argument after the command word, so Tab-completion leaves
+    /// a trailing space ready for it. Everything else completes bare (no trailing space) because
+    /// the dispatcher exact-matches the command token and "/agent " would not be recognized.
+    /// </summary>
+    private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/workflow", "/report", "/addcontext", "/set", "/newagent",
+    };
+
+    /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
+    public static bool TakesArgument(string cmd)
+        => ArgTaking.Contains((cmd ?? "").Trim());
 
     /// <summary>True when <paramref name="cmd"/> is a session-native meta command.</summary>
     public static bool IsSessionNative(string cmd)

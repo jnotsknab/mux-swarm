@@ -27,7 +27,7 @@ public class TuiDriverTests
     public void Footer_WithThreshold_RendersMeterAndPercent()
     {
         var f = TuiComponents.Footer(50_000, 200_000, plan: true, ultra: false, psub: false);
-        Assert.Contains("tui", f);
+        Assert.DoesNotContain("tui", f);   // the standing "tui" badge was removed (noise)
         Assert.Contains("plan", f);
         Assert.Contains("25%", f);            // 50k/200k
         Assert.Contains("50,000/200,000", f);
@@ -43,10 +43,11 @@ public class TuiDriverTests
     [Fact]
     public void Footer_IdleZeroTokens_SuppressesMeter()
     {
-        // 0 tokens + no threshold => no noisy "0 tokens" chip at all.
+        // 0 tokens + no threshold + no modes => an essentially empty footer (no "0 tokens"
+        // chip and no standing "tui" badge).
         var f = TuiComponents.Footer(0, 0, false, false, false);
         Assert.DoesNotContain("0 tokens", f);
-        Assert.Contains("tui", f);
+        Assert.DoesNotContain("tui", f);
     }
 
     [Fact]
@@ -60,10 +61,21 @@ public class TuiDriverTests
     [Fact]
     public void Footer_BadgesReflectModes()
     {
-        var f = TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true);
+        // Non-ultra: discrete mode badges show.
+        var f = TuiComponents.Footer(0, 0, plan: true, ultra: false, psub: true);
         Assert.Contains("plan", f);
-        Assert.Contains("ultra", f);
         Assert.Contains("psub", f);
+    }
+
+    [Fact]
+    public void Footer_UltraImpliesAndCollapsesOtherBadges()
+    {
+        // Ultra implies plan + max reasoning (+ typically psub), so the plan/psub badges are
+        // redundant noise and collapse into a single "ultra" chip.
+        var plain = TuiMarkup.Plain(TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true));
+        Assert.Contains("ultra", plain);
+        Assert.DoesNotContain("plan", plain);
+        Assert.DoesNotContain("psub", plain);
     }
 
     [Fact]
@@ -78,6 +90,18 @@ public class TuiDriverTests
     [Fact]
     public void ToolResultCompact_EmptyText_ProducesNothing()
         => Assert.Empty(TuiComponents.ToolResultCompact("   \n  \n"));
+
+    [Fact]
+    public void ToolResultCompact_PrefersCommandLineOverJobId()
+    {
+        // Async-shell dispatches lead with an opaque "Job ID:" GUID; the summary should
+        // surface the actual "Command:" line instead (Claude-Code style).
+        var r = TuiComponents.ToolResultCompact(
+            "Job ID: ff2b6fce-6630-491d-a74a-14c3aebaa3f1\nStatus: running\nCommand: git status --short");
+        Assert.Single(r);
+        Assert.Contains("git status --short", r[0]);
+        Assert.DoesNotContain("ff2b6fce", r[0]);
+    }
 
     [Fact]
     public void Diff_TintsAddRemoveHunkHeaders()
@@ -106,6 +130,96 @@ public class TuiDriverTests
         var rows = TuiComponents.SlashPalette("/pl", entries);
         Assert.Single(rows);
         Assert.Contains("/plan", rows[0]);
+    }
+
+    [Fact]
+    public void SkillsPreview_FuzzyFiltersByNameAndDescription()
+    {
+        var skills = new (string, string)[]
+        {
+            ("alpaca-trading", "Paper trading via Alpaca"),
+            ("mux-ws-client", "Cross-instance websocket chat"),
+            ("git-helper", "Common git workflows"),
+        };
+        // name match
+        var byName = TuiComponents.SkillsPreview("alp", skills, 80);
+        Assert.Contains(byName, r => r.Contains("alpaca-trading"));
+        Assert.DoesNotContain(byName, r => r.Contains("git-helper"));
+        // description match
+        var byDesc = TuiComponents.SkillsPreview("websocket", skills, 80);
+        Assert.Contains(byDesc, r => r.Contains("mux-ws-client"));
+        // empty filter lists all
+        var all = TuiComponents.SkillsPreview("", skills, 80);
+        Assert.Contains(all, r => r.Contains("alpaca-trading"));
+        Assert.Contains(all, r => r.Contains("git-helper"));
+    }
+
+    [Fact]
+    public void SkillsPreview_NoMatch_ShowsPlaceholder()
+    {
+        var skills = new (string, string)[] { ("alpaca-trading", "x") };
+        var rows = TuiComponents.SkillsPreview("zzz", skills, 80);
+        Assert.Contains(rows, r => r.Contains("no skills match"));
+    }
+
+    [Fact]
+    public void SessionsPreview_FuzzyFiltersByIdAndPreview()
+    {
+        var sessions = new (string, string)[]
+        {
+            ("2026-06-20_12-31-01", "research homelab network gear"),
+            ("2026-06-19_09-15-42", "fix the tui footer duplication"),
+        };
+        var byId = TuiComponents.SessionsPreview("12-31", sessions, 80);
+        Assert.Contains(byId, r => r.Contains("2026-06-20_12-31-01"));
+        Assert.DoesNotContain(byId, r => r.Contains("2026-06-19_09-15-42"));
+        var byPreview = TuiComponents.SessionsPreview("homelab", sessions, 80);
+        Assert.Contains(byPreview, r => r.Contains("2026-06-20_12-31-01"));
+        var none = TuiComponents.SessionsPreview("zzz", sessions, 80);
+        Assert.Contains(none, r => r.Contains("no sessions match"));
+    }
+
+    [Fact]
+    public void LineEditor_DetectsResumeFilter_WithAndWithoutArg()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "/resume") ed.Feed(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false));
+        Assert.True(ed.IsResumeFilter);
+        Assert.Equal("", ed.ResumeFilter);
+        foreach (var c in " home") ed.Feed(new ConsoleKeyInfo(c, ConsoleKey.Spacebar, false, false, false));
+        Assert.True(ed.IsResumeFilter);
+        Assert.Equal("home", ed.ResumeFilter);
+    }
+
+    [Fact]
+    public void LineEditor_DetectsSkillsFilter_WithAndWithoutArg()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "/skill") ed.Feed(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false));
+        Assert.True(ed.IsSkillsFilter);
+        Assert.Equal("", ed.SkillsFilter);
+        foreach (var c in " alp") ed.Feed(new ConsoleKeyInfo(c, ConsoleKey.Spacebar, false, false, false));
+        Assert.True(ed.IsSkillsFilter);
+        Assert.Equal("alp", ed.SkillsFilter);
+    }
+
+    [Fact]
+    public void Footer_ShowsSessionIdBadge_AndCachedTokens()
+    {
+        var f = TuiComponents.Footer(50_000, 200_000, plan: false, ultra: false, psub: false,
+            sessionId: "2026-06-20_12-31-01", cached: 39_080);
+        Assert.Contains("2026-06-20_12-31-01", f);
+        Assert.Contains("session", f);
+        Assert.Contains("39,080 cached", f);
+    }
+
+    [Fact]
+    public void Footer_NoTuiBadge_ButShowsModeCycleHint()
+    {
+        var bare = TuiComponents.Footer(0, 0, false, false, false);
+        Assert.DoesNotContain("tui", bare);
+        var hinted = TuiComponents.Footer(0, 0, false, false, false, effort: "high", modeCycleHint: true);
+        Assert.Contains("cycle", hinted);
     }
 
     [Fact]
@@ -141,11 +255,11 @@ public class TuiDriverTests
     {
         var term = new FakeTerminal();
         var d = new TuiDriver(term);
-        d.SetFooter(0, 0, false, false, false);
+        d.SetFooter(0, 0, plan: true, ultra: false, psub: false);
         term.Clear();
         d.CommitLine("  permanent transcript line");
         Assert.Contains("permanent transcript line", term.Output);
-        Assert.Contains("tui", term.Output); // footer repainted below the committed line
+        Assert.Contains("plan", term.Output); // footer repainted below the committed line
     }
 
     [Fact]
@@ -329,5 +443,445 @@ public class TuiDriverTests
         Assert.True(TuiCommands.IsReplOnly("/agent"));
         Assert.True(TuiCommands.IsReplOnly("/skills"));
         Assert.False(TuiCommands.IsReplOnly("/compact"));
+    }
+
+    // --- meter semantics (dual-color total/threshold) -----------------------
+
+    [Fact]
+    public void Footer_MeterPlotsTotalNotLiveAgainstThreshold()
+    {
+        // live=50k, cached=50k => total=100k against 200k threshold => 50% (NOT 25%).
+        var f = TuiComponents.Footer(50_000, 200_000, false, false, false, cached: 50_000);
+        Assert.Contains("50%", f);
+        Assert.Contains("100,000/200,000", f);
+    }
+
+    [Fact]
+    public void Footer_CachedHint_UsesSeparatorSpacing()
+    {
+        var f = TuiComponents.Footer(10_000, 200_000, false, false, false, cached: 5_000);
+        Assert.Contains("5,000 cached", f);
+        Assert.Contains("\u00b7", f); // a middot separator precedes the cached hint
+    }
+
+    [Fact]
+    public void Footer_ZeroCached_NoCachedHint()
+    {
+        var f = TuiComponents.Footer(10_000, 200_000, false, false, false, cached: 0);
+        Assert.DoesNotContain("cached", f);
+    }
+
+    // --- tool call/result merge ---------------------------------------------
+
+    [Fact]
+    public void ToolCallResultMerged_OneLine_CallPlusResult()
+    {
+        var r = TuiComponents.ToolCallResultMerged("read_file", "path=x.cs", "line one\nline two\nline three", expandable: true);
+        Assert.Single(r);
+        Assert.Contains("read_file", r[0]);
+        Assert.Contains("line one", r[0]);
+        Assert.Contains("(+2 lines, ctrl+e expand)", r[0]);
+    }
+
+    [Fact]
+    public void ToolCallResultMerged_EmptyResult_ShowsCallOnly()
+    {
+        var r = TuiComponents.ToolCallResultMerged("noop", null, "   \n  ");
+        Assert.Single(r);
+        Assert.Contains("noop", r[0]);
+        Assert.DoesNotContain("(+", r[0]);
+    }
+
+    [Fact]
+    public void Driver_BeginToolCall_ShowsCallLive_ThenMergesOnResult()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginToolCall("read_file", "x.cs");
+        Assert.Contains("read_file", term.Output);   // shown live above the footer
+        term.Clear();
+        // A large (above-threshold) result is Ctrl+E-expandable and advertises the affordance.
+        d.SetCollapseThreshold(2);
+        d.ResolveMergedToolResult("hello\nworld\nthree\nfour");
+        // committed merged line carries both the tool and the result first line
+        Assert.Contains("read_file", term.Output);
+        Assert.Contains("hello", term.Output);
+        Assert.Contains("ctrl+e expand", term.Output);
+    }
+
+    [Fact]
+    public void Driver_PendingToolCall_FlushedBeforeSeparateCommit()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginToolCall("shell", "ls");
+        term.Clear();
+        d.CommitLine("  diff block");     // a separate block commits first
+        Assert.Contains("shell", term.Output);   // pending call flushed to its own line
+        Assert.Contains("diff block", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ThinkingLine_UsesCalmThinkColor_NotWarn()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        term.Clear();
+        d.SetThinking("thinking");
+        // Think color (#7AA2C0) truecolor SGR present; Warn (#D4A054) absent.
+        Assert.Contains("\u001b[38;2;122;162;192m", term.Output);
+        Assert.DoesNotContain("\u001b[38;2;212;160;84m", term.Output);
+    }
+
+    // --- g11.1: user-turn separation, failed-command glyph, sub-agent gutter --------
+
+    [Fact]
+    public void UserEcho_LeadsWithBlankLine_AndAccentGutter()
+    {
+        var rows = TuiComponents.UserEcho("/gc");
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("", rows[0]);                      // blank delimiter line
+        Assert.Contains("\u258e", rows[1]);              // gutter bar
+        Assert.Contains(TuiComponents.Accent, rows[1]);  // accent-tinted
+        Assert.Contains("/gc", rows[1]);
+    }
+
+    [Fact]
+    public void ToolCallResultMerged_Error_UsesFailGlyphAndTag_NotGreenDot()
+    {
+        var ok = TuiComponents.ToolCallResultMerged("shell", "ls", "Command: ls\nok", error: false);
+        Assert.Contains(TuiComponents.Ok, ok[0]);        // green running dot on success
+        var bad = TuiComponents.ToolCallResultMerged(
+            "shell", "nope",
+            "Job ID: x\nStatus: failed (code 1)\nSTDERR: 'nope' is not recognized",
+            error: true);
+        Assert.Contains("\u2717", bad[0]);               // red cross glyph
+        Assert.Contains(TuiComponents.Err, bad[0]);       // error color
+        Assert.Contains("failed", bad[0]);
+        Assert.DoesNotContain("\u25cf", bad[0]);         // NOT the green/ok running dot
+    }
+
+    [Fact]
+    public void ToolCallResultMerged_Error_SurfacesStderrLine()
+    {
+        var bad = TuiComponents.ToolCallResultMerged(
+            "shell", null,
+            "Job ID: abc\nStatus: failed (code 1)\nSTDERR: 'thiscommanddoesnotexist' is not recognized",
+            error: true);
+        Assert.Contains("not recognized", bad[0]);        // informative error line, not Job ID
+        Assert.DoesNotContain("abc", bad[0]);
+    }
+
+    [Fact]
+    public void AgentTint_IsStable_AndDistinctAcrossNames()
+    {
+        Assert.Equal(TuiComponents.AgentTint("CodeAgent"), TuiComponents.AgentTint("CodeAgent"));
+        // a tint always comes from the lane palette
+        Assert.Contains(TuiComponents.AgentTint("WebAgent"), TuiComponents.AgentLane);
+    }
+
+    [Fact]
+    public void Gutter_ReplacesLeadingIndent_WithTintedBar()
+    {
+        var g = TuiComponents.Gutter("  [x]hi[/]", "#82C49B");
+        Assert.StartsWith("[#82C49B]\u258e[/]", g);
+        Assert.Contains("hi", g);
+    }
+
+    [Fact]
+    public void Gutter_NullTint_IsNoOp()
+        => Assert.Equal("  line", TuiComponents.Gutter("  line", null));
+
+    [Fact]
+    public void Driver_LaneTint_GuttersCommittedSubAgentLines()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetLaneTint("#82C49B");
+        term.Clear();
+        d.CommitLine("  sub-agent output");
+        // The lane bar glyph is painted before the committed content.
+        Assert.Contains("\u258e", term.Output);
+        Assert.Contains("sub-agent output", term.Output);
+    }
+
+    [Fact]
+    public void Driver_LaneTint_Null_NoGutterForPrimaryAgent()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetLaneTint(null);
+        term.Clear();
+        d.CommitLine("  primary output");
+        Assert.DoesNotContain("\u258e", term.Output);
+        Assert.Contains("primary output", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ErrorMerge_PaintsRedCrossInScrollback()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginToolCall("shell", "nope");
+        term.Clear();
+        d.ResolveMergedToolResult("Status: failed (code 1)\nSTDERR: nope", error: true);
+        Assert.Contains("\u2717", term.Output);          // red cross committed
+        Assert.Contains("failed", term.Output);
+    }
+
+    // --- g11.2: @file picker, Tab completion, error compact line --------------------
+
+    private static ConsoleKeyInfo Ch2(char c) => new(c, ConsoleKey.NoName, false, false, false);
+
+    [Fact]
+    public void LineEditor_AtFilter_DetectedMidBuffer()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "fix @Utils/Foo") ed.Feed(Ch2(c));
+        Assert.True(ed.IsAtFilter);
+        Assert.Equal("Utils/Foo", ed.AtFilter);
+    }
+
+    [Fact]
+    public void LineEditor_AtFilter_FalseWhenNoAtToken()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "just text") ed.Feed(Ch2(c));
+        Assert.False(ed.IsAtFilter);
+    }
+
+    [Fact]
+    public void LineEditor_ReplaceCurrentToken_SwapsAtTokenInPlace()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "see @Foo here") ed.Feed(Ch2(c));
+        // cursor is at end; move left to land inside "here"? Instead test direct: rebuild
+        var ed2 = new LineEditor();
+        foreach (var c in "see @Fo") ed2.Feed(Ch2(c));
+        ed2.ReplaceCurrentToken("@Utils/Foo.cs");
+        Assert.Equal("see @Utils/Foo.cs ", ed2.Buffer);
+    }
+
+    [Fact]
+    public void LineEditor_Tab_EmitsCompleteSignal()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "/he") ed.Feed(Ch2(c));
+        var sig = ed.Feed(new ConsoleKeyInfo('\t', ConsoleKey.Tab, false, false, false));
+        Assert.Equal(LineEditSignal.Complete, sig);
+    }
+
+    [Fact]
+    public void LineEditor_ShiftTab_StillModeCycles_NotComplete()
+    {
+        var ed = new LineEditor();
+        var sig = ed.Feed(new ConsoleKeyInfo('\t', ConsoleKey.Tab, shift: true, alt: false, control: false));
+        Assert.Equal(LineEditSignal.ModeCycle, sig);
+    }
+
+    [Fact]
+    public void LineEditor_SetBuffer_ReplacesAndPositionsCursor()
+    {
+        var ed = new LineEditor();
+        foreach (var c in "/sk") ed.Feed(Ch2(c));
+        ed.SetBuffer("/skill alpaca-trading");
+        Assert.Equal("/skill alpaca-trading", ed.Buffer);
+        Assert.Equal(ed.Buffer.Length, ed.Cursor);
+    }
+
+    [Fact]
+    public void FilesPreview_SubstringRanksFileNameFirst()
+    {
+        var files = new[] { "Utils/Tui/TuiDriver.cs", "docs/driver.md", "README.md" };
+        var rows = TuiComponents.FilesPreview("driver", files, 80);
+        string j = string.Join("\n", rows);
+        Assert.Contains("files", j);
+        Assert.Contains("driver.md", j);   // name-substring match present
+    }
+
+    [Fact]
+    public void FilesPreview_NoMatch_ShowsPlaceholder()
+    {
+        var files = new[] { "a.cs", "b.cs" };
+        var rows = TuiComponents.FilesPreview("zzzzz", files, 80);
+        Assert.Contains(rows, r => r.Contains("no files match"));
+    }
+
+    [Fact]
+    public void TopFileMatch_PrefersShorterNameSubstring()
+    {
+        var files = new[] { "src/TuiDriver.cs", "src/TuiDriverTests.cs" };
+        var pick = TuiComponents.TopFileMatch("TuiDriver", files);
+        Assert.Equal("src/TuiDriver.cs", pick);
+    }
+
+    [Fact]
+    public void TopFileMatch_SubsequenceFallback()
+    {
+        var files = new[] { "Utils/MultiAgentOrchestrator.cs", "x.txt" };
+        // "mao" is a scattered subsequence of MultiAgentOrchestrator
+        var pick = TuiComponents.TopFileMatch("mao", files);
+        Assert.Equal("Utils/MultiAgentOrchestrator.cs", pick);
+    }
+
+    [Fact]
+    public void TopFileMatch_EmptyFilter_ReturnsFirst()
+        => Assert.Equal("a.cs", TuiComponents.TopFileMatch("", new[] { "a.cs", "b.cs" }));
+
+    [Fact]
+    public void Driver_TabCompletesSlashCommand()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetPaletteScope(topLevel: true);
+        d.SetFooter(0, 0, false, false, false);
+        // drive ReadLine indirectly is hard; instead assert AcceptCompletion via buffer:
+        // type "/age" then Tab through the editor + driver is integration; here we trust the
+        // unit coverage of the pieces. This asserts the palette has /agent to complete to.
+        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/agent");
+    }
+
+    // --- g11.3: command ranking, palette selection highlight -----------------------
+
+    [Fact]
+    public void TopCommandMatch_PrefixBeatsDescriptionSubstring()
+    {
+        var entries = new (string, string)[]
+        {
+            ("/swarm", "Launch interactive multi-agent swarm loop"),  // desc contains "age"
+            ("/agent", "Launch interactive single-agent loop"),
+        };
+        // "/age" must complete to /agent (name prefix), NOT /swarm (description "multi-agent").
+        Assert.Equal("/agent", TuiComponents.TopCommandMatch("/age", entries));
+    }
+
+    [Fact]
+    public void RankCommands_NamePrefixRanksFirst()
+    {
+        var entries = new (string, string)[]
+        {
+            ("/swarm", "multi-agent loop"),
+            ("/agent", "single agent"),
+            ("/addcontext", "configure agent context"),
+        };
+        var ranked = TuiComponents.RankCommands("age", entries);
+        Assert.Equal("/agent", ranked[0].Cmd);   // name prefix wins over desc matches
+    }
+
+    [Fact]
+    public void CommandScore_OrdersPrefixThenSubstringThenDesc()
+    {
+        // name prefix
+        int prefix = TuiComponents.CommandScore("/agent", "x", "age");
+        // name substring (not prefix)
+        int nameSub = TuiComponents.CommandScore("/manage", "x", "age");
+        // description only
+        int descOnly = TuiComponents.CommandScore("/swarm", "multi-agent", "age");
+        Assert.True(prefix < nameSub);
+        Assert.True(nameSub < descOnly);
+        Assert.Equal(-1, TuiComponents.CommandScore("/zzz", "nope", "age"));
+    }
+
+    [Fact]
+    public void SlashPalette_HighlightsSelectedRow()
+    {
+        var entries = new (string, string)[] { ("/agent", "a"), ("/swarm", "b"), ("/status", "c") };
+        var rows = TuiComponents.SlashPalette("/s", entries, selected: 0);
+        // The selected row carries the chevron marker.
+        Assert.Contains(rows, r => r.Contains("\u203a"));
+    }
+
+    [Fact]
+    public void FilesPreview_HighlightsSelectedRow()
+    {
+        var files = new[] { "a/one.cs", "a/two.cs", "a/three.cs" };
+        var rows = TuiComponents.FilesPreview("", files, 80, selected: 1);
+        Assert.Contains(rows, r => r.Contains("\u203a"));
+    }
+
+    [Fact]
+    public void RankFiles_EmptyFilter_ReturnsAllCapped()
+    {
+        var files = Enumerable.Range(0, 100).Select(i => $"f{i}.cs").ToArray();
+        var ranked = TuiComponents.RankFiles("", files);
+        Assert.Equal(64, ranked.Count);
+    }
+
+    [Fact]
+    public void RankSkills_FiltersByNameOrDesc()
+    {
+        var skills = new (string, string)[] { ("alpaca-trading", "paper trades"), ("git-helper", "git flows") };
+        Assert.Single(TuiComponents.RankSkills("alp", skills));
+        Assert.Single(TuiComponents.RankSkills("flows", skills));
+        Assert.Equal(2, TuiComponents.RankSkills("", skills).Count);
+    }
+
+    // --- g11.4: trailing-space, window paging, --workspace --------------------------
+
+    [Fact]
+    public void TuiCommands_TakesArgument_OnlyForArgCommands()
+    {
+        Assert.True(TuiCommands.TakesArgument("/skill"));
+        Assert.True(TuiCommands.TakesArgument("/resume"));
+        Assert.True(TuiCommands.TakesArgument("/setmodel"));
+        Assert.False(TuiCommands.TakesArgument("/agent"));
+        Assert.False(TuiCommands.TakesArgument("/swarm"));
+        Assert.False(TuiCommands.TakesArgument("/plan"));
+    }
+
+    [Fact]
+    public void WindowStart_ScrollsToKeepSelectionVisible()
+    {
+        // 20 items, window 8. Selecting near the top keeps start 0.
+        Assert.Equal(0, TuiComponents.WindowStart(20, 0));
+        Assert.Equal(0, TuiComponents.WindowStart(20, 2));
+        // Selecting in the middle centers the window.
+        Assert.Equal(6, TuiComponents.WindowStart(20, 10));
+        // Selecting the last item clamps to the final full page (20-8=12).
+        Assert.Equal(12, TuiComponents.WindowStart(20, 19));
+        // Fewer items than the window => always start 0.
+        Assert.Equal(0, TuiComponents.WindowStart(5, 4));
+    }
+
+    [Fact]
+    public void SlashPalette_ShowsMoreHints_WhenWindowed()
+    {
+        // 12 entries all matching empty filter; selecting deep should show an "up more" hint.
+        var entries = Enumerable.Range(0, 12).Select(i => ($"/c{i:00}", $"desc {i}")).ToArray();
+        var rows = TuiComponents.SlashPalette("/c", entries, selected: 11);
+        string j = string.Join("\n", rows);
+        Assert.Contains("\u2191", j);   // up-arrow "N more" hint at top
+    }
+
+    [Fact]
+    public void SlashPalette_ShowsDownHint_AtTop()
+    {
+        var entries = Enumerable.Range(0, 12).Select(i => ($"/c{i:00}", $"desc {i}")).ToArray();
+        var rows = TuiComponents.SlashPalette("/c", entries, selected: 0);
+        string j = string.Join("\n", rows);
+        Assert.Contains("\u2193", j);   // down-arrow "N more" hint at bottom
+    }
+
+    [Fact]
+    public void FilesPreview_InstallDirHint_Shown()
+    {
+        var files = new[] { "MuxSwarm.exe", "Configs/Config.json" };
+        var rows = TuiComponents.FilesPreview("", files, 80, selected: -1, installDirHint: true);
+        string j = string.Join("\n", rows);
+        Assert.Contains("--workspace", j);
+    }
+
+    [Fact]
+    public void FilesPreview_NoInstallDirHint_ByDefault()
+    {
+        var files = new[] { "a.cs" };
+        var rows = TuiComponents.FilesPreview("", files, 80);
+        Assert.DoesNotContain(rows, r => r.Contains("--workspace"));
     }
 }

@@ -79,4 +79,56 @@ public class TuiMarkdownTests
         Assert.Contains("\u2502", TuiMarkup.Plain(m));
         Assert.Contains("quoted", TuiMarkup.Plain(m));
     }
+
+    [Fact]
+    public void Table_HeaderRow_RendersCellsJoinedByBar()
+    {
+        var m = TuiMarkdown.ToMarkup("| Name | Role |");
+        var plain = TuiMarkup.Plain(m);
+        Assert.Contains("Name", plain);
+        Assert.Contains("Role", plain);
+        Assert.Contains("\u2502", plain);          // cells joined by a vertical bar
+        Assert.DoesNotContain("|", plain);          // raw pipes are gone
+    }
+
+    [Fact]
+    public void Table_SeparatorRow_BecomesRule()
+    {
+        var m = TuiMarkdown.ToMarkup("|---|:--:|");
+        var plain = TuiMarkup.Plain(m);
+        Assert.Contains("\u2500", plain);           // horizontal rule
+        Assert.DoesNotContain("-", plain);          // dashes consumed
+    }
+
+    [Fact]
+    public void Table_DataRow_RendersCells()
+    {
+        var m = TuiMarkdown.ToMarkup("| Alice | Admin |");
+        var plain = TuiMarkup.Plain(m);
+        Assert.Contains("Alice", plain);
+        Assert.Contains("Admin", plain);
+    }
+
+    [Fact]
+    public void ThematicBreak_BecomesRule()
+    {
+        var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("---"));
+        Assert.Contains("\u2500", plain);
+    }
+
+    [Fact]
+    public void Strikethrough_IsStyled_TextPreserved()
+    {
+        var m = TuiMarkdown.ToMarkup("this is ~~gone~~ now");
+        Assert.Contains("strikethrough", m);
+        Assert.Equal("this is gone now", TuiMarkup.Plain(m));
+    }
+
+    [Fact]
+    public void Prose_WithSinglePipe_IsNotMistakenForTable()
+    {
+        // One interior pipe, no leading/trailing pipe -> stays prose, not a table.
+        var plain = TuiMarkup.Plain(TuiMarkdown.ToMarkup("choose a path or b"));
+        Assert.Equal("choose a path or b", plain);
+    }
 }

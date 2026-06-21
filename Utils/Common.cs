@@ -597,7 +597,7 @@ public static class Common
                     serialized.GetRawText());
             }
 
-            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
+            MuxConsole.WriteSessionSaved($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {
@@ -645,7 +645,7 @@ public static class Common
                 Path.Combine(sessionSubDir, "agent_session.json"),
                 serialized.GetRawText());
 
-            MuxConsole.WriteSuccess($"[AGENT SESSION] Saved to {sessionSubDir}");
+            MuxConsole.WriteSessionSaved($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {

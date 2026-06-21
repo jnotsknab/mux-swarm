@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -25,6 +26,7 @@ internal static class TuiMarkdown
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);
     private static readonly Regex ItalicStar = new(@"(?<![\*])\*(?!\s)(.+?)(?<!\s)\*(?![\*])", RegexOptions.Compiled);
     private static readonly Regex InlineCode = new(@"`([^`]+?)`", RegexOptions.Compiled);
+    private static readonly Regex Strike = new(@"~~(.+?)~~", RegexOptions.Compiled);
 
     /// <summary>Sentinels protect already-emitted markup tags from later escaping/regex.</summary>
     private const string LB = "\uE000";  // stands in for '['
@@ -69,8 +71,46 @@ internal static class TuiMarkdown
         if (bq.Success)
             return $"{pad}[{Bullet}]\u2502[/] {Inline(bq.Groups[1].Value)}";
 
+        // Thematic break: ---, ***, ___ (3+). Render a dim horizontal rule.
+        if (Regex.IsMatch(trimmed, @"^([-*_])\1{2,}$"))
+            return $"{pad}[{Bullet}]{new string('\u2500', 24)}[/]";
+
+        // Table rows: lines that start and end with a pipe (GitHub-flavored). The header
+        // separator (|---|:--:|) becomes a rule; data/header rows render styled cells joined
+        // by a dim vertical bar. (Per-row styling only - cross-row column alignment needs the
+        // whole table buffered, which the streaming line-commit model does not provide.)
+        if (IsTableRow(trimmed))
+        {
+            // Separator row -> rule.
+            if (Regex.IsMatch(trimmed, @"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$"))
+                return $"{pad}[{Bullet}]{new string('\u2500', 24)}[/]";
+            var cells = SplitTableCells(trimmed);
+            var sep = $" [{Bullet}]\u2502[/] ";
+            return pad + string.Join(sep, cells.Select(c => Inline(c.Trim())));
+        }
+
         // Plain paragraph line.
         return pad + Inline(trimmed);
+    }
+
+    /// <summary>True when a line looks like a GitHub table row (contains a pipe separator).</summary>
+    private static bool IsTableRow(string s)
+    {
+        // Must contain at least one unescaped interior pipe and look pipe-delimited.
+        if (!s.Contains('|')) return false;
+        string t = s.Trim();
+        // Require either leading/trailing pipe or >=2 pipes, to avoid eating prose with one "|".
+        int pipes = t.Count(ch => ch == '|');
+        return t.StartsWith("|") || t.EndsWith("|") || pipes >= 2;
+    }
+
+    /// <summary>Split a table row into cells on unescaped pipes, dropping leading/trailing empties.</summary>
+    private static List<string> SplitTableCells(string row)
+    {
+        string t = row.Trim();
+        if (t.StartsWith("|")) t = t[1..];
+        if (t.EndsWith("|")) t = t[..^1];
+        return t.Split('|').ToList();
     }
 
     /// <summary>Apply inline transforms (bold/italic/code) and escape stray brackets.</summary>
@@ -86,11 +126,29 @@ internal static class TuiMarkdown
         s = BoldStar.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
         s = BoldUnder.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
         s = ItalicStar.Replace(s, m => Tag2("italic", Escape(m.Groups[1].Value)));
+        s = Strike.Replace(s, m => Tag2("strikethrough", Escape(m.Groups[1].Value)));
 
         // 3) Escape any remaining literal Spectre brackets in the plain runs, then restore
         //    the protected sentinel brackets to real markup brackets.
         s = s.Replace("[", "[[").Replace("]", "]]");
         s = s.Replace(LB, "[").Replace(RB, "]");
+        return s;
+    }
+
+    /// <summary>
+    /// Strip inline Markdown markers (**bold**, __bold__, *italic*, `code`, ~~strike~~) to clean
+    /// PLAIN text, leaving the inner content. Used by the table renderer, whose fixed-width column
+    /// math needs the true display text (otherwise stray "**" leak into cells). Does not emit any
+    /// Spectre markup, so the result is safe to escape and measure with TuiMarkup.Width.
+    /// </summary>
+    public static string StripInline(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        s = InlineCode.Replace(s, m => m.Groups[1].Value);
+        s = BoldStar.Replace(s, m => m.Groups[1].Value);
+        s = BoldUnder.Replace(s, m => m.Groups[1].Value);
+        s = ItalicStar.Replace(s, m => m.Groups[1].Value);
+        s = Strike.Replace(s, m => m.Groups[1].Value);
         return s;
     }
 

@@ -50,6 +50,7 @@ internal sealed class LiveRegion
     private readonly ITuiTerminal _term;
     private List<string> _live = new();   // current live-region lines (markup, pre-wrap)
     private int _paintedRows;             // physical rows the live region occupies on screen
+    private List<string> _lastRows = new(); // last-painted physical rows (ANSI), for diffing
     private bool _cursorHidden;
 
     public LiveRegion(ITuiTerminal term) => _term = term;
@@ -161,6 +162,7 @@ internal sealed class LiveRegion
         _term.Write(Ansi.CursorUp(_paintedRows));
         _term.Write(Ansi.EraseDown);
         _paintedRows = 0;
+        _lastRows = new List<string>();
     }
 
     /// <summary>Paint the current live lines, recording how many physical rows they took.</summary>
@@ -176,6 +178,7 @@ internal sealed class LiveRegion
         }
         _term.Write(sb.ToString());
         _paintedRows = rows.Count;
+        _lastRows = rows;
     }
 
     /// <summary>
@@ -185,8 +188,52 @@ internal sealed class LiveRegion
     public void SetLive(IReadOnlyList<string> markupLines)
     {
         HideCursor();
-        EraseLiveRegion();
         _live = markupLines is List<string> l ? new List<string>(l) : markupLines.ToList();
+
+        // Diff-based repaint: render the new physical rows and compare against what is
+        // currently on screen. When the row COUNT is unchanged we only rewrite the rows that
+        // actually differ (seeking the cursor to each and erasing just that line), which
+        // eliminates the full-region teardown that made the footer flicker every spinner
+        // tick. When the row count changes we fall back to a full erase+repaint.
+        var newRows = RenderPhysicalRows(_live);
+
+        if (_paintedRows > 0 && newRows.Count == _lastRows.Count)
+        {
+            // Find which rows changed.
+            var changed = new List<int>();
+            for (int i = 0; i < newRows.Count; i++)
+                if (!string.Equals(newRows[i], _lastRows[i], StringComparison.Ordinal))
+                    changed.Add(i);
+
+            if (changed.Count == 0) { _term.Flush(); return; } // nothing to do - no paint, no flicker
+
+            // Cursor is on a fresh line just BELOW the last painted row. Row index r counts
+            // from the top of the region; distance from the cursor up to row r is
+            // (_paintedRows - r). Rewrite each changed row in place.
+            var sb = new StringBuilder();
+            int cursorOffset = 0; // current cursor distance above the home (below-last) line
+            foreach (int r in changed)
+            {
+                int up = _paintedRows - r;             // lines to move up from home to row r
+                int delta = up - cursorOffset;
+                if (delta > 0) sb.Append(Ansi.CursorUp(delta));
+                else if (delta < 0) sb.Append(Ansi.CursorDown(-delta));
+                cursorOffset = up;
+                sb.Append(Ansi.CursorLeft);
+                sb.Append(Ansi.EraseLine);
+                sb.Append(newRows[r]);
+            }
+            // Return the cursor to the home line (below the last row).
+            if (cursorOffset > 0) sb.Append(Ansi.CursorDown(cursorOffset));
+            sb.Append(Ansi.CursorLeft);
+            _term.Write(sb.ToString());
+            _lastRows = newRows;
+            _term.Flush();
+            return;
+        }
+
+        // Row count changed (or first paint): full erase + repaint.
+        EraseLiveRegion();
         PaintLiveRegion();
         _term.Flush();
     }

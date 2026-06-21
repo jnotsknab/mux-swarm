@@ -1,4 +1,5 @@
-﻿using MuxSwarm.Utils;
+using MuxSwarm.Utils;
+using Spectre.Console;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -81,4 +82,50 @@ public class MuxConsoleTests
             MuxConsole.StdioMode = false;
         }
     }
+
+    // --- Regression: /set picker crash on bracketed choice labels --------------------
+    // The /set picker builds labels like "renderMode = auto [auto|tui|classic]". Spectre
+    // parses "[auto|tui|classic]" as a markup tag and throws unless choices are escaped.
+    // The fix adds .UseConverter(Markup.Escape) to Select/MultiSelect.
+
+    [Fact]
+    public void SpectreMarkup_RawBracketedLabel_Throws()
+    {
+        // Documents the underlying Spectre behavior the fix guards against.
+        Assert.ThrowsAny<System.Exception>(() =>
+            new Markup("renderMode  =  auto   [auto|tui|classic]"));
+    }
+
+    [Fact]
+    public void SpectreMarkup_EscapedBracketedLabel_DoesNotThrow()
+    {
+        // The converter used by Select/MultiSelect (Markup.Escape) renders the same
+        // label safely.
+        var ex = Record.Exception(() =>
+            new Markup(Markup.Escape("renderMode  =  auto   [auto|tui|classic]")));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void Select_StdioPath_ReturnsRawBracketedChoiceUnchanged()
+    {
+        // The converter only affects display; the returned value must remain the original
+        // (unescaped) string so callers can index/compare against their source list.
+        var prevStdio = MuxConsole.StdioMode;
+        var prevIn = MuxConsole.InputOverride;
+        try
+        {
+            MuxConsole.StdioMode = true;
+            MuxConsole.InputOverride = new System.IO.StringReader("2\n");
+            var choices = new[] { "first [x|y]", "renderMode  =  auto   [auto|tui|classic]" };
+            var chosen = MuxConsole.Select("pick", choices);
+            Assert.Equal("renderMode  =  auto   [auto|tui|classic]", chosen);
+        }
+        finally
+        {
+            MuxConsole.StdioMode = prevStdio;
+            MuxConsole.InputOverride = prevIn;
+        }
+    }
+
 }

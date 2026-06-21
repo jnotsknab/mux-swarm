@@ -367,6 +367,37 @@ public static class CliCmdUtils
 
     }
 
+    /// <summary>
+    /// Lightweight catalog of resumable single-agent sessions (id + first-user-message
+    /// preview), newest first, for the live "/resume" autocomplete preview. Best-effort:
+    /// returns an empty list on any IO error.
+    /// </summary>
+    public static List<(string Id, string Preview)> GetResumableSessions()
+    {
+        var outList = new List<(string, string)>();
+        try
+        {
+            string sessionsDir = PlatformContext.SessionsDirectory;
+            if (!Directory.Exists(sessionsDir)) return outList;
+            foreach (var d in Directory.GetDirectories(sessionsDir)
+                         .Where(d => Directory.GetFiles(d, "*.json").Length <= 2)
+                         .OrderByDescending(d => d))
+            {
+                var id = Path.GetFileName(d);
+                string preview = "";
+                try
+                {
+                    var file = Directory.GetFiles(d, "*.json").FirstOrDefault();
+                    if (file != null) preview = Common.GetFirstUserMessage(file);
+                }
+                catch { /* preview optional */ }
+                outList.Add((id, preview));
+            }
+        }
+        catch { /* best-effort */ }
+        return outList;
+    }
+
     public static (JsonElement data, string sessionDir)? HandleSessionResume(string? sessionId = null)
     {
         string sessionsDir = PlatformContext.SessionsDirectory;
@@ -777,5 +808,60 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteSuccess($"Generated {generated} report(s) in {reportsDir}");
         }
+    }
+
+    /// <summary>
+    /// Build a relative-path file index of the current working directory for the live "@" file
+    /// picker. Skips heavy / noise directories (.git, bin, obj, node_modules, .vs, etc.), caps
+    /// the result so a giant repo can't blow up the picker, and returns forward-slash relative
+    /// paths sorted shortest-first. Best-effort: any IO error yields an empty list.
+    /// </summary>
+    public static List<string> GetWorkspaceFiles(int cap = 4000)
+    {
+        var outList = new List<string>();
+        try
+        {
+            // Index the configured workspace root (defaults to CWD; overridable via --workspace),
+            // so an alias that launches mux from its install dir still points "@" at the project.
+            string root = PlatformContext.WorkspaceRoot;
+            var skipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".git", "bin", "obj", "node_modules", ".vs", ".vscode", ".idea",
+                "packages", "dist", "build", ".depot", "TestResults", "__pycache__", ".venv",
+            };
+
+            var stack = new Stack<string>();
+            stack.Push(root);
+            while (stack.Count > 0 && outList.Count < cap)
+            {
+                var dir = stack.Pop();
+                string[] entries;
+                try { entries = Directory.GetFileSystemEntries(dir); }
+                catch { continue; }
+
+                foreach (var entry in entries)
+                {
+                    if (outList.Count >= cap) break;
+                    var name = Path.GetFileName(entry);
+                    bool isDir = Directory.Exists(entry);
+                    if (isDir)
+                    {
+                        if (skipDirs.Contains(name) || name.StartsWith('.')) continue;
+                        stack.Push(entry);
+                    }
+                    else
+                    {
+                        var rel = Path.GetRelativePath(root, entry).Replace('\\', '/');
+                        outList.Add(rel);
+                    }
+                }
+            }
+        }
+        catch { /* best-effort */ }
+
+        outList.Sort((a, b) => a.Length != b.Length
+            ? a.Length - b.Length
+            : string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
+        return outList;
     }
 }

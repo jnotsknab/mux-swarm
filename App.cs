@@ -216,6 +216,7 @@ public class App
         MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
+        MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
 
         
         if (_watchDogEnabled)
@@ -352,6 +353,13 @@ public class App
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
+
+            // Normalize a bare slash command with only trailing whitespace (e.g. "/agent " from
+            // Tab-completion) to its exact token, so the exact-match command switch recognizes
+            // it. A command WITH an argument (non-space content after the space) is left intact.
+            if (userInput.Length > 0 && userInput[0] == '/' && userInput.TrimEnd() != userInput
+                && !userInput.Trim().Contains(' '))
+                userInput = userInput.Trim();
 
             if (userInput.Trim() == "__CANCEL__")
             {
@@ -730,6 +738,61 @@ public class App
                     CliCmdUtils.ListSessions();
                     break;
 
+                case "/config":
+                case var cfgCmd when cfgCmd.StartsWith("/config "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) MuxConsole.WriteInfo(res.Message);
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var setCmd when setCmd == "/set" || setCmd.StartsWith("/set "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.NeedsInteractive(userInput)
+                        ? MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput)
+                        : MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
+                {
+                    // The wizard may offer to spawn a helper agent (like /onboard) to author the
+                    // new agent's prompt; wire that callback so the user can opt in.
+                    await EnsureMcpReadyAsync();
+                    var helperModel = LoadSingleAgentModel();
+                    void SpawnPromptHelper(string agentName, string desc)
+                    {
+                        var promptDir = MuxSwarm.Utils.PlatformContext.PromptsDirectory;
+                        var promptAbs = System.IO.Path.Combine(promptDir, $"{agentName}.md");
+                        var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
+                                   $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
+                                   "(overwrite the starter template). Keep it concise and operational.";
+                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
+                        try
+                        {
+                            SingleAgentOrchestrator.ChatAgentAsync(
+                                client: CreateChatClient(helperModel),
+                                GetOrResetCts().Token,
+                                maxIterations: 4,
+                                mcpTools: McpTools,
+                                continuous: false).GetAwaiter().GetResult();
+                        }
+                        finally { MuxConsole.InputOverride = System.Console.In; }
+                    }
+
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
                 default:
                     if (userInput.StartsWith("/"))
                         MuxConsole.WriteWarning("Unknown command. Type /help.");
@@ -972,6 +1035,15 @@ public class App
                 case "--cfg":
                 case "--swarmcfg":
                     NextValue(args, ref i); //handled in program bootstrap
+                    break;
+                case "--workspace":
+                case "--ws":
+                    var wsPath = NextValue(args, ref i);
+                    if (!string.IsNullOrWhiteSpace(wsPath))
+                    {
+                        try { PlatformContext.WorkspaceRoot = wsPath; }
+                        catch { MuxConsole.WriteWarning($"Invalid --workspace path: {wsPath}"); }
+                    }
                     break;
                 case "--workflow":
                 case "--wf":

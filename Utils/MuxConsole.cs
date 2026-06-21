@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using MuxSwarm.State;
 using Spectre.Console;
@@ -721,6 +721,16 @@ public static partial class MuxConsole
                 return;
             }
 
+            // Under the driver, a raw Spectre rule paints below the footer and desyncs the
+            // live region. Commit a markup rule line through the driver instead.
+            if (ViaDriver)
+            {
+                string ruleLine = label != null
+                    ? $"  [{C.Muted}]── {Esc(label)} ──[/]"
+                    : $"[{C.Muted}]{new string('\u2500', Math.Max(8, Console.WindowWidth))}[/]";
+                if (TuiCommit(ruleLine)) return;
+            }
+
             var rule = label != null
                 ? new Rule($"[{C.Muted}]{Esc(label)}[/]").RuleStyle(new Style(Color.Grey23))
                 : new Rule().RuleStyle(new Style(Color.Grey23));
@@ -761,6 +771,21 @@ public static partial class MuxConsole
         lines.Add("");
         CommitLinesToDriver(lines);
         return true;
+    }
+
+    /// <summary>
+    /// When true (default) the periodic "[AGENT SESSION] Saved to ..." confirmation is
+    /// suppressed under the live TUI - it is noisy and the docked footer already shows the
+    /// active session id. Off the TUI it still prints (muted). Set false to restore it.
+    /// </summary>
+    public static bool QuietSessionSaves { get; set; } = true;
+
+    /// <summary>Session-save confirmation: muted, and suppressed entirely under the TUI when
+    /// <see cref="QuietSessionSaves"/> is set (the default).</summary>
+    public static void WriteSessionSaved(string message)
+    {
+        if (QuietSessionSaves && ViaDriver) return;   // footer carries the session id instead
+        WriteMuted(message);
     }
 
     public static void WriteSuccess(string message)
@@ -847,6 +872,10 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) return;
+            // Under the live-region driver, raw AnsiConsole writes land BELOW the pinned
+            // footer and desync the painted-row count, stranding frozen copies of the
+            // footer/chip in scrollback. Commit a blank line through the driver instead.
+            if (TuiCommit("")) return;
             AnsiConsole.WriteLine();
         });
     }
@@ -857,6 +886,11 @@ public static partial class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
 
         if (StdioMode)
         {
@@ -907,6 +941,11 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("secret", true)));
@@ -926,6 +965,11 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             EmitJson("confirm_request", D(("prompt", message), ("default", defaultValue)));
@@ -943,6 +987,11 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             var list = choices.ToList();
@@ -958,6 +1007,7 @@ public static partial class MuxConsole
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
                 .AddChoices(choices));
     }
 
@@ -967,6 +1017,11 @@ public static partial class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
 
         if (StdioMode)
         {
@@ -987,6 +1042,7 @@ public static partial class MuxConsole
             new MultiSelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
                 .AddChoices(choices))
             .ToList();
     }
@@ -1126,6 +1182,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_end"); return; }
+            if (TuiCommit("")) return;
             AnsiConsole.WriteLine();
         }, clearIndicator: false);
     }
@@ -1302,6 +1359,19 @@ public static partial class MuxConsole
         if (StdioMode)
         {
             WriteBody(helpText);
+            return;
+        }
+
+        // Under the live-region driver, the multi-column Spectre grid paints below the
+        // footer and gets clipped/desynced. Commit the plain help text through the driver
+        // as a borderless block (Claude-Code feel) so it scrolls into native history.
+        if (ViaDriver)
+        {
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Mux-Swarm \u2014 Command Reference[/]", "" };
+            foreach (var raw in (helpText ?? "").Replace("\r\n", "\n").Split('\n'))
+                lines.Add($"  [{C.Prompt}]{Esc(raw.TrimEnd())}[/]");
+            lines.Add("");
+            CommitLinesToDriver(lines);
             return;
         }
 

@@ -50,14 +50,26 @@ public static partial class MuxConsole
     /// </summary>
     public static bool DockedFooterEnabled { get; set; } = true;
 
+    /// <summary>
+    /// Informative-line threshold above which a collapsed tool result is Ctrl+E-expandable in
+    /// the live TUI. Set from console.collapseToolLines; pushed to the driver on activation.
+    /// 0 disables the expand affordance. Default 6.
+    /// </summary>
+    public static int CollapseToolLines { get; set; } = 6;
+
     // --- live-region driver --------------------------------------------------
 
     private static TuiDriver? _driver;
     private static bool _tuiActive;
     private static bool _teardownHooked;
 
+    // The primary (foreground) agent name for the active interactive loop. Sub-agent /
+    // swarm-specialist output (any agent != this) is guttered with a per-agent lane color so
+    // a dense multi-agent transcript stays attributable. Set from the session header.
+    private static string? _primaryAgent;
+
     // Cached footer state so any render path can repaint the footer with current values.
-    private static uint _fTokens, _fThreshold;
+    private static uint _fTokens, _fThreshold, _fCached;
     private static bool _fPlan, _fUltra, _fPsub;
 
     /// <summary>True when the frame-owned live-region driver is running.</summary>
@@ -95,7 +107,24 @@ public static partial class MuxConsole
                 // Reset the meter when (re)entering any scope so menu shows "ready" and a new
                 // session starts from zero rather than inheriting the prior session's tokens.
                 _fTokens = 0; _fThreshold = 0;
+                _driver.SetLaneTint(null);   // never inherit a prior session's sub-agent gutter
                 _driver.SetPaletteScope(topLevel);
+                // Seed the live "/skill" autocomplete with the loaded skill catalog.
+                try { _driver.SetSkillsCatalog(SkillLoader.GetSkillMetadata().Select(sk => (sk.Name, sk.Description)).ToList()); }
+                catch { /* skills optional */ }
+                // Seed the live "/resume" autocomplete with resumable sessions.
+                try { _driver.SetSessionsCatalog(CliCmdUtils.GetResumableSessions()); }
+                catch { /* sessions optional */ }
+                // Seed the live "@" file picker with a workspace file index (best-effort), and
+                // flag when the workspace resolves to the mux install dir so the picker can hint
+                // about --workspace.
+                try
+                {
+                    _driver.SetFilesCatalog(CliCmdUtils.GetWorkspaceFiles());
+                    _driver.SetFilesInstallDirHint(PlatformContext.WorkspaceIsInstallDir);
+                }
+                catch { /* files optional */ }
+                _driver.SetCollapseThreshold(CollapseToolLines);
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub);
             }
             catch
@@ -111,6 +140,47 @@ public static partial class MuxConsole
     {
         if (!TuiActive) return;
         lock (ConsoleLock) { _driver!.SetPaletteScope(topLevel); }
+    }
+
+    /// <summary>
+    /// Populate the driver's skills catalog backing the live "/skill" autocomplete preview.
+    /// Safe to call anytime; no-op when the driver is not active.
+    /// </summary>
+    public static void SetTuiSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetSkillsCatalog(skills); }
+    }
+
+    /// <summary>
+    /// Populate the driver's sessions catalog backing the live "/resume" autocomplete preview.
+    /// Safe to call anytime; no-op when the driver is not active.
+    /// </summary>
+    public static void SetTuiSessionsCatalog(IReadOnlyList<(string Id, string Preview)> sessions)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetSessionsCatalog(sessions); }
+    }
+
+    /// <summary>
+    /// Populate the driver's file catalog backing the live "@" fuzzy file picker. Safe to call
+    /// anytime; no-op when the driver is not active.
+    /// </summary>
+    public static void SetTuiFilesCatalog(IReadOnlyList<string> files)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetFilesCatalog(files); }
+    }
+
+    /// <summary>
+    /// Populate the driver's tools catalog backing the live "/tools" scrollable palette (the
+    /// expandable view behind the session-header tool badge). Safe to call anytime; no-op when
+    /// the driver is not active.
+    /// </summary>
+    public static void SetTuiToolsCatalog(IReadOnlyList<(string Name, string Desc)> tools)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetToolsCatalog(tools); }
     }
 
     /// <summary>
@@ -153,11 +223,37 @@ public static partial class MuxConsole
     /// values so subsequent commits keep the footer current. No-op when the driver is not
     /// active.
     /// </summary>
-    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0)
     {
-        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub;
+        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fCached = cached;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub); }
+        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, cached); }
+    }
+
+    /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
+    public static void SetTuiSessionId(string? sessionId)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetSessionId(sessionId); }
+    }
+
+    /// <summary>Push the static context-overhead breakdown (system-prompt + tool-schema token
+    /// estimates) into the docked footer. Computed once per agent build so a fresh session\u0027s
+    /// baseline context is explained to the user. No-op outside the driver path.</summary>
+    public static void SetTuiTokenBreakdown(uint sysTokens, uint toolTokens)
+    {
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetTokenBreakdown(sysTokens, toolTokens); }
+    }
+
+    /// <summary>Live-set the tool-result collapse threshold (lines) and push it to the active
+    /// driver so the change takes effect immediately for subsequent tool results. Updates the
+    /// runtime value used on the next driver activation too.</summary>
+    public static void SetTuiCollapseThreshold(int lines)
+    {
+        CollapseToolLines = Math.Max(0, lines);
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetCollapseThreshold(CollapseToolLines); }
     }
 
     /// <summary>True when the driver should handle this render (active and on the TUI path).</summary>
@@ -187,6 +283,17 @@ public static partial class MuxConsole
     /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
     internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
 
+    /// <summary>
+    /// Expand the latest large tool result INLINE (full panel above the footer) without entering
+    /// NAV. Safe to call mid-stream from the Esc/Ctrl+E listener thread; no-op outside TUI or when
+    /// nothing is expandable. Returns true if a panel was committed.
+    /// </summary>
+    internal static bool TuiExpandLatestInline()
+    {
+        if (!ViaDriver) return false;
+        lock (ConsoleLock) { return _driver!.ExpandLatestInline(); }
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
 
@@ -199,13 +306,28 @@ public static partial class MuxConsole
         if (_driver is not null) _driver.OnModeCycle = onCycle;
     }
 
+    /// <summary>
+    /// Set the driver's lane gutter for <paramref name="agent"/>: a per-agent colored bar for
+    /// sub-agent / swarm-specialist output, or no gutter (null) for the primary agent. Keeps
+    /// dense multi-agent transcripts visually attributable without a view-swap.
+    /// </summary>
+    private static void ApplyLaneTint(string agent)
+    {
+        if (_driver is null) return;
+        bool isPrimary = string.IsNullOrEmpty(agent)
+            || (_primaryAgent is not null && string.Equals(agent, _primaryAgent, StringComparison.OrdinalIgnoreCase))
+            || string.Equals(agent, "Orchestrator", StringComparison.OrdinalIgnoreCase);
+        _driver.SetLaneTint(isPrimary ? null : TuiComponents.AgentTint(agent));
+    }
+
     // --- render helpers (driver path + inline fallback) ----------------------
 
     /// <summary>G2/G7 - session header card shown when a TUI interactive loop starts.</summary>
-    public static void RenderTuiSessionHeader(string agentName, string model, string provider)
+    public static void RenderTuiSessionHeader(string agentName, string model, string provider, int toolCount = 0)
     {
         if (!IsTui) return;
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.SessionHeader(agentName, model, provider)); } return; }
+        _primaryAgent = string.IsNullOrWhiteSpace(agentName) ? _primaryAgent : agentName.Trim();
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.SessionHeader(agentName, model, provider, toolCount)); } return; }
         WithConsole(() =>
         {
             var grid = new Grid().AddColumn().AddColumn();
@@ -227,10 +349,10 @@ public static partial class MuxConsole
     /// G7 - context-meter + mode-badge status bar. With the driver active this updates the
     /// pinned footer in place; otherwise it prints an inline status line before the prompt.
     /// </summary>
-    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub)
+    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0)
     {
         if (!IsTui) return;
-        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub); return; }
+        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached); return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub));
@@ -240,7 +362,7 @@ public static partial class MuxConsole
     /// <summary>G4 - tool-call line with a running glyph.</summary>
     public static void RenderTuiToolCall(string agent, string tool, string? args)
     {
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.ToolCall(tool, args)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agent); _driver!.BeginToolCall(tool, args); } return; }
         WithConsole(() =>
         {
             string argHint = string.IsNullOrWhiteSpace(args)
@@ -255,8 +377,7 @@ public static partial class MuxConsole
     {
         if (ViaDriver)
         {
-            string clean = Trunc(CollapseWhitespace(summary), 120);
-            lock (ConsoleLock) { _driver!.CommitLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(clean)}[/]"); }
+            lock (ConsoleLock) { ApplyLaneTint(agent); _driver!.ResolveMergedToolResult(summary, LooksLikeError(summary)); }
             return;
         }
         WithConsole(() =>
@@ -280,9 +401,14 @@ public static partial class MuxConsole
         {
             lock (ConsoleLock)
             {
-                if (LooksLikeDiff(text)) { _driver!.Commit(TuiComponents.Diff(tool, text, width)); }
-                else if (ToolOutputCompact && !err) { _driver!.Commit(TuiComponents.ToolResultCompact(text)); }
-                else _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000));
+                ApplyLaneTint(agent);
+                // Compact mode (default) collapses BOTH ok and error results to a single merged
+                // line - a green dot for success, a red cross + "failed" for errors - so failures
+                // read clearly without a heavy bordered panel. The expanded red panel is reserved
+                // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
+                if (LooksLikeDiff(text)) { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.Diff(tool, text, width)); }
+                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err); }
+                else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000)); }
             }
             return;
         }
@@ -290,7 +416,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (LooksLikeDiff(text)) { RenderDiffBody(tool, text); return; }
-            if (ToolOutputCompact && !err) { RenderCompactResult(text); return; }
+            if (ToolOutputCompact) { RenderCompactResult(text, err); return; }
 
             int cap = swarm ? 500 : 2000;
             string body = text.Length > cap ? Esc(text[..cap]) + $"\n[{TC.Dim}]\u2026 truncated[/]" : Esc(text);
@@ -347,7 +473,7 @@ public static partial class MuxConsole
     /// <summary>G8 - delegation rendered as a small from -> to tree.</summary>
     public static void RenderTuiDelegation(string fromAgent, string toAgent, string task, int truncLength)
     {
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(fromAgent); _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); } return; }
         WithConsole(() =>
         {
             var tree = new Tree($"[{TC.Agent}]{Esc(fromAgent)}[/] [{TC.Dim}]delegates[/]")
@@ -363,7 +489,7 @@ public static partial class MuxConsole
     /// <summary>G2/G8 - agent turn header.</summary>
     public static void RenderTuiTurnHeader(string agentName)
     {
-        if (ViaDriver) { _driver!.Commit(TuiComponents.TurnHeader(agentName, _driver.Width)); return; }
+        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agentName); _driver!.Commit(TuiComponents.TurnHeader(agentName, _driver.Width)); } return; }
         WithConsole(() =>
         {
             AnsiConsole.WriteLine();
@@ -376,7 +502,7 @@ public static partial class MuxConsole
     /// <summary>G4 - task-complete line with an ok glyph.</summary>
     public static void RenderTuiTaskComplete(string agent, string summary)
     {
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agent); _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); } return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine($"  [{TC.Ok}]\u2714[/] [{TC.Agent}]{Esc(agent)}[/] [{TC.Dim}]completed[/]  [{TC.Muted}]{Esc(Trunc(summary, 120))}[/]");
@@ -480,16 +606,35 @@ public static partial class MuxConsole
 
     private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.Session;
 
-    /// <summary>Collapsed result: first non-empty line + "(+N lines)" hint, dimmed.</summary>
-    private static void RenderCompactResult(string text)
+    /// <summary>Collapsed result: a status glyph + first informative line + "(+N lines)" hint.
+    /// Errors get a red cross and a "failed" tag instead of the dim ok marker.</summary>
+    private static void RenderCompactResult(string text, bool error = false)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n')
                         .Where(l => l.Trim().Length > 0).ToArray();
         if (lines.Length == 0) return;
-        string first = Trunc(CollapseWhitespace(lines[0]), 110);
+        int pick = error
+            ? Array.FindIndex(lines, l =>
+                {
+                    var t = l.TrimStart();
+                    return t.StartsWith("STDERR", StringComparison.OrdinalIgnoreCase)
+                        || t.Contains("not recognized", StringComparison.OrdinalIgnoreCase)
+                        || t.Contains("command not found", StringComparison.OrdinalIgnoreCase);
+                })
+            : Array.FindIndex(lines, l =>
+                l.TrimStart().StartsWith("Command:", StringComparison.OrdinalIgnoreCase));
+        if (pick < 0) pick = 0;
+        string first = Trunc(CollapseWhitespace(lines[pick]), 110);
         int more = lines.Length - 1;
         string moreHint = more > 0 ? $" [{TC.Dim}](+{more} line{(more == 1 ? "" : "s")})[/]" : "";
-        AnsiConsole.MarkupLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(first)}[/]{moreHint}");
+        if (error)
+        {
+            AnsiConsole.MarkupLine($"  [{TC.Err}]\u2717[/] [{TC.Err}]failed[/] [{TC.Muted}]{Esc(first)}[/]{moreHint}");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"    [{TC.Dim}]\u23bf[/] [{TC.Muted}]{Esc(first)}[/]{moreHint}");
+        }
     }
 
     // --- small helpers -------------------------------------------------------
@@ -509,7 +654,11 @@ public static partial class MuxConsole
     private static bool LooksLikeDiff(string text)
     {
         if (string.IsNullOrEmpty(text)) return false;
+        // git porcelain header (from shell `git diff` / `git apply` / `patch` output).
+        if (text.Contains("diff --git ")) return true;
+        // unified-diff hunk header.
         if (text.Contains("@@ ") && text.Contains("@@")) return true;
+        // unified-diff file headers (the edit-tool / `diff -u` form).
         if (text.Contains("--- ") && text.Contains("+++ ")) return true;
         return false;
     }
@@ -517,9 +666,37 @@ public static partial class MuxConsole
     private static bool LooksLikeError(string text)
     {
         if (string.IsNullOrEmpty(text)) return false;
-        var head = text.Length > 60 ? text[..60] : text;
-        head = head.ToLowerInvariant();
-        return head.StartsWith("error") || head.Contains("exception") ||
-               head.Contains("traceback") || head.Contains("failed:");
+        // Scan a generous head window (not just 60 chars): async-shell results lead with a
+        // "Job ID:" + "Status:" preamble, so the failure signal ("Status: failed", "(code 1)",
+        // "not recognized", etc.) lands well past the first line.
+        var head = (text.Length > 400 ? text[..400] : text).ToLowerInvariant();
+
+        // POSITIVE short-circuit FIRST: the async-shell wrapper ALWAYS emits "--- STDOUT ---"
+        // and "--- STDERR ---" section headers plus a "Status:" line, even on success. So an
+        // explicit success/completion status must NEVER read as an error, regardless of the
+        // (always-present, often empty) STDERR header below it.
+        if (System.Text.RegularExpressions.Regex.IsMatch(head,
+                @"status\s*[:=]\s*(completed|complete|success|succeeded|ok|done|running|finished|exited)"))
+            return false;
+        // An explicit zero exit code is success too.
+        if (System.Text.RegularExpressions.Regex.IsMatch(head, @"\b(?:exit\s*code|code)\s*[:=]?\s*0\b"))
+            return false;
+
+        // Now the real failure signals. NOTE: the bare presence of a "--- STDERR ---" header is
+        // NOT a failure signal (it is always present) - only an explicit failed/error status, a
+        // non-zero exit code, or a known "command not found" string counts.
+        if (head.StartsWith("error") || head.Contains("exception") ||
+            head.Contains("traceback") || head.Contains("failed:"))
+            return true;
+        if (System.Text.RegularExpressions.Regex.IsMatch(head, @"status\s*[:=]\s*(failed|error|fault)"))
+            return true;
+        if (head.Contains("(failed)"))
+            return true;
+        if (System.Text.RegularExpressions.Regex.IsMatch(head, @"\b(?:exit\s*code|code)\s*[:=]?\s*[1-9]\d*\b"))
+            return true;
+        if (head.Contains("is not recognized as an internal or external command") ||
+            head.Contains("command not found") || head.Contains("no such file or directory"))
+            return true;
+        return false;
     }
 }

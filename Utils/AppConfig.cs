@@ -80,6 +80,16 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("dockedFooter")]
     public bool DockedFooter { get; set; } = true;
+
+    /// <summary>
+    /// Line threshold above which a collapsed (compact-mode) tool result advertises a
+    /// "(ctrl+e expand)" affordance and can be re-expanded in place with Ctrl+E. A result
+    /// whose informative-line count exceeds this value is considered "large". Additive and
+    /// non-invasive: absent in older configs (defaults to 6); has no effect in /verbose
+    /// (full) output mode where results already render as full panels. Ignored outside TUI.
+    /// </summary>
+    [JsonPropertyName("collapseToolLines")]
+    public int CollapseToolLines { get; set; } = 6;
 }
 
 /// <summary>

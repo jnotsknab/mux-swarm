@@ -10,6 +10,9 @@ public sealed class ThinkingIndicator : IDisposable
     private readonly Action? _onDispose;
 
     private volatile string _status = "thinking";
+    // True once an orchestrator calls UpdateStatus(string) with a concrete status; until then
+    // the loop free-cycles quirky quips instead of showing the literal default.
+    private volatile bool _statusExplicit;
     private List<string>? _toolCalls;
 
     private int _disposed;
@@ -22,6 +25,19 @@ public sealed class ThinkingIndicator : IDisposable
 
     private static readonly string[] Frames =
         ["⠀", "⠄", "⠆", "⠦", "⠶", "⠷", "⣷", "⣿", "⣷", "⠷", "⠶", "⠦", "⠆", "⠄", "⠀"];
+
+    // Quirky Claude-Code-style "working" gerunds, cycled (~every 2s) while the agent is
+    // reasoning and no tool call is in flight. Purely cosmetic flavor for the live spinner.
+    private static readonly string[] Quips =
+    [
+        "Thinking", "Cogitating", "Percolating", "Ruminating", "Conjuring",
+        "Noodling", "Finagling", "Marinating", "Crystallizing", "Pondering",
+        "Scheming", "Tinkering", "Untangling", "Synthesizing", "Brewing",
+        "Wrangling", "Mulling", "Deliberating", "Spelunking", "Computing",
+    ];
+
+    // How many spinner ticks (80ms each) before advancing to the next quip (~2s).
+    private const int QuipTicks = 25;
 
     internal ThinkingIndicator(
         Action<string> renderRaw,
@@ -47,6 +63,7 @@ public sealed class ThinkingIndicator : IDisposable
             _toolCalls = null;
         }
         _status = status;
+        _statusExplicit = true;
         _onStatusUpdate?.Invoke(status);
     }
 
@@ -119,9 +136,20 @@ public sealed class ThinkingIndicator : IDisposable
                     string statusPart;
                     lock (_consoleLock)
                     {
-                        statusPart = _toolCalls != null
-                            ? BuildToolCallStatus(budget)
-                            : _status + "...";
+                        if (_toolCalls != null)
+                        {
+                            statusPart = BuildToolCallStatus(budget);
+                        }
+                        else if (_statusExplicit)
+                        {
+                            // An orchestrator set a specific status string; honor it verbatim.
+                            statusPart = _status + "...";
+                        }
+                        else
+                        {
+                            // Default reasoning state: cycle a quirky gerund every ~2s.
+                            statusPart = Quips[(frame / QuipTicks) % Quips.Length] + "...";
+                        }
                     }
 
                     string line = linePrefix + statusPart;
