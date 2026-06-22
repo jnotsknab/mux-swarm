@@ -9,6 +9,25 @@ public static class PlatformContext
     public static bool IsMac => RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
 
     public static readonly string BaseDirectory = AppContext.BaseDirectory;
+
+    // The root the interactive "@" file picker indexes. Defaults to the process CWD, but when
+    // mux is launched via an alias that resolves CWD to the install dir, the @ picker would index
+    // mux's own files - so this is overridable via "--workspace <path>" to point at the real
+    // project. Set once at startup by App.ParseArgs.
+    private static string? _workspaceRoot;
+    public static string WorkspaceRoot
+    {
+        get => _workspaceRoot ?? Directory.GetCurrentDirectory();
+        set => _workspaceRoot = string.IsNullOrWhiteSpace(value) ? null : System.IO.Path.GetFullPath(value);
+    }
+
+    /// <summary>True when the resolved workspace root is the mux install/base dir (so the @ file
+    /// picker would index mux's own files rather than a real project) - used to surface a hint.</summary>
+    public static bool WorkspaceIsInstallDir =>
+        string.Equals(
+            System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(WorkspaceRoot)),
+            System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(BaseDirectory)),
+            StringComparison.OrdinalIgnoreCase);
     public static readonly string ConfigDirectory = Path.Combine(BaseDirectory, "Configs");
     public static readonly string PromptsDirectory = Path.Combine(BaseDirectory, "Prompts", "Agents");
     public static readonly string ContextDirectory = Path.Combine(BaseDirectory, "Context");

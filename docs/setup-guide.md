@@ -278,6 +278,72 @@ All three bridges support voice messages and audio attachments via local Whisper
 
 **Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
 
+## Serve Layer: Editor & Auth (Optional)
+
+The web UI (`--serve`) exposes an HTTP/WebSocket API. By default the runtime is
+**zero-auth-by-design** — it expects to sit behind an nginx (or equivalent)
+perimeter. The settings below are opt-in and default to the safe (off) state.
+
+All keys live under a `serve` object in `Config.json`:
+
+```json
+{
+  "serve": {
+    "editable": false,
+    "auth": { "enabled": false, "token": "", "scheme": "bearer" }
+  }
+}
+```
+
+### In-app code editor (`serve.editable`)
+
+- `editable: false` (default) — the web app can **read** sandbox files but write
+  endpoints (`POST /api/save`, `POST /api/fs`) return **403**.
+- `editable: true` — enables saving/creating/renaming/deleting files in the
+  **sandbox only**. Session files remain read-only. Right-click a sandbox file in
+  the web UI → **Open in editor**.
+
+Writes are confined to the sandbox root and path-traversal is rejected.
+
+### App-level auth (`serve.auth`)
+
+Optional bearer-token auth that **complements** (does not replace) your nginx
+perimeter — useful when exposing the UI directly over a trusted network
+(e.g. Tailscale) without a reverse proxy.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `enabled` | `false` | Master switch. When false, behaves exactly as today. |
+| `token` | `""` | Literal token, **or** an env-var reference. |
+| `scheme` | `"bearer"` | Auth scheme (bearer). |
+
+**Env-var indirection** (keeps the secret out of the config file). Any of these
+forms resolve at startup:
+
+```json
+"token": "${MUX_SERVE_TOKEN}"   // or "{MUX_SERVE_TOKEN}" or "$MUX_SERVE_TOKEN"
+```
+
+```bash
+export MUX_SERVE_TOKEN="your-long-random-secret"
+```
+
+When enabled, **all** `/api/*` requests and the `/ws` upgrade require the token:
+
+- HTTP: `Authorization: Bearer <token>` → otherwise `401`.
+- WebSocket: `?token=<token>` query param, or `Sec-WebSocket-Protocol: bearer,<token>`.
+- Static assets (`/`, `/monaco/*`) stay open so the web app can load and present
+  its token prompt. The web UI stores the token in `sessionStorage` and attaches
+  it automatically.
+
+Notes:
+- Token comparison is constant-time; the token is never logged and is **never**
+  returned by `/api/config` (which only exposes a boolean `authRequired`).
+- If `enabled: true` but no token resolves, auth stays **inactive** and a warning
+  is printed — a misconfiguration never silently locks you out.
+- App auth is a convenience layer; for internet-facing deployments keep the nginx
+  perimeter as the primary control.
+
 ## Telemetry (Optional)
 
 Mux-Swarm exports OpenTelemetry traces, logs, and metrics when configured. This gives you full visibility into agent sessions, tool calls, delegation chains, and token usage in any OTLP-compatible backend.

@@ -14,6 +14,13 @@ public static class SingleAgentOrchestrator
 
     public static Common.AgentDefinition? AgentDef = null;
 
+    /// <summary>
+    /// Slash-anywhere hand-off: when the user runs a REPL-only command inside a session and
+    /// confirms ending it, the session loop stores the command here and exits. The App.cs
+    /// menu loop dispatches it once after the session returns, then clears it. Null otherwise.
+    /// </summary>
+    public static string? PendingReplCommand = null;
+
     private static readonly Dictionary<string, string> Models = Common.LoadAgentModels();
     //uncached tokens
     private static uint _cachedTokens;
@@ -21,6 +28,14 @@ public static class SingleAgentOrchestrator
     private static uint _sessionTokens;
 
     private static bool _pendingCompaction;
+
+    // Batch6: set after /undo or /retry rebuilds the provider session, so the next
+    // turn replays the trimmed conversationHistory into the fresh session (one-shot).
+    private static bool _pendingReseed;
+
+    // Batch6: exposed read-only to /api/status for a web context-usage meter.
+    internal static uint SessionTokens => _sessionTokens;
+    internal static int AutoCompactThreshold { get; private set; } = 80_000;
 
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {
@@ -80,6 +95,118 @@ public static class SingleAgentOrchestrator
         catch { return null; }
     }
 
+    /// <summary>
+    /// /tag &lt;text&gt; - attach a free-form tag to the live session. Persists the session now
+    /// (so a dir exists), appends the tag to the sidecar (tags.muxtag - intentionally NOT a
+    /// *.json file so the resume single-vs-swarm detector is unaffected), then offers to also
+    /// record a one-line stub in MEMORY.md via a one-shot LLM rewrite (opt-in). TUI/interactive
+    /// only path; safe no-op style on any failure.
+    /// </summary>
+    private static async Task HandleTagAsync(
+        string metaCmd,
+        string sessionTimestamp,
+        AgentSession session,
+        AIAgent agent,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        CancellationToken ct)
+    {
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            MuxConsole.WriteMuted("Usage: /tag <text>  - label this session for easy resume/search.");
+            return;
+        }
+        var tag = parts[1].Trim();
+
+        // Ensure the session is persisted so its directory exists, then resolve it.
+        string? sessionDir = Common.FindSessionDirectory(sessionTimestamp);
+        if (sessionDir == null)
+        {
+            try
+            {
+                await Common.PersistChatSessionAsync(agent, session, sessionTimestamp);
+                sessionDir = Common.FindSessionDirectory(sessionTimestamp);
+            }
+            catch { /* fall through to warning below */ }
+        }
+
+        if (sessionDir == null)
+        {
+            MuxConsole.WriteWarning("Could not resolve the session directory to write the tag.");
+            return;
+        }
+
+        if (!SessionTags.Append(sessionDir, tag))
+        {
+            MuxConsole.WriteWarning("Failed to write the session tag.");
+            return;
+        }
+
+        MuxConsole.WriteSuccess($"Tagged session {sessionTimestamp}: \"{tag}\"");
+
+        // Opt-in: also record a durable one-line stub in MEMORY.md.
+        bool alsoMemory = MuxConsole.Confirm("Also record this tag as a stub in MEMORY.md?", false);
+        if (!alsoMemory) return;
+
+        await WriteMemoryTagStubAsync(tag, sessionTimestamp, resolvedModelId, chatClientFactory, ct);
+    }
+
+    /// <summary>
+    /// Append/merge a 1-2 line stub for a session tag into MEMORY.md under a "Session Tags"
+    /// section. Writes a .bak first. SCOPED: only adds the stub line, never rewrites the file
+    /// wholesale. After writing, respects the configured MEMORY.md char-cap (warn/force).
+    /// </summary>
+    private static async Task WriteMemoryTagStubAsync(
+        string tag,
+        string sessionTimestamp,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        CancellationToken ct)
+    {
+        try
+        {
+            var memoryPath = Path.Combine(PlatformContext.ContextDirectory, ContextCap.MemoryFile);
+            var utc = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var stub = $"- `{sessionTimestamp}` - {tag} (tagged {utc} UTC)";
+            const string header = "## Session Tags";
+
+            string content = File.Exists(memoryPath) ? await File.ReadAllTextAsync(memoryPath, ct) : "";
+
+            // Back up before mutating.
+            if (File.Exists(memoryPath))
+            {
+                try { File.Copy(memoryPath, memoryPath + ".bak", overwrite: true); } catch { }
+            }
+
+            string updated;
+            int idx = content.IndexOf(header, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                // Insert the stub right after the header line.
+                int lineEnd = content.IndexOf('\n', idx);
+                if (lineEnd < 0) lineEnd = content.Length;
+                updated = content[..lineEnd] + "\n" + stub + content[lineEnd..];
+            }
+            else
+            {
+                var sep = content.Length > 0 && !content.EndsWith("\n") ? "\n\n" : "\n";
+                updated = content + sep + header + "\n" + stub + "\n";
+            }
+
+            Directory.CreateDirectory(PlatformContext.ContextDirectory);
+            await File.WriteAllTextAsync(memoryPath, updated, ct);
+            MuxConsole.WriteSuccess($"Recorded tag stub in {ContextCap.MemoryFile}.");
+
+            // Respect the MEMORY.md char-cap (warn/force) now that we have grown the file.
+            await ContextCap.CheckFileAsync(ContextCap.MemoryFile, chatClientFactory, resolvedModelId, ct);
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write MEMORY.md tag stub: {ex.Message}");
+        }
+    }
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -102,8 +229,14 @@ public static class SingleAgentOrchestrator
         bool allowSubAgents = false,
         bool allowParallelSubAgents = false)
     {
-        MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
-        MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
+        // The classic line renderer shows a titled banner + help line. In the live TUI the
+        // session header card (below) plays that role, so the banner/rule are suppressed to
+        // avoid a redundant double-header. Stdio/serve emit their own structured events.
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteBanner(persistSession ? "AGENTIC CHAT INTERFACE" : "STATELESS AGENTIC CHAT INTERFACE");
+            MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
+        }
 
         var singleAgentDef = GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
@@ -152,11 +285,27 @@ public static class SingleAgentOrchestrator
 
         if (filteredTools.Count == 0)
             MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
-        else
+        else if (!MuxConsole.IsTui)
+            // In TUI the count is folded into the session-header badge (see RenderTuiSessionHeader);
+            // the standalone success line is suppressed there to avoid duplicate chrome.
             MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
 
-        MuxConsole.WriteLine();
-        MuxConsole.WriteRule();
+        if (!MuxConsole.IsTui) MuxConsole.WriteLine();
+        // Switch the (already-running) live-region driver into this session: in-session
+        // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
+        MuxConsole.EnableDockedFooter(topLevel: false);
+        // G2: TUI session header card (no-op outside TUI render mode).
+        MuxConsole.RenderTuiSessionHeader(
+            singleAgentDef?.Name ?? "Agent",
+            resolvedModelId,
+            App.ActiveProvider?.Name ?? "",
+            filteredTools.Count);
+        // Seed the live "/tools" scrollable palette (the expandable view behind the
+        // session-header tool badge) with the agent's filtered tool catalog.
+        MuxConsole.SetTuiToolsCatalog(filteredTools.Select(t => (t.Name, t.Description ?? "")).ToList());
+        // The classic renderer separates the header from the transcript with a rule; the TUI
+        // header card already provides that separation, so skip the extra rule there.
+        if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
         string initialGoal;
         if (!string.IsNullOrWhiteSpace(incomingGoal))
@@ -168,7 +317,8 @@ public static class SingleAgentOrchestrator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            if (!MuxConsole.TuiActive)
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
             initialGoal = MuxConsole.ReadInput(cancellationToken) ?? "";
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -203,7 +353,8 @@ public static class SingleAgentOrchestrator
             singleAgentDef.Name,
             App.Config.IsUsingDockerForExec,
             continuous,
-            shouldPlan);
+            shouldPlan,
+            App.UltraMode);
 
         systemPrompt = preamble + "\n\n" + systemPrompt;
 
@@ -457,6 +608,29 @@ public static class SingleAgentOrchestrator
             Tools = [.. singleAgentTools!]
         };
 
+        // G11: static context-overhead breakdown for the footer. On a FRESH session the context
+        // is dominated by the system prompt + the serialized tool/MCP schemas (names, descriptions,
+        // JSON parameter shapes), NOT the conversation - which is why a brand-new session can
+        // already read tens of thousands of tokens. Estimate each once (~2.5 chars/token, matching
+        // Common.EstimateTokenCount) and push to the docked footer so the user understands the baseline.
+        {
+            int sysChars = systemPrompt?.Length ?? 0;
+            int toolChars = 0;
+            foreach (var t in singleAgentTools!)
+            {
+                toolChars += t.Name?.Length ?? 0;
+                toolChars += t.Description?.Length ?? 0;
+                if (t is Microsoft.Extensions.AI.AIFunction fn)
+                {
+                    try { toolChars += fn.JsonSchema.GetRawText().Length; }
+                    catch { /* schema not serializable - skip */ }
+                }
+            }
+            uint sysTok = (uint)Math.Ceiling(sysChars / 2.5);
+            uint toolTok = (uint)Math.Ceiling(toolChars / 2.5);
+            MuxConsole.SetTuiTokenBreakdown(sysTok, toolTok);
+        }
+
         // Merge modelOpts from swarm.json if present
         var singleAgentOpts = GetSingleAgentModelOpts();
         if (singleAgentOpts is not null)
@@ -476,6 +650,16 @@ public static class SingleAgentOrchestrator
             }
         }
 
+        // NOTE: config.json showReasoning is a CLIENT-SIDE display gate applied in
+        // MuxConsole.WriteStream (drops streamed reasoning text when "none"); it intentionally
+        // does NOT touch the native API reasoning level here. A per-agent swarm.json
+        // modelOpts.reasoning.output still controls the API level where set.
+
+        // /ultra: escalate reasoning to the provider max (numeric budget + effort tier).
+        // Applied last so it wins over swarm.json modelOpts for this session only.
+        if (App.UltraMode)
+            UltraReasoning.Apply(agentChatOptions);
+
         AIAgent? agent = client?.AsAIAgent(new ChatClientAgentOptions
         {
             Name = singleAgentDef.Name,
@@ -493,6 +677,10 @@ public static class SingleAgentOrchestrator
         var sessionTimestamp = resumedSessionDir != null
             ? Path.GetFileName(resumedSessionDir)
             : DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+
+        // Surface the active session id in the docked footer; the badge replaces the noisy
+        // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
+        MuxConsole.SetTuiSessionId(sessionTimestamp);
 
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
@@ -524,6 +712,8 @@ public static class SingleAgentOrchestrator
                 : (uint)Common.EstimateTokenCount(conversationHistory);
             ChatMessage? compactedMsg = null;
 
+            ServeMode.EmitEvent(new { type = "compaction_start" });
+
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
@@ -547,6 +737,7 @@ public static class SingleAgentOrchestrator
             _pendingCompaction = true;
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
+            ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = _sessionTokens });
             return _pendingCompaction;
         }
 
@@ -564,8 +755,170 @@ public static class SingleAgentOrchestrator
             }
         }
 
+        AutoCompactThreshold = autoCompactTokenThreshold ?? 80_000;
+
+        // Batch6: /undo and /retry rebuild the provider session from a trimmed local
+        // history (the SDK session is opaque/append-only), mirroring TryCompactAsync.
+        async Task RebuildSessionFromHistoryAsync()
+        {
+            session = await agent.CreateSessionAsync();
+            _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
+            _pendingReseed = conversationHistory.Count > 0;
+        }
+
+        // Batch6: /undo -- drop the last user+assistant exchange, rebuild the session.
+        async Task<bool> TryUndoAsync()
+        {
+            int lastAssistant = -1;
+            for (int i = conversationHistory.Count - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.Assistant) { lastAssistant = i; break; }
+            if (lastAssistant < 0)
+            {
+                MuxConsole.WriteWarning("Nothing to undo.");
+                return false;
+            }
+            int prevUser = -1;
+            for (int i = lastAssistant - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.User) { prevUser = i; break; }
+            int removeFrom = prevUser >= 0 ? prevUser : lastAssistant;
+            int removed = conversationHistory.Count - removeFrom;
+            conversationHistory.RemoveRange(removeFrom, removed);
+            await RebuildSessionFromHistoryAsync();
+            MuxConsole.WriteSuccess($"Undid last exchange ({removed} message(s) dropped). ~{_sessionTokens:N0} tokens remain.");
+            return true;
+        }
+
+        // Batch6: /retry -- trim the last assistant (and its user) so the user
+        // message can be re-run. Returns the user text to re-submit, or null.
+        string? TryPrepareRetry()
+        {
+            int lastAssistant = -1;
+            for (int i = conversationHistory.Count - 1; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.Assistant) { lastAssistant = i; break; }
+            int searchFrom = lastAssistant >= 0 ? lastAssistant - 1 : conversationHistory.Count - 1;
+            int lastUser = -1;
+            for (int i = searchFrom; i >= 0; i--)
+                if (conversationHistory[i].Role == ChatRole.User) { lastUser = i; break; }
+            if (lastUser < 0)
+            {
+                MuxConsole.WriteWarning("Nothing to retry.");
+                return null;
+            }
+            string userText = conversationHistory[lastUser].Text ?? string.Empty;
+            conversationHistory.RemoveRange(lastUser, conversationHistory.Count - lastUser);
+            return userText;
+        }
+
+        // Batch6: /tokens -- context usage meter.
+        void PrintTokenUsage()
+        {
+            int threshold = autoCompactTokenThreshold ?? 80_000;
+            double pct = threshold > 0 ? (double)_sessionTokens / threshold * 100.0 : 0;
+            MuxConsole.WriteInfo(
+                $"Context: {_sessionTokens:N0} / {threshold:N0} tokens ({pct:F1}%) - "
+                + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
+        }
+
+        // G11: live token estimate during a streaming turn. The provider only reports the
+        // authoritative token count AFTER the turn completes, so the docked meter would otherwise
+        // sit frozen while a long response streams. We tick a throttled estimate = the last known
+        // session total + (chars streamed this turn / ~2.5), giving the user a live-growing meter
+        // that snaps to the real count when usage details arrive. Reset at the start of each turn.
+        long _liveTurnChars = 0;
+        DateTime _lastLivePush = DateTime.MinValue;
+        void ResetLiveTokenEstimate() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
+        void TickLiveTokens(int addedChars)
+        {
+            if (!MuxConsole.TuiActive) return;
+            _liveTurnChars += Math.Max(0, addedChars);
+            // Throttle to ~10 Hz so we don\u0027t repaint the whole region on every micro-chunk.
+            var now = DateTime.UtcNow;
+            if ((now - _lastLivePush).TotalMilliseconds < 100) return;
+            _lastLivePush = now;
+            uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
+            uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
+            uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
+            MuxConsole.RenderTuiStatusBar(displayEst, threshold,
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+        }
+
+        // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
+        void RenderStatusBar()
+        {
+            uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
+            // Show the displayed context as tokens minus cached (Claude-style): the system
+            // prompt is cached after the first turn, so excluding cached gives the user a
+            // truer picture of "live" context growth rather than a misleading static base.
+            uint displayTokens = _sessionTokens > _cachedTokens ? _sessionTokens - _cachedTokens : _sessionTokens;
+            MuxConsole.RenderTuiStatusBar(displayTokens, threshold,
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+        }
+
+        // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
+        // the already-built agentChatOptions.Reasoning in place so the next turn uses it,
+        // exactly like /ultra's escalation but user-cyclable. Order: low -> med -> high -> low.
+        // The same underlying state backs the typed /effort command and the Shift+Tab key, so
+        // they stay consistent. The footer chip reflects the current tier.
+        string[] effortTiers = { "low", "med", "high" };
+        int effortIdx = -1;   // -1 = unset (inherit config/model default), no chip shown
+        string ApplyEffortTier(string tier)
+        {
+            var eff = tier switch
+            {
+                "low"  => Microsoft.Extensions.AI.ReasoningEffort.Low,
+                "med"  => Microsoft.Extensions.AI.ReasoningEffort.Medium,
+                "high" => Microsoft.Extensions.AI.ReasoningEffort.High,
+                _      => Microsoft.Extensions.AI.ReasoningEffort.Medium
+            };
+            agentChatOptions.Reasoning = new Microsoft.Extensions.AI.ReasoningOptions
+            {
+                Effort = eff,
+                Output = agentChatOptions.Reasoning?.Output
+            };
+            return tier;
+        }
+        string CycleEffort()
+        {
+            effortIdx = (effortIdx + 1) % effortTiers.Length;
+            var tier = effortTiers[effortIdx];
+            ApplyEffortTier(tier);
+            return tier;
+        }
+        void SetEffortByName(string name)
+        {
+            var n = name.Trim().ToLowerInvariant();
+            n = n switch { "medium" => "med", "m" => "med", "l" => "low", "h" => "high", _ => n };
+            int idx = Array.IndexOf(effortTiers, n);
+            if (idx < 0)
+            {
+                MuxConsole.WriteWarning($"Unknown effort '{name}'. Use low, med, or high.");
+                return;
+            }
+            effortIdx = idx;
+            ApplyEffortTier(n);
+            MuxConsole.SetTuiEffort(n);
+            MuxConsole.WriteSuccess($"Reasoning effort set to {n}.");
+        }
+
+        // Seed the footer effort chip from the resolved reasoning config so it renders by
+        // default at session init (rather than only after a manual /effort). Maps the
+        // provider effort tier back to our low/med/high label; leaves it hidden if unset.
+        {
+            var seededEffort = agentChatOptions.Reasoning?.Effort;
+            string? seedTier =
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Low    ? "low"  :
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Medium ? "med"  :
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.High   ? "high" : null;
+            if (seedTier is not null)
+            {
+                effortIdx = Array.IndexOf(effortTiers, seedTier);
+                MuxConsole.SetTuiEffort(seedTier);
+            }
+        }
+        // Register Shift+Tab to cycle effort and report the new chip label.
+        MuxConsole.SetTuiModeCycle(() => CycleEffort());
+
         var lastPersistTime = DateTime.UtcNow;
-        (string userMsg, string partialResponse)? lastInterruptedContext = null;
         do
         {
 
@@ -577,27 +930,21 @@ public static class SingleAgentOrchestrator
                 await TryCompactAsync();
             }
 
-            List<ChatMessage> messages;
-            if (lastInterruptedContext is { } ctx)
-            {
-                messages = [
-                    new(ChatRole.User, ctx.userMsg),
-                    new(ChatRole.Assistant, ctx.partialResponse + "\n\n[response interrupted by user]"),
-                    new(ChatRole.User, currentGoal)
-                ];
-                lastInterruptedContext = null;
-            }
-            else
-            {
-                messages = [new(ChatRole.User, currentGoal)];
-            }
+            // The interrupted exchange (if any) is now replayed from the session's own
+            // in-memory history (synced in the cancellation catch below), so the turn
+            // payload is always just the new goal.
+            List<ChatMessage> messages = [new(ChatRole.User, currentGoal)];
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
             int stuckCount = 0;
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken);
+            // Esc cancels the turn; Ctrl+E expands the latest large tool result inline (mid-stream)
+        // without cancelling - so the user can read full output while the agent keeps working.
+        using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
+            onExpand: () => MuxConsole.TuiExpandLatestInline(),
+            onView: () => MuxConsole.TuiEnterViewMode());
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
@@ -619,6 +966,7 @@ public static class SingleAgentOrchestrator
                     ThinkingIndicator? thinking = null;
                     bool startedStreaming = false;
                     bool currentlyStreaming = false;
+                    ResetLiveTokenEstimate();
 
                     try
                     {
@@ -639,6 +987,15 @@ public static class SingleAgentOrchestrator
                             _pendingCompaction = false;
                         }
 
+                        if (_pendingReseed)
+                        {
+                            // Batch6: replay trimmed history (everything before the current
+                            // goal, already re-added at line ~598) into the fresh session.
+                            if (conversationHistory.Count > 1)
+                                messages.InsertRange(0, conversationHistory.Take(conversationHistory.Count - 1));
+                            _pendingReseed = false;
+                        }
+
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
@@ -655,6 +1012,7 @@ public static class SingleAgentOrchestrator
 
                                 MuxConsole.WriteStream(update.Text);
                                 responseText.Append(update.Text);
+                                TickLiveTokens(update.Text.Length);
 
                                 HookWorker.Enqueue(new HookEvent
                                 {
@@ -682,6 +1040,7 @@ public static class SingleAgentOrchestrator
                                     }
 
                                     MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                                    TickLiveTokens(reasoningContent.Text.Length);
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -697,6 +1056,8 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
+                                    // Keep the live token meter moving during tool calls (args contribute to context).
+                                    TickLiveTokens((functionCall.Name?.Length ?? 0) + (functionCall.Arguments?.ToString()?.Length ?? 0));
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -728,6 +1089,8 @@ public static class SingleAgentOrchestrator
                                 else if (content is FunctionResultContent functionResult)
                                 {
                                     var resultText = functionResult.Result?.ToString();
+                                    // Tool results add to context - advance the live meter so it does not freeze during tool work.
+                                    TickLiveTokens(resultText?.Length ?? 0);
                                     Activity.Current?.SetTag("success", true);
                                     if (resultText != null)
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -823,15 +1186,23 @@ public static class SingleAgentOrchestrator
                 wasInterrupted = true;
 
                 string partial = responseText.ToString();
+                string interruptedAssistant = string.IsNullOrWhiteSpace(partial)
+                    ? "[no response — interrupted before agent replied]"
+                    : partial + "\n\n[interrupted by user]";
+
+                // The framework does NOT commit a cancelled run's messages to the session,
+                // so neither the user goal nor the partial response would survive
+                // persistence/resume. Inject both into the session's in-memory history
+                // (preserving prior tool-rich turns) so the interrupted exchange is durable.
+                if (!session.TryGetInMemoryChatHistory(out var sessionHistory) || sessionHistory is null)
+                    sessionHistory = new List<ChatMessage>();
+                sessionHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
+                sessionHistory.Add(new ChatMessage(ChatRole.Assistant, interruptedAssistant));
+                session.SetInMemoryChatHistory(sessionHistory);
+
+                // conversationHistory feeds compaction; keep the partial there too.
                 if (!string.IsNullOrWhiteSpace(partial))
-                {
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\n\n[interrupted by user]"));
-                    lastInterruptedContext = (currentGoal, partial);
-                }
-                else
-                {
-                    lastInterruptedContext = (currentGoal, "[no response — interrupted before agent replied]");
-                }
 
                 MuxConsole.WriteLine();
                 MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
@@ -847,7 +1218,7 @@ public static class SingleAgentOrchestrator
                 MuxConsole.WriteInfo("Ready for next input.");
 
             bool shouldPersist = persistSession;
-            if (shouldPersist && persistIntervalSeconds > 0)
+            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted)
                 shouldPersist = (DateTime.UtcNow - lastPersistTime).TotalSeconds >= persistIntervalSeconds;
 
             if (shouldPersist)
@@ -861,7 +1232,10 @@ public static class SingleAgentOrchestrator
                 lastPersistTime = DateTime.UtcNow;
             }
 
-            MuxConsole.WriteMuted($"Total Tokens: {_sessionTokens:N0} - Cached Tokens: {_cachedTokens:N0}");
+            // In TUI mode the docked footer already shows live token usage, so skip this
+            // redundant per-turn line; classic mode keeps it.
+            if (!MuxConsole.IsTui)
+                MuxConsole.WriteMuted($"Total Tokens: {_sessionTokens:N0} - Cached Tokens: {_cachedTokens:N0}");
 
             //Cleanly Exit as goal was passed through cli args and continuous flag was not passed
             if (incomingGoal != null && !continuous)
@@ -898,8 +1272,14 @@ public static class SingleAgentOrchestrator
                 continue;
             }
 
-            MuxConsole.WriteRule();
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            RenderStatusBar();
+            // In TUI the pinned footer/input box separate turns; the classic rule + inline
+            // "> " prompt would inject a duplicate separator line, so emit them only in classic.
+            if (!MuxConsole.TuiActive)
+            {
+                MuxConsole.WriteRule();
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+            }
 
             cancellationToken.ThrowIfCancellationRequested();
             string? nextInput = MuxConsole.ReadInput(cancellationToken);
@@ -911,11 +1291,103 @@ public static class SingleAgentOrchestrator
                 break;
             }
 
-            if (nextInput!.Trim().Equals("/compact", StringComparison.OrdinalIgnoreCase))
+            // Batch6: in-session meta-command loop. These commands act on the live
+            // session without quitting it and without counting as a goal; loop until
+            // a real message arrives (or the user quits).
+            bool quitSession = false;
+            bool retryGoalSet = false;
+            while (true)
             {
-                await TryCompactAsync();
-                MuxConsole.WriteRule();
-                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                string metaCmd = nextInput!.Trim();
+                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryCompactAsync();
+                }
+                else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
+                {
+                    session = await agent.CreateSessionAsync();
+                    conversationHistory.Clear();
+                    _sessionTokens = 0;
+                    _cachedTokens = 0;
+                    _pendingCompaction = false;
+                    _pendingReseed = false;
+                    ServeMode.EmitEvent(new { type = "session_wiped" });
+                    MuxConsole.WriteSuccess("Session context wiped. Starting fresh.");
+                }
+                else if (metaCmd.Equals("/tokens", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase))
+                {
+                    PrintTokenUsage();
+                }
+                else if (metaCmd == "/" || metaCmd == "/?")
+                {
+                    // G6: slash-command palette / preview (TUI render mode).
+                    MuxConsole.RenderTuiSlashPalette();
+                }
+                else if (metaCmd.Equals("/undo", StringComparison.OrdinalIgnoreCase))
+                {
+                    await TryUndoAsync();
+                }
+                else if (metaCmd.Equals("/retry", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/redo", StringComparison.OrdinalIgnoreCase))
+                {
+                    var retryText = TryPrepareRetry();
+                    if (retryText != null)
+                    {
+                        await RebuildSessionFromHistoryAsync();
+                        currentGoal = retryText;
+                        retryGoalSet = true;
+                        MuxConsole.WriteInfo("Retrying last message...");
+                        break;
+                    }
+                }
+                else if (metaCmd.Equals("/effort", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/effort ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // "/effort" with no arg cycles; "/effort <tier>" sets explicitly.
+                    var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 1) SetEffortByName(parts[1]);
+                    else
+                    {
+                        var tier = CycleEffort();
+                        MuxConsole.SetTuiEffort(tier);
+                        MuxConsole.WriteSuccess($"Reasoning effort set to {tier}.");
+                    }
+                }
+                else if (metaCmd.Equals("/tag", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/tag ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleTagAsync(metaCmd, sessionTimestamp, session, agent,
+                        resolvedModelId, chatClientFactory, cancellationToken);
+                }
+                else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
+                {
+                    // Slash-anywhere (web-UI parity): the user typed a REPL-only command inside a
+                    // live session, where it does NOT work. Offer to end the session and run it at
+                    // the top-level menu. If they decline, stay in the session (treat as no-op).
+                    string cmdName = metaCmd.Split(' ', 2)[0];
+                    bool end = MuxConsole.Confirm(
+                        $"'{cmdName}' only runs at the main menu. End this session and run it there?", false);
+                    if (end)
+                    {
+                        PendingReplCommand = metaCmd;
+                        quitSession = true;
+                        break;
+                    }
+                    // declined: fall through to re-prompt (do not send the slash text to the agent)
+                }
+                else
+                {
+                    break; // real message (or unknown) -> fall through to goal handling
+                }
+
+                // Re-prompt after handling a meta command.
+                RenderStatusBar();
+                if (!MuxConsole.TuiActive)
+                {
+                    MuxConsole.WriteRule();
+                    MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                }
 
                 cancellationToken.ThrowIfCancellationRequested();
                 nextInput = MuxConsole.ReadInput(cancellationToken);
@@ -924,11 +1396,16 @@ public static class SingleAgentOrchestrator
                 if (IsQuitCommand(nextInput))
                 {
                     MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
+                    quitSession = true;
                     break;
                 }
             }
 
-            currentGoal = nextInput!;
+            if (quitSession)
+                break;
+
+            if (!retryGoalSet)
+                currentGoal = nextInput!;
 
             HookWorker.Enqueue(new HookEvent
             {
@@ -942,6 +1419,11 @@ public static class SingleAgentOrchestrator
             OtelMetrics.GoalsReceived.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
 
         } while (!Environment.HasShutdownStarted);
+
+        // Clear the session-scoped TUI hooks so they do not leak to the top-level menu.
+        MuxConsole.SetTuiModeCycle(null);
+        MuxConsole.SetTuiEffort(null);
+        MuxConsole.SetTuiSessionId(null);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);

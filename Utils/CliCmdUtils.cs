@@ -367,7 +367,43 @@ public static class CliCmdUtils
 
     }
 
-    public static (JsonElement data, string sessionDir)? HandleSessionResume()
+    /// <summary>
+    /// Lightweight catalog of resumable single-agent sessions (id + first-user-message
+    /// preview), newest first, for the live "/resume" autocomplete preview. Best-effort:
+    /// returns an empty list on any IO error.
+    /// </summary>
+    public static List<(string Id, string Preview)> GetResumableSessions()
+    {
+        var outList = new List<(string, string)>();
+        try
+        {
+            string sessionsDir = PlatformContext.SessionsDirectory;
+            if (!Directory.Exists(sessionsDir)) return outList;
+            foreach (var d in Directory.GetDirectories(sessionsDir)
+                         .Where(d => Directory.GetFiles(d, "*.json").Length <= 2)
+                         .OrderByDescending(d => d))
+            {
+                var id = Path.GetFileName(d);
+                string preview = "";
+                try
+                {
+                    var file = Directory.GetFiles(d, "*.json").FirstOrDefault();
+                    if (file != null) preview = Common.GetFirstUserMessage(file);
+                }
+                catch { /* preview optional */ }
+                // Fold any session tags into the preview so the /resume palette both shows and
+                // fuzzy-matches them (the sidecar is .muxtag, invisible to the *.json detector).
+                var tagLabel = SessionTags.TagLabel(d);
+                if (!string.IsNullOrEmpty(tagLabel))
+                    preview = string.IsNullOrEmpty(preview) ? $"#{tagLabel}" : $"#{tagLabel} - {preview}";
+                outList.Add((id, preview));
+            }
+        }
+        catch { /* best-effort */ }
+        return outList;
+    }
+
+    public static (JsonElement data, string sessionDir)? HandleSessionResume(string? sessionId = null)
     {
         string sessionsDir = PlatformContext.SessionsDirectory;
 
@@ -388,13 +424,29 @@ public static class CliCmdUtils
             return null;
         }
 
+        // Non-interactive path: a session id was supplied (e.g. "/resume <id>" from
+        // the web app's Resume button). Match by folder name and skip the prompt.
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            var direct = sessionDirs.FirstOrDefault(d =>
+                Path.GetFileName(d).Equals(sessionId.Trim(), StringComparison.OrdinalIgnoreCase));
+            if (direct == null)
+            {
+                MuxConsole.WriteWarning($"No resumable single-agent session found matching: {sessionId}");
+                return null;
+            }
+            return LoadResumeSession(direct);
+        }
+
         var lines = string.Join("\n", sessionDirs.Select((d, i) =>
         {
             var timestamp = Path.GetFileName(d);
             var file = Directory.GetFiles(d, "*.json").First();
             var size = new FileInfo(file).Length;
             var preview = Common.GetFirstUserMessage(file);
-            return $"  [{i + 1}] {timestamp} ({size / 1024}KB) — {preview}";
+            var tagLabel = SessionTags.TagLabel(d);
+            var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
+            return $"  [{i + 1}] {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);
@@ -420,6 +472,12 @@ public static class CliCmdUtils
             return null;
         }
 
+        return LoadResumeSession(selectedDir);
+    }
+
+    /// <summary>Load a session's persisted state from its directory for resume.</summary>
+    private static (JsonElement data, string sessionDir)? LoadResumeSession(string selectedDir)
+    {
         var sessionFile = Directory.GetFiles(selectedDir, "*.json").First();
 
         try
@@ -481,6 +539,11 @@ public static class CliCmdUtils
             MuxConsole.WriteMuted($"Skills directory: {PlatformContext.SkillsDirectory}");
             return;
         }
+
+        // TUI: clean per-skill preview (name + one-line description) via the live-region
+        // driver; classic/stdio fall back to the single panel.
+        if (MuxConsole.RenderTuiSkills(skills.Select(s => (s.Name, s.Description)).ToList()))
+            return;
 
         var maxNameLen = skills.Max(s => s.Name.Length);
         var text = string.Join("\n", skills.Select(s => $"  {s.Name.PadRight(maxNameLen)}   {s.Description}"));
@@ -752,5 +815,60 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteSuccess($"Generated {generated} report(s) in {reportsDir}");
         }
+    }
+
+    /// <summary>
+    /// Build a relative-path file index of the current working directory for the live "@" file
+    /// picker. Skips heavy / noise directories (.git, bin, obj, node_modules, .vs, etc.), caps
+    /// the result so a giant repo can't blow up the picker, and returns forward-slash relative
+    /// paths sorted shortest-first. Best-effort: any IO error yields an empty list.
+    /// </summary>
+    public static List<string> GetWorkspaceFiles(int cap = 4000)
+    {
+        var outList = new List<string>();
+        try
+        {
+            // Index the configured workspace root (defaults to CWD; overridable via --workspace),
+            // so an alias that launches mux from its install dir still points "@" at the project.
+            string root = PlatformContext.WorkspaceRoot;
+            var skipDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".git", "bin", "obj", "node_modules", ".vs", ".vscode", ".idea",
+                "packages", "dist", "build", ".depot", "TestResults", "__pycache__", ".venv",
+            };
+
+            var stack = new Stack<string>();
+            stack.Push(root);
+            while (stack.Count > 0 && outList.Count < cap)
+            {
+                var dir = stack.Pop();
+                string[] entries;
+                try { entries = Directory.GetFileSystemEntries(dir); }
+                catch { continue; }
+
+                foreach (var entry in entries)
+                {
+                    if (outList.Count >= cap) break;
+                    var name = Path.GetFileName(entry);
+                    bool isDir = Directory.Exists(entry);
+                    if (isDir)
+                    {
+                        if (skipDirs.Contains(name) || name.StartsWith('.')) continue;
+                        stack.Push(entry);
+                    }
+                    else
+                    {
+                        var rel = Path.GetRelativePath(root, entry).Replace('\\', '/');
+                        outList.Add(rel);
+                    }
+                }
+            }
+        }
+        catch { /* best-effort */ }
+
+        outList.Sort((a, b) => a.Length != b.Length
+            ? a.Length - b.Length
+            : string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
+        return outList;
     }
 }
