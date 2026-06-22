@@ -57,6 +57,12 @@ public static partial class MuxConsole
     /// </summary>
     public static int CollapseToolLines { get; set; } = 6;
 
+    /// <summary>Blank lines emitted BELOW a tool/delegation block before the next agent output
+    /// in the live TUI (the docked-below separator). Tool groups stay docked directly under the
+    /// output text above them; this controls only the gap beneath. 0 = tight. Default 1. Seeded
+    /// from config at startup and pushed to the driver on activation + live via /set.</summary>
+    public static int DelegationSpacing { get; set; } = 1;
+
     /// <summary>
     /// When true (default) a delegated sub-agent's live output is captured and collapsed into a
     /// single expandable transcript line instead of streaming inline (Claude-Code Task style).
@@ -76,6 +82,8 @@ public static partial class MuxConsole
     {
         public required string Agent;
         public readonly System.Text.StringBuilder Buffer = new();
+        // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
+        public readonly System.Text.StringBuilder Tail = new();
         public int ToolCalls;
         public string? Status;             // set from signal_task_complete (success/failure/partial)
         public volatile string LiveStatus = "working";  // concise live activity for the panel line
@@ -194,8 +202,23 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetSubAgentActivity(items, _subAgentFrame); }
     }
 
-    /// <summary>Append captured text/reasoning to the active sub-agent buffer.</summary>
-    private static void CaptureAppend(string text) => _capture.Value?.Buffer.Append(text);
+    /// <summary>Append captured text/reasoning to the active sub-agent buffer, and surface a
+    /// rolling tail of it as the live panel preview so the user watches the sub-agent work in
+    /// real time (not just a spinner + tool name). Streamed text and "calling: X" tool status
+    /// share the one LiveStatus line; whichever fired most recently wins, which reads naturally.</summary>
+    private static void CaptureAppend(string text)
+    {
+        if (_capture.Value is not { } cap || string.IsNullOrEmpty(text)) return;
+        cap.Buffer.Append(text);
+        cap.Tail.Append(text);
+        if (cap.Tail.Length > 240) cap.Tail.Remove(0, cap.Tail.Length - 240);
+        string preview = CollapseWhitespace(cap.Tail.ToString()).Trim();
+        if (preview.Length > 0) { cap.LiveStatus = preview; PushSubAgentActivity(); }
+        // If THIS sub-agent is currently expanded (Ctrl+E), keep its bounded live panel growing in
+        // place from the full buffer (not the rolling tail) - the panel itself bounds what shows.
+        if (ViaDriver)
+            lock (ConsoleLock) { _driver!.UpdateSubAgentExpandedBody(cap.Agent, cap.Buffer.ToString().Trim()); }
+    }
 
     /// <summary>Record a captured tool-result summary line + bump the tool counter.</summary>
     private static void CaptureToolResult(string summary)
@@ -224,12 +247,21 @@ public static partial class MuxConsole
         {
             lock (ConsoleLock)
             {
+                // If THIS sub-agent is the one currently expanded in the live region, keep its panel
+                // open through completion instead of snapping it collapsed (the abrupt auto-collapse
+                // bug): freeze it to the final transcript and let the user close it (Ctrl+E) or have
+                // it fold away naturally when the input prompt returns. Otherwise drop any unrelated
+                // in-region expansion so a stale one never lingers.
+                bool keepOpen = _driver!.IsSubAgentExpanded(cap.Agent);
+                if (!keepOpen) _driver!.ClearSubAgentExpanded();
                 // Retain the full transcript expandable when there is anything to expand; otherwise
                 // commit a bare collapsed line (an empty sub-agent turn).
                 if (body.Length > 0)
                     _driver!.CommitCollapsed(collapsed, cap.Agent, body);
                 else
                     _driver!.CommitLine(collapsed);
+                // Re-anchor the still-open panel to the final body after the collapsed line commits.
+                if (keepOpen) _driver!.UpdateSubAgentExpandedBody(cap.Agent, body);
             }
             return;
         }
@@ -250,7 +282,7 @@ public static partial class MuxConsole
 
     // Cached footer state so any render path can repaint the footer with current values.
     private static uint _fTokens, _fThreshold, _fCached;
-    private static bool _fPlan, _fUltra, _fPsub;
+    private static bool _fPlan, _fUltra, _fPsub, _fSub;
 
     /// <summary>True when the frame-owned live-region driver is running.</summary>
     public static bool TuiActive => _tuiActive && _driver is not null;
@@ -305,7 +337,8 @@ public static partial class MuxConsole
                 }
                 catch { /* files optional */ }
                 _driver.SetCollapseThreshold(CollapseToolLines);
-                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub);
+                _driver.SetBlockGap(DelegationSpacing);
+                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub);
             }
             catch
             {
@@ -403,11 +436,22 @@ public static partial class MuxConsole
     /// values so subsequent commits keep the footer current. No-op when the driver is not
     /// active.
     /// </summary>
-    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0)
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
     {
-        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fCached = cached;
+        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fCached = cached;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, cached); }
+        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, sub, cached); }
+    }
+
+    /// <summary>Refresh ONLY the footer mode badges (plan / ultra / parallel-sub) immediately,
+    /// reusing the last cached token/threshold values. Used by slash-command toggles like /ultra
+    /// so the badge updates the instant the mode flips, instead of waiting for the next
+    /// post-stream status push.</summary>
+    public static void RefreshDockedFooterModes(bool plan, bool ultra, bool parallelSub, bool sub = false)
+    {
+        _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached); }
     }
 
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
@@ -436,13 +480,22 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetCollapseThreshold(CollapseToolLines); }
     }
 
+    /// <summary>Set the delegation spacing (blank lines above each delegation block) live. Takes
+    /// effect on the next delegation render; no driver state needed.</summary>
+    public static void SetTuiDelegationSpacing(int lines)
+    {
+        DelegationSpacing = Math.Max(0, lines);
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetBlockGap(DelegationSpacing); }
+    }
+
     /// <summary>True when the driver should handle this render (active and on the TUI path).</summary>
     private static bool ViaDriver => _tuiActive && _driver is not null && IsTui && !StdioMode;
 
     // --- streaming relays (called from MuxConsole.WriteStream / Begin/End) ----
 
     internal static void TuiBeginStream() { if (ViaDriver) lock (ConsoleLock) { _driver!.BeginStream(); } }
-    internal static void TuiStreamChunk(string text) { if (ViaDriver) lock (ConsoleLock) { _driver!.StreamChunk(text); } }
+    internal static void TuiStreamChunk(string text, bool reasoning = false) { if (ViaDriver) lock (ConsoleLock) { _driver!.StreamChunk(text, reasoning); } }
     internal static void TuiEndStream() { if (ViaDriver) lock (ConsoleLock) { _driver!.EndStream(); } }
 
     /// <summary>Set/clear the driver's live "thinking/working" line (animated spinner).</summary>
@@ -471,6 +524,17 @@ public static partial class MuxConsole
     internal static bool TuiExpandLatestInline()
     {
         if (!ViaDriver) return false;
+        // Prefer the most-recent STILL-RUNNING sub-agent: expand its buffered-so-far transcript
+        // inline so Ctrl+E works mid-stream, not only after the agent completes. Falls back to the
+        // latest finished expandable block (large tool result / committed sub-agent) when none run.
+        SubAgentCapture? live = null;
+        lock (_captureGate) { if (_activeCaptures.Count > 0) live = _activeCaptures[^1]; }
+        if (live is not null)
+        {
+            string body = live.Buffer.ToString().Trim();
+            if (body.Length > 0)
+                lock (ConsoleLock) { return _driver!.ToggleSubAgentExpanded(live.Agent, body); }
+        }
         lock (ConsoleLock) { return _driver!.ExpandLatestInline(); }
     }
 
@@ -542,13 +606,13 @@ public static partial class MuxConsole
     /// G7 - context-meter + mode-badge status bar. With the driver active this updates the
     /// pinned footer in place; otherwise it prints an inline status line before the prompt.
     /// </summary>
-    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0)
+    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
     {
         if (!IsTui) return;
-        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached); return; }
+        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached, sub); return; }
         WithConsole(() =>
         {
-            AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub));
+            AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub, sub));
         }, clearIndicator: false);
     }
 

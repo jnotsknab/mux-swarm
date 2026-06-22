@@ -95,6 +95,118 @@ public static class SingleAgentOrchestrator
         catch { return null; }
     }
 
+    /// <summary>
+    /// /tag &lt;text&gt; - attach a free-form tag to the live session. Persists the session now
+    /// (so a dir exists), appends the tag to the sidecar (tags.muxtag - intentionally NOT a
+    /// *.json file so the resume single-vs-swarm detector is unaffected), then offers to also
+    /// record a one-line stub in MEMORY.md via a one-shot LLM rewrite (opt-in). TUI/interactive
+    /// only path; safe no-op style on any failure.
+    /// </summary>
+    private static async Task HandleTagAsync(
+        string metaCmd,
+        string sessionTimestamp,
+        AgentSession session,
+        AIAgent agent,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        CancellationToken ct)
+    {
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2 || string.IsNullOrWhiteSpace(parts[1]))
+        {
+            MuxConsole.WriteMuted("Usage: /tag <text>  - label this session for easy resume/search.");
+            return;
+        }
+        var tag = parts[1].Trim();
+
+        // Ensure the session is persisted so its directory exists, then resolve it.
+        string? sessionDir = Common.FindSessionDirectory(sessionTimestamp);
+        if (sessionDir == null)
+        {
+            try
+            {
+                await Common.PersistChatSessionAsync(agent, session, sessionTimestamp);
+                sessionDir = Common.FindSessionDirectory(sessionTimestamp);
+            }
+            catch { /* fall through to warning below */ }
+        }
+
+        if (sessionDir == null)
+        {
+            MuxConsole.WriteWarning("Could not resolve the session directory to write the tag.");
+            return;
+        }
+
+        if (!SessionTags.Append(sessionDir, tag))
+        {
+            MuxConsole.WriteWarning("Failed to write the session tag.");
+            return;
+        }
+
+        MuxConsole.WriteSuccess($"Tagged session {sessionTimestamp}: \"{tag}\"");
+
+        // Opt-in: also record a durable one-line stub in MEMORY.md.
+        bool alsoMemory = MuxConsole.Confirm("Also record this tag as a stub in MEMORY.md?", false);
+        if (!alsoMemory) return;
+
+        await WriteMemoryTagStubAsync(tag, sessionTimestamp, resolvedModelId, chatClientFactory, ct);
+    }
+
+    /// <summary>
+    /// Append/merge a 1-2 line stub for a session tag into MEMORY.md under a "Session Tags"
+    /// section. Writes a .bak first. SCOPED: only adds the stub line, never rewrites the file
+    /// wholesale. After writing, respects the configured MEMORY.md char-cap (warn/force).
+    /// </summary>
+    private static async Task WriteMemoryTagStubAsync(
+        string tag,
+        string sessionTimestamp,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        CancellationToken ct)
+    {
+        try
+        {
+            var memoryPath = Path.Combine(PlatformContext.ContextDirectory, ContextCap.MemoryFile);
+            var utc = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            var stub = $"- `{sessionTimestamp}` - {tag} (tagged {utc} UTC)";
+            const string header = "## Session Tags";
+
+            string content = File.Exists(memoryPath) ? await File.ReadAllTextAsync(memoryPath, ct) : "";
+
+            // Back up before mutating.
+            if (File.Exists(memoryPath))
+            {
+                try { File.Copy(memoryPath, memoryPath + ".bak", overwrite: true); } catch { }
+            }
+
+            string updated;
+            int idx = content.IndexOf(header, StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                // Insert the stub right after the header line.
+                int lineEnd = content.IndexOf('\n', idx);
+                if (lineEnd < 0) lineEnd = content.Length;
+                updated = content[..lineEnd] + "\n" + stub + content[lineEnd..];
+            }
+            else
+            {
+                var sep = content.Length > 0 && !content.EndsWith("\n") ? "\n\n" : "\n";
+                updated = content + sep + header + "\n" + stub + "\n";
+            }
+
+            Directory.CreateDirectory(PlatformContext.ContextDirectory);
+            await File.WriteAllTextAsync(memoryPath, updated, ct);
+            MuxConsole.WriteSuccess($"Recorded tag stub in {ContextCap.MemoryFile}.");
+
+            // Respect the MEMORY.md char-cap (warn/force) now that we have grown the file.
+            await ContextCap.CheckFileAsync(ContextCap.MemoryFile, chatClientFactory, resolvedModelId, ct);
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write MEMORY.md tag stub: {ex.Message}");
+        }
+    }
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -538,6 +650,11 @@ public static class SingleAgentOrchestrator
             }
         }
 
+        // NOTE: config.json showReasoning is a CLIENT-SIDE display gate applied in
+        // MuxConsole.WriteStream (drops streamed reasoning text when "none"); it intentionally
+        // does NOT touch the native API reasoning level here. A per-agent swarm.json
+        // modelOpts.reasoning.output still controls the API level where set.
+
         // /ultra: escalate reasoning to the provider max (numeric budget + effort tier).
         // Applied last so it wins over swarm.json modelOpts for this session only.
         if (App.UltraMode)
@@ -722,7 +839,7 @@ public static class SingleAgentOrchestrator
             uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
             uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
             MuxConsole.RenderTuiStatusBar(displayEst, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
         }
 
         // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
@@ -734,7 +851,7 @@ public static class SingleAgentOrchestrator
             // truer picture of "live" context growth rather than a misleading static base.
             uint displayTokens = _sessionTokens > _cachedTokens ? _sessionTokens - _cachedTokens : _sessionTokens;
             MuxConsole.RenderTuiStatusBar(displayTokens, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
         }
 
         // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
@@ -782,6 +899,7 @@ public static class SingleAgentOrchestrator
             MuxConsole.SetTuiEffort(n);
             MuxConsole.WriteSuccess($"Reasoning effort set to {n}.");
         }
+
         // Seed the footer effort chip from the resolved reasoning config so it renders by
         // default at session init (rather than only after a manual /effort). Maps the
         // provider effort tier back to our low/med/high label; leaves it hidden if unset.
@@ -938,6 +1056,8 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
+                                    // Keep the live token meter moving during tool calls (args contribute to context).
+                                    TickLiveTokens((functionCall.Name?.Length ?? 0) + (functionCall.Arguments?.ToString()?.Length ?? 0));
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -969,6 +1089,8 @@ public static class SingleAgentOrchestrator
                                 else if (content is FunctionResultContent functionResult)
                                 {
                                     var resultText = functionResult.Result?.ToString();
+                                    // Tool results add to context - advance the live meter so it does not freeze during tool work.
+                                    TickLiveTokens(resultText?.Length ?? 0);
                                     Activity.Current?.SetTag("success", true);
                                     if (resultText != null)
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1231,6 +1353,12 @@ public static class SingleAgentOrchestrator
                         MuxConsole.SetTuiEffort(tier);
                         MuxConsole.WriteSuccess($"Reasoning effort set to {tier}.");
                     }
+                }
+                else if (metaCmd.Equals("/tag", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/tag ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleTagAsync(metaCmd, sessionTimestamp, session, agent,
+                        resolvedModelId, chatClientFactory, cancellationToken);
                 }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
                 {

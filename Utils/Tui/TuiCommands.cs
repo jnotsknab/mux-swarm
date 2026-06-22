@@ -1,4 +1,4 @@
-namespace MuxSwarm.Utils.Tui;
+﻿namespace MuxSwarm.Utils.Tui;
 
 /// <summary>
 /// The single canonical list of interactive slash commands, kept in sync with the two
@@ -45,6 +45,7 @@ internal static class TuiCommands
         new("/retry",        "Retry the last message", Scope.SessionOnly),
         new("/redo",         "Retry the last message", Scope.SessionOnly),
         new("/effort",       "Cycle reasoning effort (low/med/high)", Scope.SessionOnly),
+        new("/tag",          "Tag this session for easy resume/search (/tag <text>)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -66,8 +67,11 @@ internal static class TuiCommands
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
         new("/setmodel",     "Change an agent/orchestrator model", Scope.ReplOnly),
         new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
+        new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
         new("/config",       "Show all current config settings", Scope.ReplOnly),
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
+        new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
+        new("/delagent",     "Remove a swarm agent (/delagent [name])", Scope.ReplOnly),
         new("/swap",         "Swap the active single-agent model", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
@@ -104,7 +108,8 @@ internal static class TuiCommands
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
-        "/workflow", "/report", "/addcontext", "/set", "/newagent",
+        "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
+        "/tag", "/showreasoning",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

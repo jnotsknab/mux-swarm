@@ -31,6 +31,38 @@ internal static class Ansi
     public static string CursorUp(int n) => n <= 0 ? "" : CSI + n + "A";
     public static string CursorDown(int n) => n <= 0 ? "" : CSI + n + "B";
 
+    /// <summary>BEL (used to terminate an OSC string, e.g. OSC 52 clipboard).</summary>
+    public const char BEL = '\u0007';
+
+    /// <summary>Enter the alternate screen buffer (CSI ?1049h). The primary buffer + scrollback
+    /// are preserved and restored verbatim on <see cref="LeaveAltScreen"/>. Used ONLY by the
+    /// brief NAV overlay - normal streaming never enters the alt screen, preserving native
+    /// scrollback during agent turns.</summary>
+    public const string EnterAltScreen = CSI + "?1049h";
+
+    /// <summary>Leave the alternate screen buffer (CSI ?1049l), restoring the primary buffer.</summary>
+    public const string LeaveAltScreen = CSI + "?1049l";
+
+    /// <summary>Clear the entire screen (CSI 2J). Pairs with <see cref="Home"/> for a full repaint.</summary>
+    public const string ClearScreen = CSI + "2J";
+
+    /// <summary>Move the cursor to the home position, row 1 col 1 (CSI H).</summary>
+    public const string Home = CSI + "H";
+
+    /// <summary>Position the cursor at 1-based (row, col) (CSI row;col H).</summary>
+    public static string MoveTo(int row, int col) => $"{CSI}{Math.Max(1, row)};{Math.Max(1, col)}H";
+
+    /// <summary>Reverse-video / invert SGR (CSI 7m) - used to paint the NAV selection highlight.</summary>
+    public const string Invert = CSI + "7m";
+
+    /// <summary>Disable terminal auto-wrap, DECAWM off (CSI ?7l). Writing a full-width row then no
+    /// longer wraps to the next line - which is what stranded a stray row below the NAV footer.
+    /// Re-enabled with <see cref="AutoWrapOn"/> on NAV exit.</summary>
+    public const string AutoWrapOff = CSI + "?7l";
+
+    /// <summary>Re-enable terminal auto-wrap, DECAWM on (CSI ?7h).</summary>
+    public const string AutoWrapOn = CSI + "?7h";
+
     /// <summary>
     /// Erase <paramref name="count"/> lines ending at (and including) the current line,
     /// leaving the cursor at column 1 of the topmost erased line. Mirrors the well-proven

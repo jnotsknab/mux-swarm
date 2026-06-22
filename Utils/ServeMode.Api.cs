@@ -125,6 +125,7 @@ public static partial class ServeMode
                     mtime = mtime.ToString("o"),
                     sizeBytes,
                     turnCount,
+                    tag = SessionTags.TagLabel(dir.FullName),
                 });
             }
         }
@@ -193,6 +194,7 @@ public static partial class ServeMode
                 sizeBytes,
                 turnCount,
                 resumable,
+                tag = SessionTags.TagLabel(dir),
             });
         }
         catch (UnauthorizedAccessException)

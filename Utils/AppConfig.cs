@@ -40,7 +40,45 @@ public class AppConfig
     [JsonPropertyName("console")]
     public ConsoleConfig Console { get; set; } = new();
 
+    [JsonPropertyName("contextLimits")]
+    public ContextLimitsConfig ContextLimits { get; set; } = new();
 
+    /// <summary>
+    /// Client-side display gate for streamed reasoning text in interactive (TUI/console)
+    /// agent and swarm loops: "full" / "summary" both SHOW reasoning (rendered grey + italic),
+    /// "none" SUPPRESSES streaming reasoning text entirely (gates the stream). This is a
+    /// presentation gate only — it does NOT change the native API reasoning level and does not
+    /// affect stdio/NDJSON/WebSocket output (protocol unchanged). Adjusted with
+    /// <c>/showreasoning &lt;full|summary|none&gt;</c> or <c>/set showReasoning &lt;...&gt;</c>.
+    /// </summary>
+    [JsonPropertyName("showReasoning")]
+    public string ShowReasoning { get; set; } = "summary";
+
+}
+
+/// <summary>
+/// Hard character limits for the shared context memory files (BRAIN.md and MEMORY.md).
+/// Each file has an independent limit (0 = off/no cap) and a mode: "off" (ignore),
+/// "warn" (print a console warning on startup and after any mutation that exceeds the
+/// limit), or "force" (back up the file as <name>.bak then spawn a one-shot LLM rewrite
+/// that intelligently condenses the content under the cap, preserving high-signal facts).
+/// Additive and non-invasive: absent in older configs (all default to off). Adjusted live
+/// with <c>/set brainMdCharLimit &lt;int&gt;</c>, <c>/set brainMdCapMode off|warn|force</c>,
+/// and the memoryMd equivalents.
+/// </summary>
+public class ContextLimitsConfig
+{
+    [JsonPropertyName("brainMdCharLimit")]
+    public int BrainMdCharLimit { get; set; } = 0;
+
+    [JsonPropertyName("brainMdCapMode")]
+    public string BrainMdCapMode { get; set; } = "off";
+
+    [JsonPropertyName("memoryMdCharLimit")]
+    public int MemoryMdCharLimit { get; set; } = 0;
+
+    [JsonPropertyName("memoryMdCapMode")]
+    public string MemoryMdCapMode { get; set; } = "off";
 }
 
 /// <summary>
@@ -90,6 +128,17 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("collapseToolLines")]
     public int CollapseToolLines { get; set; } = 6;
+
+    /// <summary>
+    /// Number of blank lines emitted BELOW a tool-call / sub-agent-delegation block before the
+    /// following agent output in the live TUI. Tool/dot groups stay docked directly under the
+    /// output text that introduced them; this controls only the separator gap beneath the group,
+    /// which keeps dense parallel-fanout delegation readable. 0 = tight (no gap), 1 = one blank
+    /// line (default). Additive and non-invasive: absent in older configs (defaults to 1). Ignored
+    /// outside TUI. Adjusted live with <c>/set delegationSpacing &lt;n&gt;</c>.
+    /// </summary>
+    [JsonPropertyName("delegationSpacing")]
+    public int DelegationSpacing { get; set; } = 1;
 
     /// <summary>
     /// When true (default), a delegated sub-agent's live output (streamed text, reasoning,

@@ -391,6 +391,11 @@ public static class CliCmdUtils
                     if (file != null) preview = Common.GetFirstUserMessage(file);
                 }
                 catch { /* preview optional */ }
+                // Fold any session tags into the preview so the /resume palette both shows and
+                // fuzzy-matches them (the sidecar is .muxtag, invisible to the *.json detector).
+                var tagLabel = SessionTags.TagLabel(d);
+                if (!string.IsNullOrEmpty(tagLabel))
+                    preview = string.IsNullOrEmpty(preview) ? $"#{tagLabel}" : $"#{tagLabel} - {preview}";
                 outList.Add((id, preview));
             }
         }
@@ -439,7 +444,9 @@ public static class CliCmdUtils
             var file = Directory.GetFiles(d, "*.json").First();
             var size = new FileInfo(file).Length;
             var preview = Common.GetFirstUserMessage(file);
-            return $"  [{i + 1}] {timestamp} ({size / 1024}KB) — {preview}";
+            var tagLabel = SessionTags.TagLabel(d);
+            var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
+            return $"  [{i + 1}] {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);

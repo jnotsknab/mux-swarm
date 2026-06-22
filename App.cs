@@ -52,6 +52,7 @@ public class App
     /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
     public static bool PlanMode => ShouldPlan;
     public static bool ParallelSubAgentsMode => AllowParallelSubAgents;
+    public static bool SubAgentsMode => AllowSubagents;
     
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
@@ -219,7 +220,23 @@ public class App
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
+        MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
+        MuxConsole.ShowReasoning = Config.ShowReasoning;
+
+        // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
+        // warn-only by design - we never silently rewrite context files on boot. A configured
+        // "force" mode still surfaces as a warning here; the actual force-rewrite happens on the
+        // next mutation (e.g. a /tag MEMORY stub). Stdio/serve skip this entirely.
+        if (!MuxConsole.StdioMode)
+        {
+            try
+            {
+                await ContextCap.CheckFileAsync(ContextCap.BrainFile);
+                await ContextCap.CheckFileAsync(ContextCap.MemoryFile);
+            }
+            catch { /* cap check is best-effort */ }
+        }
 
         
         if (_watchDogEnabled)
@@ -483,10 +500,14 @@ public class App
                 case "/sub":
                 case "/subagents":
                     AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
+                    // Reflect the sub badge in the docked footer immediately.
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/psub":
                 case "/parasubagents":
                     AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
+                    // Reflect the psub badge in the docked footer immediately.
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
@@ -592,6 +613,8 @@ public class App
                         MuxConsole.WriteSuccess("Plan Mode disabled");
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
+                    // Reflect the plan badge in the docked footer immediately (not after stream).
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/classic":
                 case "/tui":
@@ -661,6 +684,8 @@ public class App
                         MuxConsole.WriteSuccess("Ultra Mode disabled");
                         MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
+                    // Reflect the new mode badges in the docked footer immediately (not after stream).
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/tools":
                     if (McpTools != null) Common.LogAvailableTools(McpTools);
@@ -773,6 +798,25 @@ public class App
                     break;
                 }
 
+                case var rsn when rsn == "/showreasoning" || rsn.StartsWith("/showreasoning "):
+                {
+                    // Top-level control of the client-side reasoning display gate. With no arg, show
+                    // the current value; otherwise route through the showReasoning /set key so
+                    // validation + persistence stay in one place. "none" suppresses streamed reasoning
+                    // text in interactive renderers; "full"/"summary" both show it (grey + italic).
+                    // Applies immediately (MuxConsole.ShowReasoning is re-seeded from the reloaded config).
+                    var rparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (rparts.Length < 2)
+                    {
+                        MuxConsole.WriteInfo($"showReasoning = {Config.ShowReasoning}  (set with /showreasoning <full|summary|none>).");
+                        break;
+                    }
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set showReasoning {rparts[1].Trim()}");
+                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); MuxConsole.ShowReasoning = Config.ShowReasoning; }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
                 case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
                 {
                     // The wizard may offer to spawn a helper agent (like /onboard) to author the
@@ -800,6 +844,20 @@ public class App
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var eaCmd when eaCmd == "/editagent" || eaCmd.StartsWith("/editagent ")
+                                 || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ")
+                                 || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
                     {
                         MuxConsole.WriteSuccess(res.Message);

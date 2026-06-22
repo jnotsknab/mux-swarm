@@ -80,6 +80,11 @@ internal static class TuiComponents
     public static readonly string[] ThinkFrames =
         { "\u2802", "\u2806", "\u2826", "\u2836", "\u2837", "\u2827", "\u2807", "\u2803" };
 
+    /// <summary>Distinct spinner for delegated sub-agents - a rotating half-circle, set apart
+    /// from the main agent's Braille dots so concurrent sub-agent activity reads as its own lane.</summary>
+    public static readonly string[] SubAgentFrames =
+        { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
+
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
     /// its own spinner into the status text, so we must not prepend a second one.</summary>
@@ -304,12 +309,14 @@ internal static class TuiComponents
     {
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
-        string spin = ThinkFrames[((frame % ThinkFrames.Length) + ThinkFrames.Length) % ThinkFrames.Length];
+        string spin = SubAgentFrames[((frame % SubAgentFrames.Length) + SubAgentFrames.Length) % SubAgentFrames.Length];
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
             if (st.Length > 60) st = st[..59] + "\u2026";
-            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/]");
+            // The ctrl+e affordance is shown live (not just after completion) so the user knows the
+            // still-running sub-agent's buffered output can be expanded inline at any time.
+            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
         }
         return outp;
     }
@@ -333,6 +340,53 @@ internal static class TuiComponents
         outp.Add($"  [{col}]\u2570{new string('\u2500', inner)}[/]");
         return outp;
     }
+
+    /// <summary>
+    /// Bounded live panel for any expandable block (running sub-agent transcript, large tool
+    /// result, etc.) rendered INSIDE the repaintable live region - never committed to scrollback -
+    /// so Ctrl+E toggles it open/closed and it updates in place with zero append spam. Shows at
+    /// most <paramref name="maxRows"/> body rows. When <paramref name="anchorTail"/> is true the
+    /// NEWEST lines are kept and older ones elided from the top ("+N earlier", for live-growing
+    /// sub-agent output); when false the FIRST lines are kept and the rest elided from the bottom
+    /// ("+N more", for a static result the user reads top-down). The header label and border tint
+    /// are caller-supplied so tool results and sub-agents read distinctly.
+    /// </summary>
+    public static List<string> BoundedLivePanel(
+        string title, string body, string tintHex, int width, int maxRows, bool anchorTail, bool error = false)
+    {
+        string tint = error ? Err : tintHex;
+        int inner = Math.Max(8, width - 4);
+        int cap = Math.Max(1, maxRows);
+        var wrapped = new List<string>();
+        foreach (var raw in TrimTrailingBlankLines(body ?? "").Split('\n'))
+            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
+                wrapped.Add(w);
+        int hidden = 0;
+        if (wrapped.Count > cap)
+        {
+            hidden = wrapped.Count - cap;
+            wrapped = anchorTail ? wrapped.GetRange(hidden, cap) : wrapped.GetRange(0, cap);
+        }
+        var outp = new List<string>
+        {
+            $"  [{tint}]\u256d\u2500[/] [{Accent}]{Esc(title)}[/] [{Dim}](live \u00b7 ctrl+e collapse)[/]"
+        };
+        // Top elision marker (tail-anchored views only).
+        if (hidden > 0 && anchorTail)
+            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}[/]");
+        foreach (var w in wrapped)
+            outp.Add($"  [{tint}]\u2502[/] [{Text}]{Esc(w)}[/]");
+        // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
+        if (hidden > 0 && !anchorTail)
+            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)[/]");
+        outp.Add($"  [{tint}]\u2570{new string('\u2500', inner)}[/]");
+        return outp;
+    }
+
+    /// <summary>Tail-anchored bounded live panel for a running sub-agent (thin wrapper over
+    /// <see cref="BoundedLivePanel"/> with the agent's lane tint).</summary>
+    public static List<string> SubAgentLivePanel(string agent, string body, int width, int maxRows)
+        => BoundedLivePanel(agent, body, AgentTint(agent), width, maxRows, anchorTail: true);
 
     /// <summary>Unified/git diff rendered with +/- tinting inside a card.</summary>
     public static List<string> Diff(string title, string diff, int width)
@@ -370,7 +424,7 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0)
     {
         // No standing "tui" badge - it is noise. Only show active modes.
         // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
@@ -385,6 +439,7 @@ internal static class TuiComponents
         {
             if (plan) badges.Add($"[{Plan}]plan[/]");
             if (psub) badges.Add($"[{Accent}]psub[/]");
+            if (sub) badges.Add($"[{Ok}]sub[/]");
         }
 
         // Context meter: full bar+percent when a threshold is known; a bare token count when

@@ -28,13 +28,16 @@ internal sealed class TuiDriver
     // Static per-session overhead (system prompt + serialized tool schemas), shown as a
     // breakdown in the footer so a fresh session\u0027s baseline context is explained.
     private uint _sysTokens, _toolTokens;
-    private bool _plan, _ultra, _psub;
+    private bool _plan, _ultra, _psub, _sub;
     private string? _effort;   // reasoning-effort chip (low/med/high), null = hidden
     private string? _sessionId; // active session id badge, null = hidden
 
     // streaming state - partial (un-newlined) tail shown live above the footer
     private readonly StringBuilder _streamTail = new();
     private bool _streaming;
+    // True when the current stream tail is reasoning content (rendered grey+italic to distinguish
+    // it from the final answer). Flushed/reset on a type switch so reasoning and answer never blend.
+    private bool _streamReasoning;
 
     // Buffer of contiguous GFM table source rows seen during streaming. Markdown tables need
     // the whole block to align columns, but the stream commits one line at a time - so table
@@ -65,6 +68,23 @@ internal sealed class TuiDriver
     private IReadOnlyList<(string Agent, string Status, string Tint)> _subAgents = System.Array.Empty<(string, string, string)>();
     private int _subAgentFrame;
 
+    // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
+    // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
+    // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
+    // committed to scrollback. Toggling open/closed and live stream updates repaint in place with
+    // zero append spam (the old approach appended a fresh panel per keypress, flooding scrollback).
+    // Only one block is expanded at a time; opening another switches the slot. A second Ctrl+E on
+    // the same block (or stream end / turn end) collapses it.
+    private enum ExpandKind { None, SubAgent, ToolResult }
+    private ExpandKind _expandKind = ExpandKind.None;
+    private string _expandKey = "";       // identity for toggle-match (agent name, or "tool#<idx>")
+    private string _expandTitle = "";     // panel header label
+    private string _expandBody = "";      // current body (refreshed live for sub-agents)
+    private string _expandTint = "";      // border tint
+    private bool _expandError;            // render with error styling
+    private bool _expandAnchorTail;       // true: keep newest (sub-agent); false: keep first (tool)
+    private bool Expanded => _expandKind != ExpandKind.None && _expandBody.Length > 0;
+
     // pending tool call awaiting its result for a one-line merge. Shown live (running glyph)
     // above the footer while the tool runs, then committed as a single merged line when the
     // result lands. Flushed as its own committed line if any other content commits first.
@@ -79,6 +99,11 @@ internal sealed class TuiDriver
     /// Owned by the caller (config-driven); 0 disables the affordance entirely.</summary>
     private int _collapseToolLines = 6;
     public void SetCollapseThreshold(int lines) => _collapseToolLines = Math.Max(0, lines);
+
+    /// <summary>Blank lines emitted below a tool/delegation block before following agent prose
+    /// (docked-below separator). 0 = tight. Owned by the caller (console.delegationSpacing).</summary>
+    private int _blockGap = 1;
+    public void SetBlockGap(int lines) => _blockGap = Math.Max(0, lines);
 
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
@@ -137,6 +162,9 @@ internal sealed class TuiDriver
     // _transcript, but defers the screen paint until NAV exits and issues one full Repaint.
     // Re-entrancy guard too: a second open request while NAV is active is a no-op.
     private volatile bool _navActive;
+    // Saved NAV cursor (entry index, not display-line) so re-opening NAV restores roughly where
+    // the user left off instead of snapping to the bottom. -1 = none yet (open at the latest).
+    private int _navSavedEntry = -1;
 
     // Highlighted candidate index in the open autocomplete preview (palette / skill / session /
     // @file), or -1 when nothing is highlighted. Arrow keys move it while a preview is open;
@@ -202,10 +230,14 @@ internal sealed class TuiDriver
 
     public int Width => Math.Max(20, _term.Width);
 
+    /// <summary>Visible terminal height (rows), floored so panel-bounding math stays sane on
+    /// tiny/again-unavailable terminals.</summary>
+    public int Height => Math.Max(10, _term.Height);
+
     /// <summary>Update the context meter / mode badges and repaint the live region.</summary>
-    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, uint cached = 0)
+    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0)
     {
-        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _cached = cached;
+        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached;
         Repaint();
     }
 
@@ -371,21 +403,92 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
-    /// Expand the most-recent large tool result INLINE (commit its full panel above the live
-    /// region) without entering the NAV overlay. Used mid-stream - the agent is still producing
-    /// output, so we cannot take over the screen with NAV; instead we drop the full panel into
-    /// scrollback above the footer. Thread-safe via the console lock at the call site.
+    /// TOGGLE the most-recent large tool result into the bounded live-expand slot (Ctrl+E mid-turn
+    /// or at the prompt). The full result renders as a bounded panel IN the repaintable live region
+    /// - never appended to scrollback - so repeated presses flip it open/closed instead of stacking
+    /// duplicate panels (the prior append-based ExpandLatestInline was the source of the spam bug).
+    /// Head-anchored: shows the start of the result with a "+N more (ctrl+g for full)" footer, since
+    /// a static result is read top-down (Ctrl+G / NAV still opens the complete untruncated block).
+    /// Returns true if a panel is now shown. Caller holds the console lock.
     /// </summary>
     public bool ExpandLatestInline()
     {
-        Entry? target = null;
+        int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
-            if (_transcript[i].Expandable is not null) { target = _transcript[i]; break; }
-        if (target?.Expandable is not { } blk) return false;
-        // Commit the full panel above the region (mirrors into transcript so NAV still has it).
-        CommitMirrored(Lane(TuiComponents.ToolResultPanel(blk.Tool, blk.Text, blk.Error, Width, expanded: true)));
-        return true;
+            if (_transcript[i].Expandable is not null) { idx = i; break; }
+        if (idx < 0) return false;
+        var blk = _transcript[idx].Expandable!.Value;
+        string key = $"tool#{idx}";
+        // Same block already expanded -> collapse (reversible toggle, no spam).
+        if (_expandKind == ExpandKind.ToolResult && string.Equals(_expandKey, key, StringComparison.Ordinal))
+            { ClearExpanded(); return false; }
+        OpenExpand(ExpandKind.ToolResult, key, blk.Tool, blk.Text ?? "",
+            TuiComponents.Border, blk.Error, anchorTail: false);
+        return Expanded;
     }
+
+    /// <summary>Populate + open the generic live-expand slot, then repaint. Caller holds the lock.</summary>
+    private void OpenExpand(ExpandKind kind, string key, string title, string body, string tint, bool error, bool anchorTail)
+    {
+        _expandKind = kind; _expandKey = key; _expandTitle = title; _expandBody = body;
+        _expandTint = tint; _expandError = error; _expandAnchorTail = anchorTail;
+        Repaint();
+    }
+
+    /// <summary>Collapse whatever is in the live-expand slot. No-op when empty. Holds the lock.</summary>
+    private void ClearExpanded()
+    {
+        if (_expandKind == ExpandKind.None) return;
+        _expandKind = ExpandKind.None; _expandKey = ""; _expandTitle = ""; _expandBody = "";
+        _expandTint = ""; _expandError = false; _expandAnchorTail = false;
+        Repaint();
+    }
+
+    /// <summary>
+    /// TOGGLE the mid-turn expansion of a still-running sub-agent's buffered transcript. The
+    /// expanded view is a bounded panel rendered INSIDE the repaintable live region (see
+    /// BuildLiveFrame), not committed to scrollback - so pressing Ctrl+E repeatedly just flips
+    /// it open/closed and live stream updates repaint in place, with zero append spam (the prior
+    /// inline-commit approach appended a fresh panel per keypress, flooding scrollback). Passing a
+    /// different agent while already expanded switches the target rather than collapsing. Returns
+    /// true if a panel is now shown. Caller holds the console lock.
+    /// </summary>
+    public bool ToggleSubAgentExpanded(string agent, string body)
+    {
+        string key = $"sub:{agent}";
+        // Same agent already open -> collapse (reversible toggle, no spam).
+        if (_expandKind == ExpandKind.SubAgent && string.Equals(_expandKey, key, StringComparison.Ordinal))
+            { ClearExpanded(); return false; }
+        if (string.IsNullOrEmpty(body)) return false;
+        OpenExpand(ExpandKind.SubAgent, key, agent, body, TuiComponents.AgentTint(agent), error: false, anchorTail: true);
+        return Expanded;
+    }
+
+    /// <summary>Refresh the buffered body of the currently-expanded sub-agent so the bounded live
+    /// panel grows in place as the agent streams. No-op when nothing is expanded or the update is
+    /// for a different agent. Repaints only when the body actually changed (avoids ticker thrash).
+    /// Caller holds the console lock.</summary>
+    public void UpdateSubAgentExpandedBody(string agent, string body)
+    {
+        if (_expandKind != ExpandKind.SubAgent || !string.Equals(_expandKey, $"sub:{agent}", StringComparison.Ordinal)) return;
+        if (string.Equals(_expandBody, body, StringComparison.Ordinal)) return;
+        _expandBody = body;
+        Repaint();
+    }
+
+    /// <summary>Collapse any active sub-agent expansion (e.g. when the agent finishes and its
+    /// collapsed line commits). Leaves a tool-result expansion untouched. Caller holds the lock.</summary>
+    public void ClearSubAgentExpanded()
+    {
+        if (_expandKind == ExpandKind.SubAgent) ClearExpanded();
+    }
+
+    /// <summary>True if <paramref name="agent"/> is the sub-agent currently expanded in the live
+    /// region. Lets the completion path keep a user-opened panel open through finish (instead of
+    /// snapping it collapsed) while still committing the expandable collapsed line. Caller holds
+    /// the console lock.</summary>
+    public bool IsSubAgentExpanded(string agent) =>
+        _expandKind == ExpandKind.SubAgent && string.Equals(_expandKey, $"sub:{agent}", StringComparison.Ordinal);
 
     /// <summary>
     /// Flush a pending tool call as its own committed line (used when the result will render
@@ -402,16 +505,25 @@ internal sealed class TuiDriver
 
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); Repaint(); }
+    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
     /// into scrollback; the trailing partial line is shown live just above the footer so the
     /// user watches it type in real time.
     /// </summary>
-    public void StreamChunk(string text)
+    public void StreamChunk(string text, bool reasoning = false)
     {
         if (string.IsNullOrEmpty(text)) return;
+        // Switching between reasoning and answer text: flush whatever partial tail we have under
+        // the OLD style first, so the two never share a rendered line.
+        if (reasoning != _streamReasoning && _streamTail.Length > 0)
+        {
+            var pending = _streamTail.ToString();
+            _streamTail.Clear();
+            CommitStreamLine(pending);
+        }
+        _streamReasoning = reasoning;
         _streamTail.Append(text);
         FlushCompleteStreamLines();
         Repaint();
@@ -521,6 +633,13 @@ internal sealed class TuiDriver
         // A blank line between a preceding tool block and this agent prose gives the two
         // visually distinct bands (requested density tweak). Skip if the line is itself blank.
         if (!string.IsNullOrWhiteSpace(raw)) ConsumeGap();
+        // Reasoning streams as grey+italic so it is visually distinct from the answer. It is NOT
+        // run through the markdown renderer (reasoning is free-form thought, not formatted output).
+        if (_streamReasoning)
+        {
+            CommitMirrored(Lane(new[] { $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]" }));
+            return;
+        }
         CommitMirrored(Lane(new[] { TuiMarkdown.ToMarkup(raw) }));
     }
 
@@ -529,7 +648,8 @@ internal sealed class TuiDriver
     {
         if (!_pendingGap) return;
         _pendingGap = false;
-        CommitMirrored(new[] { "" });
+        if (_blockGap <= 0) return;                       // tight: no separator
+        CommitMirrored(Enumerable.Repeat("", _blockGap).ToList());
     }
 
     /// <summary>Render and commit any buffered table rows as one aligned, bordered block.</summary>
@@ -576,7 +696,25 @@ internal sealed class TuiDriver
         var lines = new List<string>();
 
         if (_streaming && _streamTail.Length > 0)
-            lines.Add(TuiMarkdown.ToMarkup(_streamTail.ToString()));
+            lines.Add(_streamReasoning
+                ? $"[grey italic]{Spectre.Console.Markup.Escape(_streamTail.ToString())}[/]"
+                : TuiMarkdown.ToMarkup(_streamTail.ToString()));
+
+        // Mid-turn EXPANDED sub-agent: a bounded, tail-anchored panel rendered IN the live region
+        // (toggled by Ctrl+E, never committed to scrollback). Bounded to a slice of the viewport so
+        // the footer + input always stay on screen no matter how long the sub-agent transcript gets;
+        // this is the whole point of model B (paintable buffer) - long output can't shove the footer
+        // off-screen the way an unbounded inline commit would. The compact activity panel still
+        // renders below it so the user keeps the at-a-glance status for ALL running agents.
+        if (Expanded)
+        {
+            // Reserve room for footer/rule/input + the activity panel; cap the body to the rest so
+            // the footer + input always stay on screen no matter how long the expanded block is.
+            int reserved = 6 + Math.Min(_subAgents.Count, 4);
+            int maxRows = Math.Max(3, Height - reserved);
+            lines.AddRange(TuiComponents.BoundedLivePanel(
+                _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
+        }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
         // while one or more collapsed sub-agents run, show one animated line each (no flicker).
@@ -592,7 +730,7 @@ internal sealed class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
-        lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _effort,
+        lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
             modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
             sysTokens: _sysTokens, toolTokens: _toolTokens));
 
@@ -638,6 +776,10 @@ internal sealed class TuiDriver
         _editor.Reset();
         _paletteSel = -1;
         _inInput = true;
+        // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
+        // sub-agent expansion never lingers into the input frame. The block stays Ctrl+E/NAV
+        // expandable from its committed collapsed line in scrollback.
+        ClearExpanded();
         bool prevCtrlC;
         try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
         try
@@ -901,12 +1043,10 @@ internal sealed class TuiDriver
         // Mark the overlay active so the (possibly concurrent, mid-turn) streaming/commit path
         // defers its physical writes while NAV owns the screen. Cleared in the finally below.
         _navActive = true;
-        try
-        {
-        int viewH = Math.Max(3, _term.Height - 3);   // transcript rows shown at once
 
-        // Build the flat DISPLAY-line list + a per-line owning-entry map, expanding open
-        // entries into their full panels. Rebuilt whenever an entry is toggled.
+        // Build the flat DISPLAY-line list + a per-line owning-entry map, expanding open entries
+        // into their full panels. Rebuilt whenever an entry is toggled. Returned lines are MARKUP;
+        // the cursor model strips them to plain text for unambiguous column/selection math.
         (List<string> Disp, List<int> Owner) Build()
         {
             var disp = new List<string>();
@@ -920,96 +1060,204 @@ internal sealed class TuiDriver
                 else
                 { disp.Add(ent.Collapsed); owner.Add(e); }
             }
+            if (disp.Count == 0) { disp.Add(""); owner.Add(0); }
             return (disp, owner);
         }
 
-        /// <summary>First display-line index of entry e in the freshly-built list.</summary>
         int FirstLineOf(List<int> owner, int e)
         {
             for (int i = 0; i < owner.Count; i++) if (owner[i] == e) return i;
             return Math.Max(0, owner.Count - 1);
         }
 
-        var (disp0, owner0) = Build();
-        // The cursor is a DISPLAY-LINE index, so j/k step line-by-line - including through the
-        // body of an expanded card (fixing the "jumps to the next card / no side-scroll" bug).
-        int cursor = focusEntry >= 0 ? FirstLineOf(owner0, focusEntry) : disp0.Count - 1;
-        int top = 0;
+        var (disp, owner) = Build();
+        var model = new NavCursorModel(disp);
+        int startEntry = focusEntry >= 0 ? focusEntry
+            : (_navSavedEntry >= 0 && _navSavedEntry < _transcript.Count ? _navSavedEntry : -1);
+        if (startEntry >= 0) model.SeekRow(FirstLineOf(owner, startEntry));
+        else model.Bottom();
 
-        void Paint(List<string> disp, List<int> owner)
+        int top = 0;
+        string status = "";   // transient status line (e.g. "copied N chars")
+        // Last-painted physical rows (ANSI) for diff repaint - only changed rows are rewritten,
+        // so moving the cursor does NOT clear+redraw the whole screen (kills the flicker). null
+        // until the first full paint; reset to force a full repaint after a resize/expand.
+        List<string>? lastRows = null;
+
+        // Render one transcript row to a full-width ANSI string at the current model state: the
+        // styled markup is preserved (color is NOT lost - we parse spans and re-emit their SGR),
+        // and the cursor cell + any visual selection are overlaid with reverse-video on top of the
+        // underlying style. Padded to terminal width so a diff-rewrite fully overwrites the prior
+        // row with no residue.
+        string RenderRow(int r)
         {
-            if (cursor < 0) cursor = 0;
-            if (cursor >= disp.Count) cursor = disp.Count - 1;
-            int maxTop = Math.Max(0, disp.Count - viewH);
-            if (cursor < top) top = cursor;
-            else if (cursor >= top + viewH) top = cursor - viewH + 1;
+            var sb = new System.Text.StringBuilder();
+            var spans = TuiMarkup.Parse(model.DisplayLine(r));
+            int col = 0;
+            int rowCap = Math.Max(1, _term.Width - 1);   // never render into the last column
+            foreach (var span in spans)
+            {
+                string sgr = span.Style.ToAnsi();
+                foreach (char ch in span.Text)
+                {
+                    if (col >= rowCap) break;
+                    bool sel = model.InSelection(r, col);
+                    bool cur = r == model.Row && col == model.Col;
+                    if (sel || cur) sb.Append(Ansi.Reset).Append(Ansi.Invert).Append(ch).Append(Ansi.Reset);
+                    else { if (sgr.Length > 0) sb.Append(sgr); sb.Append(ch); if (sgr.Length > 0) sb.Append(Ansi.Reset); }
+                    col++;
+                }
+                if (col >= rowCap) break;
+            }
+            // Cursor parked just past the last char: show an inverted space.
+            if (model.Row == r && model.Col >= col) { sb.Append(Ansi.Invert).Append(' ').Append(Ansi.Reset); col++; }
+            // Pad to width-1 (never touch the last column) - combined with AutoWrapOff this
+            // guarantees the row cannot wrap and strand a stray line below the footer.
+            int cap = Math.Max(1, _term.Width - 1);
+            int pad = Math.Max(0, cap - col);
+            if (pad > 0) sb.Append(new string(' ', pad));
+            return sb.ToString();
+        }
+
+        // Diff repaint into the ALT SCREEN: compute every visible row's ANSI, compare against what
+        // is already on screen, and rewrite ONLY the rows that changed (cursor-addressed). The
+        // status/help rows are likewise only redrawn when their text changes. No full clear, so the
+        // view does not flicker as the cursor moves.
+        void Paint()
+        {
+            int viewH = Math.Max(1, _term.Height - 2);   // rows for transcript; 2 for status+help
+            if (model.Row < top) top = model.Row;
+            else if (model.Row >= top + viewH) top = model.Row - viewH + 1;
+            int maxTop = Math.Max(0, model.LineCount - viewH);
             if (top > maxTop) top = maxTop;
             if (top < 0) top = 0;
 
-            var frame = new List<string>();
-            int endLine = Math.Min(disp.Count, top + viewH);
-            for (int i = top; i < endLine; i++)
-                frame.Add(i == cursor
-                    ? $"[{TuiComponents.Warn}]\u2503[/]{disp[i]}"   // highlight the exact cursor line
-                    : $" {disp[i]}");
-            frame.Add(TuiComponents.FullRule(Width));
-            var ent = _transcript[owner[cursor]];
+            // Build the desired physical rows: viewH transcript rows + 1 help + 1 status.
+            var rows = new List<string>(viewH + 2);
+            int endLine = Math.Min(model.LineCount, top + viewH);
+            for (int r = top; r < endLine; r++) rows.Add(RenderRow(r));
+            while (rows.Count < viewH) rows.Add(new string(' ', _term.Width)); // blank filler rows
+
+            var ent = _transcript[owner[Math.Clamp(model.Row < owner.Count ? model.Row : owner.Count - 1, 0, owner.Count - 1)]];
             string expandHint = ent.Expandable is not null
-                ? (ent.Expanded ? "  [#787878]ctrl+e/enter collapse[/]" : "  [#787878]ctrl+e/enter expand[/]")
+                ? (ent.Expanded ? "ctrl+e/enter collapse  " : "ctrl+e/enter expand  ")
                 : "";
-            frame.Add($"  [{TuiComponents.Warn}]\u25c6[/] [black on {TuiComponents.Warn}] NAV [/] "
-                + $"[{TuiComponents.Dim}]{cursor + 1}/{disp.Count}  j/k move  ctrl+d/u page  g/G ends  q exit[/]{expandHint}");
-            _region.SetLive(frame);
-        }
-
-        var (disp, owner) = (disp0, owner0);
-        Paint(disp, owner);
-        while (true)
-        {
-            ConsoleKeyInfo key;
-            try { key = Console.ReadKey(intercept: true); }
-            catch (InvalidOperationException) { break; }
-            bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
-            bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
-            int last = disp.Count - 1;
-            int half = Math.Max(1, viewH / 2);
-
-            if (key.Key == ConsoleKey.Q || key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.I)
-                break;
-            else if (key.Key == ConsoleKey.J || key.Key == ConsoleKey.DownArrow) cursor = Math.Min(last, cursor + 1);
-            else if (key.Key == ConsoleKey.K || key.Key == ConsoleKey.UpArrow)   cursor = Math.Max(0, cursor - 1);
-            else if (ctrl && key.Key == ConsoleKey.D) cursor = Math.Min(last, cursor + half);
-            else if (ctrl && key.Key == ConsoleKey.U) cursor = Math.Max(0, cursor - half);
-            else if ((ctrl && key.Key == ConsoleKey.F) || key.Key == ConsoleKey.PageDown) cursor = Math.Min(last, cursor + viewH);
-            else if ((ctrl && key.Key == ConsoleKey.B) || key.Key == ConsoleKey.PageUp)   cursor = Math.Max(0, cursor - viewH);
-            else if (key.Key == ConsoleKey.Home || (key.Key == ConsoleKey.G && !shift)) cursor = 0;
-            else if (key.Key == ConsoleKey.End || (key.Key == ConsoleKey.G && shift)) cursor = last;
-            else if ((ctrl && key.Key == ConsoleKey.E) || key.Key == ConsoleKey.Enter)
+            string selHint = model.Select switch
             {
-                int e = owner[cursor];
-                var ent = _transcript[e];
-                if (ent.Expandable is null) continue;
-                ent.Expanded = !ent.Expanded;
-                // Rebuild and re-anchor the cursor to the toggled entry's first line so the
-                // view stays put on the card the user just opened/closed.
-                (disp, owner) = Build();
-                cursor = FirstLineOf(owner, e);
-                Paint(disp, owner);
-                continue;
+                NavSelect.Char => "[char-select] y copy  Esc clear  ",
+                NavSelect.Line => "[line-select] y copy  Esc clear  ",
+                _ => "v char-sel  V line-sel  ",
+            };
+            string help = $"{Ansi.Invert} NAV {Ansi.Reset} "
+                + $"{model.Row + 1}/{model.LineCount}  hjkl/arrows move  ctrl+d/u page  g/G ends  "
+                + expandHint + selHint + "q exit";
+            rows.Add(help);
+            rows.Add(status.Length > 0 ? status : "");
+
+            var sb = new System.Text.StringBuilder();
+            if (lastRows is null || lastRows.Count != rows.Count)
+            {
+                // First paint (or geometry changed): full clear + draw, then record.
+                sb.Append(Ansi.ClearScreen).Append(Ansi.Home);
+                for (int i = 0; i < rows.Count; i++)
+                    sb.Append(Ansi.MoveTo(i + 1, 1)).Append(rows[i]);
             }
-            else continue;
-            Paint(disp, owner);
+            else
+            {
+                // Diff: rewrite only the rows whose ANSI changed.
+                for (int i = 0; i < rows.Count; i++)
+                    if (!string.Equals(rows[i], lastRows[i], StringComparison.Ordinal))
+                        sb.Append(Ansi.MoveTo(i + 1, 1)).Append(Ansi.EraseLine).Append(rows[i]);
+            }
+            lastRows = rows;
+            if (sb.Length > 0) { _term.Write(sb.ToString()); _term.Flush(); }
         }
 
-        // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
-        // Insert mode at the live input prompt.
-        foreach (var e in _transcript) e.Expanded = false;
-        _editor.SetMode(EditorMode.Insert);
+        bool prevCtrlC;
+        try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
+        try
+        {
+            try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            _region.HideCursor();
+            _term.Write(Ansi.EnterAltScreen);
+            _term.Write(Ansi.AutoWrapOff);   // full-width rows must not wrap (kills the stray line below the footer)
+            _term.Write(Ansi.HideCursor);
+            Paint();
+
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                try { key = Console.ReadKey(intercept: true); }
+                catch (InvalidOperationException) { break; }
+                bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
+                bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
+                int viewH = Math.Max(1, _term.Height - 2);
+                int half = Math.Max(1, viewH / 2);
+                status = "";
+
+                if (key.Key == ConsoleKey.Q || key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.I)
+                {
+                    // Esc/q exits; but if a selection is active, Esc first clears it (vim-like).
+                    if (key.Key == ConsoleKey.Escape && model.Select != NavSelect.None) { model.ClearSelect(); Paint(); continue; }
+                    break;
+                }
+                else if (key.Key == ConsoleKey.J || key.Key == ConsoleKey.DownArrow) model.MoveDown();
+                else if (key.Key == ConsoleKey.K || key.Key == ConsoleKey.UpArrow)   model.MoveUp();
+                else if (key.Key == ConsoleKey.H || key.Key == ConsoleKey.LeftArrow) model.MoveLeft();
+                else if (key.Key == ConsoleKey.L || key.Key == ConsoleKey.RightArrow) model.MoveRight();
+                else if (ctrl && key.Key == ConsoleKey.D) model.Page(half);
+                else if (ctrl && key.Key == ConsoleKey.U) model.Page(-half);
+                else if ((ctrl && key.Key == ConsoleKey.F) || key.Key == ConsoleKey.PageDown) model.Page(viewH);
+                else if ((ctrl && key.Key == ConsoleKey.B) || key.Key == ConsoleKey.PageUp)   model.Page(-viewH);
+                else if (key.Key == ConsoleKey.Home) model.LineStart();
+                else if (key.Key == ConsoleKey.End)  model.LineEnd();
+                else if (key.Key == ConsoleKey.G && !shift) model.Top();
+                else if (key.Key == ConsoleKey.G && shift)  model.Bottom();
+                else if (key.Key == ConsoleKey.V && !shift) model.ToggleSelect(NavSelect.Char);
+                else if (key.Key == ConsoleKey.V && shift)  model.ToggleSelect(NavSelect.Line);
+                else if (key.Key == ConsoleKey.Y)
+                {
+                    string text = model.SelectedText();
+                    if (text.Length > 0)
+                    {
+                        TuiClipboard.CopyViaTerminal(_term, text);   // OSC 52 -> local clipboard
+                        TuiClipboard.CopyViaShell(text);             // fallback -> OS clipboard
+                        model.ClearSelect();
+                        int chars = text.Length;
+                        status = $"{Ansi.Invert} copied {chars} char{(chars == 1 ? "" : "s")} {Ansi.Reset}";
+                    }
+                    else status = "(nothing selected - press v then move, then y)";
+                }
+                else if ((ctrl && key.Key == ConsoleKey.E) || key.Key == ConsoleKey.Enter)
+                {
+                    int e = owner[Math.Clamp(model.Row, 0, owner.Count - 1)];
+                    var ent2 = _transcript[e];
+                    if (ent2.Expandable is null) { Paint(); continue; }
+                    ent2.Expanded = !ent2.Expanded;
+                    (disp, owner) = Build();
+                    model.Load(disp);
+                    model.SeekRow(FirstLineOf(owner, e));   // stay on the toggled card, no top-snap
+                    Paint();
+                    continue;
+                }
+                else continue;
+                Paint();
+            }
+
+            // Remember where the cursor was (as an entry index) so the next NAV open restores it.
+            _navSavedEntry = owner[Math.Clamp(model.Row, 0, owner.Count - 1)];
+            // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
+            // Insert mode at the live input prompt.
+            foreach (var e in _transcript) e.Expanded = false;
+            _editor.SetMode(EditorMode.Insert);
         }
         finally
         {
-            // Release the screen back to the normal render path and paint one fresh frame that
-            // reflects everything that streamed/committed (deferred) while NAV was open.
+            // Restore the primary screen buffer (scrollback intact) and repaint one fresh live
+            // frame reflecting everything that streamed/committed (deferred) while NAV was open.
+            _term.Write(Ansi.AutoWrapOn);
+            _term.Write(Ansi.LeaveAltScreen);
+            try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
             _navActive = false;
             Repaint();
         }

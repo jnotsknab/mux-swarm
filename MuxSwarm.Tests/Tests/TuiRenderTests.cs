@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text;
 using MuxSwarm.Utils;
 using MuxSwarm.Utils.Tui;
@@ -170,5 +171,51 @@ public class TuiRenderTests
         var plain = TuiMarkup.Plain(TuiComponents.SubAgentCollapsed("CodeAgent", "success", 5, 2, "#82C49B"));
         Assert.Contains("ctrl+e expand", plain);
         Assert.DoesNotContain("ctrl+o", plain);
+    }
+
+    [Fact]
+    public void SubAgentActivity_UsesDistinctSpinner_NotMainAgentBraille()
+    {
+        // Sub-agents animate with their own half-circle spinner so concurrent sub-agent activity
+        // reads as a separate lane from the main agent's Braille thinking dots.
+        var rows = TuiComponents.SubAgentActivity(
+            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: 0);
+        var plain = TuiMarkup.Plain(rows[0]);
+        Assert.Contains(TuiComponents.SubAgentFrames[0], plain);   // distinct sub-agent glyph present
+        foreach (var braille in TuiComponents.ThinkFrames)
+            Assert.DoesNotContain(braille, plain);                  // no main-agent Braille frame
+    }
+
+    [Fact]
+    public void SubAgentActivity_AdvertisesLiveCtrlEAffordance()
+    {
+        // The expand affordance is shown WHILE the sub-agent runs (not only on the finished
+        // collapsed line), so the user knows buffered output can be expanded inline mid-stream.
+        var rows = TuiComponents.SubAgentActivity(
+            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: 0);
+        Assert.Contains("ctrl+e", TuiMarkup.Plain(rows[0]));
+    }
+
+    [Fact]
+    public void SubAgentLivePanel_BoundsToMaxRows_ElidesFromTop()
+    {
+        var body = string.Join("\n", System.Linq.Enumerable.Range(1, 50).Select(i => $"line {i}"));
+        var rows = TuiComponents.SubAgentLivePanel("CodeAgent", body, width: 80, maxRows: 5);
+        var plain = rows.Select(TuiMarkup.Plain).ToList();
+        // header + (elision marker) + 5 body + footer border = 8 rows max.
+        Assert.True(rows.Count <= 8, $"expected <=8 rows, got {rows.Count}");
+        Assert.Contains(plain, l => l.Contains("earlier line"));   // top elided
+        Assert.Contains(plain, l => l.Contains("line 50"));         // newest tail kept
+        Assert.DoesNotContain(plain, l => l.Contains("line 1 "));   // oldest dropped
+        Assert.Contains(plain, l => l.Contains("ctrl+e collapse")); // reversible affordance
+    }
+
+    [Fact]
+    public void SubAgentLivePanel_ShortBody_NoElisionMarker()
+    {
+        var rows = TuiComponents.SubAgentLivePanel("CodeAgent", "just one line", width: 80, maxRows: 10);
+        var plain = rows.Select(TuiMarkup.Plain).ToList();
+        Assert.DoesNotContain(plain, l => l.Contains("earlier line"));
+        Assert.Contains(plain, l => l.Contains("just one line"));
     }
 }

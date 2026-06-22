@@ -677,6 +677,14 @@ public static partial class MuxConsole
         return BeginThinking(agentName);
     }
 
+    /// <summary>
+    /// Client-side gate for streamed reasoning text, seeded from config.json <c>showReasoning</c>.
+    /// When "none", muted (reasoning) chunks are dropped in interactive renderers so reasoning
+    /// never reaches the screen or the collapsed sub-agent transcript. stdio/NDJSON/WS output is
+    /// never gated (protocol parity). Set at startup and by <c>/showreasoning</c>.
+    /// </summary>
+    public static string ShowReasoning { get; set; } = "summary";
+
     public static void WriteStream(string text, bool muted = false, string? agentName = null)
     {
         if (string.IsNullOrEmpty(text)) return;
@@ -684,6 +692,14 @@ public static partial class MuxConsole
         // Collapsed sub-agent: buffer the chunk for the expandable transcript instead of
         // committing it inline. The thinking spinner keeps animating (live progress).
         if (Capturing) { CaptureAppend(text); return; }
+
+        // Client-side reasoning gate: when showReasoning == "none", drop muted (reasoning)
+        // chunks for interactive renderers so streaming reasoning text never reaches the TUI,
+        // the classic console, or the captured sub-agent transcript. stdio is never gated so the
+        // NDJSON/WebSocket protocol is unchanged. (The Capturing buffer above already returned
+        // before this, so a suppressed reasoning chunk is also kept out of the transcript.)
+        if (muted && !StdioMode && string.Equals(ShowReasoning, "none", StringComparison.OrdinalIgnoreCase))
+            return;
 
         WithConsole(() =>
         {
@@ -697,8 +713,10 @@ public static partial class MuxConsole
                     : D(("text", text), ("agent", agentName)));
             else if (ViaDriver)
                 // Live-region TUI: feed the chunk to the driver, which commits complete
-                // lines into scrollback and shows the partial tail live above the footer.
-                TuiStreamChunk(text);
+                // lines into scrollback and shows the partial tail live above the footer. The
+                // muted flag marks reasoning content so the driver renders it grey+italic,
+                // distinct from the final answer (parity with the classic renderer below).
+                TuiStreamChunk(text, reasoning: muted);
             else if (muted)
                 AnsiConsole.Markup(muted
                     ? $"[grey italic]{Esc(text)}[/]"

@@ -1,3 +1,4 @@
+using System.Linq;
 using MuxSwarm.Utils.Tui;
 
 namespace MuxSwarm.Tests.Tests;
@@ -65,6 +66,25 @@ public class TuiDriverTests
         var f = TuiComponents.Footer(0, 0, plan: true, ultra: false, psub: true);
         Assert.Contains("plan", f);
         Assert.Contains("psub", f);
+    }
+
+    [Fact]
+    public void Footer_SubBadgeShowsWhenSubOnAndDistinctFromPsub()
+    {
+        // sub (single-mode ephemeral sub-agents) renders its own chip, distinct from psub.
+        var plain = TuiMarkup.Plain(TuiComponents.Footer(0, 0, plan: false, ultra: false, psub: false, sub: true));
+        Assert.Contains("sub", plain);
+        Assert.DoesNotContain("psub", plain);
+    }
+
+    [Fact]
+    public void Footer_UltraCollapsesSubBadgeToo()
+    {
+        // Ultra collapses every discrete mode chip, including sub.
+        var plain = TuiMarkup.Plain(TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true, sub: true));
+        Assert.Contains("ultra", plain);
+        Assert.DoesNotContain("psub", plain);
+        Assert.Equal("ultra", System.Text.RegularExpressions.Regex.Match(plain, "ultra|plan|psub|sub").Value);
     }
 
     [Fact]
@@ -280,6 +300,50 @@ public class TuiDriverTests
         term.Clear();
         d.StreamChunk("tial\n");                   // completes the second line
         Assert.Contains("second partial", term.Output);
+
+        d.EndStream();
+    }
+
+    [Fact]
+    public void Driver_ReasoningStream_RendersDistinctlyFromAnswer()
+    {
+        // Reasoning chunks (StreamChunk reasoning:true) must render with italic styling so they
+        // are visually distinct from the final answer. Normal answer text must NOT be italic.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+
+        term.Clear();
+        d.StreamChunk("thinking about it\n", reasoning: true);
+        var reasoningOut = term.Output;
+        Assert.Contains("thinking about it", reasoningOut);
+        // SGR italic is ESC[...3...m; the muted/italic reasoning style emits it.
+        Assert.Contains("\u001b[", reasoningOut);
+        Assert.Contains("3m", reasoningOut); // italic attribute present
+
+        term.Clear();
+        d.StreamChunk("the answer\n", reasoning: false);
+        Assert.Contains("the answer", term.Output);
+
+        d.EndStream();
+    }
+
+    [Fact]
+    public void Driver_ReasoningToAnswerSwitch_FlushesPartialTail()
+    {
+        // Switching from reasoning to answer mid-stream must flush the partial reasoning tail so
+        // the two never blend into one rendered line.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+
+        d.StreamChunk("partial reasoning", reasoning: true); // no newline - lives in tail
+        d.StreamChunk("answer begins", reasoning: false);    // type switch flushes the tail
+        Assert.Contains("partial reasoning", term.Output);
+        Assert.Contains("answer begins", term.Output);
 
         d.EndStream();
     }
@@ -662,6 +726,149 @@ public class TuiDriverTests
         d.CommitLine("  primary output");
         Assert.DoesNotContain("\u258e", term.Output);
         Assert.Contains("primary output", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ToggleSubAgentExpanded_ShowsBoundedPanelInLiveRegion()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        term.Clear();
+        // Open: the buffered body renders IN the repaintable live region (not committed scrollback).
+        bool open = d.ToggleSubAgentExpanded("CodeAgent", "buffered sub-agent line so far");
+        Assert.True(open);
+        Assert.Contains("buffered sub-agent line so far", term.Output);
+        Assert.Contains("ctrl+e collapse", term.Output);   // reversible affordance advertised
+    }
+
+    [Fact]
+    public void Driver_ToggleSubAgentExpanded_SecondPressCollapses_NoAppendSpam()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        bool open = d.ToggleSubAgentExpanded("CodeAgent", "body one");
+        Assert.True(open);
+        term.Clear();
+        // Second press collapses (returns false) and the panel content is gone from the fresh frame -
+        // proving it lived in the repaintable region, not appended to immutable scrollback.
+        bool stillOpen = d.ToggleSubAgentExpanded("CodeAgent", "body one");
+        Assert.False(stillOpen);
+        Assert.DoesNotContain("ctrl+e collapse", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ToggleSubAgentExpanded_BoundedToViewport_FooterSurvives()
+    {
+        var term = new FakeTerminal { Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(123, 0, false, false, false);
+        // A transcript far taller than the terminal must NOT push the footer off-screen: the panel
+        // is bounded and drops older lines from the top with a "+N earlier" marker.
+        string huge = string.Join("\n", Enumerable.Range(1, 200).Select(i => $"line {i}"));
+        term.Clear();
+        d.ToggleSubAgentExpanded("CodeAgent", huge);
+        Assert.Contains("earlier line", term.Output);       // top-elision marker present
+        Assert.Contains("123 tokens", term.Output);          // footer still painted below the panel
+    }
+
+    [Fact]
+    public void Driver_UpdateSubAgentExpandedBody_GrowsInPlace_WhenExpanded()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.ToggleSubAgentExpanded("CodeAgent", "first");
+        term.Clear();
+        d.UpdateSubAgentExpandedBody("CodeAgent", "first\nsecond chunk");
+        Assert.Contains("second chunk", term.Output);
+    }
+
+    [Fact]
+    public void Driver_UpdateSubAgentExpandedBody_NoOp_WhenNotExpanded()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        term.Clear();
+        d.UpdateSubAgentExpandedBody("CodeAgent", "ignored");
+        Assert.DoesNotContain("ignored", term.Output);
+    }
+
+    [Fact]
+    public void Driver_IsSubAgentExpanded_TracksOpenAgent()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        Assert.False(d.IsSubAgentExpanded("CodeAgent"));
+        d.ToggleSubAgentExpanded("CodeAgent", "buffered body");
+        Assert.True(d.IsSubAgentExpanded("CodeAgent"));
+        Assert.False(d.IsSubAgentExpanded("WebAgent"));   // different agent not matched
+        d.ToggleSubAgentExpanded("CodeAgent", "buffered body");  // collapse
+        Assert.False(d.IsSubAgentExpanded("CodeAgent"));
+    }
+
+    [Fact]
+    public void Driver_KeepOpenThroughCompletion_PanelSurvivesCommitCollapsed()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        // User opens the running sub-agent's live panel mid-stream.
+        d.ToggleSubAgentExpanded("CodeAgent", "partial body so far");
+        Assert.True(d.IsSubAgentExpanded("CodeAgent"));
+        term.Clear();
+        // Completion path: the caller keeps it open (does NOT call ClearSubAgentExpanded),
+        // commits the collapsed line, then re-anchors the body to the final transcript.
+        d.CommitCollapsed("[CodeAgent] done - 12 lines", "CodeAgent", "final full body line one\nfinal body line two");
+        d.UpdateSubAgentExpandedBody("CodeAgent", "final full body line one\nfinal body line two");
+        // The panel is still open and now shows the finalized content (no abrupt snap-collapse).
+        Assert.True(d.IsSubAgentExpanded("CodeAgent"));
+        Assert.Contains("final body line two", term.Output);
+        Assert.Contains("ctrl+e collapse", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ExpandLatestInline_ToolResult_TogglesInRegion_NoAppendSpam()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(3);
+        // A large (>threshold) tool result becomes Ctrl+E-expandable and commits a collapsed line.
+        d.BeginToolCall("read_file", "big.txt");
+        string big = string.Join("\n", Enumerable.Range(1, 20).Select(i => $"result line {i}"));
+        d.ResolveMergedToolResult(big, error: false);
+        term.Clear();
+        // First Ctrl+E (mid-turn inline) opens the bounded panel IN the live region.
+        bool open = d.ExpandLatestInline();
+        Assert.True(open);
+        Assert.Contains("result line 1", term.Output);
+        Assert.Contains("ctrl+e collapse", term.Output);
+        term.Clear();
+        // Second Ctrl+E collapses it (reversible) - no second panel appended.
+        bool stillOpen = d.ExpandLatestInline();
+        Assert.False(stillOpen);
+        Assert.DoesNotContain("ctrl+e collapse", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ExpandLatestInline_ToolResult_HeadAnchored_BoundedFooterSurvives()
+    {
+        var term = new FakeTerminal { Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(456, 0, false, false, false);
+        d.SetCollapseThreshold(3);
+        d.BeginToolCall("read_file", "huge.txt");
+        string huge = string.Join("\n", Enumerable.Range(1, 200).Select(i => $"r{i}"));
+        d.ResolveMergedToolResult(huge, error: false);
+        term.Clear();
+        d.ExpandLatestInline();
+        // Head-anchored: shows the START with a "+N more (ctrl+g for full)" footer; footer survives.
+        Assert.Contains("ctrl+g for full", term.Output);
+        Assert.Contains("456 tokens", term.Output);
     }
 
     [Fact]

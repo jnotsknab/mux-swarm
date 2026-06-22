@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Serialization;
 using MuxSwarm.Utils;
 
@@ -108,5 +108,24 @@ public class ConfigModelTests
         Assert.Equal(20, deserialized.MaxOrchestratorIterations);
         Assert.Equal(10, deserialized.MaxSubAgentIterations);
         Assert.Equal(300, deserialized.ActivityTimeoutSeconds);
+    }
+
+    // ── showReasoning default + round-trip ───────────────────────────
+
+    [Fact]
+    public void AppConfig_Defaults_ShowReasoningIsSummary()
+    {
+        var config = new AppConfig();
+        Assert.Equal("summary", config.ShowReasoning);
+    }
+
+    [Fact]
+    public void AppConfig_ShowReasoning_RoundTrips()
+    {
+        var config = new AppConfig { ShowReasoning = "none" };
+        var json = JsonSerializer.Serialize(config);
+        Assert.Contains("showReasoning", json);
+        var back = JsonSerializer.Deserialize<AppConfig>(json)!;
+        Assert.Equal("none", back.ShowReasoning);
     }
 }

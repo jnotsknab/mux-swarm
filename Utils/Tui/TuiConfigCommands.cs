@@ -1,5 +1,6 @@
-namespace MuxSwarm.Utils.Tui;
+﻿namespace MuxSwarm.Utils.Tui;
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using MuxSwarm.Utils;
@@ -46,12 +47,32 @@ internal static class TuiConfigCommands
         return Ok(msg);
     }
 
+    // swarm.json scalar edit helper: load, mutate, persist in one call (for /set swarm.* keys).
+    private static Result SaveSwarmScalar(System.Action<SwarmConfig> mutate, string msg)
+    {
+        try
+        {
+            var swarm = LoadSwarmOrNew();
+            mutate(swarm);
+            SaveSwarm(swarm);
+            return Ok(msg + " (run /refresh to apply).");
+        }
+        catch (System.Exception ex) { return Bad($"Failed to update Swarm.json: {ex.Message}"); }
+    }
+
     private static bool TryBool(string v, out bool result)
     {
         v = (v ?? "").Trim().ToLowerInvariant();
         if (v is "true" or "on" or "1" or "yes") { result = true; return true; }
         if (v is "false" or "off" or "0" or "no") { result = false; return true; }
         result = false; return false;
+    }
+
+    private static bool TryCapMode(string v, out string mode)
+    {
+        v = (v ?? "").Trim().ToLowerInvariant();
+        if (v is "off" or "warn" or "force") { mode = v; return true; }
+        mode = "off"; return false;
     }
 
     private static readonly Key[] Keys =
@@ -94,6 +115,92 @@ internal static class TuiConfigCommands
                 Cfg.Console.CollapseToolLines = n;
                 MuxConsole.SetTuiCollapseThreshold(n);           // live
                 return Save($"collapseToolLines = {n}{(n == 0 ? " (0 = never auto-collapse)" : "")}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "delegationSpacing", Aliases = new[] { "delegspacing", "delegation_spacing" }, ValueHint = "<int>=0",
+            Get = () => Cfg.Console.DelegationSpacing.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 0) return Bad($"delegationSpacing expects a non-negative integer (got '{v}').");
+                Cfg.Console.DelegationSpacing = n;
+                MuxConsole.SetTuiDelegationSpacing(n);           // live
+                return Save($"delegationSpacing = {n}{(n == 0 ? " (tight)" : " blank line(s) below each tool/delegation block")}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "brainMdCharLimit", Aliases = new[] { "brainlimit", "brain_limit" }, ValueHint = "<int>=0",
+            Get = () => Cfg.ContextLimits.BrainMdCharLimit.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 0) return Bad($"brainMdCharLimit expects a non-negative integer (got '{v}').");
+                Cfg.ContextLimits.BrainMdCharLimit = n;
+                return Save($"brainMdCharLimit = {n}{(n == 0 ? " (off)" : " chars")}. Saved.");
+            },
+        },
+        new Key
+        {
+            Name = "brainMdCapMode", Aliases = new[] { "brainmode", "brain_cap_mode" }, ValueHint = "off|warn|force",
+            Get = () => Cfg.ContextLimits.BrainMdCapMode,
+            Set = v =>
+            {
+                if (!TryCapMode(v, out string m)) return Bad($"brainMdCapMode expects off|warn|force (got '{v}').");
+                Cfg.ContextLimits.BrainMdCapMode = m;
+                return Save($"brainMdCapMode = {m}. Saved.");
+            },
+        },
+        new Key
+        {
+            Name = "memoryMdCharLimit", Aliases = new[] { "memorylimit", "memory_limit" }, ValueHint = "<int>=0",
+            Get = () => Cfg.ContextLimits.MemoryMdCharLimit.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 0) return Bad($"memoryMdCharLimit expects a non-negative integer (got '{v}').");
+                Cfg.ContextLimits.MemoryMdCharLimit = n;
+                return Save($"memoryMdCharLimit = {n}{(n == 0 ? " (off)" : " chars")}. Saved.");
+            },
+        },
+        new Key
+        {
+            Name = "memoryMdCapMode", Aliases = new[] { "memorymode", "memory_cap_mode" }, ValueHint = "off|warn|force",
+            Get = () => Cfg.ContextLimits.MemoryMdCapMode,
+            Set = v =>
+            {
+                if (!TryCapMode(v, out string m)) return Bad($"memoryMdCapMode expects off|warn|force (got '{v}').");
+                Cfg.ContextLimits.MemoryMdCapMode = m;
+                return Save($"memoryMdCapMode = {m}. Saved.");
+            },
+        },
+        new Key
+        {
+            Name = "swarm.maxOrchestratorIterations", Aliases = new[] { "swarm.orchiter", "maxorchiter" }, ValueHint = "<int>=1",
+            Get = () => LoadSwarmOrNew().ExecutionLimits.MaxOrchestratorIterations.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 1) return Bad($"swarm.maxOrchestratorIterations expects a positive integer (got '{v}').");
+                return SaveSwarmScalar(s => s.ExecutionLimits.MaxOrchestratorIterations = n, $"swarm.maxOrchestratorIterations = {n}");
+            },
+        },
+        new Key
+        {
+            Name = "swarm.maxSubAgentIterations", Aliases = new[] { "swarm.subiter", "maxsubiter" }, ValueHint = "<int>=1",
+            Get = () => LoadSwarmOrNew().ExecutionLimits.MaxSubAgentIterations.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 1) return Bad($"swarm.maxSubAgentIterations expects a positive integer (got '{v}').");
+                return SaveSwarmScalar(s => s.ExecutionLimits.MaxSubAgentIterations = n, $"swarm.maxSubAgentIterations = {n}");
+            },
+        },
+        new Key
+        {
+            Name = "swarm.maxSubTaskRetries", Aliases = new[] { "swarm.retries", "maxsubretries" }, ValueHint = "<int>=0",
+            Get = () => LoadSwarmOrNew().ExecutionLimits.MaxSubTaskRetries.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 0) return Bad($"swarm.maxSubTaskRetries expects a non-negative integer (got '{v}').");
+                return SaveSwarmScalar(s => s.ExecutionLimits.MaxSubTaskRetries = n, $"swarm.maxSubTaskRetries = {n}");
             },
         },
         new Key
@@ -197,9 +304,83 @@ internal static class TuiConfigCommands
                 return Save($"serve.auth.enabled = {on}. Saved (applies on next --serve).");
             },
         },
+        new Key
+        {
+            Name = "showReasoning", Aliases = new[] { "showreasoning", "reasoning" }, ValueHint = "full|summary|none",
+            Get = () => Cfg.ShowReasoning,
+            Set = v =>
+            {
+                var n = (v ?? "").Trim().ToLowerInvariant();
+                string canon =
+                    n is "none" or "off" or "hide" ? "none" :
+                    n is "summary" or "summarized" ? "summary" :
+                    n is "full" or "all" or "on" or "show" ? "full" : "";
+                if (canon.Length == 0) return Bad($"showReasoning expects full|summary|none (got '{v}').");
+                Cfg.ShowReasoning = canon;
+                MuxConsole.ShowReasoning = canon;
+                return Save($"showReasoning = {canon}. Saved ({(canon == "none" ? "streamed reasoning hidden" : "streamed reasoning shown")}).");
+            },
+        },
     };
 
     private static Key? Find(string key) => Keys.FirstOrDefault(k => k.Matches(key));
+
+    // ---- reflection-driven coverage: every scalar leaf of config.json + swarm.json ----------
+    // The hand-written Keys[] above keep priority (they carry live side-effects like instant
+    // repaint). Everything ELSE in the two config object graphs is exposed automatically by
+    // walking the typed models, so /set + /config cover every possible arg without hand-listing.
+
+    private static void PersistAppConfig() => Common.SaveConfig(Cfg);
+
+    private static void PersistSwarm()
+    {
+        var swarm = App.SwarmConfig;
+        if (swarm is null) return;
+        System.IO.File.WriteAllText(PlatformContext.SwarmPath,
+            System.Text.Json.JsonSerializer.Serialize(swarm, SwarmJsonOpts));
+    }
+
+    /// <summary>Build a Key for one reflected leaf, routing persistence to the right file.</summary>
+    private static Key ReflectedKey(ConfigReflector.Leaf leaf, bool swarm)
+    {
+        return new Key
+        {
+            Name = leaf.Path,
+            ValueHint = leaf.TypeHint,
+            Get = leaf.Get,
+            Set = v =>
+            {
+                var (ok, msg) = leaf.Set(v);
+                if (!ok) return Bad(msg);
+                if (swarm) PersistSwarm(); else PersistAppConfig();
+                return Ok(msg + (swarm
+                    ? ". Saved to swarm.json (run /refresh to apply)."
+                    : ". Saved to config.json."));
+            },
+        };
+    }
+
+    /// <summary>All settable keys: explicit (priority, with live apply) + reflected leaves for
+    /// every other scalar in config.json and swarm.json. Reflected keys whose dotted path is
+    /// already owned by an explicit key are skipped so the explicit (live-apply) version wins.</summary>
+    private static List<Key> AllKeys()
+    {
+        var all = new List<Key>(Keys);
+        var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var k in Keys)
+        {
+            owned.Add(k.Name);
+            foreach (var a in k.Aliases) owned.Add(a);
+        }
+        foreach (var leaf in ConfigReflector.Walk(Cfg, ""))
+            if (owned.Add(leaf.Path)) all.Add(ReflectedKey(leaf, swarm: false));
+        if (App.SwarmConfig is not null)
+            foreach (var leaf in ConfigReflector.Walk(App.SwarmConfig, "swarm"))
+                if (owned.Add(leaf.Path)) all.Add(ReflectedKey(leaf, swarm: true));
+        return all;
+    }
+
+    private static Key? FindAny(string key) => AllKeys().FirstOrDefault(k => k.Matches(key));
 
     // ---- command surface ---------------------------------------------------------------
 
@@ -230,6 +411,9 @@ internal static class TuiConfigCommands
         if (head == "/newagent")
             return CreateAgentQuick(parts);   // quick path; rich wizard is RunInteractive
 
+        if (head is "/editagent" or "/delagent" or "/removeagent")
+            return Bad($"{head} is interactive; just run it with no value to open the picker.");
+
         if (head != "/set")
             return new Result(false, false, "");
 
@@ -238,7 +422,7 @@ internal static class TuiConfigCommands
 
         var key = parts[1];
         var value = string.Join(' ', parts[2..]).Trim();
-        var entry = Find(key);
+        var entry = FindAny(key);
         if (entry is null)
             return Bad($"Unknown setting '{key}'. Run /config to see all keys, or /set for an interactive picker.");
 
@@ -257,6 +441,7 @@ internal static class TuiConfigCommands
         var head = parts[0].ToLowerInvariant();
         if (head == "/set" && parts.Length < 3) return true;     // bare /set or "/set key" -> picker
         if (head == "/newagent") return true;                    // always wizard (uses prompts)
+        if (head is "/editagent" or "/delagent" or "/removeagent") return true;
         return false;
     }
 
@@ -277,6 +462,12 @@ internal static class TuiConfigCommands
         if (head == "/newagent")
             return RunNewAgentWizard(parts, spawnHelper);
 
+        if (head == "/editagent")
+            return RunEditAgentWizard(parts);
+
+        if (head is "/delagent" or "/removeagent")
+            return RunDeleteAgentWizard(parts);
+
         return new Result(false, false, "");
     }
 
@@ -286,16 +477,17 @@ internal static class TuiConfigCommands
     {
         // If a key was given (but no value), jump straight to its value prompt; otherwise show the
         // scrollable key list first.
-        Key? entry = parts.Length >= 2 ? Find(parts[1]) : null;
+        var keys = AllKeys();
+        Key? entry = parts.Length >= 2 ? FindAny(parts[1]) : null;
         if (entry is null)
         {
-            var labels = Keys.Select(k => $"{k.Name}  =  {k.Get()}   [{k.ValueHint}]").ToList();
+            var labels = keys.Select(k => $"{k.Name}  =  {k.Get()}   [{k.ValueHint}]").ToList();
             labels.Add("(cancel)");
             var chosen = MuxConsole.Select("Select a setting to change", labels);
             if (chosen.StartsWith("(cancel)")) return Ok("No changes made.");
             int idx = labels.IndexOf(chosen);
-            if (idx < 0 || idx >= Keys.Length) return Ok("No changes made.");
-            entry = Keys[idx];
+            if (idx < 0 || idx >= keys.Count) return Ok("No changes made.");
+            entry = keys[idx];
         }
 
         var value = MuxConsole.Prompt($"New value for {entry.Name} [{entry.ValueHint}] (current: {entry.Get()})");
@@ -479,15 +671,155 @@ internal static class TuiConfigCommands
         }
     }
 
+    private static void SaveSwarm(SwarmConfig swarm) =>
+        System.IO.File.WriteAllText(PlatformContext.SwarmPath, System.Text.Json.JsonSerializer.Serialize(swarm, SwarmJsonOpts));
+
+    /// <summary>Pick an agent from swarm.Agents interactively; returns its index or -1 on cancel.</summary>
+    private static int PickAgent(SwarmConfig swarm, string verb)
+    {
+        if (swarm.Agents.Count == 0) return -2; // sentinel: none exist
+        var labels = swarm.Agents
+            .Select(a => $"{a.Name}  ({a.Model ?? "swarm default"}; canDelegate={a.CanDelegate}; MCP={(a.McpServers.Count)})")
+            .ToList();
+        labels.Add("(cancel)");
+        var chosen = MuxConsole.Select($"Select an agent to {verb}", labels);
+        if (chosen.StartsWith("(cancel)")) return -1;
+        int idx = labels.IndexOf(chosen);
+        return (idx < 0 || idx >= swarm.Agents.Count) ? -1 : idx;
+    }
+
+    /// <summary>/editagent: pick an agent, then edit description / model / canDelegate / MCP servers.
+    /// The prompt file is left to the user (path is shown). Saves swarm.json; user runs /refresh.</summary>
+    private static Result RunEditAgentWizard(string[] parts)
+    {
+        var swarm = LoadSwarmOrNew();
+        int idx;
+        if (parts.Length >= 2)
+        {
+            idx = swarm.Agents.FindIndex(a => string.Equals(a.Name, parts[1].Trim(), System.StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return Bad($"No agent named '{parts[1].Trim()}' in Swarm.json.");
+        }
+        else
+        {
+            idx = PickAgent(swarm, "edit");
+        }
+        if (idx == -2) return Bad("No agents defined in Swarm.json yet. Use /newagent first.");
+        if (idx < 0) return Ok("No changes made.");
+
+        var agent = swarm.Agents[idx];
+        var field = MuxConsole.Select($"Edit '{agent.Name}' - which field?", new[]
+        {
+            "description", "model", "canDelegate", "mcpServers", "(cancel)"
+        });
+
+        switch (field)
+        {
+            case "description":
+            {
+                var v = MuxConsole.Prompt("New description", agent.Description).Trim();
+                if (string.IsNullOrWhiteSpace(v)) return Ok("No changes made.");
+                agent.Description = v;
+                break;
+            }
+            case "model":
+            {
+                var knownModels = swarm.Agents.Where(a => !string.IsNullOrWhiteSpace(a.Model)).Select(a => a.Model!)
+                    .Concat(new[] { swarm.SingleAgent?.Model, swarm.Orchestrator?.Model }.Where(m => !string.IsNullOrWhiteSpace(m))!)
+                    .Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
+                var choices = new List<string> { "(use swarm default)" };
+                choices.AddRange(knownModels!);
+                choices.Add("(enter a model id)");
+                choices.Add("(cancel)");
+                var pick = MuxConsole.Select($"Model for '{agent.Name}' (current: {agent.Model ?? "swarm default"})", choices);
+                if (pick.StartsWith("(cancel)")) return Ok("No changes made.");
+                if (pick == "(enter a model id)")
+                {
+                    var m = MuxConsole.Prompt("Model id").Trim();
+                    agent.Model = string.IsNullOrWhiteSpace(m) ? null : m;
+                }
+                else agent.Model = pick == "(use swarm default)" ? null : pick;
+                break;
+            }
+            case "canDelegate":
+            {
+                agent.CanDelegate = MuxConsole.Confirm($"Allow '{agent.Name}' to delegate to other agents?", agent.CanDelegate);
+                break;
+            }
+            case "mcpServers":
+            {
+                var available = (Cfg.McpServers?.Keys ?? Enumerable.Empty<string>())
+                    .OrderBy(s => s, System.StringComparer.OrdinalIgnoreCase).ToList();
+                if (available.Count == 0) return Bad("No MCP servers configured in Config.json.");
+                var picked = MuxConsole.MultiSelect(
+                    $"MCP servers for '{agent.Name}' (currently: {(agent.McpServers.Count > 0 ? string.Join(", ", agent.McpServers) : "none")})",
+                    available);
+                agent.McpServers = picked;
+                break;
+            }
+            default:
+                return Ok("No changes made.");
+        }
+
+        SaveSwarm(swarm);
+        return Ok($"Updated agent '{agent.Name}'. Run /refresh to apply.");
+    }
+
+    /// <summary>/delagent: pick an agent, confirm, remove it from swarm.json. Optionally also delete
+    /// its prompt file. Saves swarm.json; user runs /refresh.</summary>
+    private static Result RunDeleteAgentWizard(string[] parts)
+    {
+        var swarm = LoadSwarmOrNew();
+        int idx;
+        if (parts.Length >= 2)
+        {
+            idx = swarm.Agents.FindIndex(a => string.Equals(a.Name, parts[1].Trim(), System.StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) return Bad($"No agent named '{parts[1].Trim()}' in Swarm.json.");
+        }
+        else
+        {
+            idx = PickAgent(swarm, "remove");
+        }
+        if (idx == -2) return Bad("No agents defined in Swarm.json.");
+        if (idx < 0) return Ok("No changes made.");
+
+        var agent = swarm.Agents[idx];
+        if (!MuxConsole.Confirm($"Remove agent '{agent.Name}' from Swarm.json? This cannot be undone.", false))
+            return Ok("No changes made.");
+
+        string? promptRel = agent.PromptPath;
+        swarm.Agents.RemoveAt(idx);
+        SaveSwarm(swarm);
+
+        // Offer to also delete the prompt file (only if it lives under Prompts/Agents).
+        if (!string.IsNullOrWhiteSpace(promptRel))
+        {
+            try
+            {
+                var promptAbs = System.IO.Path.IsPathRooted(promptRel)
+                    ? promptRel
+                    : System.IO.Path.Combine(PlatformContext.PromptsDirectory, promptRel);
+                if (System.IO.File.Exists(promptAbs)
+                    && MuxConsole.Confirm($"Also delete its prompt file ({System.IO.Path.GetFileName(promptAbs)})?", false))
+                {
+                    System.IO.File.Delete(promptAbs);
+                }
+            }
+            catch (System.Exception ex) { MuxConsole.WriteWarning($"Could not delete prompt file: {ex.Message}"); }
+        }
+
+        return Ok($"Removed agent '{agent.Name}'. Run /refresh to apply.");
+    }
+
     // ---- /config ----------------------------------------------------------------------
 
     private static string ShowConfig()
     {
-        int keyW = Keys.Max(k => k.Name.Length);
-        int valW = Keys.Max(k => k.Get().Length);
+        var keys = AllKeys();
+        int keyW = keys.Max(k => k.Name.Length);
+        int valW = keys.Max(k => System.Math.Min(k.Get().Length, 40));
         var sb = new System.Text.StringBuilder();
         sb.Append("Current configuration (every key is settable with /set):");
-        foreach (var k in Keys)
+        foreach (var k in keys)
         {
             sb.Append('\n');
             sb.Append("  ").Append(k.Name.PadRight(keyW))
