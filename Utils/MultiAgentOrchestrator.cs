@@ -452,6 +452,10 @@ public static class MultiAgentOrchestrator
                     agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
+                // /ultra: raise delegated sub-agent reasoning too when configured.
+                if (App.UltraMode && App.Config.Ultra.IncludeSubAgents)
+                    UltraReasoning.Apply(agentChatOptions);
+
                 var agent = client.AsAIAgent(new ChatClientAgentOptions
                 {
                     Name = def.Name,
@@ -469,7 +473,7 @@ public static class MultiAgentOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", AgentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -550,6 +554,10 @@ public static class MultiAgentOrchestrator
             orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
 
+        // /ultra: the orchestrator is the lead agent in swarm mode — always escalate when on.
+        if (App.UltraMode)
+            UltraReasoning.Apply(orchChatOptions);
+
         var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "Orchestrator",
@@ -581,8 +589,13 @@ public static class MultiAgentOrchestrator
         if (!prodMode)
             MuxConsole.WriteMuted("Press [Escape] during execution to cancel the current goal.");
 
-        MuxConsole.WriteLine();
-        MuxConsole.WriteRule();
+        // The live TUI already docks a full-width rule above the footer; emitting another
+        // here would double the separator. Only draw the classic rule off the TUI path.
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteRule();
+        }
 
         //Main loop 
         while (!cancellationToken.IsCancellationRequested)
@@ -651,7 +664,9 @@ public static class MultiAgentOrchestrator
             IDisposable? escapeListener = null;
 
             if (!prodMode)
-                escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
+                escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken,
+                    onExpand: () => MuxConsole.TuiExpandLatestInline(),
+                    onView: () => MuxConsole.TuiEnterViewMode());
 
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
@@ -1113,12 +1128,12 @@ public static class MultiAgentOrchestrator
                         if (!prodMode && !currentlyStreaming)
                         {
                             // Transition: thinking → streaming
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming("Orchestrator");
                             currentlyStreaming = true;
                             startedStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: "Orchestrator");
                         responseText.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1142,12 +1157,12 @@ public static class MultiAgentOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming("Orchestrator");
                                 currentlyStreaming = true;
                                 startedStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: "Orchestrator");
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1250,7 +1265,7 @@ public static class MultiAgentOrchestrator
                 else
                 {
                     if (currentlyStreaming)
-                        MuxConsole.EndStreaming();
+                        MuxConsole.EndStreaming("Orchestrator");
 
                     MuxConsole.WriteAgentTurnFooter();
                 }
@@ -1265,7 +1280,7 @@ public static class MultiAgentOrchestrator
                 // If we began streaming but hit an exception before EndStreaming, ensure we end it.
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming("Orchestrator"); } catch { /* ignore */ }
                 }
 
                 thinking?.Dispose();
@@ -1343,6 +1358,11 @@ public static class MultiAgentOrchestrator
     {
         if (cleanSession)
             specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
+
+        // Collapse this sub-agent's live output into a single expandable transcript line when
+        // enabled (TUI only). Null scope = stream inline as before. AsyncLocal-scoped, so
+        // concurrent parallel sub-agents each capture independently.
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
@@ -1467,12 +1487,12 @@ public static class MultiAgentOrchestrator
                         if (!prodMode && !currentlyStreaming)
                         {
                             // Transition: thinking -> streaming
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming(specialist.Def.Name);
                             currentlyStreaming = true;
                             startedStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: specialist.Def.Name);
                         iterResponse.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1496,12 +1516,12 @@ public static class MultiAgentOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming(specialist.Def.Name);
                                 currentlyStreaming = true;
                                 startedStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: specialist.Def.Name);
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1558,6 +1578,7 @@ public static class MultiAgentOrchestrator
                                     completionSummary = summaryObj?.ToString();
                                 if (fc.Arguments.TryGetValue("artifacts", out var artifactsObj))
                                     completionArtifacts = artifactsObj?.ToString();
+                                MuxConsole.SetCapturedStatus(completionStatus);
                             }
 
                             if (!fc.Name.Equals("signal_task_complete", StringComparison.OrdinalIgnoreCase))
@@ -1614,7 +1635,7 @@ public static class MultiAgentOrchestrator
                 else
                 {
                     if (currentlyStreaming)
-                        MuxConsole.EndStreaming();
+                        MuxConsole.EndStreaming(specialist.Def.Name);
 
                     MuxConsole.WriteAgentTurnFooter();
                 }
@@ -1624,7 +1645,7 @@ public static class MultiAgentOrchestrator
                 // If we began streaming but hit an exception before EndStreaming, ensure we end it.
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming(specialist.Def.Name); } catch { /* ignore */ }
                 }
 
                 thinking?.Dispose();

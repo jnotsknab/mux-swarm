@@ -3,6 +3,7 @@
 namespace MuxSwarm.Tests.Tests;
 using Setup;
 
+[Collection("ConsoleState")]
 public class CfgTests
 {   
     

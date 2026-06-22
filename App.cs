@@ -13,7 +13,9 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.10.3";
+    public static readonly string Version = "0.11.0";
+    /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
+    public static readonly string DebugTag = "";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -38,6 +40,19 @@ public class App
     protected static bool ContinuousExec;
     protected static int MinContDelay = 300;
     protected static bool ShouldPlan = false;
+    // /ultra: composite deep-reasoning toggle (plan + max reasoning + ultra steering).
+    // Public so orchestrators and /api/status can read it without threading a new param.
+    public static bool UltraMode = false;
+    private static bool _ultraPriorPlan = false;
+    private static bool _ultraPriorParaSub = false;
+
+    // Interactive render-mode preference from the CLI (--classic / --tui). Null = use
+    // console.renderMode config (default "auto"). Never affects stdio/serve output.
+    private static string? _cliRenderModeOverride = null;
+    /// <summary>Read-only view of plan mode for the serve layer (/api/status).</summary>
+    public static bool PlanMode => ShouldPlan;
+    public static bool ParallelSubAgentsMode => AllowParallelSubAgents;
+    public static bool SubAgentsMode => AllowSubagents;
     
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
@@ -128,7 +143,7 @@ public class App
         Config = LoadConfig(ConfigPath);
 
 
-        MuxConsole.WriteSplashScreen(version: Version);
+        MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
         if (!Config.SetupCompleted)
         {
@@ -197,6 +212,32 @@ public class App
     private async Task<int> AppLoop(string[] args)
     {
         var parsed = ParseArgs(args);
+
+        // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
+        // console.renderMode config; default "auto" is capability-aware. No effect on the
+        // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
+        MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
+        MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
+        MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
+        MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
+        MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
+        MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
+        MuxConsole.ShowReasoning = Config.ShowReasoning;
+
+        // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
+        // warn-only by design - we never silently rewrite context files on boot. A configured
+        // "force" mode still surfaces as a warning here; the actual force-rewrite happens on the
+        // next mutation (e.g. a /tag MEMORY stub). Stdio/serve skip this entirely.
+        if (!MuxConsole.StdioMode)
+        {
+            try
+            {
+                await ContextCap.CheckFileAsync(ContextCap.BrainFile);
+                await ContextCap.CheckFileAsync(ContextCap.MemoryFile);
+            }
+            catch { /* cap check is best-effort */ }
+        }
+
         
         if (_watchDogEnabled)
             Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
@@ -283,34 +324,62 @@ public class App
         }
         
         OtelLogger.Info("Entered Main Interactive Loop");
+        // The live-region TUI driver (pinned footer + as-you-type slash palette) is active
+        // across the WHOLE interactive REPL - both this top-level mode-select menu and inside
+        // agent/swarm sessions. At the menu it runs in "top-level" palette scope (mode-select
+        // commands); sessions switch it to the in-session command set. No-op outside TUI.
+        MuxConsole.EnableDockedFooter(topLevel: true);
         // Interactive loop
         while (!Environment.HasShutdownStarted)
-        {   
-            
-            MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+        {
+            // Re-assert top-level scope each iteration: a returning session left it in the
+            // in-session scope, and the meter should read "ready" at the menu. Idempotent.
+            MuxConsole.EnableDockedFooter(topLevel: true);
 
-            if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
+            // Slash-anywhere hand-off: a session the user just exited may have queued a
+            // REPL-only command (they typed it in-session and confirmed ending the session to
+            // run it). Dispatch it now as if typed at the menu, then clear it.
+            string? pendingFromSession = SingleAgentOrchestrator.PendingReplCommand;
+            if (pendingFromSession is not null)
+                SingleAgentOrchestrator.PendingReplCommand = null;
+
+            // When the live-region driver is active it owns the input box (pinned at the
+            // bottom) and its own key loop (Esc -> cancel), so skip the inline "> " prompt and
+            // the non-blocking Esc pre-check, which would otherwise steal a keystroke.
+            if (!MuxConsole.TuiActive)
             {
-                var key = Console.ReadKey(intercept: true);
-                if (key.Key == ConsoleKey.Escape)
+                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+
+                if (!MuxConsole.StdioMode && !Console.IsInputRedirected && Console.KeyAvailable)
                 {
-                    lock (CtsLock)
+                    var key = Console.ReadKey(intercept: true);
+                    if (key.Key == ConsoleKey.Escape)
                     {
-                        if (!_cts.IsCancellationRequested)
+                        lock (CtsLock)
                         {
-                            _cts.Cancel();
-                            MuxConsole.WriteInfo("Interrupted.");
-                            OtelLogger.Warn("User Deployed Cancel Signal Received, Mux Swarm Interrupted");
+                            if (!_cts.IsCancellationRequested)
+                            {
+                                _cts.Cancel();
+                                MuxConsole.WriteInfo("Interrupted.");
+                                OtelLogger.Warn("User Deployed Cancel Signal Received, Mux Swarm Interrupted");
+                            }
                         }
+                        continue;
                     }
-                    continue;
                 }
             }
 
-            string? userInput = MuxConsole.ReadInput();
+            string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
                 continue;
+
+            // Normalize a bare slash command with only trailing whitespace (e.g. "/agent " from
+            // Tab-completion) to its exact token, so the exact-match command switch recognizes
+            // it. A command WITH an argument (non-space content after the space) is left intact.
+            if (userInput.Length > 0 && userInput[0] == '/' && userInput.TrimEnd() != userInput
+                && !userInput.Trim().Contains(' '))
+                userInput = userInput.Trim();
 
             if (userInput.Trim() == "__CANCEL__")
             {
@@ -337,7 +406,22 @@ public class App
                     MuxConsole.PrintHelp(Help.HelpText);
                     break;
 
+                case "/shortcuts":
+                case "/keys":
+                    MuxConsole.PrintShortcuts();
+                    break;
+
+                case "/":
+                case "/?":
+                    // G6: slash-command palette / preview. At the top-level menu the relevant
+                    // commands are the mode-select (repl) set, not the in-session set, so show
+                    // the repl-scoped palette. Falls back to full help in classic mode.
+                    if (MuxConsole.IsTui) MuxConsole.RenderReplSlashPalette();
+                    else MuxConsole.PrintHelp(Help.HelpText);
+                    break;
+
                 case "/exit":
+                    MuxConsole.DisableDockedFooter();
                     MuxConsole.WriteInfo("Shutting down gracefully...");
                     _cts.Cancel();
                     ProcessCleanup.Instance.Dispose();
@@ -355,6 +439,8 @@ public class App
                     var maModels = Common.LoadAgentModels();
                     var maCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "swarm";
+                    try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -364,6 +450,7 @@ public class App
                         agentModels: maModels,
                         cancellationToken: maCts.Token
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
 
                 case "/pswarm":
@@ -372,6 +459,8 @@ public class App
                     var pModels = Common.LoadAgentModels();
                     var pCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "pswarm";
+                    try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         mcpTools: (McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
@@ -381,6 +470,7 @@ public class App
                         agentModels: pModels,
                         cancellationToken: pCts.Token
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
 
                 case "/agent":
@@ -389,6 +479,8 @@ public class App
                     var singleAgentModel = LoadSingleAgentModel();
                     var agentCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "agent";
+                    try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel),
                         agentCts.Token,
@@ -403,14 +495,19 @@ public class App
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 case "/sub":
                 case "/subagents":
                     AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
+                    // Reflect the sub badge in the docked footer immediately.
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/psub":
                 case "/parasubagents":
                     AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
+                    // Reflect the psub badge in the docked footer immediately.
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
@@ -429,6 +526,8 @@ public class App
                     var statelessAgent = LoadSingleAgentModel();
                     var statelessAgentCts = GetOrResetCts();
 
+                    ServeMode.ActiveMode = "stateless";
+                    try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
                         statelessAgentCts.Token,
@@ -444,6 +543,7 @@ public class App
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents
                     );
+                    } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 
                 case "/addcontext":
@@ -458,14 +558,22 @@ public class App
                 case "/workflow":
                     CliCmdUtils.HandleInteractiveWorkflow();
                     break;
-                case "/resume":
-                    var resumeData = CliCmdUtils.HandleSessionResume();
+                case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
+                    // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
+                    // session directly (used by the web app's Resume button over the WS).
+                    var resumeArg = rc.Length > "/resume".Length
+                        ? rc.Substring("/resume".Length).Trim()
+                        : null;
+                    var resumeData = CliCmdUtils.HandleSessionResume(
+                        string.IsNullOrWhiteSpace(resumeArg) ? null : resumeArg);
                     if (resumeData.HasValue)
                     {
                         Config = LoadConfig(ConfigPath);
                         var resumeModel = LoadSingleAgentModel();
                         var resumeCts = GetOrResetCts();
 
+                        ServeMode.ActiveMode = "agent";
+                        try {
                         await SingleAgentOrchestrator.ChatAgentAsync(
                             client: CreateChatClient(resumeModel),
                             resumeCts.Token,
@@ -482,6 +590,7 @@ public class App
                             allowSubAgents: AllowSubagents,
                             allowParallelSubAgents: AllowParallelSubAgents
                         );
+                        } finally { ServeMode.ActiveMode = "interactive"; }
                     }
                     break;
                 
@@ -504,6 +613,79 @@ public class App
                         MuxConsole.WriteSuccess("Plan Mode disabled");
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
+                    // Reflect the plan badge in the docked footer immediately (not after stream).
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    break;
+                case "/classic":
+                case "/tui":
+                    if (MuxConsole.StdioMode)
+                    {
+                        MuxConsole.WriteMuted("Render mode is fixed to stdio/serve in this session; ignoring.");
+                        break;
+                    }
+                    if (userInput == "/classic")
+                    {
+                        MuxConsole.DisableDockedFooter();
+                        MuxConsole.SetClassicRenderMode();
+                        MuxConsole.WriteSuccess("Classic render mode enabled");
+                        MuxConsole.WriteMuted("Line-by-line renderer (pre-v0.11.0 interactive experience).");
+                    }
+                    else
+                    {
+                        MuxConsole.SetTuiRenderMode();
+                        if (MuxConsole.IsTui)
+                        {
+                            MuxConsole.EnableDockedFooter();
+                            MuxConsole.WriteSuccess("Live TUI render mode enabled");
+                            MuxConsole.WriteMuted("Live-region renderer with pinned footer + input box (takes effect in-session).");
+                        }
+                        else
+                        {
+                            MuxConsole.WriteWarning("Terminal is not TUI-capable; staying on classic renderer.");
+                        }
+                    }
+                    break;
+                case "/verbose":
+                    MuxConsole.ToolOutputCompact = !MuxConsole.ToolOutputCompact;
+                    MuxConsole.WriteSuccess(MuxConsole.ToolOutputCompact
+                        ? "Tool output: compact (collapsed one-line results)"
+                        : "Tool output: full (bordered result panels)");
+                    break;
+                case "/subagentview":
+                case "/sav":
+                    MuxConsole.CollapseSubAgents = !MuxConsole.CollapseSubAgents;
+                    Config.Console.CollapseSubAgents = MuxConsole.CollapseSubAgents;
+                    MuxConsole.WriteSuccess(MuxConsole.CollapseSubAgents
+                        ? "Sub-agent view: collapsed (delegated agents fold into one expandable line)"
+                        : "Sub-agent view: expanded (delegated agents stream inline)");
+                    break;
+                case "/ultra":
+                case "/ultraplan":
+                    UltraMode = !UltraMode;
+                    if (UltraMode)
+                    {
+                        // Compose plan discipline + max reasoning + heavy parallel delegation.
+                        // Capture prior flags so toggling /ultra off restores them exactly.
+                        _ultraPriorPlan = ShouldPlan;
+                        _ultraPriorParaSub = AllowParallelSubAgents;
+                        ShouldPlan = true;
+                        if (App.Config.Ultra.AutoSubAgents)
+                            AllowParallelSubAgents = true;
+                        MuxConsole.WriteSuccess("Ultra Mode enabled");
+                        MuxConsole.WriteMuted($"Plan Mode forced on + maximum reasoning (thinking budget {App.Config.Ultra.ThinkingBudget}).");
+                        if (App.Config.Ultra.AutoSubAgents)
+                            MuxConsole.WriteMuted("Parallel sub-agents enabled — agents fan parallelizable work out to isolated sub-agent sessions.");
+                        MuxConsole.WriteMuted("Agents decompose deeply, list assumptions, weigh alternatives, and self-review before finalizing.");
+                    }
+                    else
+                    {
+                        ShouldPlan = _ultraPriorPlan;
+                        AllowParallelSubAgents = _ultraPriorParaSub;
+                        MuxConsole.WriteSuccess("Ultra Mode disabled");
+                        MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
+                    }
+                    // Reflect the new mode badges in the docked footer immediately (not after stream).
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/tools":
                     if (McpTools != null) Common.LogAvailableTools(McpTools);
@@ -596,6 +778,94 @@ public class App
                 case "/sessions":
                     CliCmdUtils.ListSessions();
                     break;
+
+                case "/config":
+                case var cfgCmd when cfgCmd.StartsWith("/config "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) MuxConsole.WriteInfo(res.Message);
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var setCmd when setCmd == "/set" || setCmd.StartsWith("/set "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.NeedsInteractive(userInput)
+                        ? MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput)
+                        : MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var rsn when rsn == "/showreasoning" || rsn.StartsWith("/showreasoning "):
+                {
+                    // Top-level control of the client-side reasoning display gate. With no arg, show
+                    // the current value; otherwise route through the showReasoning /set key so
+                    // validation + persistence stay in one place. "none" suppresses streamed reasoning
+                    // text in interactive renderers; "full"/"summary" both show it (grey + italic).
+                    // Applies immediately (MuxConsole.ShowReasoning is re-seeded from the reloaded config).
+                    var rparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (rparts.Length < 2)
+                    {
+                        MuxConsole.WriteInfo($"showReasoning = {Config.ShowReasoning}  (set with /showreasoning <full|summary|none>).");
+                        break;
+                    }
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set showReasoning {rparts[1].Trim()}");
+                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); MuxConsole.ShowReasoning = Config.ShowReasoning; }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
+                {
+                    // The wizard may offer to spawn a helper agent (like /onboard) to author the
+                    // new agent's prompt; wire that callback so the user can opt in.
+                    await EnsureMcpReadyAsync();
+                    var helperModel = LoadSingleAgentModel();
+                    void SpawnPromptHelper(string agentName, string desc)
+                    {
+                        var promptDir = MuxSwarm.Utils.PlatformContext.PromptsDirectory;
+                        var promptAbs = System.IO.Path.Combine(promptDir, $"{agentName}.md");
+                        var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
+                                   $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
+                                   "(overwrite the starter template). Keep it concise and operational.";
+                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
+                        try
+                        {
+                            SingleAgentOrchestrator.ChatAgentAsync(
+                                client: CreateChatClient(helperModel),
+                                GetOrResetCts().Token,
+                                maxIterations: 4,
+                                mcpTools: McpTools,
+                                continuous: false).GetAwaiter().GetResult();
+                        }
+                        finally { MuxConsole.InputOverride = System.Console.In; }
+                    }
+
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var eaCmd when eaCmd == "/editagent" || eaCmd.StartsWith("/editagent ")
+                                 || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ")
+                                 || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
 
                 default:
                     if (userInput.StartsWith("/"))
@@ -778,6 +1048,19 @@ public class App
                 case "--plan":
                     ShouldPlan = true;
                     break;
+                case "--ultra":
+                case "--ultraplan":
+                    UltraMode = true;
+                    ShouldPlan = true;
+                    if (Config.Ultra.AutoSubAgents)
+                        AllowParallelSubAgents = true;
+                    break;
+                case "--classic":
+                    _cliRenderModeOverride = "classic";
+                    break;
+                case "--tui":
+                    _cliRenderModeOverride = "tui";
+                    break;
                 case "--clear":
                     Console.Clear();
                     break;
@@ -826,6 +1109,15 @@ public class App
                 case "--cfg":
                 case "--swarmcfg":
                     NextValue(args, ref i); //handled in program bootstrap
+                    break;
+                case "--workspace":
+                case "--ws":
+                    var wsPath = NextValue(args, ref i);
+                    if (!string.IsNullOrWhiteSpace(wsPath))
+                    {
+                        try { PlatformContext.WorkspaceRoot = wsPath; }
+                        catch { MuxConsole.WriteWarning($"Invalid --workspace path: {wsPath}"); }
+                    }
                     break;
                 case "--workflow":
                 case "--wf":

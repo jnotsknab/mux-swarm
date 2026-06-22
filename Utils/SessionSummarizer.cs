@@ -103,12 +103,9 @@ public static class SessionSummarizer
             string agentName = Path.GetFileNameWithoutExtension(sessionFile)
                 .Replace("_session", "", StringComparison.OrdinalIgnoreCase);
 
-            var messages = doc.RootElement
-                .TryGetProperty("chatHistoryProviderState", out var state) &&
-                state.TryGetProperty("messages", out var msgs) &&
-                msgs.ValueKind == JsonValueKind.Array
+            var messages = Common.TryGetSessionMessages(doc.RootElement, out var msgs)
                     ? msgs.EnumerateArray().ToList()
-                    : [];
+                    : new List<JsonElement>();
 
             var toolCalls = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             var delegatedAgents = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -258,12 +255,9 @@ public static class SessionSummarizer
             string agentName = Path.GetFileNameWithoutExtension(sessionFile)
                 .Replace("_session", "", StringComparison.OrdinalIgnoreCase);
 
-            var messages = doc.RootElement
-                .TryGetProperty("chatHistoryProviderState", out var state) &&
-                state.TryGetProperty("messages", out var msgs) &&
-                msgs.ValueKind == JsonValueKind.Array
+            var messages = Common.TryGetSessionMessages(doc.RootElement, out var msgs)
                     ? msgs.EnumerateArray().ToList()
-                    : [];
+                    : new List<JsonElement>();
 
             if (messages.Count == 0) continue;
 

@@ -184,37 +184,70 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 ## Usage
 
 ### Interactive Commands
+
+Type `/help` at any time for the full reference, or `/` in the live TUI for a fuzzy command palette.
+
+**Modes**
 ```
-/swarm          Launch multi-agent swarm loop
-/pswarm         Launch parallel swarm loop and concurrent batch dispatch for independent tasks
-/agent          Launch interactive single agent loop
-/stateless      Stateless single agent loop, ideal for one-off tasks
-/plan           Toggle plan mode, agents present a plan and ask for approval before executing
-/continuous     Toggle continued autonomous execution on and off (/cont shorthand)
+/swarm          Launch multi-agent orchestrated swarm loop
+/pswarm         Launch parallel swarm - concurrent batch dispatch for independent tasks
+/agent          Launch interactive single-agent loop
+/stateless      Stateless single-agent loop, ideal for one-off tasks
+/subagents      (/sub)  Enable ephemeral sub-agent delegation inside a single-agent loop
+/parasubagents  (/psub) Enable parallel ephemeral sub-agent delegation
+/subagentview   (/sav)  Toggle collapsed/expanded delegated sub-agent output
 /workflow       Run a deterministic workflow from a JSON file
-/resume         Resume a previous single-agent session
-/compact        Compact current session context (applies to single agent loops only)
+/resume         Resume a previous single-agent session (shows #tags)
+/onboard        Create or update your operator profile (BRAIN.md + MEMORY.md)
+```
+
+**Execution & reasoning**
+```
+/plan           Toggle plan mode - agents present a plan and ask for approval before executing
+/ultra          Toggle deep-reasoning mode (plan + maximum reasoning budget + heavy delegation)
+/continuous     Toggle continued autonomous execution on and off (/cont shorthand)
+/showreasoning  Show or hide streamed reasoning text: full|summary (shown) or none (hidden)
+/classic        Switch to the classic line-by-line renderer (opt out of the live TUI)
+/tui            Switch to the live full-screen TUI renderer
+/verbose        Toggle TUI tool output between compact (collapsed) and full panels
+```
+
+**Session**
+```
+/compact        Compact current session context (single-agent loops only)
+/tag <text>     Tag the live session with free-form text for easy resume/search (optional MEMORY.md stub)
+/sessions       List all saved sessions with type and agent count
+/report [<id>]  Generate full session audit report(s); pass an id to audit one session
+/clear          Clear terminal
+/qm or /qc      Stop the current session
+/exit           Exit the runtime
+```
+
+**Configuration**
+```
+/config         Show ALL configuration settings - every key is /set-editable
+/set <key> <v>  Edit any config.json or swarm.json key by dotted path (bare /set opens a picker)
 /model          View current model assignments
 /setmodel       Change the model for any agent, orchestrator, or compaction agent
 /swap           Swap the active agent for single-agent mode
+/newagent       Guided wizard to create a swarm agent (name, MCP servers, model, prompt)
+/editagent      Edit a swarm agent (model, description, MCP servers, delegation)
+/delagent       Remove a swarm agent from swarm.json (and optionally its prompt file)
+/addcontext     Configure what context each agent is injected with
+/maxp           Max agents running in parallel (default 4)
 /provider       View or switch the active LLM provider
 /limits         Display current execution limits for orchestration and agents
 /tools          List available MCP tools across enabled servers
 /skills         List available local skills
 /memory         View the knowledge graph
-/sessions       List all saved sessions with type and agent count
 /status         View current system status: provider, models, tools, skills, and sessions
 /dockerexec     Toggle Docker execution mode
-/dbg            Enable tool call output (applies to stdio mode only)
-/nodbg          Disable tool call output (applies to stdio mode only)
+/delimiter      Toggle multi-line input delimiter
+/dbg / /nodbg   Enable / disable tool call output (stdio mode only)
 /setup          Run initial setup / reconfigure
-/reloadskills   Refresh skills directory for any mid process changes
+/reloadskills   Refresh skills directory for mid-process changes
 /refresh        Full Mux system refresh: config, MCP servers, and skills
-/report         Generate full session audit reports
-/report <id>    Audit a specific session by timestamp
-/clear          Clear terminal
-/exit           Exit the runtime
-/qm or /qc      Stop the current session
+/shortcuts      Show keyboard shortcuts (alias /keys)
 ```
 
 ### CLI Flags
@@ -881,6 +914,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 - Expanded OTEL coverage: memory read/write tracking, hook dispatch spans, workflow step spans, WS lifecycle in ServeMode
 ### Shipped
 
+- **v0.11.0 — Live TUI, Session Tags & Full Agent CRUD**: New live full-screen TUI renderer (default on capable terminals; `/classic` opts out) with a fuzzy slash-command palette, in-place active-turn rendering, collapsible tool/sub-agent output, and a vim-style transcript navigation/copy mode. Session tagging via `/tag` (sidecar `.muxtag`, surfaced and fuzzy-matched in resume) with an optional one-shot MEMORY.md stub. Full swarm-agent CRUD from the REPL — `/newagent`, `/editagent`, `/delagent` — plus universal config editing: `/set <key> <value>` now reaches every scalar leaf of `config.json` and `swarm.json` by dotted path, and `/config` lists them all. `/showreasoning` gates streamed reasoning text (full/summary shown, none hidden) as a client-side display control. Per-file BRAIN.md / MEMORY.md character caps (off/warn/force). `/ultra` deep-reasoning mode and a `sub` footer badge for active delegation.
 - **v0.9.0 -- Enterprise Observability & Chat App Bridge Access**: OpenTelemetry tracing with native OTEL spans for agent sessions, turns, tool calls, orchestrator iterations, and delegations. Structured logs as span events with severity levels. Metrics counters and histograms for tokens, sessions, compaction, stuck counts, and tool call duration. Configurable telemetry block (endpoint, protocol, verbosity, headers) with OTLP export to Jaeger, Tempo, Datadog, or any compatible backend. Daemon bridge triggers for persistent sidecar process supervision with auto-restart and PID tracking. Bundled Telegram and Discord bridges with Whisper voice transcription, WebSocket auto-reconnect, and chat authorization.
 - **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
 - **v0.8.0 — Daemon Mode & OS Service Registration**: Background trigger loops via `--daemon` with file watch (FileSystemWatcher + cooldown), cron (zero-dependency 5-field parser), and status checks (HTTP, process, TCP) with auto-restart. OS service registration via `--register`/`--remove` for Windows (Task Scheduler XML), Linux (systemd + linger), and macOS (launchd). Full hook lifecycle with 10 events across all orchestrators. `additionalParams` pass-through for provider-specific model options.

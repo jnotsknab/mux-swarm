@@ -12,13 +12,106 @@ namespace MuxSwarm.Utils;
 ///
 /// Every file in the project should use MuxConsole instead of Console.Write/WriteLine.
 /// </summary>
-public static class MuxConsole
+public static partial class MuxConsole
 {
     /// <summary>
     /// When true, all output is NDJSON (one JSON object per line) suitable for piping / parsing.
     /// Set this from App.ParseArgs() when --stdio is present.
     /// </summary>
     public static bool StdioMode { get; set; } = false;
+
+    /// <summary>
+    /// Interactive render layer (v0.11.0). This is orthogonal to <see cref="StdioMode"/>:
+    /// stdio/serve always emits NDJSON and short-circuits BEFORE any render-mode branch,
+    /// so the machine/web contract is byte-identical regardless of this value.
+    /// <list type="bullet">
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Stdio"/> - reported when <see cref="StdioMode"/> is on.</item>
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Tui"/> - full-screen live renderer (interactive default on a capable TTY).</item>
+    /// <item><see cref="MuxSwarm.Utils.RenderMode.Classic"/> - pre-v0.11.0 line-by-line renderer (opt-out / non-capable fallback).</item>
+    /// </list>
+    /// </summary>
+    public static RenderMode RenderMode
+    {
+        get
+        {
+            // stdio/serve is sacrosanct and takes absolute precedence.
+            if (StdioMode) return RenderMode.Stdio;
+            return _interactiveRenderMode;
+        }
+    }
+
+    private static RenderMode _interactiveRenderMode = RenderMode.Classic;
+
+    /// <summary>
+    /// True when the active interactive renderer is the live full-screen TUI.
+    /// Always false in stdio/serve mode. Render helpers use this to decide whether to
+    /// route through the live layout; until the TUI layout lands it renders identically
+    /// to classic, so flipping the default is behaviorally safe.
+    /// </summary>
+    public static bool IsTui => !StdioMode && _interactiveRenderMode == RenderMode.Tui;
+
+    /// <summary>
+    /// Resolve the interactive render mode from an explicit preference plus terminal
+    /// capability. Call once at startup (after args/config are parsed) on the interactive
+    /// path. No effect on the stdio/serve contract — <see cref="RenderMode"/> still reports
+    /// <see cref="MuxSwarm.Utils.RenderMode.Stdio"/> whenever <see cref="StdioMode"/> is set.
+    /// </summary>
+    /// <param name="preference">"auto" (capability-aware), "tui" (force), or "classic" (force). Null/empty = "auto".</param>
+    public static void ResolveRenderMode(string? preference)
+    {
+        var pref = (preference ?? "auto").Trim().ToLowerInvariant();
+        _interactiveRenderMode = pref switch
+        {
+            "classic" => RenderMode.Classic,
+            "tui"     => RenderMode.Tui,
+            // "auto" and anything unrecognized: capability-aware default.
+            _ => IsTuiCapableTerminal() ? RenderMode.Tui : RenderMode.Classic
+        };
+    }
+
+    /// <summary>
+    /// Force the classic line renderer (e.g. the <c>/classic</c> toggle or <c>--classic</c> flag).
+    /// </summary>
+    public static void SetClassicRenderMode() => _interactiveRenderMode = RenderMode.Classic;
+
+    /// <summary>
+    /// Force the live TUI renderer (e.g. a <c>/tui</c> toggle or <c>--tui</c> flag). Falls back to
+    /// classic automatically on a non-capable terminal so a broken TUI is never shown.
+    /// </summary>
+    public static void SetTuiRenderMode()
+        => _interactiveRenderMode = IsTuiCapableTerminal() ? RenderMode.Tui : RenderMode.Classic;
+
+    /// <summary>
+    /// Heuristic terminal-capability probe driving the capability-aware default. A terminal
+    /// is considered TUI-capable when stdout is an interactive console (not redirected/piped),
+    /// not a dumb terminal, and not a known non-interactive CI environment.
+    /// </summary>
+    public static bool IsTuiCapableTerminal()
+    {
+        try
+        {
+            // Redirected/piped stdout or stdin => no live full-screen layout.
+            if (Console.IsOutputRedirected || Console.IsInputRedirected) return false;
+
+            // Dumb terminals can't render ANSI/alt-screen.
+            var term = Environment.GetEnvironmentVariable("TERM");
+            if (string.Equals(term, "dumb", StringComparison.OrdinalIgnoreCase)) return false;
+
+            // Common CI signal: default to the safe line renderer in automation.
+            if (string.Equals(Environment.GetEnvironmentVariable("CI"), "true", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Spectre's own capability check (ANSI support, interactivity).
+            if (!AnsiConsole.Profile.Capabilities.Ansi) return false;
+
+            return true;
+        }
+        catch
+        {
+            // Any probe failure => safest choice is the classic line renderer.
+            return false;
+        }
+    }
 
     /// <summary>
     /// Shared lock to prevent the thinking indicator's \r-based rendering
@@ -116,6 +209,13 @@ public static class MuxConsole
 
     public static string? ReadInput(CancellationToken ct = default)
     {
+        // Live-region TUI owns the input box (pinned at the bottom). Only for real keyboard
+        // input without a multi-line delimiter; stdio/serve and workflow input are unaffected.
+        if (TuiActive && InputOverride == Console.In && !(UsingDelimiter && MultiLineDelimiter is not null))
+        {
+            return TuiReadLine();
+        }
+
         if (InputOverride != Console.In)
         {
             var line = InputOverride.ReadLine();
@@ -186,13 +286,13 @@ public static class MuxConsole
     /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
     /// No external dependencies or image files required.
     /// </summary>
-    public static void WriteSplashScreen(string version)
+    public static void WriteSplashScreen(string version, string debugTag = "")
     {
         WithConsole(() =>
         {
             if (StdioMode)
             {
-                EmitJson("splash", D(("version", version)));
+                EmitJson("splash", string.IsNullOrEmpty(debugTag) ? D(("version", version)) : D(("version", version), ("debug", debugTag)));
                 return;
             }
 
@@ -200,7 +300,7 @@ public static class MuxConsole
 
             if (AnsiConsole.Profile.Width < 56)
             {
-                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]")
+                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}")
                     .RuleStyle(new Style(Color.Grey35))
                     .LeftJustified());
             }
@@ -246,7 +346,7 @@ public static class MuxConsole
 
                 sb.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 sb.AppendLine();
-                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
                 sb.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]");
 
                 var panel = new Panel(sb.ToString())
@@ -300,7 +400,7 @@ public static class MuxConsole
 
                 left.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 left.AppendLine();
-                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
                 left.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]");
 
                 var right = new StringBuilder();
@@ -434,6 +534,14 @@ public static class MuxConsole
     /// </summary>
     public static ThinkingIndicator BeginThinking(string agentName)
     {
+        // Captured (collapsed) sub-agent: do NOT start a competing per-agent spinner on the
+        // shared live line - with parallel delegation, N of them flicker against each other.
+        // Return an inert indicator whose status updates feed the consolidated activity panel.
+        if (Capturing)
+            return new ThinkingIndicator(
+                renderRaw: _ => { }, clearLine: _ => { }, consoleLock: ConsoleLock,
+                onStatusUpdate: status => SetCapturedLiveStatus(status));
+
         if (StdioMode)
         {
             EmitJson("thinking_start", D(("agent", agentName)));
@@ -450,6 +558,25 @@ public static class MuxConsole
         {
             if (_isStreaming)
                 return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
+
+            // The live-region driver pins its own footer/input; route the spinner into the
+            // driver's live "thinking" line (animated) instead of the inline \r renderer,
+            // which would fight the region. The indicator's status updates flow through the
+            // onStatusUpdate callback below.
+            if (ViaDriver)
+            {
+                var tuiInd = new ThinkingIndicator(
+                    // The indicator's animation loop composes a spinner+status line every
+                    // ~80ms and hands it to renderRaw; forward it to the driver's live
+                    // thinking line (stripping the leading CR the inline renderer used).
+                    renderRaw: raw => TuiSetThinking(raw.Replace("\r", "").TrimEnd()),
+                    clearLine: _ => TuiSetThinking(null),
+                    consoleLock: ConsoleLock,
+                    onDispose: () => TuiSetThinking(null));
+                _activeIndicator = tuiInd;
+                tuiInd.Start(agentName);
+                return tuiInd;
+            }
 
             StopActiveIndicator_NoLock();
         }
@@ -487,17 +614,20 @@ public static class MuxConsole
         }
     }
 
-    public static void BeginStreaming()
+    public static void BeginStreaming(string? agentName = null)
     {
+        if (Capturing) return;   // captured sub-agent: no live stream region (output is buffered)
         lock (ConsoleLock)
         {
             _isStreaming = true;
             StopActiveIndicator_NoLock();
+            TuiBeginStream();
         }
     }
 
-    public static void EndStreaming()
+    public static void EndStreaming(string? agentName = null)
     {
+        if (Capturing) return;   // captured sub-agent: nothing was streamed to end
         lock (ConsoleLock)
         {
             if (!_isStreaming)
@@ -507,9 +637,16 @@ public static class MuxConsole
 
             if (StdioMode)
             {
-                EmitJson("stream_end");
+                // agent key added only when non-null so single-agent stream_end frames
+                // stay byte-identical (dictionary entries are not covered by WhenWritingNull).
+                if (agentName is null)
+                    EmitJson("stream_end");
+                else
+                    EmitJson("stream_end", D(("agent", agentName)));
                 return;
             }
+
+            if (ViaDriver) { TuiEndStream(); return; }
 
             Console.WriteLine();
             try { Console.Out.Flush(); } catch { /* ignore */ }
@@ -518,6 +655,7 @@ public static class MuxConsole
 
     public static ThinkingIndicator ResumeThinking(string agentName)
     {
+        if (Capturing) return BeginThinking(agentName);
         lock (ConsoleLock)
         {
             if (_isStreaming)
@@ -526,6 +664,8 @@ public static class MuxConsole
 
                 if (StdioMode)
                     EmitJson("stream_end");
+                else if (ViaDriver)
+                    TuiEndStream();
                 else
                 {
                     Console.WriteLine();
@@ -537,14 +677,46 @@ public static class MuxConsole
         return BeginThinking(agentName);
     }
 
-    public static void WriteStream(string text, bool muted = false)
+    /// <summary>
+    /// Client-side gate for streamed reasoning text, seeded from config.json <c>showReasoning</c>.
+    /// When "none", muted (reasoning) chunks are dropped in interactive renderers so reasoning
+    /// never reaches the screen or the collapsed sub-agent transcript. stdio/NDJSON/WS output is
+    /// never gated (protocol parity). Set at startup and by <c>/showreasoning</c>.
+    /// </summary>
+    public static string ShowReasoning { get; set; } = "summary";
+
+    public static void WriteStream(string text, bool muted = false, string? agentName = null)
     {
         if (string.IsNullOrEmpty(text)) return;
+
+        // Collapsed sub-agent: buffer the chunk for the expandable transcript instead of
+        // committing it inline. The thinking spinner keeps animating (live progress).
+        if (Capturing) { CaptureAppend(text); return; }
+
+        // Client-side reasoning gate: when showReasoning == "none", drop muted (reasoning)
+        // chunks for interactive renderers so streaming reasoning text never reaches the TUI,
+        // the classic console, or the captured sub-agent transcript. stdio is never gated so the
+        // NDJSON/WebSocket protocol is unchanged. (The Capturing buffer above already returned
+        // before this, so a suppressed reasoning chunk is also kept out of the transcript.)
+        if (muted && !StdioMode && string.Equals(ShowReasoning, "none", StringComparison.OrdinalIgnoreCase))
+            return;
 
         WithConsole(() =>
         {
             if (StdioMode)
-                EmitJson("stream", D(("text", text)));
+                // agent key is added only when non-null so single-agent stream frames are
+                // byte-identical; parallel callers pass the specialist name so the web app
+                // can demultiplex concurrent sub-agent streams. (Dictionary entries are not
+                // covered by WhenWritingNull, so the key must be omitted explicitly.)
+                EmitJson("stream", agentName is null
+                    ? D(("text", text))
+                    : D(("text", text), ("agent", agentName)));
+            else if (ViaDriver)
+                // Live-region TUI: feed the chunk to the driver, which commits complete
+                // lines into scrollback and shows the partial tail live above the footer. The
+                // muted flag marks reasoning content so the driver renders it grey+italic,
+                // distinct from the final answer (parity with the classic renderer below).
+                TuiStreamChunk(text, reasoning: muted);
             else if (muted)
                 AnsiConsole.Markup(muted
                     ? $"[grey italic]{Esc(text)}[/]"
@@ -581,6 +753,17 @@ public static class MuxConsole
                 EmitJson("rule", label != null ? D(("label", label)) : null);
                 return;
             }
+            if (Capturing) return;   // collapsed sub-agent: no inline rules
+
+            // Under the driver, a raw Spectre rule paints below the footer and desyncs the
+            // live region. Commit a markup rule line through the driver instead.
+            if (ViaDriver)
+            {
+                string ruleLine = label != null
+                    ? $"  [{C.Muted}]── {Esc(label)} ──[/]"
+                    : $"[{C.Muted}]{new string('\u2500', Math.Max(8, Console.WindowWidth))}[/]";
+                if (TuiCommit(ruleLine)) return;
+            }
 
             var rule = label != null
                 ? new Rule($"[{C.Muted}]{Esc(label)}[/]").RuleStyle(new Style(Color.Grey23))
@@ -590,11 +773,61 @@ public static class MuxConsole
         });
     }
 
+    /// <summary>
+    /// When the live-region driver is active, commit a single markup line into native
+    /// scrollback (above the pinned footer) and return true; otherwise return false so the
+    /// caller falls through to its normal AnsiConsole rendering. Keeps simple line writers
+    /// from painting underneath the live region and corrupting it.
+    /// </summary>
+    private static bool TuiCommit(string markupLine)
+    {
+        if (!ViaDriver) return false;
+        CommitToDriver(markupLine);
+        return true;
+    }
+
+    /// <summary>
+    /// Commit a titled block (header + indented detail lines) into scrollback via the live
+    /// region instead of drawing a bordered Spectre panel/table. Borderless panels never get
+    /// clipped at the footer and keep the cursor where it belongs. Returns false when the
+    /// driver is not active so the caller can fall back to its Spectre rendering. Each detail
+    /// line is already Spectre markup (caller escapes content). Claude-Code /context feel:
+    ///   header
+    ///     ⎿ line
+    ///     ⎿ line
+    /// </summary>
+    private static bool TuiCommitBlock(string headerMarkup, IEnumerable<string> detailMarkupLines)
+    {
+        if (!ViaDriver) return false;
+        var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] {headerMarkup}" };
+        foreach (var d in detailMarkupLines)
+            lines.Add($"    [{C.Muted}]\u23bf[/] {d}");
+        lines.Add("");
+        CommitLinesToDriver(lines);
+        return true;
+    }
+
+    /// <summary>
+    /// When true (default) the periodic "[AGENT SESSION] Saved to ..." confirmation is
+    /// suppressed under the live TUI - it is noisy and the docked footer already shows the
+    /// active session id. Off the TUI it still prints (muted). Set false to restore it.
+    /// </summary>
+    public static bool QuietSessionSaves { get; set; } = true;
+
+    /// <summary>Session-save confirmation: muted, and suppressed entirely under the TUI when
+    /// <see cref="QuietSessionSaves"/> is set (the default).</summary>
+    public static void WriteSessionSaved(string message)
+    {
+        if (QuietSessionSaves && ViaDriver) return;   // footer carries the session id instead
+        WriteMuted(message);
+    }
+
     public static void WriteSuccess(string message)
     {
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("success", message); return; }
+            if (TuiCommit($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]");
         });
     }
@@ -604,6 +837,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("warning", message); return; }
+            if (TuiCommit($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]");
         });
     }
@@ -613,6 +847,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("error", message); return; }
+            if (TuiCommit($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]");
         });
     }
@@ -622,6 +857,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("info", message); return; }
+            if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
         });
     }
@@ -631,6 +867,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("debug", message); return; }
+            if (TuiCommit($"  [{C.Muted}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Muted}]{Esc(message)}[/]");
         });
     }
@@ -640,6 +877,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("body", message); return; }
+            if (TuiCommit($"  [{C.Prompt}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Prompt}]{Esc(message)}[/]");
         });
     }
@@ -649,6 +887,7 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("markup", stdioFallback ?? StripMarkup(spectreMarkup)); return; }
+            if (TuiCommit(spectreMarkup)) return;
             AnsiConsole.MarkupLine(spectreMarkup);
         });
     }
@@ -667,6 +906,11 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) return;
+            if (Capturing) return;   // collapsed sub-agent: no inline blank lines
+            // Under the live-region driver, raw AnsiConsole writes land BELOW the pinned
+            // footer and desync the painted-row count, stranding frozen copies of the
+            // footer/chip in scrollback. Commit a blank line through the driver instead.
+            if (TuiCommit("")) return;
             AnsiConsole.WriteLine();
         });
     }
@@ -677,6 +921,11 @@ public static class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
 
         if (StdioMode)
         {
@@ -727,6 +976,11 @@ public static class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             EmitJson("input_request", D(("prompt", message), ("secret", true)));
@@ -746,6 +1000,11 @@ public static class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             EmitJson("confirm_request", D(("prompt", message), ("default", defaultValue)));
@@ -763,6 +1022,11 @@ public static class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
+
         if (StdioMode)
         {
             var list = choices.ToList();
@@ -778,6 +1042,7 @@ public static class MuxConsole
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
                 .AddChoices(choices));
     }
 
@@ -787,6 +1052,11 @@ public static class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
+        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
+        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
+        TuiSuspend();
 
         if (StdioMode)
         {
@@ -807,6 +1077,7 @@ public static class MuxConsole
             new MultiSelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
                 .AddChoices(choices))
             .ToList();
     }
@@ -820,6 +1091,16 @@ public static class MuxConsole
                 var rowList = rows.Select(r => new Dictionary<string, object?> { ["key"] = r.Key, ["value"] = r.Value }).ToList();
                 EmitJson("table", D(("title", title), ("rows", rowList)));
                 return;
+            }
+
+            // TUI: borderless key/value block through the live region (no clipping, cursor safe).
+            if (ViaDriver)
+            {
+                var rowList = rows.ToList();
+                int keyW = rowList.Count == 0 ? 0 : rowList.Max(r => (r.Key ?? "").Length);
+                var detail = rowList.Select(r =>
+                    $"[{C.Info}]{Esc((r.Key ?? "").PadRight(keyW))}[/]  [{C.Prompt}]{Esc(r.Value ?? "")}[/]");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
             }
 
             var table = new Table()
@@ -846,6 +1127,16 @@ public static class MuxConsole
             {
                 EmitJson("panel", D(("title", title), ("content", content)));
                 return;
+            }
+
+            // TUI: commit a borderless titled block through the live region so it can never be
+            // clipped at the docked footer and the cursor stays put. Each content line becomes
+            // an indented detail row (Claude-Code feel). Falls back to a Spectre panel in classic.
+            if (ViaDriver)
+            {
+                var detail = (content ?? "").Replace("\r\n", "\n").Split('\n')
+                    .Select(l => $"[{C.Prompt}]{Esc(l.TrimEnd())}[/]");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
             }
 
             AnsiConsole.Write(new Panel($"[{C.Prompt}]{Esc(content)}[/]")
@@ -903,6 +1194,8 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_start", D(("agent", agentName))); }
+            else if (Capturing) { /* collapsed sub-agent: header folded into the summary line */ }
+            else if (IsTui) { RenderTuiTurnHeader(agentName); }
             else
             {
                 AnsiConsole.WriteLine();
@@ -925,6 +1218,8 @@ public static class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("agent_turn_end"); return; }
+            if (Capturing) return;   // collapsed sub-agent: no inline turn spacer
+            if (TuiCommit("")) return;
             AnsiConsole.WriteLine();
         }, clearIndicator: false);
     }
@@ -937,6 +1232,7 @@ public static class MuxConsole
             {
                 EmitJson("delegation", D(("from", fromAgent), ("to", toAgent), ("task", task)));
             }
+            else if (IsTui) { RenderTuiDelegation(fromAgent, toAgent, task, truncLength); }
             else
             {
                 string truncTask = task.Length > truncLength ? task[..truncLength] + "..." : task;
@@ -962,6 +1258,7 @@ public static class MuxConsole
             {
                 EmitJson("tool_call", D(("agent", agent), ("tool", tool), ("args", args)));
             }
+            else if (IsTui) { RenderTuiToolCall(agent, tool, args); }
             else
             {
                 AnsiConsole.MarkupLine($"  [{C.Muted}]--[/] [{C.Info}]{Esc(agent)}[/] [{C.Muted}]->[/] [{C.Accent}]{Esc(tool)}[/]");
@@ -986,6 +1283,8 @@ public static class MuxConsole
             {
                 EmitJson("tool_result", D(("agent", agent), ("summary", summary)));
             }
+            else if (Capturing) { CaptureToolResult(summary); }
+            else if (IsTui) { RenderTuiToolResultSummary(agent, summary); }
             else
             {
                 string clean = CollapseWhitespace(summary);
@@ -1010,9 +1309,14 @@ public static class MuxConsole
         if (fullResult.Length <= 0 || fullResult.Trim().Equals("Task marked as complete.", StringComparison.OrdinalIgnoreCase)
             || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase)) return;
 
+        // Collapsed sub-agent: fold the tool result into the buffered transcript (the hook
+        // below still fires) instead of rendering a panel/merged line inline.
+        if (Capturing) { CaptureToolResult($"{tool}: {Common.ExtractMcpText(fullResult)}"); return; }
 
         if (!StdioMode)
         {
+            if (IsTui) { RenderTuiToolResultPanel(agent, tool, fullResult, swarm); return; }
+
             fullResult = Common.ExtractMcpText(fullResult);
 
             var display = fullResult.Length > 2000
@@ -1051,6 +1355,8 @@ public static class MuxConsole
             {
                 EmitJson("task_complete", D(("agent", agent), ("summary", summary)));
             }
+            else if (Capturing) { /* collapsed sub-agent: completion folded into the summary line */ }
+            else if (IsTui) { RenderTuiTaskComplete(agent, summary); }
             else
             {
                 AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Step}]{Esc(agent)}[/] [{C.Muted}]completed[/]  [{C.Info}]{Esc(summary)}[/]");
@@ -1098,119 +1404,114 @@ public static class MuxConsole
             return;
         }
 
-        if (AnsiConsole.Profile.Width < 140)
+        // Under the live-region driver, the multi-column Spectre grid paints below the
+        // footer and gets clipped/desynced. Commit the plain help text through the driver
+        // as a borderless block (Claude-Code feel) so it scrolls into native history.
+        if (ViaDriver)
         {
-            WritePanel("Mux-Swarm — Command Reference", helpText);
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Mux-Swarm \u2014 Command Reference[/]", "" };
+            foreach (var raw in (helpText ?? "").Replace("\r\n", "\n").Split('\n'))
+                lines.Add($"  [{C.Prompt}]{Esc(raw.TrimEnd())}[/]");
+            lines.Add("");
+            CommitLinesToDriver(lines);
             return;
         }
 
-        var commands = new StringBuilder();
-        commands.AppendLine($"[{C.Step}]Modes[/]");
-        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
-        commands.AppendLine($"  [{C.Prompt}]/swarm[/]         [{C.Muted}]Multi-agent orchestrated loop[/]");
-        commands.AppendLine($"  [{C.Prompt}]/pswarm[/]        [{C.Muted}]Parallel concurrent dispatch[/]");
-        commands.AppendLine($"  [{C.Prompt}]/agent[/]         [{C.Muted}]Single-agent conversation[/]");
-        commands.AppendLine($"  [{C.Prompt}]/stateless[/]     [{C.Muted}]One-off stateless task[/]");
-        commands.AppendLine($"  [{C.Prompt}]/subagents[/]     [{C.Muted}]Toggle sub-agent delegation in single-agent conversation, shorthand /sub[/]");
-        commands.AppendLine($"  [{C.Prompt}]/parasubagents[/] [{C.Muted}]Toggle parallel sub-agent delegation in single-agent conversation, shorthand /psub[/]");
-        commands.AppendLine($"  [{C.Prompt}]/workflow[/]      [{C.Muted}]Run a workflow file[/]");
-        commands.AppendLine($"  [{C.Prompt}]/resume[/]        [{C.Muted}]Resume a previous session[/]");
-        commands.AppendLine();
-        commands.AppendLine($"[{C.Step}]Execution[/]");
-        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
-        commands.AppendLine($"  [{C.Prompt}]/plan[/]          [{C.Muted}]Toggle plan mode (confirm before exec)[/]");
-        commands.AppendLine($"  [{C.Prompt}]/continuous[/]    [{C.Muted}]Toggle autonomous execution[/]");
-        commands.AppendLine();
-        commands.AppendLine($"[{C.Step}]Session[/]");
-        commands.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
-        commands.AppendLine($"  [{C.Prompt}]/compact[/]       [{C.Muted}]Compress context (single agent)[/]");
-        commands.AppendLine($"  [{C.Prompt}]/sessions[/]      [{C.Muted}]List saved sessions[/]");
-        commands.AppendLine($"  [{C.Prompt}]/report[/]        [{C.Muted}]Generate session audit report[/]");
-        commands.AppendLine($"  [{C.Prompt}]/report <id>[/]   [{C.Muted}]Audit a specific session[/]");
-        commands.AppendLine($"  [{C.Prompt}]/clear[/]         [{C.Muted}]Clear screen[/]");
-        commands.AppendLine($"  [{C.Prompt}]/qc[/] [{C.Muted}]/[/] [{C.Prompt}]/qm[/]      [{C.Muted}]Exit active session[/]");
-        commands.Append($"  [{C.Prompt}]/exit[/]          [{C.Muted}]Exit Mux-Swarm[/]");
+        // Single source of truth: render Help.HelpText (the same catalog used by stdio and the
+        // live driver) in a rounded panel. The old hand-maintained multi-column grid was a
+        // duplicate that silently drifted from the real command set; it has been removed.
+        WritePanel("Mux-Swarm \u2014 Command Reference", helpText);
+    }
 
-        var config = new StringBuilder();
-        config.AppendLine($"[{C.Step}]Configuration[/]");
-        config.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
-        config.AppendLine($"  [{C.Prompt}]/model[/]         [{C.Muted}]View current models[/]");
-        config.AppendLine($"  [{C.Prompt}]/setmodel[/]      [{C.Muted}]Change agent/orchestrator model[/]");
-        config.AppendLine($"  [{C.Prompt}]/swap[/]          [{C.Muted}]Swap active single agent[/]");
-        config.AppendLine($"  [{C.Prompt}]/addcontext[/]    [{C.Muted}]Configure context each agent is injected with[/]");
-        config.AppendLine($"  [{C.Prompt}]/provider[/]      [{C.Muted}]View or switch LLM provider[/]");
-        config.AppendLine($"  [{C.Prompt}]/limits[/]        [{C.Muted}]View execution limits[/]");
-        config.AppendLine($"  [{C.Prompt}]/tools[/]         [{C.Muted}]List MCP tools[/]");
-        config.AppendLine($"  [{C.Prompt}]/skills[/]        [{C.Muted}]List local skills[/]");
-        config.AppendLine($"  [{C.Prompt}]/memory[/]        [{C.Muted}]View knowledge graph[/]");
-        config.AppendLine($"  [{C.Prompt}]/status[/]        [{C.Muted}]Full system status[/]");
-        config.AppendLine($"  [{C.Prompt}]/setup[/]         [{C.Muted}]Reconfigure[/]");
-        config.AppendLine($"  [{C.Prompt}]/onboard[/]       [{C.Muted}]Create or update BRAIN.md and MEMORY.md[/]");
-        config.AppendLine($"  [{C.Prompt}]/refresh[/]       [{C.Muted}]Reload config, MCPs, skills[/]");
-        config.AppendLine($"  [{C.Prompt}]/reloadskills[/]  [{C.Muted}]Refresh skills only[/]");
-        config.AppendLine($"  [{C.Prompt}]/dockerexec[/]    [{C.Muted}]Toggle Docker exec mode[/]");
-        config.AppendLine($"  [{C.Prompt}]/delimiter[/]     [{C.Muted}]Toggle multi-line input[/]");
-        config.AppendLine($"  [{C.Prompt}]/dbg[/]           [{C.Muted}]Enable tool call output (stdio)[/]");
-        config.Append($"  [{C.Prompt}]/nodbg[/]         [{C.Muted}]Disable tool call output (stdio)[/]");
+    /// <summary>
+    /// Render the keyboard-shortcut reference. Sourced entirely from the canonical
+    /// <see cref="Tui.TuiCommands.Keys"/> catalog so it can never drift from the live key
+    /// handlers or the /api/commands web endpoint. Grouped by context (prompt / turn / view).
+    /// Honors stdio (plain text), the live driver (borderless block), and classic (panel).
+    /// </summary>
+    public static void PrintShortcuts()
+    {
+        string ContextTitle(string ctx) => ctx switch
+        {
+            "prompt" => "At the prompt (input line)",
+            "turn"   => "During an agent turn",
+            "view"   => "Transcript / expand view",
+            _         => ctx,
+        };
+        var order = new[] { "prompt", "turn", "view" };
 
-        var cli = new StringBuilder();
-        cli.AppendLine($"[{C.Step}]CLI Usage[/]");
-        cli.AppendLine($"[{C.Muted}]────────────────────────────────────────[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms \"<goal>\"[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms <goal.txt>[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms --goal \"<goal>\"[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms --goal <goal.txt>[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms --continuous --goal \"<goal>\"[/]");
-        cli.AppendLine($"  [{C.Prompt}]ms --parallel --goal \"<goal>\"[/]");
-        cli.AppendLine();
-        cli.AppendLine($"[{C.Step}]Flags[/]");
-        cli.AppendLine($"[{C.Muted}]────────────────────────────────────────[/]");
-        cli.AppendLine($"  [{C.Prompt}]--goal <text|file>[/]       [{C.Muted}]Explicit goal[/]");
-        cli.AppendLine($"  [{C.Prompt}]--continuous[/]             [{C.Muted}]Autonomous loop mode[/]");
-        cli.AppendLine($"  [{C.Prompt}]--parallel[/]               [{C.Muted}]Concurrent batch dispatch[/]");
-        cli.AppendLine($"  [{C.Prompt}]--max-parallelism <n>[/]    [{C.Muted}]Max concurrent tasks (default 4)[/]");
-        cli.AppendLine($"  [{C.Prompt}]--agent <name>[/]           [{C.Muted}]Single agent mode[/]");
-        cli.AppendLine($"  [{C.Prompt}]--plan[/]                   [{C.Muted}]Confirm before executing[/]");
-        cli.AppendLine($"  [{C.Prompt}]--workflow <file>[/]        [{C.Muted}]Run workflow file[/]");
-        cli.AppendLine($"  [{C.Prompt}]--provider <name>[/]        [{C.Muted}]Set LLM provider[/]");
-        cli.AppendLine($"  [{C.Prompt}]--goal-id <id>[/]           [{C.Muted}]Session identifier[/]");
-        cli.AppendLine($"  [{C.Prompt}]--min-delay <secs>[/]       [{C.Muted}]Loop delay (default 300)[/]");
-        cli.AppendLine($"  [{C.Prompt}]--persist-interval <s>[/]   [{C.Muted}]Save interval in seconds[/]");
-        cli.AppendLine($"  [{C.Prompt}]--session-retention <n>[/]  [{C.Muted}]Keep last N sessions[/]");
-        cli.AppendLine($"  [{C.Prompt}]--stdio[/]                  [{C.Muted}]Machine-readable NDJSON[/]");
-        cli.AppendLine($"  [{C.Prompt}]--delimiter <str>[/]        [{C.Muted}]Multi-line input delimiter[/]");
-        cli.AppendLine($"  [{C.Prompt}]--serve <port>[/]           [{C.Muted}]Start embedded web UI[/]");
-        cli.AppendLine($"  [{C.Prompt}]--daemon[/]                 [{C.Muted}]Start daemon mode[/]");
-        cli.AppendLine($"  [{C.Prompt}]--register[/]               [{C.Muted}]Register as OS service[/]");
-        cli.AppendLine($"  [{C.Prompt}]--remove[/]                 [{C.Muted}]Unregister OS service[/]");
-        cli.AppendLine($"  [{C.Prompt}]--watchdog[/]               [{C.Muted}]External watchdog toggle[/]");
-        cli.AppendLine($"  [{C.Prompt}]--mcp-strict[/]             [{C.Muted}]Require all MCPs (default true)[/]");
-        cli.AppendLine($"  [{C.Prompt}]--docker-exec[/]            [{C.Muted}]Route exec via Docker[/]");
-        cli.AppendLine($"  [{C.Prompt}]--cfg <path>[/]             [{C.Muted}]Override config.json[/]");
-        cli.AppendLine($"  [{C.Prompt}]--swarmcfg <path>[/]        [{C.Muted}]Override swarm.json[/]");
-        cli.Append($"  [{C.Prompt}]--report [[id]][/]            [{C.Muted}]Generate report(s) and exit[/]");
+        // Plain text for stdio.
+        if (StdioMode)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Keyboard Shortcuts");
+            foreach (var ctx in order)
+            {
+                sb.AppendLine();
+                sb.AppendLine(ContextTitle(ctx));
+                foreach (var k in Tui.TuiCommands.Keys)
+                    if (k.Context == ctx)
+                        sb.AppendLine($"  {k.Keys,-14}{k.Desc}");
+            }
+            WriteBody(sb.ToString().TrimEnd());
+            return;
+        }
 
-        var grid = new Grid();
-        grid.AddColumn(new GridColumn().PadRight(3));
-        grid.AddColumn(new GridColumn().Width(1).NoWrap());
-        grid.AddColumn(new GridColumn().PadLeft(3).PadRight(3));
-        grid.AddColumn(new GridColumn().Width(1).NoWrap());
-        grid.AddColumn(new GridColumn().PadLeft(3));
-        grid.AddRow(
-            new Markup(commands.ToString()),
-            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
-            new Markup(config.ToString()),
-            new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
-            new Markup(cli.ToString())
-        );
+        // Live driver: borderless block committed into native scrollback.
+        if (ViaDriver)
+        {
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Keyboard Shortcuts[/]" };
+            foreach (var ctx in order)
+            {
+                lines.Add("");
+                lines.Add($"  [{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+                foreach (var k in Tui.TuiCommands.Keys)
+                    if (k.Context == ctx)
+                        lines.Add($"    [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
+            }
+            lines.Add("");
+            CommitLinesToDriver(lines);
+            return;
+        }
 
-        var panel = new Panel(grid)
-            .Header($"[{C.Step}]Mux-Swarm — Command Reference[/]")
+        // Classic: a rounded panel.
+        var body = new StringBuilder();
+        bool firstGroup = true;
+        foreach (var ctx in order)
+        {
+            if (!firstGroup) body.AppendLine();
+            firstGroup = false;
+            body.AppendLine($"[{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+            body.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+            foreach (var k in Tui.TuiCommands.Keys)
+                if (k.Context == ctx)
+                    body.AppendLine($"  [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
+        }
+
+        var shortcutsPanel = new Panel(new Markup(body.ToString().TrimEnd()))
+            .Header($"[{C.Step}]Mux-Swarm — Keyboard Shortcuts[/]")
             .Border(BoxBorder.Rounded)
             .BorderStyle(new Style(Color.Grey35))
             .Padding(1, 1)
             .Expand();
-
-        AnsiConsole.Write(panel);
+        AnsiConsole.Write(shortcutsPanel);
     }
+}
+
+
+/// <summary>
+/// Interactive render mode for <see cref="MuxConsole"/> (v0.11.0). Distinct from the
+/// stdio/serve NDJSON path, which is selected by <see cref="MuxConsole.StdioMode"/> and
+/// always takes precedence.
+/// </summary>
+public enum RenderMode
+{
+    /// <summary>NDJSON line protocol for --stdio / --serve. Byte-identical, machine-parseable.</summary>
+    Stdio,
+
+    /// <summary>Full-screen live renderer (interactive default on a capable terminal).</summary>
+    Tui,
+
+    /// <summary>Pre-v0.11.0 line-by-line renderer (opt-out and non-capable-terminal fallback).</summary>
+    Classic
 }

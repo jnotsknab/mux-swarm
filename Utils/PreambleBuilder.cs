@@ -6,7 +6,7 @@
 /// </summary>
 public static class PreambleBuilder
 {
-    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false)
+    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
     {
         var preamble = "";
 
@@ -44,6 +44,61 @@ public static class PreambleBuilder
             - If the task is trivial (single file read, simple question), skip planning and just do it
             - If the user approved a plan, follow it. Do not deviate without re-confirming
             - Use ask_user(type: 'select') when you need the user to choose between distinct approaches
+            ";
+
+        if (ultra)
+            preamble += @"
+            ## Ultra Mode — Maximum Thoroughness (DEEP REASONING)
+            You are operating in Ultra mode: invest your maximum reasoning budget. Optimize for
+            correctness and depth over speed. This is the highest-rigor mode the runtime offers.
+
+            ### Reasoning Discipline (MANDATORY)
+            1. Decompose the request into its smallest meaningful sub-problems before acting.
+            2. State your assumptions EXPLICITLY. Flag anything uncertain and how you would verify it.
+            3. Consider at least two distinct approaches; weigh trade-offs before committing to one.
+            4. Reason through edge cases, failure modes, and second-order consequences.
+            5. Before finalizing, run an explicit self-review pass: re-read your plan/output, look for
+               errors, gaps, and unstated assumptions, and correct them.
+            6. Prefer verified ground truth (filesystem, tool output) over recollection.
+
+            Be rigorous, not verbose: depth of thought, not padding. Surface the reasoning that
+            changes the decision; omit filler.
+            ";
+
+        if (ultra && App.Config.Ultra.AutoSubAgents)
+            preamble += @"
+            ### Aggressive Delegation (Ultra)
+            You have parallel sub-agent delegation enabled. Use it heavily. For any goal with
+            separable parts, PREFER fanning work out to sub-agents over doing everything yourself:
+            - Split independent investigations, file reads, research threads, and edits into discrete
+              sub-tasks and dispatch them to sub-agents in parallel.
+            - Each sub-agent runs in its OWN isolated session — delegating keeps your main context
+              lean and lets several lines of work progress at once.
+            - Reserve your own turns for synthesis, cross-cutting decisions, and final review of
+              what the sub-agents return.
+            - Default to delegating when a task is parallelizable or exploratory; only handle it
+              inline when it is trivial or inherently sequential.
+
+            #### Delegation Decision (MANDATORY to surface)
+            At the start of any multi-step task, EXPLICITLY classify it as either
+            'parallelizable' or 'sequential-stateful', and state your delegation split — or why
+            you are NOT splitting — before you proceed. Re-evaluate and restate this whenever the
+            task's shape changes mid-flight (e.g. an exploratory phase opens up). Never silently
+            decline to delegate: the decision must be visible, not implicit.
+
+            #### Delegate-by-default triggers
+            When ANY of these hold, fan out to sub-agents unless you give an explicit reason not to:
+            - Three or more independent file/code investigations with no data dependency between them.
+            - Two or more unrelated research threads (separate questions, sources, or subsystems).
+            - Any repo-wide or cross-cutting audit (e.g. 'find every X across the codebase').
+            - Multiple independent edits/fixes that do not touch the same files or shared state.
+
+            #### Sequential-stateful escape hatch
+            Do NOT force fan-out when the work is an inherently sequential feedback loop or mutates
+            shared state that parallel agents would race on — e.g. read -> theory -> probe -> fix ->
+            build -> test -> commit against one working tree, or iterating on a shared scaffold/file.
+            In these cases keep it inline, but SAY SO per the Delegation Decision above. Correctness
+            on a tight verify-loop outranks parallelism; do not pad a session with manufactured splits.
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;

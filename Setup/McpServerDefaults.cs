@@ -95,21 +95,6 @@ public static class McpServerDefaults
             Enabled = true
         });
 
-        // OS-specific
-        if (PlatformContext.IsWindows)
-        {
-            AddIfMissing("Windows", new McpServerConfig
-            {
-                Type = "stdio",
-                Command = "uvx",
-                Args = new[] { "windows-mcp" },
-                Env = new Dictionary<string, string?>
-                {
-                    ["ANONYMIZED_TELEMETRY"] = "true"
-                },
-                Enabled = true
-            });
-        }
     }
 
     /// <summary>
@@ -136,8 +121,6 @@ public static class McpServerDefaults
             PatchIfMatches(config, "Fetch", "uvx", uvx);
             PatchIfMatches(config, "ChromaDB", "uvx", uvx);
 
-            if (PlatformContext.IsWindows)
-                PatchIfMatches(config, "Windows", "uvx", uvx);
         }
     }
 

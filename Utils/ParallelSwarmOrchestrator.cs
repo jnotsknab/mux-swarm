@@ -368,6 +368,10 @@ public static class ParallelSwarmOrchestrator
                     agentChatOptions.AdditionalProperties = modelChatOpts.AdditionalProperties;
                 }
 
+                // /ultra: raise delegated sub-agent reasoning too when configured.
+                if (App.UltraMode && App.Config.Ultra.IncludeSubAgents)
+                    UltraReasoning.Apply(agentChatOptions);
+
                 var agent = client.AsAIAgent(new ChatClientAgentOptions
                 {
                     Name = def.Name,
@@ -424,7 +428,7 @@ public static class ParallelSwarmOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", agentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -516,6 +520,10 @@ public static class ParallelSwarmOrchestrator
             orchChatOptions.AdditionalProperties = orchModelOpts.AdditionalProperties;
         }
 
+        // /ultra: orchestrator is the lead agent — always escalate when on.
+        if (App.UltraMode)
+            UltraReasoning.Apply(orchChatOptions);
+
         var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "Orchestrator",
@@ -548,8 +556,13 @@ public static class ParallelSwarmOrchestrator
         if (!prodMode)
             MuxConsole.WriteMuted("Press [Escape] during execution to cancel the current goal.");
 
-        MuxConsole.WriteLine();
-        MuxConsole.WriteRule();
+        // The live TUI already docks a full-width rule above the footer; emitting another
+        // here would double the separator. Only draw the classic rule off the TUI path.
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteRule();
+        }
 
 
         while (!cancellationToken.IsCancellationRequested)
@@ -619,7 +632,9 @@ public static class ParallelSwarmOrchestrator
             IDisposable? escapeListener = null;
 
             if (!prodMode)
-                escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken);
+                escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken,
+                    onExpand: () => MuxConsole.TuiExpandLatestInline(),
+                    onView: () => MuxConsole.TuiEnterViewMode());
 
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
@@ -861,11 +876,11 @@ public static class ParallelSwarmOrchestrator
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming("Orchestrator");
                             currentlyStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: "Orchestrator");
                         responseText.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -888,11 +903,11 @@ public static class ParallelSwarmOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming("Orchestrator");
                                 currentlyStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: "Orchestrator");
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -993,7 +1008,7 @@ public static class ParallelSwarmOrchestrator
                     Console.Write("[[END_AGENT_TURN]]");
                 else
                 {
-                    if (currentlyStreaming) MuxConsole.EndStreaming();
+                    if (currentlyStreaming) MuxConsole.EndStreaming("Orchestrator");
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1006,7 +1021,7 @@ public static class ParallelSwarmOrchestrator
             {
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming("Orchestrator"); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
 
@@ -1209,6 +1224,10 @@ public static class ParallelSwarmOrchestrator
         CancellationToken cancellationToken,
         bool prodMode = false)
     {
+        // Collapse this (concurrent) sub-agent's live output into one expandable transcript line
+        // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "parallel_sub_agent");
@@ -1325,11 +1344,11 @@ public static class ParallelSwarmOrchestrator
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            MuxConsole.BeginStreaming();
+                            MuxConsole.BeginStreaming(specialist.Def.Name);
                             currentlyStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text);
+                        MuxConsole.WriteStream(update.Text, agentName: specialist.Def.Name);
                         iterResponse.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
@@ -1352,11 +1371,11 @@ public static class ParallelSwarmOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming();
+                                MuxConsole.BeginStreaming(specialist.Def.Name);
                                 currentlyStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: specialist.Def.Name);
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1411,6 +1430,7 @@ public static class ParallelSwarmOrchestrator
                                     completionSummary = summaryObj?.ToString();
                                 if (fc.Arguments.TryGetValue("artifacts", out var artifactsObj))
                                     completionArtifacts = artifactsObj?.ToString();
+                                MuxConsole.SetCapturedStatus(completionStatus);
                             }
 
                             if (!fc.Name.Equals("signal_task_complete", StringComparison.OrdinalIgnoreCase))
@@ -1468,7 +1488,7 @@ public static class ParallelSwarmOrchestrator
                     Console.Write("[[END_AGENT_TURN]]");
                 else
                 {
-                    if (currentlyStreaming) MuxConsole.EndStreaming();
+                    if (currentlyStreaming) MuxConsole.EndStreaming(specialist.Def.Name);
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1476,7 +1496,7 @@ public static class ParallelSwarmOrchestrator
             {
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming(specialist.Def.Name); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
 

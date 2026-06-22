@@ -373,6 +373,9 @@ public sealed class ProcessCleanup : IDisposable
         if (_disposed) return;
         _disposed = true;
 
+        // Restore the terminal scroll region if a docked TUI footer was active.
+        try { MuxConsole.DisableDockedFooter(); } catch { /* ignore */ }
+
         Shutdown();
 
         if (PlatformContext.IsWindows && _jobHandle != IntPtr.Zero)
