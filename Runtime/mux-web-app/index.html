@@ -3110,25 +3110,14 @@ const icons = {
         const skey = String(ev.agent || '');
         let st = _agentStreams.get(skey);
         if (!st) {
-          st = { el: document.createElement('div'), text: '', body: null };
+          st = { el: document.createElement('div'), text: '' };
           st.el.className = 'stream-block';
-          if (skey) {
-            st.el.dataset.agent = skey;
-            // Label concurrent sub-agent streams so parallel output is legible.
-            const hdr = document.createElement('div');
-            hdr.className = 'stream-agent-label';
-            hdr.textContent = skey;
-            st.el.appendChild(hdr);
-            st.body = document.createElement('div');
-            st.body.className = 'stream-body';
-            st.el.appendChild(st.body);
-          }
+          if (skey) st.el.dataset.agent = skey;
           output.appendChild(st.el);
           _agentStreams.set(skey, st);
         }
         st.text += (ev.text || '');
-        const target = st.body || st.el;
-        target.innerHTML = renderMarkdown(st.text);
+        st.el.innerHTML = renderMarkdown(st.text);
         attachMsgCopy(st.el, st.text);
         currentStreamEl = st.el; currentStreamText = st.text;
         scrollToBottom();
@@ -5020,9 +5009,9 @@ const icons = {
     out.querySelectorAll('.file-item-container').forEach(c => {
       c.querySelector('.file-item').addEventListener('click', (e) => {
         const dlBtn = e.target.closest('.dl-btn');
-        if (dlBtn) { window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`):`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`), '_blank'); return; }
+        if (dlBtn) { window.open(`/api/download/${tab}/${encodePath(dlBtn.dataset.dl)}`, '_blank'); return; }
         if (c.dataset.isdir === 'true') loadFileList(c.dataset.path);
-        else window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/${tab}/${encodePath(c.dataset.path)}`):`/api/download/${tab}/${encodePath(c.dataset.path)}`), '_blank');
+        else window.open(`/api/download/${tab}/${encodePath(c.dataset.path)}`, '_blank');
       });
     });
   }
@@ -5300,8 +5289,7 @@ const icons = {
           ${reasoningBlocks ? `<span class="mux-sess-chip">${reasoningBlocks} reasoning</span>` : ''}
         </div>
         <div class="mux-sess-head-actions">
-          <button class="mux-sess-btn primary" data-act="resume">Resume</button>
-          <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
+                    <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
           <button class="mux-sess-btn" data-act="download">Download JSON</button>
         </div>
       </div>`;
@@ -5354,43 +5342,6 @@ const icons = {
       const orig = btn.textContent;
       btn.textContent = copied ? 'Copied!' : 'Copy failed';
       setTimeout(() => { btn.textContent = orig; }, 1400);
-    });
-    // Resume: validate the session is resumable, then send '/resume <id>' over the
-    // WS (the resumed agent loop streams back over the same channel as /agent), and
-    // return the user to the chat view. The id is the timestamped session folder name.
-    const _resumeBtn = host.querySelector('[data-act="resume"]');
-    if (_resumeBtn) _resumeBtn.addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      const orig = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Resuming…';
-      try {
-        // Pre-check via /api/sessions/{id}; tolerate older binaries (404 on route)
-        // by proceeding anyway — the runtime validates again on /resume <id>.
-        let resumable = true;
-        try {
-          const r = await fetch(_apiUrl(`/api/sessions/${encodeURIComponent(name)}`), { headers: { 'Accept': 'application/json' } });
-          if (r.ok) { const d = await r.json(); resumable = !!d.resumable; }
-        } catch (_) {}
-        if (!resumable) {
-          btn.textContent = 'Not resumable';
-          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
-          return;
-        }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          btn.textContent = 'Not connected';
-          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
-          return;
-        }
-        // Hand off to the chat view and resume.
-        try { if (sidebar.classList.contains('open')) toggleSidebar(); } catch (_) {}
-        await send('/resume ' + name);
-        try { input.focus(); } catch (_) {}
-      } finally {
-        // Button lives in the sidebar which we just closed; restore state in case
-        // the user reopens before navigating away.
-        setTimeout(() => { try { btn.textContent = orig; btn.disabled = false; } catch (_) {} }, 1200);
-      }
     });
     host.querySelector('[data-act="download"]').addEventListener('click', () => {
       window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`):`/api/download/sessions/${encodePath(name + '/agent_session.json')}`), '_blank');
