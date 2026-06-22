@@ -92,6 +92,7 @@ internal static class TuiCommands
         new("/clear",        "Clear the screen", Scope.ReplOnly),
         new("/status",       "View full system status", Scope.ReplOnly),
         new("/help",         "Full command reference", Scope.ReplOnly),
+        new("/shortcuts",    "Show keyboard shortcuts (/keys)", Scope.ReplOnly),
         new("/exit",         "Exit Mux-Swarm", Scope.ReplOnly),
     };
 
@@ -143,4 +144,48 @@ internal static class TuiCommands
 
     /// <summary>Commands offered inside an agent/swarm session (session-native set).</summary>
     public static readonly (string Cmd, string Desc)[] Session = ForScope(Scope.SessionOnly);
+
+    /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
+    /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
+    /// the transcript/expand overlay).</summary>
+    public readonly record struct KeyBind(string Keys, string Desc, string Context);
+
+    /// <summary>
+    /// Canonical keyboard-shortcut catalog. Single source of truth for the /shortcuts command,
+    /// the Help.cs reference block, and the /api/commands web endpoint, so the three never drift.
+    /// Verified against the live handlers: LineEditor.Feed (prompt editing + vim), TuiDriver.ReadLine
+    /// (prompt-level Ctrl+E / Ctrl+G), EscapeKeyListener (mid-turn Esc / Ctrl+E / Ctrl+G), and the
+    /// EnterNavMode overlay loop (view navigation).
+    /// </summary>
+    public static readonly KeyBind[] Keys =
+    {
+        // --- prompt (input line) ---
+        new("Enter",       "Submit the current message", "prompt"),
+        new("Alt+Enter",   "Insert a newline (multi-line compose) without submitting", "prompt"),
+        new("Ctrl+J",      "Insert a newline (alias for Alt+Enter)", "prompt"),
+        new("Tab",         "Accept the top autocomplete (/command, @file, /skill, /resume)", "prompt"),
+        new("Shift+Tab",   "Cycle reasoning effort (low/med/high)", "prompt"),
+        new("Up/Down",     "Browse command history (or move the autocomplete selection)", "prompt"),
+        new("Ctrl+A",      "Move cursor to start of line", "prompt"),
+        new("Ctrl+E",      "Move cursor to end of line (or expand latest tool result if collapsible)", "prompt"),
+        new("Ctrl+U",      "Delete to start of line", "prompt"),
+        new("Ctrl+K",      "Delete to end of line", "prompt"),
+        new("Ctrl+W",      "Delete the previous word", "prompt"),
+        new("Ctrl+C",      "Cancel the current input line", "prompt"),
+        new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
+        new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
+
+        // --- during an agent turn (mid-stream) ---
+        new("Esc",         "Cancel the current turn", "turn"),
+        new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
+        new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
+
+        // --- transcript / expand view (NAV overlay) ---
+        new("j / k",       "Move cursor down / up one line", "view"),
+        new("Ctrl+D/U",    "Scroll half a page down / up", "view"),
+        new("Ctrl+F/B",    "Scroll a full page down / up (also PgDn/PgUp)", "view"),
+        new("g / G",       "Jump to top / bottom (also Home/End)", "view"),
+        new("Ctrl+E/Enter","Toggle the focused tool result open / closed", "view"),
+        new("q / Esc / i", "Exit the view and return to the prompt", "view"),
+    };
 }

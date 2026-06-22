@@ -19,7 +19,7 @@ namespace MuxSwarm.Utils;
 ///   GET /api/read/{type}/{**path}    file as text (size-capped, binary-guarded)
 ///   GET /api/skills                  loaded skill manifest (name, description)
 ///   GET /api/status                  authoritative session mode / in-session flag
-///   GET /api/commands                slash command catalog + in-session-safe flags
+///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
 public static partial class ServeMode
 {
@@ -560,40 +560,28 @@ public static partial class ServeMode
     // and session-switch gating stop hardcoding their own command tables.
     private static async Task HandleCommands(HttpContext context)
     {
-        await WriteJson(context, 200, new { items = SlashCommandCatalog });
-    }
+        // Project the SINGLE canonical TUI catalog (TuiCommands.All) so the web app, the
+        // /shortcuts command, and the Help.cs reference can never drift apart. inSessionSafe
+        // maps to SessionOnly scope: the command is handled by the in-session loop itself and
+        // does NOT imply quitting the current agent session (everything else triggers a /qc).
+        var items = Tui.TuiCommands.All
+            .GroupBy(e => e.Cmd, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Select(e => new
+            {
+                cmd = e.Cmd,
+                desc = e.Desc,
+                scope = e.Scope == Tui.TuiCommands.Scope.SessionOnly ? "session" : "repl",
+                inSessionSafe = e.Scope == Tui.TuiCommands.Scope.SessionOnly,
+            })
+            .ToList();
 
-    /// <summary>
-    /// Single source of truth for the slash command catalog exposed to the web app.
-    /// inSessionSafe = command is handled by the in-session loop itself and does NOT
-    /// imply quitting the current agent session (everything else triggers a /qc).
-    /// </summary>
-    private static readonly object[] SlashCommandCatalog =
-    [
-        new { cmd = "/help",         desc = "Show help",                                  inSessionSafe = false },
-        new { cmd = "/agent",        desc = "Start a single-agent session",               inSessionSafe = false },
-        new { cmd = "/swarm",        desc = "Start a multi-agent swarm session",          inSessionSafe = false },
-        new { cmd = "/pswarm",       desc = "Start a parallel swarm session",             inSessionSafe = false },
-        new { cmd = "/stateless",    desc = "Start an ephemeral (non-persisted) session", inSessionSafe = false },
-        new { cmd = "/resume",       desc = "Resume a previous session",                  inSessionSafe = false },
-        new { cmd = "/status",       desc = "View provider, models, tools, skills, sessions", inSessionSafe = false },
-        new { cmd = "/skills",       desc = "List available local skills",                inSessionSafe = false },
-        new { cmd = "/reloadskills", desc = "Refresh skills directory",                   inSessionSafe = false },
-        new { cmd = "/refresh",      desc = "Full Mux refresh (config, MCP, skills)",     inSessionSafe = false },
-        new { cmd = "/tools",        desc = "List available tools",                       inSessionSafe = false },
-        new { cmd = "/model",        desc = "Show or set the active model",               inSessionSafe = false },
-        new { cmd = "/memory",       desc = "Show the knowledge graph",                   inSessionSafe = false },
-        new { cmd = "/sessions",     desc = "List saved sessions",                        inSessionSafe = false },
-        new { cmd = "/qc",           desc = "Quit the current agent session",             inSessionSafe = true  },
-        new { cmd = "/exit",         desc = "Exit the current session",                   inSessionSafe = true  },
-        new { cmd = "/compact",      desc = "Compress the current context",               inSessionSafe = true  },
-        new { cmd = "/wipe",         desc = "Clear the current session context (fresh start)", inSessionSafe = true },
-        new { cmd = "/tokens",       desc = "Show context token usage",                  inSessionSafe = true  },
-        new { cmd = "/undo",         desc = "Drop the last exchange from context",        inSessionSafe = true  },
-        new { cmd = "/retry",        desc = "Re-run the last message",                   inSessionSafe = true  },
-        new { cmd = "/skill",        desc = "Load a skill by name inside a session",      inSessionSafe = true  },
-        new { cmd = "/ultra",        desc = "Toggle deep-reasoning mode (plan + max reasoning + steering)", inSessionSafe = false },
-    ];
+        var keybinds = Tui.TuiCommands.Keys
+            .Select(k => new { keys = k.Keys, desc = k.Desc, context = k.Context })
+            .ToList();
+
+        await WriteJson(context, 200, new { items, keybinds });
+    }
 
     /// <summary>Heuristic binary guard: NUL byte in the sampled prefix.</summary>
     private static bool LooksBinary(byte[] data)

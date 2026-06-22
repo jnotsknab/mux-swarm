@@ -4166,6 +4166,17 @@ const icons = {
 
   // ─── Slash command palette ───
   const cmdPalette = document.getElementById('cmdPalette');
+  // Client-only commands handled purely in the browser; the server command catalog
+  // (/api/commands) never includes these, so we always merge them into the palette
+  // display after an API refresh.
+  const CLIENT_ONLY_DISPLAY = [
+    { cmd: '/copy',         desc: 'Copy the last assistant reply to the clipboard' },
+    { cmd: '/clear-screen', desc: 'Clear the view only (Ctrl+L) — does not touch context' },
+  ];
+  // Bundled FALLBACK command table. This is the source of truth ONLY for older binaries
+  // whose /api/commands endpoint 404s; on a current binary updateCommandCatalog() replaces
+  // SLASH_COMMANDS wholesale with the authoritative server catalog so the web palette and
+  // the CLI/TUI palette never drift (single source = Tui.TuiCommands.All).
   let SLASH_COMMANDS = [
     { cmd: '/swarm',        desc: 'Launch interactive multi-agent swarm loop' },
     { cmd: '/pswarm',       desc: 'Launch parallel swarm — concurrent batch dispatch' },
@@ -4210,17 +4221,6 @@ const icons = {
     { cmd: '/qc',          desc: 'Quit the current agent session (only meaningful inside one)' },
     { cmd: '/skill',       desc: 'Load a skill by name inside a session (e.g. /skill skill-name)' },
     { cmd: '/help',         desc: 'Full command reference' },
-  ];
-  // Commands available while inside an agent session (/agent, /swarm, /pswarm, /stateless)
-  const IN_AGENT_COMMANDS = [
-    { cmd: '/qc',      desc: 'Quit current agent session and return to command interface' },
-    { cmd: '/compact', desc: 'Compact current session context' },
-    { cmd: '/wipe',    desc: 'Clear the current session context (fresh start)' },
-    { cmd: '/tokens',  desc: 'Show context token usage' },
-    { cmd: '/undo',    desc: 'Drop the last exchange from context' },
-    { cmd: '/retry',   desc: 'Re-run the last message' },
-    { cmd: '/copy',    desc: 'Copy the last assistant reply to the clipboard' },
-    { cmd: '/skill',   desc: 'Load a skill by name (e.g. /skill skill-name)' },
   ];
 
   // Cached skills list, populated from /skills panel events. Used so the
@@ -4321,16 +4321,32 @@ const icons = {
   }
 
   // B5e: apply the authoritative slash-command catalog from /api/commands.
-  // We refresh the in-session-safe GATING set (the correctness-critical bit that
-  // decides whether a command triggers a transparent /qc) from the server, always
-  // re-adding the client-only screen-clear commands. The palette DISPLAY list is
-  // left as the richer bundled table; the server catalog is a superset-safe source
-  // of truth for gating, not a UI downgrade.
+  // Single-sources BOTH the palette DISPLAY list and the in-session-safe GATING set from
+  // the server catalog (Tui.TuiCommands.All), so the web palette never drifts from the
+  // CLI/TUI. Client-only commands the server does not know (/copy, /clear-screen) are
+  // always merged back in. On an older binary the endpoint 404s and we keep the bundled
+  // fallback table untouched.
   function updateCommandCatalog(items) {
     try {
+      // GATING: which commands are safe to run without leaving the session.
       const safe = items.filter(c => c && c.inSessionSafe && c.cmd).map(c => c.cmd);
       if (safe.length) {
         IN_SESSION_SAFE_CMDS = new Set([...safe, ...CLIENT_ONLY_SAFE_CMDS]);
+      }
+      // DISPLAY: rebuild the palette pool from the server catalog + client-only extras.
+      const serverRows = items
+        .filter(c => c && c.cmd)
+        .map(c => ({ cmd: c.cmd, desc: c.desc || '' }));
+      if (serverRows.length) {
+        const seen = new Set(serverRows.map(r => r.cmd.toLowerCase()));
+        const extras = CLIENT_ONLY_DISPLAY.filter(r => !seen.has(r.cmd.toLowerCase()));
+        SLASH_COMMANDS = [...serverRows, ...extras];
+        // If the palette is open (and not on a /skill sub-query), refresh it live.
+        if (paletteOpen && typeof input !== 'undefined' && input && !/^\/skill\b/i.test(input.value)) {
+          paletteItems = buildPalette(input.value);
+          paletteActive = 0;
+          renderPalette();
+        }
       }
     } catch (_) {}
   }
