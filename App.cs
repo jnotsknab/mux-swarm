@@ -13,9 +13,9 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.10.3";
+    public static readonly string Version = "0.11.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g11.21";
+    public static readonly string DebugTag = "";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
