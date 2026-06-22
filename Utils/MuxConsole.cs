@@ -1518,6 +1518,80 @@ public static partial class MuxConsole
 
         AnsiConsole.Write(panel);
     }
+
+    /// <summary>
+    /// Render the keyboard-shortcut reference. Sourced entirely from the canonical
+    /// <see cref="Tui.TuiCommands.Keys"/> catalog so it can never drift from the live key
+    /// handlers or the /api/commands web endpoint. Grouped by context (prompt / turn / view).
+    /// Honors stdio (plain text), the live driver (borderless block), and classic (panel).
+    /// </summary>
+    public static void PrintShortcuts()
+    {
+        string ContextTitle(string ctx) => ctx switch
+        {
+            "prompt" => "At the prompt (input line)",
+            "turn"   => "During an agent turn",
+            "view"   => "Transcript / expand view",
+            _         => ctx,
+        };
+        var order = new[] { "prompt", "turn", "view" };
+
+        // Plain text for stdio.
+        if (StdioMode)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("Keyboard Shortcuts");
+            foreach (var ctx in order)
+            {
+                sb.AppendLine();
+                sb.AppendLine(ContextTitle(ctx));
+                foreach (var k in Tui.TuiCommands.Keys)
+                    if (k.Context == ctx)
+                        sb.AppendLine($"  {k.Keys,-14}{k.Desc}");
+            }
+            WriteBody(sb.ToString().TrimEnd());
+            return;
+        }
+
+        // Live driver: borderless block committed into native scrollback.
+        if (ViaDriver)
+        {
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Keyboard Shortcuts[/]" };
+            foreach (var ctx in order)
+            {
+                lines.Add("");
+                lines.Add($"  [{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+                foreach (var k in Tui.TuiCommands.Keys)
+                    if (k.Context == ctx)
+                        lines.Add($"    [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
+            }
+            lines.Add("");
+            CommitLinesToDriver(lines);
+            return;
+        }
+
+        // Classic: a rounded panel.
+        var body = new StringBuilder();
+        bool firstGroup = true;
+        foreach (var ctx in order)
+        {
+            if (!firstGroup) body.AppendLine();
+            firstGroup = false;
+            body.AppendLine($"[{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+            body.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
+            foreach (var k in Tui.TuiCommands.Keys)
+                if (k.Context == ctx)
+                    body.AppendLine($"  [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
+        }
+
+        var shortcutsPanel = new Panel(new Markup(body.ToString().TrimEnd()))
+            .Header($"[{C.Step}]Mux-Swarm — Keyboard Shortcuts[/]")
+            .Border(BoxBorder.Rounded)
+            .BorderStyle(new Style(Color.Grey35))
+            .Padding(1, 1)
+            .Expand();
+        AnsiConsole.Write(shortcutsPanel);
+    }
 }
 
 

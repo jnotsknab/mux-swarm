@@ -128,4 +128,36 @@ public class MuxConsoleTests
         }
     }
 
+    [Fact]
+    public void PrintShortcuts_StdioPath_EmitsContextsAndSecondaryExpandKey()
+    {
+        // In stdio mode PrintShortcuts routes through WriteBody, which emits a single JSON
+        // "body" event carrying the full plain-text shortcut reference. Capture it and assert
+        // the three context groups and the new Ctrl+G affordance are present.
+        var prevStdio = MuxConsole.StdioMode;
+        var prevOut = Console.Out;
+        try
+        {
+            var sw = new System.IO.StringWriter();
+            Console.SetOut(sw);
+            MuxConsole.StdioMode = true;
+            MuxConsole.PrintShortcuts();
+            var output = sw.ToString();
+            Assert.Contains("Keyboard Shortcuts", output);
+            Assert.Contains("At the prompt", output);
+            Assert.Contains("During an agent turn", output);
+            Assert.Contains("Transcript / expand view", output);
+            // NOTE: the JSON encoder escapes '+' as \u002B, so assert on '+'-free descriptions
+            // rather than the raw chord text. These descriptions are unique to the new Ctrl+G
+            // secondary-expand affordance and the Esc cancel behavior.
+            Assert.Contains("does not cancel", output);
+            Assert.Contains("Cancel the current turn", output);
+        }
+        finally
+        {
+            MuxConsole.StdioMode = prevStdio;
+            Console.SetOut(prevOut);
+        }
+    }
+
 }

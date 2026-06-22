@@ -474,6 +474,19 @@ public static partial class MuxConsole
         lock (ConsoleLock) { return _driver!.ExpandLatestInline(); }
     }
 
+    /// <summary>
+    /// Open the vim NAV (view) overlay on demand - safe to call mid-stream from the
+    /// EscapeKeyListener thread (Ctrl+G). Holds the console lock for the whole overlay session,
+    /// so any concurrent streaming commit blocks-and-defers (the driver also retains history
+    /// while NAV owns the screen); on exit the driver repaints one fresh frame. No-op outside
+    /// TUI / when nothing is retained yet. Returns true if the overlay was opened.
+    /// </summary>
+    internal static bool TuiEnterViewMode()
+    {
+        if (!ViaDriver) return false;
+        lock (ConsoleLock) { return _driver!.EnterViewMode(); }
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
 

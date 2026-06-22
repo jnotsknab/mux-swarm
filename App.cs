@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.10.3";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g11.20";
+    public static readonly string DebugTag = "g11.21";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -387,6 +387,11 @@ public class App
             {
                 case "/help":
                     MuxConsole.PrintHelp(Help.HelpText);
+                    break;
+
+                case "/shortcuts":
+                case "/keys":
+                    MuxConsole.PrintShortcuts();
                     break;
 
                 case "/":

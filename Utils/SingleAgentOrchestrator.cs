@@ -825,7 +825,8 @@ public static class SingleAgentOrchestrator
             // Esc cancels the turn; Ctrl+E expands the latest large tool result inline (mid-stream)
         // without cancelling - so the user can read full output while the agent keeps working.
         using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
-            onExpand: () => MuxConsole.TuiExpandLatestInline());
+            onExpand: () => MuxConsole.TuiExpandLatestInline(),
+            onView: () => MuxConsole.TuiEnterViewMode());
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;

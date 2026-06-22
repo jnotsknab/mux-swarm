@@ -445,6 +445,48 @@ public class TuiDriverTests
         Assert.False(TuiCommands.IsReplOnly("/compact"));
     }
 
+    // --- /shortcuts command + canonical keybind catalog ---------------------
+
+    [Fact]
+    public void TuiCommands_ShortcutsCommand_IsRegistered_ReplOnly()
+    {
+        // /shortcuts must be offered at the REPL menu (it has a handler in App.cs).
+        Assert.Contains(TuiCommands.All, e => e.Cmd == "/shortcuts");
+        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/shortcuts");
+        Assert.True(TuiCommands.IsReplOnly("/shortcuts"));
+    }
+
+    [Fact]
+    public void TuiCommands_Keys_CatalogIsWellFormed()
+    {
+        Assert.NotEmpty(TuiCommands.Keys);
+        // Every entry has a non-empty chord, description, and a known context bucket.
+        var contexts = new HashSet<string> { "prompt", "turn", "view" };
+        foreach (var k in TuiCommands.Keys)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(k.Keys));
+            Assert.False(string.IsNullOrWhiteSpace(k.Desc));
+            Assert.Contains(k.Context, contexts);
+        }
+        // All three contexts are represented.
+        foreach (var ctx in contexts)
+            Assert.Contains(TuiCommands.Keys, k => k.Context == ctx);
+    }
+
+    [Fact]
+    public void TuiCommands_Keys_DocumentEscAndSecondaryExpand()
+    {
+        // The whole point of the feature: Esc cancels mid-turn, and there is a secondary
+        // (Ctrl+G) affordance to open/expand that does NOT cancel - documented in both the
+        // prompt and turn contexts.
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Esc"
+            && k.Desc.Contains("Cancel", System.StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Ctrl+G");
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "prompt" && k.Keys == "Ctrl+G");
+        // Ctrl+E remains documented as the primary expand affordance.
+        Assert.Contains(TuiCommands.Keys, k => k.Keys == "Ctrl+E");
+    }
+
     // --- meter semantics (dual-color total/threshold) -----------------------
 
     [Fact]
@@ -883,5 +925,31 @@ public class TuiDriverTests
         var files = new[] { "a.cs" };
         var rows = TuiComponents.FilesPreview("", files, 80);
         Assert.DoesNotContain(rows, r => r.Contains("--workspace"));
+    }
+
+    // --- g11.3: mid-turn view-mode (NAV) open/close concurrency guard ----------------
+
+    [Fact]
+    public void Driver_EnterViewMode_EmptyTranscript_ReturnsFalse_NoConsole()
+    {
+        // With nothing retained, EnterViewMode must short-circuit (return false) WITHOUT
+        // touching the real Console - safe to call from the mid-turn listener thread.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        Assert.False(d.EnterViewMode());
+    }
+
+    [Fact]
+    public void Driver_EnterViewMode_IsPublicMidTurnEntryPoint()
+    {
+        // Surface check: the mid-turn entry point exists and is callable on the driver
+        // (the EscapeKeyListener Ctrl+G handler routes through MuxConsole.TuiEnterViewMode).
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        // No transcript yet -> false, but the call itself must not throw.
+        var ex = Record.Exception(() => d.EnterViewMode());
+        Assert.Null(ex);
     }
 }

@@ -121,12 +121,22 @@ internal sealed class TuiDriver
     private void CommitMirrored(IReadOnlyList<string> lines)
     {
         Retain(lines);
+        // While the NAV overlay owns the screen (possibly opened mid-turn), retain history but
+        // do NOT physically write - NAV exit issues a full repaint that reflects everything.
+        if (_navActive) return;
         _region.CommitAbove(lines, BuildLiveFrame(Width));
     }
 
     // input state - true only inside ReadLine's raw-mode loop
     private bool _inInput;
     private bool _shuttingDown;
+
+    // True while the NAV (vim view) overlay owns the screen. NAV can be opened mid-turn (via
+    // the EscapeKeyListener's Ctrl+G), so the streaming/commit path must NOT physically write
+    // to the live region while this is set - it keeps mutating the data model + retaining into
+    // _transcript, but defers the screen paint until NAV exits and issues one full Repaint.
+    // Re-entrancy guard too: a second open request while NAV is active is a no-op.
+    private volatile bool _navActive;
 
     // Highlighted candidate index in the open autocomplete preview (palette / skill / session /
     // @file), or -1 when nothing is highlighted. Arrow keys move it while a preview is open;
@@ -269,7 +279,7 @@ internal sealed class TuiDriver
         // driver commit methods which are not internally synchronized.
         FlushPendingToolCall();
         RetainExpandable(collapsedLine, agent, fullTranscript, error: false);
-        _region.CommitAbove(new[] { collapsedLine }, BuildLiveFrame(Width));
+        if (!_navActive) _region.CommitAbove(new[] { collapsedLine }, BuildLiveFrame(Width));
         _pendingGap = true;
     }
 
@@ -313,7 +323,7 @@ internal sealed class TuiDriver
             RetainExpandable(merged[0], toolName, resultText ?? "", error);
             for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
             TrimTranscript();
-            _region.CommitAbove(merged, BuildLiveFrame(Width));
+            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
         }
         else
         {
@@ -327,6 +337,25 @@ internal sealed class TuiDriver
     /// panel committed below the current transcript. No-op when nothing is expandable. The
     /// retained block is cleared after expansion so repeated presses don't duplicate it.
     /// </summary>
+    /// <summary>
+    /// Open the vim NAV (view) overlay on demand - safe to call MID-TURN from the
+    /// EscapeKeyListener thread (Ctrl+G). Opens focused on the latest expandable block if one
+    /// exists, else the plain transcript. While open, the concurrent streaming/commit path
+    /// retains history but defers screen writes (see <see cref="_navActive"/>); NAV exit issues
+    /// one full repaint. No-op when the transcript is empty or NAV is already active (re-entrancy
+    /// guard). Returns true if the overlay was opened. The caller holds the console lock.
+    /// </summary>
+    public bool EnterViewMode()
+    {
+        if (_navActive || _transcript.Count == 0) return false;
+        int idx = -1;
+        for (int i = _transcript.Count - 1; i >= 0; i--)
+            if (_transcript[i].Expandable is not null) { idx = i; break; }
+        if (idx >= 0) _transcript[idx].Expanded = true;
+        EnterNavMode(focusEntry: idx);
+        return true;
+    }
+
     public bool ExpandLastBlock()
     {
         // Find the most-recent expandable transcript entry and open NAV positioned on it,
@@ -593,6 +622,7 @@ internal sealed class TuiDriver
     private void Repaint()
     {
         if (_shuttingDown) return;
+        if (_navActive) return;   // NAV overlay owns the screen; defer paint until it exits
         _region.SetLive(BuildLiveFrame(Width));
     }
 
@@ -652,6 +682,17 @@ internal sealed class TuiDriver
                     && _transcript.Any(e => e.Expandable is not null))
                 {
                     ExpandLastBlock();
+                    Repaint();
+                    continue;
+                }
+
+                // Ctrl+G at the prompt: open the transcript / expand view unconditionally - a
+                // secondary affordance to Esc-on-empty for users whose terminal binds Esc to
+                // cancel-the-turn. Opens NAV focused on the latest expandable block if one exists,
+                // else the plain transcript overlay. Never cancels.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.G)
+                {
+                    if (!ExpandLastBlock()) EnterNavMode();
                     Repaint();
                     continue;
                 }
@@ -857,6 +898,11 @@ internal sealed class TuiDriver
     {
         if (_transcript.Count == 0) { _editor.SetMode(EditorMode.Insert); return; }
 
+        // Mark the overlay active so the (possibly concurrent, mid-turn) streaming/commit path
+        // defers its physical writes while NAV owns the screen. Cleared in the finally below.
+        _navActive = true;
+        try
+        {
         int viewH = Math.Max(3, _term.Height - 3);   // transcript rows shown at once
 
         // Build the flat DISPLAY-line list + a per-line owning-entry map, expanding open
@@ -959,6 +1005,14 @@ internal sealed class TuiDriver
         // Insert mode at the live input prompt.
         foreach (var e in _transcript) e.Expanded = false;
         _editor.SetMode(EditorMode.Insert);
+        }
+        finally
+        {
+            // Release the screen back to the normal render path and paint one fresh frame that
+            // reflects everything that streamed/committed (deferred) while NAV was open.
+            _navActive = false;
+            Repaint();
+        }
     }
 
     /// <summary>
