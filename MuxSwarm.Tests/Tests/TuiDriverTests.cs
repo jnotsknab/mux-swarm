@@ -31,14 +31,14 @@ public class TuiDriverTests
         Assert.DoesNotContain("tui", f);   // the standing "tui" badge was removed (noise)
         Assert.Contains("plan", f);
         Assert.Contains("25%", f);            // 50k/200k
-        Assert.Contains("50,000/200,000", f);
+        Assert.Contains("50k/200k", f);
     }
 
     [Fact]
     public void Footer_NoThreshold_FallsBackToTokenCount()
     {
         var f = TuiComponents.Footer(1234, 0, false, false, false);
-        Assert.Contains("1,234 tokens", f);
+        Assert.Contains("1.2k tokens", f);
     }
 
     [Fact]
@@ -257,7 +257,7 @@ public class TuiDriverTests
             sessionId: "2026-06-20_12-31-01", cached: 39_080);
         Assert.Contains("2026-06-20_12-31-01", f);
         Assert.Contains("session", f);
-        Assert.Contains("39,080 cached", f);
+        Assert.Contains("39.1k cached", f);
     }
 
     [Fact]
@@ -647,14 +647,14 @@ public class TuiDriverTests
         // live=50k, cached=50k => total=100k against 200k threshold => 50% (NOT 25%).
         var f = TuiComponents.Footer(50_000, 200_000, false, false, false, cached: 50_000);
         Assert.Contains("50%", f);
-        Assert.Contains("100,000/200,000", f);
+        Assert.Contains("100k/200k", f);
     }
 
     [Fact]
     public void Footer_CachedHint_UsesSeparatorSpacing()
     {
         var f = TuiComponents.Footer(10_000, 200_000, false, false, false, cached: 5_000);
-        Assert.Contains("5,000 cached", f);
+        Assert.Contains("5k cached", f);
         Assert.Contains("\u00b7", f); // a middot separator precedes the cached hint
     }
 
@@ -1030,6 +1030,20 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void LineEditor_BareAt_ThenEsc_AtFilterDoesNotThrow()
+    {
+        // Regression: typing a bare "@" then pressing Esc moves the editor into vim-Normal mode,
+        // which clamps the cursor from column 1 back onto the '@' at column 0. AtFilter then
+        // computed _buf.ToString(1, _cursor-1) = ToString(1, -1) and threw "length must be
+        // non-negative", crashing the app. AtFilter must now return "" safely.
+        var ed = new LineEditor();
+        ed.Feed(new ConsoleKeyInfo('@', ConsoleKey.NoName, false, false, false));
+        ed.Feed(new ConsoleKeyInfo('\x1b', ConsoleKey.Escape, false, false, false));
+        var filter = ed.AtFilter;           // must not throw
+        Assert.Equal("", filter);
+    }
+
+    [Fact]
     public void LineEditor_Tab_EmitsCompleteSignal()
     {
         var ed = new LineEditor();
@@ -1246,6 +1260,29 @@ public class TuiDriverTests
         Assert.DoesNotContain(rows, r => r.Contains("--workspace"));
     }
 
+    [Fact]
+    public void Workspace_IsRegistered_InCatalogAndHelp()
+    {
+        // /workspace is a native REPL command: present in the canonical catalog (so it shows in
+        // the palette/autocomplete), takes an inline arg (Tab keeps a space), and is documented.
+        Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/workspace");
+        Assert.True(TuiCommands.TakesArgument("/workspace"));
+        Assert.Contains("/workspace", MuxSwarm.Utils.Help.HelpText);
+        Assert.Contains("--workspace", MuxSwarm.Utils.Help.HelpText);
+    }
+
+    [Fact]
+    public void OpensInteractivePrompt_BareInteractiveCommands_SuppressEcho()
+    {
+        // Bare interactive-picker commands suppress their echo; the same command WITH an inline
+        // argument runs non-interactively and is echoed normally; ordinary commands always echo.
+        Assert.True(TuiCommands.OpensInteractivePrompt("/set"));
+        Assert.True(TuiCommands.OpensInteractivePrompt("/swap"));
+        Assert.False(TuiCommands.OpensInteractivePrompt("/set ultra.thinkingBudget 20000"));
+        Assert.False(TuiCommands.OpensInteractivePrompt("/status"));
+        Assert.False(TuiCommands.OpensInteractivePrompt("/workspace C:\\proj"));
+    }
+
     // --- g11.3: mid-turn view-mode (NAV) open/close concurrency guard ----------------
 
     [Fact]
@@ -1271,4 +1308,163 @@ public class TuiDriverTests
         var ex = Record.Exception(() => d.EnterViewMode());
         Assert.Null(ex);
     }
+
+    // --- v0.11.1 g11.33: live-region viewport clamp + history/Ctrl+R --------
+
+    private static ConsoleKeyInfo K(ConsoleKey key, bool ctrl = false)
+        => new('\0', key, false, false, ctrl);
+    private static ConsoleKeyInfo Kc(char c)
+        => new(c, ConsoleKey.NoName, false, false, false);
+
+    [Fact]
+    public void LiveRegion_OversizedFrame_PaintedRowsStayWithinWindow()
+    {
+        // A frame taller than the window must be clamped so the cursor-relative erase can never
+        // overrun the viewport top (the streaming "artifacts left in buffer" bug).
+        var term = new FakeTerminal { Width = 40, Height = 10 };
+        var region = new LiveRegion(term);
+        var rows = Enumerable.Range(0, 50).Select(i => $"row {i}").ToList();
+        region.SetLive(rows);
+        Assert.True(region.PaintedRows <= term.Height - 1,
+            $"painted {region.PaintedRows} should be <= {term.Height - 1}");
+        Assert.True(region.PaintedRows >= 1);
+    }
+
+    [Fact]
+    public void LiveRegion_OversizedFrame_RetainsLastRows_FooterPinned()
+    {
+        // The clamp keeps the LAST rows (footer/input live at the bottom). The newest row must
+        // survive; the oldest must be dropped.
+        var term = new FakeTerminal { Width = 40, Height = 8 };
+        var region = new LiveRegion(term);
+        var rows = Enumerable.Range(0, 30).Select(i => $"line{i}").ToList();
+        region.SetLive(rows);
+        var output = term.Output;
+        Assert.Contains("line29", output);  // last row pinned
+        Assert.DoesNotContain("line0\u001b", output);  // first row trimmed (followed by erase/SGR)
+    }
+
+    [Fact]
+    public void LiveRegion_RepeatedOversizedSetLive_DoesNotStrandRows()
+    {
+        // Regression: repeated repaints of an oversized frame must not let _paintedRows drift past
+        // the window (which is what stranded duplicate frames into scrollback during streaming).
+        var term = new FakeTerminal { Width = 30, Height = 6 };
+        var region = new LiveRegion(term);
+        for (int pass = 0; pass < 5; pass++)
+        {
+            var rows = Enumerable.Range(0, 20 + pass).Select(i => $"p{pass}r{i}").ToList();
+            region.SetLive(rows);
+            Assert.True(region.PaintedRows <= term.Height - 1);
+        }
+    }
+
+    [Fact]
+    public void LiveRegion_SmallFrame_NotClamped()
+    {
+        // A frame that fits must be painted verbatim (clamp is a no-op below the window height).
+        var term = new FakeTerminal { Width = 40, Height = 24 };
+        var region = new LiveRegion(term);
+        var rows = Enumerable.Range(0, 5).Select(i => $"r{i}").ToList();
+        region.SetLive(rows);
+        Assert.Equal(5, region.PaintedRows);
+    }
+
+    [Fact]
+    public void LineEditor_RecalledSlashCommand_StaysRecalledUntilEdited()
+    {
+        var ed = new LineEditor();
+        ed.Remember("/agent");
+        ed.Remember("hello world");
+        // Up once -> newest ("hello world"); Up again -> "/agent".
+        ed.Feed(K(ConsoleKey.UpArrow));
+        ed.Feed(K(ConsoleKey.UpArrow));
+        Assert.Equal("/agent", ed.Buffer);
+        Assert.True(ed.RecalledFromHistory);   // driver keeps arrows on history, palette suppressed
+        // Editing the recalled line drops the flag so the palette re-engages.
+        ed.Feed(Kc('x'));
+        Assert.False(ed.RecalledFromHistory);
+    }
+
+    [Fact]
+    public void LineEditor_HistoryPrev_StepsPastSlashCommand()
+    {
+        var ed = new LineEditor();
+        ed.Remember("/help");
+        ed.Remember("/agent");
+        ed.Remember("third");
+        ed.Feed(K(ConsoleKey.UpArrow));   // third
+        Assert.Equal("third", ed.Buffer);
+        ed.Feed(K(ConsoleKey.UpArrow));   // /agent
+        Assert.Equal("/agent", ed.Buffer);
+        ed.Feed(K(ConsoleKey.UpArrow));   // /help - must NOT get stuck on /agent
+        Assert.Equal("/help", ed.Buffer);
+    }
+
+    [Fact]
+    public void LineEditor_CtrlR_FindsAndAcceptsHistoryMatch()
+    {
+        var ed = new LineEditor();
+        ed.Remember("/agent run build");
+        ed.Remember("git status");
+        ed.Remember("/agent deploy now");
+        ed.BeginReverseSearch();
+        Assert.True(ed.IsSearching);
+        foreach (var c in "agent") ed.SearchFeed(Kc(c));
+        // Newest match first.
+        Assert.Equal("/agent deploy now", ed.SearchMatch);
+        // Ctrl+R steps to the older match.
+        ed.SearchFeed(K(ConsoleKey.R, ctrl: true));
+        Assert.Equal("/agent run build", ed.SearchMatch);
+        // Enter accepts + submits.
+        var sig = ed.SearchFeed(K(ConsoleKey.Enter));
+        Assert.Equal(ReverseSearchSignal.AcceptAndSubmit, sig);
+        Assert.False(ed.IsSearching);
+        Assert.Equal("/agent run build", ed.Buffer);
+    }
+
+    [Fact]
+    public void LineEditor_CtrlR_CancelRestoresBuffer()
+    {
+        var ed = new LineEditor();
+        ed.Remember("deploy prod");
+        foreach (var c in "wip ") ed.Feed(Kc(c));
+        ed.BeginReverseSearch();
+        foreach (var c in "deploy") ed.SearchFeed(Kc(c));
+        Assert.Equal("deploy prod", ed.SearchMatch);
+        var sig = ed.SearchFeed(K(ConsoleKey.G, ctrl: true));
+        Assert.Equal(ReverseSearchSignal.Cancel, sig);
+        Assert.False(ed.IsSearching);
+        Assert.Equal("wip ", ed.Buffer);   // pre-search buffer restored verbatim
+    }
+
+    [Fact]
+    public void LineEditor_CtrlR_EscAcceptsToBufferWithoutSubmit()
+    {
+        var ed = new LineEditor();
+        ed.Remember("/resume abc123");
+        ed.BeginReverseSearch();
+        foreach (var c in "resume") ed.SearchFeed(Kc(c));
+        var sig = ed.SearchFeed(K(ConsoleKey.Escape));
+        Assert.Equal(ReverseSearchSignal.Accept, sig);
+        Assert.False(ed.IsSearching);
+        Assert.Equal("/resume abc123", ed.Buffer);
+    }
+
+    [Fact]
+    public void ReverseSearchRow_RendersQueryAndMatch()
+    {
+        var row = TuiComponents.ReverseSearchRow("agent", "/agent deploy", 60);
+        Assert.Contains("reverse-i-search", row);
+        Assert.Contains("agent", row);
+        Assert.Contains("deploy", row);
+    }
+
+    [Fact]
+    public void ReverseSearchRow_NoMatch_ShowsNoMatch()
+    {
+        var row = TuiComponents.ReverseSearchRow("zzz", null, 60);
+        Assert.Contains("no match", row);
+    }
+
 }

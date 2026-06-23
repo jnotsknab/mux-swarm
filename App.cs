@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g11.28";
+    public static readonly string DebugTag = "g11.33";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -369,6 +369,9 @@ public class App
                 }
             }
 
+            // Back at the top-level menu (no agentic loop active): stop the loop clock. It is
+            // (re)started on the next /agent | /stateless | /swarm | /pswarm via the session header.
+            if (pendingFromSession is null) MuxConsole.StopTuiLoopClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
@@ -440,6 +443,7 @@ public class App
                     var maCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "swarm";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -460,6 +464,7 @@ public class App
                     var pCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "pswarm";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -480,6 +485,7 @@ public class App
                     var agentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "agent";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel),
@@ -527,6 +533,7 @@ public class App
                     var statelessAgentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "stateless";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
@@ -780,6 +787,31 @@ public class App
                     break;
 
                 case "/config":
+                case var wsCmd when wsCmd == "/workspace" || wsCmd.StartsWith("/workspace "):
+                {
+                    // Runtime mirror of the --workspace CLI arg: with no path, report the current
+                    // @-file workspace root; with a path, repoint it and re-index the live "@" file
+                    // picker so the new root takes effect immediately (no restart).
+                    var wparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (wparts.Length < 2)
+                    {
+                        var marker = PlatformContext.WorkspaceIsInstallDir ? "  (mux install dir - pass a path to repoint)" : "";
+                        MuxConsole.WriteInfo($"workspace = {PlatformContext.WorkspaceRoot}{marker}");
+                        break;
+                    }
+                    try
+                    {
+                        PlatformContext.WorkspaceRoot = wparts[1].Trim().Trim('"');
+                        MuxConsole.SetTuiFilesCatalog(CliCmdUtils.GetWorkspaceFiles());
+                        MuxConsole.WriteSuccess($"workspace = {PlatformContext.WorkspaceRoot} (@-file index refreshed).");
+                    }
+                    catch (Exception ex)
+                    {
+                        MuxConsole.WriteWarning($"Invalid --workspace path: {ex.Message}");
+                    }
+                    break;
+                }
+
                 case var cfgCmd when cfgCmd.StartsWith("/config "):
                 {
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);

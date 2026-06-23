@@ -75,6 +75,29 @@ internal sealed class LiveRegion
 
     private int Cols => Math.Max(1, _term.Width);
 
+    /// <summary>Visible window height in rows (>=1). Bounds the live region so its in-place
+    /// repaint never exceeds the viewport.</summary>
+    private int Rows => Math.Max(1, _term.Height);
+
+    /// <summary>
+    /// Bound a rendered live frame to the visible window so the cursor-relative erase/repaint
+    /// can never overrun the top of the viewport. The live region is repainted with relative
+    /// cursor moves (<c>CSI nA</c>), which CLAMP at the top edge and never scroll - so if the
+    /// frame is taller than the window the up-move stops short, the erase under-clears, and the
+    /// next CommitAbove pushes the un-erased rows permanently into scrollback (the streaming
+    /// "artifacts left in buffer" bug). Keeping the frame within the window (minus one headroom
+    /// row for the trailing newline) makes <c>_paintedRows</c> always reachable. We retain the
+    /// LAST rows because the footer + input + freshest streaming tail live at the bottom and
+    /// must stay pinned; earlier rows of an over-long in-progress line reappear via scrollback
+    /// once committed.
+    /// </summary>
+    private List<string> ClampRows(List<string> rows)
+    {
+        int max = Math.Max(1, Rows - 1);
+        if (rows.Count <= max) return rows;
+        return rows.GetRange(rows.Count - max, max);
+    }
+
     /// <summary>Expand markup lines into wrapped, ANSI-rendered physical rows.</summary>
     private List<string> RenderPhysicalRows(IReadOnlyList<string> markupLines)
     {
@@ -200,12 +223,13 @@ internal sealed class LiveRegion
     }
 
     /// <summary>Paint the current live lines, recording how many physical rows they took.</summary>
-    private void PaintLiveRegion() => PaintLiveRegion(RenderPhysicalRows(_live));
+    private void PaintLiveRegion() => PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
 
     /// <summary>Paint the supplied physical rows, recording how many rows they took.
     /// Overload lets callers pass rows they already rendered to avoid a second wrap pass.</summary>
     private void PaintLiveRegion(List<string> rows)
     {
+        rows = ClampRows(rows);
         var sb = new StringBuilder();
         sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them
         for (int i = 0; i < rows.Count; i++)
@@ -234,7 +258,7 @@ internal sealed class LiveRegion
         // actually differ (seeking the cursor to each and erasing just that line), which
         // eliminates the full-region teardown that made the footer flicker every spinner
         // tick. When the row count changes we fall back to a full erase+repaint.
-        var newRows = RenderPhysicalRows(_live);
+        var newRows = ClampRows(RenderPhysicalRows(_live));
 
         // On a width change the cached _lastRows/_paintedRows describe the OLD geometry, so the
         // in-place diff path would seek to wrong rows and leave trails. Force a full erase+repaint
@@ -304,7 +328,7 @@ internal sealed class LiveRegion
         _rowCacheWidth = -1;
         _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
         _term.Write(Ansi.ClearScreen + Ansi.Home);
-        PaintLiveRegion(RenderPhysicalRows(_live));
+        PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
         _term.Flush();
     }
 

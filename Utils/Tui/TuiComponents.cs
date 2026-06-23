@@ -29,7 +29,7 @@ internal static class TuiComponents
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background.
-    public const string CardBg  = "#161B22";
+    public const string CardBg  = "#1C2530";
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
     public const string DiffAddBg = "#16261C";
     public const string DiffDelBg = "#2A1A1C";
@@ -123,9 +123,32 @@ internal static class TuiComponents
         return $"  [{Think}]{spin}[/] [{Think} italic]{Esc(body)}[/]";
     }
 
+    /// <summary>
+    /// The reverse-incremental-history-search prompt row (Ctrl+R), rendered above the input box
+    /// in the readline/bash style: <c>(reverse-i-search)`query': matched line</c>. When nothing
+    /// matches yet the match slot reads <c>(failed)</c> so the user knows to refine the query.
+    /// </summary>
+    public static string ReverseSearchRow(string query, string? match, int width)
+    {
+        string q = Esc(query ?? "");
+        string label = $"(reverse-i-search)`{q}': ";
+        if (string.IsNullOrEmpty(match))
+            return $"  [{Accent}]{label}[/][{Dim}](no match)[/]";
+        int room = Math.Max(8, width - TuiMarkup.Width(label) - 2);
+        return $"  [{Accent}]{label}[/][{Text}]{Esc(Trunc(match, room))}[/]";
+    }
+
     /// <summary>Compact token count: 30000 -> "30k", 1500 -> "1.5k", &lt;1000 stays exact.</summary>
     private static string Fmt(uint n)
         => n >= 1000 ? (n % 1000 == 0 ? $"{n / 1000}k" : $"{n / 1000.0:0.0}k") : n.ToString();
+
+    /// <summary>Compact m:ss / h:mm:ss clock for the loop-clock badge (no leading "0:" hours).</summary>
+    private static string ClockMS(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
+
+    /// <summary>Coarse session-timer label: "12m", "1h 04m" (no seconds - it is a slow wall clock).</summary>
+    private static string ClockHM(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : $"{t.Minutes}m";
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
@@ -340,12 +363,17 @@ internal static class TuiComponents
         // path applies the cap.
         if (!expanded && body.Length > cap) body = body[..cap] + "\n\u2026 truncated";
 
-        int inner = Math.Max(8, width - 5);
-        var outp = new List<string> { $"  [{col}]\u256d\u2500[/] {glyph} [{Accent}]{Esc(tool)}[/]" };
+        int inner = Math.Max(8, width - 4);
+        // One continuous filled card: header band, body rows and footer band all share CardBg,
+        // with the accent rail painted ON the fill (no unshaded gap, so blank rows can't notch the
+        // right edge and the block reads as a single solid card rather than a floating rectangle).
+        string headMarkup = $"{glyph} [{Accent} on {CardBg}]{Esc(tool)}[/]";
+        string headPlain   = $"\u2713 {tool}";   // glyph(1)+space(1)+tool; width drives the fill pad
+        var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBg, inner) };
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
             foreach (var w in TuiMarkup.WrapPlain(raw, inner))
                 outp.Add(ShadedRow(col, w, Text, CardBg, inner));
-        outp.Add($"  [{col}]\u2570{new string('\u2500', inner + 1)}[/]");
+        outp.Add(ShadedRow(col, "", Text, CardBg, inner));
         return outp;
     }
 
@@ -375,19 +403,20 @@ internal static class TuiComponents
             hidden = wrapped.Count - cap;
             wrapped = anchorTail ? wrapped.GetRange(hidden, cap) : wrapped.GetRange(0, cap);
         }
-        var outp = new List<string>
-        {
-            $"  [{tint}]\u256d\u2500[/] [{Accent}]{Esc(title)}[/] [{Dim}](live \u00b7 ctrl+e collapse)[/]"
-        };
+        // Same continuous filled-card treatment as ToolResultPanel so a LIVE mid-turn expand looks
+        // identical to its NAV-scrollback counterpart: rail-on-fill, every band padded to `inner`.
+        string headPlain = $"{title} (live \u00b7 ctrl+e collapse)";
+        string headMarkup = $"[{Accent} on {CardBg}]{Esc(title)}[/] [{Dim} on {CardBg}](live \u00b7 ctrl+e collapse)[/]";
+        var outp = new List<string> { ShadedHeader(tint, headPlain, headMarkup, CardBg, inner) };
         // Top elision marker (tail-anchored views only).
         if (hidden > 0 && anchorTail)
-            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}[/]");
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBg, inner));
         foreach (var w in wrapped)
-            outp.Add($"  [{tint}]\u2502[/] [{Text}]{Esc(w)}[/]");
+            outp.Add(ShadedRow(tint, w, Text, CardBg, inner));
         // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
         if (hidden > 0 && !anchorTail)
-            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)[/]");
-        outp.Add($"  [{tint}]\u2570{new string('\u2500', inner)}[/]");
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBg, inner));
+        outp.Add(ShadedRow(tint, "", Text, CardBg, inner));
         return outp;
     }
 
@@ -451,7 +480,7 @@ internal static class TuiComponents
                 string gNew = (wi == 0 ? newS : "").PadLeft(gw);
                 string mk = wi == 0 ? marker : " ";
                 string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
-                outp.Add($"  [{Border}]\u2502[/] [{GutterFg} on {bg}]{gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
             }
         }
         outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
@@ -460,9 +489,21 @@ internal static class TuiComponents
 
     private const string DiffCtxFg = "#A0A0A0"; // diff context line (neutral grey)
 
-    /// <summary>Shade one card body row: rail + a full-width background band of <paramref name="text"/>.</summary>
+    /// <summary>Shade one card body row: an accent rail painted ON the fill, then a full-width
+    /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
+    /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
-        => $"  [{railCol}]\u2502[/] [{fg} on {bg}]{Esc(content.PadRight(inner))}[/]";
+        => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+
+    /// <summary>Header band of a shaded card: same rail-on-fill treatment, carrying pre-styled
+    /// markup (glyph + tool name) + a trailing fill computed from the header's DISPLAY width so the
+    /// band is exactly `inner` cells wide (matching the body rows). Passing a full `inner` of spaces
+    /// here was the overflow/soft-wrap regression - the row ran ~inner cells too wide and reflowed.</summary>
+    private static string ShadedHeader(string railCol, string headerPlain, string headerMarkup, string bg, int inner)
+    {
+        int pad = Math.Max(0, inner - TuiMarkup.Width(headerPlain));
+        return $"  [{railCol} on {bg}]\u2502[/][on {bg}] {headerMarkup}{new string(' ', pad)}[/]";
+    }
 
     private static bool IsMeta(string s)
         => s.StartsWith("+++") || s.StartsWith("---") || s.StartsWith("diff ") || s.StartsWith("index ");
@@ -471,14 +512,14 @@ internal static class TuiComponents
     {
         string blank = new string(' ', gw);
         string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border}]\u2502[/] [{GutterFg} on {CardBg}]{blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
     }
 
     private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
         string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border}]\u2502[/] [{GutterFg} on {DiffHunkBg}]{blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
     }
 
     /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
@@ -510,7 +551,7 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null)
     {
         // No standing "tui" badge - it is noise. Only show active modes.
         // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
@@ -527,6 +568,16 @@ internal static class TuiComponents
             if (psub) badges.Add($"[{Accent}]psub[/]");
             if (sub) badges.Add($"[{Ok}]sub[/]");
         }
+
+        // Loop clock: a live elapsed clock that runs the whole time the user is inside an agentic
+        // interface (/agent, /stateless, /swarm, /pswarm). Starts on loop entry and ticks
+        // continuously until the loop exits; cleared (null) at the top-level menu.
+        if (loopElapsed is { } le)
+            badges.Add($"[{Warn}]\u25cf {ClockMS(le)}[/]");
+        // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
+        // fresh session does not show a noisy "0m".
+        if (sessionElapsed is { } se && se.TotalSeconds >= 60)
+            badges.Add($"[{Dim}]\u23f1 {ClockHM(se)}[/]");
 
         // Context meter: full bar+percent when a threshold is known; a bare token count when
         // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
@@ -550,12 +601,12 @@ internal static class TuiComponents
             string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
                          $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
                          $"[{Dim}]" + new string('\u2501', empty) + "[/]";
-            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{cached:N0} cached[/]" : "";
-            meter = $"{bar} [{Muted}]{total:N0}/{threshold:N0} ({fracTotal * 100:F0}%)[/]{cachedHint}";
+            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{Fmt(cached)} cached[/]" : "";
+            meter = $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]{cachedHint}";
         }
         else if (tokens > 0)
         {
-            meter = $"[{Muted}]{tokens:N0} tokens[/]";
+            meter = $"[{Muted}]{Fmt(tokens)} tokens[/]";
         }
         else
         {

@@ -90,6 +90,13 @@ internal sealed class TuiDriver
     // result lands. Flushed as its own committed line if any other content commits first.
     private (string Tool, string? Args)? _pendingTool;
 
+    // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
+    // (total session age, shown by the session timer); _loopStart is set when an agentic
+    // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
+    // the loop clock ticks continuously the whole time the user is inside a loop.
+    private readonly DateTime _sessionStart = DateTime.UtcNow;
+    private DateTime? _loopStart;
+
     // Active sub-agent lane tint for gutter attribution on committed transcript lines. Null
     // for the primary agent (no gutter); set to a per-agent color while a sub-agent/specialist
     // is producing output so its lines carry a colored bar. Owned by the caller via SetLaneTint.
@@ -278,6 +285,14 @@ internal sealed class TuiDriver
         _sysTokens = sysTokens; _toolTokens = toolTokens;
         Repaint();
     }
+
+    /// <summary>Start the loop clock - the live "&#x25cf; m:ss" footer badge that ticks the whole
+    /// time the user is inside an agentic interface. Idempotent: re-entering a loop while one is
+    /// already running keeps the original start (does not reset the clock).</summary>
+    public void StartLoopClock() { _loopStart ??= DateTime.UtcNow; }
+
+    /// <summary>Stop and clear the loop clock (back at the top-level menu, no loop active).</summary>
+    public void StopLoopClock() { _loopStart = null; }
 
     /// <summary>Set (or clear, with null) the active-session id badge shown in the footer.</summary>
     public void SetSessionId(string? sessionId)
@@ -777,13 +792,22 @@ internal sealed class TuiDriver
         lines.Add(TuiComponents.FullRule(width));
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
             modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
-            sysTokens: _sysTokens, toolTokens: _toolTokens));
+            sysTokens: _sysTokens, toolTokens: _toolTokens,
+            sessionElapsed: DateTime.UtcNow - _sessionStart,
+            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null));
 
         if (_inInput)
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
             lines.Add(TuiComponents.FullRule(width));
+            // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
+            // replaces the normal input row; accepting/cancelling restores the input row.
+            if (_editor.IsSearching)
+            {
+                lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
+                return lines;
+            }
             lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
@@ -880,11 +904,55 @@ internal sealed class TuiDriver
                     return Console.ReadLine();
                 }
 
+                // Reverse-incremental history search (Ctrl+R, readline/bash style). While active it
+                // OWNS every keystroke: printable keys refine the query, Ctrl+R steps to older
+                // matches, Enter accepts+submits, Esc accepts into the buffer, Ctrl+C/Ctrl+G cancel.
+                if (_editor.IsSearching)
+                {
+                    var rs = _editor.SearchFeed(key);
+                    switch (rs)
+                    {
+                        case ReverseSearchSignal.AcceptAndSubmit:
+                        {
+                            string line = _editor.Buffer;
+                            _editor.Remember(line);
+                            _inInput = false;
+                            _pendingGap = false;
+                            if (!TuiCommands.OpensInteractivePrompt(line))
+                                CommitMirrored(TuiComponents.UserEcho(line));
+                            return line;
+                        }
+                        case ReverseSearchSignal.Accept:
+                        case ReverseSearchSignal.Cancel:
+                            _paletteSel = -1;
+                            Repaint();
+                            continue;
+                        case ReverseSearchSignal.Redraw:
+                        default:
+                            Repaint();
+                            continue;
+                    }
+                }
+
+                // Ctrl+R at the prompt: enter reverse-incremental history search. No-op (falls
+                // through) when there is no history yet, so the key is never silently swallowed.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.R
+                    && _editor.History.Count > 0)
+                {
+                    _editor.BeginReverseSearch();
+                    if (_editor.IsSearching) { _paletteSel = -1; Repaint(); continue; }
+                }
+
                 // Palette navigation intercept: when an autocomplete preview is open, Up/Down
                 // move the highlighted candidate (instead of browsing command history), and
                 // Enter on a highlighted row accepts it (instead of submitting the line). Tab
                 // always accepts. This is the bridge toward full vim-style nav.
-                if (PaletteOpen)
+                //
+                // EXCEPTION: when the buffer holds a line just RECALLED from history (e.g. a
+                // previously-run slash command), Up/Down must keep browsing history rather than be
+                // captured by the palette - otherwise history gets stuck the moment a recalled entry
+                // starts with '/'. The palette re-engages as soon as the recalled line is edited.
+                if (PaletteOpen && !_editor.RecalledFromHistory)
                 {
                     if (key.Key == ConsoleKey.UpArrow)   { MovePaletteSelection(-1); Repaint(); continue; }
                     if (key.Key == ConsoleKey.DownArrow) { MovePaletteSelection(+1); Repaint(); continue; }
@@ -942,7 +1010,12 @@ internal sealed class TuiDriver
                         // Erase input box, then echo the submitted line into scrollback with a
                         // leading blank + accent gutter so each turn is clearly delimited.
                         _pendingGap = false;
-        CommitMirrored(TuiComponents.UserEcho(line));
+                        // Suppress the echo for bare commands that open a blocking interactive
+                        // picker (e.g. /set, /swap): the picker draws its own UI and the handler
+                        // prints a confirmation, so echoing the bare command line just leaves
+                        // residue above the prompt. All other lines echo normally.
+                        if (!TuiCommands.OpensInteractivePrompt(line))
+                            CommitMirrored(TuiComponents.UserEcho(line));
                         return line;
                     }
                     case LineEditSignal.Cancel:

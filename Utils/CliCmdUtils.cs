@@ -166,7 +166,7 @@ public static class CliCmdUtils
 
         var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
         var idxW = distinctDefs.Count.ToString().Length;
-        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"  [{(i + 1).ToString().PadLeft(idxW)}] {a.Name}"));
+        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"{(i + 1).ToString().PadLeft(idxW)}  {a.Name}"));
         MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
 
         string choice = MuxConsole.Prompt("Agent: ");
@@ -249,7 +249,7 @@ public static class CliCmdUtils
 
         var idxW = slots.Count.ToString().Length;
         var lines = string.Join("\n", slots.Select((s, i) =>
-            $"  [{(i + 1).ToString().PadLeft(idxW)}] {s.Label} ({s.CurrentModel ?? "not set"})"));
+            $"{(i + 1).ToString().PadLeft(idxW)}  {s.Label} ({s.CurrentModel ?? "not set"})"));
 
         MuxConsole.WritePanel("Select an agent to update its model", lines);
 
@@ -307,8 +307,9 @@ public static class CliCmdUtils
         MuxConsole.WriteInfo($"Active provider: {current} ({App.ActiveProvider?.Endpoint ?? "no endpoint"})");
         MuxConsole.WriteLine();
 
+        var pIdxW = providers.Count.ToString().Length;
         var lines = string.Join("\n", providers.Select((p, i) =>
-            $"  [{i + 1}] {p.Name} — {p.Endpoint ?? "no endpoint"}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
+            $"{(i + 1).ToString().PadLeft(pIdxW)}  {p.Name} — {p.Endpoint ?? "no endpoint"}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
 
         MuxConsole.WritePanel("Select a provider or press Enter to keep current", lines);
 
@@ -455,7 +456,7 @@ public static class CliCmdUtils
             var tagLabel = SessionTags.TagLabel(d);
             var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
             var idxLabel = (i + 1).ToString().PadLeft(idxW);
-            return $"  [{idxLabel}] {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
+            return $"{idxLabel}  {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);
@@ -522,18 +523,18 @@ public static class CliCmdUtils
         var skillCount = SkillLoader.GetSkillMetadata().Count;
 
         var modelLines = agentModels.Count > 0
-            ? string.Join("\n", agentModels.Select(kvp => $"               {kvp.Key} -> {kvp.Value}"))
-            : "               not resolved";
+            ? string.Join("\n", agentModels.Select(kvp => $"  {kvp.Key} -> {kvp.Value}"))
+            : "  not resolved";
 
         var lines = string.Join("\n",
-            $"  Provider:    {provider?.Name ?? "not set"} ({provider?.Endpoint ?? "no endpoint"})",
-            $"  Agent:       {agent?.Name ?? "default"}",
-            $"  Models:",
+            $"Provider     {provider?.Name ?? "not set"} ({provider?.Endpoint ?? "no endpoint"})",
+            $"Agent        {agent?.Name ?? "default"}",
+            $"Models",
             modelLines,
-            $"  Tools:       {toolCount}",
-            $"  Skills:      {skillCount}",
-            $"  Sessions:    {sessionCount}",
-            $"  Docker Exec: {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}"
+            $"Tools        {toolCount}",
+            $"Skills       {skillCount}",
+            $"Sessions     {sessionCount}",
+            $"Docker Exec  {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}"
         );
 
         MuxConsole.WritePanel("Mux-Swarm Status", lines);
