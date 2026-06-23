@@ -801,7 +801,7 @@ public static partial class MuxConsole
         if (!ViaDriver) return false;
         var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] {headerMarkup}" };
         foreach (var d in detailMarkupLines)
-            lines.Add($"    [{C.Muted}]\u23bf[/] {d}");
+            lines.Add($"    [{C.Muted}]\u00b7[/] {d}");
         lines.Add("");
         CommitLinesToDriver(lines);
         return true;

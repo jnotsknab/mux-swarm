@@ -165,7 +165,8 @@ public static class CliCmdUtils
             : agentDefs;
 
         var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
-        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"  [{i + 1}] {a.Name}"));
+        var idxW = distinctDefs.Count.ToString().Length;
+        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"  [{(i + 1).ToString().PadLeft(idxW)}] {a.Name}"));
         MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
 
         string choice = MuxConsole.Prompt("Agent: ");
@@ -246,8 +247,9 @@ public static class CliCmdUtils
             return;
         }
 
+        var idxW = slots.Count.ToString().Length;
         var lines = string.Join("\n", slots.Select((s, i) =>
-            $"  [{i + 1}] {s.Label} ({s.CurrentModel ?? "not set"})"));
+            $"  [{(i + 1).ToString().PadLeft(idxW)}] {s.Label} ({s.CurrentModel ?? "not set"})"));
 
         MuxConsole.WritePanel("Select an agent to update its model", lines);
 
@@ -440,15 +442,20 @@ public static class CliCmdUtils
             return LoadResumeSession(direct);
         }
 
+        var idxW = sessionDirs.Count.ToString().Length;
         var lines = string.Join("\n", sessionDirs.Select((d, i) =>
         {
             var timestamp = Path.GetFileName(d);
             var file = Directory.GetFiles(d, "*.json").First();
             var size = new FileInfo(file).Length;
             var preview = Common.GetFirstUserMessage(file);
+            // Collapse embedded newlines/runs of whitespace so a multi-line first message stays a
+            // single list row (otherwise it splits into stray dot-prefixed orphan rows).
+            preview = System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim();
             var tagLabel = SessionTags.TagLabel(d);
             var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
-            return $"  [{i + 1}] {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
+            var idxLabel = (i + 1).ToString().PadLeft(idxW);
+            return $"  [{idxLabel}] {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);
