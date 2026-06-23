@@ -27,6 +27,14 @@ internal static class TuiComponents
     public const string Think    = "#7AA2C0";
     // Dim blue fill for the cached portion of the context meter (vs the bright live portion).
     public const string CacheFill = "#3E5A6E";
+    // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
+    // solid block distinct from the airy prose on the terminal's base background.
+    public const string CardBg  = "#161B22";
+    // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
+    public const string DiffAddBg = "#16261C";
+    public const string DiffDelBg = "#2A1A1C";
+    public const string DiffHunkBg = "#16202C";
+    public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
     /// Per-agent lane tints (stable, readable) used to gutter sub-agent / swarm-specialist
@@ -332,12 +340,12 @@ internal static class TuiComponents
         // path applies the cap.
         if (!expanded && body.Length > cap) body = body[..cap] + "\n\u2026 truncated";
 
-        int inner = Math.Max(8, width - 4);
+        int inner = Math.Max(8, width - 5);
         var outp = new List<string> { $"  [{col}]\u256d\u2500[/] {glyph} [{Accent}]{Esc(tool)}[/]" };
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
             foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add($"  [{col}]\u2502[/] [{Text}]{Esc(w)}[/]");
-        outp.Add($"  [{col}]\u2570{new string('\u2500', inner)}[/]");
+                outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        outp.Add($"  [{col}]\u2570{new string('\u2500', inner + 1)}[/]");
         return outp;
     }
 
@@ -388,23 +396,101 @@ internal static class TuiComponents
     public static List<string> SubAgentLivePanel(string agent, string body, int width, int maxRows)
         => BoundedLivePanel(agent, body, AgentTint(agent), width, maxRows, anchorTail: true);
 
-    /// <summary>Unified/git diff rendered with +/- tinting inside a card.</summary>
+    /// <summary>
+    /// Unified/git diff rendered as a production diff card: a shaded body, an old|new line-number
+    /// gutter parsed from the @@ hunk headers, per-line add/del/context background bands, and a
+    /// "+adds -dels" summary in the header. Long code lines wrap with a blank gutter continuation.
+    /// </summary>
     public static List<string> Diff(string title, string diff, int width)
     {
-        int inner = Math.Max(8, width - 4);
-        var outp = new List<string> { $"  [{Border}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 48))}[/]" };
-        foreach (var raw in TrimTrailingBlankLines(diff ?? "").Split('\n'))
+        var raws = TrimTrailingBlankLines(diff ?? "").Replace("\r\n", "\n").Split('\n');
+
+        // First pass: count adds/dels and find the largest line number so the gutter is sized once.
+        int adds = 0, dels = 0, maxLineNo = 0;
+        int oldN0 = 0, newN0 = 0;
+        foreach (var raw in raws)
         {
-            string col =
-                raw.StartsWith("+++") || raw.StartsWith("---") ? Muted :
-                raw.StartsWith("@@") ? Accent :
-                raw.StartsWith("+") ? DiffAdd :
-                raw.StartsWith("-") ? DiffDel : Dim;
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add($"  [{Border}]\u2502[/] [{col}]{Esc(w)}[/]");
+            if (TryParseHunk(raw, out var oh, out var nh)) { oldN0 = oh; newN0 = nh; continue; }
+            if (IsMeta(raw)) continue;
+            if (raw.StartsWith("+")) { adds++; maxLineNo = Math.Max(maxLineNo, newN0); newN0++; }
+            else if (raw.StartsWith("-")) { dels++; maxLineNo = Math.Max(maxLineNo, oldN0); oldN0++; }
+            else { maxLineNo = Math.Max(maxLineNo, Math.Max(oldN0, newN0)); oldN0++; newN0++; }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', inner)}[/]");
+        int gw = Math.Max(2, maxLineNo.ToString().Length);
+        // prefix(2) + rail(1) + space(1) + gutter(old gw + space + new gw + space) + code
+        int gutterCols = gw + 1 + gw + 1;
+        int codeW = Math.Max(8, width - 5 - gutterCols);
+
+        string summary = $"[{DiffAdd}]+{adds}[/] [{DiffDel}]\u2212{dels}[/]";
+        var outp = new List<string>
+        {
+            $"  [{Border}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
+        };
+
+        int oldN = 0, newN = 0;
+        foreach (var raw in raws)
+        {
+            if (TryParseHunk(raw, out var oh2, out var nh2))
+            {
+                oldN = oh2; newN = nh2;
+                outp.Add(HunkRow(raw, gw, gutterCols, codeW));
+                continue;
+            }
+            if (IsMeta(raw)) { outp.Add(MetaRow(raw, gw, gutterCols, codeW)); continue; }
+
+            string fg, bg, marker, oldS, newS;
+            if (raw.StartsWith("+")) { fg = DiffAdd; bg = DiffAddBg; marker = "+"; oldS = ""; newS = newN.ToString(); newN++; }
+            else if (raw.StartsWith("-")) { fg = DiffDel; bg = DiffDelBg; marker = "-"; oldS = oldN.ToString(); newS = ""; oldN++; }
+            else { fg = DiffCtxFg; bg = CardBg; marker = " "; oldS = oldN.ToString(); newS = newN.ToString(); oldN++; newN++; }
+
+            string code = raw.Length > 0 ? raw[1..] : "";   // strip the +/-/space marker column
+            var wrapped = TuiMarkup.WrapPlain(code, codeW);
+            for (int wi = 0; wi < wrapped.Count; wi++)
+            {
+                string gOld = (wi == 0 ? oldS : "").PadLeft(gw);
+                string gNew = (wi == 0 ? newS : "").PadLeft(gw);
+                string mk = wi == 0 ? marker : " ";
+                string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
+                outp.Add($"  [{Border}]\u2502[/] [{GutterFg} on {bg}]{gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+            }
+        }
+        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
         return outp;
+    }
+
+    private const string DiffCtxFg = "#A0A0A0"; // diff context line (neutral grey)
+
+    /// <summary>Shade one card body row: rail + a full-width background band of <paramref name="text"/>.</summary>
+    private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
+        => $"  [{railCol}]\u2502[/] [{fg} on {bg}]{Esc(content.PadRight(inner))}[/]";
+
+    private static bool IsMeta(string s)
+        => s.StartsWith("+++") || s.StartsWith("---") || s.StartsWith("diff ") || s.StartsWith("index ");
+
+    private static string MetaRow(string raw, int gw, int gutterCols, int codeW)
+    {
+        string blank = new string(' ', gw);
+        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
+        return $"  [{Border}]\u2502[/] [{GutterFg} on {CardBg}]{blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+    }
+
+    private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
+    {
+        string blank = new string(' ', gw);
+        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
+        return $"  [{Border}]\u2502[/] [{GutterFg} on {DiffHunkBg}]{blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+    }
+
+    /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
+    private static bool TryParseHunk(string raw, out int oldStart, out int newStart)
+    {
+        oldStart = 0; newStart = 0;
+        if (raw is null || !raw.StartsWith("@@")) return false;
+        var m = System.Text.RegularExpressions.Regex.Match(raw, @"^@@+\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@");
+        if (!m.Success) return false;
+        oldStart = int.Parse(m.Groups[1].Value);
+        newStart = int.Parse(m.Groups[2].Value);
+        return true;
     }
 
     /// <summary>Delegation rendered as a small from -> to tree.</summary>

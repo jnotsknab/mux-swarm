@@ -134,6 +134,33 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Diff_HasLineNumberGutter_And_Summary()
+    {
+        var d = TuiComponents.Diff("file.cs", "@@ -10,2 +10,3 @@\n ctx\n-old line\n+new line a\n+new line b", 80);
+        var plain = d.Select(MuxSwarm.Utils.Tui.TuiMarkup.Plain).ToList();
+        string joined = string.Join("\n", plain);
+        // Header carries a +adds -dels summary (2 adds, 1 del here; del uses the U+2212 minus).
+        Assert.Contains("+2", joined);
+        Assert.Contains("\u22121", joined);
+        // Old/new line numbers from the @@ -10 +10 hunk appear in the gutter.
+        Assert.Contains("10", joined);
+        Assert.Contains("11", joined);
+        // Background-band markup is present (shaded card body).
+        string mk = string.Join("\n", d);
+        Assert.Contains("on " + TuiComponents.DiffAddBg, mk);
+        Assert.Contains("on " + TuiComponents.DiffDelBg, mk);
+    }
+
+    [Fact]
+    public void ToolResultPanel_BodyRows_AreShaded()
+    {
+        var rows = TuiComponents.ToolResultPanel("read", "alpha\nbeta", error: false, width: 60);
+        string mk = string.Join("\n", rows);
+        // Body rows carry the card background fill (distinct block, not raw text).
+        Assert.Contains("on " + TuiComponents.CardBg, mk);
+    }
+
+    [Fact]
     public void Delegation_RendersFromToAndTask()
     {
         var d = TuiComponents.Delegation("CompanionAgent", "CodeAgent", "scan the repo", 80);
