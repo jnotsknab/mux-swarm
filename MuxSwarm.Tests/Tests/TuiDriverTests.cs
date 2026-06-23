@@ -943,6 +943,30 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_CommitDiffCollapsible_CommitsOneLine_ThenExpands()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        string diff = "@@ -1,2 +1,3 @@\n ctx\n-old line\n+new line a\n+new line b";
+        d.CommitDiffCollapsible("TuiTable.cs", diff);
+        // Collapsed: shows the one-line summary with the expand affordance, NOT the full body.
+        Assert.Contains("diff", term.Output);
+        Assert.Contains("ctrl+e expand", term.Output);
+        Assert.DoesNotContain("new line a", term.Output);
+        term.Clear();
+        // Ctrl+E opens the production diff card in the live region (line numbers + body visible).
+        bool open = d.ExpandLatestInline();
+        Assert.True(open);
+        Assert.Contains("new line a", term.Output);
+        term.Clear();
+        // Second Ctrl+E collapses it (reversible).
+        bool stillOpen2 = d.ExpandLatestInline();
+        Assert.False(stillOpen2);
+        Assert.DoesNotContain("new line a", term.Output);
+    }
+
+    [Fact]
     public void Driver_ExpandLatestInline_ToolResult_HeadAnchored_BoundedFooterSurvives()
     {
         var term = new FakeTerminal { Height = 12 };

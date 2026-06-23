@@ -75,7 +75,7 @@ internal sealed class TuiDriver
     // zero append spam (the old approach appended a fresh panel per keypress, flooding scrollback).
     // Only one block is expanded at a time; opening another switches the slot. A second Ctrl+E on
     // the same block (or stream end / turn end) collapses it.
-    private enum ExpandKind { None, SubAgent, ToolResult }
+    private enum ExpandKind { None, SubAgent, ToolResult, Diff }
     private ExpandKind _expandKind = ExpandKind.None;
     private string _expandKey = "";       // identity for toggle-match (agent name, or "tool#<idx>")
     private string _expandTitle = "";     // panel header label
@@ -118,6 +118,7 @@ internal sealed class TuiDriver
         public required string Collapsed;                          // the normally-shown markup line
         public (string Tool, string Text, bool Error)? Expandable; // non-null => Ctrl+E expandable
         public bool Expanded;                                      // current toggle state in NAV
+        public bool DiffKind;                                      // expandable body is a unified diff
     }
 
     private readonly List<Entry> _transcript = new();
@@ -134,6 +135,34 @@ internal sealed class TuiDriver
     {
         _transcript.Add(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
         TrimTranscript();
+    }
+
+    /// <summary>
+    /// Commit a diff as a COLLAPSED one-liner that retains the full unified-diff body, so it joins
+    /// the Ctrl+E / NAV collapse system exactly like a large tool result instead of permanently
+    /// exploding into scrollback. NAV / inline expand render it through the production diff card.
+    /// </summary>
+    public void CommitDiffCollapsible(string title, string diff)
+    {
+        FlushPendingToolCall();
+        var body = diff ?? "";
+        int adds = 0, dels = 0;
+        foreach (var raw in body.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (raw.StartsWith("+") && !raw.StartsWith("+++")) adds++;
+            else if (raw.StartsWith("-") && !raw.StartsWith("---")) dels++;
+        }
+        string shortTitle = string.IsNullOrEmpty(title) ? "diff" : title;
+        if (shortTitle.Length > 44) shortTitle = shortTitle[..43] + "\u2026";
+        string collapsed = Lane(new List<string>
+        {
+            $"  [{TuiComponents.Accent}]\u270e diff[/] [{TuiComponents.Dim}]\u00b7 {Spectre.Console.Markup.Escape(shortTitle)}[/]  "
+            + $"[{TuiComponents.DiffAdd}]+{adds}[/] [{TuiComponents.DiffDel}]\u2212{dels}[/] [{TuiComponents.Dim}](ctrl+e expand)[/]"
+        })[0];
+        _transcript.Add(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
+        TrimTranscript();
+        if (!_navActive) _region.CommitAbove(new[] { collapsed }, BuildLiveFrame(Width));
+        _pendingGap = true;
     }
 
     private void TrimTranscript()
@@ -418,11 +447,13 @@ internal sealed class TuiDriver
             if (_transcript[i].Expandable is not null) { idx = i; break; }
         if (idx < 0) return false;
         var blk = _transcript[idx].Expandable!.Value;
+        bool isDiff = _transcript[idx].DiffKind;
+        var wantKind = isDiff ? ExpandKind.Diff : ExpandKind.ToolResult;
         string key = $"tool#{idx}";
         // Same block already expanded -> collapse (reversible toggle, no spam).
-        if (_expandKind == ExpandKind.ToolResult && string.Equals(_expandKey, key, StringComparison.Ordinal))
+        if (_expandKind == wantKind && string.Equals(_expandKey, key, StringComparison.Ordinal))
             { ClearExpanded(); return false; }
-        OpenExpand(ExpandKind.ToolResult, key, blk.Tool, blk.Text ?? "",
+        OpenExpand(wantKind, key, blk.Tool, blk.Text ?? "",
             TuiComponents.Border, blk.Error, anchorTail: false);
         return Expanded;
     }
@@ -712,8 +743,22 @@ internal sealed class TuiDriver
             // the footer + input always stay on screen no matter how long the expanded block is.
             int reserved = 6 + Math.Min(_subAgents.Count, 4);
             int maxRows = Math.Max(3, Height - reserved);
-            lines.AddRange(TuiComponents.BoundedLivePanel(
-                _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
+            if (_expandKind == ExpandKind.Diff)
+            {
+                // Render the production diff card, then bound it to the viewport slice (head-anchored:
+                // a diff is read top-down) with a "+N more (ctrl+g for full)" footer when it overflows.
+                var full = TuiComponents.Diff(_expandTitle, _expandBody, width);
+                if (full.Count > maxRows)
+                {
+                    int shown = Math.Max(1, maxRows - 1);
+                    lines.AddRange(full.GetRange(0, shown));
+                    lines.Add($"  [{TuiComponents.Dim}]\u2026 +{full.Count - shown} more line(s) (ctrl+g for full)[/]");
+                }
+                else lines.AddRange(full);
+            }
+            else
+                lines.AddRange(TuiComponents.BoundedLivePanel(
+                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
@@ -1099,8 +1144,12 @@ internal sealed class TuiDriver
             {
                 var ent = _transcript[e];
                 if (ent.Expandable is { } x && ent.Expanded)
-                    foreach (var l in TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true))
-                    { disp.Add(l); owner.Add(e); }
+                {
+                    var panel = ent.DiffKind
+                        ? TuiComponents.Diff(x.Tool, x.Text, Width)
+                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true);
+                    foreach (var l in panel) { disp.Add(l); owner.Add(e); }
+                }
                 else
                 {
                     // Wrap long prose rows to the viewport so they are fully readable in NAV

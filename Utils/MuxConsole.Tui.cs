@@ -679,7 +679,7 @@ public static partial class MuxConsole
                 // line - a green dot for success, a red cross + "failed" for errors - so failures
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
-                if (LooksLikeDiff(text)) { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.Diff(tool, text, width)); }
+                if (LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
                 else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err); }
                 else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000)); }
             }
@@ -710,7 +710,7 @@ public static partial class MuxConsole
     public static void RenderTuiDiff(string title, string diff)
     {
         if (!IsTui) return;
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.Diff(title, diff, _driver.Width)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.CommitDiffCollapsible(title, diff); } return; }
         WithConsole(() => RenderDiffBody(title, diff));
     }
 
@@ -933,7 +933,20 @@ public static partial class MuxConsole
         if (text.Contains("@@ ") && text.Contains("@@")) return true;
         // unified-diff file headers (the edit-tool / `diff -u` form).
         if (text.Contains("--- ") && text.Contains("+++ ")) return true;
-        return false;
+        // Density fallback: agent-/tool-emitted diffs (e.g. Filesystem_edit_file's git-style
+        // output) that lack a real @@ header but are a strong run of +/- prefixed lines. Mirrors
+        // TuiMarkdown.LooksLikeDiff so the same content reads the same in fenced blocks and tool
+        // results. Conservative so ordinary code with a stray +/- is not miscolored.
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        int nonEmpty = 0, pm = 0;
+        foreach (var raw in lines)
+        {
+            if (raw.Length == 0) continue;
+            nonEmpty++;
+            char c = raw[0];
+            if ((c == '+' && !raw.StartsWith("++")) || (c == '-' && !raw.StartsWith("--"))) pm++;
+        }
+        return nonEmpty >= 4 && pm >= 3 && pm * 100 >= nonEmpty * 40;
     }
 
     private static bool LooksLikeError(string text)
