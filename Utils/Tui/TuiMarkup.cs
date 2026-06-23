@@ -328,4 +328,83 @@ internal static class TuiMarkup
         }
         if (sb.Length > 0) yield return sb.ToString();
     }
+
+    /// <summary>
+    /// Word-wrap a MARKUP line to <paramref name="width"/> display columns, returning each
+    /// wrapped slice as MARKUP (not ANSI), so callers that re-parse markup downstream (e.g. the
+    /// NAV cursor renderer) keep styling, per-char column math and selection intact. Styling is
+    /// preserved by re-emitting each span's resolved style as an opening tag on every slice it
+    /// contributes to. Returns at least one (possibly empty) line.
+    /// </summary>
+    public static List<string> WrapMarkup(string markup, int width)
+    {
+        if (width <= 0) return new List<string> { markup ?? "" };
+        var spans = Parse(markup ?? "");
+        var outRows = new List<string>();
+        var cur = new StringBuilder();
+        int curW = 0;
+
+        void NewRow()
+        {
+            outRows.Add(cur.ToString());
+            cur.Clear(); curW = 0;
+        }
+        void Emit(TuiStyle style, string text)
+        {
+            if (text.Length == 0) return;
+            string tag = ToMarkupTag(style);
+            if (tag.Length > 0) { cur.Append(tag); cur.Append(EscapeLiteral(text)); cur.Append("[/]"); }
+            else cur.Append(EscapeLiteral(text));
+        }
+
+        foreach (var span in spans)
+        {
+            // Honor embedded newlines, then wrap each physical line by width within the span style.
+            var physical = (span.Text ?? "").Replace("\r\n", "\n").Split('\n');
+            for (int pi = 0; pi < physical.Length; pi++)
+            {
+                if (pi > 0) NewRow();
+                foreach (var word in SplitKeepingSpaces(physical[pi]))
+                {
+                    int ww = Width(word);
+                    if (ww > width)
+                    {
+                        foreach (var chunk in HardBreak(word, width))
+                        {
+                            int cw = Width(chunk);
+                            if (curW + cw > width && curW > 0) NewRow();
+                            Emit(span.Style, chunk); curW += cw;
+                        }
+                        continue;
+                    }
+                    if (curW + ww > width && curW > 0)
+                    {
+                        NewRow();
+                        if (string.IsNullOrWhiteSpace(word)) continue; // don't lead a row with the wrapped space
+                    }
+                    Emit(span.Style, word); curW += ww;
+                }
+            }
+        }
+        if (cur.Length > 0 || outRows.Count == 0) outRows.Add(cur.ToString());
+        return outRows;
+    }
+
+    /// <summary>Re-emit a resolved style as an opening markup tag (empty when no attributes).
+    /// Inverse-ish of <see cref="ResolveTag"/> for the attributes this renderer uses.</summary>
+    private static string ToMarkupTag(TuiStyle s)
+    {
+        var parts = new List<string>();
+        if (s.Bold) parts.Add("bold");
+        if (s.Dim) parts.Add("dim");
+        if (s.Italic) parts.Add("italic");
+        if (s.Underline) parts.Add("underline");
+        if (s.Fg is { } c) parts.Add($"#{c.R:X2}{c.G:X2}{c.B:X2}");
+        if (s.Bg is { } b) { parts.Add("on"); parts.Add($"#{b.R:X2}{b.G:X2}{b.B:X2}"); }
+        return parts.Count == 0 ? "" : "[" + string.Join(" ", parts) + "]";
+    }
+
+    /// <summary>Escape literal brackets so wrapped plain text is not re-interpreted as markup.</summary>
+    private static string EscapeLiteral(string text) => text.Replace("[", "[[").Replace("]", "]]");
+
 }

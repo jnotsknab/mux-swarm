@@ -1102,7 +1102,13 @@ internal sealed class TuiDriver
                     foreach (var l in TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true))
                     { disp.Add(l); owner.Add(e); }
                 else
-                { disp.Add(ent.Collapsed); owner.Add(e); }
+                {
+                    // Wrap long prose rows to the viewport so they are fully readable in NAV
+                    // (expanded tool panels are already pre-wrapped to Width by ToolResultPanel;
+                    // unexpandable prose was emitted as one long row and clipped at the edge).
+                    foreach (var wl in TuiMarkup.WrapMarkup(ent.Collapsed, Math.Max(1, Width - 1)))
+                    { disp.Add(wl); owner.Add(e); }
+                }
             }
             if (disp.Count == 0) { disp.Add(""); owner.Add(0); }
             return (disp, owner);
