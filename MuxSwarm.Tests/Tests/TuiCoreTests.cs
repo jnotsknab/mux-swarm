@@ -338,4 +338,75 @@ public class TuiCoreTests
         Assert.Contains(Ansi.EraseDown, term.Output);
         Assert.Equal(1, lr.PaintedRows);
     }
+
+    // --- resize invalidation (the resize-artifact fix) -----------------------
+
+    [Fact]
+    public void LiveRegion_WidthChange_ForcesFullRepaint_NotDiffFastPath()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        term.Clear();
+
+        // Shrink the terminal, then repaint IDENTICAL markup (as a spinner tick would).
+        // Pre-fix this hit the no-op/diff path and left the old frame stranded; now a width
+        // change must force a full erase+repaint.
+        term.Width = 20;
+        lr.SetLive(new List<string> { "alpha", "beta" });
+
+        Assert.NotEqual("", term.Output);                 // must NOT be a no-op
+        Assert.Contains(Ansi.EraseDown, term.Output);     // full teardown, not in-place diff
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_WidthShrink_ErasesReflowedRowCount_NoStrandedFrame()
+    {
+        // A single 26-col line fits on ONE row at width 40 but reflows to THREE rows at
+        // width 10. On the next paint the erase must move up by the REFLOWED count (3), not
+        // the stale painted count (1) - otherwise the top of the old frame is stranded.
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
+        Assert.Equal(1, lr.PaintedRows);
+        term.Clear();
+
+        term.Width = 10;
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
+
+        // Erase must account for the 3 reflowed rows that are actually on screen.
+        Assert.Contains(Ansi.CursorUp(3), term.Output);
+        Assert.Contains(Ansi.EraseDown, term.Output);
+        Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
+    }
+
+    [Fact]
+    public void LiveRegion_WidthGrow_RepaintsCleanly()
+    {
+        var term = new FakeTerminal { Width = 10 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 3 rows at width 10
+        Assert.Equal(3, lr.PaintedRows);
+        term.Clear();
+
+        term.Width = 40;
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 1 row at width 40
+        Assert.Contains(Ansi.EraseDown, term.Output);
+        Assert.Equal(1, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_SameWidth_StillUsesDiffFastPath()
+    {
+        // Guard: the resize handling must not regress the no-op fast path when width is stable.
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+
+        lr.SetLive(new List<string> { "one", "two" }); // identical, same width => no paint
+        Assert.Equal("", term.Output);
+        Assert.Equal(2, lr.PaintedRows);
+    }
 }

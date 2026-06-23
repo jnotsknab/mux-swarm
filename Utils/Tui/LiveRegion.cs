@@ -52,6 +52,12 @@ internal sealed class LiveRegion
     private int _paintedRows;             // physical rows the live region occupies on screen
     private List<string> _lastRows = new(); // last-painted physical rows (ANSI), for diffing
     private bool _cursorHidden;
+    private int _lastWidth = -1;          // terminal width at last paint; resize invalidates geometry
+    // Per-line wrap/render cache (markup -> ANSI physical rows) scoped to one width. Most rows
+    // (footer, context meter, input box) are unchanged across spinner ticks, so caching the
+    // wrap+ANSI result avoids re-parsing every markup line on every repaint. Cleared on resize.
+    private readonly Dictionary<string, List<string>> _rowCache = new(StringComparer.Ordinal);
+    private int _rowCacheWidth = -1;
 
     public LiveRegion(ITuiTerminal term) => _term = term;
 
@@ -67,16 +73,24 @@ internal sealed class LiveRegion
     private List<string> RenderPhysicalRows(IReadOnlyList<string> markupLines)
     {
         int cols = Cols;
+        if (cols != _rowCacheWidth) { _rowCache.Clear(); _rowCacheWidth = cols; }
         var rows = new List<string>();
         foreach (var ml in markupLines)
         {
-            // Wrap on plain width, then re-apply styling per wrapped slice by re-parsing.
-            // Simpler + robust: render whole line to ANSI, but wrap by plain text. Because
-            // styles reset at each span boundary in ToAnsi, wrapping the MARKUP keeps tags
-            // balanced only if we wrap plain and re-style. We wrap the plain text and apply
-            // the line's leading style is lost; to keep it correct we wrap per-span instead.
-            foreach (var wrapped in WrapMarkupLine(ml, cols))
-                rows.Add(wrapped);
+            // Cache the wrap+ANSI render per markup line at the current width. WrapMarkupLine is
+            // pure for a given (markup, cols), so unchanged lines (footer/meter/input) are served
+            // from the cache and never re-parsed on a spinner tick.
+            if (!_rowCache.TryGetValue(ml, out var wrappedRows))
+            {
+                wrappedRows = WrapMarkupLine(ml, cols);
+                // Bound the cache: the streaming tail line mutates every token, so distinct keys
+                // would otherwise grow without limit over a long turn. The live region only holds a
+                // handful of lines per frame, so a small cap keeps the stable rows (footer/meter/
+                // input) hot while discarding stale streaming-tail entries.
+                if (_rowCache.Count >= 256) _rowCache.Clear();
+                _rowCache[ml] = wrappedRows;
+            }
+            rows.AddRange(wrappedRows);
         }
         return rows;
     }
@@ -153,22 +167,32 @@ internal sealed class LiveRegion
         _cursorHidden = false;
     }
 
-    /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.</summary>
+    /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.
+    /// When the terminal width changed since the last paint, the on-screen content has
+    /// reflowed, so the true physical row count is re-measured at the CURRENT width from the
+    /// cached live content - using the stale <c>_paintedRows</c> would erase the wrong number
+    /// of rows and strand part of the old frame (the resize-artifact bug).</summary>
     private void EraseLiveRegion()
     {
         if (_paintedRows <= 0) return;
+        int rowsOnScreen = _paintedRows;
+        if (_lastWidth >= 0 && _lastWidth != Cols && _live.Count > 0)
+            rowsOnScreen = RenderPhysicalRows(_live).Count; // reflowed to the new width
         // Cursor is just below the last painted row (on a fresh line). Move up onto the
         // last row, then erase upward.
-        _term.Write(Ansi.CursorUp(_paintedRows));
+        _term.Write(Ansi.CursorUp(rowsOnScreen));
         _term.Write(Ansi.EraseDown);
         _paintedRows = 0;
         _lastRows = new List<string>();
     }
 
     /// <summary>Paint the current live lines, recording how many physical rows they took.</summary>
-    private void PaintLiveRegion()
+    private void PaintLiveRegion() => PaintLiveRegion(RenderPhysicalRows(_live));
+
+    /// <summary>Paint the supplied physical rows, recording how many rows they took.
+    /// Overload lets callers pass rows they already rendered to avoid a second wrap pass.</summary>
+    private void PaintLiveRegion(List<string> rows)
     {
-        var rows = RenderPhysicalRows(_live);
         var sb = new StringBuilder();
         for (int i = 0; i < rows.Count; i++)
         {
@@ -179,6 +203,7 @@ internal sealed class LiveRegion
         _term.Write(sb.ToString());
         _paintedRows = rows.Count;
         _lastRows = rows;
+        _lastWidth = Cols;
     }
 
     /// <summary>
@@ -197,7 +222,12 @@ internal sealed class LiveRegion
         // tick. When the row count changes we fall back to a full erase+repaint.
         var newRows = RenderPhysicalRows(_live);
 
-        if (_paintedRows > 0 && newRows.Count == _lastRows.Count)
+        // On a width change the cached _lastRows/_paintedRows describe the OLD geometry, so the
+        // in-place diff path would seek to wrong rows and leave trails. Force a full erase+repaint
+        // (EraseLiveRegion re-measures the reflowed old content) and skip the fast path.
+        bool widthChanged = _lastWidth >= 0 && _lastWidth != Cols;
+
+        if (!widthChanged && _paintedRows > 0 && newRows.Count == _lastRows.Count)
         {
             // Find which rows changed.
             var changed = new List<int>();
@@ -232,9 +262,10 @@ internal sealed class LiveRegion
             return;
         }
 
-        // Row count changed (or first paint): full erase + repaint.
+        // Row count changed, width changed, or first paint: full erase + repaint. Reuse the
+        // rows we already rendered above instead of wrapping the frame a second time.
         EraseLiveRegion();
-        PaintLiveRegion();
+        PaintLiveRegion(newRows);
         _term.Flush();
     }
 
