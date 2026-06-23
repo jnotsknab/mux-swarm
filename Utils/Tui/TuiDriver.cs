@@ -739,7 +739,7 @@ internal sealed class TuiDriver
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
             lines.Add(TuiComponents.FullRule(width));
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.

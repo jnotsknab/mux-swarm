@@ -540,7 +540,7 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0)
     {
         const string cur = "#E0E0E0";
         string prompt = mode == EditorMode.Normal
@@ -548,13 +548,19 @@ internal static class TuiComponents
             : $"[{Accent}]\u203a[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
         string contGutter = $"[{Dim}]\u2502[/]";
+        string promptLead = $"  {prompt} ";
+        string contLead   = $"  {contGutter} ";
+        // Visible column cost of each lead ("  " + glyph + " "). Used to size the wrap width so a
+        // wrapped row's text never runs under the terminal's right edge and soft-wraps with no gutter.
+        int promptLeadCols = 2 + TuiMarkup.MarkupWidth(prompt) + 1;
+        int contLeadCols   = 2 + TuiMarkup.MarkupWidth(contGutter) + 1;
 
         if (string.IsNullOrEmpty(buffer))
             return new List<string>
             {
                 mode == EditorMode.Normal
-                    ? $"  {prompt} [black on {cur}] [/]"
-                    : $"  {prompt} [black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                    ? $"{promptLead}[black on {cur}] [/]"
+                    : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             };
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
@@ -569,26 +575,57 @@ internal static class TuiComponents
             cursorLine = s + 1;
         }
 
-        var rows = new List<string>(segments.Length);
+        // Build visual rows. Each logical segment is hard-wrapped (by character, so the block
+        // cursor maps exactly to (row,col)) to the content width left of the gutter. The prompt
+        // lead is used only for the very first visual row; every other row gets the dim gutter so
+        // wrapped/continuation lines hang-indent under the prompt instead of hugging column 0.
+        var rows = new List<string>();
+        int cursorVRow = -1, cursorVCol = 0;
         for (int s = 0; s < segments.Length; s++)
         {
             string seg = segments[s];
-            string lead = s == 0 ? $"  {prompt} " : $"  {contGutter} ";
-            if (s != cursorLine)
+            int pos = 0;
+            bool firstOfSeg = true;
+            while (true)
             {
-                rows.Add($"{lead}[{Text}]{Esc(seg)}[/]");
-                continue;
-            }
-            // Place the block cursor within this segment.
-            int col = Math.Clamp(cursorCol, 0, seg.Length);
-            string before = Esc(seg[..col]);
-            if (col >= seg.Length)
-                rows.Add($"{lead}[{Text}]{before}[/][black on {cur}] [/]");
-            else
-            {
-                string at = Esc(seg[col].ToString());
-                string after = Esc(seg[(col + 1)..]);
-                rows.Add($"{lead}[{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]");
+                bool isFirstRowOverall = s == 0 && firstOfSeg;
+                string lead = isFirstRowOverall ? promptLead : contLead;
+                int leadCols = isFirstRowOverall ? promptLeadCols : contLeadCols;
+                int cap = width > 0 ? Math.Max(1, width - leadCols) : int.MaxValue;
+                int take = Math.Min(cap, seg.Length - pos);
+                string chunk = seg.Substring(pos, take);
+
+                // Does the cursor fall on this visual chunk? A cursor sitting exactly at the chunk's
+                // trailing boundary belongs here only when it is also the segment end (append spot);
+                // otherwise it rolls to the start of the next wrapped row.
+                if (s == cursorLine && cursorCol >= pos &&
+                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length)))
+                {
+                    cursorVRow = rows.Count;
+                    cursorVCol = cursorCol - pos;
+                }
+
+                if (cursorVRow == rows.Count)
+                {
+                    int col = Math.Clamp(cursorVCol, 0, chunk.Length);
+                    string before = Esc(chunk[..col]);
+                    if (col >= chunk.Length)
+                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}] [/]");
+                    else
+                    {
+                        string at = Esc(chunk[col].ToString());
+                        string after = Esc(chunk[(col + 1)..]);
+                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]");
+                    }
+                }
+                else
+                {
+                    rows.Add($"{lead}[{Text}]{Esc(chunk)}[/]");
+                }
+
+                pos += take;
+                firstOfSeg = false;
+                if (pos >= seg.Length) break;
             }
         }
         return rows;

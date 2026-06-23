@@ -467,6 +467,32 @@ public class TuiVimFeatureTests
     }
 
     [Fact]
+    public void InputRows_LongLine_WrapsWithGutter()
+    {
+        // A single logical line longer than the content width wraps to multiple visual rows; the
+        // wrapped (continuation) rows carry the dim gutter and the joined plain text is preserved.
+        var text = new string('x', 200);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert, width: 40);
+        Assert.True(rows.Count > 1);
+        // All 200 input chars survive across the wrapped rows (gutter/prompt glyphs aside).
+        int xCount = rows.Sum(r => TuiMarkup.Plain(r).Count(c => c == 'x'));
+        Assert.Equal(200, xCount);
+        // Continuation rows hang-indent under the prompt via the dim gutter glyph.
+        Assert.Contains("│", TuiMarkup.Plain(rows[1]));
+        foreach (var r in rows)
+            Assert.True(TuiMarkup.MarkupWidth(r) <= 40, $"row exceeded width: {TuiMarkup.MarkupWidth(r)}");
+    }
+
+    [Fact]
+    public void InputRows_NoWidth_SingleRowUnchanged()
+    {
+        // width=0 (default) keeps the legacy single-row behaviour for a long line (no wrapping).
+        var text = new string('y', 120);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert);
+        Assert.Single(rows);
+    }
+
+    [Fact]
     public void LineEditor_AltEnter_InsertsNewline_NotSubmit()
     {
         var ed = new LineEditor();
