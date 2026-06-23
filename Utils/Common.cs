@@ -370,12 +370,12 @@ public static class Common
             ? Path.GetFullPath(normalized)
             : Path.GetFullPath(Path.Combine(PlatformContext.PromptsDirectory, normalized));
 
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[WARNING] Prompt file not found. Tried:");
+        // Route through the managed renderer so the TUI live region commits these warnings
+        // instead of a raw Console.Write that bypasses the diff and strands a ghost frame.
+        MuxConsole.WriteWarning("Prompt file not found. Tried:");
         foreach (var c in candidates)
-            Console.WriteLine($"  - {c}");
-        Console.WriteLine($"[WARNING] Expected (convention): {expected}");
-        Console.ResetColor();
+            MuxConsole.WriteMuted($"  - {c}");
+        MuxConsole.WriteWarning($"Expected (convention): {expected}");
 
         return $"You are a helpful AI assistant. (Prompt file missing: {expected})";
     }
