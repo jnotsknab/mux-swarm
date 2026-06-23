@@ -347,6 +347,7 @@ public class TuiCoreTests
         var term = new FakeTerminal { Width = 40 };
         var lr = new LiveRegion(term);
         lr.SetLive(new List<string> { "alpha", "beta" });
+        Assert.Contains(Ansi.AutoWrapOff, term.Output);   // live rows protected from reflow from the first paint
         term.Clear();
 
         // Shrink the terminal, then repaint IDENTICAL markup (as a spinner tick would).
@@ -361,22 +362,24 @@ public class TuiCoreTests
     }
 
     [Fact]
-    public void LiveRegion_WidthShrink_ErasesReflowedRowCount_NoStrandedFrame()
+    public void LiveRegion_WidthShrink_EmitsAutoWrapOff_AndFullRepaint()
     {
-        // A single 26-col line fits on ONE row at width 40 but reflows to THREE rows at
-        // width 10. On the next paint the erase must move up by the REFLOWED count (3), not
-        // the stale painted count (1) - otherwise the top of the old frame is stranded.
+        // Live rows are written with auto-wrap OFF so the emulator cannot soft-wrap/reflow them
+        // on resize (reflow is what stranded old frames). A 26-col line is ONE hard row at
+        // width 40; shrinking to width 10 re-wraps the MARKUP to 3 hard rows and forces a full
+        // erase+repaint. The erase moves up by the (un-reflowed) painted count, which stays exact
+        // precisely because auto-wrap was off.
         var term = new FakeTerminal { Width = 40 };
         var lr = new LiveRegion(term);
         lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
         Assert.Equal(1, lr.PaintedRows);
+        Assert.Contains(Ansi.AutoWrapOff, term.Output); // rows protected from reflow from the first paint
         term.Clear();
 
         term.Width = 10;
         lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
 
-        // Erase must account for the 3 reflowed rows that are actually on screen.
-        Assert.Contains(Ansi.CursorUp(3), term.Output);
+        Assert.Contains(Ansi.CursorUp(1), term.Output); // erase the 1 hard row that was on screen
         Assert.Contains(Ansi.EraseDown, term.Output);
         Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
     }

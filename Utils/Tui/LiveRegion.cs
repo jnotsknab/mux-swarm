@@ -58,6 +58,12 @@ internal sealed class LiveRegion
     // wrap+ANSI result avoids re-parsing every markup line on every repaint. Cleared on resize.
     private readonly Dictionary<string, List<string>> _rowCache = new(StringComparer.Ordinal);
     private int _rowCacheWidth = -1;
+    // Terminal auto-wrap (DECAWM) state. The live region writes hard, pre-wrapped rows with
+    // auto-wrap OFF so the emulator can never SOFT-wrap + reflow them on a resize - reflow is
+    // what drifted the on-screen row count away from _paintedRows and stranded old frames
+    // (the resize-artifact bug). Committed transcript lines are written with auto-wrap ON so
+    // normal scrollback still wraps. Toggled idempotently via WrapEscape.
+    private bool _autoWrapDisabled;
 
     public LiveRegion(ITuiTerminal term) => _term = term;
 
@@ -151,6 +157,15 @@ internal sealed class LiveRegion
             yield return new Piece(lines[i], i < lines.Count - 1);
     }
 
+    /// <summary>Escape to put auto-wrap into the requested state, or empty if already there.
+    /// Idempotent; tracks <see cref="_autoWrapDisabled"/>.</summary>
+    private string WrapEscape(bool disabled)
+    {
+        if (disabled == _autoWrapDisabled) return "";
+        _autoWrapDisabled = disabled;
+        return disabled ? Ansi.AutoWrapOff : Ansi.AutoWrapOn;
+    }
+
     /// <summary>Hide the cursor for the duration of live painting (idempotent).</summary>
     public void HideCursor()
     {
@@ -168,19 +183,17 @@ internal sealed class LiveRegion
     }
 
     /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.
-    /// When the terminal width changed since the last paint, the on-screen content has
-    /// reflowed, so the true physical row count is re-measured at the CURRENT width from the
-    /// cached live content - using the stale <c>_paintedRows</c> would erase the wrong number
-    /// of rows and strand part of the old frame (the resize-artifact bug).</summary>
+    /// Relies on live rows having been written with auto-wrap OFF (see <see cref="WrapEscape"/>),
+    /// which prevents the emulator from reflowing them on resize - so <c>_paintedRows</c> stays
+    /// the true on-screen row count and the erase is exact.</summary>
     private void EraseLiveRegion()
     {
         if (_paintedRows <= 0) return;
-        int rowsOnScreen = _paintedRows;
-        if (_lastWidth >= 0 && _lastWidth != Cols && _live.Count > 0)
-            rowsOnScreen = RenderPhysicalRows(_live).Count; // reflowed to the new width
-        // Cursor is just below the last painted row (on a fresh line). Move up onto the
-        // last row, then erase upward.
-        _term.Write(Ansi.CursorUp(rowsOnScreen));
+        // Live rows were emitted with auto-wrap OFF, so the terminal cannot have soft-wrapped or
+        // reflowed them - _paintedRows is still exactly the number of physical rows on screen,
+        // even after a resize. Move up over them and erase down.
+        _term.Write(Ansi.CursorLeft);
+        _term.Write(Ansi.CursorUp(_paintedRows));
         _term.Write(Ansi.EraseDown);
         _paintedRows = 0;
         _lastRows = new List<string>();
@@ -194,6 +207,7 @@ internal sealed class LiveRegion
     private void PaintLiveRegion(List<string> rows)
     {
         var sb = new StringBuilder();
+        sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them
         for (int i = 0; i < rows.Count; i++)
         {
             sb.Append(Ansi.EraseLine);
@@ -241,6 +255,7 @@ internal sealed class LiveRegion
             // from the top of the region; distance from the cursor up to row r is
             // (_paintedRows - r). Rewrite each changed row in place.
             var sb = new StringBuilder();
+            sb.Append(WrapEscape(disabled: true)); // keep rows un-reflowable during in-place rewrite
             int cursorOffset = 0; // current cursor distance above the home (below-last) line
             foreach (int r in changed)
             {
@@ -288,6 +303,7 @@ internal sealed class LiveRegion
         HideCursor();
         EraseLiveRegion();
         var sb = new StringBuilder();
+        sb.Append(WrapEscape(disabled: false)); // committed scrollback lines wrap normally
         foreach (var ml in markupLines)
             foreach (var row in RenderPhysicalRows(new[] { ml }))
             {
@@ -313,6 +329,7 @@ internal sealed class LiveRegion
     {
         EraseLiveRegion();
         _live = new List<string>();
+        _term.Write(WrapEscape(disabled: false)); // restore auto-wrap before handing the terminal back
         ShowCursor();
         _term.Flush();
     }
