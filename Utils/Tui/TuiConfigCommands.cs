@@ -205,6 +205,26 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "swarm.maxToolIterationsPerTurn", Aliases = new[] { "swarm.tooliter", "maxtooliter" }, ValueHint = "<int> (<=0 = unlimited)",
+            Get = () => LoadSwarmOrNew().ExecutionLimits.MaxToolIterationsPerTurn.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n)) return Bad($"swarm.maxToolIterationsPerTurn expects an integer (got '{v}').");
+                return SaveSwarmScalar(s => s.ExecutionLimits.MaxToolIterationsPerTurn = n, $"swarm.maxToolIterationsPerTurn = {n}");
+            },
+        },
+        new Key
+        {
+            Name = "swarm.maxAutoContinuesPerTurn", Aliases = new[] { "swarm.autocontinue", "maxautocontinue" }, ValueHint = "<int>=0",
+            Get = () => LoadSwarmOrNew().ExecutionLimits.MaxAutoContinuesPerTurn.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 0) return Bad($"swarm.maxAutoContinuesPerTurn expects a non-negative integer (got '{v}').");
+                return SaveSwarmScalar(s => s.ExecutionLimits.MaxAutoContinuesPerTurn = n, $"swarm.maxAutoContinuesPerTurn = {n}");
+            },
+        },
+        new Key
+        {
             Name = "dockedFooter", Aliases = new[] { "footer" }, ValueHint = "on|off",
             Get = () => Cfg.Console.DockedFooter.ToString(),
             Set = v =>

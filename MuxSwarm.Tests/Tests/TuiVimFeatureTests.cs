@@ -343,6 +343,30 @@ public class TuiVimFeatureTests
     }
 
     [Fact]
+    public void Table_WrapsLongCells_NoTruncation_FitsWidth()
+    {
+        var rows = new[]
+        {
+            "| Commit | Root cause |",
+            "|--------|-----------|",
+            "| 3fbb732 | TuiCommitBlock stamped a corner glyph on every row so it was changed to a dim middot uniformly across all panels and indices right-aligned |",
+            "| ba71cfb | – |",
+        };
+        const int W = 60;
+        var outp = TuiTable.Render(rows, W);
+        var plain = outp.Select(TuiMarkup.Plain).ToList();
+        // No content is lost to an ellipsis, and a distinctive tail word survives the wrap.
+        var joined = string.Join(" ", plain);
+        Assert.DoesNotContain("\u2026", joined);   // no horizontal ellipsis
+        Assert.Contains("panels", joined);
+        // Every physical line fits within the terminal width (closing border never wraps).
+        foreach (var l in plain)
+            Assert.True(TuiMarkup.Width(l) <= W, $"row width {TuiMarkup.Width(l)} > {W}: {l}");
+        // The long cell forced the row to span multiple physical lines.
+        Assert.True(outp.Count > 6);
+    }
+
+    [Fact]
     public void Table_IsTableRow_And_Separator_Detection()
     {
         Assert.True(TuiTable.IsTableRow("| a | b |"));
@@ -464,6 +488,32 @@ public class TuiVimFeatureTests
         var rows = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert);
         Assert.Single(rows);
         Assert.Contains("hello", TuiMarkup.Plain(rows[0]));
+    }
+
+    [Fact]
+    public void InputRows_LongLine_WrapsWithGutter()
+    {
+        // A single logical line longer than the content width wraps to multiple visual rows; the
+        // wrapped (continuation) rows carry the dim gutter and the joined plain text is preserved.
+        var text = new string('x', 200);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert, width: 40);
+        Assert.True(rows.Count > 1);
+        // All 200 input chars survive across the wrapped rows (gutter/prompt glyphs aside).
+        int xCount = rows.Sum(r => TuiMarkup.Plain(r).Count(c => c == 'x'));
+        Assert.Equal(200, xCount);
+        // Continuation rows hang-indent under the prompt via the dim gutter glyph.
+        Assert.Contains("│", TuiMarkup.Plain(rows[1]));
+        foreach (var r in rows)
+            Assert.True(TuiMarkup.MarkupWidth(r) <= 40, $"row exceeded width: {TuiMarkup.MarkupWidth(r)}");
+    }
+
+    [Fact]
+    public void InputRows_NoWidth_SingleRowUnchanged()
+    {
+        // width=0 (default) keeps the legacy single-row behaviour for a long line (no wrapping).
+        var text = new string('y', 120);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert);
+        Assert.Single(rows);
     }
 
     [Fact]

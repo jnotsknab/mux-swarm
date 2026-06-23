@@ -52,6 +52,18 @@ internal sealed class LiveRegion
     private int _paintedRows;             // physical rows the live region occupies on screen
     private List<string> _lastRows = new(); // last-painted physical rows (ANSI), for diffing
     private bool _cursorHidden;
+    private int _lastWidth = -1;          // terminal width at last paint; resize invalidates geometry
+    // Per-line wrap/render cache (markup -> ANSI physical rows) scoped to one width. Most rows
+    // (footer, context meter, input box) are unchanged across spinner ticks, so caching the
+    // wrap+ANSI result avoids re-parsing every markup line on every repaint. Cleared on resize.
+    private readonly Dictionary<string, List<string>> _rowCache = new(StringComparer.Ordinal);
+    private int _rowCacheWidth = -1;
+    // Terminal auto-wrap (DECAWM) state. The live region writes hard, pre-wrapped rows with
+    // auto-wrap OFF so the emulator can never SOFT-wrap + reflow them on a resize - reflow is
+    // what drifted the on-screen row count away from _paintedRows and stranded old frames
+    // (the resize-artifact bug). Committed transcript lines are written with auto-wrap ON so
+    // normal scrollback still wraps. Toggled idempotently via WrapEscape.
+    private bool _autoWrapDisabled;
 
     public LiveRegion(ITuiTerminal term) => _term = term;
 
@@ -63,20 +75,51 @@ internal sealed class LiveRegion
 
     private int Cols => Math.Max(1, _term.Width);
 
+    /// <summary>Visible window height in rows (>=1). Bounds the live region so its in-place
+    /// repaint never exceeds the viewport.</summary>
+    private int Rows => Math.Max(1, _term.Height);
+
+    /// <summary>
+    /// Bound a rendered live frame to the visible window so the cursor-relative erase/repaint
+    /// can never overrun the top of the viewport. The live region is repainted with relative
+    /// cursor moves (<c>CSI nA</c>), which CLAMP at the top edge and never scroll - so if the
+    /// frame is taller than the window the up-move stops short, the erase under-clears, and the
+    /// next CommitAbove pushes the un-erased rows permanently into scrollback (the streaming
+    /// "artifacts left in buffer" bug). Keeping the frame within the window (minus one headroom
+    /// row for the trailing newline) makes <c>_paintedRows</c> always reachable. We retain the
+    /// LAST rows because the footer + input + freshest streaming tail live at the bottom and
+    /// must stay pinned; earlier rows of an over-long in-progress line reappear via scrollback
+    /// once committed.
+    /// </summary>
+    private List<string> ClampRows(List<string> rows)
+    {
+        int max = Math.Max(1, Rows - 1);
+        if (rows.Count <= max) return rows;
+        return rows.GetRange(rows.Count - max, max);
+    }
+
     /// <summary>Expand markup lines into wrapped, ANSI-rendered physical rows.</summary>
     private List<string> RenderPhysicalRows(IReadOnlyList<string> markupLines)
     {
         int cols = Cols;
+        if (cols != _rowCacheWidth) { _rowCache.Clear(); _rowCacheWidth = cols; }
         var rows = new List<string>();
         foreach (var ml in markupLines)
         {
-            // Wrap on plain width, then re-apply styling per wrapped slice by re-parsing.
-            // Simpler + robust: render whole line to ANSI, but wrap by plain text. Because
-            // styles reset at each span boundary in ToAnsi, wrapping the MARKUP keeps tags
-            // balanced only if we wrap plain and re-style. We wrap the plain text and apply
-            // the line's leading style is lost; to keep it correct we wrap per-span instead.
-            foreach (var wrapped in WrapMarkupLine(ml, cols))
-                rows.Add(wrapped);
+            // Cache the wrap+ANSI render per markup line at the current width. WrapMarkupLine is
+            // pure for a given (markup, cols), so unchanged lines (footer/meter/input) are served
+            // from the cache and never re-parsed on a spinner tick.
+            if (!_rowCache.TryGetValue(ml, out var wrappedRows))
+            {
+                wrappedRows = WrapMarkupLine(ml, cols);
+                // Bound the cache: the streaming tail line mutates every token, so distinct keys
+                // would otherwise grow without limit over a long turn. The live region only holds a
+                // handful of lines per frame, so a small cap keeps the stable rows (footer/meter/
+                // input) hot while discarding stale streaming-tail entries.
+                if (_rowCache.Count >= 256) _rowCache.Clear();
+                _rowCache[ml] = wrappedRows;
+            }
+            rows.AddRange(wrappedRows);
         }
         return rows;
     }
@@ -137,6 +180,15 @@ internal sealed class LiveRegion
             yield return new Piece(lines[i], i < lines.Count - 1);
     }
 
+    /// <summary>Escape to put auto-wrap into the requested state, or empty if already there.
+    /// Idempotent; tracks <see cref="_autoWrapDisabled"/>.</summary>
+    private string WrapEscape(bool disabled)
+    {
+        if (disabled == _autoWrapDisabled) return "";
+        _autoWrapDisabled = disabled;
+        return disabled ? Ansi.AutoWrapOff : Ansi.AutoWrapOn;
+    }
+
     /// <summary>Hide the cursor for the duration of live painting (idempotent).</summary>
     public void HideCursor()
     {
@@ -153,12 +205,17 @@ internal sealed class LiveRegion
         _cursorHidden = false;
     }
 
-    /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.</summary>
+    /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.
+    /// Relies on live rows having been written with auto-wrap OFF (see <see cref="WrapEscape"/>),
+    /// which prevents the emulator from reflowing them on resize - so <c>_paintedRows</c> stays
+    /// the true on-screen row count and the erase is exact.</summary>
     private void EraseLiveRegion()
     {
         if (_paintedRows <= 0) return;
-        // Cursor is just below the last painted row (on a fresh line). Move up onto the
-        // last row, then erase upward.
+        // Live rows were emitted with auto-wrap OFF, so the terminal cannot have soft-wrapped or
+        // reflowed them - _paintedRows is still exactly the number of physical rows on screen,
+        // even after a resize. Move up over them and erase down.
+        _term.Write(Ansi.CursorLeft);
         _term.Write(Ansi.CursorUp(_paintedRows));
         _term.Write(Ansi.EraseDown);
         _paintedRows = 0;
@@ -166,10 +223,15 @@ internal sealed class LiveRegion
     }
 
     /// <summary>Paint the current live lines, recording how many physical rows they took.</summary>
-    private void PaintLiveRegion()
+    private void PaintLiveRegion() => PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
+
+    /// <summary>Paint the supplied physical rows, recording how many rows they took.
+    /// Overload lets callers pass rows they already rendered to avoid a second wrap pass.</summary>
+    private void PaintLiveRegion(List<string> rows)
     {
-        var rows = RenderPhysicalRows(_live);
+        rows = ClampRows(rows);
         var sb = new StringBuilder();
+        sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them
         for (int i = 0; i < rows.Count; i++)
         {
             sb.Append(Ansi.EraseLine);
@@ -179,6 +241,7 @@ internal sealed class LiveRegion
         _term.Write(sb.ToString());
         _paintedRows = rows.Count;
         _lastRows = rows;
+        _lastWidth = Cols;
     }
 
     /// <summary>
@@ -195,9 +258,14 @@ internal sealed class LiveRegion
         // actually differ (seeking the cursor to each and erasing just that line), which
         // eliminates the full-region teardown that made the footer flicker every spinner
         // tick. When the row count changes we fall back to a full erase+repaint.
-        var newRows = RenderPhysicalRows(_live);
+        var newRows = ClampRows(RenderPhysicalRows(_live));
 
-        if (_paintedRows > 0 && newRows.Count == _lastRows.Count)
+        // On a width change the cached _lastRows/_paintedRows describe the OLD geometry, so the
+        // in-place diff path would seek to wrong rows and leave trails. Force a full erase+repaint
+        // (EraseLiveRegion re-measures the reflowed old content) and skip the fast path.
+        bool widthChanged = _lastWidth >= 0 && _lastWidth != Cols;
+
+        if (!widthChanged && _paintedRows > 0 && newRows.Count == _lastRows.Count)
         {
             // Find which rows changed.
             var changed = new List<int>();
@@ -211,6 +279,7 @@ internal sealed class LiveRegion
             // from the top of the region; distance from the cursor up to row r is
             // (_paintedRows - r). Rewrite each changed row in place.
             var sb = new StringBuilder();
+            sb.Append(WrapEscape(disabled: true)); // keep rows un-reflowable during in-place rewrite
             int cursorOffset = 0; // current cursor distance above the home (below-last) line
             foreach (int r in changed)
             {
@@ -232,9 +301,34 @@ internal sealed class LiveRegion
             return;
         }
 
-        // Row count changed (or first paint): full erase + repaint.
+        // Row count changed, width changed, or first paint: full erase + repaint. Reuse the
+        // rows we already rendered above instead of wrapping the frame a second time.
         EraseLiveRegion();
-        PaintLiveRegion();
+        PaintLiveRegion(newRows);
+        _term.Flush();
+    }
+
+    /// <summary>
+    /// Re-lay-out the live region cleanly by clearing the whole viewport and repainting, used
+    /// after a terminal RESIZE or on a manual redraw (Ctrl+L). On a width change the emulator
+    /// reflows its buffer (conhost and Windows Terminal both re-wrap already-emitted rows
+    /// regardless of hard newlines / DECAWM), which drifts the cursor anchor away from the cached
+    /// <c>_paintedRows</c> - so any erase relative to that anchor can strand frames. A full
+    /// clear is the only approach that is guaranteed artifact-free across emulators; the committed
+    /// transcript scrolls up into native scrollback, the standard full-redraw behaviour.
+    /// </summary>
+    public void ForceRepaint()
+    {
+        HideCursor();
+        // Discard cached geometry: after a reflow neither _paintedRows nor _lastRows nor the wrap
+        // cache describe what is actually on screen any more.
+        _paintedRows = 0;
+        _lastRows = new List<string>();
+        _rowCache.Clear();
+        _rowCacheWidth = -1;
+        _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
+        _term.Write(Ansi.ClearScreen + Ansi.Home);
+        PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
         _term.Flush();
     }
 
@@ -257,6 +351,7 @@ internal sealed class LiveRegion
         HideCursor();
         EraseLiveRegion();
         var sb = new StringBuilder();
+        sb.Append(WrapEscape(disabled: false)); // committed scrollback lines wrap normally
         foreach (var ml in markupLines)
             foreach (var row in RenderPhysicalRows(new[] { ml }))
             {
@@ -282,6 +377,7 @@ internal sealed class LiveRegion
     {
         EraseLiveRegion();
         _live = new List<string>();
+        _term.Write(WrapEscape(disabled: false)); // restore auto-wrap before handing the terminal back
         ShowCursor();
         _term.Flush();
     }

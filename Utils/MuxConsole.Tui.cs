@@ -99,6 +99,10 @@ public static partial class MuxConsole
     private static readonly List<SubAgentCapture> _activeCaptures = new();
     private static System.Threading.Timer? _subAgentTimer;
     private static int _subAgentFrame;
+    // Always-on resize poll: ticks ~100ms while the live-region driver is active and forces a
+    // clean repaint when the terminal size changes (the only reliable cure for the buffer-reflow
+    // artifacts a width resize leaves behind). Started on driver activation, disposed on teardown.
+    private static System.Threading.Timer? _resizeTimer;
 
     /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
     private static bool Capturing => _capture.Value is not null;
@@ -315,6 +319,8 @@ public static partial class MuxConsole
                     _driver = new TuiDriver();
                     _tuiActive = true;
                     InstallTeardownHook_NoLock();
+                    // Start the resize poll once, alongside the driver.
+                    _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);
                 }
                 // Reset the meter when (re)entering any scope so menu shows "ready" and a new
                 // session starts from zero rather than inheriting the prior session's tokens.
@@ -408,6 +414,8 @@ public static partial class MuxConsole
             {
                 try { _driver.Shutdown(); } catch { /* ignore */ }
             }
+            try { _resizeTimer?.Dispose(); } catch { /* ignore */ }
+            _resizeTimer = null;
             _driver = null;
             _tuiActive = false;
         }
@@ -452,6 +460,21 @@ public static partial class MuxConsole
         _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub;
         if (!TuiActive) return;
         lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached); }
+    }
+
+    /// <summary>Start the loop clock (live "&#x25cf; m:ss" footer badge) - called when an agentic
+    /// interface (/agent, /stateless, /swarm, /pswarm) is entered. No-op outside the driver.</summary>
+    public static void StartTuiLoopClock()
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.StartLoopClock(); }
+    }
+
+    /// <summary>Stop/clear the loop clock - called back at the top-level menu. No-op outside the driver.</summary>
+    public static void StopTuiLoopClock()
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.StopLoopClock(); }
     }
 
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
@@ -500,6 +523,14 @@ public static partial class MuxConsole
 
     /// <summary>Set/clear the driver's live "thinking/working" line (animated spinner).</summary>
     internal static void TuiSetThinking(string? text) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetThinking(text); } }
+
+    /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
+    /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
+    internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Resize poll tick: detect a terminal size change and force a clean repaint. No-op
+    /// outside the TUI. Called from the shared resize-poll timer.</summary>
+    internal static void TuiPollResize() { if (ViaDriver) lock (ConsoleLock) { _driver!.PollResize(); } }
 
     /// <summary>True when the driver is active - used to route the thinking indicator.</summary>
     internal static bool TuiDriverActive => ViaDriver;
@@ -663,7 +694,7 @@ public static partial class MuxConsole
                 // line - a green dot for success, a red cross + "failed" for errors - so failures
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
-                if (LooksLikeDiff(text)) { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.Diff(tool, text, width)); }
+                if (IsDiffTool(tool) && LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
                 else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err); }
                 else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000)); }
             }
@@ -672,7 +703,7 @@ public static partial class MuxConsole
 
         WithConsole(() =>
         {
-            if (LooksLikeDiff(text)) { RenderDiffBody(tool, text); return; }
+            if (IsDiffTool(tool) && LooksLikeDiff(text)) { RenderDiffBody(tool, text); return; }
             if (ToolOutputCompact) { RenderCompactResult(text, err); return; }
 
             int cap = swarm ? 500 : 2000;
@@ -694,7 +725,7 @@ public static partial class MuxConsole
     public static void RenderTuiDiff(string title, string diff)
     {
         if (!IsTui) return;
-        if (ViaDriver) { lock (ConsoleLock) { _driver!.Commit(TuiComponents.Diff(title, diff, _driver.Width)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { _driver!.CommitDiffCollapsible(title, diff); } return; }
         WithConsole(() => RenderDiffBody(title, diff));
     }
 
@@ -908,15 +939,33 @@ public static partial class MuxConsole
     private static string Trunc(string s, int max)
         => string.IsNullOrEmpty(s) ? s : (s.Length > max ? s[..max] + "\u2026" : s);
 
+    /// <summary>
+    /// Tools whose output is an actual file edit/write patch and may be rendered as a diff card.
+    /// Everything else (analyze_image, reads, shell, search, prose) is shown verbatim - free-form
+    /// text that merely *starts* lines with -/+/@ must never be mistaken for a diff. The tool gate
+    /// is the primary guard; <see cref="LooksLikeDiff"/> is a secondary structural confirmation.
+    /// </summary>
+    private static bool IsDiffTool(string? tool)
+    {
+        if (string.IsNullOrEmpty(tool)) return false;
+        var t = tool.ToLowerInvariant();
+        // Match on the verb so registry-prefixed names (Filesystem_edit_file, str_replace_editor,
+        // apply_patch, write_file, create_file, etc.) are all covered without an exact list.
+        return t.Contains("edit_file") || t.Contains("apply_patch") || t.Contains("str_replace")
+            || t.Contains("write_file") || t.Contains("create_file") || t.EndsWith("_patch")
+            || t == "edit" || t == "patch" || t == "write" || t == "apply_diff";
+    }
+
     private static bool LooksLikeDiff(string text)
     {
         if (string.IsNullOrEmpty(text)) return false;
-        // git porcelain header (from shell `git diff` / `git apply` / `patch` output).
-        if (text.Contains("diff --git ")) return true;
-        // unified-diff hunk header.
-        if (text.Contains("@@ ") && text.Contains("@@")) return true;
-        // unified-diff file headers (the edit-tool / `diff -u` form).
-        if (text.Contains("--- ") && text.Contains("+++ ")) return true;
+        // Require a genuine structural marker. The density fallback was removed: prose from tools
+        // like analyze_image (bullet lists, em-dashes, lines starting with `-`/`` ` ``) was tripping
+        // it, producing a bogus diff card with a duplicate old|new line-number gutter (issue: wrong
+        // content caught as diffs). A real diff always carries one of these.
+        if (text.Contains("diff --git ")) return true;                 // git porcelain header
+        if (text.Contains("@@ ") && text.Contains(" @@")) return true; // unified hunk header
+        if (text.Contains("--- ") && text.Contains("+++ ")) return true; // paired file headers
         return false;
     }
 

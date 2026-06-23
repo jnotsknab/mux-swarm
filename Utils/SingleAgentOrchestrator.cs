@@ -996,10 +996,22 @@ public static class SingleAgentOrchestrator
                             _pendingReseed = false;
                         }
 
+                        // Auto-continue on finish_reason == length: when the model's response is cut
+                        // off by the output/reasoning token cap (NOT a real stop), transparently
+                        // re-invoke on the SAME session so it resumes where it left off, bounded by
+                        // ExecutionLimits.MaxAutoContinuesPerTurn. This is why a long reasoning block
+                        // or tool run could appear to "just stop" with no error.
+                        int autoContinues = 0;
+                        int maxAutoContinues = ExecutionLimits.Current.MaxAutoContinuesPerTurn;
+                        Microsoft.Extensions.AI.ChatFinishReason? lastFinishReason;
+                        do
+                        {
+                        lastFinishReason = null;
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
                             activityTimeout.Ping();
+                            if (update.FinishReason is { } fr) lastFinishReason = fr;
 
                             if (!string.IsNullOrEmpty(update.Text))
                             {
@@ -1126,6 +1138,26 @@ public static class SingleAgentOrchestrator
                                 }
                             }
                         }
+
+                        // If the stream ended because the output cap was hit (length) and we still
+                        // have auto-continue budget, nudge the model to resume on the same session.
+                        if (lastFinishReason == Microsoft.Extensions.AI.ChatFinishReason.Length
+                            && autoContinues < maxAutoContinues)
+                        {
+                            autoContinues++;
+                            messages.Clear();
+                            messages.Add(new ChatMessage(ChatRole.User, "continue"));
+                        }
+                        else
+                        {
+                            if (lastFinishReason == Microsoft.Extensions.AI.ChatFinishReason.Length
+                                && maxAutoContinues > 0)
+                                MuxConsole.WriteMuted("[output cap reached after "
+                                    + $"{autoContinues} auto-continue(s) — type 'continue' to resume]");
+                            break;
+                        }
+                        }
+                        while (true);
                     }
                     finally
                     {

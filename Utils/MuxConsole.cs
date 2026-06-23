@@ -799,9 +799,14 @@ public static partial class MuxConsole
     private static bool TuiCommitBlock(string headerMarkup, IEnumerable<string> detailMarkupLines)
     {
         if (!ViaDriver) return false;
-        var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] {headerMarkup}" };
+        // A single continuous accent rail runs down the whole block - the rail IS the grouping,
+        // so no per-row bullet is needed. Header sits on the rail; a rail-only spacer separates it
+        // from the body; each detail row is the rail + one uniform space + the (already-trimmed)
+        // content. Callers must NOT pre-indent or bracket their rows; the rail provides structure.
+        string rail = $"  [{C.Step}]\u2502[/]";
+        var lines = new List<string> { "", $"{rail} {headerMarkup}", rail };
         foreach (var d in detailMarkupLines)
-            lines.Add($"    [{C.Muted}]\u23bf[/] {d}");
+            lines.Add($"{rail} {d}");
         lines.Add("");
         CommitLinesToDriver(lines);
         return true;
@@ -915,6 +920,31 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>Safe cursor-row read (returns -1 when the console has no usable position).</summary>
+    private static int SafeCursorTop()
+    {
+        try { return Console.CursorTop; } catch { return -1; }
+    }
+
+    /// <summary>
+    /// Erase the residue a blocking Spectre prompt leaves in scrollback - the answered
+    /// "question (current) answer" line - so only the caller's own confirmation (e.g. the
+    /// "\u2713 ... saved" line) remains. Live TUI only: in the classic renderer the prompt
+    /// history is intentionally kept. Best-effort; all cursor ops are guarded. <paramref name="fromTop"/>
+    /// is the row captured right after the footer was suspended (i.e. the row the prompt starts on).
+    /// </summary>
+    private static void ErasePromptResidue(int fromTop)
+    {
+        if (StdioMode || !ViaDriver || fromTop < 0) return;
+        try
+        {
+            if (Console.CursorTop < fromTop) return;
+            Console.SetCursorPosition(0, fromTop);
+            Console.Write("\x1b[J");   // erase from cursor to end of screen
+        }
+        catch { /* non-positionable console: leave residue rather than risk corruption */ }
+    }
+
     public static string Prompt(string message, string? defaultValue = null, bool secret = false)
     {
         lock (ConsoleLock)
@@ -926,6 +956,7 @@ public static partial class MuxConsole
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
         TuiSuspend();
+        int _resTop = SafeCursorTop();
 
         if (StdioMode)
         {
@@ -966,7 +997,9 @@ public static partial class MuxConsole
         else
             prompt.AllowEmpty();
 
-        return AnsiConsole.Prompt(prompt).Trim();
+        var _ans = AnsiConsole.Prompt(prompt).Trim();
+        ErasePromptResidue(_resTop);
+        return _ans;
     }
 
     public static string PromptSecret(string message)
@@ -1004,6 +1037,7 @@ public static partial class MuxConsole
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
         TuiSuspend();
+        int _resTop = SafeCursorTop();
 
         if (StdioMode)
         {
@@ -1012,7 +1046,9 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(input) ? defaultValue : input.StartsWith('y');
         }
 
-        return AnsiConsole.Confirm($"  [{C.Prompt}]{Esc(message)}[/]", defaultValue);
+        var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Esc(message)}[/]", defaultValue);
+        ErasePromptResidue(_resTop);
+        return _c;
     }
 
     public static string Select(string title, IEnumerable<string> choices)
@@ -1026,6 +1062,7 @@ public static partial class MuxConsole
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
         TuiSuspend();
+        int _resTop = SafeCursorTop();
 
         if (StdioMode)
         {
@@ -1038,12 +1075,14 @@ public static partial class MuxConsole
             return list[0];
         }
 
-        return AnsiConsole.Prompt(
+        var _sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
                 .UseConverter(Esc)
                 .AddChoices(choices));
+        ErasePromptResidue(_resTop);
+        return _sel;
     }
 
     public static List<string> MultiSelect(string title, IEnumerable<string> choices)
@@ -1057,6 +1096,7 @@ public static partial class MuxConsole
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
         TuiSuspend();
+        int _resTop = SafeCursorTop();
 
         if (StdioMode)
         {
@@ -1073,13 +1113,15 @@ public static partial class MuxConsole
             return selected.Count > 0 ? selected : new List<string> { list[0] };
         }
 
-        return AnsiConsole.Prompt(
+        var _ms = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Esc(title)}[/]")
                 .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
                 .UseConverter(Esc)
                 .AddChoices(choices))
             .ToList();
+        ErasePromptResidue(_resTop);
+        return _ms;
     }
 
     public static void WriteSummaryTable(string title, IEnumerable<(string Key, string Value)> rows)

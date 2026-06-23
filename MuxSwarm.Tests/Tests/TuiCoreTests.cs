@@ -338,4 +338,114 @@ public class TuiCoreTests
         Assert.Contains(Ansi.EraseDown, term.Output);
         Assert.Equal(1, lr.PaintedRows);
     }
+
+    // --- resize invalidation (the resize-artifact fix) -----------------------
+
+    [Fact]
+    public void LiveRegion_WidthChange_ForcesFullRepaint_NotDiffFastPath()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        Assert.Contains(Ansi.AutoWrapOff, term.Output);   // live rows protected from reflow from the first paint
+        term.Clear();
+
+        // Shrink the terminal, then repaint IDENTICAL markup (as a spinner tick would).
+        // Pre-fix this hit the no-op/diff path and left the old frame stranded; now a width
+        // change must force a full erase+repaint.
+        term.Width = 20;
+        lr.SetLive(new List<string> { "alpha", "beta" });
+
+        Assert.NotEqual("", term.Output);                 // must NOT be a no-op
+        Assert.Contains(Ansi.EraseDown, term.Output);     // full teardown, not in-place diff
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_WidthShrink_EmitsAutoWrapOff_AndFullRepaint()
+    {
+        // Live rows are written with auto-wrap OFF so the emulator cannot soft-wrap/reflow them
+        // on resize (reflow is what stranded old frames). A 26-col line is ONE hard row at
+        // width 40; shrinking to width 10 re-wraps the MARKUP to 3 hard rows and forces a full
+        // erase+repaint. The erase moves up by the (un-reflowed) painted count, which stays exact
+        // precisely because auto-wrap was off.
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
+        Assert.Equal(1, lr.PaintedRows);
+        Assert.Contains(Ansi.AutoWrapOff, term.Output); // rows protected from reflow from the first paint
+        term.Clear();
+
+        term.Width = 10;
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" });
+
+        Assert.Contains(Ansi.CursorUp(1), term.Output); // erase the 1 hard row that was on screen
+        Assert.Contains(Ansi.EraseDown, term.Output);
+        Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
+    }
+
+    [Fact]
+    public void LiveRegion_WidthGrow_RepaintsCleanly()
+    {
+        var term = new FakeTerminal { Width = 10 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 3 rows at width 10
+        Assert.Equal(3, lr.PaintedRows);
+        term.Clear();
+
+        term.Width = 40;
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 1 row at width 40
+        Assert.Contains(Ansi.EraseDown, term.Output);
+        Assert.Equal(1, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_SameWidth_StillUsesDiffFastPath()
+    {
+        // Guard: the resize handling must not regress the no-op fast path when width is stable.
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+
+        lr.SetLive(new List<string> { "one", "two" }); // identical, same width => no paint
+        Assert.Equal("", term.Output);
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    // --- ForceRepaint (Ctrl+L / resize-settle full redraw) -------------------
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_ClearsScreen_AndRepaintsFromScratch()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        term.Clear();
+
+        lr.ForceRepaint();
+        var outp = term.Output;
+        // A full-clear redraw: clear the viewport, home the cursor, then repaint the content.
+        Assert.Contains(Ansi.ClearScreen, outp);
+        Assert.Contains(Ansi.Home, outp);
+        Assert.Contains("alpha", outp);
+        Assert.Contains("beta", outp);
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_AfterWidthChange_RepaintsAtNewWidth()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 1 row at width 40
+        Assert.Equal(1, lr.PaintedRows);
+        term.Clear();
+
+        // Simulate a resize, then a forced redraw (what the resize poll does).
+        term.Width = 10;
+        lr.ForceRepaint();
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
+    }
 }

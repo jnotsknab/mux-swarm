@@ -219,3 +219,39 @@ public class TuiRenderTests
         Assert.Contains(plain, l => l.Contains("just one line"));
     }
 }
+
+
+/// <summary>Coverage for TuiMarkup.WrapMarkup (v0.11.1 NAV prose wrapping): wraps a markup
+/// line to a width while preserving the visible text and keeping each slice within width.</summary>
+public class TuiWrapMarkupTests
+{
+    [Fact]
+    public void WrapMarkup_LongLine_WrapsAndPreservesText()
+    {
+        var src = "[#C8C8C8]" + string.Join(" ", Enumerable.Repeat("word", 40)) + "[/]";
+        var rows = TuiMarkup.WrapMarkup(src, 20);
+        Assert.True(rows.Count > 1);
+        foreach (var r in rows)
+            Assert.True(TuiMarkup.MarkupWidth(r) <= 20, $"row too wide: {TuiMarkup.MarkupWidth(r)}");
+        var joined = string.Concat(rows.Select(r => TuiMarkup.Plain(r))).Replace(" ", "");
+        Assert.Equal(string.Concat(Enumerable.Repeat("word", 40)), joined);
+    }
+
+    [Fact]
+    public void WrapMarkup_ShortLine_SingleRowKeepsStyle()
+    {
+        var rows = TuiMarkup.WrapMarkup("[#64B4DC]hello[/]", 80);
+        Assert.Single(rows);
+        Assert.Equal("hello", TuiMarkup.Plain(rows[0]));
+    }
+
+    [Fact]
+    public void WrapMarkup_HardBreaksOverlongWord()
+    {
+        var rows = TuiMarkup.WrapMarkup(new string('x', 50), 10);
+        Assert.True(rows.Count >= 5);
+        foreach (var r in rows)
+            Assert.True(TuiMarkup.MarkupWidth(r) <= 10);
+        Assert.Equal(50, rows.Sum(r => TuiMarkup.Plain(r).Length));
+    }
+}
