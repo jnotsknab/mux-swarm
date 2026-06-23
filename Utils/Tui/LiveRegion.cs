@@ -285,6 +285,30 @@ internal sealed class LiveRegion
     }
 
     /// <summary>
+    /// Re-lay-out the live region cleanly by clearing the whole viewport and repainting, used
+    /// after a terminal RESIZE or on a manual redraw (Ctrl+L). On a width change the emulator
+    /// reflows its buffer (conhost and Windows Terminal both re-wrap already-emitted rows
+    /// regardless of hard newlines / DECAWM), which drifts the cursor anchor away from the cached
+    /// <c>_paintedRows</c> - so any erase relative to that anchor can strand frames. A full
+    /// clear is the only approach that is guaranteed artifact-free across emulators; the committed
+    /// transcript scrolls up into native scrollback, the standard full-redraw behaviour.
+    /// </summary>
+    public void ForceRepaint()
+    {
+        HideCursor();
+        // Discard cached geometry: after a reflow neither _paintedRows nor _lastRows nor the wrap
+        // cache describe what is actually on screen any more.
+        _paintedRows = 0;
+        _lastRows = new List<string>();
+        _rowCache.Clear();
+        _rowCacheWidth = -1;
+        _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
+        _term.Write(Ansi.ClearScreen + Ansi.Home);
+        PaintLiveRegion(RenderPhysicalRows(_live));
+        _term.Flush();
+    }
+
+    /// <summary>
     /// Commit permanent transcript lines into native scrollback ABOVE the live region:
     /// erase the live region, write the committed lines (which scroll naturally), then
     /// repaint the live region beneath them. This is how streamed/finished output becomes

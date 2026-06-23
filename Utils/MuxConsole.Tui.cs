@@ -99,6 +99,10 @@ public static partial class MuxConsole
     private static readonly List<SubAgentCapture> _activeCaptures = new();
     private static System.Threading.Timer? _subAgentTimer;
     private static int _subAgentFrame;
+    // Always-on resize poll: ticks ~100ms while the live-region driver is active and forces a
+    // clean repaint when the terminal size changes (the only reliable cure for the buffer-reflow
+    // artifacts a width resize leaves behind). Started on driver activation, disposed on teardown.
+    private static System.Threading.Timer? _resizeTimer;
 
     /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
     private static bool Capturing => _capture.Value is not null;
@@ -315,6 +319,8 @@ public static partial class MuxConsole
                     _driver = new TuiDriver();
                     _tuiActive = true;
                     InstallTeardownHook_NoLock();
+                    // Start the resize poll once, alongside the driver.
+                    _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);
                 }
                 // Reset the meter when (re)entering any scope so menu shows "ready" and a new
                 // session starts from zero rather than inheriting the prior session's tokens.
@@ -408,6 +414,8 @@ public static partial class MuxConsole
             {
                 try { _driver.Shutdown(); } catch { /* ignore */ }
             }
+            try { _resizeTimer?.Dispose(); } catch { /* ignore */ }
+            _resizeTimer = null;
             _driver = null;
             _tuiActive = false;
         }
@@ -500,6 +508,14 @@ public static partial class MuxConsole
 
     /// <summary>Set/clear the driver's live "thinking/working" line (animated spinner).</summary>
     internal static void TuiSetThinking(string? text) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetThinking(text); } }
+
+    /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
+    /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
+    internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Resize poll tick: detect a terminal size change and force a clean repaint. No-op
+    /// outside the TUI. Called from the shared resize-poll timer.</summary>
+    internal static void TuiPollResize() { if (ViaDriver) lock (ConsoleLock) { _driver!.PollResize(); } }
 
     /// <summary>True when the driver is active - used to route the thinking indicator.</summary>
     internal static bool TuiDriverActive => ViaDriver;

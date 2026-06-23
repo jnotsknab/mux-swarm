@@ -179,11 +179,13 @@ internal static class TuiCommands
         new("Ctrl+C",      "Cancel the current input line", "prompt"),
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
+        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc",         "Cancel the current turn", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
+        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),
 
         // --- transcript / expand view (NAV overlay) ---
         new("j / k",       "Move cursor down / up one line", "view"),

@@ -551,6 +551,67 @@ public class TuiDriverTests
         Assert.Contains(TuiCommands.Keys, k => k.Keys == "Ctrl+E");
     }
 
+    [Fact]
+    public void TuiCommands_Keys_DocumentCtrlL_ClearArtifacts()
+    {
+        // Ctrl+L (clear resize/redraw artifacts) is documented in both prompt and turn contexts.
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "prompt" && k.Keys == "Ctrl+L");
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Ctrl+L");
+    }
+
+    // --- resize poll ---------------------------------------------------------
+
+    [Fact]
+    public void PollResize_FirstTickRecordsBaseline_NoRepaint()
+    {
+        var term = new FakeTerminal { Width = 60 };
+        var d = new TuiDriver(term);
+        d.SetThinking("working");
+        term.Clear();
+
+        d.PollResize(); // first ever poll: just record the size, draw nothing
+        Assert.Equal("", term.Output);
+    }
+
+    [Fact]
+    public void PollResize_UnchangedSize_NoRepaint()
+    {
+        var term = new FakeTerminal { Width = 60 };
+        var d = new TuiDriver(term);
+        d.SetThinking("working");
+        d.PollResize();   // baseline
+        term.Clear();
+
+        d.PollResize();   // same size => no work
+        Assert.Equal("", term.Output);
+    }
+
+    [Fact]
+    public void PollResize_WidthChange_ForcesFullClearRepaint()
+    {
+        var term = new FakeTerminal { Width = 60 };
+        var d = new TuiDriver(term);
+        d.SetThinking("working");
+        d.PollResize();   // baseline at width 60
+        term.Clear();
+
+        term.Width = 30;
+        d.PollResize();   // width changed => clean full repaint
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+    }
+
+    [Fact]
+    public void ForceRedraw_ClearsAndRepaints()
+    {
+        var term = new FakeTerminal { Width = 60 };
+        var d = new TuiDriver(term);
+        d.SetThinking("working");
+        term.Clear();
+
+        d.ForceRedraw(); // Ctrl+L
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+    }
+
     // --- meter semantics (dual-color total/threshold) -----------------------
 
     [Fact]

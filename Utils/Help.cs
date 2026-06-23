@@ -63,6 +63,7 @@ public struct Help
         "  Esc             Empty prompt: open transcript view; with text: enter vim Normal mode",
         "  Ctrl+E          Expand the most recent large/collapsed tool result in place",
         "  Ctrl+G          Open the transcript/expand view (secondary to Esc; never cancels the turn)",
+        "  Ctrl+L          Clear resize/redraw artifacts and repaint (never cancels the turn)",
         "  Tab             Accept the top autocomplete (/command, @file, /skill, /resume)",
         "  @<file>         Reference a workspace file (preview shows relative; inserts absolute path)",
         "  Shift+Tab       Cycle reasoning effort (low/med/high)",

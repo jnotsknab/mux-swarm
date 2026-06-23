@@ -764,6 +764,42 @@ internal sealed class TuiDriver
         _region.SetLive(BuildLiveFrame(Width));
     }
 
+    // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
+    private int _lastSeenWidth = -1;
+    private int _lastSeenHeight = -1;
+
+    /// <summary>
+    /// Resize poll: called on a timer (~100ms). Detects a terminal width/height change and, when
+    /// one is seen, forces a clean full repaint of the live region - the only reliable way to clear
+    /// the artifacts a buffer reflow leaves on a width change (conhost + Windows Terminal both
+    /// reflow already-emitted rows). No-op when the size is unchanged, during NAV (which owns the
+    /// screen), or while shutting down, so it is cheap to call frequently.
+    /// </summary>
+    public void PollResize()
+    {
+        if (_shuttingDown || _navActive) return;
+        int w = _term.Width, h = _term.Height;
+        if (w == _lastSeenWidth && h == _lastSeenHeight) return;
+        bool first = _lastSeenWidth < 0;
+        _lastSeenWidth = w;
+        _lastSeenHeight = h;
+        if (first) return;        // just record the baseline on the first tick; nothing to redraw
+        _region.ForceRepaint();
+    }
+
+    /// <summary>
+    /// Manual redraw (Ctrl+L): clear the viewport and repaint the live region from scratch,
+    /// discarding any artifacts. Never cancels the turn. Safe mid-stream or at the prompt.
+    /// </summary>
+    public void ForceRedraw()
+    {
+        if (_shuttingDown || _navActive) return;
+        // Re-sync the size baseline so the poll does not immediately re-fire after a manual redraw.
+        _lastSeenWidth = _term.Width;
+        _lastSeenHeight = _term.Height;
+        _region.ForceRepaint();
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -836,6 +872,14 @@ internal sealed class TuiDriver
                 {
                     if (!ExpandLastBlock()) EnterNavMode();
                     Repaint();
+                    continue;
+                }
+
+                // Ctrl+L at the prompt: clear any resize/redraw artifacts and repaint the live
+                // region from scratch. Does not cancel or submit.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
+                {
+                    ForceRedraw();
                     continue;
                 }
 

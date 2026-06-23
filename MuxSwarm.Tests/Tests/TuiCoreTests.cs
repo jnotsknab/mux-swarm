@@ -412,4 +412,40 @@ public class TuiCoreTests
         Assert.Equal("", term.Output);
         Assert.Equal(2, lr.PaintedRows);
     }
+
+    // --- ForceRepaint (Ctrl+L / resize-settle full redraw) -------------------
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_ClearsScreen_AndRepaintsFromScratch()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        term.Clear();
+
+        lr.ForceRepaint();
+        var outp = term.Output;
+        // A full-clear redraw: clear the viewport, home the cursor, then repaint the content.
+        Assert.Contains(Ansi.ClearScreen, outp);
+        Assert.Contains(Ansi.Home, outp);
+        Assert.Contains("alpha", outp);
+        Assert.Contains("beta", outp);
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_AfterWidthChange_RepaintsAtNewWidth()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "abcdefghijklmnopqrstuvwxyz" }); // 1 row at width 40
+        Assert.Equal(1, lr.PaintedRows);
+        term.Clear();
+
+        // Simulate a resize, then a forced redraw (what the resize poll does).
+        term.Width = 10;
+        lr.ForceRepaint();
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
+    }
 }
