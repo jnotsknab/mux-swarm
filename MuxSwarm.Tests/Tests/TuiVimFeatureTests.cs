@@ -343,6 +343,30 @@ public class TuiVimFeatureTests
     }
 
     [Fact]
+    public void Table_WrapsLongCells_NoTruncation_FitsWidth()
+    {
+        var rows = new[]
+        {
+            "| Commit | Root cause |",
+            "|--------|-----------|",
+            "| 3fbb732 | TuiCommitBlock stamped a corner glyph on every row so it was changed to a dim middot uniformly across all panels and indices right-aligned |",
+            "| ba71cfb | – |",
+        };
+        const int W = 60;
+        var outp = TuiTable.Render(rows, W);
+        var plain = outp.Select(TuiMarkup.Plain).ToList();
+        // No content is lost to an ellipsis, and a distinctive tail word survives the wrap.
+        var joined = string.Join(" ", plain);
+        Assert.DoesNotContain("\u2026", joined);   // no horizontal ellipsis
+        Assert.Contains("panels", joined);
+        // Every physical line fits within the terminal width (closing border never wraps).
+        foreach (var l in plain)
+            Assert.True(TuiMarkup.Width(l) <= W, $"row width {TuiMarkup.Width(l)} > {W}: {l}");
+        // The long cell forced the row to span multiple physical lines.
+        Assert.True(outp.Count > 6);
+    }
+
+    [Fact]
     public void Table_IsTableRow_And_Separator_Detection()
     {
         Assert.True(TuiTable.IsTableRow("| a | b |"));
