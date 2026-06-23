@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g11.24";
+    public static readonly string DebugTag = "g11.25";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -1572,11 +1572,16 @@ public class App
 
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
     {
+        // Cap the function-invocation middleware's model->tool round-trips per turn. The default
+        // (unbounded-ish SDK default) made long autonomous tool chains stop mid-task with no error
+        // surfaced. ExecutionLimits.MaxToolIterationsPerTurn defaults high; <= 0 means unlimited.
+        int toolIters = ExecutionLimits.Current.MaxToolIterationsPerTurn;
         return CreateOpenAiClient()
             .GetChatClient(modelId)
             .AsIChatClient()
             .AsBuilder()
-            .UseFunctionInvocation()
+            .UseFunctionInvocation(configure: c =>
+                c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
             .Build();
     }
     

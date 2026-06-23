@@ -74,6 +74,8 @@ public static class CliCmdUtils
             "  Single Agent",
             $"    Compaction Char Budget:       {l.CompactionCharBudget:N0} chars",
             $"    Compaction Max Message Chars: {l.CompactionMaxMessageChars:N0} chars",
+            $"    Max Tool Iterations / Turn:   {(l.MaxToolIterationsPerTurn > 0 ? l.MaxToolIterationsPerTurn.ToString() : "unlimited")}",
+            $"    Max Auto-Continues / Turn:    {l.MaxAutoContinuesPerTurn}",
             "",
             "  All Modes",
             $"    Max Stuck Count:              {l.MaxStuckCount}",

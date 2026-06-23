@@ -39,4 +39,25 @@ public class ExecutionLimits
     [JsonPropertyName("activityTimeoutSeconds")]
     public int ActivityTimeoutSeconds { get; set; } = 1200;
 
+
+    /// <summary>
+    /// Max model-&gt;tool round-trips the function-invocation middleware will run within a single
+    /// turn before it stops looping and returns. A long autonomous tool chain that hits this looks
+    /// like the agent "just stopped" mid-task. Default is high so a normal run never trips it; a
+    /// value &lt;= 0 means unlimited (the real ceiling then comes from the orchestrator iteration
+    /// cap + the activity timeout, so a genuine runaway still surfaces).
+    /// </summary>
+    [JsonPropertyName("maxToolIterationsPerTurn")]
+    public int MaxToolIterationsPerTurn { get; set; } = 1000;
+
+    /// <summary>
+    /// How many times a single turn may transparently continue itself when the model's response
+    /// ended with finish_reason "length" (output/reasoning token cap hit mid-generation) rather
+    /// than a real stop. Each auto-continue re-invokes on the SAME session so the model resumes
+    /// exactly where it was cut off. 0 disables auto-continue (revert to manual "continue"). When
+    /// the budget is exhausted mid-generation a muted hint is shown.
+    /// </summary>
+    [JsonPropertyName("maxAutoContinuesPerTurn")]
+    public int MaxAutoContinuesPerTurn { get; set; } = 3;
+
 }
