@@ -75,7 +75,7 @@ internal sealed class TuiDriver
     // zero append spam (the old approach appended a fresh panel per keypress, flooding scrollback).
     // Only one block is expanded at a time; opening another switches the slot. A second Ctrl+E on
     // the same block (or stream end / turn end) collapses it.
-    private enum ExpandKind { None, SubAgent, ToolResult }
+    private enum ExpandKind { None, SubAgent, ToolResult, Diff }
     private ExpandKind _expandKind = ExpandKind.None;
     private string _expandKey = "";       // identity for toggle-match (agent name, or "tool#<idx>")
     private string _expandTitle = "";     // panel header label
@@ -89,6 +89,13 @@ internal sealed class TuiDriver
     // above the footer while the tool runs, then committed as a single merged line when the
     // result lands. Flushed as its own committed line if any other content commits first.
     private (string Tool, string? Args)? _pendingTool;
+
+    // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
+    // (total session age, shown by the session timer); _loopStart is set when an agentic
+    // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
+    // the loop clock ticks continuously the whole time the user is inside a loop.
+    private readonly DateTime _sessionStart = DateTime.UtcNow;
+    private DateTime? _loopStart;
 
     // Active sub-agent lane tint for gutter attribution on committed transcript lines. Null
     // for the primary agent (no gutter); set to a per-agent color while a sub-agent/specialist
@@ -118,6 +125,7 @@ internal sealed class TuiDriver
         public required string Collapsed;                          // the normally-shown markup line
         public (string Tool, string Text, bool Error)? Expandable; // non-null => Ctrl+E expandable
         public bool Expanded;                                      // current toggle state in NAV
+        public bool DiffKind;                                      // expandable body is a unified diff
     }
 
     private readonly List<Entry> _transcript = new();
@@ -134,6 +142,34 @@ internal sealed class TuiDriver
     {
         _transcript.Add(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
         TrimTranscript();
+    }
+
+    /// <summary>
+    /// Commit a diff as a COLLAPSED one-liner that retains the full unified-diff body, so it joins
+    /// the Ctrl+E / NAV collapse system exactly like a large tool result instead of permanently
+    /// exploding into scrollback. NAV / inline expand render it through the production diff card.
+    /// </summary>
+    public void CommitDiffCollapsible(string title, string diff)
+    {
+        FlushPendingToolCall();
+        var body = diff ?? "";
+        int adds = 0, dels = 0;
+        foreach (var raw in body.Replace("\r\n", "\n").Split('\n'))
+        {
+            if (raw.StartsWith("+") && !raw.StartsWith("+++")) adds++;
+            else if (raw.StartsWith("-") && !raw.StartsWith("---")) dels++;
+        }
+        string shortTitle = string.IsNullOrEmpty(title) ? "diff" : title;
+        if (shortTitle.Length > 44) shortTitle = shortTitle[..43] + "\u2026";
+        string collapsed = Lane(new List<string>
+        {
+            $"  [{TuiComponents.Accent}]\u270e diff[/] [{TuiComponents.Dim}]\u00b7 {Spectre.Console.Markup.Escape(shortTitle)}[/]  "
+            + $"[{TuiComponents.DiffAdd}]+{adds}[/] [{TuiComponents.DiffDel}]\u2212{dels}[/] [{TuiComponents.Dim}](ctrl+e expand)[/]"
+        })[0];
+        _transcript.Add(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
+        TrimTranscript();
+        if (!_navActive) _region.CommitAbove(new[] { collapsed }, BuildLiveFrame(Width));
+        _pendingGap = true;
     }
 
     private void TrimTranscript()
@@ -249,6 +285,14 @@ internal sealed class TuiDriver
         _sysTokens = sysTokens; _toolTokens = toolTokens;
         Repaint();
     }
+
+    /// <summary>Start the loop clock - the live "&#x25cf; m:ss" footer badge that ticks the whole
+    /// time the user is inside an agentic interface. Idempotent: re-entering a loop while one is
+    /// already running keeps the original start (does not reset the clock).</summary>
+    public void StartLoopClock() { _loopStart ??= DateTime.UtcNow; }
+
+    /// <summary>Stop and clear the loop clock (back at the top-level menu, no loop active).</summary>
+    public void StopLoopClock() { _loopStart = null; }
 
     /// <summary>Set (or clear, with null) the active-session id badge shown in the footer.</summary>
     public void SetSessionId(string? sessionId)
@@ -418,11 +462,13 @@ internal sealed class TuiDriver
             if (_transcript[i].Expandable is not null) { idx = i; break; }
         if (idx < 0) return false;
         var blk = _transcript[idx].Expandable!.Value;
+        bool isDiff = _transcript[idx].DiffKind;
+        var wantKind = isDiff ? ExpandKind.Diff : ExpandKind.ToolResult;
         string key = $"tool#{idx}";
         // Same block already expanded -> collapse (reversible toggle, no spam).
-        if (_expandKind == ExpandKind.ToolResult && string.Equals(_expandKey, key, StringComparison.Ordinal))
+        if (_expandKind == wantKind && string.Equals(_expandKey, key, StringComparison.Ordinal))
             { ClearExpanded(); return false; }
-        OpenExpand(ExpandKind.ToolResult, key, blk.Tool, blk.Text ?? "",
+        OpenExpand(wantKind, key, blk.Tool, blk.Text ?? "",
             TuiComponents.Border, blk.Error, anchorTail: false);
         return Expanded;
     }
@@ -712,8 +758,22 @@ internal sealed class TuiDriver
             // the footer + input always stay on screen no matter how long the expanded block is.
             int reserved = 6 + Math.Min(_subAgents.Count, 4);
             int maxRows = Math.Max(3, Height - reserved);
-            lines.AddRange(TuiComponents.BoundedLivePanel(
-                _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
+            if (_expandKind == ExpandKind.Diff)
+            {
+                // Render the production diff card, then bound it to the viewport slice (head-anchored:
+                // a diff is read top-down) with a "+N more (ctrl+g for full)" footer when it overflows.
+                var full = TuiComponents.Diff(_expandTitle, _expandBody, width);
+                if (full.Count > maxRows)
+                {
+                    int shown = Math.Max(1, maxRows - 1);
+                    lines.AddRange(full.GetRange(0, shown));
+                    lines.Add($"  [{TuiComponents.Dim}]\u2026 +{full.Count - shown} more line(s) (ctrl+g for full)[/]");
+                }
+                else lines.AddRange(full);
+            }
+            else
+                lines.AddRange(TuiComponents.BoundedLivePanel(
+                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
@@ -732,14 +792,23 @@ internal sealed class TuiDriver
         lines.Add(TuiComponents.FullRule(width));
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
             modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
-            sysTokens: _sysTokens, toolTokens: _toolTokens));
+            sysTokens: _sysTokens, toolTokens: _toolTokens,
+            sessionElapsed: DateTime.UtcNow - _sessionStart,
+            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null));
 
         if (_inInput)
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
             lines.Add(TuiComponents.FullRule(width));
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode));
+            // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
+            // replaces the normal input row; accepting/cancelling restores the input row.
+            if (_editor.IsSearching)
+            {
+                lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
+                return lines;
+            }
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -762,6 +831,42 @@ internal sealed class TuiDriver
         if (_shuttingDown) return;
         if (_navActive) return;   // NAV overlay owns the screen; defer paint until it exits
         _region.SetLive(BuildLiveFrame(Width));
+    }
+
+    // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
+    private int _lastSeenWidth = -1;
+    private int _lastSeenHeight = -1;
+
+    /// <summary>
+    /// Resize poll: called on a timer (~100ms). Detects a terminal width/height change and, when
+    /// one is seen, forces a clean full repaint of the live region - the only reliable way to clear
+    /// the artifacts a buffer reflow leaves on a width change (conhost + Windows Terminal both
+    /// reflow already-emitted rows). No-op when the size is unchanged, during NAV (which owns the
+    /// screen), or while shutting down, so it is cheap to call frequently.
+    /// </summary>
+    public void PollResize()
+    {
+        if (_shuttingDown || _navActive) return;
+        int w = _term.Width, h = _term.Height;
+        if (w == _lastSeenWidth && h == _lastSeenHeight) return;
+        bool first = _lastSeenWidth < 0;
+        _lastSeenWidth = w;
+        _lastSeenHeight = h;
+        if (first) return;        // just record the baseline on the first tick; nothing to redraw
+        _region.ForceRepaint();
+    }
+
+    /// <summary>
+    /// Manual redraw (Ctrl+L): clear the viewport and repaint the live region from scratch,
+    /// discarding any artifacts. Never cancels the turn. Safe mid-stream or at the prompt.
+    /// </summary>
+    public void ForceRedraw()
+    {
+        if (_shuttingDown || _navActive) return;
+        // Re-sync the size baseline so the poll does not immediately re-fire after a manual redraw.
+        _lastSeenWidth = _term.Width;
+        _lastSeenHeight = _term.Height;
+        _region.ForceRepaint();
     }
 
     // --- input ---------------------------------------------------------------
@@ -799,11 +904,55 @@ internal sealed class TuiDriver
                     return Console.ReadLine();
                 }
 
+                // Reverse-incremental history search (Ctrl+R, readline/bash style). While active it
+                // OWNS every keystroke: printable keys refine the query, Ctrl+R steps to older
+                // matches, Enter accepts+submits, Esc accepts into the buffer, Ctrl+C/Ctrl+G cancel.
+                if (_editor.IsSearching)
+                {
+                    var rs = _editor.SearchFeed(key);
+                    switch (rs)
+                    {
+                        case ReverseSearchSignal.AcceptAndSubmit:
+                        {
+                            string line = _editor.Buffer;
+                            _editor.Remember(line);
+                            _inInput = false;
+                            _pendingGap = false;
+                            if (!TuiCommands.OpensInteractivePrompt(line))
+                                CommitMirrored(TuiComponents.UserEcho(line));
+                            return line;
+                        }
+                        case ReverseSearchSignal.Accept:
+                        case ReverseSearchSignal.Cancel:
+                            _paletteSel = -1;
+                            Repaint();
+                            continue;
+                        case ReverseSearchSignal.Redraw:
+                        default:
+                            Repaint();
+                            continue;
+                    }
+                }
+
+                // Ctrl+R at the prompt: enter reverse-incremental history search. No-op (falls
+                // through) when there is no history yet, so the key is never silently swallowed.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.R
+                    && _editor.History.Count > 0)
+                {
+                    _editor.BeginReverseSearch();
+                    if (_editor.IsSearching) { _paletteSel = -1; Repaint(); continue; }
+                }
+
                 // Palette navigation intercept: when an autocomplete preview is open, Up/Down
                 // move the highlighted candidate (instead of browsing command history), and
                 // Enter on a highlighted row accepts it (instead of submitting the line). Tab
                 // always accepts. This is the bridge toward full vim-style nav.
-                if (PaletteOpen)
+                //
+                // EXCEPTION: when the buffer holds a line just RECALLED from history (e.g. a
+                // previously-run slash command), Up/Down must keep browsing history rather than be
+                // captured by the palette - otherwise history gets stuck the moment a recalled entry
+                // starts with '/'. The palette re-engages as soon as the recalled line is edited.
+                if (PaletteOpen && !_editor.RecalledFromHistory)
                 {
                     if (key.Key == ConsoleKey.UpArrow)   { MovePaletteSelection(-1); Repaint(); continue; }
                     if (key.Key == ConsoleKey.DownArrow) { MovePaletteSelection(+1); Repaint(); continue; }
@@ -839,6 +988,14 @@ internal sealed class TuiDriver
                     continue;
                 }
 
+                // Ctrl+L at the prompt: clear any resize/redraw artifacts and repaint the live
+                // region from scratch. Does not cancel or submit.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
+                {
+                    ForceRedraw();
+                    continue;
+                }
+
                 var sig = _editor.Feed(key);
                 // Any buffer/cursor edit invalidates the highlighted candidate (the filtered
                 // list just changed); a fresh preview starts with nothing highlighted.
@@ -853,7 +1010,12 @@ internal sealed class TuiDriver
                         // Erase input box, then echo the submitted line into scrollback with a
                         // leading blank + accent gutter so each turn is clearly delimited.
                         _pendingGap = false;
-        CommitMirrored(TuiComponents.UserEcho(line));
+                        // Suppress the echo for bare commands that open a blocking interactive
+                        // picker (e.g. /set, /swap): the picker draws its own UI and the handler
+                        // prints a confirmation, so echoing the bare command line just leaves
+                        // residue above the prompt. All other lines echo normally.
+                        if (!TuiCommands.OpensInteractivePrompt(line))
+                            CommitMirrored(TuiComponents.UserEcho(line));
                         return line;
                     }
                     case LineEditSignal.Cancel:
@@ -1055,10 +1217,20 @@ internal sealed class TuiDriver
             {
                 var ent = _transcript[e];
                 if (ent.Expandable is { } x && ent.Expanded)
-                    foreach (var l in TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true))
-                    { disp.Add(l); owner.Add(e); }
+                {
+                    var panel = ent.DiffKind
+                        ? TuiComponents.Diff(x.Tool, x.Text, Width)
+                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true);
+                    foreach (var l in panel) { disp.Add(l); owner.Add(e); }
+                }
                 else
-                { disp.Add(ent.Collapsed); owner.Add(e); }
+                {
+                    // Wrap long prose rows to the viewport so they are fully readable in NAV
+                    // (expanded tool panels are already pre-wrapped to Width by ToolResultPanel;
+                    // unexpandable prose was emitted as one long row and clipped at the edge).
+                    foreach (var wl in TuiMarkup.WrapMarkup(ent.Collapsed, Math.Max(1, Width - 1)))
+                    { disp.Add(wl); owner.Add(e); }
+                }
             }
             if (disp.Count == 0) { disp.Add(""); owner.Add(0); }
             return (disp, owner);

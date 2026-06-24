@@ -64,15 +64,21 @@ internal static class TuiTable
 
         // Budget: indent(2) + borders. Each column costs colW + 3 ("| " + " "), plus final "|".
         int pad = 2;
-        int chrome = 1 + cols * 3;                 // leading "|" handled per-column as "│ "
+        int chrome = 2 + cols * 3;                 // leading "│ " + per-column " │ "; +1 keeps the
+                                                   // closing border out of the last terminal column (no soft-wrap).
         int avail = Math.Max(8, width) - pad - chrome;
-        int natural = colW.Sum();
-        if (natural > avail && natural > 0)
+        // Shrink to fit by repeatedly trimming the WIDEST column by one, down to a soft floor.
+        // This preserves naturally-narrow columns (e.g. a short id/commit column) at full width
+        // and steals space only from the genuinely wide cells, which then wrap (never truncate).
+        const int floorW = 6;
+        int Total() => colW.Sum();
+        int guard = 0;
+        while (Total() > avail && guard++ < 100000)
         {
-            // Proportionally shrink columns that are wider than a soft floor.
-            double scale = (double)avail / natural;
-            for (int c = 0; c < cols; c++)
-                colW[c] = Math.Max(3, (int)Math.Floor(colW[c] * scale));
+            int widest = 0;
+            for (int c = 1; c < cols; c++) if (colW[c] > colW[widest]) widest = c;
+            if (colW[widest] <= floorW) break;   // everything at/under the floor: accept overflow
+            colW[widest]--;
         }
 
         string indent = new string(' ', pad);
@@ -85,41 +91,63 @@ internal static class TuiTable
         outp.Add("");
         outp.Add(topB);
         // Header row (first data row) styled in accent.
-        outp.Add(RenderRow(dataRows[0], colW, aligns, indent, headerStyle: true));
+        outp.AddRange(RenderRow(dataRows[0], colW, aligns, indent, headerStyle: true));
         outp.Add(midB);
         for (int i = 1; i < dataRows.Count; i++)
-            outp.Add(RenderRow(dataRows[i], colW, aligns, indent, headerStyle: false));
+            outp.AddRange(RenderRow(dataRows[i], colW, aligns, indent, headerStyle: false));
         outp.Add(botB);
         outp.Add("");
         return outp;
     }
 
-    private static string RenderRow(List<string> cells, int[] colW, List<Align> aligns, string indent, bool headerStyle)
+    /// <summary>
+    /// Render one logical table row as one or more PHYSICAL lines: each cell is word-wrapped
+    /// (hard-breaking over-long tokens) to its column width rather than truncated, so no cell
+    /// content is lost. The row is as tall as its tallest wrapped cell; shorter cells are blank-
+    /// padded on the trailing physical lines, and every physical line carries the full borders.
+    /// </summary>
+    private static List<string> RenderRow(List<string> cells, int[] colW, List<Align> aligns, string indent, bool headerStyle)
     {
-        var sb = new System.Text.StringBuilder();
-        sb.Append(indent).Append($"[{Border}]\u2502[/] ");
+        // Wrap every cell to its column width up-front; the row height is the tallest cell.
+        var wrapped = new List<List<string>>(colW.Length);
         for (int c = 0; c < colW.Length; c++)
         {
             string plain = c < cells.Count ? cells[c] : "";
-            // Truncate plain content to the column width, then re-style.
-            if (TuiMarkup.Width(plain) > colW[c])
-                plain = TuiMarkup.TruncatePlain(plain, colW[c]);
-            int textW = TuiMarkup.Width(plain);
-            int padTotal = Math.Max(0, colW[c] - textW);
-            int left = aligns[c] switch
-            {
-                Align.Right => padTotal,
-                Align.Center => padTotal / 2,
-                _ => 0,
-            };
-            int right = padTotal - left;
-            string styled = headerStyle
-                ? $"[bold {Head}]{Esc(plain)}[/]"
-                : Esc(plain);
-            sb.Append(new string(' ', left)).Append(styled).Append(new string(' ', right));
-            sb.Append($" [{Border}]\u2502[/] ");
+            var lines = TuiMarkup.WrapPlain(plain, colW[c]);
+            if (lines.Count == 0) lines.Add("");
+            wrapped.Add(lines);
         }
-        return sb.ToString().TrimEnd();
+        int height = wrapped.Max(l => l.Count);
+
+        var outLines = new List<string>(height);
+        for (int h = 0; h < height; h++)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(indent).Append($"[{Border}]\u2502[/] ");
+            for (int c = 0; c < colW.Length; c++)
+            {
+                string seg = h < wrapped[c].Count ? wrapped[c][h] : "";
+                // WrapPlain already fits to width; guard against any wide-rune overshoot.
+                if (TuiMarkup.Width(seg) > colW[c])
+                    seg = TuiMarkup.TruncatePlain(seg, colW[c]);
+                int textW = TuiMarkup.Width(seg);
+                int padTotal = Math.Max(0, colW[c] - textW);
+                int left = aligns[c] switch
+                {
+                    Align.Right => padTotal,
+                    Align.Center => padTotal / 2,
+                    _ => 0,
+                };
+                int right = padTotal - left;
+                string styled = headerStyle
+                    ? $"[bold {Head}]{Esc(seg)}[/]"
+                    : Esc(seg);
+                sb.Append(new string(' ', left)).Append(styled).Append(new string(' ', right));
+                sb.Append($" [{Border}]\u2502[/] ");
+            }
+            outLines.Add(sb.ToString().TrimEnd());
+        }
+        return outLines;
     }
 
     private static List<Align> ParseAligns(string sepRow)

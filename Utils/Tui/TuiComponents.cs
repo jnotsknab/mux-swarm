@@ -27,6 +27,14 @@ internal static class TuiComponents
     public const string Think    = "#7AA2C0";
     // Dim blue fill for the cached portion of the context meter (vs the bright live portion).
     public const string CacheFill = "#3E5A6E";
+    // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
+    // solid block distinct from the airy prose on the terminal's base background.
+    public const string CardBg  = "#1C2530";
+    // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
+    public const string DiffAddBg = "#16261C";
+    public const string DiffDelBg = "#2A1A1C";
+    public const string DiffHunkBg = "#16202C";
+    public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
     /// Per-agent lane tints (stable, readable) used to gutter sub-agent / swarm-specialist
@@ -115,9 +123,32 @@ internal static class TuiComponents
         return $"  [{Think}]{spin}[/] [{Think} italic]{Esc(body)}[/]";
     }
 
+    /// <summary>
+    /// The reverse-incremental-history-search prompt row (Ctrl+R), rendered above the input box
+    /// in the readline/bash style: <c>(reverse-i-search)`query': matched line</c>. When nothing
+    /// matches yet the match slot reads <c>(failed)</c> so the user knows to refine the query.
+    /// </summary>
+    public static string ReverseSearchRow(string query, string? match, int width)
+    {
+        string q = Esc(query ?? "");
+        string label = $"(reverse-i-search)`{q}': ";
+        if (string.IsNullOrEmpty(match))
+            return $"  [{Accent}]{label}[/][{Dim}](no match)[/]";
+        int room = Math.Max(8, width - TuiMarkup.Width(label) - 2);
+        return $"  [{Accent}]{label}[/][{Text}]{Esc(Trunc(match, room))}[/]";
+    }
+
     /// <summary>Compact token count: 30000 -> "30k", 1500 -> "1.5k", &lt;1000 stays exact.</summary>
     private static string Fmt(uint n)
         => n >= 1000 ? (n % 1000 == 0 ? $"{n / 1000}k" : $"{n / 1000.0:0.0}k") : n.ToString();
+
+    /// <summary>Compact m:ss / h:mm:ss clock for the loop-clock badge (no leading "0:" hours).</summary>
+    private static string ClockMS(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
+
+    /// <summary>Coarse session-timer label: "12m", "1h 04m" (no seconds - it is a slow wall clock).</summary>
+    private static string ClockHM(TimeSpan t)
+        => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : $"{t.Minutes}m";
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
@@ -333,11 +364,16 @@ internal static class TuiComponents
         if (!expanded && body.Length > cap) body = body[..cap] + "\n\u2026 truncated";
 
         int inner = Math.Max(8, width - 4);
-        var outp = new List<string> { $"  [{col}]\u256d\u2500[/] {glyph} [{Accent}]{Esc(tool)}[/]" };
+        // One continuous filled card: header band, body rows and footer band all share CardBg,
+        // with the accent rail painted ON the fill (no unshaded gap, so blank rows can't notch the
+        // right edge and the block reads as a single solid card rather than a floating rectangle).
+        string headMarkup = $"{glyph} [{Accent} on {CardBg}]{Esc(tool)}[/]";
+        string headPlain   = $"\u2713 {tool}";   // glyph(1)+space(1)+tool; width drives the fill pad
+        var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBg, inner) };
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
             foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add($"  [{col}]\u2502[/] [{Text}]{Esc(w)}[/]");
-        outp.Add($"  [{col}]\u2570{new string('\u2500', inner)}[/]");
+                outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        outp.Add(ShadedRow(col, "", Text, CardBg, inner));
         return outp;
     }
 
@@ -367,19 +403,20 @@ internal static class TuiComponents
             hidden = wrapped.Count - cap;
             wrapped = anchorTail ? wrapped.GetRange(hidden, cap) : wrapped.GetRange(0, cap);
         }
-        var outp = new List<string>
-        {
-            $"  [{tint}]\u256d\u2500[/] [{Accent}]{Esc(title)}[/] [{Dim}](live \u00b7 ctrl+e collapse)[/]"
-        };
+        // Same continuous filled-card treatment as ToolResultPanel so a LIVE mid-turn expand looks
+        // identical to its NAV-scrollback counterpart: rail-on-fill, every band padded to `inner`.
+        string headPlain = $"{title} (live \u00b7 ctrl+e collapse)";
+        string headMarkup = $"[{Accent} on {CardBg}]{Esc(title)}[/] [{Dim} on {CardBg}](live \u00b7 ctrl+e collapse)[/]";
+        var outp = new List<string> { ShadedHeader(tint, headPlain, headMarkup, CardBg, inner) };
         // Top elision marker (tail-anchored views only).
         if (hidden > 0 && anchorTail)
-            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}[/]");
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBg, inner));
         foreach (var w in wrapped)
-            outp.Add($"  [{tint}]\u2502[/] [{Text}]{Esc(w)}[/]");
+            outp.Add(ShadedRow(tint, w, Text, CardBg, inner));
         // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
         if (hidden > 0 && !anchorTail)
-            outp.Add($"  [{tint}]\u2502[/] [{Dim}]\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)[/]");
-        outp.Add($"  [{tint}]\u2570{new string('\u2500', inner)}[/]");
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBg, inner));
+        outp.Add(ShadedRow(tint, "", Text, CardBg, inner));
         return outp;
     }
 
@@ -388,23 +425,113 @@ internal static class TuiComponents
     public static List<string> SubAgentLivePanel(string agent, string body, int width, int maxRows)
         => BoundedLivePanel(agent, body, AgentTint(agent), width, maxRows, anchorTail: true);
 
-    /// <summary>Unified/git diff rendered with +/- tinting inside a card.</summary>
+    /// <summary>
+    /// Unified/git diff rendered as a production diff card: a shaded body, an old|new line-number
+    /// gutter parsed from the @@ hunk headers, per-line add/del/context background bands, and a
+    /// "+adds -dels" summary in the header. Long code lines wrap with a blank gutter continuation.
+    /// </summary>
     public static List<string> Diff(string title, string diff, int width)
     {
-        int inner = Math.Max(8, width - 4);
-        var outp = new List<string> { $"  [{Border}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 48))}[/]" };
-        foreach (var raw in TrimTrailingBlankLines(diff ?? "").Split('\n'))
+        var raws = TrimTrailingBlankLines(diff ?? "").Replace("\r\n", "\n").Split('\n');
+
+        // First pass: count adds/dels and find the largest line number so the gutter is sized once.
+        int adds = 0, dels = 0, maxLineNo = 0;
+        int oldN0 = 0, newN0 = 0;
+        foreach (var raw in raws)
         {
-            string col =
-                raw.StartsWith("+++") || raw.StartsWith("---") ? Muted :
-                raw.StartsWith("@@") ? Accent :
-                raw.StartsWith("+") ? DiffAdd :
-                raw.StartsWith("-") ? DiffDel : Dim;
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add($"  [{Border}]\u2502[/] [{col}]{Esc(w)}[/]");
+            if (TryParseHunk(raw, out var oh, out var nh)) { oldN0 = oh; newN0 = nh; continue; }
+            if (IsMeta(raw)) continue;
+            if (raw.StartsWith("+")) { adds++; maxLineNo = Math.Max(maxLineNo, newN0); newN0++; }
+            else if (raw.StartsWith("-")) { dels++; maxLineNo = Math.Max(maxLineNo, oldN0); oldN0++; }
+            else { maxLineNo = Math.Max(maxLineNo, Math.Max(oldN0, newN0)); oldN0++; newN0++; }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', inner)}[/]");
+        int gw = Math.Max(2, maxLineNo.ToString().Length);
+        // prefix(2) + rail(1) + space(1) + gutter(old gw + space + new gw + space) + code
+        int gutterCols = gw + 1 + gw + 1;
+        int codeW = Math.Max(8, width - 5 - gutterCols);
+
+        string summary = $"[{DiffAdd}]+{adds}[/] [{DiffDel}]\u2212{dels}[/]";
+        var outp = new List<string>
+        {
+            $"  [{Border}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
+        };
+
+        int oldN = 0, newN = 0;
+        foreach (var raw in raws)
+        {
+            if (TryParseHunk(raw, out var oh2, out var nh2))
+            {
+                oldN = oh2; newN = nh2;
+                outp.Add(HunkRow(raw, gw, gutterCols, codeW));
+                continue;
+            }
+            if (IsMeta(raw)) { outp.Add(MetaRow(raw, gw, gutterCols, codeW)); continue; }
+
+            string fg, bg, marker, oldS, newS;
+            if (raw.StartsWith("+")) { fg = DiffAdd; bg = DiffAddBg; marker = "+"; oldS = ""; newS = newN.ToString(); newN++; }
+            else if (raw.StartsWith("-")) { fg = DiffDel; bg = DiffDelBg; marker = "-"; oldS = oldN.ToString(); newS = ""; oldN++; }
+            else { fg = DiffCtxFg; bg = CardBg; marker = " "; oldS = oldN.ToString(); newS = newN.ToString(); oldN++; newN++; }
+
+            string code = raw.Length > 0 ? raw[1..] : "";   // strip the +/-/space marker column
+            var wrapped = TuiMarkup.WrapPlain(code, codeW);
+            for (int wi = 0; wi < wrapped.Count; wi++)
+            {
+                string gOld = (wi == 0 ? oldS : "").PadLeft(gw);
+                string gNew = (wi == 0 ? newS : "").PadLeft(gw);
+                string mk = wi == 0 ? marker : " ";
+                string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
+                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+            }
+        }
+        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
         return outp;
+    }
+
+    private const string DiffCtxFg = "#A0A0A0"; // diff context line (neutral grey)
+
+    /// <summary>Shade one card body row: an accent rail painted ON the fill, then a full-width
+    /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
+    /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
+    private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
+        => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+
+    /// <summary>Header band of a shaded card: same rail-on-fill treatment, carrying pre-styled
+    /// markup (glyph + tool name) + a trailing fill computed from the header's DISPLAY width so the
+    /// band is exactly `inner` cells wide (matching the body rows). Passing a full `inner` of spaces
+    /// here was the overflow/soft-wrap regression - the row ran ~inner cells too wide and reflowed.</summary>
+    private static string ShadedHeader(string railCol, string headerPlain, string headerMarkup, string bg, int inner)
+    {
+        int pad = Math.Max(0, inner - TuiMarkup.Width(headerPlain));
+        return $"  [{railCol} on {bg}]\u2502[/][on {bg}] {headerMarkup}{new string(' ', pad)}[/]";
+    }
+
+    private static bool IsMeta(string s)
+        => s.StartsWith("+++") || s.StartsWith("---") || s.StartsWith("diff ") || s.StartsWith("index ");
+
+    private static string MetaRow(string raw, int gw, int gutterCols, int codeW)
+    {
+        string blank = new string(' ', gw);
+        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
+        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+    }
+
+    private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
+    {
+        string blank = new string(' ', gw);
+        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
+        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+    }
+
+    /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
+    private static bool TryParseHunk(string raw, out int oldStart, out int newStart)
+    {
+        oldStart = 0; newStart = 0;
+        if (raw is null || !raw.StartsWith("@@")) return false;
+        var m = System.Text.RegularExpressions.Regex.Match(raw, @"^@@+\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@");
+        if (!m.Success) return false;
+        oldStart = int.Parse(m.Groups[1].Value);
+        newStart = int.Parse(m.Groups[2].Value);
+        return true;
     }
 
     /// <summary>Delegation rendered as a small from -> to tree.</summary>
@@ -424,7 +551,7 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null)
     {
         // No standing "tui" badge - it is noise. Only show active modes.
         // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
@@ -441,6 +568,16 @@ internal static class TuiComponents
             if (psub) badges.Add($"[{Accent}]psub[/]");
             if (sub) badges.Add($"[{Ok}]sub[/]");
         }
+
+        // Loop clock: a live elapsed clock that runs the whole time the user is inside an agentic
+        // interface (/agent, /stateless, /swarm, /pswarm). Starts on loop entry and ticks
+        // continuously until the loop exits; cleared (null) at the top-level menu.
+        if (loopElapsed is { } le)
+            badges.Add($"[{Warn}]\u25cf {ClockMS(le)}[/]");
+        // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
+        // fresh session does not show a noisy "0m".
+        if (sessionElapsed is { } se && se.TotalSeconds >= 60)
+            badges.Add($"[{Dim}]\u23f1 {ClockHM(se)}[/]");
 
         // Context meter: full bar+percent when a threshold is known; a bare token count when
         // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
@@ -464,12 +601,12 @@ internal static class TuiComponents
             string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
                          $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
                          $"[{Dim}]" + new string('\u2501', empty) + "[/]";
-            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{cached:N0} cached[/]" : "";
-            meter = $"{bar} [{Muted}]{total:N0}/{threshold:N0} ({fracTotal * 100:F0}%)[/]{cachedHint}";
+            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{Fmt(cached)} cached[/]" : "";
+            meter = $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]{cachedHint}";
         }
         else if (tokens > 0)
         {
-            meter = $"[{Muted}]{tokens:N0} tokens[/]";
+            meter = $"[{Muted}]{Fmt(tokens)} tokens[/]";
         }
         else
         {
@@ -540,7 +677,7 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0)
     {
         const string cur = "#E0E0E0";
         string prompt = mode == EditorMode.Normal
@@ -548,13 +685,19 @@ internal static class TuiComponents
             : $"[{Accent}]\u203a[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
         string contGutter = $"[{Dim}]\u2502[/]";
+        string promptLead = $"  {prompt} ";
+        string contLead   = $"  {contGutter} ";
+        // Visible column cost of each lead ("  " + glyph + " "). Used to size the wrap width so a
+        // wrapped row's text never runs under the terminal's right edge and soft-wraps with no gutter.
+        int promptLeadCols = 2 + TuiMarkup.MarkupWidth(prompt) + 1;
+        int contLeadCols   = 2 + TuiMarkup.MarkupWidth(contGutter) + 1;
 
         if (string.IsNullOrEmpty(buffer))
             return new List<string>
             {
                 mode == EditorMode.Normal
-                    ? $"  {prompt} [black on {cur}] [/]"
-                    : $"  {prompt} [black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                    ? $"{promptLead}[black on {cur}] [/]"
+                    : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             };
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
@@ -569,26 +712,57 @@ internal static class TuiComponents
             cursorLine = s + 1;
         }
 
-        var rows = new List<string>(segments.Length);
+        // Build visual rows. Each logical segment is hard-wrapped (by character, so the block
+        // cursor maps exactly to (row,col)) to the content width left of the gutter. The prompt
+        // lead is used only for the very first visual row; every other row gets the dim gutter so
+        // wrapped/continuation lines hang-indent under the prompt instead of hugging column 0.
+        var rows = new List<string>();
+        int cursorVRow = -1, cursorVCol = 0;
         for (int s = 0; s < segments.Length; s++)
         {
             string seg = segments[s];
-            string lead = s == 0 ? $"  {prompt} " : $"  {contGutter} ";
-            if (s != cursorLine)
+            int pos = 0;
+            bool firstOfSeg = true;
+            while (true)
             {
-                rows.Add($"{lead}[{Text}]{Esc(seg)}[/]");
-                continue;
-            }
-            // Place the block cursor within this segment.
-            int col = Math.Clamp(cursorCol, 0, seg.Length);
-            string before = Esc(seg[..col]);
-            if (col >= seg.Length)
-                rows.Add($"{lead}[{Text}]{before}[/][black on {cur}] [/]");
-            else
-            {
-                string at = Esc(seg[col].ToString());
-                string after = Esc(seg[(col + 1)..]);
-                rows.Add($"{lead}[{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]");
+                bool isFirstRowOverall = s == 0 && firstOfSeg;
+                string lead = isFirstRowOverall ? promptLead : contLead;
+                int leadCols = isFirstRowOverall ? promptLeadCols : contLeadCols;
+                int cap = width > 0 ? Math.Max(1, width - leadCols) : int.MaxValue;
+                int take = Math.Min(cap, seg.Length - pos);
+                string chunk = seg.Substring(pos, take);
+
+                // Does the cursor fall on this visual chunk? A cursor sitting exactly at the chunk's
+                // trailing boundary belongs here only when it is also the segment end (append spot);
+                // otherwise it rolls to the start of the next wrapped row.
+                if (s == cursorLine && cursorCol >= pos &&
+                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length)))
+                {
+                    cursorVRow = rows.Count;
+                    cursorVCol = cursorCol - pos;
+                }
+
+                if (cursorVRow == rows.Count)
+                {
+                    int col = Math.Clamp(cursorVCol, 0, chunk.Length);
+                    string before = Esc(chunk[..col]);
+                    if (col >= chunk.Length)
+                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}] [/]");
+                    else
+                    {
+                        string at = Esc(chunk[col].ToString());
+                        string after = Esc(chunk[(col + 1)..]);
+                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]");
+                    }
+                }
+                else
+                {
+                    rows.Add($"{lead}[{Text}]{Esc(chunk)}[/]");
+                }
+
+                pos += take;
+                firstOfSeg = false;
+                if (pos >= seg.Length) break;
             }
         }
         return rows;

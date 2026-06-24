@@ -65,6 +65,41 @@ public class ConfigModelTests
     // ── ExecutionLimits defaults ───────────────────────────────────────
 
     [Fact]
+    public void ExecutionLimits_Defaults_TurnContinuationKnobs()
+    {
+        var limits = new ExecutionLimits();
+        // A is high by default so a normal tool chain never trips it.
+        Assert.True(limits.MaxToolIterationsPerTurn >= 100);
+        // B defaults to a small bounded number of silent continues.
+        Assert.Equal(3, limits.MaxAutoContinuesPerTurn);
+    }
+
+    [Fact]
+    public void ExecutionLimits_MissingKeys_InheritDefaults()
+    {
+        // A swarm.json that predates these knobs (no keys present) must deserialize to the
+        // C# defaults rather than 0 - otherwise auto-continue would silently turn off and the
+        // tool cap would collapse to zero iterations.
+        var limits = JsonSerializer.Deserialize<ExecutionLimits>("{}");
+        Assert.NotNull(limits);
+        Assert.Equal(1000, limits!.MaxToolIterationsPerTurn);
+        Assert.Equal(3, limits.MaxAutoContinuesPerTurn);
+    }
+
+    [Fact]
+    public void ExecutionLimits_TurnKnobs_RoundTrip()
+    {
+        var limits = new ExecutionLimits { MaxToolIterationsPerTurn = 0, MaxAutoContinuesPerTurn = 7 };
+        var json = JsonSerializer.Serialize(limits);
+        var back = JsonSerializer.Deserialize<ExecutionLimits>(json);
+        Assert.NotNull(back);
+        Assert.Equal(0, back!.MaxToolIterationsPerTurn);  // 0 = unlimited sentinel preserved
+        Assert.Equal(7, back.MaxAutoContinuesPerTurn);
+        Assert.Contains("maxToolIterationsPerTurn", json);
+        Assert.Contains("maxAutoContinuesPerTurn", json);
+    }
+
+    [Fact]
     public void ExecutionLimits_Defaults_AreSensible()
     {
         var limits = new ExecutionLimits();

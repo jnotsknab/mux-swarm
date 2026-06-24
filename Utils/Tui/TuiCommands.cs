@@ -84,6 +84,7 @@ internal static class TuiCommands
         new("/resume",       "Resume a previous single-agent session", Scope.ReplOnly),
         new("/model",        "View current swarm models", Scope.ReplOnly),
         new("/provider",     "View or switch the active LLM provider", Scope.ReplOnly),
+        new("/workspace",    "Show or set the @-file workspace root (/workspace <path>)", Scope.ReplOnly),
         new("/limits",       "Display current execution limits", Scope.ReplOnly),
         new("/tools",        "List available MCP tools", Scope.ReplOnly),
         new("/skills",       "List available local skills", Scope.ReplOnly),
@@ -109,12 +110,33 @@ internal static class TuiCommands
     {
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
-        "/tag", "/showreasoning",
+        "/tag", "/showreasoning", "/workspace",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
     public static bool TakesArgument(string cmd)
         => ArgTaking.Contains((cmd ?? "").Trim());
+
+    /// <summary>
+    /// Commands whose handler opens a BLOCKING interactive picker/prompt (Spectre TextPrompt /
+    /// SelectionPrompt). For these the submitted command line is NOT echoed into scrollback: the
+    /// picker draws its own UI and the handler prints a "&#x2713; ... saved" confirmation, so an
+    /// extra echo of the bare "/set" / "/swap" line is just residue. Bare invocation only - a
+    /// command WITH an inline argument (e.g. "/set key value") runs non-interactively and is echoed
+    /// normally so the turn stays delimited.
+    /// </summary>
+    private static readonly HashSet<string> InteractivePicker = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext",
+    };
+
+    /// <summary>True when <paramref name="line"/> is a bare command that opens an interactive picker
+    /// (no inline argument), so its echo should be suppressed.</summary>
+    public static bool OpensInteractivePrompt(string line)
+    {
+        var t = (line ?? "").Trim();
+        return InteractivePicker.Contains(t);   // bare token only (no space/arg)
+    }
 
     /// <summary>True when <paramref name="cmd"/> is a session-native meta command.</summary>
     public static bool IsSessionNative(string cmd)
@@ -179,11 +201,13 @@ internal static class TuiCommands
         new("Ctrl+C",      "Cancel the current input line", "prompt"),
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
+        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc",         "Cancel the current turn", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
+        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),
 
         // --- transcript / expand view (NAV overlay) ---
         new("j / k",       "Move cursor down / up one line", "view"),

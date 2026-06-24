@@ -27,6 +27,20 @@ internal enum LineEditSignal
     Ignored
 }
 
+/// <summary>Result of feeding one key while the reverse-incremental-history search (Ctrl+R)
+/// is active.</summary>
+internal enum ReverseSearchSignal
+{
+    /// <summary>Query/match changed (or a no-op key was swallowed); repaint the search row.</summary>
+    Redraw,
+    /// <summary>Esc: load the current match into the buffer and leave search at the prompt.</summary>
+    Accept,
+    /// <summary>Enter: load the current match into the buffer and submit it.</summary>
+    AcceptAndSubmit,
+    /// <summary>Ctrl+C / Ctrl+G: leave search and restore the pre-search buffer untouched.</summary>
+    Cancel
+}
+
 /// <summary>Vim-style editing mode for the input buffer.</summary>
 internal enum EditorMode
 {
@@ -51,6 +65,22 @@ internal sealed class LineEditor
     private readonly List<string> _history = new();
     private int _historyIndex;                 // == _history.Count means "current/new line"
     private string _stash = "";                // in-progress line stashed while browsing history
+
+    // History-recall tracking. RecalledFromHistory is true while the buffer still holds an
+    // unedited line pulled from history (or the restored in-progress stash) - the driver uses it
+    // to keep Up/Down browsing history through a recalled slash command instead of letting the
+    // command palette capture the arrows (the "can't go back further once you hit a slash cmd"
+    // bug). Comparing against the snapshot means ANY edit clears it automatically (cursor-only
+    // motion keeps it set), with no need to touch every mutation site.
+    private bool _historyActive;
+    private string _historyBuf = "";
+
+    // Reverse-incremental search (Ctrl+R) state. _searchStash is the buffer captured on entry so
+    // a cancel restores it verbatim; _searchPos is the history index of the current match (-1 none).
+    private bool _searching;
+    private readonly StringBuilder _search = new();
+    private int _searchPos = -1;
+    private string _searchStash = "";
 
     // Vim modal state. Default Insert preserves the prior (modeless) behavior exactly; the
     // user opts into Normal mode with Esc, and a "pending operator" (e.g. the first 'd' of
@@ -186,8 +216,13 @@ internal sealed class LineEditor
         {
             if (!IsAtFilter) return "";
             var (start, _) = CurrentToken();
-            // Filter is what has been typed between '@' and the cursor.
-            return _buf.ToString(start + 1, _cursor - (start + 1));
+            // Filter is what has been typed between '@' and the cursor. Guard the length: when the
+            // token is a bare "@" and the cursor sits ON the '@' (e.g. after the vim-Normal clamp
+            // pulls it back one column on Esc), _cursor - (start + 1) is negative - clamp to 0 so
+            // ToString never throws "length must be non-negative" (crashed the app on Esc).
+            int len = _cursor - (start + 1);
+            if (len <= 0) return "";
+            return _buf.ToString(start + 1, len);
         }
     }
 
@@ -220,6 +255,12 @@ internal sealed class LineEditor
         _stash = "";
         _mode = EditorMode.Insert;
         _pendingOp = '\0';
+        _historyActive = false;
+        _historyBuf = "";
+        _searching = false;
+        _search.Clear();
+        _searchPos = -1;
+        _searchStash = "";
     }
 
     /// <summary>Append a submitted line to history (deduping immediate repeats, ignoring blanks).</summary>
@@ -233,6 +274,102 @@ internal sealed class LineEditor
 
     /// <summary>Snapshot of the history (oldest first). Test/inspection hook.</summary>
     public IReadOnlyList<string> History => _history;
+
+    /// <summary>True while the buffer holds an unedited line recalled from history. The driver
+    /// gates the command-palette arrow intercept on this so history browsing is never trapped on
+    /// a recalled slash command. Goes false the instant the buffer text is edited.</summary>
+    public bool RecalledFromHistory => _historyActive && _buf.ToString() == _historyBuf;
+
+    /// <summary>True while reverse-incremental history search (Ctrl+R) is active.</summary>
+    public bool IsSearching => _searching;
+
+    /// <summary>The current reverse-search query text (what the user has typed after Ctrl+R).</summary>
+    public string SearchQuery => _search.ToString();
+
+    /// <summary>The history line currently matched by the reverse search, or null if none.</summary>
+    public string? SearchMatch
+        => _searchPos >= 0 && _searchPos < _history.Count ? _history[_searchPos] : null;
+
+    /// <summary>Enter reverse-incremental history search (Ctrl+R). Captures the current buffer so
+    /// a cancel can restore it.</summary>
+    public void BeginReverseSearch()
+    {
+        if (_history.Count == 0) return;
+        _searching = true;
+        _searchStash = _buf.ToString();
+        _search.Clear();
+        _searchPos = -1;
+    }
+
+    /// <summary>Feed one key while reverse search is active and return what the driver should do.
+    /// Printable keys refine the query (re-search from the newest entry), Backspace trims it,
+    /// Ctrl+R steps to the next older match, Enter accepts+submits, Esc accepts to the buffer,
+    /// and Ctrl+C / Ctrl+G cancel (restoring the pre-search buffer).</summary>
+    public ReverseSearchSignal SearchFeed(ConsoleKeyInfo key)
+    {
+        bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
+        if (ctrl && key.Key == ConsoleKey.R) { StepSearchOlder(); return ReverseSearchSignal.Redraw; }
+        if (ctrl && (key.Key == ConsoleKey.G || key.Key == ConsoleKey.C))
+        {
+            _searching = false;
+            SetBuffer(_searchStash);
+            _search.Clear(); _searchPos = -1;
+            return ReverseSearchSignal.Cancel;
+        }
+        switch (key.Key)
+        {
+            case ConsoleKey.Enter:
+                AcceptSearchMatch();
+                return ReverseSearchSignal.AcceptAndSubmit;
+            case ConsoleKey.Escape:
+                AcceptSearchMatch();
+                return ReverseSearchSignal.Accept;
+            case ConsoleKey.Backspace:
+                if (_search.Length > 0) { _search.Remove(_search.Length - 1, 1); RefreshSearch(); }
+                return ReverseSearchSignal.Redraw;
+        }
+        if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+        {
+            _search.Append(key.KeyChar);
+            RefreshSearch();
+            return ReverseSearchSignal.Redraw;
+        }
+        return ReverseSearchSignal.Redraw;   // unmapped key: stay in search, no buffer change
+    }
+
+    /// <summary>Load the current match (or, if none, the pre-search buffer) and leave search.</summary>
+    private void AcceptSearchMatch()
+    {
+        _searching = false;
+        if (_searchPos >= 0 && _searchPos < _history.Count) SetBuffer(_history[_searchPos]);
+        else SetBuffer(_searchStash);
+        _search.Clear(); _searchPos = -1;
+    }
+
+    /// <summary>Re-run the search from the newest history entry after the query changed.</summary>
+    private void RefreshSearch() => FindFrom(_history.Count - 1);
+
+    /// <summary>Step to the next match strictly older than the current one (Ctrl+R again).
+    /// Keeps the current match if there is no older one.</summary>
+    private void StepSearchOlder()
+    {
+        int start = _searchPos >= 0 ? _searchPos - 1 : _history.Count - 1;
+        if (start < 0) return;
+        int saved = _searchPos;
+        if (!FindFrom(start)) _searchPos = saved;
+    }
+
+    /// <summary>Find the newest history entry at or below <paramref name="start"/> containing the
+    /// query (case-insensitive). Sets <c>_searchPos</c> to the match, or -1 when none / empty query.</summary>
+    private bool FindFrom(int start)
+    {
+        string q = _search.ToString();
+        if (q.Length == 0) { _searchPos = -1; return false; }
+        for (int i = Math.Min(start, _history.Count - 1); i >= 0; i--)
+            if (_history[i].Contains(q, StringComparison.OrdinalIgnoreCase)) { _searchPos = i; return true; }
+        _searchPos = -1;
+        return false;
+    }
 
     /// <summary>
     /// Feed a key to the editor and get the resulting signal. Printable characters insert
@@ -532,6 +669,7 @@ internal sealed class LineEditor
         if (_historyIndex == _history.Count)
         {
             _buf.Clear(); _buf.Append(_stash); _cursor = _buf.Length;
+            _historyActive = true; _historyBuf = _buf.ToString();
         }
         else LoadFromHistory();
         return LineEditSignal.Continue;
@@ -542,6 +680,8 @@ internal sealed class LineEditor
         _buf.Clear();
         _buf.Append(_history[_historyIndex]);
         _cursor = _buf.Length;
+        _historyActive = true;
+        _historyBuf = _buf.ToString();
     }
 
     private int PrevWord(int from)
