@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.11";
+    public static readonly string DebugTag = "g12.12";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -439,6 +439,55 @@ public class App
                     bool setupSuccess = RunSetup();
                     if (setupSuccess) MuxConsole.WriteSuccess("Setup complete!");
                     break;
+
+                case var tc when tc == "/teams" || tc.StartsWith("/teams ", StringComparison.Ordinal):
+                {
+                    await EnsureMcpReadyAsync();
+                    Config = LoadConfig(ConfigPath);
+                    var teamsArg = tc.Length > "/teams".Length ? tc.Substring("/teams".Length).Trim() : "";
+                    var teamsModels = Common.LoadAgentModels();
+
+                    if (teamsArg.Length == 0)
+                    {
+                        CliCmdUtils.HandleListTeams(SwarmConfig);
+                        break;
+                    }
+
+                    var teamCfg = MuxSwarm.Utils.Teams.TeamController.Find(SwarmConfig, teamsArg);
+                    if (teamCfg is null)
+                    {
+                        MuxConsole.WriteWarning($"No team named '{teamsArg}' in swarm.json. Run /teams to list configured teams.");
+                        break;
+                    }
+
+                    var teamsCts = GetOrResetCts();
+                    var teamScope = MuxSwarm.Utils.Teams.TeamController.Build(
+                        teamCfg, SwarmConfig ?? new SwarmConfig(),
+                        modelId => CreateChatClient(modelId), teamsModels, teamsCts.Token);
+                    if (teamScope is null) break;
+
+                    var teamLeadModel = teamsModels.GetValueOrDefault(
+                        teamScope.LeadDef.Name, LoadSingleAgentModel());
+
+                    ServeMode.ActiveMode = "teams";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    try {
+                    await SingleAgentOrchestrator.ChatAgentAsync(
+                        client: CreateChatClient(teamLeadModel),
+                        teamsCts.Token,
+                        maxIterations: 3,
+                        mcpTools: McpTools,
+                        continuous: ContinuousExec,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
+                        minDelaySeconds: (uint)MinContDelay!,
+                        showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan,
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        teamScope: teamScope
+                    );
+                    } finally { ServeMode.ActiveMode = "interactive"; MuxSwarm.Utils.Teams.TeamController.Clear(); }
+                    break;
+                }
 
                 case "/swarm":
                     await EnsureMcpReadyAsync();

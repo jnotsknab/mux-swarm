@@ -227,7 +227,8 @@ public static class SingleAgentOrchestrator
         JsonElement? resumedSession = null,
         string? resumedSessionDir = null,
         bool allowSubAgents = false,
-        bool allowParallelSubAgents = false)
+        bool allowParallelSubAgents = false,
+        MuxSwarm.Utils.Teams.TeamScope? teamScope = null)
     {
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
@@ -238,7 +239,9 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
         }
 
-        var singleAgentDef = GetCurrSingleAgentDef();
+        // When launched as a team (teamScope != null) the lead drives this loop with the
+        // resolved lead definition; off-team this is exactly today's single-agent def.
+        var singleAgentDef = teamScope?.LeadDef ?? GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
         var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
@@ -613,6 +616,17 @@ public static class SingleAgentOrchestrator
             singleAgentTools.Add(delegateParallelTool);
             await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+        }
+
+        // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and
+        // build the member specialist registry so member dispatch (ExecuteParallelWorker) can
+        // resolve them. Members surface live in the Agent View via the existing capture path.
+        // Null teamScope leaves the tool list and registry exactly as the off-team path built them.
+        if (teamScope is not null)
+        {
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+            foreach (var t in teamScope.Tools) singleAgentTools.Add(t);
         }
 
         var agentChatOptions = new ChatOptions

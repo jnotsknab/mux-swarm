@@ -82,6 +82,13 @@ internal sealed class TuiDriver
     // focus yet (Ctrl+E falls back to the most-recent running sub-agent).
     private volatile string? _foregroundAgent;
 
+    // v0.12.0 M2 - team TaskBoard strip (Ctrl+T). A decoupled provider supplies a point-in-time
+    // board snapshot (tally + flattened rows) so the driver never references State/Teams directly.
+    // Null provider or null snapshot => no board => the strip never renders (off-team byte-identical).
+    private volatile bool _taskBoardVisible;
+    public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? TaskBoardProvider { get; set; }
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -748,6 +755,13 @@ internal sealed class TuiDriver
     /// drives the shared spinner. An empty list clears the panel. Repaints only when the snapshot
     /// actually changed, so the ticker does not thrash the region when nothing moved.
     /// </summary>
+    /// <summary>Toggle the team TaskBoard strip (Ctrl+T). No-op visual when no board is active.</summary>
+    public bool ToggleTaskBoard()
+    {
+        _taskBoardVisible = !_taskBoardVisible;
+        return _taskBoardVisible;
+    }
+
     public void SetSubAgentActivity(IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
     {
         bool changed = frame != _subAgentFrame || agents.Count != _subAgents.Count;
@@ -962,6 +976,13 @@ internal sealed class TuiDriver
         // default) this adds nothing, keeping the frame byte-identical to today's.
         if (_agentViewActive)
             lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
+
+        // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
+        // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
+        // adds nothing, keeping the frame identical to today.
+        if (_taskBoardVisible && TaskBoardProvider?.Invoke() is { } bd)
+            lines.AddRange(TuiComponents.TaskBoardStrip(
+                bd.Total, bd.Done, bd.InProgress, bd.Blocked, bd.Failed, bd.Rows));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
@@ -1282,6 +1303,15 @@ internal sealed class TuiDriver
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
                 {
                     ForceRedraw();
+                    continue;
+                }
+
+                // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual
+                // when no team board is active. Does not cancel or submit.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.T)
+                {
+                    ToggleTaskBoard();
+                    Repaint();
                     continue;
                 }
 

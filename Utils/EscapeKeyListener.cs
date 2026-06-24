@@ -98,6 +98,13 @@ public sealed class EscapeKeyListener : IDisposable
                             try { MuxConsole.TuiForceRedraw(); } catch { /* redraw is best-effort */ }
                             continue;
                         }
+                        // Ctrl+T: toggle the team TaskBoard strip mid-turn (v0.12.0 M2) without
+                        // cancelling. No-op when no team board is active.
+                        if (ctrl && key.Key == ConsoleKey.T)
+                        {
+                            try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
+                            continue;
+                        }
                     }
                     Thread.Sleep(100);
                 }

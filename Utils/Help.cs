@@ -22,6 +22,7 @@ public struct Help
         "  /subagentview   (/sav) Toggle delegated sub-agent output between collapsed (one expandable line) and inline streaming",
         "  /continuous     Toggles continued autonomous execution on and off (shorthand /cont)",
         "  /workflow       <file> Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
+        "  /teams          List configured teams, or launch one: /teams <name> (members stream into Agent View; Ctrl+T toggles the TaskBoard strip)",
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
         "  /tag            (in-session) Tag the live session with free-form text for easy resume/search; optional MEMORY.md stub",
         "  /compact        Compact current session context (applies to single agent loops only)",

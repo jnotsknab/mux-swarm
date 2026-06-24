@@ -32,6 +32,7 @@ public static class PlatformContext
     public static readonly string PromptsDirectory = Path.Combine(BaseDirectory, "Prompts", "Agents");
     public static readonly string ContextDirectory = Path.Combine(BaseDirectory, "Context");
     public static readonly string SessionsDirectory = Path.Combine(BaseDirectory, "Sessions");
+    public static readonly string TeamsDirectory = Path.Combine(BaseDirectory, "Teams");
     public static readonly string SkillsDirectory = Path.Combine(BaseDirectory, "Skills", "bundled");
     public static readonly string MascotPath = Path.Combine(BaseDirectory, "assets", "mascot.png");
 

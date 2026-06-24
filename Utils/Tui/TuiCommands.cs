@@ -57,6 +57,7 @@ internal static class TuiCommands
         new("/subagents",    "Enable sub-agent delegation (/sub)", Scope.ReplOnly),
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
         new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
+        new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
@@ -110,7 +111,7 @@ internal static class TuiCommands
     {
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
-        "/tag", "/showreasoning", "/workspace",
+        "/tag", "/showreasoning", "/workspace", "/teams",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
@@ -202,6 +203,7 @@ internal static class TuiCommands
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
         new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
+        new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc",         "Cancel the current turn", "turn"),

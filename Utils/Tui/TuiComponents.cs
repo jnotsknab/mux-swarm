@@ -1155,4 +1155,61 @@ internal static class TuiComponents
         if (qi < q.Length) return -1;                     // not a subsequence at all
         return 1000 + (last - first);
     }
+
+    /// <summary>
+    /// The v0.12.0 M2 TaskBoard strip (Ctrl+T): a one-line progress bar over the shared team
+    /// board plus up to a few color-coded task rows (pending=dim, in-progress=accent,
+    /// blocked=warn, done=ok, failed=err). Pure - the driver passes a tally + pre-flattened
+    /// rows (id, status, owner, subject) so this stays free of any State dependency and is
+    /// unit-testable. Rendered with auto-wrap OFF by the live region like every other strip.
+    /// </summary>
+    public static List<string> TaskBoardStrip(
+        int total, int done, int inProgress, int blocked, int failed,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> rows,
+        int maxRows = 5)
+    {
+        var outRows = new List<string>();
+        int segs = 6;
+        int filled = total > 0 ? (int)System.Math.Round(segs * (double)done / total) : 0;
+        filled = System.Math.Clamp(filled, 0, segs);
+        string bar = new string('\u2593', filled) + new string('\u2591', segs - filled);
+        string blockedNote = blocked > 0 ? $" [{Warn}]\u00b7 {blocked} blocked[/]" : "";
+        string failedNote = failed > 0 ? $" [{Err}]\u00b7 {failed} failed[/]" : "";
+        outRows.Add($"  [{Accent}]\u25a4 board[/] [{Dim}]{bar}[/] [{Text}]{done}/{total} done[/]{blockedNote}{failedNote}");
+
+        if (total == 0)
+        {
+            outRows.Add($"    [{Dim}]no tasks yet[/]");
+            return outRows;
+        }
+
+        int shown = System.Math.Min(maxRows, rows.Count);
+        for (int i = 0; i < shown; i++)
+        {
+            var (id, status, owner, subject) = rows[i];
+            string tint = status switch
+            {
+                "InProgress" => Accent,
+                "Blocked" => Warn,
+                "Done" => Ok,
+                "Failed" => Err,
+                _ => Dim,
+            };
+            string glyph = status switch
+            {
+                "Done" => "\u2713",
+                "Failed" => "\u2717",
+                "InProgress" => "\u25cf",
+                "Blocked" => "\u25cb",
+                _ => "\u00b7",
+            };
+            string who = string.IsNullOrEmpty(owner) ? "" : $" [{Dim}]@{Esc(owner)}[/]";
+            string subj = subject ?? "";
+            if (subj.Length > 48) subj = subj[..47] + "\u2026";
+            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}");
+        }
+        if (rows.Count > shown)
+            outRows.Add($"    [{Dim}]\u2193 +{rows.Count - shown} more[/]");
+        return outRows;
+    }
 }

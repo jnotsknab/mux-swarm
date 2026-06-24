@@ -881,4 +881,38 @@ public static class CliCmdUtils
             : string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
         return outList;
     }
+
+    /// <summary>
+    /// List configured teams (swarm.json teams[]) plus any persisted/resumable teams found in
+    /// the install-dir Teams directory. Read-only - launching is /teams &lt;name&gt;.
+    /// </summary>
+    public static void HandleListTeams(SwarmConfig? config)
+    {
+        var configured = config?.Teams ?? new List<TeamConfig>();
+        if (configured.Count == 0)
+        {
+            MuxConsole.WriteWarning("No teams configured. Add a \"teams\" array to swarm.json (see docs).");
+        }
+        else
+        {
+            MuxConsole.WriteInfo($"Configured teams ({configured.Count}):");
+            foreach (var t in configured)
+            {
+                var members = t.Members is { Count: > 0 } ? string.Join(", ", t.Members) : "(none)";
+                var lead = string.IsNullOrWhiteSpace(t.Lead) ? "Orchestrator" : t.Lead;
+                MuxConsole.WriteMuted($"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
+                if (!string.IsNullOrWhiteSpace(t.Description))
+                    MuxConsole.WriteMuted($"      {t.Description}");
+            }
+            MuxConsole.WriteMuted("  Launch with: /teams <name>");
+        }
+
+        var live = MuxSwarm.Utils.Teams.TeamState.LoadAll();
+        if (live.Count > 0)
+        {
+            MuxConsole.WriteInfo($"Persisted/resumable teams ({live.Count}):");
+            foreach (var s in live)
+                MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+        }
+    }
 }

@@ -585,6 +585,18 @@ public static partial class MuxConsole
     /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
     internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
+    /// <summary>Toggle the team TaskBoard strip (v0.12.0 M2, Ctrl+T). No-op outside the TUI.</summary>
+    internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoard(); _driver!.ForceRedraw(); } }
+
+    /// <summary>Install (or clear) the board-snapshot provider that feeds the TaskBoard strip.
+    /// Set by TeamController when a taskboard team launches; cleared when it ends.</summary>
+    internal static void TuiSetTaskBoardProvider(
+        Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
+            IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? provider)
+    {
+        if (_driver is not null) _driver.TaskBoardProvider = provider;
+    }
+
     /// <summary>Resize poll tick: detect a terminal size change and force a clean repaint. No-op
     /// outside the TUI. Called from the shared resize-poll timer.</summary>
     internal static void TuiPollResize() { if (ViaDriver) lock (ConsoleLock) { _driver!.PollResize(); } }
