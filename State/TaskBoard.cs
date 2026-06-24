@@ -52,6 +52,15 @@ public sealed class TeamTask
 
     [JsonPropertyName("completedAt")]
     public DateTimeOffset? CompletedAt { get; set; }
+
+    /// <summary>Member designated to run this task (auto-run target). Distinct from
+    /// <see cref="Owner"/>, which is set atomically when the task is actually claimed.</summary>
+    [JsonPropertyName("assignee")]
+    public string? Assignee { get; set; }
+
+    /// <summary>Earliest time the auto-runner may start this task. Null = eligible immediately.</summary>
+    [JsonPropertyName("startAt")]
+    public DateTimeOffset? StartAt { get; set; }
 }
 
 /// <summary>
@@ -149,7 +158,8 @@ public sealed class TaskBoard
     /// blocker's Blocks list gains this task) and the new task starts Blocked if any blocker is
     /// not yet Done, else Pending. Returns the assigned id.
     /// </summary>
-    public TeamTask Create(string subject, string description, IEnumerable<string>? blockedBy = null)
+    public TeamTask Create(string subject, string description, IEnumerable<string>? blockedBy = null,
+        string? assignee = null, DateTimeOffset? startAt = null)
     {
         lock (_gate)
         {
@@ -166,6 +176,8 @@ public sealed class TaskBoard
                 Description = description ?? string.Empty,
                 BlockedBy = deps,
                 Status = TeamTaskStatus.Pending,
+                Assignee = string.IsNullOrWhiteSpace(assignee) ? null : assignee!.Trim(),
+                StartAt = startAt,
             };
 
             foreach (var depId in deps)
@@ -247,6 +259,154 @@ public sealed class TaskBoard
         }
     }
 
+    /// <summary>
+    /// Reassign a task to a different member: clears the current owner + InProgress claim, sets
+    /// the new Assignee, and returns it to Pending/Blocked (re-derived from its deps). Use to move
+    /// in-flight or stuck work to another member. Returns false for an unknown task.
+    /// </summary>
+    public bool Reassign(string id, string? assignee, out string reason)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue(id, out var t)) { reason = $"no such task '{id}'"; return false; }
+            t.Owner = null;
+            t.ClaimedAt = null;
+            t.Assignee = string.IsNullOrWhiteSpace(assignee) ? null : assignee!.Trim();
+            t.Status = DepsSatisfied_NoLock(t) ? TeamTaskStatus.Pending : TeamTaskStatus.Blocked;
+            Persist(t);
+            reason = t.Assignee is null ? "unassigned" : $"reassigned to {t.Assignee}";
+            return true;
+        }
+    }
+
+    /// <summary>Clear a task's owner/claim and return it to Pending/Blocked, keeping its Assignee.
+    /// (Reassign with a null assignee also drops the designation.)</summary>
+    public bool Unassign(string id, out string reason)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue(id, out var t)) { reason = $"no such task '{id}'"; return false; }
+            t.Owner = null;
+            t.ClaimedAt = null;
+            t.Status = DepsSatisfied_NoLock(t) ? TeamTaskStatus.Pending : TeamTaskStatus.Blocked;
+            Persist(t);
+            reason = "unassigned";
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Reopen a Done/Failed task: clears owner + completion and returns it to Pending/Blocked. Any
+    /// dependent that had auto-unblocked off this task is re-blocked (it is no longer Done), so the
+    /// dependency graph stays consistent. Returns false for an unknown task.
+    /// </summary>
+    public bool Reopen(string id, out string reason)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue(id, out var t)) { reason = $"no such task '{id}'"; return false; }
+            t.Owner = null;
+            t.ClaimedAt = null;
+            t.CompletedAt = null;
+            t.Status = DepsSatisfied_NoLock(t) ? TeamTaskStatus.Pending : TeamTaskStatus.Blocked;
+            Persist(t);
+
+            // This task is no longer Done, so re-block any dependent that relied on it.
+            foreach (var depId in t.Blocks)
+                if (_tasks.TryGetValue(depId, out var dep)
+                    && (dep.Status == TeamTaskStatus.Pending || dep.Status == TeamTaskStatus.InProgress)
+                    && !DepsSatisfied_NoLock(dep))
+                {
+                    dep.Owner = null;
+                    dep.ClaimedAt = null;
+                    dep.Status = TeamTaskStatus.Blocked;
+                    Persist(dep);
+                }
+
+            reason = "reopened";
+            return true;
+        }
+    }
+
+    /// <summary>Remove a single task from the board + disk, unwiring it from any dependency links.
+    /// Returns false for an unknown task.</summary>
+    public bool Remove(string id, out string reason)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue(id, out var t)) { reason = $"no such task '{id}'"; return false; }
+            // Unwire links: drop this id from every other task's Blocks/BlockedBy.
+            foreach (var other in _tasks.Values)
+            {
+                bool touched = other.Blocks.Remove(id) | other.BlockedBy.Remove(id);
+                if (touched)
+                {
+                    // A dependent that just lost its last blocker becomes claimable again.
+                    if (other.Status == TeamTaskStatus.Blocked && DepsSatisfied_NoLock(other))
+                        other.Status = TeamTaskStatus.Pending;
+                    Persist(other);
+                }
+            }
+            _tasks.Remove(id);
+            TryDeleteFile(id);
+            reason = "removed";
+            return true;
+        }
+    }
+
+    /// <summary>Remove every task from the board + disk. Returns the number cleared.</summary>
+    public int RemoveAll()
+    {
+        lock (_gate)
+        {
+            int n = _tasks.Count;
+            foreach (var id in _tasks.Keys.ToList()) TryDeleteFile(id);
+            _tasks.Clear();
+            return n;
+        }
+    }
+
+    /// <summary>One unassigned task to display in info: a deep snapshot of a single task, or null.</summary>
+    public TeamTask? Get(string id)
+    {
+        lock (_gate)
+            return _tasks.TryGetValue(id, out var t) ? Clone(t) : null;
+    }
+
+    /// <summary>
+    /// The next task the auto-runner should start: the earliest-created task that is unowned,
+    /// dependency-satisfied, has a designated <see cref="TeamTask.Assignee"/>, and is past its
+    /// <see cref="TeamTask.StartAt"/> time - EXCLUDING any whose assignee already appears in
+    /// <paramref name="busyAssignees"/> (one in-flight task per member). Null when nothing is
+    /// runnable right now. Returned as a deep clone.
+    /// </summary>
+    public TeamTask? NextRunnable(DateTimeOffset now, IReadOnlySet<string> busyAssignees)
+    {
+        lock (_gate)
+        {
+            var pick = _tasks.Values
+                .Where(t => t.Owner is null
+                            && t.Assignee is not null
+                            && (t.Status == TeamTaskStatus.Pending || t.Status == TeamTaskStatus.Blocked)
+                            && DepsSatisfied_NoLock(t)
+                            && (t.StartAt is null || t.StartAt <= now)
+                            && !busyAssignees.Contains(t.Assignee!))
+                .OrderBy(t => t.Created)
+                .FirstOrDefault();
+            return pick is null ? null : Clone(pick);
+        }
+    }
+
+    /// <summary>True when every blocker of <paramref name="t"/> is Done.</summary>
+    private bool DepsSatisfied_NoLock(TeamTask t)
+        => t.BlockedBy.All(d => _tasks.TryGetValue(d, out var dep) && dep.Status == TeamTaskStatus.Done);
+
+    private void TryDeleteFile(string id)
+    {
+        try { var f = Path.Combine(_tasksDir, id + ".json"); if (File.Exists(f)) File.Delete(f); }
+        catch { /* best-effort; the in-memory removal is authoritative this session */ }
+    }
+
     private void Persist(TeamTask t)
     {
         try
@@ -265,5 +425,6 @@ public sealed class TaskBoard
         Id = t.Id, Subject = t.Subject, Description = t.Description, Owner = t.Owner,
         Status = t.Status, Blocks = new List<string>(t.Blocks), BlockedBy = new List<string>(t.BlockedBy),
         Created = t.Created, ClaimedAt = t.ClaimedAt, CompletedAt = t.CompletedAt,
+        Assignee = t.Assignee, StartAt = t.StartAt,
     };
 }

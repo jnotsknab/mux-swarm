@@ -193,4 +193,162 @@ public class TeamsM2Tests
         Assert.True(r.Handled);
         Assert.False(r.Ok);
     }
+
+    // ---- TaskBoard lifecycle: unassign / reassign / reopen / clear ----
+
+    [Fact]
+    public void TaskBoard_Reassign_MovesOwnerAndResetsStatus()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var a = board.Create("job", "do it");
+            Assert.True(board.TryClaim(a.Id, "WebAgent", out _));
+            Assert.True(board.Reassign(a.Id, "CodeAgent", out _));
+            var t = board.Get(a.Id)!;
+            Assert.Null(t.Owner);                       // claim cleared
+            Assert.Equal("CodeAgent", t.Assignee);      // designated to new member
+            Assert.Equal(TeamTaskStatus.Pending, t.Status);
+            // and it can be claimed by the new member
+            Assert.True(board.TryClaim(a.Id, "CodeAgent", out _));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TaskBoard_Unassign_ReturnsTaskToPool()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var a = board.Create("job", "do it");
+            board.TryClaim(a.Id, "WebAgent", out _);
+            Assert.True(board.Unassign(a.Id, out _));
+            var t = board.Get(a.Id)!;
+            Assert.Null(t.Owner);
+            Assert.Equal(TeamTaskStatus.Pending, t.Status);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TaskBoard_Reopen_Done_ReblocksDependents()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var a = board.Create("research", "r");
+            var b = board.Create("build", "b", new[] { a.Id });
+            board.TryClaim(a.Id, "WebAgent", out _);
+            board.SetStatus(a.Id, TeamTaskStatus.Done, out _);
+            Assert.True(board.IsClaimable(b.Id));       // unblocked
+            // Reopen the blocker -> dependent must re-block.
+            Assert.True(board.Reopen(a.Id, out _));
+            Assert.Equal(TeamTaskStatus.Pending, board.Get(a.Id)!.Status);
+            Assert.Equal(TeamTaskStatus.Blocked, board.Get(b.Id)!.Status);
+            Assert.False(board.IsClaimable(b.Id));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TaskBoard_Clear_RemovesTasks_FromMemoryAndDisk()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            board.Create("a", "1");
+            board.Create("b", "2");
+            Assert.Equal(2, board.RemoveAll());
+            Assert.Empty(board.Snapshot());
+            // reload from disk confirms files were deleted
+            Assert.Empty(TaskBoard.Open("t", root).Snapshot());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TaskBoard_Remove_UnwiresDeps_AndUnblocksDependent()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var a = board.Create("a", "1");
+            var b = board.Create("b", "2", new[] { a.Id });
+            Assert.Equal(TeamTaskStatus.Blocked, board.Get(b.Id)!.Status);
+            Assert.True(board.Remove(a.Id, out _));
+            // b lost its only blocker -> becomes Pending/claimable
+            Assert.Equal(TeamTaskStatus.Pending, board.Get(b.Id)!.Status);
+            Assert.True(board.IsClaimable(b.Id));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    // ---- TaskBoard auto-run eligibility (NextRunnable) ----
+
+    [Fact]
+    public void TaskBoard_NextRunnable_RespectsAssignee_Deps_Start_AndBusy()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var now = DateTimeOffset.UtcNow;
+            var empty = new HashSet<string>();
+
+            // No assignee -> not runnable.
+            var noAssignee = board.Create("x", "x");
+            Assert.Null(board.NextRunnable(now, empty));
+
+            // Assigned + immediate -> runnable.
+            var ready = board.Create("y", "y", null, "WebAgent");
+            Assert.Equal(ready.Id, board.NextRunnable(now, empty)!.Id);
+
+            // But not if that assignee is already busy.
+            Assert.Null(board.NextRunnable(now, new HashSet<string> { "WebAgent" }));
+
+            // Scheduled in the future -> not yet runnable.
+            var later = board.Create("z", "z", null, "CodeAgent", now.AddMinutes(5));
+            var pick = board.NextRunnable(now, new HashSet<string> { "WebAgent" });
+            Assert.Null(pick); // z is future, y\u0027s owner busy
+            // ...but runnable once its start time passes.
+            Assert.Equal(later.Id, board.NextRunnable(now.AddMinutes(6), new HashSet<string> { "WebAgent" })!.Id);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void TaskBoard_NextRunnable_BlockedTask_NotRunnableUntilDepDone()
+    {
+        var root = TempRoot();
+        try
+        {
+            var board = TaskBoard.Open("t", root);
+            var now = DateTimeOffset.UtcNow;
+            var a = board.Create("a", "1", null, "WebAgent");
+            var b = board.Create("b", "2", new[] { a.Id }, "CodeAgent");
+            // b is blocked -> only a is runnable.
+            Assert.Equal(a.Id, board.NextRunnable(now, new HashSet<string>())!.Id);
+            board.TryClaim(a.Id, "WebAgent", out _);
+            board.SetStatus(a.Id, TeamTaskStatus.Done, out _);
+            // now b auto-unblocked and is the next runnable.
+            Assert.Equal(b.Id, board.NextRunnable(now, new HashSet<string>())!.Id);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    // ---- TeamConfig auto-run defaults ----
+
+    [Fact]
+    public void TeamConfig_AutoRun_Defaults()
+    {
+        var t = new TeamConfig();
+        Assert.False(t.AutoRun);
+        Assert.Equal(15, t.AutoRunIntervalSeconds);
+    }
 }

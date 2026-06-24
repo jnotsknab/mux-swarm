@@ -39,4 +39,14 @@ public class TeamConfig
     /// <summary>Agent View density: "auto" (always-on strip) or "minimal". Default "auto".</summary>
     [JsonPropertyName("agentView")]
     public string AgentView { get; set; } = "auto";
+
+    /// <summary>When true (taskboard teams only), the lead starts the background auto-runner at
+    /// launch: tasks that are unblocked, unowned, have an assignee, and are past their start
+    /// time are claimed + run automatically on a timer. Default false (lead assigns manually).</summary>
+    [JsonPropertyName("autoRun")]
+    public bool AutoRun { get; set; }
+
+    /// <summary>Auto-runner poll interval in seconds. Default 15. Clamped to a sane floor at runtime.</summary>
+    [JsonPropertyName("autoRunIntervalSeconds")]
+    public int AutoRunIntervalSeconds { get; set; } = 15;
 }

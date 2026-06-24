@@ -427,6 +427,34 @@ Array of agent definitions for swarm/pswarm modes.
 }
 ```
 
+### teams
+
+Optional array of named teams (additive; absent leaves all behavior unchanged). A team is a
+selection over the existing `agents[]` plus a coordination policy, launched with `/teams <name>`.
+
+```json
+{
+  "name": "research-build",
+  "description": "Research a topic then implement + document it.",
+  "lead": "Orchestrator",
+  "members": ["WebAgent", "CodeAgent", "DocumentationAgent"],
+  "coordination": "taskboard",
+  "maxParallel": 4,
+  "agentView": "auto",
+  "autoRun": false,
+  "autoRunIntervalSeconds": 15
+}
+```
+
+- `lead` - the coordinating agent the user talks to (defaults to `Orchestrator`).
+- `members` - agent names resolved against `agents[]`; spawned as isolated sub-agent sessions.
+- `coordination` - `fanout` (independent concurrent tasks) or `taskboard` (shared dependency-gated
+  task graph with file-locked claiming). `pipeline` is reserved (falls back to fanout).
+- `maxParallel` - max members running at once; falls back to `/maxp` / `executionLimits`.
+- `agentView` - `auto` (always-on status strip) or `minimal`.
+- `autoRun` - taskboard only: start the background auto-runner at launch (see Teams & TaskBoard).
+- `autoRunIntervalSeconds` - auto-runner poll interval (default 15, floor 3).
+
 ### modelOpts
 
 Any agent, orchestrator, singleAgent, or compactionAgent supports optional model tuning:
@@ -519,6 +547,8 @@ Flags can be combined. Common stacks:
 /plan           Toggle plan mode
 /continuous     Toggle autonomous execution (/cont shorthand)
 /workflow       Run a workflow file
+/teams          List configured teams, or launch one: /teams <name>
+/createteam     Guided wizard to create a team (saved to swarm.json teams[])
 /resume         Resume previous session
 /compact        Compress session context
 /model          View model assignments
@@ -541,6 +571,57 @@ Flags can be combined. Common stacks:
 /exit           Exit runtime
 /qc, /qm        Exit active session
 ```
+
+## Teams & TaskBoard
+
+A **team** runs one selected `agents[]` roster under a **lead** agent. `/teams <name>` drops you
+into an interactive session WITH the lead; you drive the team by talking to the lead, which holds
+team-only tools. Members are spawned on demand as isolated sub-agent sessions and stream live in
+the Agent View. State persists under `<install>/Teams/{slug}/` (`team.json` + `tasks/{id}.json`),
+so a team is resumable across restarts. Off-team behavior is unchanged.
+
+**Keys:** `\` opens the Agent View dashboard (foreground one member with Enter); `Ctrl+T` toggles
+the color-coded TaskBoard strip (pending=dim, in-progress=accent, blocked=warn, done=ok, failed=err).
+
+### Coordination: fanout
+
+Independent work, no dependencies. The lead has `team_dispatch` to fan a batch of member tasks out
+concurrently (bounded by `maxParallel`) and collect their results.
+
+### Coordination: taskboard
+
+A shared, persisted, dependency-gated task graph. Claiming is file-locked (no two members ever own
+one task); a task blocked by unfinished dependencies cannot run; completing a blocker auto-unblocks
+its dependents. M2 is lead-orchestrated: the lead creates and assigns; members execute what they are
+handed. The lead has these tools:
+
+```
+task_create    Create a task. Args: subject, description, blockedBy (csv task ids),
+               assignee (member; required for auto-run), startInSeconds (timer/trigger delay).
+task_assign    Assign (or reassign) a task to a member: claims it, runs it, marks Done/Failed.
+               Reassigning an already-owned task moves it to the new member.
+task_unassign  Clear a task's owner -> back to Pending/Blocked. Optional assignee to redirect,
+               or "none" to drop the designation.
+task_reopen    Revert a Done/Failed task to Pending and re-block its dependents (redo/correct work).
+task_clear     Remove a task by id, or the ENTIRE board when no id (or "all") is given.
+task_info      Full detail for one task: status, owner, assignee, deps (and which still pending),
+               what it blocks, timestamps.
+task_list      List every task with status, owner/assignee, and dependencies.
+task_autorun   Toggle the background auto-runner. Args: enabled (bool), intervalSeconds (default 15).
+```
+
+### Auto-runner (timer / trigger)
+
+A daemon-like background loop for taskboard teams. While ON it scans the board on a timer and
+automatically claims + runs every task that is eligible -- **unblocked, unowned, has a designated
+`assignee`, and is past its `startInSeconds` timer** -- bounded to one in-flight task per member.
+A whole dependency graph drains on its own: as each blocker completes, its dependents auto-unblock
+and get picked up on the next scan. It honors the session cancellation (Esc / quit).
+
+Start it at launch with `"autoRun": true` in the team config, or at runtime via the lead calling
+`task_autorun(enabled: true)`. To schedule work, create tasks with an `assignee` and an optional
+`startInSeconds` delay, then let the runner drain them. Turn it off with `task_autorun(enabled: false)`;
+tasks then run only when the lead assigns them.
 
 ## OS Service Registration
 
