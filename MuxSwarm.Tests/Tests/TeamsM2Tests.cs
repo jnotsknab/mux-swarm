@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using MuxSwarm.State;
 using MuxSwarm.Utils;
 using MuxSwarm.Utils.Teams;
+using MuxSwarm.Utils.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -173,5 +174,23 @@ public class TeamsM2Tests
     {
         Assert.Equal("giga-build", TeamState.Slug("giga:build"));
         Assert.DoesNotContain(":", TeamState.Slug("giga:build"));
+    }
+
+    // ---- /createteam command registration ----
+
+    [Fact]
+    public void CreateTeam_IsRegistered_InCommandCatalog()
+    {
+        Assert.Contains(TuiCommands.All, e => e.Cmd == "/createteam" && e.Scope == TuiCommands.Scope.ReplOnly);
+    }
+
+    [Fact]
+    public void CreateTeam_NeedsInteractive_AndIsNotHandledNonInteractively()
+    {
+        Assert.True(TuiConfigCommands.NeedsInteractive("/createteam"));
+        // Non-interactive Handle routes it to a guided-wizard hint rather than silently no-op.
+        var r = TuiConfigCommands.Handle("/createteam");
+        Assert.True(r.Handled);
+        Assert.False(r.Ok);
     }
 }

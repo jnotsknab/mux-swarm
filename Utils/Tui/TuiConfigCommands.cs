@@ -482,6 +482,9 @@ internal static class TuiConfigCommands
         if (head is "/editagent" or "/delagent" or "/removeagent")
             return Bad($"{head} is interactive; just run it with no value to open the picker.");
 
+        if (head == "/createteam")
+            return Bad("/createteam is interactive; just run it to open the guided wizard.");
+
         if (head != "/set")
             return new Result(false, false, "");
 
@@ -510,6 +513,7 @@ internal static class TuiConfigCommands
         if (head == "/set" && parts.Length < 3) return true;     // bare /set or "/set key" -> picker
         if (head == "/newagent") return true;                    // always wizard (uses prompts)
         if (head is "/editagent" or "/delagent" or "/removeagent") return true;
+        if (head == "/createteam") return true;                  // always wizard (uses prompts)
         return false;
     }
 
@@ -535,6 +539,9 @@ internal static class TuiConfigCommands
 
         if (head is "/delagent" or "/removeagent")
             return RunDeleteAgentWizard(parts);
+
+        if (head == "/createteam")
+            return RunCreateTeamWizard(parts);
 
         return new Result(false, false, "");
     }
@@ -736,6 +743,108 @@ internal static class TuiConfigCommands
         catch (System.Exception ex)
         {
             return Bad($"Failed to create agent: {ex.Message}");
+        }
+    }
+
+    // ---- /createteam: guided team-creation wizard --------------------------------------
+
+    private static (bool ok, string err) ValidateTeamName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || name.Contains(' '))
+            return (false, $"Invalid team name '{name}'. Use a single word, file-system safe (no spaces).");
+        return (true, "");
+    }
+
+    /// <summary>Guided /createteam wizard: name -> description -> lead -> members -> coordination
+    /// -> maxParallel. Persists an additive entry to swarm.json teams[] (mirrors /newagent). The
+    /// lead + members are picked from the agents already defined in swarm.json.</summary>
+    private static Result RunCreateTeamWizard(string[] parts)
+    {
+        var swarm = LoadSwarmOrNew();
+
+        // Roster of selectable agents (named agents + Orchestrator as a possible lead).
+        var agentNames = swarm.Agents.Select(a => a.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(System.StringComparer.OrdinalIgnoreCase).ToList();
+        if (agentNames.Count == 0)
+            return Bad("No agents defined in swarm.json yet. Use /newagent first, then /createteam.");
+
+        // Name (from args or prompt).
+        string name = parts.Length >= 2 ? parts[1].Trim() : MuxConsole.Prompt("New team name (single word)").Trim();
+        var (ok, err) = ValidateTeamName(name);
+        if (!ok) return Bad(err);
+        if (swarm.Teams.Exists(t => string.Equals(t.Name, name, System.StringComparison.OrdinalIgnoreCase)))
+            return Bad($"A team named '{name}' already exists in swarm.json. Pick another name or edit it directly.");
+
+        // Description.
+        string descDefault = parts.Length > 2 ? string.Join(' ', parts[2..]).Trim() : $"{name} team";
+        string description = MuxConsole.Prompt("One-line description of what this team does", descDefault).Trim();
+        if (string.IsNullOrWhiteSpace(description)) description = descDefault;
+
+        // Lead: an existing agent, or the Orchestrator.
+        var leadChoices = new List<string> { "Orchestrator" };
+        leadChoices.AddRange(agentNames.Where(n => !n.Equals("Orchestrator", System.StringComparison.OrdinalIgnoreCase)));
+        string lead = MuxConsole.Select("Lead (coordinator) for this team", leadChoices);
+
+        // Members: multi-select from the agents (excluding the lead).
+        var memberPool = agentNames
+            .Where(n => !n.Equals(lead, System.StringComparison.OrdinalIgnoreCase))
+            .OrderBy(n => n, System.StringComparer.OrdinalIgnoreCase).ToList();
+        var members = new List<string>();
+        if (memberPool.Count > 0)
+            members = MuxConsole.MultiSelect("Select team members (space to toggle, enter to confirm)", memberPool);
+        else
+            MuxConsole.WriteMuted("No other agents available as members; the team will run with just the lead.");
+
+        // Coordination policy.
+        string coordination = MuxConsole.Select("Coordination policy", new[]
+        {
+            "fanout    (independent concurrent tasks)",
+            "taskboard (shared task graph: deps + claiming + Ctrl+T board)",
+        }).StartsWith("taskboard") ? "taskboard" : "fanout";
+
+        // Max parallel members (optional; blank = inherit /maxp).
+        int? maxParallel = null;
+        var mp = MuxConsole.Prompt("Max members running in parallel (blank = use /maxp default)", "").Trim();
+        if (!string.IsNullOrWhiteSpace(mp) && int.TryParse(mp, out var mpVal) && mpVal > 0)
+            maxParallel = mpVal;
+
+        return WriteTeam(name, description, lead, members, coordination, maxParallel);
+    }
+
+    /// <summary>Persist a new team to swarm.json teams[] (additive). User runs /refresh, then
+    /// launches it with /teams &lt;name&gt;.</summary>
+    private static Result WriteTeam(string name, string description, string lead,
+        List<string> members, string coordination, int? maxParallel)
+    {
+        try
+        {
+            var swarm = LoadSwarmOrNew();
+            if (swarm.Teams.Exists(t => string.Equals(t.Name, name, System.StringComparison.OrdinalIgnoreCase)))
+                return Bad($"A team named '{name}' already exists in swarm.json.");
+
+            swarm.Teams.Add(new TeamConfig
+            {
+                Name = name,
+                Description = description,
+                Lead = lead,
+                Members = members ?? new List<string>(),
+                Coordination = coordination,
+                MaxParallel = maxParallel,
+            });
+            SaveSwarm(swarm);
+
+            string membersNote = (members is { Count: > 0 }) ? string.Join(", ", members) : "(none)";
+            string mpNote = maxParallel is { } v ? $"maxParallel: {v}" : "maxParallel: /maxp default";
+            return Ok(
+                $"Created team '{name}'.\n" +
+                $"  swarm.json teams[] entry added  (lead={lead}; coordination={coordination}; {mpNote})\n" +
+                $"  members: {membersNote}\n" +
+                $"Run /refresh to load it, then launch with /teams {name}.");
+        }
+        catch (System.Exception ex)
+        {
+            return Bad($"Failed to create team: {ex.Message}");
         }
     }
 

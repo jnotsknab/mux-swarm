@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.12";
+    public static readonly string DebugTag = "g12.13";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -929,6 +929,18 @@ public class App
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
                     {
                         MuxConsole.WriteSuccess(res.Message);

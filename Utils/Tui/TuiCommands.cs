@@ -58,6 +58,7 @@ internal static class TuiCommands
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
         new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
         new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
+        new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
@@ -128,7 +129,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> InteractivePicker = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext",
+        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam",
     };
 
     /// <summary>True when <paramref name="line"/> is a bare command that opens an interactive picker
