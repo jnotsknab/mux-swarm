@@ -762,6 +762,18 @@ internal sealed class TuiDriver
         return _taskBoardVisible;
     }
 
+    /// <summary>Toggle the TaskBoard strip and repaint IN PLACE (Ctrl+T). The strip changes the
+    /// live frame height, so this drives a normal diff/erase+repaint via <see cref="Repaint"/>
+    /// (the same path the mid-turn Ctrl+E expand uses) rather than a full ClearScreen redraw -
+    /// a ClearScreen would re-anchor the frame at the top of the viewport and strand the footer
+    /// in scrollback as streaming resumed (the buffer-artifact bug). Safe from the listener
+    /// thread: the caller holds the console lock, exactly like every other repaint.</summary>
+    public void ToggleTaskBoardRepaint()
+    {
+        _taskBoardVisible = !_taskBoardVisible;
+        Repaint();
+    }
+
     public void SetSubAgentActivity(IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
     {
         bool changed = frame != _subAgentFrame || agents.Count != _subAgents.Count;

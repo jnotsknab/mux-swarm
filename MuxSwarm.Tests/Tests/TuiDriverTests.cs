@@ -310,6 +310,28 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_ToggleTaskBoardRepaint_DoesNotClearScreen_NoBufferRelocation()
+    {
+        // Regression: opening the TaskBoard strip mid-turn must repaint IN PLACE, not via a
+        // ClearScreen+Home full redraw. A ClearScreen re-anchors the live frame at the top of
+        // the viewport, so when streaming CommitAbove resumed it stranded the prior footer/status
+        // rows in scrollback (the triplicated-status-bar artifact). The in-place toggle path must
+        // never emit ESC[2J.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: true, ultra: false, psub: false);
+        term.Clear();
+
+        d.ToggleTaskBoardRepaint();
+        Assert.DoesNotContain(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+
+        // Contrast: the manual Ctrl+L redraw IS allowed to clear the screen (its whole purpose).
+        term.Clear();
+        d.ForceRedraw();
+        Assert.Contains(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+    }
+
+    [Fact]
     public void Driver_Streaming_CommitsCompleteLines_KeepsPartialTailLive()
     {
         var term = new FakeTerminal();

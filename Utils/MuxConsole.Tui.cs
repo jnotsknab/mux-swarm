@@ -586,7 +586,7 @@ public static partial class MuxConsole
     internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
     /// <summary>Toggle the team TaskBoard strip (v0.12.0 M2, Ctrl+T). No-op outside the TUI.</summary>
-    internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoard(); _driver!.ForceRedraw(); } }
+    internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoardRepaint(); } }
 
     /// <summary>Install (or clear) the board-snapshot provider that feeds the TaskBoard strip.
     /// Set by TeamController when a taskboard team launches; cleared when it ends.</summary>
