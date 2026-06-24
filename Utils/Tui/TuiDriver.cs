@@ -921,7 +921,7 @@ internal sealed class TuiDriver
         // A pending (unresolved) tool call is shown live with a running glyph until its
         // result lands and the two merge into a single committed line.
         if (!_streaming && _pendingTool is { } pt)
-            lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args)));
+            lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args, _thinkFrame)));
 
         // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
         // dashboard renders inline just above the rule/footer. The always-on activity strip above

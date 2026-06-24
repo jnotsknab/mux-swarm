@@ -174,14 +174,16 @@ public class TuiRenderTests
     }
 
     [Fact]
-    public void SubAgentActivity_UsesDistinctSpinner_NotMainAgentBraille()
+    public void SubAgentActivity_UsesPulsingDotHead_NotMainAgentBraille()
     {
-        // Sub-agents animate with their own half-circle spinner so concurrent sub-agent activity
-        // reads as a separate lane from the main agent's Braille thinking dots.
+        // g12.07: the live lane head is the PULSING dot (motion = working), not the main agent's
+        // Braille thinking dots - so concurrent sub-agent activity reads as its own lane. Use the
+        // frame whose pulse cell is the distinctive big circle to avoid the row's middot separator.
+        int bigFrame = System.Array.IndexOf(TuiComponents.PulseFrames, "\u25CF");
         var rows = TuiComponents.SubAgentActivity(
-            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: 0);
+            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: bigFrame);
         var plain = TuiMarkup.Plain(rows[0]);
-        Assert.Contains(TuiComponents.SubAgentFrames[0], plain);   // distinct sub-agent glyph present
+        Assert.Contains("\u25CF", plain);                          // pulsing head dot present
         foreach (var braille in TuiComponents.ThinkFrames)
             Assert.DoesNotContain(braille, plain);                  // no main-agent Braille frame
     }

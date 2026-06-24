@@ -94,6 +94,16 @@ internal static class TuiComponents
     public static readonly string[] SubAgentFrames =
         { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
 
+    /// <summary>Pulsing dot used to mark the SINGLE in-flight tool per live lane: a dot that
+    /// "breathes" small-&gt;large-&gt;small. Same glyph vocabulary as the static result dots, so the
+    /// only signal is motion (alive) vs stillness (done). Rides the shared ~100ms ticker frame.</summary>
+    public static readonly string[] PulseFrames =
+        { "\u00b7", "\u2022", "\u25CF", "\u2022" };   // middot -> bullet -> big circle -> bullet
+
+    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative).</summary>
+    public static string PulseDot(int frame)
+        => PulseFrames[((frame % PulseFrames.Length) + PulseFrames.Length) % PulseFrames.Length];
+
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
     /// its own spinner into the status text, so we must not prepend a second one.</summary>
@@ -216,12 +226,17 @@ internal static class TuiComponents
     /// <summary>Tool-call line: a running glyph, a human ACTION label (verb-derived from the tool
     /// id so it reads "Running command" not "ReplShellMcp_execute_command_async"), and a compact
     /// arg hint. Falls back to a humanized name then "Working" - never a raw identifier.</summary>
-    public static List<string> ToolCall(string tool, string? args)
+    public static List<string> ToolCall(string tool, string? args) => ToolCall(tool, args, -1);
+
+    /// <summary>Tool-call line; when <paramref name="frame"/> &gt;= 0 the head dot PULSES (live
+    /// in-flight call), else a static running dot (committed/flushed line). Action label as above.</summary>
+    public static List<string> ToolCall(string tool, string? args, int frame)
     {
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        return new() { $"  [{Warn}]\u25cf[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        string dot = frame >= 0 ? PulseDot(frame) : "\u25cf";
+        return new() { $"  [{Warn}]{dot}[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -343,7 +358,8 @@ internal static class TuiComponents
     {
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
-        string spin = SubAgentFrames[((frame % SubAgentFrames.Length) + SubAgentFrames.Length) % SubAgentFrames.Length];
+        // Pulsing dot marks the live lane head (motion = working); same dot vocabulary as static rows.
+        string spin = PulseDot(frame);
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);

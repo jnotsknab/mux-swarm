@@ -240,14 +240,25 @@ public static partial class MuxConsole
             lock (ConsoleLock) { _driver!.UpdateSubAgentExpandedBody(cap.Agent, cap.Buffer.ToString().Trim()); }
     }
 
-    /// <summary>Record a captured tool-result summary line + bump the tool counter.</summary>
+    /// <summary>Record a captured tool marker as a clean one-line "\u00b7 &lt;Action&gt;" dot row
+    /// (main-viewport style) + bump the tool counter, instead of a raw "[tool] &lt;dump&gt;" blob -
+    /// so the expanded card reads as prose interleaved with tidy tool dots, not truncated JSON. The
+    /// <paramref name="summary"/> is shaped "&lt;tool&gt;: &lt;result text&gt;"; the action label is
+    /// derived from the tool id (Describe never returns a raw id), with a short trailing detail.
+    /// Fallback: no parseable "tool:" prefix -&gt; dot + the trimmed text.</summary>
     private static void CaptureToolResult(string summary)
     {
         if (_capture.Value is not { } cap) return;
         cap.ToolCalls++;
-        string clean = CollapseWhitespace(summary ?? "");
-        if (clean.Length > 0)
-            cap.Buffer.Append('\n').Append("[tool] ").Append(clean.Length > 200 ? clean[..200] + "\u2026" : clean);
+        string raw = CollapseWhitespace(summary ?? "");
+        if (raw.Length == 0) return;
+        string toolId = raw, detail = "";
+        int colon = raw.IndexOf(':');
+        if (colon > 0) { toolId = raw[..colon].Trim(); detail = raw[(colon + 1)..].Trim(); }
+        string action = ToolActionLabel.Describe(toolId);
+        string detailShort = detail.Length > 80 ? detail[..80] + "\u2026" : detail;
+        string row = detailShort.Length > 0 ? $"\u00b7 {action} \u2014 {detailShort}" : $"\u00b7 {action}";
+        cap.Buffer.Append('\n').Append(row);
     }
 
     /// <summary>
