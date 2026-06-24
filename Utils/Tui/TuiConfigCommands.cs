@@ -248,6 +248,54 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "inputHighlight", Aliases = new[] { "inputshade", "inputbg" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.InputHighlight.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"inputHighlight expects a boolean (got '{v}').");
+                Cfg.Console.InputHighlight = on;
+                MuxConsole.SetTuiInputHighlight(on);             // live
+                return Save($"inputHighlight = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "cardMarkdown", Aliases = new[] { "cardmd", "panelmarkdown" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.CardMarkdown.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"cardMarkdown expects a boolean (got '{v}').");
+                Cfg.Console.CardMarkdown = on;
+                MuxConsole.SetTuiCardMarkdown(on);               // live
+                return Save($"cardMarkdown = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "collapseDelegations", Aliases = new[] { "collapsedeleg", "delegcollapse" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.CollapseDelegations.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"collapseDelegations expects a boolean (got '{v}').");
+                Cfg.Console.CollapseDelegations = on;
+                MuxConsole.CollapseDelegations = on;             // live
+                return Save($"collapseDelegations = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "bracketedPaste", Aliases = new[] { "paste", "multilinepaste" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.BracketedPaste.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"bracketedPaste expects a boolean (got '{v}').");
+                Cfg.Console.BracketedPaste = on;
+                MuxConsole.SetTuiBracketedPaste(on);             // live
+                return Save($"bracketedPaste = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
             Name = "ultra.thinkingBudget", Aliases = new[] { "thinkingbudget", "ultra.budget" }, ValueHint = "<int>",
             Get = () => Cfg.Ultra.ThinkingBudget.ToString(),
             Set = v =>

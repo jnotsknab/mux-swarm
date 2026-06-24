@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.02";
+    public static readonly string DebugTag = "g12.03";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -222,6 +222,10 @@ public class App
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
+        MuxConsole.InputHighlight = Config.Console.InputHighlight;
+        MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
+        MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
+        MuxConsole.BracketedPaste = Config.Console.BracketedPaste;
         MuxConsole.ShowReasoning = Config.ShowReasoning;
 
         // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is

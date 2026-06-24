@@ -63,6 +63,14 @@ internal static class Ansi
     /// <summary>Re-enable terminal auto-wrap, DECAWM on (CSI ?7h).</summary>
     public const string AutoWrapOn = CSI + "?7h";
 
+    /// <summary>Enable bracketed-paste mode, DECSET 2004 (CSI ?2004h). The terminal then wraps any
+    /// paste in ESC[200~ ... ESC[201~ so the app can buffer a multi-line paste as one literal block
+    /// instead of treating the first embedded newline as a submit. Disabled with <see cref="BracketedPasteOff"/>.</summary>
+    public const string BracketedPasteOn = CSI + "?2004h";
+
+    /// <summary>Disable bracketed-paste mode, DECRST 2004 (CSI ?2004l).</summary>
+    public const string BracketedPasteOff = CSI + "?2004l";
+
     /// <summary>
     /// Erase <paramref name="count"/> lines ending at (and including) the current line,
     /// leaving the cursor at column 1 of the topmost erased line. Mirrors the well-proven

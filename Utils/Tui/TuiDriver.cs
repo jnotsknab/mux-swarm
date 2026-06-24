@@ -126,6 +126,26 @@ internal sealed class TuiDriver
     private int _blockGap = 1;
     public void SetBlockGap(int lines) => _blockGap = Math.Max(0, lines);
 
+    /// <summary>Shade the user input/compose field on a band (console.inputHighlight).</summary>
+    private bool _inputHighlight = true;
+    public void SetInputHighlight(bool on) => _inputHighlight = on;
+
+    /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).</summary>
+    private bool _cardMarkdown = true;
+    public void SetCardMarkdown(bool on) => _cardMarkdown = on;
+
+    /// <summary>Capture a multi-line paste as one literal block (console.bracketedPaste, DECSET 2004)
+    /// instead of submitting on the first embedded newline.</summary>
+    private bool _bracketedPaste = true;
+    public void SetBracketedPaste(bool on)
+    {
+        _bracketedPaste = on;
+        try { _term.Write(on ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff); _term.Flush(); } catch { /* ignore */ }
+    }
+    // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
+    // stashed here and replayed through the normal edit path so nothing is dropped.
+    private readonly Queue<ConsoleKeyInfo> _ungetq = new();
+
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
     // read back), so we mirror them here as ENTRIES. Most entries are a single plain markup
@@ -919,7 +939,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width, highlight: _inputHighlight));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -980,6 +1000,61 @@ internal sealed class TuiDriver
         _region.ForceRepaint();
     }
 
+    // --- bracketed paste -----------------------------------------------------
+
+    private static readonly char[] _pasteOpenTail = { '[', '2', '0', '0', '~' };
+    private static readonly char[] _pasteCloseTail = { '[', '2', '0', '1', '~' };
+
+    // Called right after an ESC was read. Probe the next queued chars for the "[200~" opener tail.
+    // On a full match the chars are consumed (returns true). On any mismatch the probed keys are
+    // pushed to the unget queue (replayed as normal input) and the ESC keeps its normal meaning.
+    private bool TryConsumePasteOpen() => MatchTail(_pasteOpenTail);
+
+    private bool MatchTail(char[] tail)
+    {
+        var probed = new List<ConsoleKeyInfo>(tail.Length);
+        for (int i = 0; i < tail.Length; i++)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (TryReadKeyNonBlocking(out k)) { }
+            else { foreach (var p in probed) _ungetq.Enqueue(p); return false; }
+            probed.Add(k);
+            if (k.KeyChar != tail[i]) { foreach (var p in probed) _ungetq.Enqueue(p); return false; }
+        }
+        return true;
+    }
+
+    private static bool TryReadKeyNonBlocking(out ConsoleKeyInfo key)
+    {
+        try
+        {
+            if (Console.KeyAvailable) { key = Console.ReadKey(intercept: true); return true; }
+        }
+        catch { /* not a real console */ }
+        key = default;
+        return false;
+    }
+
+    private string DrainBracketedPaste()
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (!TryReadKeyNonBlocking(out k))
+            {
+                System.Threading.Thread.Sleep(2);   // settle wait for the rest of a large paste
+                if (!TryReadKeyNonBlocking(out k)) break;
+            }
+            if (k.KeyChar == '\u001b' && MatchTail(_pasteCloseTail)) break;   // ESC[201~ terminator
+            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
+            if (k.KeyChar != '\0') sb.Append(k.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -1006,13 +1081,33 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException)
+                if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else
                 {
-                    // stdin not a real console (shouldn't happen in TUI) - fall back.
-                    _inInput = false;
-                    _region.Clear();
-                    return Console.ReadLine();
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException)
+                    {
+                        // stdin not a real console (shouldn't happen in TUI) - fall back.
+                        _inInput = false;
+                        _region.Clear();
+                        return Console.ReadLine();
+                    }
+                }
+
+                // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
+                // ESC[201~. On a confirmed opener we drain the body (newlines kept literal) until
+                // the closer and insert it all at once, so a multi-line paste no longer submits on
+                // its first newline. A bare Esc (no paste body) falls through to the editor unchanged.
+                if (_bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
+                {
+                    string pasted = DrainBracketedPaste();
+                    if (pasted.Length > 0)
+                    {
+                        _editor.InsertText(pasted);
+                        _paletteSel = -1;
+                        if (!KeyQueued() && _ungetq.Count == 0) Repaint();
+                    }
+                    continue;
                 }
 
                 // Reverse-incremental history search (Ctrl+R, readline/bash style). While active it
@@ -1331,7 +1426,7 @@ internal sealed class TuiDriver
                 {
                     var panel = ent.DiffKind
                         ? TuiComponents.Diff(x.Tool, x.Text, Width)
-                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true);
+                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true, markdown: _cardMarkdown);
                     foreach (var l in panel) { disp.Add(l); owner.Add(e); }
                 }
                 else
@@ -1560,6 +1655,7 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown) return;
         _shuttingDown = true;
+        try { if (_bracketedPaste) { _term.Write(Ansi.BracketedPasteOff); _term.Flush(); } } catch { /* ignore */ }
         try { _region.Clear(); } catch { /* ignore */ }
     }
 }

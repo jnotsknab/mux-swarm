@@ -30,6 +30,7 @@ internal static class TuiComponents
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background.
     public const string CardBg  = "#1C2530";
+    public const string InputBg = "#161B22";   // shaded band behind the user input/compose field
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
     public const string DiffAddBg = "#16261C";
     public const string DiffDelBg = "#2A1A1C";
@@ -353,7 +354,7 @@ internal static class TuiComponents
     }
 
     /// <summary>Expanded tool result as a bordered card with a status glyph.</summary>
-    public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false)
+    public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false, bool markdown = false)
     {
         string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]\u2713[/]";
         string col = error ? Err : Border;
@@ -370,9 +371,17 @@ internal static class TuiComponents
         string headMarkup = $"{glyph} [{Accent} on {CardBg}]{Esc(tool)}[/]";
         string headPlain   = $"\u2713 {tool}";   // glyph(1)+space(1)+tool; width drives the fill pad
         var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBg, inner) };
+        // markdown=true renders the BODY as muted markdown (uniform with sub-agent panels): headings/
+        // bold/inline-code styled but subordinate, no literal ###/**. Tool name/status stay literal.
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        {
+            if (markdown)
+                foreach (var w in TuiMarkup.WrapMarkup(TuiMarkdown.ToMarkup(raw), inner))
+                    outp.Add(ShadedMarkdownRow(col, w, CardBg, inner));
+            else
+                foreach (var w in TuiMarkup.WrapPlain(raw, inner))
+                    outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        }
         outp.Add(ShadedRow(col, "", Text, CardBg, inner));
         return outp;
     }
@@ -550,6 +559,12 @@ internal static class TuiComponents
         return true;
     }
 
+    /// <summary>One-line collapsed delegation summary: "from -> to  <short task>  (ctrl+e expand)".
+    /// The full prompt is retained as expandable data by the driver, mirroring sub-agent collapse.</summary>
+    public static string DelegationSummary(string from, string to, string task)
+        => $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{Accent}]\u2192 {Esc(to)}[/]  "
+         + $"[{Muted}]{Esc(Trunc(CollapseWs(task), 60))}[/]  [{Dim}](ctrl+e expand)[/]";
+
     /// <summary>Delegation rendered as a small from -> to tree.</summary>
     public static List<string> Delegation(string from, string to, string task, int truncLength) => new()
     {
@@ -693,9 +708,24 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0, bool highlight = false)
     {
         const string cur = "#E0E0E0";
+        // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
+        // full width so the compose field reads as a contained region. Applied as a final pass over
+        // the rows so the cursor/markup math below is unchanged (highlight=false is byte-identical).
+        List<string> Shade(List<string> rows)
+        {
+            if (!highlight || width <= 0) return rows;
+            var outp = new List<string>(rows.Count);
+            foreach (var r in rows)
+            {
+                int vis = TuiMarkup.MarkupWidth(r);
+                int pad = Math.Max(0, width - vis);
+                outp.Add($"[on {InputBg}]{r}{new string(' ', pad)}[/]");
+            }
+            return outp;
+        }
         string prompt = mode == EditorMode.Normal
             ? $"[{Warn}]\u25c6[/] [black on {Warn}] NORMAL [/]"
             : $"[{Accent}]\u203a[/]";
@@ -709,12 +739,12 @@ internal static class TuiComponents
         int contLeadCols   = 2 + TuiMarkup.MarkupWidth(contGutter) + 1;
 
         if (string.IsNullOrEmpty(buffer))
-            return new List<string>
+            return Shade(new List<string>
             {
                 mode == EditorMode.Normal
                     ? $"{promptLead}[black on {cur}] [/]"
                     : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
-            };
+            });
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
 
@@ -781,7 +811,7 @@ internal static class TuiComponents
                 if (pos >= seg.Length) break;
             }
         }
-        return rows;
+        return Shade(rows);
     }
 
     /// <summary>

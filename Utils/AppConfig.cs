@@ -152,6 +152,49 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("collapseSubAgents")]
     public bool CollapseSubAgents { get; set; } = true;
+
+    /// <summary>
+    /// When true (default), the user input/compose field is drawn on a subtle shaded band
+    /// (a step off the terminal background) so the prompt reads as a contained input region
+    /// rather than blending into the transcript, the way Claude Code shades its composer.
+    /// Additive and non-invasive: absent in older configs (defaults to true). Toggled live
+    /// with <c>/set inputHighlight false</c>. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("inputHighlight")]
+    public bool InputHighlight { get; set; } = true;
+
+    /// <summary>
+    /// When true (default), the BODY of expanded tool-result / batch-summary cards renders
+    /// as muted markdown (headings, bold, inline code styled but subordinate) instead of raw
+    /// markdown source (literal <c>###</c>, <c>**</c>, backticks). Tool names and status stay
+    /// literal. Matches the sub-agent panel treatment for uniform formatting across the TUI.
+    /// Additive and non-invasive: absent in older configs (defaults to true). Toggled live
+    /// with <c>/set cardMarkdown false</c>. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("cardMarkdown")]
+    public bool CardMarkdown { get; set; } = true;
+
+    /// <summary>
+    /// When true (default), a <c>delegates -&gt; X</c> dispatch line auto-collapses to a
+    /// single expandable summary row (the full task prompt is retained behind Ctrl+E), the
+    /// same way sub-agent results already collapse, so dense parallel fanout stays scannable
+    /// instead of printing every full prompt inline. Additive and non-invasive: absent in
+    /// older configs (defaults to true). Toggled live with <c>/set collapseDelegations false</c>.
+    /// Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("collapseDelegations")]
+    public bool CollapseDelegations { get; set; } = true;
+
+    /// <summary>
+    /// When true (default), bracketed-paste mode (DECSET 2004) is enabled while the live
+    /// TUI owns the terminal, so a multi-line clipboard paste is captured as one literal
+    /// block (embedded newlines kept as soft line breaks in the compose buffer) and submitted
+    /// only when the user presses Enter - instead of the first pasted newline submitting a
+    /// truncated first line. Additive and non-invasive: absent in older configs (defaults to
+    /// true). Set false to revert to line-at-a-time paste. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("bracketedPaste")]
+    public bool BracketedPaste { get; set; } = true;
 }
 
 /// <summary>

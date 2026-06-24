@@ -613,4 +613,65 @@ public class TuiVimFeatureTests
         Assert.False(TuiConfigCommands.NeedsInteractive("/set renderMode tui")); // full form -> direct
         Assert.True(TuiConfigCommands.NeedsInteractive("/newagent"));
     }
+
+    // --- v0.12.0 M1-polish + bracketed paste (g12.03) ------------------------
+
+    [Fact]
+    public void LineEditor_InsertText_KeepsNewlinesAsMultilineCompose()
+    {
+        var ed = new LineEditor();
+        ed.InsertText("first line\nsecond line\nthird");
+        // Multi-line paste lands as a single compose buffer with literal newlines, cursor at end.
+        Assert.Equal("first line\nsecond line\nthird", ed.Buffer);
+        Assert.Equal(ed.Buffer.Length, ed.Cursor);
+        // Renders as three input rows (not a truncated single line).
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert);
+        Assert.Equal(3, rows.Count);
+    }
+
+    [Fact]
+    public void LineEditor_InsertText_NormalizesCrlf()
+    {
+        var ed = new LineEditor();
+        ed.InsertText("a\r\nb\rc");
+        Assert.Equal("a\nb\nc", ed.Buffer);
+    }
+
+    [Fact]
+    public void InputRows_Highlight_ShadesEveryRow()
+    {
+        // highlight=false (default) is unchanged; highlight=true wraps each row in the InputBg band.
+        var plain = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: false);
+        Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
+        var shaded = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: true);
+        Assert.All(shaded, r => Assert.Contains(TuiComponents.InputBg, r));
+        // Highlighting must not change the visible text.
+        Assert.Contains("hello", TuiMarkup.Plain(shaded[0]));
+    }
+
+    [Fact]
+    public void ToolResultPanel_Markdown_RendersHeadingNotRaw()
+    {
+        var rows = TuiComponents.ToolResultPanel("delegate", "### BATCH DONE\nbody text",
+            error: false, width: 60, expanded: true, markdown: true);
+        var plain = TuiMarkup.Plain(string.Join("\n", rows));
+        Assert.Contains("BATCH DONE", plain);
+        Assert.DoesNotContain("### BATCH DONE", plain);   // ATX hashes consumed by markdown rendering
+        // markdown=false leaves the raw text intact (old behavior).
+        var rawRows = TuiComponents.ToolResultPanel("delegate", "### BATCH DONE\nbody text",
+            error: false, width: 60, expanded: true, markdown: false);
+        Assert.Contains("### BATCH DONE", TuiMarkup.Plain(string.Join("\n", rawRows)));
+    }
+
+    [Fact]
+    public void DelegationSummary_IsOneCollapsibleLine()
+    {
+        string s = TuiComponents.DelegationSummary("Orchestrator", "WebAgent",
+            "Do a very long task prompt that should be truncated in the collapsed summary row so it stays scannable");
+        var plain = TuiMarkup.Plain(s);
+        Assert.Contains("Orchestrator", plain);
+        Assert.Contains("WebAgent", plain);
+        Assert.Contains("ctrl+e expand", plain);
+        Assert.DoesNotContain("\n", s);   // single line
+    }
 }

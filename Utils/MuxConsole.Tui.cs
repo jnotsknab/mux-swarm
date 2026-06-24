@@ -63,6 +63,22 @@ public static partial class MuxConsole
     /// from config at startup and pushed to the driver on activation + live via /set.</summary>
     public static int DelegationSpacing { get; set; } = 1;
 
+    /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
+    /// on activation + live via /set. Ignored outside the live TUI.</summary>
+    public static bool InputHighlight { get; set; } = true;
+
+    /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).
+    /// Pushed to the driver on activation + live via /set.</summary>
+    public static bool CardMarkdown { get; set; } = true;
+
+    /// <summary>Auto-collapse delegation dispatch lines to one expandable summary row
+    /// (console.collapseDelegations). Read by RenderTuiDelegation; toggled live via /set.</summary>
+    public static bool CollapseDelegations { get; set; } = true;
+
+    /// <summary>Capture multi-line pastes as one block (console.bracketedPaste, DECSET 2004).
+    /// Pushed to the driver on activation + live via /set.</summary>
+    public static bool BracketedPaste { get; set; } = true;
+
     /// <summary>
     /// When true (default) a delegated sub-agent's live output is captured and collapsed into a
     /// single expandable transcript line instead of streaming inline (Claude-Code Task style).
@@ -344,6 +360,9 @@ public static partial class MuxConsole
                 catch { /* files optional */ }
                 _driver.SetCollapseThreshold(CollapseToolLines);
                 _driver.SetBlockGap(DelegationSpacing);
+                _driver.SetInputHighlight(InputHighlight);
+                _driver.SetCardMarkdown(CardMarkdown);
+                _driver.SetBracketedPaste(BracketedPaste);
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub);
             }
             catch
@@ -505,6 +524,30 @@ public static partial class MuxConsole
 
     /// <summary>Set the delegation spacing (blank lines above each delegation block) live. Takes
     /// effect on the next delegation render; no driver state needed.</summary>
+    /// <summary>Toggle input-field shading live (console.inputHighlight) + push to the driver.</summary>
+    public static void SetTuiInputHighlight(bool on)
+    {
+        InputHighlight = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetInputHighlight(on); }
+    }
+
+    /// <summary>Toggle muted-markdown card bodies live (console.cardMarkdown) + push to the driver.</summary>
+    public static void SetTuiCardMarkdown(bool on)
+    {
+        CardMarkdown = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetCardMarkdown(on); }
+    }
+
+    /// <summary>Toggle bracketed-paste capture live (console.bracketedPaste) + push to the driver.</summary>
+    public static void SetTuiBracketedPaste(bool on)
+    {
+        BracketedPaste = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetBracketedPaste(on); }
+    }
+
     public static void SetTuiDelegationSpacing(int lines)
     {
         DelegationSpacing = Math.Max(0, lines);
@@ -802,7 +845,23 @@ public static partial class MuxConsole
     /// <summary>G8 - delegation rendered as a small from -> to tree.</summary>
     public static void RenderTuiDelegation(string fromAgent, string toAgent, string task, int truncLength)
     {
-        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(fromAgent); _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); } return; }
+        if (ViaDriver)
+        {
+            lock (ConsoleLock)
+            {
+                ApplyLaneTint(fromAgent);
+                if (CollapseDelegations)
+                {
+                    // Collapse the dispatch to one expandable summary row (the full prompt is retained
+                    // behind Ctrl+E), matching how sub-agent results already collapse. Keeps dense
+                    // parallel fanout scannable instead of printing every full prompt inline.
+                    string summary = TuiComponents.DelegationSummary(fromAgent, toAgent, task);
+                    _driver!.CommitCollapsed(summary, fromAgent, CollapseWhitespace(task));
+                }
+                else { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); }
+            }
+            return;
+        }
         WithConsole(() =>
         {
             var tree = new Tree($"[{TC.Agent}]{Esc(fromAgent)}[/] [{TC.Dim}]delegates[/]")
