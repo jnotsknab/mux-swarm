@@ -676,16 +676,19 @@ public class TuiVimFeatureTests
     }
 
     [Fact]
-    public void InputRows_Highlight_SubtleRail_NotFullWidthFill()
+    public void InputRows_Highlight_SubtleRail_FillsRowWidth()
     {
-        // Option B: each shaded row carries a thin accent left-rail glyph, and the faint shade does
-        // NOT fill the whole terminal width over empty space (band ends a few cells past the text).
+        // Option B (g12.04 follow-up): each shaded row carries a thin accent left-rail glyph and a
+        // FAINT shade that fills the full field width (the earlier text-width-clipped band looked
+        // broken). The faint colour keeps a full-width fill from reading as a heavy strip.
         var rows = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: true);
         var first = rows[0];
         Assert.Contains("\u2502", TuiMarkup.Plain(first));        // left rail present
         Assert.Contains(TuiComponents.InputBg, first);            // faint shade present
-        // The faint shade must not span the full 120-col width (that was the "looks off" full strip).
-        int shadeRun = TuiMarkup.Plain(first).Length;
-        Assert.True(shadeRun < 100, $"shaded row unexpectedly wide ({shadeRun})");
+        // The field row fills the configured width (rail + shaded body span the whole row).
+        Assert.Equal(120, TuiMarkup.MarkupWidth(first));
+        // highlight=false stays unshaded.
+        var plain = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: false);
+        Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
     }
 }

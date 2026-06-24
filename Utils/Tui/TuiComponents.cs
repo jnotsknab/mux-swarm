@@ -714,25 +714,22 @@ internal static class TuiComponents
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
         // full width so the compose field reads as a contained region. Applied as a final pass over
         // the rows so the cursor/markup math below is unchanged (highlight=false is byte-identical).
-        // Subtle treatment (option B): a thin accent left-rail + a FAINT shade that extends only a
-        // small trailing pad past the visible text - not a full-width dark strip over empty space.
-        // The 2-space lead each row already carries is replaced by the rail glyph so the field
-        // frames cleanly without shifting columns. highlight=false stays byte-identical.
+        // Subtle treatment (option B): a thin accent left-rail + a FAINT shade FILLING the field row.
+        // The shade starts flush at the rail (the leading space is inside the band, no gap) and spans
+        // the full width so the field reads as one contained region - the faint colour keeps it from
+        // looking like a heavy strip. The 2-space lead each row already carries becomes rail(1)+
+        // space(1), so the text stays at its original column. highlight=false stays byte-identical.
         List<string> Shade(List<string> rows)
         {
-            if (!highlight) return rows;
-            const int trail = 2;          // faint shade reaches this many cells past the text
-            int floorW = Math.Min(width > 0 ? width : int.MaxValue, 24);   // a minimum field width
+            if (!highlight || width <= 0) return rows;
             var outp = new List<string>(rows.Count);
             foreach (var r in rows)
             {
-                int vis = TuiMarkup.MarkupWidth(r);
-                int band = Math.Min(width > 0 ? width : vis + trail, Math.Max(floorW, vis + trail));
-                int pad = Math.Max(0, band - vis);
-                // The leading two spaces every row carries become the rail + one space, keeping the
-                // text at its original column. Rail is a dim accent bar so the field reads as input.
+                int vis = TuiMarkup.MarkupWidth(r);          // includes the 2 leading spaces
+                // Fill the rest of the row with the faint shade: rail(1) + " " + body + pad == width.
+                int pad = Math.Max(0, width - vis);
                 string body = r.StartsWith("  ") ? r.Substring(2) : r;
-                outp.Add($"[{Accent}]\u2502[/] [on {InputBg}]{body}{new string(' ', pad)}[/]");
+                outp.Add($"[{Accent}]\u2502[/][on {InputBg}] {body}{new string(' ', pad)}[/]");
             }
             return outp;
         }
