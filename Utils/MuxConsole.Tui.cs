@@ -555,11 +555,20 @@ public static partial class MuxConsole
     internal static bool TuiExpandLatestInline()
     {
         if (!ViaDriver) return false;
-        // Prefer the most-recent STILL-RUNNING sub-agent: expand its buffered-so-far transcript
+        // Ctrl+E quick-open targets, in priority order: (1) the agent the user last FOREGROUNDED
+        // via the backslash dashboard (sticky focus, issue #1) when it is still running, else
+        // (2) the most-recent still-running sub-agent. This expands its buffered-so-far transcript
         // inline so Ctrl+E works mid-stream, not only after the agent completes. Falls back to the
         // latest finished expandable block (large tool result / committed sub-agent) when none run.
         SubAgentCapture? live = null;
-        lock (_captureGate) { if (_activeCaptures.Count > 0) live = _activeCaptures[^1]; }
+        string? focus = null;
+        lock (ConsoleLock) { focus = _driver!.ForegroundAgent; }
+        lock (_captureGate)
+        {
+            if (focus is not null)
+                live = _activeCaptures.FindLast(c => string.Equals(c.Agent, focus, StringComparison.Ordinal));
+            if (live is null && _activeCaptures.Count > 0) live = _activeCaptures[^1];
+        }
         if (live is not null)
         {
             string body = live.Buffer.ToString().Trim();
@@ -580,6 +589,38 @@ public static partial class MuxConsole
     {
         if (!ViaDriver) return false;
         lock (ConsoleLock) { return _driver!.EnterViewMode(); }
+    }
+
+    /// <summary>
+    /// Foreground the inline Agent View dashboard (v0.12.0 M1, the backslash key). Safe to call
+    /// mid-stream from the EscapeKeyListener thread. Builds the running-agent snapshot from the
+    /// live capture registry and supplies a by-name body provider so Enter can attach the chosen
+    /// agent's buffered-so-far transcript through the driver's sub-agent expand path. No-op (false)
+    /// outside the TUI or when no agents are running. Holds the console lock for the session, like
+    /// the Ctrl+G view overlay, so concurrent commits defer while the dashboard owns the screen.
+    /// </summary>
+    internal static bool TuiEnterAgentView()
+    {
+        if (!ViaDriver) return false;
+        List<(string Agent, string Status, string Tint)> snapshot;
+        Dictionary<string, string> bodies;
+        lock (_captureGate)
+        {
+            if (_activeCaptures.Count == 0) return false;
+            snapshot = _activeCaptures
+                .Select(c => (c.Agent, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
+                .ToList();
+            // Snapshot each agent's buffered transcript so the by-name foreground lookup does not
+            // re-enter the capture gate while the driver holds the console lock.
+            bodies = _activeCaptures
+                .GroupBy(c => c.Agent)
+                .ToDictionary(g => g.Key, g => g.Last().Buffer.ToString().Trim(), StringComparer.Ordinal);
+        }
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterAgentView(snapshot,
+                agent => bodies.TryGetValue(agent, out var b) ? b : null);
+        }
     }
 
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>

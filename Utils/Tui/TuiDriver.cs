@@ -68,6 +68,20 @@ internal sealed class TuiDriver
     private IReadOnlyList<(string Agent, string Status, string Tint)> _subAgents = System.Array.Empty<(string, string, string)>();
     private int _subAgentFrame;
 
+    // v0.12.0 M1 - inline Agent View dashboard. The backslash key foregrounds a keyboard-
+    // navigable session list over the running sub-agents (the existing _subAgents snapshot);
+    // Enter attaches the selected agent's buffered stream through the same sub-agent expand
+    // machinery used by Ctrl+E. Rendered INSIDE the live region (BuildLiveFrame) so scrollback
+    // is preserved - never an alt-screen takeover. Bypassed entirely when not open, so the
+    // off-dashboard path is byte-identical to today's frame.
+    private readonly AgentView _agentView = new();
+    private volatile bool _agentViewActive;
+    // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
+    // this agent (toggling its panel) instead of snapping back to the latest-registered
+    // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
+    // focus yet (Ctrl+E falls back to the most-recent running sub-agent).
+    private volatile string? _foregroundAgent;
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -536,6 +550,89 @@ internal sealed class TuiDriver
     public bool IsSubAgentExpanded(string agent) =>
         _expandKind == ExpandKind.SubAgent && string.Equals(_expandKey, $"sub:{agent}", StringComparison.Ordinal);
 
+    /// <summary>The sub-agent most recently foregrounded through the backslash dashboard, or
+    /// null when none has been chosen this turn. Lets the Ctrl+E quick-open prefer the user's
+    /// selected focus over the latest-registered capture. Caller holds the console lock.</summary>
+    public string? ForegroundAgent => _foregroundAgent;
+
+    /// <summary>Clear the sticky foreground focus (e.g. when its capture finishes). Caller
+    /// holds the console lock.</summary>
+    public void ClearForegroundAgent(string agent)
+    {
+        if (string.Equals(_foregroundAgent, agent, StringComparison.Ordinal)) _foregroundAgent = null;
+    }
+
+    /// <summary>
+    /// Foreground the inline Agent View dashboard (v0.12.0 M1, the backslash key). Seeds the
+    /// session list from the current live sub-agent snapshot and runs a small key loop ON THE
+    /// CALLING THREAD (the mid-turn EscapeKeyListener thread, exactly like the Ctrl+G view
+    /// overlay) so there is never a second concurrent key reader. Up/Down move the selection,
+    /// Enter foregrounds the selected agent's buffered stream via <paramref name="bodyProvider"/>
+    /// + the existing sub-agent expand machinery, Esc/backslash/q close. Rendered inline through
+    /// the live region (BuildLiveFrame) - scrollback preserved, no alt-screen takeover. The caller
+    /// holds the console lock for the whole session (so concurrent commits defer), and the
+    /// snapshot is supplied by the caller because the driver does not own the capture buffers.
+    /// No-op (returns false) when there are no running agents or NAV already owns the screen.
+    /// </summary>
+    public bool EnterAgentView(
+        IReadOnlyList<(string Agent, string Status, string Tint)> snapshot,
+        Func<string, string?> bodyProvider)
+    {
+        if (_navActive || _agentViewActive) return false;
+        if (snapshot.Count == 0) return false;
+
+        _agentView.SetRows(snapshot, DateTime.UtcNow);
+        _agentView.Open();
+        _agentViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                try { key = Console.ReadKey(intercept: true); }
+                catch (InvalidOperationException) { break; }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
+
+                // Esc / backslash / q: close the dashboard and return to the foregrounded stream.
+                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)
+                    break;
+
+                // Enter: foreground (attach) the selected agent's buffered transcript. Reuses the
+                // proven ToggleSubAgentExpanded bounded-panel path so the attached stream renders
+                // in-region and keeps growing live; closing the dashboard hands the screen back.
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    string? agent = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (agent is not null)
+                    {
+                        string body = bodyProvider(agent) ?? "";
+                        _agentViewActive = false;
+                        _agentView.Close();
+                        // Stick Ctrl+E to this agent from now on (issue #1).
+                        _foregroundAgent = agent;
+                        if (body.Length > 0 && !IsSubAgentExpanded(agent))
+                            ToggleSubAgentExpanded(agent, body);
+                        Repaint();
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _agentViewActive = false;
+            _agentView.Close();
+            Repaint();
+        }
+        return true;
+    }
+
     /// <summary>
     /// Flush a pending tool call as its own committed line (used when the result will render
     /// as a separate block - diff/error/expanded - or when other content commits first).
@@ -773,12 +870,19 @@ internal sealed class TuiDriver
             }
             else
                 lines.AddRange(TuiComponents.BoundedLivePanel(
-                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
+                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError,
+                    markdown: _expandKind == ExpandKind.SubAgent));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
         // while one or more collapsed sub-agents run, show one animated line each (no flicker).
-        if (_subAgents.Count > 0)
+        // When the backslash dashboard is foregrounded it becomes the SOLE session list, so the
+        // compact strip is suppressed to avoid duplicate per-agent rows (issue #2).
+        if (_agentViewActive)
+        {
+            // dashboard owns the agent list this frame; no compact strip / thinking line.
+        }
+        else if (_subAgents.Count > 0)
             lines.AddRange(TuiComponents.SubAgentActivity(_subAgents, _subAgentFrame));
         else if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
             lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
@@ -787,6 +891,13 @@ internal sealed class TuiDriver
         // result lands and the two merge into a single committed line.
         if (!_streaming && _pendingTool is { } pt)
             lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args)));
+
+        // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
+        // dashboard renders inline just above the rule/footer. The always-on activity strip above
+        // still shows, so the dashboard is an expansion of it rather than a replacement. Off (the
+        // default) this adds nothing, keeping the frame byte-identical to today's.
+        if (_agentViewActive)
+            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));

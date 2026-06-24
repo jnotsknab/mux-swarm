@@ -944,7 +944,8 @@ public static class SingleAgentOrchestrator
         // without cancelling - so the user can read full output while the agent keeps working.
         using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
             onExpand: () => MuxConsole.TuiExpandLatestInline(),
-            onView: () => MuxConsole.TuiEnterViewMode());
+            onView: () => MuxConsole.TuiEnterViewMode(),
+            onAgents: () => MuxConsole.TuiEnterAgentView());
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;

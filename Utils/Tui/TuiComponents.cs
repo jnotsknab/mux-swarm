@@ -388,15 +388,21 @@ internal static class TuiComponents
     /// are caller-supplied so tool results and sub-agents read distinctly.
     /// </summary>
     public static List<string> BoundedLivePanel(
-        string title, string body, string tintHex, int width, int maxRows, bool anchorTail, bool error = false)
+        string title, string body, string tintHex, int width, int maxRows, bool anchorTail, bool error = false, bool markdown = false)
     {
         string tint = error ? Err : tintHex;
         int inner = Math.Max(8, width - 4);
         int cap = Math.Max(1, maxRows);
+        // SubAgent panels render their transcript as MUTED markdown (headings/bold/inline-code
+        // still differentiate, but subordinate to the main viewport); everything else stays plain.
         var wrapped = new List<string>();
         foreach (var raw in TrimTrailingBlankLines(body ?? "").Split('\n'))
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                wrapped.Add(w);
+        {
+            if (markdown)
+                foreach (var w in TuiMarkup.WrapMarkup(TuiMarkdown.ToMarkup(raw), inner)) wrapped.Add(w);
+            else
+                foreach (var w in TuiMarkup.WrapPlain(raw, inner)) wrapped.Add(w);
+        }
         int hidden = 0;
         if (wrapped.Count > cap)
         {
@@ -412,7 +418,7 @@ internal static class TuiComponents
         if (hidden > 0 && anchorTail)
             outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBg, inner));
         foreach (var w in wrapped)
-            outp.Add(ShadedRow(tint, w, Text, CardBg, inner));
+            outp.Add(markdown ? ShadedMarkdownRow(tint, w, CardBg, inner) : ShadedRow(tint, w, Text, CardBg, inner));
         // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
         if (hidden > 0 && !anchorTail)
             outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBg, inner));
@@ -494,6 +500,16 @@ internal static class TuiComponents
     /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
         => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+
+    /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
+    /// WrapMarkup). The base fill is Muted so the sub-agent transcript reads as subordinate to the
+    /// main viewport, while nested tags (headings/bold/inline-code) still apply on top. Padded by
+    /// DISPLAY width so the band is exactly inner cells wide (matching the plain body rows).</summary>
+    private static string ShadedMarkdownRow(string railCol, string markupContent, string bg, int inner)
+    {
+        int pad = Math.Max(0, inner - TuiMarkup.MarkupWidth(markupContent));
+        return $"  [{railCol} on {bg}]\u2502[/][{Muted} on {bg}] {markupContent}{new string(' ', pad)}[/]";
+    }
 
     /// <summary>Header band of a shaded card: same rail-on-fill treatment, carrying pre-styled
     /// markup (glyph + tool name) + a trailing fill computed from the header's DISPLAY width so the

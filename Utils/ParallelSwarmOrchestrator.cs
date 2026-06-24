@@ -634,7 +634,8 @@ public static class ParallelSwarmOrchestrator
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken,
                     onExpand: () => MuxConsole.TuiExpandLatestInline(),
-                    onView: () => MuxConsole.TuiEnterViewMode());
+                    onView: () => MuxConsole.TuiEnterViewMode(),
+                    onAgents: () => MuxConsole.TuiEnterAgentView());
 
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 

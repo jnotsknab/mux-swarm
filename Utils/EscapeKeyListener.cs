@@ -27,6 +27,9 @@ public sealed class EscapeKeyListener : IDisposable
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand)
         => Start(targetCts, outerToken, onExpand, onView: null);
 
+    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView)
+        => Start(targetCts, outerToken, onExpand, onView, onAgents: null);
+
     /// <summary>
     /// Start the listener with optional mid-stream affordances. While the agent is producing
     /// output: Esc cancels the turn (as before); Ctrl+E fires <paramref name="onExpand"/> to
@@ -38,7 +41,7 @@ public sealed class EscapeKeyListener : IDisposable
     /// name="onView"/> runs the overlay loop synchronously on THIS thread, so there is never a
     /// second concurrent key reader.
     /// </summary>
-    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView)
+    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
 
@@ -70,6 +73,15 @@ public sealed class EscapeKeyListener : IDisposable
                         {
                             try { if (onView is not null) onView(); else onExpand!(); }
                             catch { /* overlay is best-effort */ }
+                            continue;
+                        }
+                        // Backslash: foreground the inline Agent View dashboard (v0.12.0 M1) -
+                        // a keyboard-navigable session list over the running sub-agents - WITHOUT
+                        // cancelling. Runs the dashboard loop synchronously on this thread, so there
+                        // is never a second concurrent key reader (same contract as the Ctrl+G view).
+                        if (key.KeyChar == '\\' && onAgents is not null)
+                        {
+                            try { onAgents(); } catch { /* dashboard is best-effort */ }
                             continue;
                         }
                         // Ctrl+E: expand the latest tool result inline without cancelling the turn.
