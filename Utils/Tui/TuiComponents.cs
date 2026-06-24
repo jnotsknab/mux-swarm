@@ -30,7 +30,7 @@ internal static class TuiComponents
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background.
     public const string CardBg  = "#1C2530";
-    public const string InputBg = "#161B22";   // shaded band behind the user input/compose field
+    public const string InputBg = "#12161C";   // very faint shade behind the compose field (subtle)
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
     public const string DiffAddBg = "#16261C";
     public const string DiffDelBg = "#2A1A1C";
@@ -714,15 +714,25 @@ internal static class TuiComponents
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
         // full width so the compose field reads as a contained region. Applied as a final pass over
         // the rows so the cursor/markup math below is unchanged (highlight=false is byte-identical).
+        // Subtle treatment (option B): a thin accent left-rail + a FAINT shade that extends only a
+        // small trailing pad past the visible text - not a full-width dark strip over empty space.
+        // The 2-space lead each row already carries is replaced by the rail glyph so the field
+        // frames cleanly without shifting columns. highlight=false stays byte-identical.
         List<string> Shade(List<string> rows)
         {
-            if (!highlight || width <= 0) return rows;
+            if (!highlight) return rows;
+            const int trail = 2;          // faint shade reaches this many cells past the text
+            int floorW = Math.Min(width > 0 ? width : int.MaxValue, 24);   // a minimum field width
             var outp = new List<string>(rows.Count);
             foreach (var r in rows)
             {
                 int vis = TuiMarkup.MarkupWidth(r);
-                int pad = Math.Max(0, width - vis);
-                outp.Add($"[on {InputBg}]{r}{new string(' ', pad)}[/]");
+                int band = Math.Min(width > 0 ? width : vis + trail, Math.Max(floorW, vis + trail));
+                int pad = Math.Max(0, band - vis);
+                // The leading two spaces every row carries become the rail + one space, keeping the
+                // text at its original column. Rail is a dim accent bar so the field reads as input.
+                string body = r.StartsWith("  ") ? r.Substring(2) : r;
+                outp.Add($"[{Accent}]\u2502[/] [on {InputBg}]{body}{new string(' ', pad)}[/]");
             }
             return outp;
         }

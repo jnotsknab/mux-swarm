@@ -1055,6 +1055,27 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
+    // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
+    // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
+    // ends. Enters become literal newlines; printables append; control keys are dropped. A short
+    // settle wait bridges the tiny gap between chunks of a large paste still streaming in.
+    private string DrainBurstPaste()
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            ConsoleKeyInfo k;
+            if (!TryReadKeyNonBlocking(out k))
+            {
+                System.Threading.Thread.Sleep(2);   // bridge inter-chunk gap of a large paste
+                if (!TryReadKeyNonBlocking(out k)) break;
+            }
+            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
+            if (k.KeyChar != '\0' && !char.IsControl(k.KeyChar)) sb.Append(k.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -1107,6 +1128,24 @@ internal sealed class TuiDriver
                         _paletteSel = -1;
                         if (!KeyQueued() && _ungetq.Count == 0) Repaint();
                     }
+                    continue;
+                }
+
+                // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
+                // read and more input is ALREADY buffered, it is the interior of a fast burst - a
+                // paste, not a human keystroke (a person cannot have the next key queued in the same
+                // instant). Treat it as a literal newline and absorb the rest of the burst into the
+                // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
+                // active when bracketedPaste is enabled and the editor is in plain Insert mode.
+                if (_bracketedPaste && key.Key == ConsoleKey.Enter
+                    && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
+                    && _editor.Mode == EditorMode.Insert && !_editor.IsSearching
+                    && _ungetq.Count == 0 && KeyQueued())
+                {
+                    string burst = DrainBurstPaste();
+                    _editor.InsertText("\n" + burst);
+                    _paletteSel = -1;
+                    if (!KeyQueued()) Repaint();
                     continue;
                 }
 
