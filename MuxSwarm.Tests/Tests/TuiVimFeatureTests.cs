@@ -723,4 +723,24 @@ public class TuiVimFeatureTests
         Assert.Equal("Working", ToolActionLabel.Describe(""));
         Assert.Equal("Working", ToolActionLabel.Describe("   "));
     }
+
+    [Fact]
+    public void InputRows_AfterMultilineReset_CursorFlushLeft_NoResidualIndent()
+    {
+        // Send a multi-line buffer, then reset (as ReadLine does on submit). The next empty
+        // prompt must render the cursor flush at the prompt column - no leftover continuation
+        // gutter/indent from the prior multi-line compose.
+        var ed = new LineEditor();
+        ed.InsertText("alpha\nbeta\ngamma");
+        Assert.Equal(3, TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80).Count);
+        ed.Reset();
+        Assert.Equal(0, ed.Cursor);
+        Assert.Equal("", ed.Buffer);
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80);
+        Assert.Single(rows);
+        // The single empty row begins at the prompt lead (two spaces + prompt glyph), not a deeper
+        // continuation indent. Plain text starts with the prompt chevron after the 2-space lead.
+        string plain = TuiMarkup.Plain(rows[0]);
+        Assert.StartsWith("  \u203a", plain);   // "  >" prompt, flush
+    }
 }
