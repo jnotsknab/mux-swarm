@@ -563,6 +563,17 @@ internal sealed class TuiDriver
         if (_expandKind == ExpandKind.SubAgent) ClearExpanded();
     }
 
+    /// <summary>If a sub-agent panel is currently open, collapse it and return true; else return
+    /// false. Lets Ctrl+E act as a true toggle - close whatever is open - instead of recomputing a
+    /// (possibly different) target agent and opening THAT, which read as "collapse changed the
+    /// content instead of closing" when focus had drifted. Caller holds the console lock.</summary>
+    public bool CollapseOpenSubAgentPanel()
+    {
+        if (_expandKind != ExpandKind.SubAgent) return false;
+        ClearExpanded();
+        return true;
+    }
+
     /// <summary>True if <paramref name="agent"/> is the sub-agent currently expanded in the live
     /// region. Lets the completion path keep a user-opened panel open through finish (instead of
     /// snapping it collapsed) while still committing the expandable collapsed line. Caller holds

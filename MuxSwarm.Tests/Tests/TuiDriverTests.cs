@@ -693,7 +693,8 @@ public class TuiDriverTests
         var d = new TuiDriver(term);
         d.SetFooter(0, 0, false, false, false);
         d.BeginToolCall("read_file", "x.cs");
-        Assert.Contains("read_file", term.Output);   // shown live above the footer
+        // The LIVE tool-call line shows a human action label (verb-derived), not the raw id.
+        Assert.Contains("Reading", term.Output);   // "read_file" -> "Reading file"
         term.Clear();
         // A large (above-threshold) result is Ctrl+E-expandable and advertises the affordance.
         d.SetCollapseThreshold(2);
@@ -713,7 +714,8 @@ public class TuiDriverTests
         d.BeginToolCall("shell", "ls");
         term.Clear();
         d.CommitLine("  diff block");     // a separate block commits first
-        Assert.Contains("shell", term.Output);   // pending call flushed to its own line
+        // Pending call flushed to its own line; rendered with its action label ("shell" -> "Shell").
+        Assert.Contains("Shell", term.Output);
         Assert.Contains("diff block", term.Output);
     }
 

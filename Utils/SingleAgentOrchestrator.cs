@@ -560,6 +560,19 @@ public static class SingleAgentOrchestrator
                             chatClientFactory, Models, compactionClient, compactionChatOptions,
                             maxIterations, false, ct: cancellationToken, cleanSession: true);
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // A real turn cancellation (Esc / kill-switch) must propagate so Task.WhenAll
+                        // unwinds the whole batch - not be swallowed as a per-agent result.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // A single agent throwing (rate-limit, provider/network error, etc.) must NOT
+                        // discard every sibling result. Turn the throw into this agent's error string
+                        // so Task.WhenAll still returns and the batch keeps all other agents' output.
+                        return $"[ERROR {req.AgentName}] {ex.Message}";
+                    }
                     finally
                     {
                         semaphore.Release();

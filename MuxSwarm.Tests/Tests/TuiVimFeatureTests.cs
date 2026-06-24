@@ -691,4 +691,36 @@ public class TuiVimFeatureTests
         var plain = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: false);
         Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
     }
+
+    // --- g12.06 dynamic tool action labels ----------------------------------
+
+    [Theory]
+    [InlineData("ReplShellMcp_execute_command_async", "Running command")]
+    [InlineData("Filesystem_read_text_file", "Reading text file")]
+    [InlineData("analyze_image", "Analyzing image")]
+    [InlineData("Filesystem_write_file", "Writing file")]
+    [InlineData("delegate_parallel", "Dispatching parallel")]
+    [InlineData("ReplShellMcp_check_job_status", "Checking job status")]
+    public void ToolActionLabel_MapsVerbToGerund(string raw, string expected)
+    {
+        Assert.Equal(expected, ToolActionLabel.Describe(raw));
+    }
+
+    [Fact]
+    public void ToolActionLabel_UnknownVerb_HumanizesNeverRawId()
+    {
+        // An unmapped verb still yields a readable label (humanized), never the raw identifier.
+        string s = ToolActionLabel.Describe("notion_frobnicate_widget");
+        Assert.DoesNotContain("_", s);
+        Assert.False(string.IsNullOrWhiteSpace(s));
+        Assert.Equal(char.ToUpperInvariant(s[0]), s[0]);   // capitalized
+    }
+
+    [Fact]
+    public void ToolActionLabel_NullOrEmpty_FallsBackToWorking()
+    {
+        Assert.Equal("Working", ToolActionLabel.Describe(null));
+        Assert.Equal("Working", ToolActionLabel.Describe(""));
+        Assert.Equal("Working", ToolActionLabel.Describe("   "));
+    }
 }

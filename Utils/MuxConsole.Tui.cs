@@ -272,8 +272,11 @@ public static partial class MuxConsole
                 // bug): freeze it to the final transcript and let the user close it (Ctrl+E) or have
                 // it fold away naturally when the input prompt returns. Otherwise drop any unrelated
                 // in-region expansion so a stale one never lingers.
+                // A finishing agent never collapses a panel - not its own (kept open through
+                // completion) and crucially not a DIFFERENT agent's open panel (the old
+                // ClearSubAgentExpanded() here closed whoever was expanded when ANY sibling
+                // finished). Panels close only on the user's Ctrl+E or when the prompt returns.
                 bool keepOpen = _driver!.IsSubAgentExpanded(cap.Agent);
-                if (!keepOpen) _driver!.ClearSubAgentExpanded();
                 // Retain the full transcript expandable when there is anything to expand; otherwise
                 // commit a bare collapsed line (an empty sub-agent turn).
                 if (body.Length > 0)
@@ -598,6 +601,11 @@ public static partial class MuxConsole
     internal static bool TuiExpandLatestInline()
     {
         if (!ViaDriver) return false;
+        // True toggle: if a sub-agent panel is already open, Ctrl+E CLOSES it (whatever it is) and
+        // stops - instead of recomputing a possibly-different target and opening that one, which
+        // read as "collapse just changed the content". Only when nothing is open do we compute a
+        // fresh target below.
+        lock (ConsoleLock) { if (_driver!.CollapseOpenSubAgentPanel()) return false; }
         // Ctrl+E quick-open targets, in priority order: (1) the agent the user last FOREGROUNDED
         // via the backslash dashboard (sticky focus, issue #1) when it is still running, else
         // (2) the most-recent still-running sub-agent. This expands its buffered-so-far transcript

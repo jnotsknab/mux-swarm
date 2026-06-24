@@ -213,13 +213,15 @@ internal static class TuiComponents
         };
     }
 
-    /// <summary>Tool-call line: a running glyph, tool name, and a compact arg hint.</summary>
+    /// <summary>Tool-call line: a running glyph, a human ACTION label (verb-derived from the tool
+    /// id so it reads "Running command" not "ReplShellMcp_execute_command_async"), and a compact
+    /// arg hint. Falls back to a humanized name then "Working" - never a raw identifier.</summary>
     public static List<string> ToolCall(string tool, string? args)
     {
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        return new() { $"  [{Warn}]\u25cf[/] [{Accent}]{Esc(tool)}[/]{hint}" };
+        return new() { $"  [{Warn}]\u25cf[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>

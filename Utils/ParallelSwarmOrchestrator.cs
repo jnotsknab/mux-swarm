@@ -405,6 +405,17 @@ public static class ParallelSwarmOrchestrator
                             chatClientFactory, agentModels, compactionClient, compactionChatOptions,
                             maxSubAgentIterations, prodMode, ct: cancellationToken);
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Real turn cancellation propagates and unwinds the batch.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // One agent throwing (rate-limit/provider error) must not nuke the batch:
+                        // return its error string so siblings' results are preserved.
+                        return $"[ERROR {req.AgentName}] {ex.Message}";
+                    }
                     finally
                     {
                         semaphore.Release();

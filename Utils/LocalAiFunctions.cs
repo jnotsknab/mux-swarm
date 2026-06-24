@@ -127,11 +127,25 @@ public static class LocalAiFunctions
         SleepTool = AIFunctionFactory.Create(
             method: async (
                 [System.ComponentModel.Description("Seconds to pause.")]
-                int seconds
+                int seconds,
+                // Bound automatically by the function-invocation middleware to the turn's token, so
+                // Esc (the EscapeKeyListener cancels the turn CTS) interrupts the sleep instead of
+                // blocking until it elapses. Fallback: when no cancellable token is supplied (default
+                // CancellationToken.None), this behaves exactly as the prior uninterruptible delay.
+                CancellationToken cancellationToken = default
                 ) =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(seconds));
-                return $"Slept for {seconds} seconds.";
+                if (seconds <= 0) return "Slept for 0 seconds.";
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
+                    return $"Slept for {seconds} seconds.";
+                }
+                catch (OperationCanceledException)
+                {
+                    // Turn cancelled mid-sleep: report it cleanly rather than throwing a raw error.
+                    return $"Sleep of {seconds}s interrupted (cancelled).";
+                }
             },
             name: "system_sleep",
             description: "Pause execution for N minutes without consuming tokens. Use between polling cycles, while waiting for long-running processes, or for scheduled intervals."
