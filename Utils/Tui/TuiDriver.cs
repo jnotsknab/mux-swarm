@@ -938,8 +938,6 @@ internal sealed class TuiDriver
         }
         else if (_subAgents.Count > 0)
             lines.AddRange(TuiComponents.SubAgentActivity(_subAgents, _subAgentFrame));
-        else if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
-            lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // A pending (unresolved) tool call is shown live with a running glyph until its
         // result lands and the two merge into a single committed line.
@@ -951,6 +949,12 @@ internal sealed class TuiDriver
         if (!_streaming && _settling is { } sr)
             lines.AddRange(Lane(TuiComponents.ToolCallResultMerged(
                 sr.Tool, sr.Args, sr.Result, sr.Error, sr.Expandable, _thinkFrame / 3)));
+
+        // The italic "thinking" indicator renders BELOW the live dot line(s) - the dot is the
+        // primary action, the spinner+status is the running tail beneath it (rendering it above the
+        // dot looked off when both animate). Only when no sub-agent strip owns the line.
+        if (!_agentViewActive && _subAgents.Count == 0 && !_streaming && !string.IsNullOrEmpty(_thinkingText))
+            lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
         // dashboard renders inline just above the rule/footer. The always-on activity strip above
