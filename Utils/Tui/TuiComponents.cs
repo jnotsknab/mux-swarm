@@ -246,6 +246,11 @@ internal static class TuiComponents
     /// non-diff result; otherwise the call and result render as separate blocks.
     /// </summary>
     public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error = false, bool expandable = false)
+        => ToolCallResultMerged(tool, args, resultText, error, expandable, -1);
+
+    /// <summary>As above; when <paramref name="frame"/> &gt;= 0 the OK head dot pulses (the most-
+    /// recent completed call, held in the live region) - the red failure glyph never pulses.</summary>
+    public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error, bool expandable, int frame)
     {
         var lines = (resultText ?? "").Replace("\r\n", "\n").Split('\n')
             .Where(l => l.Trim().Length > 0).ToArray();
@@ -296,7 +301,9 @@ internal static class TuiComponents
             : "";
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]\u25cf[/]";
+        // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
+        string okDot = frame >= 0 ? PulseDot(frame) : "\u25cf";
+        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]{okDot}[/]";
         string failTag = error ? $" [{Err}]failed[/]" : "";
         string resultPart = first.Length > 0
             ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"

@@ -73,7 +73,10 @@ public sealed class ThinkingIndicator : IDisposable
         {
             _toolCalls = new List<string>(toolCalls);
         }
-        _onStatusUpdate?.Invoke($"[calling: {string.Join(", ", toolCalls)}]");
+        // Show human action labels (verb-derived) instead of raw tool ids in the live indicator,
+        // e.g. "[calling: Running command, Sleeping]" not the raw "ReplShellMcp_execute_command_async".
+        var labels = toolCalls.Select(MuxSwarm.Utils.Tui.ToolActionLabel.Describe);
+        _onStatusUpdate?.Invoke($"[calling: {string.Join(", ", labels)}]");
     }
 
     private static int SafeWindowWidth()
@@ -85,7 +88,7 @@ public sealed class ThinkingIndicator : IDisposable
     private string BuildToolCallStatus(int budget)
     {
         // _consoleLock must be held by caller
-        var calls = _toolCalls;
+        var calls = _toolCalls?.Select(MuxSwarm.Utils.Tui.ToolActionLabel.Describe).ToList();
         if (calls == null || calls.Count == 0)
             return _status + "...";
 

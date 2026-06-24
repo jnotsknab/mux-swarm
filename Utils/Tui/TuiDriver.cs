@@ -104,6 +104,13 @@ internal sealed class TuiDriver
     // result lands. Flushed as its own committed line if any other content commits first.
     private (string Tool, string? Args)? _pendingTool;
 
+    // Most-recent RESOLVED tool result, HELD in the live region so its completion dot can pulse
+    // SLOWLY (a "settling" beat, ~3x slower than the in-flight dot). It is flushed down to static
+    // scrollback the instant any other content commits (next tool call / stream / line), so only
+    // ONE completion dot ever pulses at a time, just above the footer. Stores everything needed to
+    // re-emit the merged line + retain its expandable block on flush. Null = nothing settling.
+    private (string Tool, string? Args, string Result, bool Error, bool Expandable)? _settling;
+
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
     // (total session age, shown by the session timer); _loopStart is set when an agentic
     // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
@@ -368,6 +375,7 @@ internal sealed class TuiDriver
     {
         if (markupLines.Count == 0) { Repaint(); return; }
         FlushTableBuffer();
+        FlushSettlingResult();
         FlushPendingToolCall();
         _thinkingText = null;
         // The retained transcript keeps any expandable tool-result entries armed for Ctrl+E /
@@ -403,6 +411,7 @@ internal sealed class TuiDriver
     /// </summary>
     public void BeginToolCall(string tool, string? args)
     {
+        FlushSettlingResult();
         FlushPendingToolCall();
         _pendingTool = (tool, args);
         _thinkingText = null;
@@ -419,27 +428,15 @@ internal sealed class TuiDriver
         var (tool, args) = _pendingTool ?? ("", null);
         _pendingTool = null;
         _thinkingText = null;
-        // "Large" results (informative-line count above the configured threshold) become
-        // Ctrl+E-expandable: the merged line advertises the affordance and we retain the full
-        // text in memory so Ctrl+E can re-commit it as a full panel below.
         int infoLines = (resultText ?? "").Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
         bool expandable = _collapseToolLines > 0 && infoLines > _collapseToolLines;
-        string toolName = string.IsNullOrEmpty(tool) ? "tool" : tool;
-        var merged = Lane(TuiComponents.ToolCallResultMerged(tool, args, resultText, error, expandable));
-        if (expandable && merged.Count > 0)
-        {
-            // Retain the collapsed line WITH its full-panel data so the NAV cursor can toggle
-            // it open/closed in place; commit only the collapsed line to live scrollback.
-            RetainExpandable(merged[0], toolName, resultText ?? "", error);
-            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
-            TrimTranscript();
-            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
-        }
-        else
-        {
-            CommitMirrored(merged);
-        }
-        _pendingGap = true;
+        // Flush any PRIOR settling result to static scrollback, then HOLD this newest one in the
+        // live region so its completion dot pulses slowly until the next event supersedes it. This
+        // is the only way the most-recent completed dot can animate (committed scrollback can't be
+        // repainted). The held line still retains its expandable block on flush (see FlushSettling).
+        FlushSettlingResult();
+        _settling = (tool, args, resultText ?? "", error, expandable);
+        Repaint();
     }
 
     /// <summary>
@@ -457,6 +454,7 @@ internal sealed class TuiDriver
     /// </summary>
     public bool EnterViewMode()
     {
+        FlushSettlingResult();
         if (_navActive || _transcript.Count == 0) return false;
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
@@ -468,6 +466,8 @@ internal sealed class TuiDriver
 
     public bool ExpandLastBlock()
     {
+        // Flush any still-settling result into the transcript so it is openable in NAV.
+        FlushSettlingResult();
         // Find the most-recent expandable transcript entry and open NAV positioned on it,
         // pre-expanded. Expansion is a reversible in-overlay toggle (not a one-way commit),
         // so the user can collapse it again or scroll to other blocks.
@@ -491,6 +491,9 @@ internal sealed class TuiDriver
     /// </summary>
     public bool ExpandLatestInline()
     {
+        // A just-resolved result may still be HELD in the settling slot (pulsing) and not yet in
+        // the transcript - flush it first so its expandable block exists to open.
+        FlushSettlingResult();
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
             if (_transcript[i].Expandable is not null) { idx = i; break; }
@@ -677,9 +680,29 @@ internal sealed class TuiDriver
         _pendingGap = true;
     }
 
+    /// <summary>Flush the held "settling" tool result down to static scrollback (dot frozen) and
+    /// retain its expandable block. No-op when nothing is settling. Called from every commit
+    /// chokepoint so the next event supersedes the pulse. Caller holds the console lock.</summary>
+    public void FlushSettlingResult()
+    {
+        if (_settling is not ( {} s)) return;
+        _settling = null;
+        string toolName = string.IsNullOrEmpty(s.Tool) ? "tool" : s.Tool;
+        var merged = Lane(TuiComponents.ToolCallResultMerged(s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1));
+        if (s.Expandable && merged.Count > 0)
+        {
+            RetainExpandable(merged[0], toolName, s.Result, s.Error);
+            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
+            TrimTranscript();
+            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
+        }
+        else CommitMirrored(merged);
+        _pendingGap = true;
+    }
+
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; Repaint(); }
+    public void BeginStream() { FlushSettlingResult(); FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
@@ -922,6 +945,12 @@ internal sealed class TuiDriver
         // result lands and the two merge into a single committed line.
         if (!_streaming && _pendingTool is { } pt)
             lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args, _thinkFrame)));
+
+        // Most-recent RESOLVED tool result held live so its completion dot pulses SLOWLY (~1/3 the
+        // in-flight cadence). Flushed to static scrollback the instant anything else commits.
+        if (!_streaming && _settling is { } sr)
+            lines.AddRange(Lane(TuiComponents.ToolCallResultMerged(
+                sr.Tool, sr.Args, sr.Result, sr.Error, sr.Expandable, _thinkFrame / 3)));
 
         // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
         // dashboard renders inline just above the rule/footer. The always-on activity strip above
@@ -1695,7 +1724,7 @@ internal sealed class TuiDriver
     /// Clear the live region and hand the terminal back cleanly (cursor shown, no residue).
     /// Called before any blocking external prompt, mode switch, or exit. Idempotent.
     /// </summary>
-    public void Suspend() { FlushPendingToolCall(); _region.Clear(); }
+    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); _region.Clear(); }
 
     /// <summary>
     /// Full teardown for process exit / mode switch: clear the live region, show the cursor.

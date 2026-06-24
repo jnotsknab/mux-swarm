@@ -1621,4 +1621,35 @@ public class TuiDriverTests
         d.ClearForegroundAgent("CodeAgent");
         Assert.Null(d.ForegroundAgent);
     }
+
+    [Fact]
+    public void Driver_ResolvedResult_HeldLiveThenFlushedOnNextEvent()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginToolCall("read_file", "x.cs");
+        d.ResolveMergedToolResult("Command: cat x.cs");   // short -> not expandable
+        // The resolved line is HELD in the live region (so its dot can pulse), visible after resolve.
+        Assert.Contains("Command: cat x.cs", term.Output);
+        term.Clear();
+        // The next event (a stream / commit / new call) flushes it down to static scrollback.
+        d.CommitLine("next thing");
+        Assert.Contains("next thing", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ResolvedResult_StillCtrlEExpandable_AfterSettling()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(3);
+        d.BeginToolCall("read_file", "big.txt");
+        d.ResolveMergedToolResult(string.Join("\n", Enumerable.Range(1, 20).Select(i => $"line {i}")));
+        // Even while the result is still SETTLING (held, not yet committed), Ctrl+E flushes it and
+        // opens the expandable panel - the held state never loses the expandable block.
+        Assert.True(d.ExpandLatestInline());
+        Assert.Contains("line 1", term.Output);
+    }
 }
