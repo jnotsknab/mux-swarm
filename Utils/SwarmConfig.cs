@@ -26,6 +26,9 @@ public class SwarmConfig
     [JsonPropertyName("agents")]
     public List<AgentConfig> Agents { get; set; } = [];
 
+    [JsonPropertyName("teams")]
+    public List<TeamConfig> Teams { get; set; } = [];
+
     [JsonPropertyName("hooks")]
     public List<HookConfig> Hooks { get; set; } = [];
 }
