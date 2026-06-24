@@ -928,7 +928,7 @@ internal sealed class TuiDriver
         // still shows, so the dashboard is an expansion of it rather than a replacement. Off (the
         // default) this adds nothing, keeping the frame byte-identical to today's.
         if (_agentViewActive)
-            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame));
+            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));

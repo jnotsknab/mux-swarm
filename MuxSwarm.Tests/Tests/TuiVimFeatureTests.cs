@@ -743,4 +743,27 @@ public class TuiVimFeatureTests
         string plain = TuiMarkup.Plain(rows[0]);
         Assert.StartsWith("  \u203a", plain);   // "  >" prompt, flush
     }
+
+    [Fact]
+    public void AgentView_Dashboard_MarksForegroundedAgentWithPin()
+    {
+        var av = new AgentView();
+        av.SetRows(new System.Collections.Generic.List<(string, string, string)>
+        {
+            ("CodeAgent", "working", TuiComponents.AgentTint("CodeAgent")),
+            ("WebAgent", "working", TuiComponents.AgentTint("WebAgent")),
+        }, System.DateTime.UtcNow);
+        av.Open();
+        // Distinctive pin marker (star + word) so the footer's "Enter foreground" hint never collides.
+        const string Pin = "\u2605 foreground";
+        // No foreground -> no pin tag anywhere.
+        var none = string.Join("\n", av.RenderDashboard(80, System.DateTime.UtcNow, 0));
+        Assert.DoesNotContain(Pin, TuiMarkup.Plain(none));
+        // Foreground WebAgent -> exactly that row carries the pin tag.
+        var rows = av.RenderDashboard(80, System.DateTime.UtcNow, 0, foregrounded: "WebAgent");
+        var webRow = rows.First(r => TuiMarkup.Plain(r).Contains("WebAgent"));
+        Assert.Contains(Pin, TuiMarkup.Plain(webRow));
+        var codeRow = rows.First(r => TuiMarkup.Plain(r).Contains("CodeAgent"));
+        Assert.DoesNotContain(Pin, TuiMarkup.Plain(codeRow));
+    }
 }

@@ -124,7 +124,7 @@ internal sealed class AgentView
     /// key hint. Pure given its inputs - unit-tested without a console. <paramref name="frame"/>
     /// advances the shared spinner so the rows animate in step with the activity strip.
     /// </summary>
-    public List<string> RenderDashboard(int width, DateTime now, int frame)
+    public List<string> RenderDashboard(int width, DateTime now, int frame, string? foregrounded = null)
     {
         var rows = new List<string>();
         string spin = TuiComponents.SubAgentFrames[
@@ -144,9 +144,13 @@ internal sealed class AgentView
                 string st = string.IsNullOrWhiteSpace(r.Status) ? "working" : r.Status.Trim();
                 if (st.Length > 56) st = st[..55] + "\u2026";
                 bool isSel = string.Equals(r.Agent, sel, StringComparison.Ordinal);
+                bool isPinned = foregrounded is not null && string.Equals(r.Agent, foregrounded, StringComparison.Ordinal);
+                // A small pin tag on the foregrounded agent so it is obvious which one the live
+                // panel / Ctrl+E currently tracks - switching focus reads clearly.
+                string pin = isPinned ? $" [{TuiComponents.Ok}]\u2605 foreground[/]" : "";
                 rows.Add(isSel
-                    ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]"
-                    : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]");
+                    ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]{pin}"
+                    : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]{pin}");
             }
         }
         if (overflow > 0)
