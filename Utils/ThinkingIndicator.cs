@@ -28,13 +28,77 @@ public sealed class ThinkingIndicator : IDisposable
 
     // Quirky Claude-Code-style "working" gerunds, cycled (~every 2s) while the agent is
     // reasoning and no tool call is in flight. Purely cosmetic flavor for the live spinner.
-    private static readonly string[] Quips =
+    private static readonly string[] QuipPool =
     [
         "Thinking", "Cogitating", "Percolating", "Ruminating", "Conjuring",
         "Noodling", "Finagling", "Marinating", "Crystallizing", "Pondering",
         "Scheming", "Tinkering", "Untangling", "Synthesizing", "Brewing",
         "Wrangling", "Mulling", "Deliberating", "Spelunking", "Computing",
+        "Vibing", "Plotting", "Cooking", "Simmering", "Incubating",
+        "Calibrating", "Orchestrating", "Triangulating", "Distilling", "Fermenting",
+        "Hypothesizing", "Theorizing", "Whirring", "Churning", "Processing",
+        "Divining", "Channeling", "Manifesting", "Summoning", "Weaving",
+        "Reticulating", "Bamboozling", "Galvanizing", "Concocting", "Hatching",
+        "Architecting", "Strategizing", "Contemplating", "Wibbling", "Buffering",
+        "Forging", "Sculpting", "Tessellating", "Extrapolating", "Improvising",
     ];
+
+    // Per-user, shuffled rotation of the quip pool: each user gets their OWN stable shuffle order
+    // (seeded from machine + user identity), so the gerunds are randomized rather than always
+    // cycling Thinking->Cogitating->... in array order, and two users see different sequences. The
+    // shuffle is computed once (lazy) and reused; deterministic per user so it is unit-testable.
+    private static string[]? _rotation;
+    private static readonly object _rotationLock = new();
+
+    internal static int UserSeed()
+    {
+        // Stable per-user/machine seed. Best-effort: any failure falls back to a fixed seed so the
+        // rotation is still randomized (just not user-specific).
+        try
+        {
+            string id = (Environment.UserName ?? "") + "@" + (Environment.MachineName ?? "");
+            return StableHash(id);
+        }
+        catch { return 0x5EED; }
+    }
+
+    // FNV-1a 32-bit: stable across runs/platforms (string.GetHashCode is randomized per process).
+    private static int StableHash(string s)
+    {
+        unchecked
+        {
+            uint h = 2166136261;
+            foreach (char c in s) { h ^= c; h *= 16777619; }
+            return (int)h;
+        }
+    }
+
+    /// <summary>The per-user shuffled quip rotation (built once). Pure given <see cref="UserSeed"/>.</summary>
+    internal static string[] Rotation()
+    {
+        var r = _rotation;
+        if (r != null) return r;
+        lock (_rotationLock)
+        {
+            if (_rotation != null) return _rotation;
+            _rotation = Shuffle(QuipPool, UserSeed());
+            return _rotation;
+        }
+    }
+
+    /// <summary>Deterministic Fisher-Yates shuffle of <paramref name="src"/> seeded by
+    /// <paramref name="seed"/>. Pure - same seed always yields the same order (testable).</summary>
+    internal static string[] Shuffle(string[] src, int seed)
+    {
+        var a = (string[])src.Clone();
+        var rng = new Random(seed);
+        for (int i = a.Length - 1; i > 0; i--)
+        {
+            int j = rng.Next(i + 1);
+            (a[i], a[j]) = (a[j], a[i]);
+        }
+        return a;
+    }
 
     // How many spinner ticks (80ms each) before advancing to the next quip (~2s).
     private const int QuipTicks = 25;
@@ -150,8 +214,10 @@ public sealed class ThinkingIndicator : IDisposable
                         }
                         else
                         {
-                            // Default reasoning state: cycle a quirky gerund every ~2s.
-                            statusPart = Quips[(frame / QuipTicks) % Quips.Length] + "...";
+                            // Default reasoning state: cycle a quirky gerund every ~2s, walking the
+                            // PER-USER shuffled rotation (randomized order, stable per user).
+                            var rot = Rotation();
+                            statusPart = rot[(frame / QuipTicks) % rot.Length] + "...";
                         }
                     }
 

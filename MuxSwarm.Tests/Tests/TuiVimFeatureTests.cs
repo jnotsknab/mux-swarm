@@ -766,4 +766,30 @@ public class TuiVimFeatureTests
         var codeRow = rows.First(r => TuiMarkup.Plain(r).Contains("CodeAgent"));
         Assert.DoesNotContain(Pin, TuiMarkup.Plain(codeRow));
     }
+
+    // --- g12.11 per-user shuffled thinking quips -----------------------------
+
+    [Fact]
+    public void ThinkingQuips_Shuffle_DeterministicPerSeed_SameElements()
+    {
+        string[] pool = { "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot" };
+        var a = ThinkingIndicator.Shuffle(pool, 1234);
+        var b = ThinkingIndicator.Shuffle(pool, 1234);
+        // Same seed -> identical order (deterministic, so it is stable per user across runs).
+        Assert.Equal(a, b);
+        // Shuffle is a permutation: same multiset of elements, none lost/added.
+        Assert.Equal(pool.OrderBy(x => x), a.OrderBy(x => x));
+        // The source array is not mutated.
+        Assert.Equal("Alpha", pool[0]);
+    }
+
+    [Fact]
+    public void ThinkingQuips_Shuffle_DifferentSeeds_DifferentOrder()
+    {
+        string[] pool = { "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel" };
+        var a = ThinkingIndicator.Shuffle(pool, 1);
+        var b = ThinkingIndicator.Shuffle(pool, 999983);
+        // Two different users (seeds) get different rotations (vanishingly unlikely to collide).
+        Assert.NotEqual(a, b);
+    }
 }
