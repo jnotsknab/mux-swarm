@@ -111,15 +111,41 @@ public static class PreambleBuilder
 
         preamble += $@"
         ## Memory Layers
-        You have access to multiple memory layers. Use the appropriate layer for the task:
+        You have a layered memory system. The two markdown layers are PRIMARY (compact, always-read,
+        usually auto-injected below); the graph + vector stores are heavy on-demand stores you reach
+        VIA stubs left in the primary layers. Use the right layer for the job:
 
-        1. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what exists.
-        2. **Vector DB (ChromaDB)** -- semantic search over prior knowledge. Use for recall without loading full histories.
-        3. **Knowledge Graph** -- entities, relationships, structured facts. Use for deterministic queries where relationships matter.
-        4. **BRAIN.md** -- shared context all agents inherit. Located at {PlatformContext.ContextDirectory}/BRAIN.md. Contains agent identity / name and conventions, communication preferences, and standing directives that apply across all sessions. If it exists, read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for anything related to your role, specialization, or task execution strategy.
-        5. **MEMORY.md** -- shared working context. Located at {PlatformContext.ContextDirectory}/MEMORY.md. Contains active projects, goals, environment details, and constraints. Reference this for task-relevant decisions. If it exists, read it before your first action.
-        6. **DOCS.md** -- system reference documentation. Located at {PlatformContext.ContextDirectory}/DOCS.md. Contains configuration formats, daemon trigger schemas, bridge setup instructions, CLI flags, and service registration details. Read this before modifying any config files. 
+        1. **BRAIN.md (PRIMARY -- BEHAVIORAL: how to act).** Located at {PlatformContext.ContextDirectory}/BRAIN.md.
+           Agent identity/name, conventions, communication preferences, standing directives, and -- importantly --
+           learned ANTI-PATTERNS, REFLEXES, and self-healing loopback (things you got wrong before and must not
+           repeat). Keep it as structured-freeform under canonical headers like `## Anti-Patterns` and `## Reflexes`.
+           Read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for
+           your role/specialization/task strategy.
+        2. **MEMORY.md (PRIMARY -- FACTUAL: what is true + who the user is).** Located at {PlatformContext.ContextDirectory}/MEMORY.md.
+           Active projects, environment, constraints, and a dedicated `## About User / Conventions` section. Read it
+           before your first action; reference it for task-relevant decisions.
+        3. **Knowledge Graph (heavy, on-demand)** -- entities, relationships, structured facts. Reach it via stubs.
+        4. **Vector DB (ChromaDB) (heavy, on-demand)** -- semantic recall over prior knowledge without loading full histories. Reach it via stubs.
+        5. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what physically exists.
+        6. **DOCS.md** -- system reference (config formats, daemon schemas, bridge setup, CLI flags, service registration). Located at {PlatformContext.ContextDirectory}/DOCS.md. Read before modifying any config files.
+
+        ### Memory discipline (keep the loop tight)
+        - **Index-card rule:** the primary layers stay SMALL. When something is dense, write the full content to the
+          Knowledge Graph or ChromaDB and leave ONE LINE in BRAIN/MEMORY with a STRICT pointer -- `-> KG:<entity>` or
+          `-> chroma:<collection>/<id>`. Following a stub means a DIRECT lookup (e.g. open_nodes on that exact entity),
+          NEVER a fresh semantic re-search -- the stub already names the target, so re-searching just wastes a roundtrip.
+        - **Write-back triggers (do this proactively, do not wait to be told):**
+          - BRAIN.md when you think ""I have hit this before"" or ""I keep doing this wrong"" -- record the anti-pattern/reflex
+            so future you (and every other agent/instance that inherits BRAIN) does not repeat it.
+          - MEMORY.md when you learn a durable fact about the user or the working world.
+          Favor short, specific entries in the right layer over verbose journaling; skip transient noise and secrets.
+        - **Per-agent escape valve (convention, not forced):** agent-specific, high-volume lessons can live in
+          `BRAIN.<YourAgentName>.md` / `MEMORY.<YourAgentName>.md` (auto-injected when present), with a single stub left in
+          shared BRAIN (e.g. `- <Agent> anti-patterns -> BRAIN.<Agent>.md`). Keep UNIVERSAL lessons in shared BRAIN so
+          every agent inherits them.
+
         Priority order for conflicting instructions: agent system prompt > BRAIN.md > inferred context.
+        Source-of-truth for whether an ARTIFACT exists/is current: filesystem wins over any memory layer.
         ";
         if (continuousMode)
             preamble += @"
@@ -201,6 +227,11 @@ public static class PreambleBuilder
         string? content = null;
         var brainPath = Path.Combine(PlatformContext.ContextDirectory, "BRAIN.md");
         var memPath = Path.Combine(PlatformContext.ContextDirectory, "MEMORY.md");
+        // Per-agent escape-valve files (memory-loop hardening): agent-specific BRAIN/MEMORY layered
+        // ON TOP of the shared ones. File-existence gated, so when absent the injected block is
+        // byte-identical to before. Reuses the same AutoInject mode gating as the shared files.
+        var agentBrainPath = Path.Combine(PlatformContext.ContextDirectory, $"BRAIN.{agentName}.md");
+        var agentMemPath = Path.Combine(PlatformContext.ContextDirectory, $"MEMORY.{agentName}.md");
         switch (AutoInject.Current)
         {
             case AutoInject.Mode.None:
@@ -209,10 +240,14 @@ public static class PreambleBuilder
                 content = "[INJECTED CONTEXT FROM BRAIN.md]\n";
                 if (File.Exists(brainPath))
                     content += File.ReadAllText(brainPath);
+                if (File.Exists(agentBrainPath))
+                    content += $"\n[INJECTED CONTEXT FROM BRAIN.{agentName}.md]\n" + File.ReadAllText(agentBrainPath);
 
                 content += "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
+                if (File.Exists(agentMemPath))
+                    content += $"\n[INJECTED CONTEXT FROM MEMORY.{agentName}.md]\n" + File.ReadAllText(agentMemPath);
 
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;
@@ -220,6 +255,8 @@ public static class PreambleBuilder
                 content = "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
+                if (File.Exists(agentMemPath))
+                    content += $"\n[INJECTED CONTEXT FROM MEMORY.{agentName}.md]\n" + File.ReadAllText(agentMemPath);
 
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;

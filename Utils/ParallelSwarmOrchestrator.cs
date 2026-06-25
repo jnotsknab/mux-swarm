@@ -286,7 +286,7 @@ public static class ParallelSwarmOrchestrator
 
                               ## Memory Policy (MANDATORY)
 
-                              **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+                              **At the START of your task:** Relevant BRAIN.md / MEMORY.md context is usually already injected above - read it first. If a stub points to a heavy store (`-> KG:<entity>` or `-> chroma:<coll>/<id>`), follow it with a DIRECT lookup, not a fresh re-search. For broader prior context not already provided, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip the delegation if context was already passed in your task instructions.
 
                               **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Pass it:
                               - Task name and outcome (success/failure)
