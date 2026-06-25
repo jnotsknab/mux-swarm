@@ -244,4 +244,47 @@ public class TeamsM3PeerTests
         Assert.False(board.Exists(a.Id));
         Assert.False(board.Exists("t12345"));
     }
+
+    // ---- Lead preamble (teamScope-gated coordination guide) ----
+
+    [Fact]
+    public void LeadPreamble_TaskboardTeam_MentionsKeyToolsAndMembers()
+    {
+        var scope = new TeamScope
+        {
+            DisplayName = "research-build",
+            LeadDef = new MuxSwarm.Utils.Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
+            Members = new List<string> { "WebAgent", "CodeAgent" },
+            Coordination = "taskboard",
+            Board = TaskBoard.Open("research-build", TempRoot()),
+            Tools = new List<Microsoft.Extensions.AI.AITool>(),
+            State = new TeamState { Name = "research-build" },
+        };
+        var p = scope.LeadPreamble();
+        Assert.Contains("leading a team", p);
+        Assert.Contains("WebAgent, CodeAgent", p);
+        Assert.Contains("team_dispatch", p);
+        Assert.Contains("task_create", p);
+        Assert.Contains("team_peerwork", p);
+        Assert.Contains("/kanban", p);
+    }
+
+    [Fact]
+    public void LeadPreamble_FanoutTeam_OmitsBoardTools()
+    {
+        var scope = new TeamScope
+        {
+            DisplayName = "fan",
+            LeadDef = new MuxSwarm.Utils.Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
+            Members = new List<string> { "WebAgent" },
+            Coordination = "fanout",
+            Board = null,
+            Tools = new List<Microsoft.Extensions.AI.AITool>(),
+            State = new TeamState { Name = "fan" },
+        };
+        var p = scope.LeadPreamble();
+        Assert.Contains("team_dispatch", p);
+        Assert.DoesNotContain("task_create", p);
+        Assert.DoesNotContain("team_peerwork", p);
+    }
 }

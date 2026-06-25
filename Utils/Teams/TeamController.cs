@@ -33,6 +33,48 @@ public sealed class TeamScope
     public MemberRunner? PeerRunner { get; init; }
 
     public bool UsesTaskBoard => Board is not null;
+
+    /// <summary>
+    /// A concise, static guide injected into the LEAD's system prompt while a team is active
+    /// (teamScope != null) so the model has a cohesive overview of HOW to coordinate - not just the
+    /// individual tool descriptions. Off-team this is never appended (the prompt stays identical).
+    /// </summary>
+    public string LeadPreamble()
+    {
+        var roster = Members.Count > 0 ? string.Join(", ", Members) : "(none)";
+        var sb = new StringBuilder();
+        sb.AppendLine();
+        sb.AppendLine("## You are leading a team");
+        sb.AppendLine($"Team: {DisplayName}. Members you can delegate to: {roster}.");
+        sb.AppendLine("Coordinate by choosing the right tool; do the coordination yourself, don't ask the user to.");
+        sb.AppendLine();
+        sb.AppendLine("- team_dispatch(assignments[]) - fan INDEPENDENT work to several members at once and");
+        sb.AppendLine("  collect their results. Use for parallel work with no ordering between items.");
+        if (UsesTaskBoard)
+        {
+            sb.AppendLine("- task_create(subject, description, blockedBy?, assignee?, startInSeconds?) - put a unit of");
+            sb.AppendLine("  work on the shared board. Use blockedBy for DEPENDENT work (a task waits until its");
+            sb.AppendLine("  blockers are Done); set assignee to the member who should run it. Unknown dep ids are");
+            sb.AppendLine("  rejected, so create blockers first.");
+            sb.AppendLine("- task_assign(taskId, member) - claim + run ONE board task now (also reassigns).");
+            sb.AppendLine("- team_peerwork(enabled, intervalSeconds?) - turn ON to let members self-claim and drain");
+            sb.AppendLine("  the board on their own (each pulls eligible tasks per the team's pickup policy). Prefer");
+            sb.AppendLine("  this for a backlog of assigned/dependent tasks instead of assigning each by hand.");
+            sb.AppendLine("- task_autorun(enabled, intervalSeconds?) - alternative: one background loop that runs");
+            sb.AppendLine("  every assigned, unblocked, timer-elapsed task. task_list / task_info inspect the board.");
+            sb.AppendLine("- The user can watch and EDIT the board live with /kanban (add/assign/block/ready/move/peer).");
+            sb.AppendLine();
+            sb.AppendLine("Typical flow: break the goal into task_create calls (wire dependencies via blockedBy +");
+            sb.AppendLine("assignee), then team_peerwork(true) and let the team drain it; summarize results at the end.");
+        }
+        else
+        {
+            sb.AppendLine();
+            sb.AppendLine("This team uses fan-out coordination (no shared board): use team_dispatch for everything,");
+            sb.AppendLine("then synthesize the members' results yourself.");
+        }
+        return sb.ToString();
+    }
 }
 
 /// <summary>

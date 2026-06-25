@@ -627,6 +627,9 @@ public static class SingleAgentOrchestrator
             await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
             foreach (var t in teamScope.Tools) singleAgentTools.Add(t);
+            // Append the concise teams-coordination guide ONLY while leading a team. Off-team this
+            // block is skipped, so the single-agent system prompt is byte-identical to before.
+            systemPrompt += teamScope.LeadPreamble();
         }
 
         var agentChatOptions = new ChatOptions
