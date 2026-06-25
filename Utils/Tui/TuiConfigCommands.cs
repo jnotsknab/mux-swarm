@@ -248,6 +248,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "collapseDaemon", Aliases = new[] { "daemonview", "dv", "collapsedaemon" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.CollapseDaemon.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"collapseDaemon expects a boolean (got '{v}').");
+                Cfg.Console.CollapseDaemon = on;
+                MuxConsole.CollapseDaemonOutput = on;            // live
+                return Save($"collapseDaemon = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
             Name = "inputHighlight", Aliases = new[] { "inputshade", "inputbg" }, ValueHint = "on|off",
             Get = () => Cfg.Console.InputHighlight.ToString(),
             Set = v =>

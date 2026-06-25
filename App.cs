@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.27";
+    public static readonly string DebugTag = "g12.28";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -222,6 +222,7 @@ public class App
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
+        MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
         MuxConsole.InputHighlight = Config.Console.InputHighlight;
         MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
         MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
@@ -718,6 +719,14 @@ public class App
                     MuxConsole.WriteSuccess(MuxConsole.CollapseSubAgents
                         ? "Sub-agent view: collapsed (delegated agents fold into one expandable line)"
                         : "Sub-agent view: expanded (delegated agents stream inline)");
+                    break;
+                case "/daemonview":
+                case "/dv":
+                    MuxConsole.CollapseDaemonOutput = !MuxConsole.CollapseDaemonOutput;
+                    Config.Console.CollapseDaemon = MuxConsole.CollapseDaemonOutput;
+                    MuxConsole.WriteSuccess(MuxConsole.CollapseDaemonOutput
+                        ? "Daemon view: collapsed (daemon-fired goals fold into one expandable line)"
+                        : "Daemon view: expanded (daemon-fired goals stream inline)");
                     break;
                 case "/ultra":
                 case "/ultraplan":

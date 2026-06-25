@@ -1166,7 +1166,7 @@ internal static class TuiComponents
     public static List<string> TaskBoardStrip(
         int total, int done, int inProgress, int blocked, int failed,
         IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> rows,
-        int maxRows = 5)
+        int maxRows = 5, int offset = 0)
     {
         var outRows = new List<string>();
         int segs = 6;
@@ -1183,10 +1183,18 @@ internal static class TuiComponents
             return outRows;
         }
 
-        int shown = System.Math.Min(maxRows, rows.Count);
+        // Window the (possibly long) task list through a maxRows-tall viewport scrollable with
+        // Up/Down while the Ctrl+T strip is open (offset clamped by the driver). The "above" /
+        // "more" affordances show how many rows are hidden in each direction so the user knows
+        // there is more to scroll to.
+        int maxOffset = System.Math.Max(0, rows.Count - maxRows);
+        offset = System.Math.Clamp(offset, 0, maxOffset);
+        if (offset > 0)
+            outRows.Add($"    [{Dim}]\u2191 {offset} above[/]");
+        int shown = System.Math.Min(maxRows, rows.Count - offset);
         for (int i = 0; i < shown; i++)
         {
-            var (id, status, owner, subject) = rows[i];
+            var (id, status, owner, subject) = rows[offset + i];
             string tint = status switch
             {
                 "InProgress" => Accent,
@@ -1208,8 +1216,9 @@ internal static class TuiComponents
             if (subj.Length > 48) subj = subj[..47] + "\u2026";
             outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}");
         }
-        if (rows.Count > shown)
-            outRows.Add($"    [{Dim}]\u2193 +{rows.Count - shown} more[/]");
+        int below = rows.Count - offset - shown;
+        if (below > 0)
+            outRows.Add($"    [{Dim}]\u2193 +{below} more[/]");
         return outRows;
     }
 }

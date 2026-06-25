@@ -220,6 +220,88 @@ public class TuiRenderTests
         Assert.DoesNotContain(plain, l => l.Contains("earlier line"));
         Assert.Contains(plain, l => l.Contains("just one line"));
     }
+
+    // --- g12.28: TaskBoard strip scroll windowing -----------------------------
+
+    private static System.Collections.Generic.List<(string, string, string?, string)> BoardRows(int n)
+    {
+        var l = new System.Collections.Generic.List<(string, string, string?, string)>();
+        for (int i = 0; i < n; i++) l.Add(($"t{i}", "Todo", null, $"task subject {i}"));
+        return l;
+    }
+
+    [Fact]
+    public void TaskBoardStrip_WindowsRows_AtOffsetZero_ShowsFirstWindowAndMore()
+    {
+        var rows = BoardRows(12);
+        var outp = TuiComponents.TaskBoardStrip(12, 0, 0, 0, 0, rows, maxRows: 5, offset: 0);
+        var plain = string.Join("\n", outp.Select(TuiMarkup.Plain));
+        Assert.Contains("task subject 0", plain);
+        Assert.Contains("task subject 4", plain);
+        Assert.DoesNotContain("task subject 5", plain);   // outside the window
+        Assert.Contains("+7 more", plain);                // 12 - 5 below
+        Assert.DoesNotContain("above", plain);            // at top, nothing above
+    }
+
+    [Fact]
+    public void TaskBoardStrip_WindowsRows_AtOffset_ShowsAboveAndShiftedWindow()
+    {
+        var rows = BoardRows(12);
+        var outp = TuiComponents.TaskBoardStrip(12, 0, 0, 0, 0, rows, maxRows: 5, offset: 3);
+        var plain = string.Join("\n", outp.Select(TuiMarkup.Plain));
+        Assert.Contains("3 above", plain);
+        Assert.Contains("task subject 3", plain);
+        Assert.Contains("task subject 7", plain);
+        Assert.DoesNotContain("task subject 2", plain);
+        Assert.DoesNotContain("task subject 8", plain);
+        Assert.Contains("+4 more", plain);                // 12 - 3 - 5
+    }
+
+    [Fact]
+    public void TaskBoardStrip_OffsetClampedToEnd_NoNegativeMore()
+    {
+        var rows = BoardRows(7);
+        // Over-large offset is clamped to rows-window (=2); last window is rows 2..6, no "more".
+        var outp = TuiComponents.TaskBoardStrip(7, 0, 0, 0, 0, rows, maxRows: 5, offset: 99);
+        var plain = string.Join("\n", outp.Select(TuiMarkup.Plain));
+        Assert.Contains("task subject 6", plain);
+        Assert.DoesNotContain("more", plain);
+        Assert.Contains("2 above", plain);
+    }
+
+    [Fact]
+    public void TaskBoardStrip_ShortList_NoScrollAffordances()
+    {
+        var rows = BoardRows(3);
+        var outp = TuiComponents.TaskBoardStrip(3, 0, 0, 0, 0, rows, maxRows: 5, offset: 0);
+        var plain = string.Join("\n", outp.Select(TuiMarkup.Plain));
+        Assert.DoesNotContain("more", plain);
+        Assert.DoesNotContain("above", plain);
+    }
+
+    // --- g12.28: daemon output collapse gate ----------------------------------
+
+    [Fact]
+    public void BeginDaemonCapture_NullInStdioMode_IndependentOfSubAgentToggle()
+    {
+        // Daemon collapse is gated on its OWN flag, and (like sub-agent capture) must NOT engage
+        // in stdio/serve mode - so daemon goals still stream for the web app.
+        bool priorD = MuxConsole.CollapseDaemonOutput;
+        bool priorS = MuxConsole.CollapseSubAgents;
+        try
+        {
+            MuxConsole.CollapseDaemonOutput = true;
+            MuxConsole.CollapseSubAgents = false;            // independent of /sav
+            string outp = CaptureStdio(() =>
+            {
+                using var scope = MuxConsole.BeginDaemonCapture("daemon:rt1");
+                Assert.Null(scope);                          // no capture in stdio mode
+                MuxConsole.WriteStream("daemon work", agentName: "MuxAgent");
+            });
+            Assert.Contains("daemon work", outp);            // stream frame still emitted
+        }
+        finally { MuxConsole.CollapseDaemonOutput = priorD; MuxConsole.CollapseSubAgents = priorS; }
+    }
 }
 
 

@@ -86,6 +86,13 @@ internal sealed class TuiDriver
     // board snapshot (tally + flattened rows) so the driver never references State/Teams directly.
     // Null provider or null snapshot => no board => the strip never renders (off-team byte-identical).
     private volatile bool _taskBoardVisible;
+    // Scroll offset into the (possibly long) task list while the Ctrl+T strip is open. Up/Down at
+    // the idle prompt (empty buffer) adjust it; reset to 0 whenever the strip is toggled.
+    private int _taskBoardOffset;
+    // Rows shown in the strip viewport - kept in sync with TaskBoardStrip's maxRows so the driver
+    // clamps the offset against the same window the component renders.
+    private const int TaskBoardWindow = 5;
+    public bool TaskBoardVisible => _taskBoardVisible;
     public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
         IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? TaskBoardProvider { get; set; }
 
@@ -775,6 +782,7 @@ internal sealed class TuiDriver
     public bool ToggleTaskBoard()
     {
         _taskBoardVisible = !_taskBoardVisible;
+        _taskBoardOffset = 0;
         return _taskBoardVisible;
     }
 
@@ -787,7 +795,24 @@ internal sealed class TuiDriver
     public void ToggleTaskBoardRepaint()
     {
         _taskBoardVisible = !_taskBoardVisible;
+        _taskBoardOffset = 0;
         Repaint();
+    }
+
+    /// <summary>Scroll the open TaskBoard strip by <paramref name="delta"/> rows (Up/Down at the
+    /// idle prompt). Clamped to [0, rows-window]; a no-op when the strip is closed or there is no
+    /// board. Returns true if it consumed the key (so the caller skips history nav).</summary>
+    public bool ScrollTaskBoard(int delta)
+    {
+        if (!_taskBoardVisible) return false;
+        if (TaskBoardProvider?.Invoke() is not { } bd) return false;
+        int maxOffset = Math.Max(0, bd.Rows.Count - TaskBoardWindow);
+        if (maxOffset == 0) return false;   // nothing to scroll - let the key fall through
+        int next = Math.Clamp(_taskBoardOffset + delta, 0, maxOffset);
+        if (next == _taskBoardOffset) return true;  // consumed (at an edge) but no repaint needed
+        _taskBoardOffset = next;
+        Repaint();
+        return true;
     }
 
     public void SetSubAgentActivity(IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
@@ -1015,7 +1040,8 @@ internal sealed class TuiDriver
         // adds nothing, keeping the frame identical to today.
         if (_taskBoardVisible && TaskBoardProvider?.Invoke() is { } bd)
             lines.AddRange(TuiComponents.TaskBoardStrip(
-                bd.Total, bd.Done, bd.InProgress, bd.Blocked, bd.Failed, bd.Rows));
+                bd.Total, bd.Done, bd.InProgress, bd.Blocked, bd.Failed, bd.Rows,
+                maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
@@ -1312,6 +1338,20 @@ internal sealed class TuiDriver
                         Repaint();
                         continue;
                     }
+                }
+
+                // Up/Down while the Ctrl+T TaskBoard strip is open AND the input buffer is empty:
+                // scroll the board's windowed task list instead of browsing command history, so a
+                // long board's lower tasks become reachable. Only consumes the key when the strip
+                // actually scrolled (more rows than the window); otherwise falls through to normal
+                // history nav. Closed board / non-empty buffer => arrows behave exactly as before.
+                if (_taskBoardVisible && _editor.IsEmpty
+                    && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt | ConsoleModifiers.Shift)) == 0)
+                {
+                    if (key.Key == ConsoleKey.UpArrow && ScrollTaskBoard(-1)) continue;
+                    if (key.Key == ConsoleKey.DownArrow && ScrollTaskBoard(+1)) continue;
+                    if (key.Key == ConsoleKey.PageUp && ScrollTaskBoard(-TaskBoardWindow)) continue;
+                    if (key.Key == ConsoleKey.PageDown && ScrollTaskBoard(+TaskBoardWindow)) continue;
                 }
 
                 // Ctrl+E at the prompt: when sub-agents are live (e.g. a /background or /swarm

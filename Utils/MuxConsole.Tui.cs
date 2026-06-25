@@ -88,6 +88,15 @@ public static partial class MuxConsole
     /// </summary>
     public static bool CollapseSubAgents { get; set; } = true;
 
+    /// <summary>
+    /// When true (default), goals fired by the in-house daemon collapse their whole agent run into
+    /// one expandable Agent-View line (reusing the sub-agent capture machinery), instead of
+    /// streaming the full reasoning + tool transcript into the main viewport. Set from
+    /// console.collapseDaemon; toggled at runtime by /daemonview (alias /dv). Independent of the
+    /// /sav sub-agent toggle. Only affects the live TUI - stdio/serve always streams.
+    /// </summary>
+    public static bool CollapseDaemonOutput { get; set; } = true;
+
     // --- sub-agent output capture (collapse-by-default) ----------------------
     // While a delegated sub-agent runs, its streamed text / reasoning / tool-result summaries are
     // buffered here instead of being committed to the transcript; on completion one collapsed,
@@ -132,6 +141,28 @@ public static partial class MuxConsole
     /// or null when capture does not apply (collapse disabled, stdio/serve, or non-TUI) - in
     /// which case the sub-agent streams inline as before. Safe to <c>using</c> the nullable.
     /// </summary>
+    /// <summary>
+    /// Begin capturing a daemon-fired goal's live output so the whole run collapses to one
+    /// expandable Agent-View line (tagged with the trigger label), gated on the INDEPENDENT
+    /// <see cref="CollapseDaemonOutput"/> flag rather than the /sav sub-agent toggle. Reuses the
+    /// proven sub-agent capture plumbing. Returns null (stream inline as today) when collapse is
+    /// off, in stdio/serve, or outside the TUI. Safe to <c>using</c> the nullable.
+    /// </summary>
+    public static IDisposable? BeginDaemonCapture(string label)
+    {
+        if (!CollapseDaemonOutput || StdioMode || !IsTui) return null;
+        var cap = new SubAgentCapture { Agent = label };
+        var prev = _capture.Value;
+        _capture.Value = cap;
+        lock (_captureGate)
+        {
+            _activeCaptures.Add(cap);
+            EnsureSubAgentTicker_NoGate();
+        }
+        PushSubAgentActivity();
+        return new CaptureScope(cap, prev);
+    }
+
     public static IDisposable? BeginSubAgentCapture(string agent)
     {
         if (!CollapseSubAgents || StdioMode || !IsTui) return null;

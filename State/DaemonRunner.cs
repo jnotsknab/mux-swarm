@@ -715,13 +715,20 @@ public sealed class DaemonRunner : IAsyncDisposable
                             SingleAgentOrchestrator.AgentDef?.Name ?? "Orchestrator",
                             _agentModels["Orchestrator"]);
 
-                    await SingleAgentOrchestrator.ChatAgentAsync(
-                        client: _chatClientFactory(modelId),
-                        cancellationToken: ct,
-                        mcpTools: _mcpTools
-                            .Cast<ModelContextProtocol.Client.McpClientTool>().ToList(),
-                        chatClientFactory: _chatClientFactory,
-                        incomingGoal: goal);
+                    // Collapse the daemon-fired agent run into one expandable Agent-View line
+                    // (dense by default) instead of streaming the full reasoning + tool transcript
+                    // into the main viewport. Off (/daemonview off) => null scope => streams inline
+                    // as before. swarm/pswarm modes self-collapse via their specialist sub-agents.
+                    using (MuxConsole.BeginDaemonCapture($"daemon:{trigger.Id}"))
+                    {
+                        await SingleAgentOrchestrator.ChatAgentAsync(
+                            client: _chatClientFactory(modelId),
+                            cancellationToken: ct,
+                            mcpTools: _mcpTools
+                                .Cast<ModelContextProtocol.Client.McpClientTool>().ToList(),
+                            chatClientFactory: _chatClientFactory,
+                            incomingGoal: goal);
+                    }
                     break;
             }
 

@@ -154,6 +154,17 @@ public class ConsoleConfig
     public bool CollapseSubAgents { get; set; } = true;
 
     /// <summary>
+    /// When true (default), goals fired by the in-house daemon (cron/watch triggers, agent mode)
+    /// collapse their full agent run into one expandable Agent-View line instead of streaming the
+    /// whole reasoning + tool transcript verbosely into the main viewport - the same density the
+    /// sub-agent / background view uses. Toggled at runtime by <c>/daemonview</c> (alias
+    /// <c>/dv</c>). Additive and non-invasive: absent in older configs (defaults to true). Has no
+    /// effect in stdio/serve mode and is ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("collapseDaemon")]
+    public bool CollapseDaemon { get; set; } = true;
+
+    /// <summary>
     /// When true (default), the user input/compose field is drawn on a subtle shaded band
     /// (a step off the terminal background) so the prompt reads as a contained input region
     /// rather than blending into the transcript, the way Claude Code shades its composer.
