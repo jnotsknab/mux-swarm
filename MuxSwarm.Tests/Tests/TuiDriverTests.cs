@@ -1620,6 +1620,39 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_SetSubAgentActivity_PaintsEagerly_NotDeferred()
+    {
+        // g12.26 regression guard: the ~100ms sub-agent ticker must paint the live region on every
+        // change - including while the idle-prompt ReadLine loop is active - so the spinner/activity
+        // strip animates instead of freezing. (g12.25 deferred this paint behind `if (_inInput)
+        // return;`; the real fix routes the idle-prompt repaints through ConsoleLock - see
+        // TuiDriver.Repaint - so painting live is safe.) Assert SetSubAgentActivity writes to the
+        // terminal immediately rather than waiting for the next keystroke.
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        d.SetFooter(100, 1000, plan: false, ultra: false, psub: false);
+        term.Clear();
+        d.SetSubAgentActivity(Snap("CodeAgent"), 1);
+        Assert.NotEqual(string.Empty, term.Output);   // painted now, not deferred
+        Assert.Contains("CodeAgent", term.Output);
+    }
+
+    [Fact]
+    public void Driver_OnSubAgentExpand_HookSettable_DefaultsNull()
+    {
+        // g12.26: at the idle prompt, Ctrl+E targets the live sub-agent panel via this hook when
+        // sub-agents are running (mirroring the mid-turn expand), falling back to NAV only when the
+        // hook is unset or no sub-agents are live. Verify the seam exists and defaults unset.
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        Assert.Null(d.OnSubAgentExpand);
+        bool called = false;
+        d.OnSubAgentExpand = () => { called = true; return true; };
+        Assert.True(d.OnSubAgentExpand!());
+        Assert.True(called);
+    }
+
+    [Fact]
     public void Driver_BuildLiveFrame_DashboardActive_SuppressesCompactStrip()
     {
         var term = new FakeTerminal { Width = 60, Height = 24 };

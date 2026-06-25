@@ -352,6 +352,10 @@ public static partial class MuxConsole
                     // mid-turn EscapeKeyListener path). Returns false when no agents are running,
                     // so backslash then inserts as a literal char.
                     _driver.AgentViewOpener = TuiEnterAgentView;
+                    // Idle-prompt Ctrl+E targets the live sub-agent panel (toggle open/closed),
+                    // mirroring the mid-turn EscapeKeyListener expand; TuiDriver.ReadLine falls back
+                    // to the NAV overlay when no sub-agents are running.
+                    _driver.OnSubAgentExpand = TuiExpandLatestInline;
                     InstallTeardownHook_NoLock();
                     // Start the resize poll once, alongside the driver.
                     _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);

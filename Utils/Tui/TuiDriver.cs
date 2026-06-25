@@ -95,6 +95,16 @@ internal sealed class TuiDriver
     // through to the editor as a literal char. Mirrors the mid-turn EscapeKeyListener onAgents path.
     public Func<bool>? AgentViewOpener { get; set; }
 
+    /// <summary>
+    /// Optional callback to expand/collapse the live sub-agent panel at the idle prompt, mirroring
+    /// the mid-turn EscapeKeyListener Ctrl+E path (MuxConsole.TuiExpandLatestInline). When set and
+    /// sub-agents are running, the prompt's Ctrl+E targets the live panel (toggle open/closed)
+    /// instead of the transcript NAV overlay, so a /background or /swarm panel can be closed from
+    /// the prompt. Returns true if it opened a panel. Set by the console wiring alongside
+    /// AgentViewOpener; null at the top-level menu.
+    /// </summary>
+    public Func<bool>? OnSubAgentExpand { get; set; }
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -790,14 +800,11 @@ internal sealed class TuiDriver
         if (!changed) return;
         _subAgents = agents;
         _subAgentFrame = frame;
-        // This is driven by the ~100ms BACKGROUND ticker thread. While the input loop owns the
-        // screen at the idle prompt (_inInput), a background-thread Repaint races the input
-        // thread's own paints + any concurrent CommitAbove ([bg]/[daemon] messages), which
-        // under-clears the prior frame and strands duplicate footers in scrollback (the artifact
-        // when running /background + /daemon while idle). Update the data model but DEFER the paint:
-        // the next keystroke's Repaint reflects the new strip. Mid-turn (not _inInput) the streaming
-        // thread owns paints and there is no idle race, so repaint live as before.
-        if (_inInput) return;
+        // Driven by the ~100ms BACKGROUND ticker thread (under ConsoleLock via
+        // PushSubAgentActivity). Repaint() now serializes on that same lock, so painting live is
+        // safe even while the idle-prompt ReadLine loop is active (_inInput) - the spinner/activity
+        // strip animates at the prompt instead of freezing. (g12.25 deferred this paint to dodge a
+        // torn-frame race; the real fix was locking the idle-prompt repaints - see Repaint().)
         Repaint();
     }
 
@@ -1052,7 +1059,13 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown) return;
         if (_navActive) return;   // NAV overlay owns the screen; defer paint until it exits
-        _region.SetLive(BuildLiveFrame(Width));
+        // Serialize against the ~100ms sub-agent ticker thread (which paints through
+        // MuxConsole.ConsoleLock via PushSubAgentActivity). The idle-prompt ReadLine loop runs
+        // UNLOCKED (TuiReadLine holds no lock so blocking input never starves the ticker), so its
+        // Repaint() previously raced the ticker's SetLive and stranded duplicate footers. The lock
+        // is reentrant, so the many callers already under ConsoleLock are unaffected.
+        lock (MuxConsole.ConsoleLock)
+            _region.SetLive(BuildLiveFrame(Width));
     }
 
     // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
@@ -1301,16 +1314,26 @@ internal sealed class TuiDriver
                     }
                 }
 
-                // Ctrl+E at the prompt: open the NAV overlay on the most-recent large tool
-                // result, pre-expanded. Inside NAV the cursor can toggle it closed again or
-                // move to other blocks (reversible). Falls through to the editor's emacs
-                // Ctrl+E (end-of-line) when there is no expandable result.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.E
-                    && _transcript.Any(e => e.Expandable is not null))
+                // Ctrl+E at the prompt: when sub-agents are live (e.g. a /background or /swarm
+                // panel), target THAT live panel - expand/collapse it in place like the mid-turn
+                // EscapeKeyListener path - so the running panel can be closed from the prompt
+                // instead of falling into the transcript NAV overlay. Otherwise open the NAV overlay
+                // on the most-recent large tool result, pre-expanded (reversible). Falls through to
+                // the editor's emacs Ctrl+E (end-of-line) when neither applies.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.E)
                 {
-                    ExpandLastBlock();
-                    Repaint();
-                    continue;
+                    if (_subAgents.Count > 0 && OnSubAgentExpand is { } expandSub)
+                    {
+                        expandSub();
+                        Repaint();
+                        continue;
+                    }
+                    if (_transcript.Any(e => e.Expandable is not null))
+                    {
+                        ExpandLastBlock();
+                        Repaint();
+                        continue;
+                    }
                 }
 
                 // Ctrl+G at the prompt: open the transcript / expand view unconditionally - a
