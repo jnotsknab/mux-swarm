@@ -1429,10 +1429,10 @@ public static class SingleAgentOrchestrator
                     // Editable team board for the active taskboard team; a no-op hint off-team.
                     MuxSwarm.Utils.Teams.KanbanCommand.Run(metaCmd);
                 }
-                else if (metaCmd.Equals("/detach", StringComparison.OrdinalIgnoreCase)
-                      || metaCmd.StartsWith("/detach ", StringComparison.OrdinalIgnoreCase))
+                else if (metaCmd.Equals("/background", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/bg", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/background ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/bg ", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Launch/list/cancel detached background agent jobs (watchable via the \\ Agent View).
+                    // Launch/list/cancel background agent jobs (watchable via the \\ Agent View).
                     await DetachedRunner.RunCommand(metaCmd, chatClientFactory, Models, cancellationToken);
                 }
                 else if (metaCmd.Equals("/daemon", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/da", StringComparison.OrdinalIgnoreCase)

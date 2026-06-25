@@ -156,20 +156,22 @@ public static class DetachedRunner
     }
 
     /// <summary>
-    /// Handle a "/detach ..." command line from the in-session meta-loop. Subcommands:
-    ///   /detach jobs                 list background jobs
-    ///   /detach cancel &lt;id&gt;          cancel a running job
-    ///   /detach &lt;agent&gt; &lt;goal...&gt;     launch agent on goal as a detached background job
+    /// Handle a "/background" (alias "/bg") command line from the in-session meta-loop. Subcommands:
+    ///   /background jobs                 list background jobs
+    ///   /background cancel &lt;id&gt;          cancel a running job
+    ///   /background &lt;agent&gt; &lt;goal...&gt;     launch agent on goal as a background job
     /// All output goes through MuxConsole. Non-blocking - a launched job runs in the background and
-    /// surfaces in the `\` Agent View tagged bg:&lt;agent&gt;.
+    /// surfaces in the `\` Agent View tagged bg:&lt;agent&gt;. (The `/detach` name is reserved for the
+    /// future "detach the current LIVE session" feature, which is a different mechanism.)
     /// </summary>
     public static async Task RunCommand(
         string raw, Func<string, IChatClient>? chatClientFactory,
         Dictionary<string, string> agentModels, CancellationToken sessionCt)
     {
         var line = (raw ?? string.Empty).Trim();
-        if (line.StartsWith("/detach", StringComparison.OrdinalIgnoreCase))
-            line = line.Substring("/detach".Length).Trim();
+        foreach (var pfx in new[] { "/background", "/bg" })
+            if (line.StartsWith(pfx, StringComparison.OrdinalIgnoreCase))
+            { line = line.Substring(pfx.Length).Trim(); break; }
 
         if (line.Length == 0 || line.Equals("jobs", StringComparison.OrdinalIgnoreCase)
             || line.Equals("list", StringComparison.OrdinalIgnoreCase))
@@ -184,23 +186,23 @@ public static class DetachedRunner
         if (verb is "cancel" or "kill" or "stop")
         {
             var id = parts.Length > 1 ? parts[1].Trim() : "";
-            if (id.Length == 0) { MuxConsole.WriteWarning("Usage: /detach cancel <id>"); return; }
+            if (id.Length == 0) { MuxConsole.WriteWarning("Usage: /background cancel <id>"); return; }
             MuxConsole.WriteMuted(Cancel(id) ? $"[detach] Cancelling {id}." : $"[detach] No running job '{id}'.");
             return;
         }
 
         if (verb is "help" or "?")
         {
-            MuxConsole.WriteMuted("/detach <agent> <goal>   run an agent on a goal in the background (watch with \\)");
-            MuxConsole.WriteMuted("/detach jobs             list background jobs");
-            MuxConsole.WriteMuted("/detach cancel <id>      cancel a running background job");
+            MuxConsole.WriteMuted("/background <agent> <goal>   run an agent on a goal in the background (watch with \\)");
+            MuxConsole.WriteMuted("/background jobs             list background jobs");
+            MuxConsole.WriteMuted("/background cancel <id>      cancel a running background job");
             return;
         }
 
         // Otherwise: /detach <agent> <goal...>
         if (parts.Length < 2)
         {
-            MuxConsole.WriteWarning("Usage: /detach <agent> <goal>  (or /detach jobs | /detach cancel <id>)");
+            MuxConsole.WriteWarning("Usage: /background <agent> <goal>  (or /background jobs | /background cancel <id>)");
             return;
         }
         if (chatClientFactory is null)
@@ -212,7 +214,7 @@ public static class DetachedRunner
         var goal = parts[1].Trim();
         var job = await LaunchAsync(agent, goal, chatClientFactory, agentModels, sessionCt);
         if (job is not null)
-            MuxConsole.WriteSuccess($"[detach] {job.Id} launched: {job.Agent} (running in background; press \\ to view).");
+            MuxConsole.WriteSuccess($"[bg] {job.Id} launched: {job.Agent} (running in background; press \\ to view).");
     }
 
     /// <summary>Render the job list for /detach jobs.</summary>

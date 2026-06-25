@@ -18,7 +18,7 @@ public class UnifiedPaletteTests
         var cmds = TuiCommands.SessionUnified.Select(e => e.Cmd).ToList();
         Assert.Contains("/compact", cmds);
         Assert.Contains("/kanban", cmds);
-        Assert.Contains("/detach", cmds);
+        Assert.Contains("/background", cmds);
         Assert.Contains("/daemon", cmds);
     }
 
