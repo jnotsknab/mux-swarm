@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.28";
+    public static readonly string DebugTag = "g12.29";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -73,6 +73,30 @@ public class App
             }
             return _cts;
         }
+    }
+
+    /// <summary>
+    /// Drive a detachable interactive session until it either PARKS (the user typed /detach inside
+    /// it) or FINISHES (quit/completed/error). The session's ChatAgentAsync runs as
+    /// <c>handle.ChatTask</c>; we race it against the handle's detach signal so the menu reclaims
+    /// the single console reader the instant the frame parks - the frame stays alive (its whole
+    /// closure preserved) awaiting a later /attach. Returns true when the session is DONE (already
+    /// removed from the registry), false when it merely parked and remains attachable. Single
+    /// console reader at all times: this method only returns once the parked frame has stopped
+    /// reading (it is blocked on the attach gate) or the task has completed.
+    /// </summary>
+    private static async Task<bool> PumpSessionAsync(MuxSwarm.Utils.InteractiveSession handle)
+    {
+        var winner = await Task.WhenAny(handle.ChatTask!, handle.WaitForDetachAsync());
+        if (winner == handle.ChatTask)
+        {
+            try { await handle.ChatTask!; }
+            catch (OperationCanceledException) { /* quit/cancel is a normal session end */ }
+            MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+            return true;
+        }
+        // Parked: the frame is blocked on its attach gate; the menu owns the console again.
+        return false;
     }
 
     // Awaits the background MCP init (idempotent). On total connection failure,
@@ -541,7 +565,9 @@ public class App
                     ServeMode.ActiveMode = "agent";
                     MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
-                    await SingleAgentOrchestrator.ChatAgentAsync(
+                    var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                        "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
+                    agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel),
                         agentCts.Token,
                         maxIterations: 3,
@@ -553,8 +579,10 @@ public class App
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         allowSubAgents: AllowSubagents,
-                        allowParallelSubAgents: AllowParallelSubAgents
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: agentHandle
                     );
+                    await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 case "/sub":
@@ -589,7 +617,9 @@ public class App
                     ServeMode.ActiveMode = "stateless";
                     MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
-                    await SingleAgentOrchestrator.ChatAgentAsync(
+                    var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                        "stateless", "stateless");
+                    statelessHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
                         statelessAgentCts.Token,
                         maxIterations: 3,
@@ -602,10 +632,47 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false,
                         allowSubAgents: AllowSubagents,
-                        allowParallelSubAgents: AllowParallelSubAgents
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: statelessHandle
                     );
+                    await PumpSessionAsync(statelessHandle);
                     } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
+
+                case var atc when atc == "/attach" || atc.StartsWith("/attach ", StringComparison.Ordinal):
+                {
+                    // Re-enter a session parked via /detach. "/attach" lists parked sessions; "/attach
+                    // <id>" releases that frame's attach gate (handing the console back to it) and
+                    // pumps it again until it re-parks or finishes. Single console reader throughout:
+                    // the menu stops reading the moment it releases the gate.
+                    var parked = MuxSwarm.Utils.InteractiveSessionRegistry.ListParked();
+                    var attachArg = atc.Length > "/attach".Length ? atc.Substring("/attach".Length).Trim() : "";
+                    if (parked.Count == 0)
+                    {
+                        MuxConsole.WriteMuted("No detached sessions. Launch /agent or /stateless, then /detach.");
+                        break;
+                    }
+                    if (attachArg.Length == 0)
+                    {
+                        MuxConsole.WriteInfo("Detached sessions:");
+                        foreach (var (pid, plabel, pmode, ptok) in parked)
+                            MuxConsole.WriteMuted($"  {pid}  {plabel} ({pmode}) ~{ptok:N0} tok  - /attach {pid}");
+                        break;
+                    }
+                    var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Find(attachArg);
+                    if (handle is null || handle.Status != "parked")
+                    {
+                        MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
+                        break;
+                    }
+                    MuxConsole.StartTuiLoopClock();
+                    ServeMode.ActiveMode = handle.Mode;
+                    try {
+                        handle.ReleaseAttach();             // resume the parked frame (it takes the console)
+                        await PumpSessionAsync(handle);     // returns when it re-parks or finishes
+                    } finally { ServeMode.ActiveMode = "interactive"; }
+                    break;
+                }
                 
                 case "/addcontext":
                     CliCmdUtils.HandleContextInject();

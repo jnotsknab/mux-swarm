@@ -228,7 +228,8 @@ public static class SingleAgentOrchestrator
         string? resumedSessionDir = null,
         bool allowSubAgents = false,
         bool allowParallelSubAgents = false,
-        MuxSwarm.Utils.Teams.TeamScope? teamScope = null)
+        MuxSwarm.Utils.Teams.TeamScope? teamScope = null,
+        InteractiveSession? interactiveHandle = null)
     {
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
@@ -1462,6 +1463,37 @@ public static class SingleAgentOrchestrator
                 {
                     // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
                     MuxSwarm.State.DaemonCommand.Run(metaCmd);
+                }
+                else if (metaCmd.Equals("/detach", StringComparison.OrdinalIgnoreCase))
+                {
+                    // v0.12.0 live-session detach: park THIS interactive session in the background
+                    // and return to the top-level menu, re-attachable via /attach <id> or the \
+                    // picker. The async frame stays alive across the await, preserving the whole
+                    // session closure (agent, in-memory history, tokens) - no disk round-trip. Only
+                    // valid at the idle prompt (we are between turns here by construction). When no
+                    // handle was supplied (e.g. a daemon-fired or non-detachable launch) it is a
+                    // clear no-op so /detach is never silently swallowed.
+                    if (interactiveHandle is null)
+                    {
+                        MuxConsole.WriteMuted("This session cannot be detached. Use /qc to exit.");
+                    }
+                    else
+                    {
+                        // Persist so the parked session is also resumable from disk as a safety net.
+                        try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
+                        catch { /* best-effort; the live frame is preserved regardless */ }
+                        interactiveHandle.Tokens = _sessionTokens;
+                        MuxConsole.WriteSuccess($"Detached session {interactiveHandle.Id} ({interactiveHandle.Label}). Re-attach with /attach {interactiveHandle.Id} or \\.");
+                        // Release the session-scoped TUI hooks so the menu's footer is clean while
+                        // parked; they are re-asserted on resume below.
+                        MuxConsole.SetTuiSessionId(null);
+                        // Park: hand the console back to the menu and block (async) until /attach.
+                        await interactiveHandle.ParkAndAwaitAttachAsync(cancellationToken);
+                        // --- resumed ---
+                        MuxConsole.SetTuiSessionId(sessionTimestamp);
+                        RenderStatusBar();
+                        MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
+                    }
                 }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
                 {

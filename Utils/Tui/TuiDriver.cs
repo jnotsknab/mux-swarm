@@ -112,6 +112,16 @@ internal sealed class TuiDriver
     /// </summary>
     public Func<bool>? OnSubAgentExpand { get; set; }
 
+    /// <summary>
+    /// Optional idle-prompt picker for DETACHED interactive sessions (v0.12.0 /detach). When the
+    /// backslash key is pressed at the prompt and no sub-agents are running to foreground, this is
+    /// invoked; if it returns a non-null command string (e.g. "/attach sess2") the ReadLine loop
+    /// returns that line so it routes through the normal /attach dispatch. Returns null when the
+    /// user cancels or there is nothing to attach (then backslash inserts literally). Set by the
+    /// console wiring; null at construction.
+    /// </summary>
+    public Func<string?>? AttachPicker { get; set; }
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -1411,6 +1421,14 @@ internal sealed class TuiDriver
                 if (key.KeyChar == '\\' && _editor.IsEmpty && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0)
                 {
                     if (AgentViewOpener is { } open && open()) { Repaint(); continue; }
+                    // No live sub-agents to foreground: offer the detached-session picker. If it
+                    // yields an /attach command, submit it as the line so the menu's /attach
+                    // dispatch re-enters that parked session.
+                    if (AttachPicker is { } pick && pick() is { } attachCmd)
+                    {
+                        _inInput = false;
+                        return attachCmd;
+                    }
                     // else: fall through and insert '\\' as a normal character.
                 }
 

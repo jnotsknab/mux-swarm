@@ -387,6 +387,15 @@ public static partial class MuxConsole
                     // mirroring the mid-turn EscapeKeyListener expand; TuiDriver.ReadLine falls back
                     // to the NAV overlay when no sub-agents are running.
                     _driver.OnSubAgentExpand = TuiExpandLatestInline;
+                    // Backslash at the idle prompt with no live sub-agents offers the detached
+                    // interactive sessions (v0.12.0 /detach). One parked session -> attach it
+                    // directly; several -> route to the "/attach" list so the user picks an id.
+                    _driver.AttachPicker = () =>
+                    {
+                        var parked = InteractiveSessionRegistry.ListParked();
+                        if (parked.Count == 0) return null;
+                        return parked.Count == 1 ? $"/attach {parked[0].Id}" : "/attach";
+                    };
                     InstallTeardownHook_NoLock();
                     // Start the resize poll once, alongside the driver.
                     _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);

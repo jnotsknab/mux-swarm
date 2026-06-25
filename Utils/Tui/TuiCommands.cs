@@ -64,6 +64,7 @@ internal static class TuiCommands
         new("/daemon cron",   "Add a cron trigger at runtime (/daemon cron \"<expr>\" <mode> <goal>)", Scope.SessionOnly),
         new("/daemon watch",  "Add a file-watch trigger at runtime (/daemon watch <glob> <mode> <goal>)", Scope.SessionOnly),
         new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
+        new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -103,6 +104,7 @@ internal static class TuiCommands
         new("/classic",      "Switch to the classic line renderer", Scope.ReplOnly),
         new("/tui",          "Switch to the live TUI renderer", Scope.ReplOnly),
         new("/resume",       "Resume a previous single-agent session", Scope.ReplOnly),
+        new("/attach",       "Re-enter a detached session (/attach [id])", Scope.ReplOnly),
         new("/model",        "View current swarm models", Scope.ReplOnly),
         new("/provider",     "View or switch the active LLM provider", Scope.ReplOnly),
         new("/workspace",    "Show or set the @-file workspace root (/workspace <path>)", Scope.ReplOnly),
