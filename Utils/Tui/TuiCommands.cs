@@ -213,6 +213,27 @@ internal static class TuiCommands
         return list.ToArray();
     }
 
+    /// <summary>
+    /// Unified TOP-LEVEL (menu) palette: REPL/mode-launch commands FIRST, then the session-native
+    /// commands so they are discoverable at the menu too (v0.12.0 full symmetry). Selecting a
+    /// session-native command at the menu does NOT run it (there is no live session); the App menu
+    /// WARNS that it needs an active session. Their descriptions carry a "(needs a session)" hint
+    /// so the consequence is visible before selecting.
+    /// </summary>
+    public static readonly (string Cmd, string Desc)[] ReplUnified = BuildReplUnified();
+
+    private static (string Cmd, string Desc)[] BuildReplUnified()
+    {
+        var list = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (cmd, desc) in Repl)
+            if (seen.Add(cmd)) list.Add((cmd, desc));
+        foreach (var e in All)
+            if (e.Scope == Scope.SessionOnly && seen.Add(e.Cmd))
+                list.Add((e.Cmd, e.Desc + "  (needs a session)"));
+        return list.ToArray();
+    }
+
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
     /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
     /// the transcript/expand overlay).</summary>

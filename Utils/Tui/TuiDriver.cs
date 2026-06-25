@@ -282,7 +282,7 @@ internal sealed class TuiDriver
     private IReadOnlyList<(string Name, string Desc)> _skills = Array.Empty<(string, string)>();
 
     /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
-    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.SessionUnified;
+    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.ReplUnified : TuiCommands.SessionUnified;
 
     /// <summary>Set the skills catalog backing the live "/skill" autocomplete preview.</summary>
     public void SetSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)

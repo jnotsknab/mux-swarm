@@ -318,13 +318,35 @@ public static class SingleAgentOrchestrator
         }
         else
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // First-turn parity: route the very first prompt through the same session-agnostic
+            // meta dispatch the in-session loop uses, so /background, /daemon, /kanban, and the
+            // slash-anywhere REPL hand-off work on turn one instead of being sent to the agent
+            // as a goal. Loop until a real goal (or quit) arrives.
+            initialGoal = "";
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            if (!MuxConsole.TuiActive)
-                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-            initialGoal = MuxConsole.ReadInput(cancellationToken) ?? "";
+                if (!MuxConsole.TuiActive)
+                    MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                string firstInput = MuxConsole.ReadInput(cancellationToken) ?? "";
 
-            cancellationToken.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (IsQuitCommand(firstInput))
+                {
+                    MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
+                    return;
+                }
+
+                var firstDisp = await MetaCommandDispatch.TryHandleAsync(
+                    firstInput, chatClientFactory, Models, cancellationToken);
+                if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
+                if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
+
+                initialGoal = firstInput;
+                break;
+            }
         }
 
         if (IsQuitCommand(initialGoal))

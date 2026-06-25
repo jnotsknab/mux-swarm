@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.26";
+    public static readonly string DebugTag = "g12.27";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -966,7 +966,16 @@ public class App
 
                 default:
                     if (userInput.StartsWith("/"))
-                        MuxConsole.WriteWarning("Unknown command. Type /help.");
+                    {
+                        // Slash-anywhere symmetry: a SESSION-native command typed at the menu has
+                        // no live session to act on. Warn that it needs an active session instead
+                        // of the generic "unknown command", so the user knows to launch one first.
+                        var menuCmd = userInput.Split(' ', 2)[0];
+                        if (MuxSwarm.Utils.Tui.TuiCommands.IsSessionNative(menuCmd))
+                            MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
+                        else
+                            MuxConsole.WriteWarning("Unknown command. Type /help.");
+                    }
                     else
                         MuxConsole.WriteMuted("Type /help for commands.");
                     break;

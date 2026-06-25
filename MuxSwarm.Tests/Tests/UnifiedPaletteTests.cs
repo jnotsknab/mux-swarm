@@ -44,4 +44,49 @@ public class UnifiedPaletteTests
         var entry = TuiCommands.SessionUnified.First(e => e.Cmd == "/kanban");
         Assert.DoesNotContain("ends session", entry.Desc);
     }
+
+    // --- g12.27: top-level (menu) unified palette + slash-anywhere symmetry ---
+
+    [Fact]
+    public void ReplUnified_IncludesModeLaunchCommands()
+    {
+        var cmds = TuiCommands.ReplUnified.Select(e => e.Cmd).ToList();
+        Assert.Contains("/agent", cmds);
+        Assert.Contains("/swarm", cmds);
+        Assert.Contains("/pswarm", cmds);
+        Assert.Contains("/teams", cmds);
+    }
+
+    [Fact]
+    public void ReplUnified_SurfacesSessionNativeCommands_WithNeedsSessionHint()
+    {
+        var entry = TuiCommands.ReplUnified.First(e => e.Cmd == "/compact");
+        Assert.Contains("needs a session", entry.Desc);
+        var bg = TuiCommands.ReplUnified.First(e => e.Cmd == "/background");
+        Assert.Contains("needs a session", bg.Desc);
+    }
+
+    [Fact]
+    public void ReplUnified_ModeLaunchNotTaggedNeedsSession()
+    {
+        var entry = TuiCommands.ReplUnified.First(e => e.Cmd == "/agent");
+        Assert.DoesNotContain("needs a session", entry.Desc);
+    }
+
+    [Fact]
+    public void ReplUnified_NoDuplicateCommands()
+    {
+        var cmds = TuiCommands.ReplUnified.Select(e => e.Cmd).ToList();
+        Assert.Equal(cmds.Count, cmds.Distinct().Count());
+    }
+
+    [Fact]
+    public void IsSessionNative_DetectsSessionOnlyCommands_ForMenuWarn()
+    {
+        // The App menu uses IsSessionNative to warn instead of "unknown command".
+        Assert.True(TuiCommands.IsSessionNative("/compact"));
+        Assert.True(TuiCommands.IsSessionNative("/background"));
+        Assert.False(TuiCommands.IsSessionNative("/agent"));
+        Assert.False(TuiCommands.IsSessionNative("/notacmd"));
+    }
 }

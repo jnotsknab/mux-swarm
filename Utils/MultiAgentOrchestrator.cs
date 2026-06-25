@@ -597,6 +597,12 @@ public static class MultiAgentOrchestrator
             MuxConsole.WriteRule();
         }
 
+        // Switch the docked-footer slash palette to the in-session (unified) command set so the
+        // session-agnostic meta commands (/background, /daemon, /kanban) and the slash-anywhere
+        // REPL hand-off are discoverable here, not just the top-level mode-launch set. The App
+        // menu re-asserts top-level scope when control returns, so this is self-restoring.
+        MuxConsole.EnableDockedFooter(topLevel: false);
+
         //Main loop 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -618,6 +624,14 @@ public static class MultiAgentOrchestrator
                     break;
                 }
 
+                // Session-agnostic meta commands (/background, /daemon, /kanban) + slash-anywhere
+                // REPL hand-off, mirroring the single-agent loop. Handled in place -> re-prompt;
+                // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
+                // the top-level menu runs it. Non-meta input falls through as a goal.
+                var disp = await MetaCommandDispatch.TryHandleAsync(
+                    input, chatClientFactory, agentModels, cancellationToken);
+                if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
+                if (disp == MetaCommandDispatch.Result.Handled) continue;
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
 
