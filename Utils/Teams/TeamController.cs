@@ -27,6 +27,11 @@ public sealed class TeamScope
     /// when the team config sets autoRun, or via the task_autorun tool.</summary>
     public AutoRunner? Runner { get; init; }
 
+    /// <summary>The peer self-claim engine for a taskboard team (null otherwise): per-member loops
+    /// that poll the board and claim eligible tasks on their own. Started via the team_peerwork
+    /// tool (or /kanban). Distinct from <see cref="Runner"/>, which is a single assignee-keyed loop.</summary>
+    public MemberRunner? PeerRunner { get; init; }
+
     public bool UsesTaskBoard => Board is not null;
 }
 
@@ -135,10 +140,11 @@ public static class TeamController
         if (maxSubIters <= 0) maxSubIters = 8;
 
         var tools = BuildTeamTools(
-            leadDef.Name, members, coordination, board,
+            team, leadDef.Name, members, coordination, board,
             chatClientFactory, agentModels, maxParallel, maxSubIters, state, ct,
-            out var autoRunner);
+            out var autoRunner, out var peerRunner);
         ActiveRunner = autoRunner;
+        ActivePeerRunner = peerRunner;
 
         // Start the auto-runner at launch when the team config opts in (taskboard only).
         if (autoRunner is not null && coordination == "taskboard" && team.AutoRun)
@@ -157,6 +163,7 @@ public static class TeamController
             Tools = tools,
             State = state,
             Runner = autoRunner,
+            PeerRunner = peerRunner,
         };
     }
 
@@ -166,11 +173,16 @@ public static class TeamController
         ActiveBoard = null;
         MuxConsole.TuiSetTaskBoardProvider(null);
         try { ActiveRunner?.Stop(); } catch { /* best-effort */ }
+        try { ActivePeerRunner?.Stop(); } catch { /* best-effort */ }
         ActiveRunner = null;
+        ActivePeerRunner = null;
     }
 
     /// <summary>The auto-runner of the currently-running team, stopped on Clear().</summary>
     public static AutoRunner? ActiveRunner { get; private set; }
+
+    /// <summary>The peer self-claim engine of the currently-running team, stopped on Clear().</summary>
+    public static MemberRunner? ActivePeerRunner { get; private set; }
 
     /// <summary>Feed the driver's Ctrl+T TaskBoard strip a point-in-time snapshot of the board
     /// (tally + flattened rows), keeping the TUI layer free of any State/Teams dependency.</summary>
@@ -195,6 +207,7 @@ public static class TeamController
     }
 
     private static IList<AITool> BuildTeamTools(
+        TeamConfig team,
         string leadName,
         List<string> members,
         string coordination,
@@ -205,27 +218,44 @@ public static class TeamController
         int maxSubIters,
         TeamState state,
         CancellationToken ct,
-        out AutoRunner? autoRunner)
+        out AutoRunner? autoRunner,
+        out MemberRunner? peerRunner)
     {
         autoRunner = null;
+        peerRunner = null;
         var delegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
         var semaphore = new SemaphoreSlim(Math.Max(1, maxParallel));
         var memberSet = new HashSet<string>(members, StringComparer.OrdinalIgnoreCase);
 
+        // Per-member context: "persistent" (default, warm sessions + auto-compaction) or "fresh"
+        // (clean session each task = the pre-g12.16 one-shot behavior). Members get their OWN
+        // auto-compact ceiling (compactionAgent.memberAutoCompactTokenThreshold) so a teammate pool
+        // stays cheap relative to the lead. The compaction client is resolved the same way the lead
+        // resolves its own (compactionAgent model, or the Orchestrator model as a fallback).
+        IChatClient? memberCompactionClient = ResolveMemberCompactionClient(chatClientFactory, agentModels);
+        ChatOptions? memberCompactionOptions = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
+        int memberThreshold = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.MemberAutoCompactTokenThreshold ?? 0;
+        var contextManager = new MemberContextManager(
+            team.Name, team.MemberContext, memberThreshold, memberCompactionClient, memberCompactionOptions);
+
         // Run one member on a task through the existing parallel-worker path. This is what makes
-        // members appear live in the Agent View (RunSubAgentAsync -> BeginSubAgentCapture).
+        // members appear live in the Agent View (RunSubAgentAsync -> BeginSubAgentCapture). The
+        // context manager decides clean-vs-warm session per the team's memberContext policy and
+        // auto-compacts a warm session that grows past the member threshold.
         async Task<string> RunMember(string agent, string task)
         {
             await semaphore.WaitAsync(ct);
             try
             {
                 state.LastActive = DateTimeOffset.UtcNow;
-                return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
-                    agent, task, leadName,
-                    MultiAgentOrchestrator.Specialists, delegationResults, retryRegistry,
-                    chatClientFactory, agentModels, compactionClient: null, compactionChatOptions: null,
-                    maxSubAgentIterations: maxSubIters, prodMode: false, ct: ct, cleanSession: true);
+                return await contextManager.RunAsync(agent, async cleanSession =>
+                    await ParallelSwarmOrchestrator.ExecuteParallelWorker(
+                        agent, task, leadName,
+                        MultiAgentOrchestrator.Specialists, delegationResults, retryRegistry,
+                        chatClientFactory, agentModels, compactionClient: null, compactionChatOptions: null,
+                        maxSubAgentIterations: maxSubIters, prodMode: false, ct: ct, cleanSession: cleanSession),
+                    ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) { return $"[ERROR {agent}] {ex.Message}"; }
@@ -447,10 +477,59 @@ public static class TeamController
                 description: "Toggle the background auto-runner for this team's board. When ON it periodically scans the " +
                              "board and automatically claims + runs eligible tasks (assigned, unblocked, past their start " +
                              "timer) without you assigning each one - draining a whole dependency graph on its own."));
+
+            // The peer self-claim engine: one poll->claim->run->complete loop PER member identity.
+            // Each member pulls work it is eligible for under the team's pickupPolicy ("assigned" =
+            // only its own assigned tasks; "open" = also any unassigned ready task), claims it
+            // file-locked, runs it in its (persistent or fresh) session, completes it, and loops -
+            // a self-organizing pool draining the dependency graph on its own.
+            bool openPool = NormalizePickupPolicy(team.PickupPolicy) == "open";
+            var peer = new MemberRunner(board, members, RunMember, state, openPool, ct);
+            peerRunner = peer;
+
+            tools.Add(AIFunctionFactory.Create(
+                method: (
+                    [Description("True to start the peer self-claim engine, false to stop it.")] bool enabled,
+                    [Description("Optional poll interval in seconds (how often each idle member scans for claimable work). Default 15, floor 3.")] int? intervalSeconds) =>
+                {
+                    if (enabled)
+                    {
+                        peer.Start(intervalSeconds ?? 15);
+                        return $"[teams] Peer self-claim ON (every {peer.IntervalSeconds}s, pickup={(openPool ? "open" : "assigned")}). " +
+                               "Each member claims + runs eligible board tasks on its own - one in-flight per member.";
+                    }
+                    peer.Stop();
+                    return "[teams] Peer self-claim OFF. Tasks now run only when you assign/auto-run them.";
+                },
+                name: "team_peerwork",
+                description: "Toggle peer self-claiming for this team's board. When ON, every member runs its own loop that " +
+                             "claims + runs board tasks it is eligible for (per the team's pickupPolicy) without the lead " +
+                             "assigning each one - a self-organizing pool, one task in-flight per member."));
         }
 
         return tools;
     }
+
+    /// <summary>Resolve the chat client used to compact MEMBER sessions: the configured compaction
+    /// model, or the Orchestrator model as a fallback. Null when neither resolves (callers then do a
+    /// bounded hard reset instead of leaking).</summary>
+    private static IChatClient? ResolveMemberCompactionClient(
+        Func<string, IChatClient> chatClientFactory, Dictionary<string, string> agentModels)
+    {
+        try
+        {
+            var model = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = agentModels.TryGetValue("Compaction", out var cm) ? cm
+                      : agentModels.TryGetValue("Orchestrator", out var om) ? om : null;
+            return string.IsNullOrWhiteSpace(model) ? null : chatClientFactory(model!);
+        }
+        catch { return null; }
+    }
+
+    /// <summary>Normalize the pickup policy; unknown values fall back to "assigned".</summary>
+    private static string NormalizePickupPolicy(string? p)
+        => (p ?? "assigned").Trim().ToLowerInvariant() == "open" ? "open" : "assigned";
 
     /// <summary>Claim-already-done: run a board task to completion and flip its status. Shared by
     /// task_assign and the auto-runner. The caller must have already claimed <paramref name="id"/>
@@ -595,6 +674,130 @@ public sealed class AutoRunner
         {
             lock (_gate) _busy.Remove(who);
         }
+    }
+
+    private string BriefFor(string id)
+    {
+        var t = _board.Get(id);
+        if (t is null) return $"Work task {id}.";
+        var sb = new StringBuilder();
+        sb.AppendLine($"You are assigned team task {t.Id}: {t.Subject}");
+        if (!string.IsNullOrWhiteSpace(t.Description)) sb.AppendLine().AppendLine(t.Description);
+        return sb.ToString();
+    }
+}
+
+/// <summary>
+/// The peer self-claim engine for a taskboard team: one independent poll-claim-run-complete loop
+/// PER member identity (the Claude-Code "teammates pull their own work" model). Each member's loop
+/// scans the board for the next task it may claim under the team's pickup policy
+/// (assigned-only: its own assigned tasks; open-pool: also any unassigned, ready task), claims it
+/// atomically (file-locked, so two members racing an open task can never both win), runs it in that
+/// member's session via the shared RunMember path, marks it Done/Failed (auto-unblocking dependents),
+/// and loops - one task in-flight per member at a time. The whole dependency DAG drains on its own:
+/// as blockers complete, dependents become claimable on the next scan. Honors the team session's
+/// CancellationToken; stops cleanly on Stop().
+/// </summary>
+public sealed class MemberRunner
+{
+    private readonly TaskBoard _board;
+    private readonly List<string> _members;
+    private readonly Func<string, string, Task<string>> _runMember;
+    private readonly TeamState _state;
+    private readonly bool _openPool;
+    private readonly CancellationToken _sessionCt;
+
+    private CancellationTokenSource? _cts;
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Task> _loops = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Per-member poll interval in seconds (floored at 3). Reflects the last Start() call.</summary>
+    public int IntervalSeconds { get; private set; } = 15;
+
+    /// <summary>True while at least one member loop is active.</summary>
+    public bool IsRunning
+    {
+        get { lock (_gate) return _loops.Values.Any(t => !t.IsCompleted); }
+    }
+
+    /// <summary>True when members may also claim unassigned (open-pool) tasks.</summary>
+    public bool OpenPool => _openPool;
+
+    internal MemberRunner(TaskBoard board, List<string> members,
+        Func<string, string, Task<string>> runMember, TeamState state, bool openPool,
+        CancellationToken sessionCt)
+    {
+        _board = board;
+        _members = members;
+        _runMember = runMember;
+        _state = state;
+        _openPool = openPool;
+        _sessionCt = sessionCt;
+    }
+
+    /// <summary>Start (or restart with a new interval) one self-claim loop per member.</summary>
+    public void Start(int intervalSeconds)
+    {
+        IntervalSeconds = Math.Max(3, intervalSeconds);
+        lock (_gate)
+        {
+            if (IsRunning) return;
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCt);
+            _loops.Clear();
+            foreach (var m in _members)
+            {
+                var who = m;
+                _loops[who] = Task.Run(() => RunMemberLoopAsync(who, _cts.Token));
+            }
+        }
+    }
+
+    /// <summary>Stop every member loop. A task already in flight finishes naturally.</summary>
+    public void Stop()
+    {
+        lock (_gate)
+        {
+            try { _cts?.Cancel(); } catch { /* already disposed */ }
+        }
+    }
+
+    private async Task RunMemberLoopAsync(string who, CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                bool didWork = false;
+
+                // Drain everything this member can claim right now, one task at a time.
+                while (!ct.IsCancellationRequested)
+                {
+                    var next = _board.NextClaimableFor(who, _openPool, DateTimeOffset.UtcNow);
+                    if (next is null) break;
+
+                    if (!_board.TryClaim(next.Id, who, out _)) continue; // raced another member; try the next
+                    didWork = true;
+
+                    string result;
+                    try { result = await _runMember(who, BriefFor(next.Id)); }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        _board.Unassign(next.Id, out _); // return it to the pool
+                        return;
+                    }
+                    bool ok = !result.StartsWith("[ERROR", StringComparison.Ordinal);
+                    _board.SetStatus(next.Id, ok ? TeamTaskStatus.Done : TeamTaskStatus.Failed, out _);
+                    _state.Save();
+                }
+
+                // Nothing claimable this pass -> wait a poll interval (shorter if we just worked, so a
+                // freshly-unblocked dependent is picked up promptly).
+                try { await Task.Delay(TimeSpan.FromSeconds(didWork ? 1 : IntervalSeconds), ct); }
+                catch (OperationCanceledException) { break; }
+            }
+        }
+        catch (OperationCanceledException) { /* clean stop */ }
+        catch (Exception ex) { MuxConsole.WriteWarning($"[teams] Peer loop for {who} stopped on error: {ex.Message}"); }
     }
 
     private string BriefFor(string id)

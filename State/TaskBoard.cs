@@ -397,6 +397,34 @@ public sealed class TaskBoard
         }
     }
 
+    /// <summary>
+    /// The next task a specific <paramref name="member"/> may claim under its own self-claim loop:
+    /// the earliest-created task that is unowned, dependency-satisfied, and past its
+    /// <see cref="TeamTask.StartAt"/> time, AND eligible for this member under the pickup policy.
+    /// When <paramref name="openPool"/> is false the task's <see cref="TeamTask.Assignee"/> must be
+    /// this member (assigned-only); when true the member may also take any UNASSIGNED ready task
+    /// (a self-organizing pool). Returns a deep clone, or null when nothing is claimable now. The
+    /// actual claim still goes through <see cref="TryClaim"/>, so two members racing for the same
+    /// open task can never both win.
+    /// </summary>
+    public TeamTask? NextClaimableFor(string member, bool openPool, DateTimeOffset now)
+    {
+        if (string.IsNullOrWhiteSpace(member)) return null;
+        lock (_gate)
+        {
+            var pick = _tasks.Values
+                .Where(t => t.Owner is null
+                            && (t.Status == TeamTaskStatus.Pending || t.Status == TeamTaskStatus.Blocked)
+                            && DepsSatisfied_NoLock(t)
+                            && (t.StartAt is null || t.StartAt <= now)
+                            && (string.Equals(t.Assignee, member, StringComparison.OrdinalIgnoreCase)
+                                || (openPool && t.Assignee is null)))
+                .OrderBy(t => t.Created)
+                .FirstOrDefault();
+            return pick is null ? null : Clone(pick);
+        }
+    }
+
     /// <summary>True when every blocker of <paramref name="t"/> is Done.</summary>
     private bool DepsSatisfied_NoLock(TeamTask t)
         => t.BlockedBy.All(d => _tasks.TryGetValue(d, out var dep) && dep.Status == TeamTaskStatus.Done);

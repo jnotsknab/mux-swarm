@@ -49,4 +49,25 @@ public class TeamConfig
     /// <summary>Auto-runner poll interval in seconds. Default 15. Clamped to a sane floor at runtime.</summary>
     [JsonPropertyName("autoRunIntervalSeconds")]
     public int AutoRunIntervalSeconds { get; set; } = 15;
+
+    /// <summary>
+    /// How a member's session is managed across task pickups (taskboard teams):
+    /// "persistent" (default) keeps each member's session warm so context carries over between
+    /// tasks - bounded by per-member auto-compaction at
+    /// <see cref="CompacterConfig.MemberAutoCompactTokenThreshold"/>; "fresh" starts a clean
+    /// session for every task (the pre-g12.16 one-shot behavior, no carry-over, no growth).
+    /// Unknown values fall back to "persistent".
+    /// </summary>
+    [JsonPropertyName("memberContext")]
+    public string MemberContext { get; set; } = "persistent";
+
+    /// <summary>
+    /// How members acquire board tasks when running their own self-claim loops (taskboard teams):
+    /// "assigned" (default) - a member only auto-claims tasks whose Assignee is itself (the lead
+    /// or /kanban designates who runs what); "open" - any idle member may claim any unassigned,
+    /// unblocked, ready task (a self-organizing pool, load-balanced across members). File-locked
+    /// claiming makes both race-safe. Unknown values fall back to "assigned".
+    /// </summary>
+    [JsonPropertyName("pickupPolicy")]
+    public string PickupPolicy { get; set; } = "assigned";
 }
