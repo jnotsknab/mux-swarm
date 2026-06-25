@@ -46,6 +46,7 @@ internal static class TuiCommands
         new("/redo",         "Retry the last message", Scope.SessionOnly),
         new("/effort",       "Cycle reasoning effort (low/med/high)", Scope.SessionOnly),
         new("/tag",          "Tag this session for easy resume/search (/tag <text>)", Scope.SessionOnly),
+        new("/kanban",       "Editable team board (taskboard teams) (/kanban [add|assign|move|...])", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -112,7 +113,7 @@ internal static class TuiCommands
     {
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
-        "/tag", "/showreasoning", "/workspace", "/teams",
+        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

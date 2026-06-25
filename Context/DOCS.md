@@ -442,7 +442,9 @@ selection over the existing `agents[]` plus a coordination policy, launched with
   "maxParallel": 4,
   "agentView": "auto",
   "autoRun": false,
-  "autoRunIntervalSeconds": 15
+  "autoRunIntervalSeconds": 15,
+  "memberContext": "persistent",
+  "pickupPolicy": "assigned"
 }
 ```
 
@@ -454,6 +456,20 @@ selection over the existing `agents[]` plus a coordination policy, launched with
 - `agentView` - `auto` (always-on status strip) or `minimal`.
 - `autoRun` - taskboard only: start the background auto-runner at launch (see Teams & TaskBoard).
 - `autoRunIntervalSeconds` - auto-runner poll interval (default 15, floor 3).
+- `memberContext` - how a member's session carries across task pickups: `persistent` (default; warm
+  session, context accumulates, auto-compacted at the member threshold below) or `fresh` (clean
+  session each task, no carry-over).
+- `pickupPolicy` - how members acquire work when the peer self-claim engine runs: `assigned`
+  (default; a member only auto-claims tasks whose `assignee` is itself) or `open` (any idle member
+  may also claim any unassigned, unblocked, ready task - a self-organizing pool). Claiming is
+  file-locked, so both are race-safe.
+
+The per-member context ceiling lives on `compactionAgent` (next to `autoCompactTokenThreshold`):
+
+- `memberAutoCompactTokenThreshold` - when a persistent member's session is estimated past this many
+  tokens, its history is summarized and reseeded (the same mechanism the single-agent loop uses).
+  Members get their own knob so they can run tighter than the lead. `0` (default) falls back to a
+  bounded runtime default (never unbounded).
 
 ### modelOpts
 
@@ -549,6 +565,8 @@ Flags can be combined. Common stacks:
 /workflow       Run a workflow file
 /teams          List configured teams, or launch one: /teams <name>
 /createteam     Guided wizard to create a team (saved to swarm.json teams[])
+/kanban         (in a taskboard team) editable board: add/assign/move/ready/remove tasks +
+                toggle the peer self-claim engine. /kanban help for the full verb list.
 /resume         Resume previous session
 /compact        Compress session context
 /model          View model assignments
@@ -608,6 +626,8 @@ task_info      Full detail for one task: status, owner, assignee, deps (and whic
                what it blocks, timestamps.
 task_list      List every task with status, owner/assignee, and dependencies.
 task_autorun   Toggle the background auto-runner. Args: enabled (bool), intervalSeconds (default 15).
+team_peerwork  Toggle peer self-claiming (each member claims its own eligible tasks per pickupPolicy).
+               Args: enabled (bool), intervalSeconds (default 15).
 ```
 
 ### Auto-runner (timer / trigger)
@@ -622,6 +642,31 @@ Start it at launch with `"autoRun": true` in the team config, or at runtime via 
 `task_autorun(enabled: true)`. To schedule work, create tasks with an `assignee` and an optional
 `startInSeconds` delay, then let the runner drain them. Turn it off with `task_autorun(enabled: false)`;
 tasks then run only when the lead assigns them.
+
+### Peer self-claiming (members pull their own work)
+
+Beyond the single lead-keyed auto-runner, every member can run its **own** poll-claim-run loop and
+pull work off the board on its own initiative (the Claude-Code "teammates claim their own tasks"
+model). Each member's loop scans for the next task it may claim under the team's `pickupPolicy`
+(`assigned` = only its own assigned tasks; `open` = also any unassigned, unblocked, ready task),
+claims it atomically (file-locked, so two members racing an open task can never both win), runs it,
+marks it Done/Failed (auto-unblocking dependents), and loops - one task in-flight per member.
+
+Toggle it with the lead tool `team_peerwork(enabled, intervalSeconds)` or, interactively, with
+`/kanban peer on|off`. Mark a task claimable from the board with `/kanban ready <id>` (or
+`/kanban assign <id> <member>` to direct it to a specific member under the `assigned` policy).
+
+### Persistent member context
+
+With `memberContext: "persistent"` (the default) each member keeps a **warm session** so its context
+accumulates across the tasks it picks up - it remembers what it did on previous tasks, like the main
+agent's session does. To keep that bounded, a member's session is **auto-compacted** when it grows
+past `compactionAgent.memberAutoCompactTokenThreshold`: its history is summarized and the session is
+reseeded with the summary (the exact mechanism the single-agent loop uses for its own
+`autoCompactTokenThreshold`), so a warm member can never grow without bound. Set
+`memberContext: "fresh"` to opt a team back into one-shot members (clean session per task, no
+carry-over). Per-member working state (activity, completed count, compaction count, token estimate)
+persists under `<install>/Teams/{slug}/members/{member}.json` for resume + the Agent View.
 
 ## OS Service Registration
 

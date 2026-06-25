@@ -1420,6 +1420,12 @@ public static class SingleAgentOrchestrator
                     await HandleTagAsync(metaCmd, sessionTimestamp, session, agent,
                         resolvedModelId, chatClientFactory, cancellationToken);
                 }
+                else if (metaCmd.Equals("/kanban", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/kanban ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Editable team board for the active taskboard team; a no-op hint off-team.
+                    MuxSwarm.Utils.Teams.KanbanCommand.Run(metaCmd);
+                }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
                 {
                     // Slash-anywhere (web-UI parity): the user typed a REPL-only command inside a
