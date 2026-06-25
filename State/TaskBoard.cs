@@ -187,13 +187,39 @@ public sealed class TaskBoard
                     Persist(dep);
                 }
 
-            if (deps.Any(d => _tasks.TryGetValue(d, out var dep) && dep.Status != TeamTaskStatus.Done))
+            // A dependency that is not Done - INCLUDING an unknown/stale id that resolves to no
+            // task - leaves this task Blocked. A dangling dep id must never be treated as
+            // satisfied (that would silently bypass gating); it blocks until the id is created +
+            // completed or the dep is removed. Mirrors DepsSatisfied_NoLock / IsClaimable_NoLock.
+            if (deps.Any(d => !_tasks.TryGetValue(d, out var dep) || dep.Status != TeamTaskStatus.Done))
                 task.Status = TeamTaskStatus.Blocked;
 
             _tasks[id] = task;
             Persist(task);
             return Clone(task);
         }
+    }
+
+    /// <summary>True when a task with this id exists on the board.</summary>
+    public bool Exists(string id)
+    {
+        lock (_gate) return _tasks.ContainsKey((id ?? string.Empty).Trim());
+    }
+
+    /// <summary>
+    /// The subset of <paramref name="depIds"/> that do NOT resolve to a real task on the board.
+    /// Used to reject a create/block with stale or typo'd dependency ids LOUDLY rather than
+    /// silently treating an unknown dep as satisfied (which would bypass dependency gating).
+    /// </summary>
+    public IReadOnlyList<string> UnknownDeps(IEnumerable<string>? depIds)
+    {
+        lock (_gate)
+            return (depIds ?? Enumerable.Empty<string>())
+                .Select(d => (d ?? string.Empty).Trim())
+                .Where(d => d.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .Where(d => !_tasks.ContainsKey(d))
+                .ToList();
     }
 
     /// <summary>True when a task exists, is unclaimed, and all its blockers are Done.</summary>

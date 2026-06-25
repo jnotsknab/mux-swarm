@@ -310,6 +310,12 @@ public static class TeamController
                     var who = string.IsNullOrWhiteSpace(assignee) ? null : assignee!.Trim();
                     if (who is not null && !memberSet.Contains(who))
                         return $"[teams] Assignee '{who}' is not a member. Members: {roster}";
+                    // Reject stale/typo'd dependency ids LOUDLY - an unknown dep must never be
+                    // silently treated as satisfied (that would bypass dependency gating).
+                    var unknownDeps = board.UnknownDeps(deps);
+                    if (unknownDeps.Count > 0)
+                        return $"[teams] Unknown dependency id(s): {string.Join(", ", unknownDeps)}. " +
+                               "Create those tasks first, or omit them. (No task was created.)";
                     DateTimeOffset? startAt = startInSeconds is { } s && s > 0
                         ? DateTimeOffset.UtcNow.AddSeconds(s) : null;
                     var t = board.Create(subject, description, deps, who, startAt);
@@ -418,9 +424,17 @@ public static class TeamController
                     sb.AppendLine($"  owner: {t.Owner ?? "(unclaimed)"}   assignee: {t.Assignee ?? "(none)"}");
                     if (t.BlockedBy.Count > 0)
                     {
-                        var pending = t.BlockedBy.Where(d => board.Get(d) is { Status: not TeamTaskStatus.Done }).ToList();
-                        sb.AppendLine($"  blockedBy: [{string.Join(",", t.BlockedBy)}]" +
-                                      (pending.Count > 0 ? $"  (waiting on: {string.Join(",", pending)})" : "  (all deps done)"));
+                        // An unknown/stale dep id is NOT "done" - surface it distinctly so a typo'd
+                        // dependency is visible rather than silently counted as satisfied.
+                        var unknown = board.UnknownDeps(t.BlockedBy);
+                        var pending = t.BlockedBy
+                            .Where(d => !unknown.Contains(d) && board.Get(d) is { Status: not TeamTaskStatus.Done })
+                            .ToList();
+                        var notes = new List<string>();
+                        if (pending.Count > 0) notes.Add($"waiting on: {string.Join(",", pending)}");
+                        if (unknown.Count > 0) notes.Add($"UNKNOWN dep id(s): {string.Join(",", unknown)}");
+                        if (notes.Count == 0) notes.Add("all deps done");
+                        sb.AppendLine($"  blockedBy: [{string.Join(",", t.BlockedBy)}]  ({string.Join("; ", notes)})");
                     }
                     if (t.Blocks.Count > 0) sb.AppendLine($"  blocks: [{string.Join(",", t.Blocks)}]");
                     sb.AppendLine($"  created: {t.Created:u}" +

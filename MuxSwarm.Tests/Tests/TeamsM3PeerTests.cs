@@ -199,4 +199,49 @@ public class TeamsM3PeerTests
     {
         Assert.Null(MemberState.Load("no-such-team-" + Guid.NewGuid().ToString("N"), "Ghost"));
     }
+
+    // ---- Dangling-dependency gating (stale/typo'd dep id must NOT count as satisfied) ----
+
+    [Fact]
+    public void Create_WithUnknownDep_StartsBlocked_NotPending()
+    {
+        var board = TaskBoard.Open("t", TempRoot());
+        var t = board.Create("orphan", "", new[] { "t999" });   // t999 never existed
+        Assert.Equal(TeamTaskStatus.Blocked, t.Status);
+        // and it must not be claimable while the dep is unresolved
+        Assert.False(board.IsClaimable(t.Id));
+        Assert.Null(board.NextClaimableFor("Alice", openPool: true, DateTimeOffset.UtcNow));
+    }
+
+    [Fact]
+    public void Create_WithStaleClearedDep_StaysBlocked()
+    {
+        var board = TaskBoard.Open("t", TempRoot());
+        var a = board.Create("first", "");
+        board.Remove(a.Id, out _);                              // clear t1; counter keeps advancing
+        var t = board.Create("second", "", new[] { a.Id });    // depends on the now-stale id
+        Assert.Equal(TeamTaskStatus.Blocked, t.Status);
+        Assert.False(board.IsClaimable(t.Id));
+    }
+
+    [Fact]
+    public void UnknownDeps_ReportsOnlyMissingIds()
+    {
+        var board = TaskBoard.Open("t", TempRoot());
+        var a = board.Create("real", "");
+        var unknown = board.UnknownDeps(new[] { a.Id, "t777", "  ", "t777" });
+        Assert.Equal(new[] { "t777" }, unknown.ToArray());      // dedup + trim + only-missing
+        Assert.Empty(board.UnknownDeps(new[] { a.Id }));
+    }
+
+    [Fact]
+    public void Exists_TracksPresence()
+    {
+        var board = TaskBoard.Open("t", TempRoot());
+        var a = board.Create("x", "");
+        Assert.True(board.Exists(a.Id));
+        board.Remove(a.Id, out _);
+        Assert.False(board.Exists(a.Id));
+        Assert.False(board.Exists("t12345"));
+    }
 }

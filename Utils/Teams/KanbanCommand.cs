@@ -233,6 +233,13 @@ public static class KanbanCommand
         // the simplest contract: if deps are given and any is unfinished, force Blocked.
         var existing = board.Get(id);
         if (existing is null) { MuxConsole.WriteWarning($"[kanban] no such task '{id}'."); return; }
+        // Reject stale/typo'd dep ids loudly - an unknown dep must not silently pass gating.
+        var unknown = board.UnknownDeps(deps);
+        if (unknown.Count > 0)
+        {
+            MuxConsole.WriteWarning($"[kanban] unknown dependency id(s): {string.Join(", ", unknown)}. Nothing changed.");
+            return;
+        }
         bool anyOpen = deps.Any(d => board.Get(d) is { Status: not TeamTaskStatus.Done });
         if (deps.Length > 0 && anyOpen)
         {
