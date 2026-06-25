@@ -28,6 +28,12 @@ public sealed class DaemonRunner : IAsyncDisposable
     private readonly Dictionary<string, Func<Task>> _restartHandlers = new(StringComparer.OrdinalIgnoreCase);
     private volatile bool _killed;
 
+    // Runtime-added triggers (via /daemon cron|watch): each gets its own CTS so it can be cancelled
+    // individually without tearing down the whole daemon. The boot triggers share _cts.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _runtimeCts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, DaemonTrigger> _runtimeTriggers = new(StringComparer.OrdinalIgnoreCase);
+    private int _runtimeSeq;
+
     private static readonly HttpClient HttpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(10)
@@ -97,6 +103,75 @@ public sealed class DaemonRunner : IAsyncDisposable
             _workers.Add(worker);
         }
     }
+
+    /// <summary>True once <see cref="Start"/> has wired up the execution dependencies (needed before
+    /// a runtime trigger can fire a goal).</summary>
+    public bool IsStarted => _chatClientFactory is not null;
+
+    /// <summary>
+    /// Add and immediately start a trigger at runtime (via /daemon cron|watch), independent of the
+    /// boot config. The trigger gets its own CancellationTokenSource so <see cref="CancelTrigger"/>
+    /// can stop just this one. Returns the assigned id, or null when the daemon isn't started yet or
+    /// the type is unsupported for runtime add (only "cron" and "watch").
+    /// </summary>
+    public string? AddTriggerRuntime(DaemonTrigger trigger)
+    {
+        if (!IsStarted) { MuxConsole.WriteWarning("[Daemon] Not started yet; cannot add a runtime trigger."); return null; }
+        var type = (trigger.Type ?? "").ToLowerInvariant();
+        if (type is not ("cron" or "watch"))
+        {
+            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch (got '{trigger.Type}').");
+            return null;
+        }
+        if (string.IsNullOrWhiteSpace(trigger.Id))
+            trigger.Id = $"rt{System.Threading.Interlocked.Increment(ref _runtimeSeq)}";
+
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_cts.Token);
+        _runtimeCts[trigger.Id] = cts;
+        _runtimeTriggers[trigger.Id] = trigger;
+
+        var worker = type switch
+        {
+            "watch" => RunWatchLoop(trigger, cts.Token),
+            "cron"  => RunCronLoop(trigger, cts.Token),
+            _       => LogUnknownTrigger(trigger),
+        };
+        _workers.Add(worker);
+        return trigger.Id;
+    }
+
+    /// <summary>Cancel one runtime-added trigger by id. Returns false when no such runtime trigger.</summary>
+    public bool CancelTrigger(string id)
+    {
+        var key = (id ?? "").Trim();
+        if (_runtimeCts.TryRemove(key, out var cts))
+        {
+            try { cts.Cancel(); } catch { /* already disposed */ }
+            _runtimeTriggers.TryRemove(key, out _);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Snapshot of all known triggers: boot (from config) + runtime-added, with a flag.</summary>
+    public IReadOnlyList<(string Id, string Type, string Detail, bool Runtime)> ListTriggers()
+    {
+        var list = new List<(string, string, string, bool)>();
+        foreach (var t in _config.Triggers)
+            list.Add((t.Id, t.Type, TriggerDetail(t), false));
+        foreach (var t in _runtimeTriggers.Values)
+            list.Add((t.Id, t.Type, TriggerDetail(t), true));
+        return list;
+    }
+
+    private static string TriggerDetail(DaemonTrigger t) => t.Type.ToLowerInvariant() switch
+    {
+        "cron"   => $"{t.Schedule} -> {t.Mode}:{t.Agent ?? "(default)"}",
+        "watch"  => $"{t.Path} -> {t.Mode}:{t.Agent ?? "(default)"}",
+        "status" => $"{t.Check} (restart={t.Restart})",
+        "bridge" => $"{t.Command}",
+        _        => "",
+    };
 
     public async ValueTask DisposeAsync()
     {

@@ -1435,6 +1435,12 @@ public static class SingleAgentOrchestrator
                     // Launch/list/cancel detached background agent jobs (watchable via the \\ Agent View).
                     await DetachedRunner.RunCommand(metaCmd, chatClientFactory, Models, cancellationToken);
                 }
+                else if (metaCmd.Equals("/daemon", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/da", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/daemon ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/da ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
+                    MuxSwarm.State.DaemonCommand.Run(metaCmd);
+                }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
                 {
                     // Slash-anywhere (web-UI parity): the user typed a REPL-only command inside a

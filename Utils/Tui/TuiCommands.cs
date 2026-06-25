@@ -57,6 +57,13 @@ internal static class TuiCommands
         new("/detach",        "Run an agent on a goal in the background, watchable via \\ (/detach <agent> <goal>)", Scope.SessionOnly),
         new("/detach jobs",   "List detached background agent jobs", Scope.SessionOnly),
         new("/detach cancel", "Cancel a running background job (/detach cancel <id>)", Scope.SessionOnly),
+        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.SessionOnly),
+        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.SessionOnly),
+        new("/daemon off",    "Stop the daemon", Scope.SessionOnly),
+        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.SessionOnly),
+        new("/daemon cron",   "Add a cron trigger at runtime (/daemon cron \"<expr>\" <mode> <goal>)", Scope.SessionOnly),
+        new("/daemon watch",  "Add a file-watch trigger at runtime (/daemon watch <glob> <mode> <goal>)", Scope.SessionOnly),
+        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -123,7 +130,7 @@ internal static class TuiCommands
     {
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
-        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/detach",
+        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/detach", "/daemon", "/da",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
