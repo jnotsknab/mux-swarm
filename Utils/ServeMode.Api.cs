@@ -554,6 +554,7 @@ public static partial class ServeMode
             tokenPct = Math.Round(pct, 1),
             plan = App.PlanMode,
             ultra = App.UltraMode,
+            giga = App.GigaMode,
         });
     }
 

@@ -2,7 +2,7 @@
 
 public struct Help
 {
-    public static readonly string HelpText = string.Join("\n",
+    public static readonly string HelpText = string.Join("\r\n",
         "Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime & Operating Environment",
         "",
         "Slash Commands",
@@ -16,6 +16,7 @@ public struct Help
         "  /addcontext     Allows configuration of what context each agent is injected with (supports custom overrides)",
         "  /plan           Toggle plan mode, agents present a plan and ask for approval before executing",
         "  /ultra          Toggle deep-reasoning mode (plan + maximum reasoning budget + heavy delegation)",
+        "  /giga           Toggle giga mode (ultra + the agent can spawn teams and author/run workflows itself)",
         "  /classic        Switch to the classic line-by-line renderer (opt out of the live TUI)",
         "  /tui            Switch to the live full-screen TUI renderer (capable terminals only)",
         "  /verbose        Toggle TUI tool output between compact (collapsed) and full panels",

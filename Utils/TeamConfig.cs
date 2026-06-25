@@ -70,4 +70,14 @@ public class TeamConfig
     /// </summary>
     [JsonPropertyName("pickupPolicy")]
     public string PickupPolicy { get; set; } = "assigned";
+
+    /// <summary>
+    /// Whether this team has an inter-agent mailbox (M4). When true (default) the lead AND every
+    /// member get the <c>send_message</c> / <c>read_inbox</c> tools, members drain their inbox at
+    /// the start of each task, and an idle member wakes to process incoming messages. Set false to
+    /// disable inter-agent messaging entirely for the team (no mailbox, no tools, no drain) -
+    /// byte-identical to a team with no messaging.
+    /// </summary>
+    [JsonPropertyName("mailbox")]
+    public bool Mailbox { get; set; } = true;
 }

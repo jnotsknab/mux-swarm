@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.31";
+    public static readonly string DebugTag = "g12.33";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -45,6 +45,12 @@ public class App
     public static bool UltraMode = false;
     private static bool _ultraPriorPlan = false;
     private static bool _ultraPriorParaSub = false;
+    // v0.12.0 M6 Giga mode: a superset of /ultra that also grants dynamic orchestration tools
+    // (spawn_team / run_team / write_workflow / run_workflow). Public so orchestrators + /api can read it.
+    public static bool GigaMode = false;
+    private static bool _gigaPriorPlan = false;
+    private static bool _gigaPriorParaSub = false;
+    private static bool _gigaPriorUltra = false;
 
     // Interactive render-mode preference from the CLI (--classic / --tui). Null = use
     // console.renderMode config (default "auto"). Never affects stdio/serve output.
@@ -821,6 +827,34 @@ public class App
                         MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
                     // Reflect the new mode badges in the docked footer immediately (not after stream).
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    break;
+                case "/giga":
+                    GigaMode = !GigaMode;
+                    if (GigaMode)
+                    {
+                        // Giga is a superset of ultra: force plan + max reasoning (via UltraMode) AND
+                        // grant dynamic-orchestration tools. Capture prior flags to restore on toggle-off.
+                        _gigaPriorPlan = ShouldPlan;
+                        _gigaPriorParaSub = AllowParallelSubAgents;
+                        _gigaPriorUltra = UltraMode;
+                        UltraMode = true;
+                        ShouldPlan = true;
+                        if (App.Config.Ultra.AutoSubAgents)
+                            AllowParallelSubAgents = true;
+                        MuxConsole.WriteSuccess("Giga Mode enabled");
+                        MuxConsole.WriteMuted("Dynamic orchestration unlocked: the agent can spawn_team, run_team, and write/run workflows on its own.");
+                        MuxConsole.WriteMuted($"Maximum reasoning + plan discipline on (thinking budget {App.Config.Ultra.ThinkingBudget}). Giga teams are tagged 'giga:'.");
+                    }
+                    else
+                    {
+                        ShouldPlan = _gigaPriorPlan;
+                        AllowParallelSubAgents = _gigaPriorParaSub;
+                        UltraMode = _gigaPriorUltra;
+                        MuxSwarm.Utils.Teams.GigaMode.Reset();
+                        MuxConsole.WriteSuccess("Giga Mode disabled");
+                        MuxConsole.WriteMuted($"Orchestration tools removed; reasoning/plan flags restored (Ultra: {(UltraMode ? "on" : "off")}, Plan: {(ShouldPlan ? "on" : "off")}).");
+                    }
                     MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
                     break;
                 case "/tools":

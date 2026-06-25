@@ -228,6 +228,50 @@ public sealed class Mailbox
         lock (_gate) { return _shutdown.Contains((agent ?? string.Empty).Trim()); }
     }
 
+    /// <summary>Unread message count for one agent's inbox.</summary>
+    public int UnreadCountFor(string agent)
+    {
+        lock (_gate)
+        {
+            var dir = InboxDir(agent);
+            if (!Directory.Exists(dir)) return 0;
+            int n = 0;
+            foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+            {
+                try
+                {
+                    var m = JsonSerializer.Deserialize<TeamMessage>(File.ReadAllText(file), JsonOpts);
+                    if (m is not null && !m.Read) n++;
+                }
+                catch { /* skip */ }
+            }
+            return n;
+        }
+    }
+
+    /// <summary>True when <paramref name="agent"/> has an unread message that warrants a turn to act
+    /// on (a Question or Handoff). Info/Answer messages are FYI and do not by themselves wake an idle
+    /// member - they are still delivered into the next task's brief. Shutdown is handled separately.</summary>
+    public bool HasActionableUnread(string agent)
+    {
+        lock (_gate)
+        {
+            var dir = InboxDir(agent);
+            if (!Directory.Exists(dir)) return false;
+            foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+            {
+                try
+                {
+                    var m = JsonSerializer.Deserialize<TeamMessage>(File.ReadAllText(file), JsonOpts);
+                    if (m is not null && !m.Read && (m.Type == MsgType.Question || m.Type == MsgType.Handoff))
+                        return true;
+                }
+                catch { /* skip */ }
+            }
+            return false;
+        }
+    }
+
     /// <summary>Total unread messages across all inboxes (for a lightweight UI badge).</summary>
     public int UnreadCount()
     {

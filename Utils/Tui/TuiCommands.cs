@@ -83,6 +83,7 @@ internal static class TuiCommands
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
         new("/plan",         "Toggle plan mode (approve before exec)", Scope.ReplOnly),
         new("/ultra",        "Toggle deep-reasoning mode (plan + max reasoning)", Scope.ReplOnly),
+        new("/giga",         "Toggle giga mode (ultra + dynamic team/workflow orchestration)", Scope.ReplOnly),
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),

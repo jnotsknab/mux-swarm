@@ -186,12 +186,12 @@ public static class SingleAgentOrchestrator
                 // Insert the stub right after the header line.
                 int lineEnd = content.IndexOf('\n', idx);
                 if (lineEnd < 0) lineEnd = content.Length;
-                updated = content[..lineEnd] + "\n" + stub + content[lineEnd..];
+                updated = content[..lineEnd] + "\r\n" + stub + content[lineEnd..];
             }
             else
             {
-                var sep = content.Length > 0 && !content.EndsWith("\n") ? "\n\n" : "\n";
-                updated = content + sep + header + "\n" + stub + "\n";
+                var sep = content.Length > 0 && !content.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                updated = content + sep + header + "\r\n" + stub + "\r\n";
             }
 
             Directory.CreateDirectory(PlatformContext.ContextDirectory);
@@ -382,13 +382,13 @@ public static class SingleAgentOrchestrator
             shouldPlan,
             App.UltraMode);
 
-        systemPrompt = preamble + "\n\n" + systemPrompt;
+        systemPrompt = preamble + "\r\n\r\n" + systemPrompt;
 
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
             {
                 var skills = SkillLoader.GetSkillMetadata(singleAgentDef?.Name);
-                return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
+                return string.Join("\r\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
             },
             name: "list_skills",
             description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill."
@@ -405,8 +405,8 @@ public static class SingleAgentOrchestrator
                     return content;
 
                 var available = SkillLoader.GetSkillMetadata(singleAgentDef?.Name);
-                var listing = string.Join("\n", available.Select(s => $"- {s.Name}: {s.Description}"));
-                return $"Skill '{skillName}' not found. Here are the currently available skills — call read_skill again with a valid name:\n{listing}";
+                var listing = string.Join("\r\n", available.Select(s => $"- {s.Name}: {s.Description}"));
+                return $"Skill '{skillName}' not found. Here are the currently available skills — call read_skill again with a valid name:\r\n{listing}";
             },
             name: "read_skill",
             description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
@@ -482,7 +482,7 @@ public static class SingleAgentOrchestrator
 
             if (!succeeded && attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
             {
-                compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
+                compacted += $"\r\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
 
@@ -647,12 +647,29 @@ public static class SingleAgentOrchestrator
         // Null teamScope leaves the tool list and registry exactly as the off-team path built them.
         if (teamScope is not null)
         {
+            // M4: pass the team's per-member extra-tool factory so each MEMBER specialist is built
+            // with its own identity-bound send_message/read_inbox (null = no team mailbox).
             await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
-                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                teamScope.MemberToolFactory);
             foreach (var t in teamScope.Tools) singleAgentTools.Add(t);
             // Append the concise teams-coordination guide ONLY while leading a team. Off-team this
             // block is skipped, so the single-agent system prompt is byte-identical to before.
             systemPrompt += teamScope.LeadPreamble();
+        }
+
+        // v0.12.0 M6 Giga mode: grant the live single agent dynamic-orchestration tools (spawn_team,
+        // run_team, write/run/list workflows) + a capability-reference preamble. Members run through
+        // the shared ExecuteParallelWorker path, so specialists must be built. Off-giga (the default)
+        // this block is skipped entirely -> byte-identical single-agent prompt + toolset.
+        if (App.GigaMode && teamScope is null)
+        {
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+            foreach (var t in MuxSwarm.Utils.Teams.GigaMode.BuildTools(
+                modelId => App.CreateChatClient(modelId), Models, cancellationToken))
+                singleAgentTools.Add(t);
+            systemPrompt += MuxSwarm.Utils.Teams.GigaMode.Preamble();
         }
 
         var agentChatOptions = new ChatOptions
@@ -1274,7 +1291,7 @@ public static class SingleAgentOrchestrator
                 string partial = responseText.ToString();
                 string interruptedAssistant = string.IsNullOrWhiteSpace(partial)
                     ? "[no response — interrupted before agent replied]"
-                    : partial + "\n\n[interrupted by user]";
+                    : partial + "\r\n\r\n[interrupted by user]";
 
                 // The framework does NOT commit a cancelled run's messages to the session,
                 // so neither the user goal nor the partial response would survive
@@ -1288,7 +1305,7 @@ public static class SingleAgentOrchestrator
 
                 // conversationHistory feeds compaction; keep the partial there too.
                 if (!string.IsNullOrWhiteSpace(partial))
-                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\n\n[interrupted by user]"));
+                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\r\n\r\n[interrupted by user]"));
 
                 MuxConsole.WriteLine();
                 MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");

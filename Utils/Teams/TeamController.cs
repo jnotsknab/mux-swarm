@@ -22,6 +22,10 @@ public sealed class TeamScope
     public TaskBoard? Board { get; init; }                // non-null when Coordination == "taskboard"
     public Mailbox? Mailbox { get; init; }                // inter-agent P2P messaging (M4), always-on per team
     public required IList<AITool> Tools { get; init; }    // team tools appended to the lead's tool list
+
+    /// <summary>M4: per-agent extra-tool factory passed to BuildSpecialists so each MEMBER gets its
+    /// own identity-bound send_message/read_inbox. Null when the team has no mailbox.</summary>
+    public Func<Common.AgentDefinition, IList<AITool>>? MemberToolFactory { get; init; }
     public required TeamState State { get; init; }
 
     /// <summary>The board auto-runner for a taskboard team (null otherwise). Started at launch
@@ -189,11 +193,20 @@ public static class TeamController
             ActiveBoard = null;
         }
 
-        // Mailbox is always-on for a team (works in both fanout and taskboard coordination, per
-        // the M4 spec). The lead sends/reads; members are recipients (shutdown stops their loop).
-        var mailbox = Mailbox.Open(team.Name, TeamState.RootFor(team.Name));
-        ActiveMailbox = mailbox;
-        InstallMailboxProvider(mailbox);
+        // Mailbox (M4): on by default for a team (works in both fanout and taskboard coordination).
+        // The lead AND every member send/read; members drain their inbox into each task brief and
+        // wake on actionable messages. team.mailbox=false disables it entirely (no mailbox, no tools).
+        Mailbox? mailbox = null;
+        if (team.Mailbox)
+        {
+            mailbox = Mailbox.Open(team.Name, TeamState.RootFor(team.Name));
+            ActiveMailbox = mailbox;
+            InstallMailboxProvider(mailbox);
+        }
+        else
+        {
+            ActiveMailbox = null;
+        }
 
         int maxParallel = team.MaxParallel is { } mp && mp > 0 ? mp : App.MaxDegreeParallelism;
         int maxSubIters = ExecutionLimits.Current.MaxSubAgentIterations;
@@ -202,7 +215,7 @@ public static class TeamController
         var tools = BuildTeamTools(
             team, leadDef.Name, members, coordination, board, mailbox,
             chatClientFactory, agentModels, maxParallel, maxSubIters, state, ct,
-            out var autoRunner, out var peerRunner);
+            out var autoRunner, out var peerRunner, out var memberToolFactory);
         ActiveRunner = autoRunner;
         ActivePeerRunner = peerRunner;
 
@@ -225,6 +238,7 @@ public static class TeamController
             State = state,
             Runner = autoRunner,
             PeerRunner = peerRunner,
+            MemberToolFactory = memberToolFactory,
         };
     }
 
@@ -305,7 +319,7 @@ public static class TeamController
         List<string> members,
         string coordination,
         TaskBoard? board,
-        Mailbox mailbox,
+        Mailbox? mailbox,
         Func<string, IChatClient> chatClientFactory,
         Dictionary<string, string> agentModels,
         int maxParallel,
@@ -313,10 +327,12 @@ public static class TeamController
         TeamState state,
         CancellationToken ct,
         out AutoRunner? autoRunner,
-        out MemberRunner? peerRunner)
+        out MemberRunner? peerRunner,
+        out Func<Common.AgentDefinition, IList<AITool>>? memberToolFactory)
     {
         autoRunner = null;
         peerRunner = null;
+        memberToolFactory = null;
         var delegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
         var semaphore = new SemaphoreSlim(Math.Max(1, maxParallel));
@@ -343,9 +359,13 @@ public static class TeamController
             try
             {
                 state.LastActive = DateTimeOffset.UtcNow;
+                // M4: drain this member's inbox INTO the task brief so messages are consumed live
+                // (not stranded until the member happens to call read_inbox). Drained messages are
+                // marked read; the member can still call read_inbox for anything that arrives mid-task.
+                string brief = PrependInbox(mailbox, agent, task);
                 return await contextManager.RunAsync(agent, async cleanSession =>
                     await ParallelSwarmOrchestrator.ExecuteParallelWorker(
-                        agent, task, leadName,
+                        agent, brief, leadName,
                         MultiAgentOrchestrator.Specialists, delegationResults, retryRegistry,
                         chatClientFactory, agentModels, compactionClient: null, compactionChatOptions: null,
                         maxSubAgentIterations: maxSubIters, prodMode: false, ct: ct, cleanSession: cleanSession),
@@ -388,7 +408,10 @@ public static class TeamController
                          $"Members on this team: {roster}. Use for independent work that can run in parallel."));
 
         // send_message: P2P (or broadcast) message to a teammate's inbox (M4 Mailbox). "shutdown"
-        // type gracefully stops a member's self-claim loop between tasks.
+        // type gracefully stops a member's self-claim loop between tasks. Lead tools only present
+        // when the team has a mailbox (team.mailbox != false).
+        if (mailbox is not null)
+        {
         tools.Add(AIFunctionFactory.Create(
             method: (
                 [Description("Recipient member name, or \"all\" to broadcast to every member.")] string to,
@@ -431,6 +454,7 @@ public static class TeamController
             },
             name: "read_inbox",
             description: "Read (and clear) new messages addressed to you from teammates."));
+        }
 
         if (coordination == "taskboard" && board is not null)
         {
@@ -660,7 +684,84 @@ public static class TeamController
                              "assigning each one - a self-organizing pool, one task in-flight per member."));
         }
 
+        // M4: identity-bound member mailbox tools. Each member specialist gets a send_message +
+        // read_inbox whose "from"/inbox identity is the member itself (vs the lead's, above), built
+        // via BuildSpecialists' per-agent extra-tool factory so a member can answer the lead /
+        // message a peer. Members only; the lead/Orchestrator already has its own pair.
+        memberToolFactory = mailbox is null ? null : def =>
+        {
+            var extra = new List<AITool>();
+            if (!memberSet.Contains(def.Name)) return extra;
+            var selfName = def.Name;
+
+            extra.Add(AIFunctionFactory.Create(
+                method: (
+                    [Description("Recipient: a teammate name, the team lead, or \"all\" to broadcast.")] string to,
+                    [Description("Message type: info | question | answer | handoff | shutdown.")] string type,
+                    [Description("The message body.")] string body) =>
+                {
+                    var dest = (to ?? string.Empty).Trim();
+                    if (dest.Length == 0) return "[mailbox] No recipient specified.";
+                    bool bcast = dest.Equals("all", StringComparison.OrdinalIgnoreCase) || dest == "*";
+                    if (!bcast && !memberSet.Contains(dest)
+                        && !dest.Equals(leadName, StringComparison.OrdinalIgnoreCase))
+                        return $"[mailbox] '{dest}' is not the lead or a member. Lead: {leadName}. Members: {roster}";
+                    var mt = (type ?? "info").Trim().ToLowerInvariant() switch
+                    {
+                        "question" => MsgType.Question,
+                        "answer"   => MsgType.Answer,
+                        "handoff"  => MsgType.Handoff,
+                        "shutdown" => MsgType.Shutdown,
+                        _          => MsgType.Info,
+                    };
+                    // Broadcast targets every OTHER member + the lead; a member may not shut peers down.
+                    if (mt == MsgType.Shutdown)
+                        return "[mailbox] Members cannot signal shutdown; only the lead may stop a member.";
+                    var audience = new List<string>(members) { leadName };
+                    int n = mailbox.Send(selfName, dest, mt, body ?? string.Empty, audience);
+                    return $"[mailbox] Sent {mt} to {dest} ({n} inbox(es)).";
+                },
+                name: "send_message",
+                description: "Send a message to a teammate, the team lead, or \"all\". Use 'question' to ask and " +
+                             "'answer'/'handoff' to respond or pass work. Replies reach the recipient's inbox."));
+
+            extra.Add(AIFunctionFactory.Create(
+                method: () =>
+                {
+                    var msgs = mailbox.ReadInbox(selfName, drain: true);
+                    if (msgs.Count == 0) return "[mailbox] No new messages.";
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"### INBOX ({msgs.Count} new) ###");
+                    foreach (var m in msgs)
+                        sb.AppendLine($"[{m.Type}] from {m.From}: {m.Body}");
+                    return sb.ToString();
+                },
+                name: "read_inbox",
+                description: "Read (and clear) new messages addressed to you from the lead or teammates."));
+
+            return extra;
+        };
+
         return tools;
+    }
+
+    /// <summary>M4: drain <paramref name="agent"/>'s unread inbox and prepend it to <paramref name="task"/>
+    /// so delivered messages are surfaced to the member at the very start of the task turn (rather than
+    /// sitting unread until it independently calls read_inbox). Drained messages are marked read. When the
+    /// inbox is empty the task is returned unchanged (byte-identical to the no-mailbox path).</summary>
+    private static string PrependInbox(Mailbox? mailbox, string agent, string task)
+    {
+        if (mailbox is null) return task;
+        var msgs = mailbox.ReadInbox(agent, drain: true);
+        if (msgs.Count == 0) return task;
+        var sb = new StringBuilder();
+        sb.AppendLine($"### TEAM INBOX ({msgs.Count} new message(s) for you) ###");
+        foreach (var m in msgs)
+            sb.AppendLine($"- [{m.Type}] from {m.From}: {m.Body}");
+        sb.AppendLine("(Address anything that needs a reply with send_message, then proceed.)");
+        sb.AppendLine();
+        sb.Append(task);
+        return sb.ToString();
     }
 
     /// <summary>Resolve the chat client used to compact MEMBER sessions: the configured compaction
@@ -932,7 +1033,9 @@ public sealed class MemberRunner
 
                 bool didWork = false;
 
-                // Drain everything this member can claim right now, one task at a time.
+                // Drain everything this member can claim right now, one task at a time. Each task's
+                // brief is prepended with any unread inbox messages (handled in RunMember), so a
+                // working member naturally consumes its mailbox.
                 while (!ct.IsCancellationRequested)
                 {
                     var next = _board.NextClaimableFor(who, _openPool, DateTimeOffset.UtcNow);
@@ -953,8 +1056,25 @@ public sealed class MemberRunner
                     _state.Save();
                 }
 
+                // M4 wake: an idle member with NO claimable task but an actionable unread message
+                // (a question or handoff addressed to it) runs a short turn to read + respond, so a
+                // peer's message is acted on promptly instead of sitting until the next board task.
+                if (!didWork && _mailbox is not null && _mailbox.HasActionableUnread(who))
+                {
+                    try
+                    {
+                        didWork = true;
+                        await _runMember(who,
+                            "You have unread team messages (a question or handoff from a teammate). " +
+                            "Read them, take any action they require, and reply with send_message. " +
+                            "If nothing is actionable, simply acknowledge and finish.");
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+                    catch (Exception ex) { MuxConsole.WriteMuted($"[teams] {who} inbox turn error: {ex.Message}"); }
+                }
+
                 // Nothing claimable this pass -> wait a poll interval (shorter if we just worked, so a
-                // freshly-unblocked dependent is picked up promptly).
+                // freshly-unblocked dependent or a fresh message is picked up promptly).
                 try { await Task.Delay(TimeSpan.FromSeconds(didWork ? 1 : IntervalSeconds), ct); }
                 catch (OperationCanceledException) { break; }
             }

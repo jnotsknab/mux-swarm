@@ -801,7 +801,8 @@ public static class MultiAgentOrchestrator
     }
 
 
-    public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools)
+    public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools,
+        Func<Common.AgentDefinition, IList<AITool>>? extraToolsPerAgent = null)
     {
         foreach (var def in AgentDefs)
         {
@@ -899,6 +900,15 @@ public static class MultiAgentOrchestrator
             var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
             if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
             agentTools.AddRange(filteredTools);
+
+            // v0.12.0 M4 - per-agent extra tools (e.g. a team member's identity-bound mailbox
+            // send_message/read_inbox). Null factory (every off-team path) leaves the toolset
+            // byte-identical to before.
+            if (extraToolsPerAgent is not null)
+            {
+                foreach (var extra in extraToolsPerAgent(def))
+                    agentTools.Add(extra);
+            }
 
             var agentChatOptions = new ChatOptions
             {

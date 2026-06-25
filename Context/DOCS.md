@@ -444,7 +444,8 @@ selection over the existing `agents[]` plus a coordination policy, launched with
   "autoRun": false,
   "autoRunIntervalSeconds": 15,
   "memberContext": "persistent",
-  "pickupPolicy": "assigned"
+  "pickupPolicy": "assigned",
+  "mailbox": true
 }
 ```
 
@@ -463,6 +464,10 @@ selection over the existing `agents[]` plus a coordination policy, launched with
   (default; a member only auto-claims tasks whose `assignee` is itself) or `open` (any idle member
   may also claim any unassigned, unblocked, ready task - a self-organizing pool). Claiming is
   file-locked, so both are race-safe.
+- `mailbox` - inter-agent messaging (default `true`). When on, the lead AND every member get the
+  `send_message` / `read_inbox` tools, members drain their inbox into each task brief, and an idle
+  member wakes to handle an incoming question/handoff. Set `false` to disable messaging entirely
+  for the team. See [Mailbox](#mailbox-inter-agent-messaging).
 
 The per-member context ceiling lives on `compactionAgent` (next to `autoCompactTokenThreshold`):
 
@@ -604,7 +609,9 @@ the color-coded TaskBoard strip (pending=dim, in-progress=accent, blocked=warn, 
 ### Coordination: fanout
 
 Independent work, no dependencies. The lead has `team_dispatch` to fan a batch of member tasks out
-concurrently (bounded by `maxParallel`) and collect their results.
+concurrently (bounded by `maxParallel`) and collect their results. Both coordination modes also have
+the always-on **mailbox** (`send_message` / `read_inbox` on the lead and every member - see
+[Mailbox](#mailbox-inter-agent-messaging)).
 
 ### Coordination: taskboard
 
@@ -668,6 +675,44 @@ reseeded with the summary (the exact mechanism the single-agent loop uses for it
 carry-over). Per-member working state (activity, completed count, compaction count, token estimate)
 persists under `<install>/Teams/{slug}/members/{member}.json` for resume + the Agent View.
 
+### Mailbox (inter-agent messaging)
+
+Every team has an inter-agent **mailbox** (unless `mailbox: false`). It lets the lead and members
+exchange peer-to-peer messages while a team runs - asking questions, handing off work, broadcasting,
+and gracefully shutting a member down.
+
+**Tools** (on the lead AND every member; each bound to its own identity):
+- `send_message(to, type, body)` - deliver a message to a teammate, the lead, or `"all"`/`"*"`
+  (broadcast to every other member + lead). `type` is one of `info | question | answer | handoff |
+  shutdown`. Only the lead may send `shutdown` (a member cannot stop a peer).
+- `read_inbox()` - read and clear (drain) the new messages addressed to you.
+
+**Delivery semantics:**
+- **Persistent.** Each message is one JSON file in the recipient's inbox, so a team survives a
+  restart with its conversation intact. An undelivered `shutdown` re-arms its stop flag on reload.
+- **Live drain (members don't sit on mail).** A member drains its inbox at the **start of every
+  task** - unread messages are prepended to the task brief, so it acts on them immediately rather
+  than only when it independently calls `read_inbox`.
+- **Idle wake.** When a member has no claimable board task but has an actionable unread message (a
+  `question` or `handoff`), its self-claim loop runs a short turn to read and respond - so a peer's
+  message is handled promptly instead of waiting for the next task. `info`/`answer` messages are FYI
+  and do not by themselves wake an idle member (they are still delivered into the next task brief).
+- **Graceful shutdown.** The lead sends a `shutdown`-type message to a member; that member stops its
+  self-claim loop **between tasks** (never mid-call), so in-flight work finishes cleanly.
+
+**On-disk layout** (per team, under `<install>/Teams/{slug}/`):
+
+```
+inboxes/
+  {agent}/
+    m1.json   # { "id":"m1", "from":"Lead", "to":"Alice",
+    m2.json   #   "type":"question", "body":"status?",
+    ...        #   "sent":"2026-06-26T...Z", "read":false }
+```
+
+The Agent View `m` key shows any agent's full message history (the m-log) on demand, without
+draining its inbox.
+
 ## OS Service Registration
 
 Register to start on boot:
@@ -730,6 +775,40 @@ Deterministic replayable pipelines as JSON:
 ```
 
 Run via `mux-swarm --workflow ./path/to/workflow.json` or `/workflow` interactively.
+
+## Giga Mode
+
+Toggle with `/giga` (a superset of `/ultra`). Giga keeps ultra's maximum-reasoning + plan discipline
+and ADDS **dynamic orchestration**: the live single agent can build and drive its own team or
+workflow mid-conversation, without you wiring anything. Toggle it off and the capability + tools are
+removed and the prior reasoning/plan flags are restored (the off-giga single-agent path is
+byte-identical).
+
+While giga is on the agent gains these tools:
+
+```
+spawn_team(name, members, coordination, persist)
+               Create an ephemeral team from existing agents. members = comma-separated agent
+               names; coordination = "fanout" | "taskboard". persist=true also writes it to
+               swarm.json teams[] so it survives a restart. Ephemeral teams are tagged "giga:".
+run_team(name, assignments)
+               Dispatch a batch of member tasks concurrently and collect results. assignments =
+               JSON array of {"agent":"<member>","task":"<instruction>"}. Each member runs in its
+               own session and appears live in the Agent View.
+write_workflow(name, steps)
+               Author a reusable workflow file. steps = JSON array of "AgentName: instruction"
+               strings (or plain "instruction" to route to the Orchestrator). Saved as
+               <name>.workflow.json under the Teams directory.
+run_workflow(path)
+               Execute a workflow file phase-by-phase, routing each step to its agent and feeding
+               each step's result forward as context to the next.
+list_workflows()
+               List the saved workflow files you can run.
+```
+
+Giga-spawned teams reuse the same execution substrate as `/teams` (parallel workers + the Agent
+View), so members are visible and focus-switchable exactly like a configured team's. The agent
+remains the single voice in your conversation; the team works under it.
 
 ## Event Hooks
 
