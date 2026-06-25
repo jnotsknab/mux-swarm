@@ -89,6 +89,12 @@ internal sealed class TuiDriver
     public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
         IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? TaskBoardProvider { get; set; }
 
+    // Opens the inline Agent View dashboard from the IDLE prompt (the backslash key). MuxConsole
+    // wires this to TuiEnterAgentView(), which builds the running-agent snapshot + body provider
+    // from the live capture registry. Null or returns false => no agents running => backslash falls
+    // through to the editor as a literal char. Mirrors the mid-turn EscapeKeyListener onAgents path.
+    public Func<bool>? AgentViewOpener { get; set; }
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -784,6 +790,14 @@ internal sealed class TuiDriver
         if (!changed) return;
         _subAgents = agents;
         _subAgentFrame = frame;
+        // This is driven by the ~100ms BACKGROUND ticker thread. While the input loop owns the
+        // screen at the idle prompt (_inInput), a background-thread Repaint races the input
+        // thread's own paints + any concurrent CommitAbove ([bg]/[daemon] messages), which
+        // under-clears the prior frame and strands duplicate footers in scrollback (the artifact
+        // when running /background + /daemon while idle). Update the data model but DEFER the paint:
+        // the next keystroke's Repaint reflects the new strip. Mid-turn (not _inInput) the streaming
+        // thread owns paints and there is no idle race, so repaint live as before.
+        if (_inInput) return;
         Repaint();
     }
 
@@ -1325,6 +1339,16 @@ internal sealed class TuiDriver
                     ToggleTaskBoard();
                     Repaint();
                     continue;
+                }
+
+                // Backslash at the prompt opens the Agent View dashboard - but ONLY when it is the
+                // FIRST char (empty buffer), so the user can still type a literal '\\' mid-line.
+                // No-op fall-through (insert the char) when no agents are running or the opener is
+                // unset, so the key is never silently swallowed. Mirrors the mid-turn '\\' path.
+                if (key.KeyChar == '\\' && _editor.IsEmpty && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0)
+                {
+                    if (AgentViewOpener is { } open && open()) { Repaint(); continue; }
+                    // else: fall through and insert '\\' as a normal character.
                 }
 
                 var sig = _editor.Feed(key);

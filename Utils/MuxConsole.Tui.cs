@@ -348,6 +348,10 @@ public static partial class MuxConsole
                 {
                     _driver = new TuiDriver();
                     _tuiActive = true;
+                    // Idle-prompt backslash opens the Agent View dashboard (same entry as the
+                    // mid-turn EscapeKeyListener path). Returns false when no agents are running,
+                    // so backslash then inserts as a literal char.
+                    _driver.AgentViewOpener = TuiEnterAgentView;
                     InstallTeardownHook_NoLock();
                     // Start the resize poll once, alongside the driver.
                     _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);
