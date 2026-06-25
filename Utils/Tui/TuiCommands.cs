@@ -192,6 +192,27 @@ internal static class TuiCommands
     /// <summary>Commands offered inside an agent/swarm session (session-native set).</summary>
     public static readonly (string Cmd, string Desc)[] Session = ForScope(Scope.SessionOnly);
 
+    /// <summary>
+    /// Unified in-session palette: session-native commands FIRST, then the REPL/mode-launch
+    /// commands so they are discoverable everywhere (v0.12.0 - one palette). Selecting a REPL-only
+    /// command inside a live session is still handled by the slash-anywhere path, which WARNS that
+    /// it ends the active session before running it at the top-level menu. The descriptions of the
+    /// mode-launch commands here carry an "(ends session)" hint so the consequence is visible.
+    /// </summary>
+    public static readonly (string Cmd, string Desc)[] SessionUnified = BuildUnified();
+
+    private static (string Cmd, string Desc)[] BuildUnified()
+    {
+        var list = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (cmd, desc) in Session)
+            if (seen.Add(cmd)) list.Add((cmd, desc));
+        foreach (var e in All)
+            if (e.Scope == Scope.ReplOnly && seen.Add(e.Cmd))
+                list.Add((e.Cmd, e.Desc + "  (ends session)"));
+        return list.ToArray();
+    }
+
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
     /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
     /// the transcript/expand overlay).</summary>

@@ -1023,7 +1023,7 @@ public static partial class MuxConsole
 
     private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.Repl;
 
-    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.Session;
+    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.SessionUnified;
 
     /// <summary>Collapsed result: a status glyph + first informative line + "(+N lines)" hint.
     /// Errors get a red cross and a "failed" tag instead of the dim ok marker.</summary>

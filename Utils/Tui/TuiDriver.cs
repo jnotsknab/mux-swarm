@@ -260,13 +260,13 @@ internal sealed class TuiDriver
     /// Both are filtered views of <see cref="TuiCommands.All"/> (the single canonical list
     /// kept in sync with App.cs's command switch + Help.cs), so no command is ever missing
     /// from the preview while a different one works.</summary>
-    private (string Cmd, string Desc)[] _paletteEntries = TuiCommands.Session;
+    private (string Cmd, string Desc)[] _paletteEntries = TuiCommands.SessionUnified;
 
     /// <summary>Loaded skills catalog for the live "/skill" autocomplete preview.</summary>
     private IReadOnlyList<(string Name, string Desc)> _skills = Array.Empty<(string, string)>();
 
     /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
-    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.Session;
+    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.SessionUnified;
 
     /// <summary>Set the skills catalog backing the live "/skill" autocomplete preview.</summary>
     public void SetSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)
