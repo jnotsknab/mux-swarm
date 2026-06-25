@@ -96,6 +96,11 @@ internal sealed class TuiDriver
     public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
         IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? TaskBoardProvider { get; set; }
 
+    // M4 Mailbox: per-agent message-log provider for the Agent View 'm' key. Given an agent name,
+    // returns pre-formatted markup rows of that agent's inbox history (oldest-first), or empty.
+    // Null when no team mailbox is active (the 'm' key is then a no-op).
+    public Func<string, IReadOnlyList<string>>? MessageLogProvider { get; set; }
+
     // Opens the inline Agent View dashboard from the IDLE prompt (the backslash key). MuxConsole
     // wires this to TuiEnterAgentView(), which builds the running-agent snapshot + body provider
     // from the live capture registry. Null or returns false => no agents running => backslash falls
@@ -671,6 +676,27 @@ internal sealed class TuiDriver
                     { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
                     { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
+
+                // m: audit the selected agent's mailbox (M4). Commits its message-log rows to the
+                // transcript so cross-agent chatter is visible on demand (off by default - nothing
+                // shows until the user presses m). No-op when no team mailbox is active.
+                if ((key.Key == ConsoleKey.M || key.KeyChar == 'm') && MessageLogProvider is { } mlog)
+                {
+                    string? sel = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (sel is not null)
+                    {
+                        var rows = mlog(sel);
+                        _agentViewActive = false;
+                        _agentView.Close();
+                        if (rows.Count == 0)
+                            Commit(new[] { $"[{TuiComponents.Dim}]\u00b7 no messages for {sel}[/]" });
+                        else
+                            Commit(rows);
+                        Repaint();
+                        return true;
+                    }
+                    continue;
+                }
 
                 // Esc / backslash / q: close the dashboard and return to the foregrounded stream.
                 if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)

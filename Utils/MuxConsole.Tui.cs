@@ -645,6 +645,13 @@ public static partial class MuxConsole
         if (_driver is not null) _driver.TaskBoardProvider = provider;
     }
 
+    /// <summary>Install (or clear) the Agent View 'm' message-log provider (M4 Mailbox). Set by
+    /// TeamController when a team launches; cleared when it ends.</summary>
+    internal static void TuiSetMessageLogProvider(Func<string, IReadOnlyList<string>>? provider)
+    {
+        if (_driver is not null) _driver.MessageLogProvider = provider;
+    }
+
     /// <summary>Resize poll tick: detect a terminal size change and force a clean repaint. No-op
     /// outside the TUI. Called from the shared resize-poll timer.</summary>
     internal static void TuiPollResize() { if (ViaDriver) lock (ConsoleLock) { _driver!.PollResize(); } }

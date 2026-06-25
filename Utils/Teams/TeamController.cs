@@ -20,6 +20,7 @@ public sealed class TeamScope
     public required List<string> Members { get; init; }
     public required string Coordination { get; init; }   // "fanout" | "taskboard"
     public TaskBoard? Board { get; init; }                // non-null when Coordination == "taskboard"
+    public Mailbox? Mailbox { get; init; }                // inter-agent P2P messaging (M4), always-on per team
     public required IList<AITool> Tools { get; init; }    // team tools appended to the lead's tool list
     public required TeamState State { get; init; }
 
@@ -73,6 +74,13 @@ public sealed class TeamScope
             sb.AppendLine("This team uses fan-out coordination (no shared board): use team_dispatch for everything,");
             sb.AppendLine("then synthesize the members' results yourself.");
         }
+        sb.AppendLine();
+        sb.AppendLine("Mailbox (inter-agent messaging):");
+        sb.AppendLine("- send_message(to, type, body) - message a member (or \"all\" to broadcast). type is one of");
+        sb.AppendLine("  info | question | answer | handoff | shutdown. Use 'shutdown' to GRACEFULLY stop a member");
+        sb.AppendLine("  that is no longer needed (it stops between tasks, never mid-call).");
+        sb.AppendLine("- read_inbox() - read replies addressed to you. The user can audit any agent's messages in");
+        sb.AppendLine("  the Agent View with 'm'.");
         return sb.ToString();
     }
 }
@@ -94,6 +102,10 @@ public static class TeamController
     /// <summary>The board of the currently-running team, exposed for the Ctrl+T TaskBoard strip.
     /// Null when no taskboard team is active.</summary>
     public static TaskBoard? ActiveBoard { get; private set; }
+
+    /// <summary>The mailbox of the currently-running team (M4), exposed for the Agent View m-log.
+    /// Null when no team is active.</summary>
+    public static Mailbox? ActiveMailbox { get; private set; }
 
     /// <summary>Look up a configured team by name (case-insensitive).</summary>
     public static TeamConfig? Find(SwarmConfig? config, string name)
@@ -177,12 +189,18 @@ public static class TeamController
             ActiveBoard = null;
         }
 
+        // Mailbox is always-on for a team (works in both fanout and taskboard coordination, per
+        // the M4 spec). The lead sends/reads; members are recipients (shutdown stops their loop).
+        var mailbox = Mailbox.Open(team.Name, TeamState.RootFor(team.Name));
+        ActiveMailbox = mailbox;
+        InstallMailboxProvider(mailbox);
+
         int maxParallel = team.MaxParallel is { } mp && mp > 0 ? mp : App.MaxDegreeParallelism;
         int maxSubIters = ExecutionLimits.Current.MaxSubAgentIterations;
         if (maxSubIters <= 0) maxSubIters = 8;
 
         var tools = BuildTeamTools(
-            team, leadDef.Name, members, coordination, board,
+            team, leadDef.Name, members, coordination, board, mailbox,
             chatClientFactory, agentModels, maxParallel, maxSubIters, state, ct,
             out var autoRunner, out var peerRunner);
         ActiveRunner = autoRunner;
@@ -202,6 +220,7 @@ public static class TeamController
             Members = members,
             Coordination = coordination,
             Board = board,
+            Mailbox = mailbox,
             Tools = tools,
             State = state,
             Runner = autoRunner,
@@ -213,7 +232,9 @@ public static class TeamController
     public static void Clear()
     {
         ActiveBoard = null;
+        ActiveMailbox = null;
         MuxConsole.TuiSetTaskBoardProvider(null);
+        MuxConsole.TuiSetMessageLogProvider(null);
         try { ActiveRunner?.Stop(); } catch { /* best-effort */ }
         try { ActivePeerRunner?.Stop(); } catch { /* best-effort */ }
         ActiveRunner = null;
@@ -241,6 +262,36 @@ public static class TeamController
         });
     }
 
+    /// <summary>Feed the Agent View 'm' message-log: given an agent, format its inbox history into
+    /// dim markup rows (M4 Mailbox). Cleared on Clear().</summary>
+    private static void InstallMailboxProvider(Mailbox mailbox)
+    {
+        MuxConsole.TuiSetMessageLogProvider(agent =>
+        {
+            var history = mailbox.History(agent);
+            var rows = new List<string>(history.Count + 1)
+            {
+                $"[#64B4DC]\u2709 mailbox \u00b7 {Markup(agent)}[/]"
+            };
+            foreach (var m in history)
+            {
+                var glyph = m.Type switch
+                {
+                    MsgType.Shutdown => "\u25a0",
+                    MsgType.Question => "?",
+                    MsgType.Answer   => "\u2713",
+                    MsgType.Handoff  => "\u2192",
+                    _                 => "\u00b7",
+                };
+                var stamp = m.Sent.ToLocalTime().ToString("HH:mm");
+                rows.Add($"  [#7A8290]{stamp}[/] {glyph} [#C8CDD4]{Markup(m.From)}[/] [#7A8290]{m.Type}[/]: {Markup(m.Body)}");
+            }
+            return (IReadOnlyList<string>)rows;
+        });
+    }
+
+    private static string Markup(string s) => (s ?? string.Empty).Replace("[", "[[").Replace("]", "]]");
+
     private static string NormalizeCoordination(string? c)
     {
         var v = (c ?? "fanout").Trim().ToLowerInvariant();
@@ -254,6 +305,7 @@ public static class TeamController
         List<string> members,
         string coordination,
         TaskBoard? board,
+        Mailbox mailbox,
         Func<string, IChatClient> chatClientFactory,
         Dictionary<string, string> agentModels,
         int maxParallel,
@@ -334,6 +386,51 @@ public static class TeamController
             name: "team_dispatch",
             description: "Dispatch one or more tasks to team members concurrently and collect their results. " +
                          $"Members on this team: {roster}. Use for independent work that can run in parallel."));
+
+        // send_message: P2P (or broadcast) message to a teammate's inbox (M4 Mailbox). "shutdown"
+        // type gracefully stops a member's self-claim loop between tasks.
+        tools.Add(AIFunctionFactory.Create(
+            method: (
+                [Description("Recipient member name, or \"all\" to broadcast to every member.")] string to,
+                [Description("Message type: info | question | answer | handoff | shutdown.")] string type,
+                [Description("The message body.")] string body) =>
+            {
+                var dest = (to ?? string.Empty).Trim();
+                if (dest.Length == 0) return "[mailbox] No recipient specified.";
+                if (!dest.Equals("all", StringComparison.OrdinalIgnoreCase) && dest != "*"
+                    && !memberSet.Contains(dest))
+                    return $"[mailbox] '{dest}' is not a member of this team. Members: {roster}";
+                var mt = (type ?? "info").Trim().ToLowerInvariant() switch
+                {
+                    "question" => MsgType.Question,
+                    "answer"   => MsgType.Answer,
+                    "handoff"  => MsgType.Handoff,
+                    "shutdown" => MsgType.Shutdown,
+                    _          => MsgType.Info,
+                };
+                int n = mailbox.Send(leadName, dest, mt, body ?? string.Empty, members);
+                if (mt == MsgType.Shutdown)
+                    return $"[mailbox] Shutdown signalled to {dest} ({n} inbox(es)); it will stop after its current task.";
+                return $"[mailbox] Sent {mt} to {dest} ({n} inbox(es)).";
+            },
+            name: "send_message",
+            description: "Send a message to a team member's inbox (or \"all\" to broadcast). Types: info, " +
+                         "question, answer, handoff, shutdown. Use 'shutdown' to gracefully stop a member."));
+
+        // read_inbox: drain the lead's own inbox (replies addressed to the lead).
+        tools.Add(AIFunctionFactory.Create(
+            method: () =>
+            {
+                var msgs = mailbox.ReadInbox(leadName, drain: true);
+                if (msgs.Count == 0) return "[mailbox] No new messages.";
+                var sb = new StringBuilder();
+                sb.AppendLine($"### INBOX ({msgs.Count} new) ###");
+                foreach (var m in msgs)
+                    sb.AppendLine($"[{m.Type}] from {m.From}: {m.Body}");
+                return sb.ToString();
+            },
+            name: "read_inbox",
+            description: "Read (and clear) new messages addressed to you from teammates."));
 
         if (coordination == "taskboard" && board is not null)
         {
@@ -540,7 +637,7 @@ public static class TeamController
             // file-locked, runs it in its (persistent or fresh) session, completes it, and loops -
             // a self-organizing pool draining the dependency graph on its own.
             bool openPool = NormalizePickupPolicy(team.PickupPolicy) == "open";
-            var peer = new MemberRunner(board, members, RunMember, state, openPool, ct);
+            var peer = new MemberRunner(board, members, RunMember, state, openPool, ct, mailbox);
             peerRunner = peer;
 
             tools.Add(AIFunctionFactory.Create(
@@ -762,6 +859,7 @@ public sealed class MemberRunner
     private readonly TeamState _state;
     private readonly bool _openPool;
     private readonly CancellationToken _sessionCt;
+    private readonly Mailbox? _mailbox;   // M4: cooperative shutdown signalled via the team mailbox
 
     private CancellationTokenSource? _cts;
     private readonly object _gate = new();
@@ -781,7 +879,7 @@ public sealed class MemberRunner
 
     internal MemberRunner(TaskBoard board, List<string> members,
         Func<string, string, Task<string>> runMember, TeamState state, bool openPool,
-        CancellationToken sessionCt)
+        CancellationToken sessionCt, Mailbox? mailbox = null)
     {
         _board = board;
         _members = members;
@@ -789,6 +887,7 @@ public sealed class MemberRunner
         _state = state;
         _openPool = openPool;
         _sessionCt = sessionCt;
+        _mailbox = mailbox;
     }
 
     /// <summary>Start (or restart with a new interval) one self-claim loop per member.</summary>
@@ -823,6 +922,14 @@ public sealed class MemberRunner
         {
             while (!ct.IsCancellationRequested)
             {
+                // M4 graceful shutdown: the lead sent this member a Shutdown message. Stop the
+                // self-claim loop BETWEEN tasks (never mid-call) so in-flight work finishes cleanly.
+                if (_mailbox is not null && _mailbox.IsShutdownRequested(who))
+                {
+                    MuxConsole.WriteInfo($"[teams] {who} received shutdown - stopping its peer loop.");
+                    return;
+                }
+
                 bool didWork = false;
 
                 // Drain everything this member can claim right now, one task at a time.
