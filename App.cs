@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.36";
+    public static readonly string DebugTag = "g12.38";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -279,6 +279,16 @@ public class App
         
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
+
+        if (parsed.AcpMode)
+        {
+            // ACP owns stdin (JSON-RPC line transport) and drives the single-agent REPL
+            // headlessly. Start the cancel monitor PAUSED so session/cancel can abort a turn
+            // without the monitor's background reader also consuming ACP's stdin.
+            await EnsureMcpReadyAsync();
+            StdinCancelMonitor.Start(startPaused: true);
+            return await RunAcpAsync();
+        }
 
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
@@ -1123,6 +1133,51 @@ public class App
         return string.Empty;
     }
 
+    /// <summary>
+    /// Run the ACP (Zed Agent Client Protocol) adapter. Each ACP session maps to one
+    /// interactive single-agent loop, fed by an <see cref="MuxSwarm.Utils.Acp.AcpInputReader"/>
+    /// (installed as InputOverride) and observed via MuxConsole.AcpSink. Blocks until the
+    /// client closes stdin.
+    /// </summary>
+    private async Task<int> RunAcpAsync()
+    {
+        var server = new MuxSwarm.Utils.Acp.AcpServer(
+            version: Version,
+            runSession: async reader =>
+            {
+                var model = LoadSingleAgentModel();
+                var acpCts = GetOrResetCts();
+                ServeMode.ActiveMode = "agent";
+                var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                    "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
+                try
+                {
+                    handle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
+                        client: CreateChatClient(model),
+                        acpCts.Token,
+                        maxIterations: 3,
+                        mcpTools: McpTools,
+                        continuous: ContinuousExec,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
+                        minDelaySeconds: (uint)MinContDelay!,
+                        showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan,
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        allowSubAgents: AllowSubagents,
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: handle);
+                    await handle.ChatTask;
+                }
+                finally
+                {
+                    ServeMode.ActiveMode = "interactive";
+                    MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+                }
+            });
+        await server.RunAsync();
+        return 0;
+    }
+
     private record ParsedArgs(
         string? Goal,
         bool Continuous,
@@ -1139,7 +1194,8 @@ public class App
         bool ReportAll,
         string AgentName,
         int? ServePort,
-        bool DaemonMode
+        bool DaemonMode,
+        bool AcpMode
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -1169,6 +1225,7 @@ public class App
         bool reportAll = false;
         string? agentName = null;
         bool daemonMode = false;
+        bool acpMode = false;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -1207,6 +1264,14 @@ public class App
 
                 case "--stdio":
                     MuxConsole.StdioMode = true;
+                    break;
+                case "--acp":
+                    // ACP (Zed Agent Client Protocol) adapter. Routes structured events to the
+                    // ACP sink (JSON-RPC over stdio) instead of NDJSON; StdioMode keeps the
+                    // orchestrators on their machine-output path while AcpActive diverts it.
+                    acpMode = true;
+                    MuxConsole.StdioMode = true;
+                    MuxConsole.AcpActive = true;
                     break;
                 case "--delimiter":
                     var delim = NextValue(args, ref i);
@@ -1383,7 +1448,8 @@ public class App
             reportAll,
             agentName,
             ServePort,
-            daemonMode
+            daemonMode,
+            acpMode
         );
     }
 

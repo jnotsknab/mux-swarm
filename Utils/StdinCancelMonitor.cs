@@ -26,15 +26,19 @@ public sealed class StdinCancelMonitor : IDisposable
     /// <summary>
     /// Start the monitor. Call once at app startup when --stdio is active.
     /// </summary>
-    public static StdinCancelMonitor Start()
+    public static StdinCancelMonitor Start(bool startPaused = false)
     {
-        var monitor = new StdinCancelMonitor();
+        var monitor = new StdinCancelMonitor(startPaused);
         Instance = monitor;
         return monitor;
     }
 
-    private StdinCancelMonitor()
+    private StdinCancelMonitor(bool startPaused = false)
     {
+        // The ACP adapter starts the monitor PAUSED: it needs Instance to exist for
+        // SetActiveTurnCts / FireCancel (so session/cancel can abort a turn), but the ACP
+        // transport owns stdin itself, so the background ReadLoop must NOT also consume it.
+        _paused = startPaused;
         _readerThread = new Thread(ReadLoop)
         {
             IsBackground = true,

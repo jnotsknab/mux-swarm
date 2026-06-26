@@ -35,6 +35,15 @@ namespace MuxSwarm
                 if (Array.IndexOf(args, "--stdio") >= 0 || Array.IndexOf(args, "--serve") >= 0)
                     MuxConsole.StdioMode = true;
 
+                // --acp (Zed Agent Client Protocol) is a machine transport too: gate StdioMode
+                // early (so startup hooks never block on a console prompt) and mark AcpActive so
+                // structured events divert to the ACP sink instead of polluting the JSON-RPC stdout.
+                if (Array.IndexOf(args, "--acp") >= 0)
+                {
+                    MuxConsole.StdioMode = true;
+                    MuxConsole.AcpActive = true;
+                }
+
                 var app = new App();
                 return await app.Run(args);
             }

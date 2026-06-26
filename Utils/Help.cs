@@ -106,6 +106,7 @@ public struct Help
         "  --persist-interval <s>     Persist session every N seconds",
         "  --session-retention <n>    Keep last N sessions (default 10)",
         "  --stdio                    Machine-readable output (no ANSI)",
+        "  --acp                      Run as a Zed ACP (Agent Client Protocol) server over stdio",
         "  --classic                  Force the classic line renderer (opt out of the live TUI default)",
         "  --tui                      Force the live full-screen TUI renderer (capable terminals only)",
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
