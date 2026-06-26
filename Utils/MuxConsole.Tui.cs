@@ -1,4 +1,4 @@
-using MuxSwarm.Utils.Tui;
+﻿using MuxSwarm.Utils.Tui;
 using Spectre.Console;
 
 namespace MuxSwarm.Utils;
@@ -106,6 +106,13 @@ public static partial class MuxConsole
     private sealed class SubAgentCapture
     {
         public required string Agent;
+        // Stable, disambiguated lane name unique among ALIVE captures: "WebAgent", "WebAgent 2",
+        // "WebAgent 3", ... Assigned once at registration so the Agent View can key selection +
+        // body lookup per LANE (duplicate same-name delegations no longer collapse to one row).
+        public string Lane = "";
+        // /hide: when true the lane is removed from the docked activity strip + viewport but kept
+        // in the backslash Agent View (tagged "hidden"), so the user can unhide it later.
+        public volatile bool Hidden;
         public readonly System.Text.StringBuilder Buffer = new();
         // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
         public readonly System.Text.StringBuilder Tail = new();
@@ -156,6 +163,7 @@ public static partial class MuxConsole
         _capture.Value = cap;
         lock (_captureGate)
         {
+            cap.Lane = NextLane_NoGate(label);
             _activeCaptures.Add(cap);
             EnsureSubAgentTicker_NoGate();
         }
@@ -171,6 +179,7 @@ public static partial class MuxConsole
         _capture.Value = cap;
         lock (_captureGate)
         {
+            cap.Lane = NextLane_NoGate(agent);
             _activeCaptures.Add(cap);
             EnsureSubAgentTicker_NoGate();
         }
@@ -219,6 +228,74 @@ public static partial class MuxConsole
 
     // --- consolidated live activity panel (single ticker, no per-agent flicker) --------------
 
+    /// <summary>Assign a unique disambiguated lane name for a new capture among the ALIVE lanes:
+    /// the first "WebAgent" stays "WebAgent"; a concurrent second becomes "WebAgent 2", etc. Caller
+    /// holds <see cref="_captureGate"/>.</summary>
+    private static string NextLane_NoGate(string agent)
+    {
+        var baseName = string.IsNullOrWhiteSpace(agent) ? "agent" : agent.Trim();
+        var taken = new HashSet<string>(_activeCaptures.Select(c => c.Lane), StringComparer.Ordinal);
+        if (!taken.Contains(baseName)) return baseName;
+        for (int n = 2; ; n++)
+        {
+            var cand = $"{baseName} {n}";
+            if (!taken.Contains(cand)) return cand;
+        }
+    }
+
+    /// <summary>/hide: hide a live sub-agent LANE from the docked strip + viewport (kept in the
+    /// backslash Agent View, tagged "hidden"). Resolves <paramref name="lane"/> by exact lane name,
+    /// else by base agent name (first match). Returns the resolved lane name, or null if not found.</summary>
+    public static string? HideSubAgentLane(string lane)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && !c.Hidden);
+            if (cap is not null) { cap.Hidden = true; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
+    }
+
+    /// <summary>Unhide a previously /hide'd lane (exact lane name, else base agent name). Returns the
+    /// resolved lane, or null if not found.</summary>
+    public static string? UnhideSubAgentLane(string lane)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden)
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden);
+            if (cap is not null) { cap.Hidden = false; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
+    }
+
+    /// <summary>The live lane names (for /hide + /unhide autocomplete). Visible lanes first, then
+    /// hidden ones suffixed with " (hidden)".</summary>
+    public static IReadOnlyList<string> ActiveSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Select(c => c.Hidden ? $"{c.Lane} (hidden)" : c.Lane).ToList();
+    }
+
+    /// <summary>Lane names eligible for /hide (the currently-visible lanes).</summary>
+    public static IReadOnlyList<string> VisibleSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Where(c => !c.Hidden).Select(c => c.Lane).ToList();
+    }
+
+    /// <summary>Lane names eligible for /unhide (the currently-hidden lanes).</summary>
+    public static IReadOnlyList<string> HiddenSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Where(c => c.Hidden).Select(c => c.Lane).ToList();
+    }
+
     /// <summary>Start the shared ~100ms ticker that animates the active-sub-agent panel. Caller
     /// holds <see cref="_captureGate"/>. Idempotent.</summary>
     private static void EnsureSubAgentTicker_NoGate()
@@ -247,7 +324,8 @@ public static partial class MuxConsole
         {
             if (advanceFrame) _subAgentFrame++;
             items = _activeCaptures
-                .Select(c => (c.Agent, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
+                .Where(c => !c.Hidden)
+                .Select(c => (c.Lane, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
                 .ToList();
         }
         lock (ConsoleLock) { _driver!.SetSubAgentActivity(items, _subAgentFrame); }
@@ -347,7 +425,7 @@ public static partial class MuxConsole
 
     // Cached footer state so any render path can repaint the footer with current values.
     private static uint _fTokens, _fThreshold, _fCached;
-    private static bool _fPlan, _fUltra, _fPsub, _fSub;
+    private static bool _fPlan, _fUltra, _fPsub, _fSub, _fGiga;
 
     /// <summary>True when the frame-owned live-region driver is running.</summary>
     public static bool TuiActive => _tuiActive && _driver is not null;
@@ -425,7 +503,7 @@ public static partial class MuxConsole
                 _driver.SetInputHighlight(InputHighlight);
                 _driver.SetCardMarkdown(CardMarkdown);
                 _driver.SetBracketedPaste(BracketedPaste);
-                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub);
+                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
             }
             catch
             {
@@ -525,22 +603,22 @@ public static partial class MuxConsole
     /// values so subsequent commits keep the footer current. No-op when the driver is not
     /// active.
     /// </summary>
-    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false, bool giga = false)
     {
-        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fCached = cached;
+        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fCached = cached; _fGiga = giga;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, sub, cached); }
+        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, sub, cached, giga); }
     }
 
     /// <summary>Refresh ONLY the footer mode badges (plan / ultra / parallel-sub) immediately,
     /// reusing the last cached token/threshold values. Used by slash-command toggles like /ultra
     /// so the badge updates the instant the mode flips, instead of waiting for the next
     /// post-stream status push.</summary>
-    public static void RefreshDockedFooterModes(bool plan, bool ultra, bool parallelSub, bool sub = false)
+    public static void RefreshDockedFooterModes(bool plan, bool ultra, bool parallelSub, bool sub = false, bool giga = false)
     {
-        _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub;
+        _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fGiga = giga;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached); }
+        lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached, giga); }
     }
 
     /// <summary>Start the loop clock (live "&#x25cf; m:ss" footer badge) - called when an agentic
@@ -736,14 +814,16 @@ public static partial class MuxConsole
         lock (_captureGate)
         {
             if (_activeCaptures.Count == 0) return false;
+            // The Agent View lists every LANE (including /hide'd ones, tagged "hidden" in the
+            // status) keyed by the unique lane name, so duplicate same-name delegations are
+            // individually selectable + attachable.
             snapshot = _activeCaptures
-                .Select(c => (c.Agent, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
+                .Select(c => (c.Lane,
+                              c.Hidden ? $"hidden \u00b7 {c.LiveStatus}" : c.LiveStatus,
+                              TuiComponents.AgentTint(c.Agent)))
                 .ToList();
-            // Snapshot each agent's buffered transcript so the by-name foreground lookup does not
-            // re-enter the capture gate while the driver holds the console lock.
             bodies = _activeCaptures
-                .GroupBy(c => c.Agent)
-                .ToDictionary(g => g.Key, g => g.Last().Buffer.ToString().Trim(), StringComparer.Ordinal);
+                .ToDictionary(c => c.Lane, c => c.Buffer.ToString().Trim(), StringComparer.Ordinal);
         }
         lock (ConsoleLock)
         {
@@ -807,10 +887,10 @@ public static partial class MuxConsole
     /// G7 - context-meter + mode-badge status bar. With the driver active this updates the
     /// pinned footer in place; otherwise it prints an inline status line before the prompt.
     /// </summary>
-    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
+    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false, bool giga = false)
     {
         if (!IsTui) return;
-        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached, sub); return; }
+        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached, sub, giga); return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub, sub));

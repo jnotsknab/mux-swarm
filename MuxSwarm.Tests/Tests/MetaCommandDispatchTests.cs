@@ -36,4 +36,27 @@ public class MetaCommandDispatchTests
         var r = await MetaCommandDispatch.TryHandleAsync("/notarealcommand do x", null, null, CancellationToken.None);
         Assert.Equal(MetaCommandDispatch.Result.NotHandled, r);
     }
+
+    [Fact]
+    public async Task Hide_WithNoArg_IsHandled_NotAGoal()
+    {
+        // /hide is a session-agnostic meta command: even with no live sub-agents it is Handled
+        // (prints usage), never falling through to the agent as a goal.
+        var r = await MetaCommandDispatch.TryHandleAsync("/hide", null, null, CancellationToken.None);
+        Assert.Equal(MetaCommandDispatch.Result.Handled, r);
+    }
+
+    [Fact]
+    public async Task Unhide_WithNoArg_IsHandled_NotAGoal()
+    {
+        var r = await MetaCommandDispatch.TryHandleAsync("/unhide", null, null, CancellationToken.None);
+        Assert.Equal(MetaCommandDispatch.Result.Handled, r);
+    }
+
+    [Fact]
+    public void HideUnhide_AreRegistered_AsSessionCommands()
+    {
+        Assert.Contains(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/hide");
+        Assert.Contains(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/unhide");
+    }
 }

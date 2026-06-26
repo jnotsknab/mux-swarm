@@ -99,6 +99,18 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Footer_GigaSupersedesUltraChip()
+    {
+        // Giga is a superset of ultra, so the giga chip stands in for the whole stack -
+        // the ultra chip is suppressed when giga is active.
+        var plain = TuiMarkup.Plain(TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true, giga: true));
+        Assert.Contains("giga", plain);
+        Assert.DoesNotContain("ultra", plain);
+        Assert.DoesNotContain("plan", plain);
+        Assert.DoesNotContain("psub", plain);
+    }
+
+    [Fact]
     public void ToolResultCompact_ShowsFirstLineAndMoreHint()
     {
         var r = TuiComponents.ToolResultCompact("line one\nline two\nline three");
@@ -1514,6 +1526,24 @@ public class TuiDriverTests
         Assert.Contains("CodeAgent", j);
         Assert.Contains("agents", j);
         Assert.Contains("foreground", j);   // the key-hint footer row
+    }
+
+    [Fact]
+    public void AgentView_DisambiguatedLanes_AreIndividuallySelectable()
+    {
+        // The duplicate-same-name bug: 3 "WebAgent" delegations collapsed to one selectable row
+        // and arrows stopped working. With upstream lane disambiguation the view receives unique
+        // lane names ("WebAgent", "WebAgent 2", "WebAgent 3") and each is independently navigable.
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("WebAgent", "WebAgent 2", "WebAgent 3"), now);
+        Assert.Equal("WebAgent", av.SelectedAgent(now));
+        av.Move(+1, now);
+        Assert.Equal("WebAgent 2", av.SelectedAgent(now));
+        av.Move(+1, now);
+        Assert.Equal("WebAgent 3", av.SelectedAgent(now));
+        av.Move(-1, now);
+        Assert.Equal("WebAgent 2", av.SelectedAgent(now));
     }
 
     [Fact]

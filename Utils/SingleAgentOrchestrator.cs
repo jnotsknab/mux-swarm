@@ -909,7 +909,7 @@ public static class SingleAgentOrchestrator
             uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
             uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
             MuxConsole.RenderTuiStatusBar(displayEst, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
 
         // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
@@ -921,7 +921,7 @@ public static class SingleAgentOrchestrator
             // truer picture of "live" context growth rather than a misleading static base.
             uint displayTokens = _sessionTokens > _cachedTokens ? _sessionTokens - _cachedTokens : _sessionTokens;
             MuxConsole.RenderTuiStatusBar(displayTokens, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
 
         // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates

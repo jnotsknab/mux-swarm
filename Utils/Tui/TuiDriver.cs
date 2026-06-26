@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 
 namespace MuxSwarm.Utils.Tui;
 
@@ -28,7 +28,7 @@ internal sealed class TuiDriver
     // Static per-session overhead (system prompt + serialized tool schemas), shown as a
     // breakdown in the footer so a fresh session\u0027s baseline context is explained.
     private uint _sysTokens, _toolTokens;
-    private bool _plan, _ultra, _psub, _sub;
+    private bool _plan, _ultra, _psub, _sub, _giga;
     private string? _effort;   // reasoning-effort chip (low/med/high), null = hidden
     private string? _sessionId; // active session id badge, null = hidden
 
@@ -357,9 +357,9 @@ internal sealed class TuiDriver
     public int Height => Math.Max(10, _term.Height);
 
     /// <summary>Update the context meter / mode badges and repaint the live region.</summary>
-    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0)
+    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0, bool giga = false)
     {
-        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached;
+        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached; _giga = giga;
         Repaint();
     }
 
@@ -1085,7 +1085,8 @@ internal sealed class TuiDriver
             modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
             sysTokens: _sysTokens, toolTokens: _toolTokens,
             sessionElapsed: DateTime.UtcNow - _sessionStart,
-            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null));
+            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null,
+            giga: _giga));
 
         if (_inInput)
         {

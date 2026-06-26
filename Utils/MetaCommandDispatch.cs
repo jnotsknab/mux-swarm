@@ -61,6 +61,42 @@ internal static class MetaCommandDispatch
             case "/kanban":
                 MuxSwarm.Utils.Teams.KanbanCommand.Run(line);
                 return Result.Handled;
+
+            case "/hide":
+            {
+                var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";
+                if (arg.Length == 0)
+                {
+                    var vis = MuxConsole.VisibleSubAgentLanes();
+                    MuxConsole.WriteMuted(vis.Count == 0
+                        ? "No live sub-agents to hide."
+                        : "Usage: /hide <agent>. Live: " + string.Join(", ", vis));
+                    return Result.Handled;
+                }
+                var hidden = MuxConsole.HideSubAgentLane(arg);
+                MuxConsole.WriteMuted(hidden is not null
+                    ? $"Hid '{hidden}' (still in the \\ Agent View; /unhide {hidden} to restore)."
+                    : $"No live sub-agent matching '{arg}'.");
+                return Result.Handled;
+            }
+
+            case "/unhide":
+            {
+                var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";
+                var hiddenLanes = MuxConsole.HiddenSubAgentLanes();
+                if (arg.Length == 0)
+                {
+                    MuxConsole.WriteMuted(hiddenLanes.Count == 0
+                        ? "No hidden sub-agents."
+                        : "Usage: /unhide <agent>. Hidden: " + string.Join(", ", hiddenLanes));
+                    return Result.Handled;
+                }
+                var shown = MuxConsole.UnhideSubAgentLane(arg);
+                MuxConsole.WriteMuted(shown is not null
+                    ? $"Unhid '{shown}'."
+                    : $"No hidden sub-agent matching '{arg}'.");
+                return Result.Handled;
+            }
         }
 
         if (Tui.TuiCommands.IsReplOnly(cmd))

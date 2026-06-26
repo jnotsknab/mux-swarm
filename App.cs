@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.33";
+    public static readonly string DebugTag = "g12.36";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -595,13 +595,13 @@ public class App
                 case "/subagents":
                     AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
                     // Reflect the sub badge in the docked footer immediately.
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/psub":
                 case "/parasubagents":
                     AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
                     // Reflect the psub badge in the docked footer immediately.
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
@@ -748,7 +748,7 @@ public class App
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
                     // Reflect the plan badge in the docked footer immediately (not after stream).
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/classic":
                 case "/tui":
@@ -827,7 +827,7 @@ public class App
                         MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
                     // Reflect the new mode badges in the docked footer immediately (not after stream).
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/giga":
                     GigaMode = !GigaMode;
@@ -855,7 +855,7 @@ public class App
                         MuxConsole.WriteSuccess("Giga Mode disabled");
                         MuxConsole.WriteMuted($"Orchestration tools removed; reasoning/plan flags restored (Ultra: {(UltraMode ? "on" : "off")}, Plan: {(ShouldPlan ? "on" : "off")}).");
                     }
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/tools":
                     if (McpTools != null) Common.LogAvailableTools(McpTools);

@@ -1,4 +1,4 @@
-namespace MuxSwarm.Utils.Tui;
+﻿namespace MuxSwarm.Utils.Tui;
 
 /// <summary>
 /// Pure builders that turn render events (session header, tool call/result, diff,
@@ -20,6 +20,7 @@ internal static class TuiComponents
     public const string Text    = "#C8C8C8";
     public const string Plan    = "#B48EAD";
     public const string Ultra   = "#D08770";
+    public const string Giga    = "#B48EAD";
     public const string DiffAdd = "#78C88C";
     public const string DiffDel = "#D46C6C";
     public const string Border  = "#3A3A3A";
@@ -607,14 +608,22 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null, bool giga = false)
     {
         // No standing "tui" badge - it is noise. Only show active modes.
         // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
         // active the three mode badges are redundant noise - collapse them to a single "ultra"
         // chip. Otherwise show whichever discrete modes are on.
+        // Giga is a SUPERSET of ultra (ultra reasoning + plan + dynamic team/workflow
+        // orchestration), so when giga is active it supersedes the ultra chip - one "giga" badge
+        // stands for the whole stack. Otherwise ultra collapses plan/psub/sub into one chip, and
+        // failing that the discrete modes show individually.
         var badges = new List<string>();
-        if (ultra)
+        if (giga)
+        {
+            badges.Add($"[{Giga}]giga[/]");
+        }
+        else if (ultra)
         {
             badges.Add($"[{Ultra}]ultra[/]");
         }
