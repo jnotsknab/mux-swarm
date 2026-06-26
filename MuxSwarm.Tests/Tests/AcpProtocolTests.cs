@@ -148,6 +148,67 @@ public class AcpProtocolTests
         Assert.DoesNotContain('\n', line);
     }
 
+    [Theory]
+    [InlineData("{\"path\":\"C:\\\\a\\\\b.cs\"}", "C:\\a\\b.cs")]
+    [InlineData("{\"file\":\"/home/u/x.py\"}", "/home/u/x.py")]
+    [InlineData("{\"path\":\"relative/x.cs\"}", null)]
+    [InlineData("not json", null)]
+    [InlineData("{\"other\":1}", null)]
+    public void ExtractAbsolutePath_OnlyReturnsAbsolute(string args, string? expected)
+    {
+        Assert.Equal(expected, AcpProtocol.ExtractAbsolutePath(args));
+    }
+
+    [Fact]
+    public void Locations_NullWhenNoAbsolutePath()
+    {
+        Assert.Null(AcpProtocol.Locations("{\"path\":\"rel/x\"}"));
+        var loc = AcpProtocol.Locations("{\"path\":\"/abs/x\"}");
+        Assert.NotNull(loc);
+        var el = Reparse(loc!);
+        Assert.Equal("/abs/x", el[0].GetProperty("path").GetString());
+    }
+
+    [Fact]
+    public void Plan_EmitsFullSnapshotEntries()
+    {
+        var el = Reparse(AcpProtocol.Plan(new[] { ("step one", "high", "in_progress"), ("step two", "low", "pending") }));
+        Assert.Equal("plan", el.GetProperty("sessionUpdate").GetString());
+        var entries = el.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal("step one", entries[0].GetProperty("content").GetString());
+        Assert.Equal("high", entries[0].GetProperty("priority").GetString());
+        Assert.Equal("in_progress", entries[0].GetProperty("status").GetString());
+    }
+
+    [Fact]
+    public void DiffContent_KeepsNullOldTextForNewFile()
+    {
+        var el = Reparse(AcpProtocol.DiffContent("/abs/f.cs", null, "new body"));
+        Assert.Equal("diff", el.GetProperty("type").GetString());
+        Assert.Equal("/abs/f.cs", el.GetProperty("path").GetString());
+        Assert.Equal("new body", el.GetProperty("newText").GetString());
+        Assert.Equal(JsonValueKind.Null, el.GetProperty("oldText").ValueKind);
+    }
+
+    [Fact]
+    public void ToolCallUpdateRich_OmitsEmptyContent()
+    {
+        var el = Reparse(AcpProtocol.ToolCallUpdateRich("call_1", "completed", null));
+        Assert.False(el.TryGetProperty("content", out _));
+        var el2 = Reparse(AcpProtocol.ToolCallUpdateRich("call_2", "completed", new[] { AcpProtocol.TextContent("ok") }));
+        Assert.Equal(1, el2.GetProperty("content").GetArrayLength());
+    }
+
+    [Fact]
+    public void ToolCallWithLocations_IncludesLocationsWhenPresent()
+    {
+        var loc = AcpProtocol.Locations("{\"path\":\"/abs/x\"}");
+        var el = Reparse(AcpProtocol.ToolCallWithLocations("call_5", "edit_file", "edit", "in_progress", null, loc));
+        Assert.Equal("/abs/x", el.GetProperty("locations")[0].GetProperty("path").GetString());
+        Assert.False(el.TryGetProperty("rawInput", out _));
+    }
+
     [Fact]
     public void InputReader_FirstReadTickThenPromptDriven()
     {

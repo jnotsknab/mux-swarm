@@ -45,6 +45,7 @@ public sealed class AcpServer
     // results to calls FIFO (single-agent tools run sequentially).
     private int _toolCounter;
     private readonly ConcurrentQueue<string> _pendingToolIds = new();
+    private string? _lastToolArgs;
 
     public AcpServer(string version, Func<AcpInputReader, Task> runSession)
     {
@@ -241,22 +242,50 @@ public sealed class AcpServer
             }
             case "tool_call":
             {
+                // Explicit tool_call frame (swarm/parallel paths). Emit a pending->in_progress
+                // ACP tool_call; the matching tool_result completes it.
                 string tool = Str(payload, "tool");
                 string args = Str(payload, "args");
                 string toolId = "call_" + (++_toolCounter);
                 _pendingToolIds.Enqueue(toolId);
-                string title = string.IsNullOrEmpty(args) ? tool : $"{tool}";
-                WriteMessage(AcpProtocol.SessionUpdate(sid,
-                    AcpProtocol.ToolCall(toolId, title, AcpProtocol.ToolKind(tool), "in_progress",
-                        string.IsNullOrEmpty(args) ? null : new Dictionary<string, object?> { ["args"] = args })));
+                _lastToolArgs = args;
+                EmitToolCall(sid, toolId, tool, args);
                 break;
             }
             case "tool_result":
             {
-                string summary = Str(payload, "summary");
-                string toolId = _pendingToolIds.TryDequeue(out var tid) ? tid : "call_" + _toolCounter;
+                // The single-agent path emits ONLY a tool_result frame (no preceding tool_call),
+                // carrying {agent, tool, result}. Swarm paths use {agent, summary} after a
+                // tool_call. Synthesize whatever the client has not seen yet so every tool shows
+                // a pending->completed lifecycle.
+                string tool = Str(payload, "tool");
+                string body = payload.TryGetValue("result", out var rv) && rv is string rs && rs.Length > 0
+                    ? rs : Str(payload, "summary");
+                string toolId;
+                if (_pendingToolIds.TryDequeue(out var tid))
+                {
+                    toolId = tid;   // completes a tool_call already announced
+                }
+                else
+                {
+                    // No preceding tool_call (single-agent): announce one first.
+                    toolId = "call_" + (++_toolCounter);
+                    EmitToolCall(sid, toolId, string.IsNullOrEmpty(tool) ? "tool" : tool, _lastToolArgs);
+                }
+                var content = BuildToolContent(tool, _lastToolArgs, body);
                 WriteMessage(AcpProtocol.SessionUpdate(sid,
-                    AcpProtocol.ToolCallUpdate(toolId, "completed", string.IsNullOrEmpty(summary) ? null : summary)));
+                    AcpProtocol.ToolCallUpdateRich(toolId, "completed", content)));
+                _lastToolArgs = null;
+                break;
+            }
+            case "step":
+            {
+                // A WriteStep frame is a single plan item becoming the in-progress focus. ACP
+                // plans are full snapshots, so emit a one-entry plan marking the current step.
+                string title = Str(payload, "title");
+                if (title.Length > 0)
+                    WriteMessage(AcpProtocol.SessionUpdate(sid,
+                        AcpProtocol.Plan(new[] { (title, "medium", "in_progress") })));
                 break;
             }
             // Diagnostics / unmapped frames -> stderr so the client may surface logs.
@@ -268,6 +297,37 @@ public sealed class AcpServer
                 break;   // thinking/step/rule/banner/etc. are not part of the ACP turn stream
         }
     }
+
+    private void EmitToolCall(string sid, string toolId, string tool, string? args)
+    {
+        var raw = string.IsNullOrEmpty(args) ? null : new Dictionary<string, object?> { ["args"] = args };
+        var locations = AcpProtocol.Locations(args);
+        WriteMessage(AcpProtocol.SessionUpdate(sid,
+            AcpProtocol.ToolCallWithLocations(toolId, tool, AcpProtocol.ToolKind(tool), "in_progress", raw, locations)));
+    }
+
+    /// <summary>
+    /// Build the completed tool_call_update content. Edit-tool results that contain a git-style
+    /// unified diff are surfaced as an ACP diff block (path from the tool args); everything else
+    /// becomes a text block. Empty bodies yield no content.
+    /// </summary>
+    private object[]? BuildToolContent(string tool, string? args, string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+        string kind = AcpProtocol.ToolKind(tool);
+        string? path = AcpProtocol.ExtractAbsolutePath(args);
+        if (kind == "edit" && path is not null && LooksLikeDiff(body))
+        {
+            // Surface the unified diff as both a diff block (rich UI) and the raw text.
+            return new[] { AcpProtocol.DiffContent(path, null, body) };
+        }
+        string text = body.Length > 4000 ? body[..4000] + "\n... (truncated)" : body;
+        return new[] { AcpProtocol.TextContent(text) };
+    }
+
+    private static bool LooksLikeDiff(string s) =>
+        s.Contains("@@") || s.Contains("--- ") || s.Contains("+++ ") ||
+        (s.Contains("\n+") && s.Contains("\n-"));
 
     private void EmitUsage()
     {

@@ -201,6 +201,56 @@ public static class AcpProtocol
         return d;
     }
 
+    /// <summary>tool_call with optional rawInput + follow-along locations.</summary>
+    public static object ToolCallWithLocations(string toolCallId, string title, string kind, string status, object? rawInput, object[]? locations)
+    {
+        var d = new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "tool_call",
+            ["toolCallId"] = toolCallId,
+            ["title"] = title,
+            ["kind"] = kind,
+            ["status"] = status
+        };
+        if (rawInput is not null) d["rawInput"] = rawInput;
+        if (locations is not null) d["locations"] = locations;
+        return d;
+    }
+
+    /// <summary>tool_call_update carrying an already-built ToolCallContent[] (text/diff).</summary>
+    public static object ToolCallUpdateRich(string toolCallId, string status, object[]? content)
+    {
+        var d = new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "tool_call_update",
+            ["toolCallId"] = toolCallId,
+            ["status"] = status
+        };
+        if (content is { Length: > 0 }) d["content"] = content;
+        return d;
+    }
+
+    /// <summary>A regular ToolCallContent wrapping a text ContentBlock.</summary>
+    public static object TextContent(string text) =>
+        new Dictionary<string, object?>
+        {
+            ["type"] = "content",
+            ["content"] = new Dictionary<string, object?> { ["type"] = "text", ["text"] = text }
+        };
+
+    /// <summary>A diff ToolCallContent. oldText may be null (new file); newText required.</summary>
+    public static object DiffContent(string path, string? oldText, string newText)
+    {
+        var d = new Dictionary<string, object?>
+        {
+            ["type"] = "diff",
+            ["path"] = path,
+            ["newText"] = newText
+        };
+        d["oldText"] = oldText;   // explicit null is meaningful (new file) per spec
+        return d;
+    }
+
     /// <summary>
     /// Map a Mux tool name to the closest ACP ToolKind
     /// (read|edit|delete|move|search|execute|think|fetch|other).
@@ -218,6 +268,64 @@ public static class AcpProtocol
         if (t.Contains("think") || t.Contains("reason")) return "think";
         return "other";
     }
+
+    /// <summary>
+    /// A plan update (full snapshot). Each entry: content + priority (high|medium|low) +
+    /// status (pending|in_progress|completed). The client REPLACES the whole plan each time.
+    /// </summary>
+    public static object Plan(IEnumerable<(string Content, string Priority, string Status)> entries) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "plan",
+            ["entries"] = entries.Select(e => new Dictionary<string, object?>
+            {
+                ["content"] = e.Content,
+                ["priority"] = e.Priority,
+                ["status"] = e.Status
+            }).ToArray()
+        };
+
+    /// <summary>
+    /// A ToolCallLocation { path (absolute), line? } for follow-along UI, or null when no
+    /// absolute path can be extracted from the tool arguments.
+    /// </summary>
+    public static object[]? Locations(string? toolArgs)
+    {
+        string? path = ExtractAbsolutePath(toolArgs);
+        if (path is null) return null;
+        return new object[] { new Dictionary<string, object?> { ["path"] = path } };
+    }
+
+    /// <summary>
+    /// Best-effort absolute-path extraction from a tool's JSON argument blob ("path"/"file"/
+    /// "filename" keys, or a bare absolute-looking token). Returns null if none is found. ACP
+    /// requires all paths to be absolute, so relative matches are rejected.
+    /// </summary>
+    public static string? ExtractAbsolutePath(string? toolArgs)
+    {
+        if (string.IsNullOrWhiteSpace(toolArgs)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(toolArgs);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var key in new[] { "path", "file", "filename", "filePath", "file_path" })
+                {
+                    if (doc.RootElement.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String)
+                    {
+                        string s = v.GetString() ?? "";
+                        if (IsAbsolute(s)) return s;
+                    }
+                }
+            }
+        }
+        catch (JsonException) { /* args not JSON; fall through */ }
+        return null;
+    }
+
+    private static bool IsAbsolute(string s) =>
+        !string.IsNullOrEmpty(s) &&
+        (s.StartsWith('/') || (s.Length > 2 && char.IsLetter(s[0]) && s[1] == ':' && (s[2] == '\\' || s[2] == '/')) || s.StartsWith("\\\\"));
 
     /// <summary>Valid ACP stop reasons.</summary>
     public static class StopReason
