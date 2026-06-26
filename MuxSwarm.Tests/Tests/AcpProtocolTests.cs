@@ -210,6 +210,13 @@ public class AcpProtocolTests
     }
 
     [Fact]
+    public void InitializeResult_AdvertisesLoadSessionWhenRequested()
+    {
+        var el = Reparse(AcpProtocol.InitializeResult("1.0", loadSession: true));
+        Assert.True(el.GetProperty("agentCapabilities").GetProperty("loadSession").GetBoolean());
+    }
+
+    [Fact]
     public void InputReader_FirstReadTickThenPromptDriven()
     {
         using var reader = new AcpInputReader();

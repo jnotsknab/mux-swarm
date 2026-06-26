@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.39";
+    public static readonly string DebugTag = "g12.40";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -1143,7 +1143,7 @@ public class App
     {
         var server = new MuxSwarm.Utils.Acp.AcpServer(
             version: Version,
-            runSession: async reader =>
+            runSession: async (reader, resume) =>
             {
                 var model = LoadSingleAgentModel();
                 var acpCts = GetOrResetCts();
@@ -1163,6 +1163,8 @@ public class App
                         showToolResultCalls: _showToolCallResults,
                         shouldPlan: ShouldPlan,
                         chatClientFactory: modelId => CreateChatClient(modelId),
+                        resumedSession: resume?.Data,
+                        resumedSessionDir: resume?.Dir,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
                         interactiveHandle: handle);

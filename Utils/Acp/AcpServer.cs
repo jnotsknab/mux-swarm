@@ -25,7 +25,7 @@ namespace MuxSwarm.Utils.Acp;
 /// </summary>
 public sealed class AcpServer
 {
-    private readonly Func<AcpInputReader, Task> _runSession;
+    private readonly Func<AcpInputReader, AcpResume?, Task> _runSession;
     private readonly string _version;
     private readonly object _outLock = new();
 
@@ -47,7 +47,7 @@ public sealed class AcpServer
     private readonly ConcurrentQueue<string> _pendingToolIds = new();
     private string? _lastToolArgs;
 
-    public AcpServer(string version, Func<AcpInputReader, Task> runSession)
+    public AcpServer(string version, Func<AcpInputReader, AcpResume?, Task> runSession)
     {
         _version = version;
         _runSession = runSession;
@@ -106,7 +106,7 @@ public sealed class AcpServer
             switch (method)
             {
                 case "initialize":
-                    Respond(id, AcpProtocol.InitializeResult(_version));
+                    Respond(id, AcpProtocol.InitializeResult(_version, loadSession: true));
                     break;
 
                 case "authenticate":
@@ -118,9 +118,7 @@ public sealed class AcpServer
                     break;
 
                 case "session/load":
-                    // loadSession capability is not advertised in MVP; reply empty so a
-                    // permissive client does not hang.
-                    Respond(id, (object?)null);
+                    HandleSessionLoad(id, prms);
                     break;
 
                 case "session/prompt":
@@ -147,12 +145,47 @@ public sealed class AcpServer
 
     private void HandleSessionNew(object? id)
     {
+        string sid = "sess_" + Guid.NewGuid().ToString("N")[..12];
+        StartSession(sid, resume: null);
+        Respond(id, new Dictionary<string, object?> { ["sessionId"] = sid });
+    }
+
+    private void HandleSessionLoad(object? id, JsonElement prms)
+    {
+        string? sid = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("sessionId", out var s)
+            && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+        if (string.IsNullOrEmpty(sid))
+        {
+            if (id is not null) WriteMessage(AcpProtocol.Error(id, -32602, "session/load requires a sessionId"));
+            return;
+        }
+
+        // Resolve the persisted session by id (folder name). HandleSessionResume's console
+        // output routes through the (currently null-mapped) ACP sink, never to stdout.
+        var resumeData = MuxSwarm.Utils.CliCmdUtils.HandleSessionResume(sid);
+        if (resumeData is null)
+        {
+            if (id is not null) WriteMessage(AcpProtocol.Error(id, -32001, $"No resumable session: {sid}"));
+            return;
+        }
+
+        // Start the session FIRST so _sessionId is set, then replay the persisted transcript as
+        // session/update notifications (user_message_chunk / agent_message_chunk) per the spec,
+        // then respond with result:null. The started loop resumes the same context so the next
+        // session/prompt continues the conversation.
+        StartSession(sid, new AcpResume(resumeData.Value.data, resumeData.Value.sessionDir));
+        ReplayHistory(sid, resumeData.Value.data);
+        Respond(id, (object?)null);
+    }
+
+    private void StartSession(string sid, AcpResume? resume)
+    {
         // MVP supports a single active session per process. Tear down any prior reader.
         _reader?.CloseSession();
 
         var reader = new AcpInputReader();
         _reader = reader;
-        _sessionId = "sess_" + Guid.NewGuid().ToString("N")[..12];
+        _sessionId = sid;
         _sawFirstReadTick = false;
         _pendingPromptId = null;
         _cancelRequested = false;
@@ -164,13 +197,40 @@ public sealed class AcpServer
         // boundary tick, which is just "ready") and blocks until the first prompt is pushed.
         _sessionTask = Task.Run(async () =>
         {
-            try { await _runSession(reader); }
+            try { await _runSession(reader, resume); }
             catch (Exception ex) { Log($"session ended: {ex.Message}"); }
             finally { MuxConsole.InputOverride = Console.In; }
         });
-
-        Respond(id, new Dictionary<string, object?> { ["sessionId"] = _sessionId });
     }
+
+    /// <summary>
+    /// Replay a persisted session's messages to the client as session/update notifications
+    /// (user_message_chunk for user turns, agent_message_chunk for assistant turns), per the
+    /// session/load contract. Each message gets its own messageId.
+    /// </summary>
+    private void ReplayHistory(string sid, JsonElement data)
+    {
+        int n = 0;
+        foreach (var msg in MuxSwarm.Utils.Common.ExtractMessagesFromSession(data))
+        {
+            string txt = msg.Text ?? string.Empty;
+            if (txt.Length == 0) continue;
+            bool isUser = msg.Role == Microsoft.Extensions.AI.ChatRole.User;
+            string mid = (isUser ? "msg_user_" : "msg_agent_") + (++n);
+            object update = isUser
+                ? UserMessageChunk(txt, mid)
+                : AcpProtocol.AgentMessageChunk(txt, mid);
+            WriteMessage(AcpProtocol.SessionUpdate(sid, update));
+        }
+    }
+
+    private static object UserMessageChunk(string text, string messageId) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "user_message_chunk",
+            ["messageId"] = messageId,
+            ["content"] = new Dictionary<string, object?> { ["type"] = "text", ["text"] = text }
+        };
 
     private void HandlePrompt(object? id, JsonElement prms)
     {
@@ -377,4 +437,7 @@ public sealed class AcpServer
         JsonValueKind.Number => idEl.TryGetInt64(out var l) ? l : idEl.GetDouble(),
         _ => null
     };
+
+    /// <summary>Resume payload for session/load: the persisted session JSON + its directory.</summary>
+    public readonly record struct AcpResume(System.Text.Json.JsonElement Data, string Dir);
 }
