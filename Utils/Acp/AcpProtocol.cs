@@ -443,6 +443,33 @@ public static class AcpProtocol
         };
     }
 
+    /// <summary>
+    /// Build the Zed/Copilot Models API state object (NewSessionResponse.models /
+    /// LoadSessionResponse.models): <c>{ availableModels:[{modelId,name,description?}],
+    /// currentModelId }</c>. This is the field the Zed agent panel's model picker actually
+    /// reads (the spec marks it UNSTABLE); the generic <see cref="ModelConfigOption"/> covers
+    /// configOptions-based clients (e.g. Copilot CLI). We advertise BOTH so every client's
+    /// picker is populated. Returns null when there are no models to offer.
+    /// </summary>
+    public static object? ModelState(string current, IEnumerable<string> models)
+    {
+        var distinct = new List<string>();
+        if (!string.IsNullOrEmpty(current)) distinct.Add(current);
+        foreach (var m in models)
+            if (!string.IsNullOrEmpty(m) && !distinct.Contains(m)) distinct.Add(m);
+        if (distinct.Count == 0) return null;
+        string cur = string.IsNullOrEmpty(current) ? distinct[0] : current;
+        return new Dictionary<string, object?>
+        {
+            ["currentModelId"] = cur,
+            ["availableModels"] = distinct.Select(m => new Dictionary<string, object?>
+            {
+                ["modelId"] = m,
+                ["name"] = m
+            }).ToArray()
+        };
+    }
+
     /// <summary>Wrap config options as a session/update config_option_update notification body.</summary>
     public static object ConfigOptionUpdate(IEnumerable<object> configOptions) =>
         new Dictionary<string, object?>

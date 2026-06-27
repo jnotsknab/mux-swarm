@@ -241,6 +241,36 @@ public class AcpProtocolTests
     }
 
     [Fact]
+    public void ModelState_BuildsZedModelsApiWithCurrentFirst()
+    {
+        // Zed/Copilot agent-panel model picker reads NewSessionResponse.models (UNSTABLE):
+        // { currentModelId, availableModels:[{modelId,name}] }. Current must be present + first.
+        var obj = AcpProtocol.ModelState("model-b", new[] { "model-a", "model-b", "model-c" });
+        Assert.NotNull(obj);
+        var el = Reparse(obj!);
+        Assert.Equal("model-b", el.GetProperty("currentModelId").GetString());
+        var models = el.GetProperty("availableModels");
+        Assert.Equal(3, models.GetArrayLength());
+        Assert.Equal("model-b", models[0].GetProperty("modelId").GetString());
+        Assert.Equal("model-b", models[0].GetProperty("name").GetString());
+    }
+
+    [Fact]
+    public void ModelState_AddsCurrentWhenNotInList()
+    {
+        var el = Reparse(AcpProtocol.ModelState("brand-new", new[] { "a", "b" })!);
+        Assert.Equal("brand-new", el.GetProperty("currentModelId").GetString());
+        Assert.Equal(3, el.GetProperty("availableModels").GetArrayLength());
+    }
+
+    [Fact]
+    public void ModelState_NullWhenNoModels()
+    {
+        // No current and no available -> nothing to advertise -> null (omitted from the result).
+        Assert.Null(AcpProtocol.ModelState("", System.Array.Empty<string>()));
+    }
+
+    [Fact]
     public void ConfigOptionUpdate_WrapsOptionsArray()
     {
         var opt = AcpProtocol.ModelConfigOption("m1", new[] { "m1", "m2" });

@@ -81,6 +81,18 @@ public sealed class AcpServer
         catch { return System.Array.Empty<object>(); }
     }
 
+    /// <summary>Build the Zed/Copilot Models API state (NewSessionResponse.models), or null.</summary>
+    private object? BuildModelState()
+    {
+        if (_modelsProvider is null) return null;
+        try
+        {
+            var (current, available) = _modelsProvider();
+            return AcpProtocol.ModelState(current, available);
+        }
+        catch { return null; }
+    }
+
     /// <summary>
     /// Run the ACP server: install the event sink, then read JSON-RPC lines from stdin until
     /// EOF. Blocks for the lifetime of the connection. stdout is reserved for ACP messages.
@@ -206,6 +218,10 @@ public sealed class AcpServer
                     HandleSetConfigOption(id, prms);
                     break;
 
+                case "session/set_model":
+                    HandleSetModel(id, prms);
+                    break;
+
                 case "logout":
                     Respond(id, new Dictionary<string, object?>());
                     break;
@@ -224,7 +240,9 @@ public sealed class AcpServer
         StartSession(sid, resume: null);
         var result = new Dictionary<string, object?> { ["sessionId"] = sid };
         var cfg = BuildConfigOptions();
-        if (cfg.Length > 0) result["configOptions"] = cfg;   // model selector for the client's /models
+        if (cfg.Length > 0) result["configOptions"] = cfg;   // configOptions-API clients (e.g. Copilot CLI)
+        var models = BuildModelState();
+        if (models is not null) result["models"] = models;   // Models-API clients (e.g. Zed agent-panel model picker)
         Respond(id, result);
     }
 
@@ -253,7 +271,12 @@ public sealed class AcpServer
         // session/prompt continues the conversation.
         StartSession(sid, new AcpResume(resumeData.Value.data, resumeData.Value.sessionDir));
         ReplayHistory(sid, resumeData.Value.data);
-        Respond(id, (object?)null);
+        var lres = new Dictionary<string, object?>();
+        var lcfg = BuildConfigOptions();
+        if (lcfg.Length > 0) lres["configOptions"] = lcfg;
+        var lmodels = BuildModelState();
+        if (lmodels is not null) lres["models"] = lmodels;
+        Respond(id, lres);
     }
 
     private void HandleSessionResume(object? id, JsonElement prms)
@@ -277,6 +300,8 @@ public sealed class AcpServer
         var rres = new Dictionary<string, object?>();
         var rcfg = BuildConfigOptions();
         if (rcfg.Length > 0) rres["configOptions"] = rcfg;
+        var rmodels = BuildModelState();
+        if (rmodels is not null) rres["models"] = rmodels;
         Respond(id, rres);
     }
 
@@ -291,6 +316,20 @@ public sealed class AcpServer
         if (string.Equals(configId, "model", StringComparison.Ordinal) && !string.IsNullOrEmpty(value))
             _setModel?.Invoke(value);
         Respond(id, new Dictionary<string, object?> { ["configOptions"] = BuildConfigOptions() });
+    }
+
+    /// <summary>
+    /// Zed/Copilot Models API: the client picked a model via the agent-panel model picker
+    /// (session/set_model {sessionId, modelId}). Apply it as a CLI-style override and ack with
+    /// an empty result per the (UNSTABLE) SetSessionModelResponse contract.
+    /// </summary>
+    private void HandleSetModel(object? id, JsonElement prms)
+    {
+        string? modelId = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("modelId", out var mEl)
+            && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() : null;
+        if (!string.IsNullOrEmpty(modelId))
+            _setModel?.Invoke(modelId);
+        Respond(id, new Dictionary<string, object?>());
     }
 
     private void HandleSetMode(object? id, JsonElement prms)
