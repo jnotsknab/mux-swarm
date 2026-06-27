@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.45";
+    public static readonly string DebugTag = "g12.46";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -1194,6 +1194,19 @@ public class App
     {
         var server = new MuxSwarm.Utils.Acp.AcpServer(
             version: Version,
+            // Model selector for ACP clients' /models: current = the resolved single-agent
+            // model, available = the distinct model ids configured across swarm.json. Setting
+            // it applies a CLI-style model override for the next session/turn.
+            modelsProvider: () =>
+            {
+                string current = LoadSingleAgentModel();
+                var available = Common.LoadAgentModels().Values
+                    .Where(m => !string.IsNullOrEmpty(m))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                return (current, (IReadOnlyList<string>)available);
+            },
+            setModel: m => { if (!string.IsNullOrWhiteSpace(m)) _cliModelOverride = m; },
             runSession: async (reader, resume) =>
             {
                 // Tools are needed once the model actually runs a turn; await MCP readiness

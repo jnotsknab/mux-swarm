@@ -415,6 +415,42 @@ public static class AcpProtocol
         return new AcpClientCaps(fsRead, fsWrite, terminal);
     }
 
+    /// <summary>
+    /// Build a single model-selector ConfigOption (category "model") from a set of model ids.
+    /// The current value is <paramref name="current"/>; if it is not already in the list it is
+    /// prepended so the selector always has a valid current option.
+    /// </summary>
+    public static object ModelConfigOption(string current, IEnumerable<string> models)
+    {
+        var distinct = new List<string>();
+        if (!string.IsNullOrEmpty(current)) distinct.Add(current);
+        foreach (var m in models)
+            if (!string.IsNullOrEmpty(m) && !distinct.Contains(m)) distinct.Add(m);
+        if (distinct.Count == 0) distinct.Add(current ?? "default");
+        return new Dictionary<string, object?>
+        {
+            ["id"] = "model",
+            ["name"] = "Model",
+            ["description"] = "The model the single agent runs with",
+            ["category"] = "model",
+            ["type"] = "select",
+            ["currentValue"] = string.IsNullOrEmpty(current) ? distinct[0] : current,
+            ["options"] = distinct.Select(m => new Dictionary<string, object?>
+            {
+                ["value"] = m,
+                ["name"] = m
+            }).ToArray()
+        };
+    }
+
+    /// <summary>Wrap config options as a session/update config_option_update notification body.</summary>
+    public static object ConfigOptionUpdate(IEnumerable<object> configOptions) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "config_option_update",
+            ["configOptions"] = configOptions.ToArray()
+        };
+
     /// <summary>Valid ACP stop reasons.</summary>
     public static class StopReason
     {

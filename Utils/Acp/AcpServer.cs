@@ -29,6 +29,11 @@ public sealed class AcpServer
     private readonly string _version;
     private readonly object _outLock = new();
 
+    // Model selector (ACP session config option). _modelsProvider returns (current, available);
+    // _setModel applies a chosen model id for the next/current session. Both optional (null-safe).
+    private readonly Func<(string Current, IReadOnlyList<string> Available)>? _modelsProvider;
+    private readonly Action<string>? _setModel;
+
     private AcpInputReader? _reader;
     private Task? _sessionTask;
     private string? _sessionId;
@@ -54,10 +59,26 @@ public sealed class AcpServer
     private int _outboundId = 1000;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pendingOutbound = new();
 
-    public AcpServer(string version, Func<AcpInputReader, AcpResume?, Task> runSession)
+    public AcpServer(string version, Func<AcpInputReader, AcpResume?, Task> runSession,
+        Func<(string Current, IReadOnlyList<string> Available)>? modelsProvider = null,
+        Action<string>? setModel = null)
     {
         _version = version;
         _runSession = runSession;
+        _modelsProvider = modelsProvider;
+        _setModel = setModel;
+    }
+
+    /// <summary>Build the current model-selector configOptions array (empty when no provider).</summary>
+    private object[] BuildConfigOptions()
+    {
+        if (_modelsProvider is null) return System.Array.Empty<object>();
+        try
+        {
+            var (current, available) = _modelsProvider();
+            return new[] { AcpProtocol.ModelConfigOption(current, available) };
+        }
+        catch { return System.Array.Empty<object>(); }
     }
 
     /// <summary>
@@ -181,6 +202,10 @@ public sealed class AcpServer
                     HandleSetMode(id, prms);
                     break;
 
+                case "session/set_config_option":
+                    HandleSetConfigOption(id, prms);
+                    break;
+
                 case "logout":
                     Respond(id, new Dictionary<string, object?>());
                     break;
@@ -197,7 +222,10 @@ public sealed class AcpServer
     {
         string sid = "sess_" + Guid.NewGuid().ToString("N")[..12];
         StartSession(sid, resume: null);
-        Respond(id, new Dictionary<string, object?> { ["sessionId"] = sid });
+        var result = new Dictionary<string, object?> { ["sessionId"] = sid };
+        var cfg = BuildConfigOptions();
+        if (cfg.Length > 0) result["configOptions"] = cfg;   // model selector for the client's /models
+        Respond(id, result);
     }
 
     private void HandleSessionLoad(object? id, JsonElement prms)
@@ -246,7 +274,23 @@ public sealed class AcpServer
         // Resume = restore context, NO history replay (unlike session/load). Start the loop
         // with the resumed session and return an empty result when ready.
         StartSession(sid, new AcpResume(resumeData.Value.data, resumeData.Value.sessionDir));
-        Respond(id, new Dictionary<string, object?>());
+        var rres = new Dictionary<string, object?>();
+        var rcfg = BuildConfigOptions();
+        if (rcfg.Length > 0) rres["configOptions"] = rcfg;
+        Respond(id, rres);
+    }
+
+    private void HandleSetConfigOption(object? id, JsonElement prms)
+    {
+        // The client picked a config value (e.g. the model selector). Apply known ids, then
+        // respond with the COMPLETE config state per spec (the whole configOptions array).
+        string? configId = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("configId", out var c)
+            && c.ValueKind == JsonValueKind.String ? c.GetString() : null;
+        string? value = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("value", out var v)
+            && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        if (string.Equals(configId, "model", StringComparison.Ordinal) && !string.IsNullOrEmpty(value))
+            _setModel?.Invoke(value);
+        Respond(id, new Dictionary<string, object?> { ["configOptions"] = BuildConfigOptions() });
     }
 
     private void HandleSetMode(object? id, JsonElement prms)

@@ -210,6 +210,47 @@ public class AcpProtocolTests
     }
 
     [Fact]
+    public void ModelConfigOption_BuildsModelSelectorWithCurrentFirst()
+    {
+        var el = Reparse(AcpProtocol.ModelConfigOption("model-b", new[] { "model-a", "model-b", "model-c" }));
+        Assert.Equal("model", el.GetProperty("id").GetString());
+        Assert.Equal("model", el.GetProperty("category").GetString());
+        Assert.Equal("select", el.GetProperty("type").GetString());
+        Assert.Equal("model-b", el.GetProperty("currentValue").GetString());
+        var opts = el.GetProperty("options");
+        // current is prepended (so always valid), then the rest in order, de-duped.
+        Assert.Equal("model-b", opts[0].GetProperty("value").GetString());
+        Assert.Equal(3, opts.GetArrayLength());
+    }
+
+    [Fact]
+    public void ModelConfigOption_AddsCurrentWhenNotInList()
+    {
+        var el = Reparse(AcpProtocol.ModelConfigOption("brand-new", new[] { "a", "b" }));
+        Assert.Equal("brand-new", el.GetProperty("currentValue").GetString());
+        Assert.Equal(3, el.GetProperty("options").GetArrayLength());
+        Assert.Equal("brand-new", el.GetProperty("options")[0].GetProperty("value").GetString());
+    }
+
+    [Fact]
+    public void ModelConfigOption_EmptyAvailableStillHasCurrent()
+    {
+        var el = Reparse(AcpProtocol.ModelConfigOption("only", System.Array.Empty<string>()));
+        Assert.Equal("only", el.GetProperty("currentValue").GetString());
+        Assert.Equal(1, el.GetProperty("options").GetArrayLength());
+    }
+
+    [Fact]
+    public void ConfigOptionUpdate_WrapsOptionsArray()
+    {
+        var opt = AcpProtocol.ModelConfigOption("m1", new[] { "m1", "m2" });
+        var el = Reparse(AcpProtocol.ConfigOptionUpdate(new[] { opt }));
+        Assert.Equal("config_option_update", el.GetProperty("sessionUpdate").GetString());
+        Assert.Equal(1, el.GetProperty("configOptions").GetArrayLength());
+        Assert.Equal("model", el.GetProperty("configOptions")[0].GetProperty("id").GetString());
+    }
+
+    [Fact]
     public void InitializeResult_AdvertisesFullSuiteCapabilities()
     {
         var el = Reparse(AcpProtocol.InitializeResult("1.0", loadSession: true));
