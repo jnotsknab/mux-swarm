@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.41";
+    public static readonly string DebugTag = "g12.42";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -24,7 +24,8 @@ public class App
     public static IList<McpClientTool>? McpTools;
     private static string? _cliModelOverride;
     private static bool _watchDogEnabled;
-    private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
+    private static bool _verboseToggle;
+    private static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
@@ -241,6 +242,11 @@ public class App
 
     private async Task<int> AppLoop(string[] args)
     {
+        // Prepend persisted startup args (config.startupArgs) before the real argv so the
+        // user can boot straight into a mode/agent every run (e.g. "--agent CodeAgent --giga").
+        // Real CLI flags come AFTER and therefore win on any single-valued override. Set via
+        // /startargs. Machine transports (--stdio/--serve/--acp) ignore startup mode entry.
+        args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
 
         // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
@@ -391,6 +397,24 @@ public class App
             string? pendingFromSession = SingleAgentOrchestrator.PendingReplCommand;
             if (pendingFromSession is not null)
                 SingleAgentOrchestrator.PendingReplCommand = null;
+
+            // Startup mode entry: a startup flag (--swarm/--pswarm/--stateless/--teams/
+            // --agent-mode/--agent <name>) requested booting straight into a mode. Run it once
+            // as the first input, exactly as if the user typed it at the menu. Consumed here so
+            // it only fires on the very first loop iteration.
+            if (_startupCommand is not null && pendingFromSession is null)
+            {
+                pendingFromSession = _startupCommand;
+                _startupCommand = null;
+                if (_startupAgentName is not null)
+                {
+                    var defs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+                    var matched = defs.FirstOrDefault(d => d.Name.Equals(_startupAgentName, StringComparison.OrdinalIgnoreCase));
+                    if (matched is not null) SingleAgentOrchestrator.AgentDef = matched;
+                    else MuxConsole.WriteWarning($"Startup agent '{_startupAgentName}' not found; using default.");
+                    _startupAgentName = null;
+                }
+            }
 
             // When the live-region driver is active it owns the input box (pinned at the
             // bottom) and its own key loop (Esc -> cancel), so skip the inline "> " prompt and
@@ -1026,6 +1050,29 @@ public class App
                     break;
                 }
 
+                case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs "):
+                {
+                    // Persist CLI args applied automatically at every startup (config.startupArgs).
+                    // No arg -> show current value. "clear" -> empty it. Otherwise set verbatim.
+                    // Takes effect on the NEXT launch (args are merged before ParseArgs at boot).
+                    var saParts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (saParts.Length < 2)
+                    {
+                        var cur = string.IsNullOrWhiteSpace(Config.StartupArgs) ? "(none)" : Config.StartupArgs;
+                        MuxConsole.WriteInfo($"startupArgs = {cur}");
+                        MuxConsole.WriteMuted("Set with /startargs <args>  (e.g. /startargs --agent CodeAgent --giga). Clear with /startargs clear. Applies next launch.");
+                        break;
+                    }
+                    var saVal = saParts[1].Trim();
+                    Config.StartupArgs = saVal.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "" : saVal;
+                    Common.SaveConfig(Config);
+                    Config = LoadConfig(ConfigPath);
+                    MuxConsole.WriteSuccess(string.IsNullOrEmpty(Config.StartupArgs)
+                        ? "Cleared startupArgs."
+                        : $"startupArgs set to: {Config.StartupArgs}  (applies next launch).");
+                    break;
+                }
+
                 case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
                 {
                     // The wizard may offer to spawn a helper agent (like /onboard) to author the
@@ -1217,6 +1264,47 @@ public class App
         return null;
     }
 
+    /// <summary>The mode-entry command (e.g. "/agent", "/swarm") to auto-run as the first
+    /// interactive input, set by startup mode flags. Null = land at the menu as usual.</summary>
+    private static string? _startupCommand;
+    /// <summary>Agent name from --agent, applied when booting into a startup /agent session.</summary>
+    private static string? _startupAgentName;
+
+    /// <summary>
+    /// Tokenize <paramref name="startupArgs"/> (a single config string) and prepend the tokens
+    /// before the real argv. Honors simple double-quoted groups so a quoted value with spaces
+    /// survives. Returns the original argv unchanged when there are no startup args.
+    /// </summary>
+    internal static string[] MergeStartupArgs(string? startupArgs, string[] argv)
+    {
+        if (string.IsNullOrWhiteSpace(startupArgs)) return argv;
+        var tokens = TokenizeArgString(startupArgs);
+        if (tokens.Count == 0) return argv;
+        var merged = new string[tokens.Count + argv.Length];
+        tokens.CopyTo(merged, 0);
+        argv.CopyTo(merged, tokens.Count);
+        return merged;
+    }
+
+    /// <summary>Split a shell-like argument string into tokens, respecting double quotes.</summary>
+    internal static List<string> TokenizeArgString(string s)
+    {
+        var tokens = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        foreach (char c in s)
+        {
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+            }
+            else sb.Append(c);
+        }
+        if (sb.Length > 0) tokens.Add(sb.ToString());
+        return tokens;
+    }
+
     private static ParsedArgs ParseArgs(string[] args)
     {
         string? goal = null;
@@ -1332,7 +1420,14 @@ public class App
                 case "--agent":
                     var an = NextValue(args, ref i);
                     if (!string.IsNullOrWhiteSpace(an))
+                    {
                         agentName = an;
+                        // Interactive: pick this agent AND boot into a single-agent session
+                        // (unless another startup mode was explicitly requested). For a
+                        // goal-driven (--goal) or machine run, AgentName alone is used downstream.
+                        _startupCommand ??= "/agent";
+                        _startupAgentName = an;
+                    }
                     break;
                 
                 case "--plan":
@@ -1350,6 +1445,43 @@ public class App
                     break;
                 case "--tui":
                     _cliRenderModeOverride = "tui";
+                    break;
+                case "--giga":
+                    // Dynamic team/workflow orchestration (parity with /giga).
+                    GigaMode = true;
+                    if (Config.Ultra.AutoSubAgents)
+                        AllowParallelSubAgents = true;
+                    break;
+                case "--sub":
+                case "--subagents":
+                    // Enable single-agent delegation to sub-agents (parity with /sub).
+                    AllowSubagents = true;
+                    break;
+                case "--psub":
+                case "--parasubagents":
+                    // Enable parallel sub-agent delegation (parity with /psub).
+                    AllowParallelSubAgents = true;
+                    break;
+                case "--verbose":
+                    // Verbose MCP/init logging (parity with /verbose).
+                    _verboseToggle = true;
+                    break;
+                case "--swarm":
+                    _startupCommand = "/swarm";
+                    break;
+                case "--pswarm":
+                    _startupCommand = "/pswarm";
+                    break;
+                case "--stateless":
+                    _startupCommand = "/stateless";
+                    break;
+                case "--teams":
+                    _startupCommand = "/teams";
+                    break;
+                case "--agent-mode":
+                    // Boot straight into a single-agent session (parity with /agent). Combine
+                    // with --agent <name> to also pick which agent drives it.
+                    _startupCommand = "/agent";
                     break;
                 case "--clear":
                     Console.Clear();

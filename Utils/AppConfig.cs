@@ -54,6 +54,15 @@ public class AppConfig
     [JsonPropertyName("showReasoning")]
     public string ShowReasoning { get; set; } = "summary";
 
+    /// <summary>
+    /// Extra CLI arguments applied automatically at every startup, as if typed on the command
+    /// line (prepended before the real argv, so real flags can still override). Lets the user
+    /// boot straight into a mode/agent - e.g. "--agent CodeAgent --giga" or "--swarm --ultra".
+    /// Set with <c>/startargs &lt;args&gt;</c> (or <c>/startargs clear</c>). Empty by default.
+    /// </summary>
+    [JsonPropertyName("startupArgs")]
+    public string StartupArgs { get; set; } = "";
+
 }
 
 /// <summary>

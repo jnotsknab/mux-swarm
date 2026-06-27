@@ -98,6 +98,16 @@ public struct Help
         "  --max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)",
         "  --agent <name>             Run in single-agent mode with the specified agent instead of swarm",
         "  --plan                     Enable plan mode, agents confirm before executing (orchestrator and single agent only)",
+        "  --ultra / --ultraplan      Maximum-reasoning mode (plan + auto sub-agents per config)",
+        "  --giga                     Dynamic team/workflow orchestration mode (parity with /giga)",
+        "  --sub / --subagents        Enable single-agent delegation to sub-agents",
+        "  --psub / --parasubagents   Enable parallel sub-agent delegation",
+        "  --verbose                  Verbose MCP / init logging",
+        "  --swarm                    Boot straight into sequential swarm mode",
+        "  --pswarm                   Boot straight into parallel swarm mode",
+        "  --stateless                Boot straight into a stateless single-agent session",
+        "  --teams                    Boot straight into teams mode",
+        "  --agent-mode               Boot straight into a single-agent session (pair with --agent <name>)",
         "  --workflow <file>          Run deterministic and replayable workflows with control of the entire mux-swarm runtime",
         "  --provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)",
         "  --workspace <path>         Set the @-file workspace root (defaults to CWD; point at your real project dir)",
@@ -119,5 +129,9 @@ public struct Help
         "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
         "  --swarmcfg <path>          Override Swarm.json path for scoped instance",
-        "  --report <session-id>      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated");
+        "  --report <session-id>      Generate audit report(s) and exit, if no session id is passed reports for all saved sessions are generated",
+        "",
+        "Startup Args",
+        "  Persist any of the above flags to run automatically every launch with /startargs <args>",
+        "  (e.g. /startargs --agent CodeAgent --giga). Stored in config.startupArgs; clear with /startargs clear.");
 }
