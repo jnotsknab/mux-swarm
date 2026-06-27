@@ -101,6 +101,7 @@ internal static class TuiCommands
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
+        new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
 
         // --- global utilities (App.cs menu) ---

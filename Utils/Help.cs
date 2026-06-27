@@ -47,6 +47,7 @@ public struct Help
         "  /memory         View knowledge graph",
         "  /sessions       List all saved sessions with type and agent count",
         "  /dockerexec     Toggle Docker execution mode",
+            "  /sandbox        Show/swap exec sandbox backend (host|docker|podman|gvisor|bwrap|...)",
         "  /delimiter      Toggle multi-line input delimiter",
         "  /dbg            Enable tool call output (applies to stdio mode only)",
         "  /nodbg          Disable tool call output (applies to stdio mode only)",

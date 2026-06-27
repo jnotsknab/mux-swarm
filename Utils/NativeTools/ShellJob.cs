@@ -24,9 +24,25 @@ internal sealed class ShellJob
 
     public ShellJob(string id, string command) { _id = id; _command = command; }
 
-    public void Start(string workDir, string? venvDir = null)
+    public void Start(string workDir, string? venvDir = null, SandboxSpec? spec = null, OciSandbox? oci = null)
     {
-        var (file, args) = SplitShell(_command);
+        string file;
+        string args;
+        if (spec is null)
+        {
+            // Host execution (current behavior).
+            (file, args) = SplitShell(_command);
+        }
+        else if (spec.Kind == SandboxKind.Oci && oci is not null)
+        {
+            // Run the command inside the per-session container via `<binary> exec`.
+            (file, args) = oci.ExecShell(_command);
+        }
+        else
+        {
+            // Wrapper (bwrap/firejail/sandbox-exec) or custom backend: re-wrap each command.
+            (file, args) = SandboxBackend.WrapShellCommand(spec, _command, workDir);
+        }
         var psi = new ProcessStartInfo
         {
             FileName = file,

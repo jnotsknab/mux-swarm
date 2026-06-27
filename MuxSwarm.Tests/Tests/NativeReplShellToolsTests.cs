@@ -12,8 +12,13 @@ namespace MuxSwarm.Tests.Tests;
 /// replace the shared-connection mcp-async-repl server. Spawns a real Python worker subprocess,
 /// so it asserts the genuine wire (persistent vars, isolation, restart). Requires `python` on PATH.
 /// </summary>
+[Collection("ConsoleState")]
 public class NativeReplShellToolsTests
 {
+    // Pin host execution so a parallel config-mutating test cannot bleed a non-host sandbox
+    // backend into the ReplSession ctor (which resolves App.Config.Sandbox). Serialized via ConsoleState.
+    public NativeReplShellToolsTests() => MuxSwarm.App.Config.Sandbox = new MuxSwarm.Utils.SandboxConfig();
+
     private static AIFunction Fn(string name) =>
         (AIFunction)ReplShellTools.Build().First(t => ((AIFunction)t).Name == name);
 

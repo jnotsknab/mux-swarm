@@ -102,11 +102,19 @@ public static class PreambleBuilder
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
-        if (hasSkills && isUsingDockerForExec)
+        if (isUsingDockerForExec)
         {
-            preamble += "CRITICAL: You MUST call read_skill(\"docker-sandbox\") as your VERY FIRST action. "
-                + "No exceptions. Do not check directories or execute any code before reading docker-sandbox. "
-                + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n";
+            // Execution sandbox is ACTIVE: the native shell + Python tools transparently run inside the
+            // configured sandbox backend (one container/session). This is enforced by the tools, not by
+            // your cooperation - you cannot escape to the host by choosing a different tool. Artifacts you
+            // want to keep must land in the mounted work dir. Filesystem tools still operate on the host
+            // (within allowed paths), matching the docker-sandbox skill's "don't use the sandbox just to
+            // write files" rule.
+            preamble += "## Execution Sandbox (ACTIVE)\n"
+                + "Your shell commands and Python execution run INSIDE a sandbox container, not on the host. "
+                + "This is enforced by the runtime. Write artifacts to the working directory so they persist.\n";
+            if (hasSkills)
+                preamble += "For sandbox conventions (what runs where, output retrieval), you may read_skill(\"docker-sandbox\").\n";
         }
 
         preamble += $@"

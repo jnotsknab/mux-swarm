@@ -25,6 +25,9 @@ public class AppConfig
     [JsonPropertyName("shell")]
     public ShellConfig Shell { get; set; } = new();
 
+    [JsonPropertyName("sandbox")]
+    public SandboxConfig Sandbox { get; set; } = new();
+
     [JsonPropertyName("userInfo")]
     public UserInfoConfig UserInfo { get; set; } = new();
 
@@ -103,6 +106,61 @@ public class ShellConfig
     /// </summary>
     [JsonPropertyName("allowedCommands")]
     public List<string> AllowedCommands { get; set; } = [];
+}
+
+/// <summary>
+/// Pluggable execution-sandbox backend for the native shell + Python REPL tools. When the backend is
+/// anything other than "host", a session's shell jobs AND its persistent Python worker run INSIDE a
+/// sandbox (one per session) instead of directly on the host, so model-generated code cannot escape
+/// to the host by choice - the tool wraps execution, the agent does not opt in. Default "host"
+/// preserves today's behavior byte-for-byte. Mirrors the pluggable-runtime pattern used by OpenHands /
+/// smolagents / hermes-agent (one backend interface, interchangeable implementations).
+///
+/// Backends:
+///   "host"                       - no sandbox (default; current behavior).
+///   "docker" / "podman" / "nerdctl" - OCI container per session (image mounted at the work dir).
+///   "gvisor"                     - docker + the runsc runtime (userspace-kernel isolation).
+///   "bwrap" / "firejail" / "sandbox-exec" - lightweight OS-native wrapper (Linux/macOS; no image).
+///   "custom"                     - render Command as a template ({cmd},{workdir},{image}); drive any
+///                                  containerization service we did not hardcode.
+///
+/// Network: AllowedDomains non-empty => enforced proxy allowlist (OCI backends only; the sandbox has
+/// NO direct egress and reaches only listed domains via an injected filtering proxy). Empty +
+/// Network=true => open. Empty + Network=false => fully air-gapped. An allowlist on a non-OCI backend
+/// is a hard validation error (no silent false-confidence). Unknown backend / missing binary / custom
+/// without a template => hard error surfaced to the user, never a silent host fallback.
+/// Additive: absent in older configs => "host" (zero behavior change).
+/// </summary>
+public class SandboxConfig
+{
+    [JsonPropertyName("backend")]
+    public string Backend { get; set; } = "host";
+
+    /// <summary>Container image for OCI backends. Ignored by wrapper/host backends.</summary>
+    [JsonPropertyName("image")]
+    public string Image { get; set; } = "python:3.12-slim";
+
+    /// <summary>
+    /// Network posture when AllowedDomains is empty: true = open egress, false = air-gapped.
+    /// Ignored when AllowedDomains is non-empty (which forces the filtered-proxy allowlist).
+    /// </summary>
+    [JsonPropertyName("network")]
+    public bool Network { get; set; } = false;
+
+    /// <summary>
+    /// Domain allowlist. Non-empty => the sandbox can reach ONLY these hosts, enforced by an injected
+    /// CONNECT-filtering proxy on an internal (egress-less) network. OCI backends only. Deny-by-default.
+    /// </summary>
+    [JsonPropertyName("allowedDomains")]
+    public List<string> AllowedDomains { get; set; } = [];
+
+    /// <summary>
+    /// Command template for the "custom" backend. Placeholders: {cmd} (the command to run), {workdir}
+    /// (host work dir), {image}. Lets you point at any containerization/sandbox CLI. Required (non-empty)
+    /// when Backend == "custom"; ignored otherwise.
+    /// </summary>
+    [JsonPropertyName("command")]
+    public string Command { get; set; } = "";
 }
 
 public class ContextLimitsConfig

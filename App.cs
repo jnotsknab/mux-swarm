@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.55";
+    public static readonly string DebugTag = "g12.57";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -313,6 +313,34 @@ public class App
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
             MuxConsole.WriteInfo($"Docker Exec set to: {Config.IsUsingDockerForExec}");
             OtelLogger.Info($"Docker Exec set to: {Config.IsUsingDockerForExec}");
+            // Skills were loaded in the ctor with the pre-flag (default) value, so reload now that
+            // --dockerexec has flipped it - otherwise the bundled-docker skill set (incl. the
+            // docker-sandbox directive skill) is not active for this run.
+            SkillLoader.LoadSkills();
+        }
+
+        if (_startupSandboxBackend is { } sbxBackend)
+        {
+            // --sandbox <backend> applied at startup: validate, set the config backend, sync the
+            // docker-exec flag + reload skills so the directive set matches. Invalid backend warns
+            // and leaves host execution intact (no silent half-apply).
+            var candidate = new SandboxConfig
+            {
+                Backend = sbxBackend, Image = Config.Sandbox.Image, Network = Config.Sandbox.Network,
+                AllowedDomains = Config.Sandbox.AllowedDomains, Command = Config.Sandbox.Command,
+            };
+            var sbxErr = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(candidate);
+            if (sbxErr is null)
+            {
+                Config.Sandbox = candidate;
+                Config.IsUsingDockerForExec = sbxBackend.Trim().ToLowerInvariant() is not ("host" or "none" or "");
+                SkillLoader.LoadSkills();
+                MuxConsole.WriteInfo($"Sandbox backend set to: {sbxBackend}");
+            }
+            else
+            {
+                MuxConsole.WriteWarning($"--sandbox {sbxBackend} ignored: {sbxErr}");
+            }
         }
 
         if (parsed.McpStrictOverride.HasValue)
@@ -937,6 +965,9 @@ public class App
                 case "/dockerexec":
                     CliCmdUtils.HandleDockerExec(ConfigPath);
                     break;
+                case var sbx when sbx == "/sandbox" || sbx.StartsWith("/sandbox "):
+                    CliCmdUtils.HandleSandbox(userInput, ConfigPath);
+                    break;
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
                     break;
@@ -1285,6 +1316,8 @@ public class App
     /// <summary>The mode-entry command (e.g. "/agent", "/swarm") to auto-run as the first
     /// interactive input, set by startup mode flags. Null = land at the menu as usual.</summary>
     private static string? _startupCommand;
+    /// <summary>Sandbox backend from --sandbox, applied to Config after load. Null = leave config as-is.</summary>
+    private static string? _startupSandboxBackend;
     /// <summary>Agent name from --agent, applied when booting into a startup /agent session.</summary>
     private static string? _startupAgentName;
 
@@ -1434,6 +1467,9 @@ public class App
 
                 case "--docker-exec":
                     dockerExecOverride = NextBool(args, ref i) ?? true;
+                    break;
+                case "--sandbox":
+                    _startupSandboxBackend = (i + 1 < args.Length) ? args[++i] : "docker";
                     break;
                 case "--agent":
                     var an = NextValue(args, ref i);

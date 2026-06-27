@@ -41,13 +41,31 @@ internal sealed class ReplSession : IDisposable
     private readonly ConcurrentDictionary<string, ShellJob> _shellJobs = new(StringComparer.Ordinal);
     private int _shellSeq;
 
+    // ---- sandbox (null = host execution; non-null = shell jobs + python worker run inside it) ----
+    private readonly SandboxSpec? _spec;
+    private readonly string? _sandboxError;
+    private OciSandbox? _oci;
+    private bool Sandboxed => _spec is not null;
+    private bool OciSandboxed => _spec is { Kind: SandboxKind.Oci };
+
     public ReplSession(string key)
     {
         _key = key;
         string sub = "repl_" + Sanitize(key);
         _workDir = Path.Combine(LocalDataRoot(), "repl", sub);
         Directory.CreateDirectory(_workDir);
+
+        // Resolve the configured sandbox backend ONCE. A SandboxException (unknown backend, missing
+        // binary, bad network combo) is captured and surfaced on first tool use rather than thrown
+        // from the ctor - so an invalid sandbox config fails loud at the tool, never silently to host.
+        try { _spec = SandboxBackend.Resolve(App.Config.Sandbox); }
+        catch (SandboxException ex) { _spec = null; _sandboxError = ex.Message; }
+        if (OciSandboxed) _oci = new OciSandbox(_spec!, _workDir, _key);
     }
+
+    /// <summary>Non-null when the configured sandbox is unusable; tools return it instead of running on host.</summary>
+    private string? SandboxGuard() => _sandboxError is null ? null
+        : $"[SANDBOX ERROR] {_sandboxError}\nExecution refused: fix sandbox config or set sandbox.backend host.";
 
     /// <summary>Local (never-NAS) data root for venvs + worker temp files.</summary>
     private static string LocalDataRoot()
@@ -69,6 +87,7 @@ internal sealed class ReplSession : IDisposable
 
     public async Task<string> ExecutePythonAsync(string code, CancellationToken ct)
     {
+        if (SandboxGuard() is { } guard) return guard;
         await EnsureWorkerAsync(ct);
         lock (_lock)
         {
@@ -174,32 +193,62 @@ internal sealed class ReplSession : IDisposable
         lock (_lock) needStart = _worker is null || _worker.HasExited;
         if (!needStart) return;
 
-        await EnsureVenvAsync(ct);
+        if (OciSandboxed)
+            _oci!.EnsureStarted();   // python lives in the container; no host venv needed
+        else
+            await EnsureVenvAsync(ct);
 
         lock (_lock)
         {
             if (_worker is not null && !_worker.HasExited) return;
             _workerFile = Path.Combine(_workDir, "worker.py");
-            // Write the worker as LF (Python) bytes; never let the host EOL leak in.
+            // Write the worker as LF (Python) bytes; never let the host EOL leak in. The work dir is
+            // bind-mounted into the OCI sandbox at /work, so the same file is visible inside the container.
             File.WriteAllText(_workerFile, ReplShellTools.WorkerCodeLf, new UTF8Encoding(false));
 
-            var psi = new ProcessStartInfo
+            ProcessStartInfo psi;
+            if (OciSandboxed)
             {
-                FileName = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3"),
-                Arguments = QuoteArg(_workerFile),
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = _workDir,
-                // CRITICAL: a BOM-emitting encoder on stdin (Encoding.UTF8 emits a BOM on its first
-                // write on Windows) prepends \xEF\xBB\xBF to the first line, so the worker's
-                // json.loads on `{...}` fails and the execute is silently skipped (worker hangs in
-                // "running" forever). Use a BOM-LESS UTF-8 encoder for BOTH directions.
-                StandardOutputEncoding = new UTF8Encoding(false),
-                StandardInputEncoding = new UTF8Encoding(false),
-            };
+                // Run the persistent Python worker INSIDE the session container via `exec -i`, so its
+                // JSON line protocol flows across the container boundary. The worker file lives in the
+                // mounted work dir, visible at /work/worker.py inside the sandbox.
+                var (file, args) = _oci!.ExecPythonWorker(OciSandbox.GuestWorkDir + "/worker.py");
+                psi = new ProcessStartInfo
+                {
+                    FileName = file,
+                    Arguments = args,
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = _workDir,
+                    // Same BOM-less stdio rule as the host path - a BOM on the first stdin write would
+                    // corrupt the worker's first json.loads (the g12.52 bug), now across `docker exec -i`.
+                    StandardOutputEncoding = new UTF8Encoding(false),
+                    StandardInputEncoding = new UTF8Encoding(false),
+                };
+            }
+            else
+            {
+                psi = new ProcessStartInfo
+                {
+                    FileName = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3"),
+                    Arguments = QuoteArg(_workerFile),
+                    RedirectStandardInput = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = _workDir,
+                    // CRITICAL: a BOM-emitting encoder on stdin (Encoding.UTF8 emits a BOM on its first
+                    // write on Windows) prepends \xEF\xBB\xBF to the first line, so the worker's
+                    // json.loads on `{...}` fails and the execute is silently skipped (worker hangs in
+                    // "running" forever). Use a BOM-LESS UTF-8 encoder for BOTH directions.
+                    StandardOutputEncoding = new UTF8Encoding(false),
+                    StandardInputEncoding = new UTF8Encoding(false),
+                };
+            }
             psi.Environment["PYTHONUNBUFFERED"] = "1";
             _worker = Process.Start(psi);
             _jobStatus = "idle";
@@ -317,9 +366,9 @@ internal sealed class ReplSession : IDisposable
 
     public async Task<string> StartShellJobAsync(string command, CancellationToken ct)
     {
-        // Ensure the session venv exists before launching so the shell job is activated into the
-        // SAME interpreter the REPL worker / install_package_async use, regardless of call order.
-        await EnsureVenvAsync(ct);
+        if (SandboxGuard() is { } guard) return guard;
+        if (OciSandboxed) _oci!.EnsureStarted();           // command runs inside the container
+        else if (!Sandboxed) await EnsureVenvAsync(ct);    // host: activate the session venv
         return StartShellJob(command);
     }
 
@@ -328,16 +377,23 @@ internal sealed class ReplSession : IDisposable
         string id = "job_" + Interlocked.Increment(ref _shellSeq);
         var job = new ShellJob(id, command);
         _shellJobs[id] = job;
-        // Pass the venv dir only when it actually materialized (uv present); otherwise leave the
-        // job on the system PATH, matching the worker's own system-python fallback.
-        string? venv = Directory.Exists(VenvDir) ? VenvDir : null;
-        try { job.Start(_workDir, venv); }
+        // Host path passes the venv dir to activate it; sandbox paths route the command through the
+        // backend (container exec / wrapper / custom) instead - see ShellJob.Start.
+        string? venv = (!Sandboxed && Directory.Exists(VenvDir)) ? VenvDir : null;
+        try { job.Start(_workDir, venv, _spec, _oci); }
         catch (Exception ex) { job.MarkFailed(ex.Message); }
         return $"Job ID: {id}\nStatus: {job.Status}\nCommand: {command}\n\nUse check_job_status('{id}') to see the output.";
     }
 
     public async Task<string> InstallPackageAsync(string package, CancellationToken ct)
     {
+        if (SandboxGuard() is { } guard) return guard;
+        if (OciSandboxed)
+        {
+            // Inside the container, install with pip (the base image's python). No host venv.
+            _oci!.EnsureStarted();
+            return StartShellJob($"python -m pip install {package}");
+        }
         await EnsureVenvAsync(ct);
         string py = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3");
         string cmd = $"uv pip install --python {QuoteArg(py)} {package}";
@@ -365,5 +421,6 @@ internal sealed class ReplSession : IDisposable
         lock (_lock) KillWorker_NoLock();
         foreach (var j in _shellJobs.Values) j.Kill();
         _shellJobs.Clear();
+        try { _oci?.Dispose(); } catch { /* best effort container teardown */ }
     }
 }

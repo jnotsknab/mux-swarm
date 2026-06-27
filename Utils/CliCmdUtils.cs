@@ -47,16 +47,74 @@ public static class CliCmdUtils
 
     public static void HandleDockerExec(string cfgPath)
     {
-        App.Config.IsUsingDockerForExec = !App.Config.IsUsingDockerForExec;
-        MuxConsole.WriteInfo($"Docker Exec is now: {App.Config.IsUsingDockerForExec}");
+        // /dockerexec is now shorthand for the sandbox backend: toggle between host and docker. The
+        // docker-sandbox directive skill set + the IsUsingDockerForExec flag track the backend.
+        bool turningOn = App.Config.Sandbox.Backend.Trim().ToLowerInvariant() is "host" or "" or "none";
+        ApplySandboxBackend(turningOn ? "docker" : "host", image: null, cfgPath);
+    }
 
-        MuxConsole.WriteMuted(App.Config.IsUsingDockerForExec
-            ? "Agents will route script execution, Python, and git operations through Docker containers. File I/O still uses Filesystem MCP directly."
-            : "Agents will execute natively on the host. Docker sandbox is disabled.");
+    /// <summary>
+    /// /sandbox [backend] [image] - hot-swap the execution sandbox backend (host/docker/podman/nerdctl/
+    /// gvisor/bwrap/firejail/sandbox-exec/custom). Validates the new backend BEFORE applying; on failure
+    /// the current backend is untouched and the error is surfaced. With no args, prints current status.
+    /// </summary>
+    public static void HandleSandbox(string userInput, string cfgPath)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+        {
+            var s = App.Config.Sandbox;
+            MuxConsole.WriteInfo($"Sandbox backend: {s.Backend}");
+            if (!string.Equals(s.Backend, "host", StringComparison.OrdinalIgnoreCase))
+            {
+                MuxConsole.WriteMuted($"  image: {s.Image}");
+                MuxConsole.WriteMuted(s.AllowedDomains.Count > 0
+                    ? $"  network: allowlist [{string.Join(", ", s.AllowedDomains)}]"
+                    : $"  network: {(s.Network ? "open" : "air-gapped")}");
+            }
+            var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(s);
+            MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");
+            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|bwrap|firejail|sandbox-exec|custom> [image]");
+            return;
+        }
+        string backend = parts[1].Trim().ToLowerInvariant();
+        string? image = parts.Length >= 3 ? parts[2].Trim() : null;
+        ApplySandboxBackend(backend, image, cfgPath);
+    }
+
+    private static void ApplySandboxBackend(string backend, string? image, string cfgPath)
+    {
+        // Build a candidate config and VALIDATE before committing - never half-apply an unusable backend.
+        var candidate = new SandboxConfig
+        {
+            Backend = backend,
+            Image = image ?? App.Config.Sandbox.Image,
+            Network = App.Config.Sandbox.Network,
+            AllowedDomains = App.Config.Sandbox.AllowedDomains,
+            Command = App.Config.Sandbox.Command,
+        };
+        var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(candidate);
+        if (err is not null)
+        {
+            MuxConsole.WriteWarning($"Sandbox backend '{backend}' not applied: {err}");
+            return;
+        }
+
+        App.Config.Sandbox = candidate;
+        // Keep the legacy docker-exec flag in sync so the preamble's docker directive + bundled-docker
+        // skill set track any container backend (docker/podman/nerdctl/gvisor all imply 'use the sandbox').
+        bool containerized = backend is not ("host" or "none" or "");
+        App.Config.IsUsingDockerForExec = containerized;
 
         Common.SaveConfig(App.Config);
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
+        SkillLoader.LoadSkills();   // swap bundled vs bundled-docker so the directive set matches
+
+        MuxConsole.WriteInfo($"Sandbox backend is now: {backend}");
+        MuxConsole.WriteMuted(containerized
+            ? "New agent sessions run shell + Python execution inside the sandbox. Existing live sessions keep their current backend until they end."
+            : "Agents execute natively on the host. Sandbox disabled.");
     }
 
     public static void ShowExecutionLimits()
@@ -534,7 +592,8 @@ public static class CliCmdUtils
             $"Tools        {toolCount}",
             $"Skills       {skillCount}",
             $"Sessions     {sessionCount}",
-            $"Docker Exec  {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}"
+            $"Docker Exec  {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}",
+            $"Sandbox      {App.Config.Sandbox.Backend}"
         );
 
         MuxConsole.WritePanel("Mux-Swarm Status", lines);
