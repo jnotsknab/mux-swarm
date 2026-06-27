@@ -202,6 +202,13 @@ public static class PreambleBuilder
 
         Prefer sleep over rapid retries. A sleeping agent costs nothing.
 
+        ## File Reads & Context Hygiene (rule of thumb)
+        Filesystem read tools load a file's FULL contents into context. For large files, logs, or any
+        sizable codebase file, PREFER the shell/REPL tools (e.g. wc -l, sed -n, head/tail, rg, or a
+        python read) to inspect only what you need. Before using a Filesystem read tool on a file you
+        are unsure about, verify its size first (a quick shell stat / wc -l) - unless the user
+        explicitly says to ""read the file"". Reading a big file whole is the most common way to blow context.
+
         ## Filesystem Write Rules (STRICT)
         You MUST only write files to directories that are explicitly allowed.
 

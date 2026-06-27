@@ -137,7 +137,9 @@ for line in sys.stdin:
                 method: async (
                     [Description("Python code to run in the persistent REPL. Variables persist between calls.")] string code,
                     CancellationToken cancellationToken = default) =>
-                    await Session().ExecutePythonAsync(code, cancellationToken),
+                    NativeShellSecurity.Gate(code, "Run python") is { } _deny
+                        ? _deny
+                        : await Session().ExecutePythonAsync(code, cancellationToken),
                 name: "repl_shell_exec",
                 description: "Execute Python code in a persistent background worker. Variables persist between executions. " +
                              "Safe from hanging the server. If the code takes longer than 2 seconds, it returns a running status. " +
@@ -175,7 +177,9 @@ for line in sys.stdin:
                 method: async (
                     [Description("Shell command to run as a background job.")] string command,
                     CancellationToken cancellationToken = default) =>
-                    await Session().StartShellJobAsync(command, cancellationToken),
+                    NativeShellSecurity.Gate(command, "Run shell command") is { } _deny
+                        ? _deny
+                        : await Session().StartShellJobAsync(command, cancellationToken),
                 name: "execute_command_async",
                 description: "Execute a shell command asynchronously to prevent timeouts. Returns a Job ID immediately. " +
                              "Use this for long-running scripts, then poll with check_job_status."),
@@ -199,7 +203,9 @@ for line in sys.stdin:
                 method: async (
                     [Description("Package to install into the session venv (uv pip install).")] string package,
                     CancellationToken cancellationToken = default) =>
-                    await Session().InstallPackageAsync(package, cancellationToken),
+                    NativeShellSecurity.Gate("uv pip install " + package, "Install package") is { } _deny
+                        ? _deny
+                        : await Session().InstallPackageAsync(package, cancellationToken),
                 name: "install_package_async",
                 description: "Install a Python package asynchronously using uv into the session's virtual environment. " +
                              "Returns a Job ID to poll with check_job_status."),

@@ -126,6 +126,11 @@ public static class MultiAgentOrchestrator
     {
         AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
 
+        // Merge native tools (Filesystem + shell/REPL) into the pool so the per-agent and
+        // orchestrator ToolFilters gate them like MCP tools (swarm.json mcpServers "Filesystem"/"Shell").
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 
@@ -804,6 +809,10 @@ public static class MultiAgentOrchestrator
     public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools,
         Func<Common.AgentDefinition, IList<AITool>>? extraToolsPerAgent = null)
     {
+        // Merge native tools (Filesystem + shell/REPL) into the pool BEFORE per-agent ToolFilter,
+        // so each specialist gets them only when its swarm.json mcpServers lists "Filesystem"/"Shell".
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
         foreach (var def in AgentDefs)
         {
             string prompt = await Common.LoadPromptAsync(def.SystemPromptPath);
@@ -900,10 +909,6 @@ public static class MultiAgentOrchestrator
             var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
             if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
             agentTools.AddRange(filteredTools);
-            // Native session-scoped REPL/shell tools for every specialist (same default as the lead).
-            // The tools resolve the CURRENT ReplSession at call time, so when this specialist runs as a
-            // sub-agent under a per-child scope (RunSubAgentAsync), its worker + shell jobs are its own.
-            agentTools.AddRange(MuxSwarm.Utils.NativeTools.ReplShellTools.Build());
 
             // v0.12.0 M4 - per-agent extra tools (e.g. a team member's identity-bound mailbox
             // send_message/read_inbox). Null factory (every off-team path) leaves the toolset

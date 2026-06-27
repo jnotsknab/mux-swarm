@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.54";
+    public static readonly string DebugTag = "g12.55";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -1752,8 +1752,18 @@ public class App
             return false;
         }
 
+        // Native in-house toolsets (Filesystem + shell/REPL) are bound in-process via NativeToolRegistry,
+        // NOT spawned as MCP subprocesses. Skip connecting any server that (a) carries the
+        // native-runtime-tools marker, (b) is the legacy npx @modelcontextprotocol/server-filesystem
+        // entry (now satisfied natively - existing configs upgrade transparently), or (c) launches the
+        // old mcp-async-repl. This removes default subprocesses (faster startup) without losing surface.
+        bool SkipBecauseNative(McpServerConfig c) =>
+            IsNativeReplShellServer(c)
+            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(c)
+            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsLegacyFilesystemEntry(c);
+
         var enabledServers = config.McpServers
-            .Where(kvp => kvp.Value.Enabled && !IsNativeReplShellServer(kvp.Value))
+            .Where(kvp => kvp.Value.Enabled && !SkipBecauseNative(kvp.Value))
             .ToList();
         int enabledCount = enabledServers.Count;
 

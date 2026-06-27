@@ -22,6 +22,9 @@ public class AppConfig
     [JsonPropertyName("filesystem")]
     public FilesystemConfig Filesystem { get; set; } = new();
 
+    [JsonPropertyName("shell")]
+    public ShellConfig Shell { get; set; } = new();
+
     [JsonPropertyName("userInfo")]
     public UserInfoConfig UserInfo { get; set; } = new();
 
@@ -75,6 +78,33 @@ public class AppConfig
 /// with <c>/set brainMdCharLimit &lt;int&gt;</c>, <c>/set brainMdCapMode off|warn|force</c>,
 /// and the memoryMd equivalents.
 /// </summary>
+/// <summary>
+/// Security posture for the NATIVE shell/REPL tools (execute_command_async, repl_shell_exec, and
+/// the install/input helpers). Mux owns these in-process, so it can gate command execution the way
+/// Claude Code gates Bash. Default "off" preserves today's run-anything behavior. Modes:
+///   "off" (default) - run anything, no prompts. Unchanged behavior.
+///   "prompt"        - EVERY shell command + python exec elevates to the user (shows the exact
+///                     command). Deny hard-blocks at the process level (the process never spawns).
+///   "allowlist"     - commands whose first token matches an AllowedCommands prefix run freely;
+///                     anything else elevates.
+/// Elevation routes through the same confirm path as ask_user; in a non-interactive context
+/// (stdio/serve, ACP, captured sub-agent, daemon) any non-off mode AUTO-DENIES with a clear message.
+/// Additive: absent in older configs -> "off" (zero behavior change).
+/// </summary>
+public class ShellConfig
+{
+    [JsonPropertyName("securityMode")]
+    public string SecurityMode { get; set; } = "off";
+
+    /// <summary>
+    /// First-token command prefixes permitted without a prompt under "allowlist" mode
+    /// (e.g. "git", "ls", "cat", "python", "rg"). Matched case-insensitively against the leading
+    /// token of the command. Ignored in "off" / "prompt" modes.
+    /// </summary>
+    [JsonPropertyName("allowedCommands")]
+    public List<string> AllowedCommands { get; set; } = [];
+}
+
 public class ContextLimitsConfig
 {
     [JsonPropertyName("brainMdCharLimit")]

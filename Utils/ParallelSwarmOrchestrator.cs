@@ -171,6 +171,11 @@ public static class ParallelSwarmOrchestrator
         uint sessionRetention = 10,
         CancellationToken cancellationToken = default)
     {
+        // Merge native tools (Filesystem + shell/REPL) into the pool so per-agent + orchestrator
+        // ToolFilters gate them like MCP tools (swarm.json mcpServers "Filesystem"/"Shell").
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 

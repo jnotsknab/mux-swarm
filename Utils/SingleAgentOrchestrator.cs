@@ -285,6 +285,11 @@ public static class SingleAgentOrchestrator
         catch { /* fall through */ }
 
         IList<AITool> allTools = (mcpTools ?? Array.Empty<McpClientTool>()).Cast<AITool>().ToList();
+        // Merge the native in-house tools (Filesystem + shell/REPL) into the PRE-FILTER pool so
+        // the per-agent ToolFilter gates them exactly like MCP tools: an agent gets them only if
+        // it lists "Filesystem"/"Shell" in its swarm.json mcpServers (or a matching toolPattern).
+        foreach (var nativeTool in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config))
+            allTools.Add(nativeTool);
         IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
 
         if (filteredTools.Count == 0)
@@ -308,7 +313,6 @@ public static class SingleAgentOrchestrator
             4                                                   // listSkills, readSkill, sleep, mux_refresh
             + (hasVision ? 1 : 0)                               // analyze_image
             + filteredTools.Count                               // filtered MCP tools
-            + MuxSwarm.Utils.NativeTools.ReplShellTools.Build().Count // native session-scoped REPL/shell tools
             + ((shouldPlan || systemPromptOverride != null) ? 1 : 0) // ask_user
             + (allowSubAgents ? 1 : 0)                          // delegate_to_agent_lite
             + (allowParallelSubAgents ? 1 : 0)                  // delegate_parallel
@@ -650,12 +654,6 @@ public static class SingleAgentOrchestrator
             .. (analyzeImageTool != null ? new[] { analyzeImageTool } : Array.Empty<AITool>()),
             .. filteredTools
         ];
-
-        // Native session-scoped REPL/shell tools (the default; not config-gated). These replace the
-        // shared-connection mcp-async-repl MCP server (suppressed at MCP init) with PER-SESSION
-        // isolated workers, so parallel sub-agents never clash on one Python REPL / shell job table.
-        foreach (var nativeTool in MuxSwarm.Utils.NativeTools.ReplShellTools.Build())
-            singleAgentTools.Add(nativeTool);
 
         if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
 

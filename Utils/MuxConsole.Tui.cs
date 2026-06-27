@@ -147,6 +147,11 @@ public static partial class MuxConsole
     /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
     private static bool Capturing => _capture.Value is not null;
 
+    /// <summary>Public read of whether the calling async flow is inside a sub-agent / daemon
+    /// capture lane (no live interactive user). Used by native-tool security to auto-deny
+    /// elevation prompts that would otherwise block on input that never comes.</summary>
+    public static bool InSubAgentCapture => _capture.Value is not null;
+
     /// <summary>The active capture for this async flow, or null. Used by the gated sinks.</summary>
     private static SubAgentCapture? CurrentCapture => _capture.Value;
 
