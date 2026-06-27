@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.46";
+    public static readonly string DebugTag = "g12.47";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -218,7 +218,12 @@ public class App
         // Kick off MCP server connections in the background so the user is
         // dropped into the interactive prompt immediately. Connection results
         // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.
-        McpInitTask = InitMcpServersAsync(Config);
+        //
+        // Task.Run so the SYNCHRONOUS prelude of InitMcpServersAsync (config patching +
+        // setting up ~14 subprocess connections before the first real await yields) runs on a
+        // background thread too. Calling it directly stalled startup ~700ms before the kickoff
+        // returned; this makes time-to-prompt effectively instant.
+        McpInitTask = Task.Run(() => InitMcpServersAsync(Config));
 
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
