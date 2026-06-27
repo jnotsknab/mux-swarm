@@ -279,6 +279,9 @@ internal sealed class LiveRegion
             // from the top of the region; distance from the cursor up to row r is
             // (_paintedRows - r). Rewrite each changed row in place.
             var sb = new StringBuilder();
+            // Synchronized Output: batch the whole in-place rewrite into ONE atomic frame so
+            // the spinner/timer tick never shows a half-erased row (the flicker source).
+            sb.Append(Ansi.BeginSyncOutput);
             sb.Append(WrapEscape(disabled: true)); // keep rows un-reflowable during in-place rewrite
             int cursorOffset = 0; // current cursor distance above the home (below-last) line
             foreach (int r in changed)
@@ -295,6 +298,7 @@ internal sealed class LiveRegion
             // Return the cursor to the home line (below the last row).
             if (cursorOffset > 0) sb.Append(Ansi.CursorDown(cursorOffset));
             sb.Append(Ansi.CursorLeft);
+            sb.Append(Ansi.EndSyncOutput);   // present the batched frame atomically
             _term.Write(sb.ToString());
             _lastRows = newRows;
             _term.Flush();
@@ -302,9 +306,12 @@ internal sealed class LiveRegion
         }
 
         // Row count changed, width changed, or first paint: full erase + repaint. Reuse the
-        // rows we already rendered above instead of wrapping the frame a second time.
+        // rows we already rendered above instead of wrapping the frame a second time. The
+        // erase+repaint is wrapped in Synchronized Output so it presents as one atomic frame.
+        _term.Write(Ansi.BeginSyncOutput);
         EraseLiveRegion();
         PaintLiveRegion(newRows);
+        _term.Write(Ansi.EndSyncOutput);
         _term.Flush();
     }
 
@@ -327,8 +334,9 @@ internal sealed class LiveRegion
         _rowCache.Clear();
         _rowCacheWidth = -1;
         _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
-        _term.Write(Ansi.ClearScreen + Ansi.Home);
+        _term.Write(Ansi.BeginSyncOutput + Ansi.ClearScreen + Ansi.Home);
         PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
+        _term.Write(Ansi.EndSyncOutput);
         _term.Flush();
     }
 

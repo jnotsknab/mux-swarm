@@ -339,6 +339,52 @@ public class TuiCoreTests
         Assert.Equal(1, lr.PaintedRows);
     }
 
+    // --- Synchronized Output (flicker fix) -----------------------------------
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_WrapsFrameInSynchronizedOutput()
+    {
+        // The in-place spinner/timer tick path must batch its writes in BSU/ESU so the
+        // terminal presents one atomic frame (no half-painted row flicker).
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta", "gamma" });
+        term.Clear();
+        lr.SetLive(new List<string> { "alpha", "BETA", "gamma" }); // diff path
+        var outp = term.Output;
+        Assert.Contains(Ansi.BeginSyncOutput, outp);
+        Assert.Contains(Ansi.EndSyncOutput, outp);
+        // BSU must come before ESU.
+        Assert.True(outp.IndexOf(Ansi.BeginSyncOutput, StringComparison.Ordinal)
+                  < outp.IndexOf(Ansi.EndSyncOutput, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_NoChange_EmitsNoSyncMarkers()
+    {
+        // A no-op tick must stay byte-empty - no BSU/ESU, no paint, no flicker.
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+        lr.SetLive(new List<string> { "one", "two" }); // identical => no paint
+        Assert.Equal("", term.Output);
+    }
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_WrapsInSynchronizedOutput()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        term.Clear();
+        lr.ForceRepaint();
+        var outp = term.Output;
+        Assert.Contains(Ansi.BeginSyncOutput, outp);
+        Assert.Contains(Ansi.EndSyncOutput, outp);
+        Assert.Contains(Ansi.ClearScreen, outp);
+    }
+
     // --- resize invalidation (the resize-artifact fix) -----------------------
 
     [Fact]
