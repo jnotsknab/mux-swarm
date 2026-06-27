@@ -287,8 +287,28 @@ public sealed class AcpServer
 
     private void StartSession(string sid, AcpResume? resume)
     {
-        // MVP supports a single active session per process. Tear down any prior reader.
-        _reader?.CloseSession();
+        // One active session per process. A new session/new (e.g. the client's "/new") must
+        // FULLY tear down the prior session BEFORE installing the new one, because the two
+        // single-agent loops share global statics (MuxConsole.InputOverride, the cancel
+        // monitor, SingleAgentOrchestrator.AgentDef + session tokens, ServeMode.ActiveMode).
+        // If they overlap, the dying session's teardown finally resets InputOverride back to
+        // Console.In AFTER the new reader was installed, so the new orchestrator reads raw
+        // stdin instead of its ACP reader and the first prompt is never delivered (the
+        // "sits on thinking forever" bug).
+        var prevReader = _reader;
+        var prevTask = _sessionTask;
+        if (prevReader is not null)
+        {
+            prevReader.ReadEntered -= OnTurnBoundary;   // stop stale turn-boundary ticks
+            StdinCancelMonitor.Instance?.FireCancel();  // abort any in-flight turn so it can quit
+            prevReader.CloseSession();                  // queue /qc so the loop exits
+        }
+        if (prevTask is not null)
+        {
+            // Block the dedicated reader thread briefly until the old loop unwinds. Nothing
+            // else needs dispatching during a session swap; the cap guards against a wedged turn.
+            try { prevTask.Wait(5000); } catch { /* best-effort teardown */ }
+        }
 
         var reader = new AcpInputReader();
         _reader = reader;
@@ -296,6 +316,10 @@ public sealed class AcpServer
         _sawFirstReadTick = false;
         _pendingPromptId = null;
         _cancelRequested = false;
+        _messageCounter = 0;
+        _toolCounter = 0;
+        while (_pendingToolIds.TryDequeue(out _)) { }   // drop any stale tool ids
+        _lastToolArgs = null;
 
         reader.ReadEntered += OnTurnBoundary;
         MuxConsole.InputOverride = reader;
@@ -306,7 +330,9 @@ public sealed class AcpServer
         {
             try { await _runSession(reader, resume); }
             catch (Exception ex) { Log($"session ended: {ex.Message}"); }
-            finally { MuxConsole.InputOverride = Console.In; }
+            // Only relinquish stdin if THIS reader is still the installed override; a newer
+            // session may have already taken over (guards the InputOverride clobber race).
+            finally { if (ReferenceEquals(MuxConsole.InputOverride, reader)) MuxConsole.InputOverride = Console.In; }
         });
 
         AdvertiseCommands(sid);
