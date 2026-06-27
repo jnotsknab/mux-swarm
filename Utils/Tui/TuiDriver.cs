@@ -35,6 +35,17 @@ internal sealed class TuiDriver
     // streaming state - partial (un-newlined) tail shown live above the footer
     private readonly StringBuilder _streamTail = new();
     private bool _streaming;
+    // True until the FIRST answer line of the current streamed assistant block is committed, so a
+    // single grey lead dot (Claude-Code style) is stamped once per OUTPUT BLOCK - not per line and
+    // not per turn. Set in BeginStream, cleared when the first non-reasoning line commits.
+    private bool _streamBlockDotPending;
+    // Stream repaint coalescing: model tokens arrive many-per-second and a full live-frame rebuild
+    // per token (BuildLiveFrame re-runs the markdown renderer over the whole growing tail) is what
+    // makes non-ACP streaming look chunky. We mark the live tail dirty per chunk but only actually
+    // repaint on a ~30fps budget; completed-line commits + EndStream still flush immediately, so no
+    // content is ever lost - only the intra-frame live-tail preview is throttled.
+    private long _lastStreamPaintTicks;
+    private const long StreamPaintIntervalTicks = TimeSpan.TicksPerMillisecond * 33;
     // True when the current stream tail is reasoning content (rendered grey+italic to distinguish
     // it from the final answer). Flushed/reset on a type switch so reasoning and answer never blend.
     private bool _streamReasoning;
@@ -768,7 +779,7 @@ internal sealed class TuiDriver
 
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { FlushSettlingResult(); FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; Repaint(); }
+    public void BeginStream() { FlushSettlingResult(); FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; _streamBlockDotPending = true; _lastStreamPaintTicks = 0; Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
@@ -779,16 +790,26 @@ internal sealed class TuiDriver
     {
         if (string.IsNullOrEmpty(text)) return;
         // Switching between reasoning and answer text: flush whatever partial tail we have under
-        // the OLD style first, so the two never share a rendered line.
+        // the OLD style first, so the two never share a rendered line. A switch must paint
+        // immediately (bypass the stream throttle) so the boundary is shown without delay.
+        bool forcePaint = false;
         if (reasoning != _streamReasoning && _streamTail.Length > 0)
         {
             var pending = _streamTail.ToString();
             _streamTail.Clear();
             CommitStreamLine(pending);
+            forcePaint = true;
         }
         _streamReasoning = reasoning;
         _streamTail.Append(text);
-        FlushCompleteStreamLines();
+        bool committed = FlushCompleteStreamLines();
+        // A completed line repainted via CommitMirrored already; only the leftover live tail needs
+        // a frame. Coalesce those tail-only repaints to a ~30fps budget so a burst of tokens does
+        // not trigger a full live-frame rebuild each. A type switch (forcePaint) and EndStream are
+        // unthrottled so no boundary or final token is ever left unpainted.
+        long now = DateTime.UtcNow.Ticks;
+        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks) return;
+        _lastStreamPaintTicks = now;
         Repaint();
     }
 
@@ -881,10 +902,12 @@ internal sealed class TuiDriver
         if (_inFence) FlushCodeBuffer();
         // Any table rows buffered up to the very end of the turn are rendered now.
         FlushTableBuffer();
-        if (!hadTail) Repaint();
+        // Always repaint at end-of-stream: the per-chunk live-tail repaint is throttled, so the
+        // final partial frame may be stale; this guarantees the last tokens are on screen.
+        Repaint();
     }
 
-    private void FlushCompleteStreamLines()
+    private bool FlushCompleteStreamLines()
     {
         string s = _streamTail.ToString();
         int nl;
@@ -899,7 +922,9 @@ internal sealed class TuiDriver
             _streamTail.Clear();
             _streamTail.Append(s);
             foreach (var raw in commit) CommitStreamLine(raw);
+            return true;
         }
+        return false;
     }
 
     /// <summary>
@@ -945,7 +970,16 @@ internal sealed class TuiDriver
             CommitMirrored(Lane(new[] { $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]" }));
             return;
         }
-        CommitMirrored(Lane(new[] { TuiMarkdown.ToMarkup(raw) }));
+        string built = TuiMarkdown.ToMarkup(raw);
+        // Stamp a single grey lead dot on the FIRST answer line of this output block (Claude-Code
+        // style: a quiet marker that a new agent message has begun). Once per block - cleared after
+        // the first non-blank answer line - never on reasoning, blanks, code, or tables.
+        if (_streamBlockDotPending && !string.IsNullOrWhiteSpace(raw))
+        {
+            _streamBlockDotPending = false;
+            built = $"[{TuiComponents.Muted}]\u25cf[/] " + built;
+        }
+        CommitMirrored(Lane(new[] { built }));
     }
 
     /// <summary>Emit the one-line separator owed after a tool block, if any.</summary>

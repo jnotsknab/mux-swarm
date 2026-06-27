@@ -642,7 +642,7 @@ internal static class TuiComponents
         // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
         // fresh session does not show a noisy "0m".
         if (sessionElapsed is { } se && se.TotalSeconds >= 60)
-            badges.Add($"[{Dim}]\u23f1 {ClockHM(se)}[/]");
+            badges.Add($"[{Dim}]{ClockHM(se)}[/]");
 
         // Context meter: full bar+percent when a threshold is known; a bare token count when
         // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no

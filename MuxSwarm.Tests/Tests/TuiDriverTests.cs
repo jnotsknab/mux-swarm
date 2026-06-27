@@ -410,6 +410,44 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_StreamBlock_StampsSingleGreyLeadDotOnFirstAnswerLine()
+    {
+        // Claude-Code style: the first answer line of a streamed output block gets ONE grey lead
+        // dot (U+25CF in the Muted color); later lines in the same block do not.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("first line\nsecond line\n", reasoning: false);
+        d.EndStream();
+        string outp = term.Output;
+        int dots = outp.Split('\u25cf').Length - 1;
+        Assert.Equal(1, dots);                  // exactly one lead dot for the block
+        // The Muted color (#787878) renders to an ANSI truecolor SGR (38;2;120;120;120).
+        Assert.Contains("38;2;120;120;120", outp);
+        Assert.Contains("first line", outp);
+        Assert.Contains("second line", outp);
+    }
+
+    [Fact]
+    public void Driver_StreamBlock_ReasoningLinesGetNoLeadDot()
+    {
+        // Reasoning is grey+italic already; it must not receive the answer-block lead dot. The dot
+        // lands on the first ANSWER line only.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("thinking...\n", reasoning: true);   // reasoning line - no dot
+        d.StreamChunk("the answer\n", reasoning: false);   // first answer line - the dot
+        d.EndStream();
+        int dots = term.Output.Split('\u25cf').Length - 1;
+        Assert.Equal(1, dots);
+    }
+
+    [Fact]
     public void Driver_BuildLiveFrame_IncludesFooterAndRule()
     {
         var term = new FakeTerminal { Width = 50 };
