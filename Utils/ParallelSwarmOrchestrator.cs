@@ -1254,6 +1254,12 @@ public static class ParallelSwarmOrchestrator
         // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
+        // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
+        // Python worker + shell jobs are its own (disposed when the run ends). This is what makes
+        // parallel sub-agents isolated by construction - they never share one REPL/job table.
+        using var _replScope = MuxSwarm.Utils.NativeTools.ReplShellTools.BeginScope(
+            "sub_" + Guid.NewGuid().ToString("N")[..12]);
+
         // Per-child cancellation source registered under this lane, so a scoped Esc on the
         // foregrounded/expanded sub-agent cancels only this child (siblings keep their shared
         // batch token). Whole-turn cancel still flows through the linked token. Auto-deregisters.

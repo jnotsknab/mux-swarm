@@ -1738,7 +1738,23 @@ public class App
             }
         }
 
-        var enabledServers = config.McpServers.Where(kvp => kvp.Value.Enabled).ToList();
+        // The native in-house REPL/shell tools (ReplShellTools) replace the mcp-async-repl server,
+        // which used ONE shared worker/connection across all agents and clashed under parallel
+        // sub-agents. Skip connecting any stdio server that launches it (by command or args) so
+        // existing configs that still list it do not double-register the same tool names. This is
+        // a runtime safety net; the bundled template no longer ships the entry.
+        static bool IsNativeReplShellServer(McpServerConfig c)
+        {
+            bool Has(string? s) => s is not null && s.Contains("mcp-async-repl", StringComparison.OrdinalIgnoreCase);
+            if (Has(c.Command)) return true;
+            if (c.Args is not null)
+                foreach (var a in c.Args) if (Has(a)) return true;
+            return false;
+        }
+
+        var enabledServers = config.McpServers
+            .Where(kvp => kvp.Value.Enabled && !IsNativeReplShellServer(kvp.Value))
+            .ToList();
         int enabledCount = enabledServers.Count;
 
         // Connect to all enabled servers concurrently; shared collections are

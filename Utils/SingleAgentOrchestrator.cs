@@ -638,6 +638,12 @@ public static class SingleAgentOrchestrator
             .. filteredTools
         ];
 
+        // Native session-scoped REPL/shell tools (the default; not config-gated). These replace the
+        // shared-connection mcp-async-repl MCP server (suppressed at MCP init) with PER-SESSION
+        // isolated workers, so parallel sub-agents never clash on one Python REPL / shell job table.
+        foreach (var nativeTool in MuxSwarm.Utils.NativeTools.ReplShellTools.Build())
+            singleAgentTools.Add(nativeTool);
+
         if (shouldPlan || systemPromptOverride != null) singleAgentTools.Add(LocalAiFunctions.AskUserTool);
 
         if (allowSubAgents)

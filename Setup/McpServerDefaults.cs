@@ -76,14 +76,9 @@ public static class McpServerDefaults
         });
 
 
-        AddIfMissing("ReplShellMcp", new McpServerConfig
-        {
-            Type = "stdio",
-            Command = "uvx",
-            Args = new[] { "mcp-async-repl" },
-            Env = new Dictionary<string, string?>(),
-            Enabled = true
-        });
+        // NOTE: the former "ReplShellMcp" (uvx mcp-async-repl) default is intentionally NOT seeded.
+        // Its REPL/shell behavior is now provided natively + session-scoped by ReplShellTools, so a
+        // shared MCP worker is no longer needed (and would double-register the same tool names).
 
         //web browser / automation (optional)
         AddIfMissing("Playwright", new McpServerConfig

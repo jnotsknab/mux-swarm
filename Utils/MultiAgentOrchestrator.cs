@@ -900,6 +900,10 @@ public static class MultiAgentOrchestrator
             var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
             if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
             agentTools.AddRange(filteredTools);
+            // Native session-scoped REPL/shell tools for every specialist (same default as the lead).
+            // The tools resolve the CURRENT ReplSession at call time, so when this specialist runs as a
+            // sub-agent under a per-child scope (RunSubAgentAsync), its worker + shell jobs are its own.
+            agentTools.AddRange(MuxSwarm.Utils.NativeTools.ReplShellTools.Build());
 
             // v0.12.0 M4 - per-agent extra tools (e.g. a team member's identity-bound mailbox
             // send_message/read_inbox). Null factory (every off-team path) leaves the toolset
@@ -1388,6 +1392,12 @@ public static class MultiAgentOrchestrator
         // enabled (TUI only). Null scope = stream inline as before. AsyncLocal-scoped, so
         // concurrent parallel sub-agents each capture independently.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+
+        // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
+        // Python worker + shell jobs are its own (disposed when the run ends). This is what makes
+        // parallel sub-agents isolated by construction - they never share one REPL/job table.
+        using var _replScope = MuxSwarm.Utils.NativeTools.ReplShellTools.BeginScope(
+            "sub_" + Guid.NewGuid().ToString("N")[..12]);
 
         // Give THIS sub-agent its own cancellation source (linked to the incoming token) and
         // register it under its capture lane, so a scoped Esc on the foregrounded/expanded
