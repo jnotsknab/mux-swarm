@@ -453,8 +453,13 @@ public static class SingleAgentOrchestrator
 
 
             int attempts = 0;
+            // Children must observe the PER-TURN cancel token too: Esc cancels the lead's turnCts
+            // (registered on StdinCancelMonitor), not this captured app/session token. Linking them
+            // means pressing Esc tears the sub-agent down instead of wedging the lead on its await.
+            using var delLinked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
-                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false, cleanSession: true);
+                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, delLinked.Token, prodMode: false, cleanSession: true);
 
             bool succeeded = status == "success";
             attempts += 1;
@@ -575,18 +580,26 @@ public static class SingleAgentOrchestrator
                 var assignmentList = assignments.ToList();
                 MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
 
+                // Link the captured app/session token with the live PER-TURN token so Esc (which
+                // cancels turnCts) unwinds the whole parallel batch. Otherwise the lead blocks on
+                // Task.WhenAll while the children run on an un-cancelled token -> input deadlock
+                // that only a restart clears.
+                using var batchLinked = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
+                var batchCt = batchLinked.Token;
+
                 var taskBatch = assignmentList.Select(async req =>
                 {
-                    await semaphore.WaitAsync(cancellationToken);
+                    await semaphore.WaitAsync(batchCt);
                     try
                     {
                         return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
                             req.AgentName, req.Task, singleAgentDef.Name,
                             specialists, pDelegationResults, retryRegistry,
                             chatClientFactory, Models, compactionClient, compactionChatOptions,
-                            maxIterations, false, ct: cancellationToken, cleanSession: true);
+                            maxIterations, false, ct: batchCt, cleanSession: true);
                     }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (batchCt.IsCancellationRequested)
                     {
                         // A real turn cancellation (Esc / kill-switch) must propagate so Task.WhenAll
                         // unwinds the whole batch - not be swallowed as a per-agent result.

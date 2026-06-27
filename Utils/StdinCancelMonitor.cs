@@ -71,6 +71,20 @@ public sealed class StdinCancelMonitor : IDisposable
     }
 
     /// <summary>
+    /// The cancellation token of the turn currently registered via <see cref="SetActiveTurnCts"/>,
+    /// or <see cref="CancellationToken.None"/> when no turn is active. Delegated sub-agent work
+    /// must observe THIS token (not just the outer app/session token) so that pressing Esc - which
+    /// cancels the per-turn CTS - also tears down in-flight children. Without it, a lead blocked on
+    /// Task.WhenAll(children) would wedge: Esc cancels the lead's turn token, the children keep
+    /// running on the un-cancelled outer token, and input is dead until the app is restarted.
+    /// </summary>
+    public CancellationToken ActiveTurnToken
+    {
+        get { lock (_ctsLock) { return _activeTurnCts?.Token ?? CancellationToken.None; } }
+    }
+
+
+    /// <summary>
     /// Read the next line from stdin. Blocks until input is available.
     /// Use this instead of Console.ReadLine() everywhere.
     /// </summary>
