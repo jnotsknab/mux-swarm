@@ -62,16 +62,35 @@ public sealed class AcpServer
         MuxConsole.AcpActive = true;
         MuxConsole.AcpSink = OnMuxEvent;
 
+        // Read AND dispatch on a DEDICATED thread, never the thread pool. During startup MCP
+        // init spawns many subprocess connections concurrently, which can saturate the pool
+        // for ~15s; a pool-scheduled read (e.g. `Task.Run(Console.In.ReadLine)`) would be
+        // starved and the ACP handshake would stall even though the runtime is ready at ~1s.
+        // A dedicated reader thread (mirroring StdinCancelMonitor) delivers the initialize
+        // request immediately. Dispatch is synchronous; session turns spin up their own tasks.
+        var done = new TaskCompletionSource();
+        var readerThread = new Thread(() =>
+        {
+            try
+            {
+                var stdin = new StreamReader(Console.OpenStandardInput(), System.Text.Encoding.UTF8);
+                while (true)
+                {
+                    string? line = stdin.ReadLine();
+                    if (line is null) break;       // stdin closed -> client disconnected
+                    if (line.Length == 0) continue;
+                    try { Dispatch(line); }
+                    catch (Exception ex) { Log($"dispatch error: {ex.Message}"); }
+                }
+            }
+            catch (Exception ex) { Log($"reader error: {ex.Message}"); }
+            finally { done.TrySetResult(); }
+        }) { IsBackground = true, Name = "AcpStdinReader" };
+        readerThread.Start();
+
         try
         {
-            while (true)
-            {
-                string? line = await Task.Run(Console.In.ReadLine);
-                if (line is null) break;          // stdin closed -> client disconnected
-                if (line.Length == 0) continue;
-                try { Dispatch(line); }
-                catch (Exception ex) { Log($"dispatch error: {ex.Message}"); }
-            }
+            await done.Task;   // until stdin closes
         }
         finally
         {

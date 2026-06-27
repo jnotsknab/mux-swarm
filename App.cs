@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.40";
+    public static readonly string DebugTag = "g12.41";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -285,7 +285,11 @@ public class App
             // ACP owns stdin (JSON-RPC line transport) and drives the single-agent REPL
             // headlessly. Start the cancel monitor PAUSED so session/cancel can abort a turn
             // without the monitor's background reader also consuming ACP's stdin.
-            await EnsureMcpReadyAsync();
+            //
+            // MCP init is NOT awaited here: it runs in the background (McpInitTask) and is
+            // awaited lazily inside the session loop right before the first turn needs tools.
+            // This lets the ACP handshake (initialize / session/new) respond in milliseconds
+            // instead of blocking ~15s on MCP subprocess spawns.
             StdinCancelMonitor.Start(startPaused: true);
             return await RunAcpAsync();
         }
@@ -1145,6 +1149,9 @@ public class App
             version: Version,
             runSession: async (reader, resume) =>
             {
+                // Tools are needed once the model actually runs a turn; await MCP readiness
+                // here (not at transport start) so the ACP handshake stays instant.
+                await EnsureMcpReadyAsync();
                 var model = LoadSingleAgentModel();
                 var acpCts = GetOrResetCts();
                 ServeMode.ActiveMode = "agent";
