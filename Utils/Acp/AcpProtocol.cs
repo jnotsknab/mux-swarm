@@ -77,9 +77,22 @@ public static class AcpProtocol
                 ["loadSession"] = loadSession,
                 ["promptCapabilities"] = new Dictionary<string, object?>
                 {
+                    // Baseline text + resource_link are always supported; embeddedContext lets
+                    // clients inline text resources (e.g. open-buffer contents) into a prompt.
                     ["image"] = false,
                     ["audio"] = false,
-                    ["embeddedContext"] = false
+                    ["embeddedContext"] = true
+                },
+                // Session lifecycle: resume (no-replay restore) + close. Each '{}' = supported.
+                ["sessionCapabilities"] = new Dictionary<string, object?>
+                {
+                    ["resume"] = new Dictionary<string, object?>(),
+                    ["close"] = new Dictionary<string, object?>()
+                },
+                // Auth: logout supported (auth itself is a no-op; no methods required).
+                ["auth"] = new Dictionary<string, object?>
+                {
+                    ["logout"] = new Dictionary<string, object?>()
                 }
             },
             ["agentInfo"] = new Dictionary<string, object?>
@@ -327,6 +340,81 @@ public static class AcpProtocol
         !string.IsNullOrEmpty(s) &&
         (s.StartsWith('/') || (s.Length > 2 && char.IsLetter(s[0]) && s[1] == ':' && (s[2] == '\\' || s[2] == '/')) || s.StartsWith("\\\\"));
 
+    /// <summary>
+    /// available_commands_update: advertise the slash commands the client can offer the user.
+    /// Each command: name (no leading slash), description, optional input hint.
+    /// </summary>
+    public static object AvailableCommandsUpdate(IEnumerable<(string Name, string Description)> commands) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "available_commands_update",
+            ["availableCommands"] = commands.Select(c => new Dictionary<string, object?>
+            {
+                ["name"] = c.Name,
+                ["description"] = c.Description
+            }).ToArray()
+        };
+
+    /// <summary>current_mode_update: report the agent's active session mode id to the client.</summary>
+    public static object CurrentModeUpdate(string modeId) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionUpdate"] = "current_mode_update",
+            ["currentModeId"] = modeId
+        };
+
+    /// <summary>
+    /// session/request_permission params (Agent->Client). Asks the client to approve a tool
+    /// call, offering allow/reject options. The client replies with a selected optionId or a
+    /// cancelled outcome.
+    /// </summary>
+    public static object RequestPermissionParams(string sessionId, string toolCallId, string title) =>
+        new Dictionary<string, object?>
+        {
+            ["sessionId"] = sessionId,
+            ["toolCall"] = new Dictionary<string, object?>
+            {
+                ["toolCallId"] = toolCallId,
+                ["title"] = title
+            },
+            ["options"] = new object[]
+            {
+                new Dictionary<string, object?> { ["optionId"] = "allow-once",   ["name"] = "Allow once",      ["kind"] = "allow_once" },
+                new Dictionary<string, object?> { ["optionId"] = "allow-always", ["name"] = "Allow always",    ["kind"] = "allow_always" },
+                new Dictionary<string, object?> { ["optionId"] = "reject-once",  ["name"] = "Reject",          ["kind"] = "reject_once" }
+            }
+        };
+
+    /// <summary>fs/read_text_file params (Agent->Client).</summary>
+    public static object FsReadParams(string sessionId, string path, int? line = null, int? limit = null)
+    {
+        var d = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["path"] = path };
+        if (line is not null) d["line"] = line;
+        if (limit is not null) d["limit"] = limit;
+        return d;
+    }
+
+    /// <summary>fs/write_text_file params (Agent->Client).</summary>
+    public static object FsWriteParams(string sessionId, string path, string content) =>
+        new Dictionary<string, object?> { ["sessionId"] = sessionId, ["path"] = path, ["content"] = content };
+
+    /// <summary>Parse client capabilities advertised in initialize into a simple struct.</summary>
+    public static AcpClientCaps ParseClientCaps(JsonElement prms)
+    {
+        bool fsRead = false, fsWrite = false, terminal = false;
+        if (prms.ValueKind == JsonValueKind.Object &&
+            prms.TryGetProperty("clientCapabilities", out var cc) && cc.ValueKind == JsonValueKind.Object)
+        {
+            if (cc.TryGetProperty("fs", out var fs) && fs.ValueKind == JsonValueKind.Object)
+            {
+                fsRead = fs.TryGetProperty("readTextFile", out var r) && r.ValueKind == JsonValueKind.True;
+                fsWrite = fs.TryGetProperty("writeTextFile", out var w) && w.ValueKind == JsonValueKind.True;
+            }
+            terminal = cc.TryGetProperty("terminal", out var t) && t.ValueKind == JsonValueKind.True;
+        }
+        return new AcpClientCaps(fsRead, fsWrite, terminal);
+    }
+
     /// <summary>Valid ACP stop reasons.</summary>
     public static class StopReason
     {
@@ -337,3 +425,6 @@ public static class AcpProtocol
         public const string Cancelled = "cancelled";
     }
 }
+
+/// <summary>Client capabilities advertised in initialize (gates agent->client callbacks).</summary>
+public readonly record struct AcpClientCaps(bool FsRead, bool FsWrite, bool Terminal);

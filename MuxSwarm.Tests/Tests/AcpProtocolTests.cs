@@ -210,6 +210,75 @@ public class AcpProtocolTests
     }
 
     [Fact]
+    public void InitializeResult_AdvertisesFullSuiteCapabilities()
+    {
+        var el = Reparse(AcpProtocol.InitializeResult("1.0", loadSession: true));
+        var caps = el.GetProperty("agentCapabilities");
+        Assert.True(caps.GetProperty("promptCapabilities").GetProperty("embeddedContext").GetBoolean());
+        Assert.True(caps.TryGetProperty("sessionCapabilities", out var sc));
+        Assert.True(sc.TryGetProperty("resume", out _));
+        Assert.True(sc.TryGetProperty("close", out _));
+        Assert.True(caps.GetProperty("auth").TryGetProperty("logout", out _));
+    }
+
+    [Fact]
+    public void AvailableCommandsUpdate_ListsCommands()
+    {
+        var el = Reparse(AcpProtocol.AvailableCommandsUpdate(new[] { ("compact", "Compress"), ("qc", "Quit") }));
+        Assert.Equal("available_commands_update", el.GetProperty("sessionUpdate").GetString());
+        var cmds = el.GetProperty("availableCommands");
+        Assert.Equal(2, cmds.GetArrayLength());
+        Assert.Equal("compact", cmds[0].GetProperty("name").GetString());
+        Assert.Equal("Compress", cmds[0].GetProperty("description").GetString());
+    }
+
+    [Fact]
+    public void CurrentModeUpdate_CarriesModeId()
+    {
+        var el = Reparse(AcpProtocol.CurrentModeUpdate("ultra"));
+        Assert.Equal("current_mode_update", el.GetProperty("sessionUpdate").GetString());
+        Assert.Equal("ultra", el.GetProperty("currentModeId").GetString());
+    }
+
+    [Fact]
+    public void RequestPermission_OffersAllowRejectOptions()
+    {
+        var el = Reparse(AcpProtocol.RequestPermissionParams("sess_x", "call_1", "Run tests"));
+        Assert.Equal("sess_x", el.GetProperty("sessionId").GetString());
+        Assert.Equal("call_1", el.GetProperty("toolCall").GetProperty("toolCallId").GetString());
+        var opts = el.GetProperty("options");
+        Assert.Equal(3, opts.GetArrayLength());
+        Assert.Equal("allow_once", opts[0].GetProperty("kind").GetString());
+        Assert.Equal("reject_once", opts[2].GetProperty("kind").GetString());
+    }
+
+    [Fact]
+    public void FsParams_ShapeIsCorrect()
+    {
+        var r = Reparse(AcpProtocol.FsReadParams("s", "/abs/x", 10, 50));
+        Assert.Equal("/abs/x", r.GetProperty("path").GetString());
+        Assert.Equal(10, r.GetProperty("line").GetInt32());
+        Assert.Equal(50, r.GetProperty("limit").GetInt32());
+        var r2 = Reparse(AcpProtocol.FsReadParams("s", "/abs/y"));
+        Assert.False(r2.TryGetProperty("line", out _));
+        var w = Reparse(AcpProtocol.FsWriteParams("s", "/abs/z", "body"));
+        Assert.Equal("body", w.GetProperty("content").GetString());
+    }
+
+    [Theory]
+    [InlineData("""{"clientCapabilities":{"fs":{"readTextFile":true,"writeTextFile":true},"terminal":true}}""", true, true, true)]
+    [InlineData("""{"clientCapabilities":{"fs":{"readTextFile":true}}}""", true, false, false)]
+    [InlineData("""{"clientCapabilities":{}}""", false, false, false)]
+    [InlineData("""{}""", false, false, false)]
+    public void ParseClientCaps_ReadsAdvertisedFlags(string json, bool read, bool write, bool term)
+    {
+        var caps = AcpProtocol.ParseClientCaps(Parse(json));
+        Assert.Equal(read, caps.FsRead);
+        Assert.Equal(write, caps.FsWrite);
+        Assert.Equal(term, caps.Terminal);
+    }
+
+    [Fact]
     public void InitializeResult_AdvertisesLoadSessionWhenRequested()
     {
         var el = Reparse(AcpProtocol.InitializeResult("1.0", loadSession: true));

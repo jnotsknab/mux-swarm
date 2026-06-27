@@ -47,6 +47,13 @@ public sealed class AcpServer
     private readonly ConcurrentQueue<string> _pendingToolIds = new();
     private string? _lastToolArgs;
 
+    // Client capabilities (from initialize) gating agent->client callbacks (fs/*, terminal/*).
+    private AcpClientCaps _clientCaps;
+
+    // Outbound request correlation (agent->client requests like fs/* and request_permission).
+    private int _outboundId = 1000;
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pendingOutbound = new();
+
     public AcpServer(string version, Func<AcpInputReader, AcpResume?, Task> runSession)
     {
         _version = version;
@@ -118,13 +125,24 @@ public sealed class AcpServer
             bool hasId = root.TryGetProperty("id", out var idEl);
             object? id = hasId ? ExtractId(idEl) : null;
 
-            if (method is null) return;       // a response to one of our outbound calls; none expected in MVP
+            if (method is null)
+            {
+                // A response to one of OUR outbound requests (fs/*, request_permission, etc.).
+                // Complete the awaiting task with the result (or a JSON null on error).
+                if (hasId && id is long rid && _pendingOutbound.TryRemove(rid, out var tcs))
+                {
+                    if (root.TryGetProperty("result", out var resEl)) tcs.TrySetResult(resEl.Clone());
+                    else tcs.TrySetResult(default);
+                }
+                return;
+            }
 
             JsonElement prms = root.TryGetProperty("params", out var p) ? p : default;
 
             switch (method)
             {
                 case "initialize":
+                    _clientCaps = AcpProtocol.ParseClientCaps(prms);
                     Respond(id, AcpProtocol.InitializeResult(_version, loadSession: true));
                     break;
 
@@ -151,6 +169,19 @@ public sealed class AcpServer
 
                 case "session/close":
                     _reader?.CloseSession();
+                    Respond(id, new Dictionary<string, object?>());
+                    break;
+
+                case "session/resume":
+                    // Like load but WITHOUT replaying history: restore context + return ready.
+                    HandleSessionResume(id, prms);
+                    break;
+
+                case "session/set_mode":
+                    HandleSetMode(id, prms);
+                    break;
+
+                case "logout":
                     Respond(id, new Dictionary<string, object?>());
                     break;
 
@@ -197,6 +228,63 @@ public sealed class AcpServer
         Respond(id, (object?)null);
     }
 
+    private void HandleSessionResume(object? id, JsonElement prms)
+    {
+        string? sid = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("sessionId", out var s)
+            && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+        if (string.IsNullOrEmpty(sid))
+        {
+            if (id is not null) WriteMessage(AcpProtocol.Error(id, -32602, "session/resume requires a sessionId"));
+            return;
+        }
+        var resumeData = MuxSwarm.Utils.CliCmdUtils.HandleSessionResume(sid);
+        if (resumeData is null)
+        {
+            if (id is not null) WriteMessage(AcpProtocol.Error(id, -32001, $"No resumable session: {sid}"));
+            return;
+        }
+        // Resume = restore context, NO history replay (unlike session/load). Start the loop
+        // with the resumed session and return an empty result when ready.
+        StartSession(sid, new AcpResume(resumeData.Value.data, resumeData.Value.sessionDir));
+        Respond(id, new Dictionary<string, object?>());
+    }
+
+    private void HandleSetMode(object? id, JsonElement prms)
+    {
+        // Mux does not expose distinct per-session ACP operating modes; accept the request,
+        // echo the requested mode back via current_mode_update, and ack. This keeps clients
+        // that drive a mode selector happy without changing engine behavior.
+        string? mode = prms.ValueKind == JsonValueKind.Object && prms.TryGetProperty("modeId", out var mEl)
+            && mEl.ValueKind == JsonValueKind.String ? mEl.GetString() : null;
+        if (_sessionId is not null && mode is not null)
+            WriteMessage(AcpProtocol.SessionUpdate(_sessionId, AcpProtocol.CurrentModeUpdate(mode)));
+        Respond(id, new Dictionary<string, object?>());
+    }
+
+    /// <summary>
+    /// Send an agent->client REQUEST and await its response. Used for fs/* and
+    /// session/request_permission callbacks. Returns the raw result element (default/Undefined
+    /// on error or when the client never answers within the timeout).
+    /// </summary>
+    private async Task<JsonElement> SendRequestAsync(string method, object @params, int timeoutMs = 30000)
+    {
+        long rid = System.Threading.Interlocked.Increment(ref _outboundId);
+        var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _pendingOutbound[rid] = tcs;
+        WriteMessage(new Dictionary<string, object?>
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = rid,
+            ["method"] = method,
+            ["params"] = @params
+        });
+        using var cts = new CancellationTokenSource(timeoutMs);
+        await using (cts.Token.Register(() => { if (_pendingOutbound.TryRemove(rid, out var t)) t.TrySetResult(default); }))
+        {
+            return await tcs.Task;
+        }
+    }
+
     private void StartSession(string sid, AcpResume? resume)
     {
         // MVP supports a single active session per process. Tear down any prior reader.
@@ -220,6 +308,28 @@ public sealed class AcpServer
             catch (Exception ex) { Log($"session ended: {ex.Message}"); }
             finally { MuxConsole.InputOverride = Console.In; }
         });
+
+        AdvertiseCommands(sid);
+    }
+
+    /// <summary>
+    /// Advertise Mux's in-session slash commands to the client so it can surface them in its
+    /// own command palette. A curated subset of the most useful in-session controls.
+    /// </summary>
+    private void AdvertiseCommands(string sid)
+    {
+        var cmds = new (string, string)[]
+        {
+            ("compact", "Compress conversation context to free tokens"),
+            ("wipe", "Clear the session context and start fresh"),
+            ("tokens", "Show current context token usage"),
+            ("sub", "Toggle single-agent delegation to sub-agents"),
+            ("psub", "Toggle parallel sub-agent delegation"),
+            ("ultra", "Toggle maximum-reasoning ultra mode"),
+            ("giga", "Toggle dynamic team/workflow orchestration"),
+            ("qc", "End the current session")
+        };
+        WriteMessage(AcpProtocol.SessionUpdate(sid, AcpProtocol.AvailableCommandsUpdate(cmds)));
     }
 
     /// <summary>

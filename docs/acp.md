@@ -60,16 +60,17 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 
 ## Deliberately NOT implemented (by design)
 
-- **`fs/read_text_file`, `fs/write_text_file`, `terminal/*` client callbacks.** Mux owns its
-  own filesystem and shell access through its MCP tool layer; re-routing those operations back
-  through the ACP **client** would be a large architectural inversion with no functional gain.
-  Mux therefore performs file/terminal work directly and reports the results as `tool_call` /
-  `tool_call_update` updates (with diff content for edits). These client capabilities are
-  optional in ACP and gated on the client advertising them, so omitting them is spec-compliant.
-- **`session/request_permission`.** Tool gating is handled by Mux's own config / approval
-  model, not surfaced as an ACP permission prompt in this adapter.
-- **`session/set_mode`, `session/resume`, `session/delete`, `logout`.** Not advertised; not
-  part of the single-agent driving surface.
+- **`fs/read_text_file`, `fs/write_text_file`, `terminal/*` client-callback EXECUTION.** The
+  outbound agent->client request/response plumbing exists (`SendRequestAsync`, with client
+  capabilities captured from `initialize`), but Mux performs file and shell work directly
+  through its own MCP tool layer rather than routing it back through the ACP client. Re-routing
+  would be a large architectural inversion with no functional gain; results are reported as
+  `tool_call` / `tool_call_update` updates (with diff content for edits). These callbacks are
+  optional + capability-gated in ACP, so this is spec-compliant.
+- **`session/request_permission` PROMPTING.** Tool gating is handled by Mux's own config /
+  approval model; the adapter has the factory + transport to raise an ACP permission request
+  but does not gate Mux tools behind one by default.
+- **`session/delete`.** Not advertised (session deletion is managed via Mux's own retention).
 
 ## Architecture (how it works)
 
