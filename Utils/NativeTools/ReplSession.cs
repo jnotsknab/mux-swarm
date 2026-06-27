@@ -315,18 +315,30 @@ internal sealed class ReplSession : IDisposable
 
     // ===== shell jobs =====
 
-    public string StartShellJob(string command)
+    public async Task<string> StartShellJobAsync(string command, CancellationToken ct)
+    {
+        // Ensure the session venv exists before launching so the shell job is activated into the
+        // SAME interpreter the REPL worker / install_package_async use, regardless of call order.
+        await EnsureVenvAsync(ct);
+        return StartShellJob(command);
+    }
+
+    private string StartShellJob(string command)
     {
         string id = "job_" + Interlocked.Increment(ref _shellSeq);
         var job = new ShellJob(id, command);
         _shellJobs[id] = job;
-        try { job.Start(_workDir); }
+        // Pass the venv dir only when it actually materialized (uv present); otherwise leave the
+        // job on the system PATH, matching the worker's own system-python fallback.
+        string? venv = Directory.Exists(VenvDir) ? VenvDir : null;
+        try { job.Start(_workDir, venv); }
         catch (Exception ex) { job.MarkFailed(ex.Message); }
         return $"Job ID: {id}\nStatus: {job.Status}\nCommand: {command}\n\nUse check_job_status('{id}') to see the output.";
     }
 
-    public string InstallPackage(string package)
+    public async Task<string> InstallPackageAsync(string package, CancellationToken ct)
     {
+        await EnsureVenvAsync(ct);
         string py = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3");
         string cmd = $"uv pip install --python {QuoteArg(py)} {package}";
         return StartShellJob(cmd);

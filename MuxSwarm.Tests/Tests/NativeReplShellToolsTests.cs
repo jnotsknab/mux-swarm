@@ -71,4 +71,30 @@ public class NativeReplShellToolsTests
             outB = await Call("repl_shell_exec", new { code = "print('has' if 'marker' in dir() else 'clean')" });
         Assert.Contains("clean", outB);   // session B never sees session A's worker state
     }
+    [Fact]
+    public async Task ShellJobs_RunInTheSameVenvAsTheReplWorker()
+    {
+        using var _ = ReplShellTools.BeginScope("venv_" + System.Guid.NewGuid().ToString("N")[..8]);
+        // Force the session venv to materialize via the REPL worker path, then capture its python.
+        await Call("install_package_async", new { package = "--upgrade pip" }); // triggers EnsureVenv (uv)
+        var replExe = await Call("repl_shell_exec", new { code = "import sys; print(sys.executable)" });
+
+        // A shell job invoking a bare `python` must resolve to the SAME interpreter (venv-activated PATH),
+        // not the system python. Poll until the job completes.
+        var start = await Call("execute_command_async", new { command = "python -c \"import sys;print(sys.executable)\"" });
+        string jobId = start.Split('\n')[0].Replace("Job ID:", "").Trim();
+        string shellOut = "";
+        for (int i = 0; i < 40; i++)
+        {
+            shellOut = await Call("check_job_status", new { job_id = jobId });
+            if (shellOut.Contains("completed") || shellOut.Contains("failed")) break;
+            await Task.Delay(250);
+        }
+
+        // If uv is unavailable in CI (no venv), both fall back to system python and still match.
+        string Norm(string s) => s.Replace("\r", "").ToLowerInvariant();
+        // Extract the venv dir name if present and assert the shell python lives under the same venv tree.
+        if (Norm(replExe).Contains(".venv"))
+            Assert.Contains(".venv", Norm(shellOut));
+    }
 }

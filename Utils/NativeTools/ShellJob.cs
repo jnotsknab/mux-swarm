@@ -24,7 +24,7 @@ internal sealed class ShellJob
 
     public ShellJob(string id, string command) { _id = id; _command = command; }
 
-    public void Start(string workDir)
+    public void Start(string workDir, string? venvDir = null)
     {
         var (file, args) = SplitShell(_command);
         var psi = new ProcessStartInfo
@@ -40,6 +40,23 @@ internal sealed class ShellJob
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        // Run shell jobs INSIDE the session venv so a bare `python`/`pip` resolves to the same
+        // interpreter the REPL worker uses and install_package_async targets. Mirrors venv
+        // activation: prepend the venv bin dir to PATH, set VIRTUAL_ENV, clear PYTHONHOME. Without
+        // this, cmd.exe/sh inherit the parent PATH and `python` hits the system interpreter, so
+        // tool-installed packages are invisible to shell jobs (the inconsistent-venv bug).
+        if (venvDir is not null)
+        {
+            string bin = OperatingSystem.IsWindows()
+                ? Path.Combine(venvDir, "Scripts")
+                : Path.Combine(venvDir, "bin");
+            string existingPath = psi.Environment.TryGetValue("PATH", out var pv) && pv is not null
+                ? pv
+                : (Environment.GetEnvironmentVariable("PATH") ?? "");
+            psi.Environment["PATH"] = bin + Path.PathSeparator + existingPath;
+            psi.Environment["VIRTUAL_ENV"] = venvDir;
+            psi.Environment.Remove("PYTHONHOME");
+        }
         _proc = Process.Start(psi);
         if (_proc is null) { MarkFailed("failed to start process"); return; }
         _status = "running";

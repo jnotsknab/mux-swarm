@@ -172,9 +172,10 @@ for line in sys.stdin:
                              "loop). NOTE: this clears all variables in memory."),
 
             AIFunctionFactory.Create(
-                method: (
-                    [Description("Shell command to run as a background job.")] string command) =>
-                    Session().StartShellJob(command),
+                method: async (
+                    [Description("Shell command to run as a background job.")] string command,
+                    CancellationToken cancellationToken = default) =>
+                    await Session().StartShellJobAsync(command, cancellationToken),
                 name: "execute_command_async",
                 description: "Execute a shell command asynchronously to prevent timeouts. Returns a Job ID immediately. " +
                              "Use this for long-running scripts, then poll with check_job_status."),
@@ -195,9 +196,10 @@ for line in sys.stdin:
                 description: "Send text input (like 'y\\n' or passwords) to a running async shell command."),
 
             AIFunctionFactory.Create(
-                method: (
-                    [Description("Package to install into the session venv (uv pip install).")] string package) =>
-                    Session().InstallPackage(package),
+                method: async (
+                    [Description("Package to install into the session venv (uv pip install).")] string package,
+                    CancellationToken cancellationToken = default) =>
+                    await Session().InstallPackageAsync(package, cancellationToken),
                 name: "install_package_async",
                 description: "Install a Python package asynchronously using uv into the session's virtual environment. " +
                              "Returns a Job ID to poll with check_job_status."),
