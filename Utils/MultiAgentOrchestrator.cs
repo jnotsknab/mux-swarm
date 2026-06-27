@@ -1389,6 +1389,15 @@ public static class MultiAgentOrchestrator
         // concurrent parallel sub-agents each capture independently.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
+        // Give THIS sub-agent its own cancellation source (linked to the incoming token) and
+        // register it under its capture lane, so a scoped Esc on the foregrounded/expanded
+        // sub-agent cancels just this child. The whole-turn cancel still flows through the linked
+        // token. The IDisposable lane-deregistration + CTS dispose run when the scope exits (no
+        // try/finally needed around the method body's many returns).
+        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
+        cancellationToken = _subCts.Token;
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");

@@ -45,7 +45,12 @@ public sealed class EscapeKeyListener : IDisposable
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
 
-        _ = Task.Run(() =>
+        // Run the key poll on a DEDICATED thread, never the thread pool. During sub-agent
+        // fan-out the pool is saturated by concurrent model streams + MCP subprocess calls, so a
+        // pool-scheduled poll (Task.Run) is starved and the Esc keystroke is not read until the
+        // batch finishes - it then "fires afterwards". A dedicated thread reads Esc immediately.
+        // (Same starvation class as the ACP stdin-read fix.)
+        var listenerThread = new Thread(() =>
         {
             try
             {
@@ -61,6 +66,12 @@ public sealed class EscapeKeyListener : IDisposable
                         var key = Console.ReadKey(intercept: true);
                         if (key.Key == ConsoleKey.Escape)
                         {
+                            // Scoped cancel: if the user foregrounded (expanded) a specific
+                            // sub-agent via the backslash Agent View, Esc cancels ONLY that child
+                            // and keeps listening (siblings + the lead turn continue). With no
+                            // sub-agents / none foregrounded, Esc cancels the whole turn as before.
+                            if (MuxConsole.TryCancelForegroundedSubAgent())
+                                continue;
                             targetCts.Cancel();
                             break;
                         }
@@ -111,7 +122,8 @@ public sealed class EscapeKeyListener : IDisposable
             }
             catch (OperationCanceledException) { }
             catch (InvalidOperationException) { }
-        }, listenerCts.Token);
+        }) { IsBackground = true, Name = "EscapeKeyListener" };
+        listenerThread.Start();
 
         return new EscapeKeyListener(listenerCts);
     }

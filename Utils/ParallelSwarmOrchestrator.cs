@@ -1254,6 +1254,13 @@ public static class ParallelSwarmOrchestrator
         // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
+        // Per-child cancellation source registered under this lane, so a scoped Esc on the
+        // foregrounded/expanded sub-agent cancels only this child (siblings keep their shared
+        // batch token). Whole-turn cancel still flows through the linked token. Auto-deregisters.
+        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
+        cancellationToken = _subCts.Token;
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "parallel_sub_agent");

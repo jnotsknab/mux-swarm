@@ -129,6 +129,14 @@ public static partial class MuxConsole
     // shared live line and flickered heavily). Guarded by _captureGate.
     private static readonly object _captureGate = new();
     private static readonly List<SubAgentCapture> _activeCaptures = new();
+
+    // Lane -> per-sub-agent CancellationTokenSource, so Esc can cancel a SINGLE foregrounded
+    // sub-agent (the one expanded via the backslash Agent View) instead of the whole turn. The
+    // orchestrator registers each child's own linked CTS under its capture lane for the lifetime
+    // of the run; the cancel path looks the lane up from TuiDriver.ForegroundAgent. Guarded by
+    // _captureGate. Cancelling one lane lets siblings continue (their batch token is unaffected).
+    private static readonly Dictionary<string, CancellationTokenSource> _laneCts =
+        new(StringComparer.Ordinal);
     private static System.Threading.Timer? _subAgentTimer;
     private static int _subAgentFrame;
     // Always-on resize poll: ticks ~100ms while the live-region driver is active and forces a
@@ -185,6 +193,58 @@ public static partial class MuxConsole
         }
         PushSubAgentActivity();
         return new CaptureScope(cap, prev);
+    }
+
+    /// <summary>
+    /// Register a sub-agent's own cancellation source under the CURRENT capture lane (so a scoped
+    /// Esc on the foregrounded/expanded sub-agent cancels just that child) and return an
+    /// IDisposable that deregisters it when the run ends. No-op (returns a null-object disposable)
+    /// when not capturing - non-TUI / collapse disabled - in which case only the whole-turn cancel
+    /// applies. Safe to <c>using</c>.
+    /// </summary>
+    public static IDisposable ScopedLaneCts(CancellationTokenSource cts)
+    {
+        var cap = _capture.Value;
+        if (cap is null || string.IsNullOrEmpty(cap.Lane)) return _noopDisposable;
+        string lane = cap.Lane;
+        lock (_captureGate) { _laneCts[lane] = cts; }
+        return new LaneCtsScope(lane);
+    }
+
+    private static readonly IDisposable _noopDisposable = new NoopDisposable();
+    private sealed class NoopDisposable : IDisposable { public void Dispose() { } }
+    private sealed class LaneCtsScope : IDisposable
+    {
+        private readonly string _lane;
+        private bool _done;
+        public LaneCtsScope(string lane) { _lane = lane; }
+        public void Dispose()
+        {
+            if (_done) return;
+            _done = true;
+            lock (_captureGate) { _laneCts.Remove(_lane); }
+        }
+    }
+
+    /// <summary>
+    /// Scoped cancellation entry point for Esc while sub-agents are live. If the user has
+    /// FOREGROUNDED a specific sub-agent (Enter in the backslash Agent View -> sticky
+    /// <c>TuiDriver.ForegroundAgent</c>) and that lane has a live CTS, cancel ONLY that child and
+    /// return true (siblings + the lead turn keep running). Otherwise return false so the caller
+    /// falls back to cancelling the whole turn. No sub-agents / none foregrounded -> false.
+    /// </summary>
+    public static bool TryCancelForegroundedSubAgent()
+    {
+        if (!ViaDriver) return false;
+        string? lane;
+        lock (ConsoleLock) { lane = _driver!.ForegroundAgent; }
+        if (string.IsNullOrEmpty(lane)) return false;
+        CancellationTokenSource? cts;
+        lock (_captureGate) { _laneCts.TryGetValue(lane, out cts); }
+        if (cts is null || cts.IsCancellationRequested) return false;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { return false; }
+        WriteInfo($"Cancelled sub-agent: {lane}");
+        return true;
     }
 
     /// <summary>Record the sub-agent's completion status (from signal_task_complete) on the
