@@ -1,5 +1,7 @@
-﻿using System.ComponentModel;
+﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 using System.Text;
+using System.Threading;
 using Microsoft.Extensions.AI;
 
 namespace MuxSwarm.Utils.NativeTools;
@@ -29,6 +31,44 @@ public static class FilesystemTools
     // ---- security decisions -------------------------------------------------------------------
 
     private enum Access { Read, Write }
+
+    // ---- atomicity / parallel-safety --------------------------------------------------------
+    //
+    // Sub-agents (esp. delegate_parallel) can target the SAME path concurrently. Guard every
+    // mutation with a per-canonical-path lock so read-modify-write (edit_file) is serialized and
+    // never interleaves, and make the on-disk replacement ATOMIC (write a temp sibling, flush, then
+    // File.Move(overwrite:true) which is a rename) so a concurrent reader / a crash never observes a
+    // truncated or half-written file. Locks are keyed by the canonical path (symlinks resolved), so
+    // two aliases of one file share one lock. The lock table is process-wide (static), matching the
+    // process-wide nature of the filesystem.
+    private static readonly ConcurrentDictionary<string, object> _pathLocks = new();
+
+    private static object LockFor(string path) =>
+        _pathLocks.GetOrAdd(NativeToolSecurity.Canonicalize(path),
+            _ => new object());
+
+    /// <summary>Atomic file replace: temp sibling -> fsync -> rename over the target.</summary>
+    private static void AtomicWrite(string path, string content)
+    {
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        // Temp sibling in the SAME directory so the final rename stays on one volume (atomic).
+        string tmp = path + ".mux-tmp-" + Guid.NewGuid().ToString("N")[..8];
+        try
+        {
+            var bytes = new UTF8Encoding(false).GetBytes(content);
+            using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(bytes, 0, bytes.Length);
+                fs.Flush(flushToDisk: true);
+            }
+            File.Move(tmp, path, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch { /* best effort */ }
+        }
+    }
 
     /// <summary>
     /// Gate a path operation. Returns null when allowed; otherwise an error string the tool returns
@@ -186,9 +226,7 @@ public static class FilesystemTools
         if (gate is not null) return gate;
         try
         {
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(path, content);
+            lock (LockFor(path)) AtomicWrite(path, content);
             return $"Wrote {content.Length} chars to {path}";
         }
         catch (Exception ex) { return $"[ERROR] {ex.Message}"; }
@@ -201,12 +239,17 @@ public static class FilesystemTools
         if (!File.Exists(path)) return $"[ERROR] File not found: {path}";
         try
         {
-            string original = File.ReadAllText(path);
-            if (!original.Contains(oldText))
-                return "[ERROR] oldText not found in file (must match exactly, including whitespace).";
-            string updated = ReplaceFirst(original, oldText, newText);
-            File.WriteAllText(path, updated);
-            return BuildUnifiedDiff(path, original, updated);
+            // Serialize the whole read-modify-write so two sub-agents editing the same file cannot
+            // interleave (lost-update / torn-read). The replace + atomic rename happen under one lock.
+            lock (LockFor(path))
+            {
+                string original = File.ReadAllText(path);
+                if (!original.Contains(oldText))
+                    return "[ERROR] oldText not found in file (must match exactly, including whitespace).";
+                string updated = ReplaceFirst(original, oldText, newText);
+                AtomicWrite(path, updated);
+                return BuildUnifiedDiff(path, original, updated);
+            }
         }
         catch (Exception ex) { return $"[ERROR] {ex.Message}"; }
     }

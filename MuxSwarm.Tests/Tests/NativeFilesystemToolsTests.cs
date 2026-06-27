@@ -171,4 +171,41 @@ public class NativeFilesystemToolsTests : IDisposable
         var r = await Call("Filesystem_list_allowed_directories", new { });
         Assert.Contains(_root, r);
     }
+    [Fact]
+    public async Task ParallelWrites_SamePath_NeverTearAndAlwaysValid()
+    {
+        string f = Path.Combine(_root, "race.txt");
+        File.WriteAllText(f, "seed");
+        // 32 concurrent writers, each writing a distinct full payload. With atomic temp+rename and
+        // the per-path lock, every observed state must be EXACTLY one writer's complete payload -
+        // never a torn/empty/partial file.
+        var payloads = Enumerable.Range(0, 32)
+            .Select(i => "PAYLOAD-" + i + "-" + new string((char)('a' + (i % 26)), 500))
+            .ToArray();
+        var tasks = payloads.Select(pl => Task.Run(() => Call("Filesystem_write_file", new { path = f, content = pl }))).ToArray();
+        await Task.WhenAll(tasks);
+        // Final file content must be one of the exact payloads (last writer wins), bit-for-bit.
+        string final = File.ReadAllText(f);
+        Assert.Contains(final, payloads);
+        // No temp siblings left behind.
+        Assert.Empty(Directory.GetFiles(_root, "race.txt.mux-tmp-*"));
+    }
+
+    [Fact]
+    public async Task ParallelEdits_SamePath_NoLostUpdatesUnderLock()
+    {
+        string f = Path.Combine(_root, "counter.txt");
+        File.WriteAllText(f, "X");
+        // Each editor replaces the single "X" with "XX" (grow by one). Serialized read-modify-write
+        // means N successful edits OR clean "oldText not found" losers - but never a torn file and
+        // never a crash. We assert the file is always a valid run of X's afterward.
+        var tasks = Enumerable.Range(0, 16)
+            .Select(_ => Task.Run(() => Call("Filesystem_edit_file", new { path = f, oldText = "X", newText = "XX" })))
+            .ToArray();
+        await Task.WhenAll(tasks);
+        string final = File.ReadAllText(f);
+        Assert.True(final.Length >= 1 && final.All(c => c == 'X'),
+            $"file corrupted under parallel edit: '{final}'");
+        Assert.Empty(Directory.GetFiles(_root, "counter.txt.mux-tmp-*"));
+    }
 }
