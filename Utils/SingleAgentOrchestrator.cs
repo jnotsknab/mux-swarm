@@ -298,15 +298,28 @@ public static class SingleAgentOrchestrator
         // Switch the (already-running) live-region driver into this session: in-session
         // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
         MuxConsole.EnableDockedFooter(topLevel: false);
+        // Project the FULL session tool count for the header badge. The live toolset is assembled
+        // further down (var singleAgentTools = [...]) and adds far more than the MCP tools in
+        // filteredTools: 4 always-on local tools, the native REPL/shell tools, and the flag-gated
+        // analyze_image / ask_user / delegation / team / giga tools. Mirror those exact conditions
+        // here so the badge matches what the agent actually receives (was MCP-only -> undercount).
+        bool hasVision = chatClientFactory != null && !string.IsNullOrEmpty(App.SwarmConfig?.VisionAgent?.Model);
+        int projectedToolCount =
+            4                                                   // listSkills, readSkill, sleep, mux_refresh
+            + (hasVision ? 1 : 0)                               // analyze_image
+            + filteredTools.Count                               // filtered MCP tools
+            + MuxSwarm.Utils.NativeTools.ReplShellTools.Build().Count // native session-scoped REPL/shell tools
+            + ((shouldPlan || systemPromptOverride != null) ? 1 : 0) // ask_user
+            + (allowSubAgents ? 1 : 0)                          // delegate_to_agent_lite
+            + (allowParallelSubAgents ? 1 : 0)                  // delegate_parallel
+            + (teamScope?.Tools.Count ?? 0)                     // team lead tools
+            + ((App.GigaMode && teamScope is null) ? MuxSwarm.Utils.Teams.GigaMode.ToolCount : 0); // giga tools
         // G2: TUI session header card (no-op outside TUI render mode).
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",
             resolvedModelId,
             App.ActiveProvider?.Name ?? "",
-            filteredTools.Count);
-        // Seed the live "/tools" scrollable palette (the expandable view behind the
-        // session-header tool badge) with the agent's filtered tool catalog.
-        MuxConsole.SetTuiToolsCatalog(filteredTools.Select(t => (t.Name, t.Description ?? "")).ToList());
+            projectedToolCount);
         // The classic renderer separates the header from the transcript with a rule; the TUI
         // header card already provides that separation, so skip the extra rule there.
         if (!MuxConsole.IsTui) MuxConsole.WriteRule();
@@ -696,6 +709,10 @@ public static class SingleAgentOrchestrator
             Instructions = systemPrompt,
             Tools = [.. singleAgentTools!]
         };
+
+        // Re-seed the live "/tools" palette with the FULLY-assembled toolset (the early seed only
+        // had the MCP tools). Now the expandable badge view lists exactly what the agent holds.
+        MuxConsole.SetTuiToolsCatalog(singleAgentTools.Select(t => (t.Name, t.Description ?? "")).ToList());
 
         // G11: static context-overhead breakdown for the footer. On a FRESH session the context
         // is dominated by the system prompt + the serialized tool/MCP schemas (names, descriptions,

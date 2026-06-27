@@ -96,6 +96,12 @@ public static class GigaMode
     /// wrappers (send_message/read_inbox/task_*/team_peerwork) operate on that active team. Members run
     /// through the shared ExecuteParallelWorker path, so they surface live in the Agent View. Off-giga
     /// this is never called.</summary>
+    /// <summary>Number of tools <see cref="BuildTools"/> grants (spawn_team, run_team, send_message,
+    /// read_inbox, task_create, task_assign, task_list, team_peerwork, write_workflow, run_workflow,
+    /// list_workflows). Kept in sync with the tools.Add() calls below; used to project the
+    /// session-header tool badge before the live toolset is assembled.</summary>
+    public const int ToolCount = 11;
+
     public static IList<AITool> BuildTools(
         Func<string, IChatClient> chatClientFactory,
         Dictionary<string, string> agentModels,
