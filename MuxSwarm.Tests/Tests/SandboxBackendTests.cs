@@ -100,4 +100,49 @@ public class SandboxBackendTests
         else
             Assert.NotNull(SandboxBackend.Resolve(Cfg("docker"))); // present => resolves to a real spec
     }
+    private static FilesystemConfig Fs(string mode, params string[] paths) =>
+        new() { SecurityMode = mode, AllowedPaths = new List<string>(paths) };
+
+    [Fact]
+    public void Mounts_Standard_FirstRw_RestRo()
+    {
+        var m = SandboxBackend.ResolveMounts(Fs("standard", @"C:\proj", @"C:\refs", @"C:\data"));
+        Assert.Equal(3, m.Count);
+        Assert.False(m[0].ReadOnly);  // workspace (first) RW
+        Assert.True(m[1].ReadOnly);   // rest RO
+        Assert.True(m[2].ReadOnly);
+        Assert.StartsWith("/host/", m[0].GuestPath);
+    }
+
+    [Fact]
+    public void Mounts_Secure_AllReadOnly()
+    {
+        var m = SandboxBackend.ResolveMounts(Fs("secure", @"C:\proj", @"C:\refs"));
+        Assert.All(m, x => Assert.True(x.ReadOnly));
+    }
+
+    [Fact]
+    public void Mounts_LaxAndNone_AllReadWrite()
+    {
+        foreach (var mode in new[] { "lax", "yolo", "none" })
+        {
+            var m = SandboxBackend.ResolveMounts(Fs(mode, @"C:\proj", @"C:\refs"));
+            Assert.All(m, x => Assert.False(x.ReadOnly));
+        }
+    }
+
+    [Fact]
+    public void Mounts_Empty_WhenNoAllowedPaths()
+    {
+        Assert.Empty(SandboxBackend.ResolveMounts(Fs("standard")));
+    }
+
+    [Fact]
+    public void Mounts_DedupGuestLeaves()
+    {
+        // Two different host paths sharing a leaf name must get distinct guest mount points.
+        var m = SandboxBackend.ResolveMounts(Fs("none", @"C:\a\proj", @"D:\b\proj"));
+        Assert.Equal(2, m.Count);
+        Assert.NotEqual(m[0].GuestPath, m[1].GuestPath);
+    }
 }

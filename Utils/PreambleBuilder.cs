@@ -112,7 +112,21 @@ public static class PreambleBuilder
             // write files" rule.
             preamble += "## Execution Sandbox (ACTIVE)\n"
                 + "Your shell commands and Python execution run INSIDE a sandbox container, not on the host. "
-                + "This is enforced by the runtime. Write artifacts to the working directory so they persist.\n";
+                + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n";
+            // Surface the allowed-path mounts so the agent knows WHERE its project files are inside the
+            // sandbox and which are read-only (mapped from the filesystem security posture).
+            try
+            {
+                var mounts = MuxSwarm.Utils.NativeTools.SandboxBackend.ResolveMounts(App.Config.Filesystem);
+                if (mounts.Count > 0)
+                {
+                    preamble += "Host paths are mounted inside the sandbox as:\n";
+                    foreach (var m in mounts)
+                        preamble += $"  {m.HostPath} -> {m.GuestPath}{(m.ReadOnly ? " (read-only)" : " (read-write)")}\n";
+                    preamble += "Operate on your project under those /host/* paths; /work is scratch.\n";
+                }
+            }
+            catch { /* sandbox config may be host/invalid; no mount list to show */ }
             if (hasSkills)
                 preamble += "For sandbox conventions (what runs where, output retrieval), you may read_skill(\"docker-sandbox\").\n";
         }

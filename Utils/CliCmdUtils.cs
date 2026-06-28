@@ -71,6 +71,13 @@ public static class CliCmdUtils
                 MuxConsole.WriteMuted(s.AllowedDomains.Count > 0
                     ? $"  network: allowlist [{string.Join(", ", s.AllowedDomains)}]"
                     : $"  network: {(s.Network ? "open" : "air-gapped")}");
+                var mounts = MuxSwarm.Utils.NativeTools.SandboxBackend.ResolveMounts(App.Config.Filesystem);
+                if (mounts.Count > 0)
+                {
+                    MuxConsole.WriteMuted($"  mounts (from filesystem.securityMode={App.Config.Filesystem.SecurityMode}):");
+                    foreach (var m in mounts)
+                        MuxConsole.WriteMuted($"    {m.HostPath} -> {m.GuestPath} {(m.ReadOnly ? "[ro]" : "[rw]")}");
+                }
             }
             var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(s);
             MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");

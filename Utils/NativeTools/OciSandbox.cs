@@ -75,9 +75,15 @@ internal sealed class OciSandbox : IDisposable
                 ? $"-e HTTP_PROXY=http://{_proxyName}:8080 -e HTTPS_PROXY=http://{_proxyName}:8080 -e http_proxy=http://{_proxyName}:8080 -e https_proxy=http://{_proxyName}:8080"
                 : "";
 
-            // Persistent container: sleep forever, we exec into it. Mount the work dir at /work.
+            // Persistent container: sleep forever, we exec into it. /work is the Mux-internal scratch
+            // (always RW); host AllowedPaths are bound at /host/<leaf> with RO/RW per the fs security
+            // posture (see SandboxBackend.ResolveMounts) so sandboxed code works on the real project.
+            var binds = new System.Text.StringBuilder();
+            binds.Append("-v ").Append(MountSpec(_hostWorkDir, GuestWorkDir, readOnly: false));
+            foreach (var m in _spec.Mounts)
+                binds.Append(" -v ").Append(MountSpec(m.HostPath, m.GuestPath, m.ReadOnly));
             string args = $"run -d --name {_containerName} {runtimeArg} {hardenArg} {netArg} {proxyEnv} " +
-                          $"-v {MountSpec(_hostWorkDir, GuestWorkDir)} -w {GuestWorkDir} " +
+                          $"{binds} -w {GuestWorkDir} " +
                           $"--entrypoint sh {_spec.Image} -c \"sleep infinity\"";
             var (ok, _, err) = Run(_spec.Binary, args, allowFail: true);
             if (!ok)
@@ -173,9 +179,10 @@ internal sealed class OciSandbox : IDisposable
         catch (Exception ex) { if (!allowFail) throw new SandboxException(ex.Message); return (false, "", ex.Message); }
     }
 
-    // Mount spec: on Windows host the path is C:\... which docker maps fine via -v; bind as rw.
-    private static string MountSpec(string hostDir, string guest) =>
-        "\"" + hostDir + "\":" + guest;
+    // Mount spec: on Windows host the path is C:\... which docker maps fine via -v. Append :ro for a
+    // read-only bind (host data the sandbox may read but not modify under the active fs security mode).
+    private static string MountSpec(string hostDir, string guest, bool readOnly) =>
+        "\"" + hostDir + "\":" + guest + (readOnly ? ":ro" : "");
 
     private static string Sanitize(string s)
     {

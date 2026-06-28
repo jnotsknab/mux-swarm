@@ -33,9 +33,19 @@ internal sealed class SandboxSpec
     public string CustomTemplate { get; init; } = "";
     public string? Runtime { get; init; }              // e.g. "runsc" for gvisor
 
+    /// <summary>
+    /// Host allowed-paths to bind into the sandbox, with per-path read-only/read-write derived from the
+    /// filesystem security posture (see <see cref="SandboxBackend.ResolveMounts"/>). Empty = only the
+    /// Mux-internal work dir is mounted (today's behavior). OCI backends only.
+    /// </summary>
+    public IReadOnlyList<SandboxMount> Mounts { get; init; } = Array.Empty<SandboxMount>();
+
     public bool UsesAllowlist => AllowedDomains.Count > 0;
     public bool IsOci => Kind == SandboxKind.Oci;
 }
+
+/// <summary>One host->guest bind for the sandbox. <paramref name="ReadOnly"/> derived from fs security mode.</summary>
+internal readonly record struct SandboxMount(string HostPath, string GuestPath, bool ReadOnly);
 
 /// <summary>Raised when sandbox config is invalid or the chosen backend is not usable. Message is user-facing.</summary>
 internal sealed class SandboxException : Exception
@@ -100,6 +110,7 @@ internal static class SandboxBackend
             {
                 Kind = SandboxKind.Oci, Backend = backend, Binary = binary, Image = cfg.Image,
                 NetworkOpen = cfg.Network, AllowedDomains = allow, Runtime = runtime,
+                Mounts = ResolveMounts(App.Config.Filesystem),
             };
         }
 
@@ -251,4 +262,56 @@ internal static class SandboxBackend
     private static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
     // Quote a path arg that may contain spaces (double-quote form for argv tokens).
     private static string Q(string s) => s.Contains(' ') ? "\"" + s + "\"" : s;
+
+    // ---- allowed-path mounts mapped from the filesystem security posture --------------------
+    //
+    // The sandbox is where shell + Python execute; binding the host AllowedPaths in (read-only or
+    // read-write per posture) lets sandboxed code work on the same project files the native Filesystem
+    // tools see, instead of being copy-in/out isolated. The RW/RO split mirrors the fs SecurityMode so
+    // there is ONE mental model (no separate mount config):
+    //   "none"            -> all allowed paths RW
+    //   "lax" / "yolo"    -> all allowed paths RW
+    //   "standard"(deflt) -> FIRST allowed path (the workspace) RW, the rest RO  (Codex workspace-write)
+    //   "secure"          -> ALL allowed paths RO  (matches "writes elevate to the user" - no silent writes)
+    // The Mux-internal session work dir (/work) is always RW separately (scratch + venv, not host data).
+    // Each host path is mounted at /host/<sanitized-leaf> to avoid colliding with the image's own dirs.
+    internal static IReadOnlyList<SandboxMount> ResolveMounts(FilesystemConfig fs)
+    {
+        var paths = (fs?.AllowedPaths ?? new List<string>())
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (paths.Count == 0) return Array.Empty<SandboxMount>();
+
+        string mode = (fs!.SecurityMode ?? "standard").Trim().ToLowerInvariant();
+        var mounts = new List<SandboxMount>(paths.Count);
+        var usedLeaves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < paths.Count; i++)
+        {
+            bool ro = mode switch
+            {
+                "none" or "lax" or "yolo" => false,
+                "secure" => true,
+                _ => i != 0,   // "standard": first (workspace) RW, rest RO
+            };
+            string leaf = SanitizeLeaf(paths[i]);
+            string guest = "/host/" + leaf;
+            // de-dup guest leaf names (two paths with same leaf) by suffixing an index
+            int n = 1; string g = guest;
+            while (!usedLeaves.Add(g)) { g = guest + "_" + (++n); }
+            mounts.Add(new SandboxMount(paths[i], g, ro));
+        }
+        return mounts;
+    }
+
+    private static string SanitizeLeaf(string hostPath)
+    {
+        string leaf;
+        try { leaf = Path.GetFileName(Path.TrimEndingDirectorySeparator(hostPath)); }
+        catch { leaf = hostPath; }
+        if (string.IsNullOrWhiteSpace(leaf)) leaf = "root";
+        var sb = new System.Text.StringBuilder(leaf.Length);
+        foreach (char c in leaf) sb.Append(char.IsLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_');
+        return sb.Length == 0 ? "p" : sb.ToString();
+    }
 }

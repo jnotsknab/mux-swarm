@@ -39,6 +39,12 @@ public class FilesystemConfig
     ///                AllowedPaths always permitted.
     ///   "none"     - unrestricted, no path checks.
     /// Additive: absent in older configs -> "standard" (zero behavior change).
+    ///
+    /// This SAME posture also drives how AllowedPaths are bound into an execution SANDBOX (when
+    /// sandbox.backend != host), so there is one mental model: "none"/"lax" -> all paths RW; "standard"
+    /// -> the first/workspace path RW + the rest read-only (Codex workspace-write model); "secure" ->
+    /// all paths read-only (writes would elevate, so the sandbox gets no silent write path). See
+    /// SandboxBackend.ResolveMounts.
     /// </summary>
     [JsonPropertyName("securityMode")]
     public string SecurityMode { get; set; } = "standard";
