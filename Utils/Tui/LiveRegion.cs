@@ -142,6 +142,11 @@ internal sealed class LiveRegion
         // aligned column (the flush-left "off-indentation" bug). The hang width is the leading
         // plain-text whitespace of the line, or 2 when the line starts with the U+25CF lead dot.
         string hangIndent = ComputeHangIndent(spans);
+        // Reserve room for the hang indent so a continuation row (hangIndent + wrapped text) never
+        // EXCEEDS the terminal width. Without this, pieces wrapped to the full `cols` plus the 2-col
+        // hang prefix sum to cols+2 and the terminal soft-wraps the overflow back to col 0 - the
+        // residual flush-left wrap bug. Wrapping text to (cols - hang) keeps every row within `cols`.
+        int textWidth = hangIndent.Length > 0 ? Math.Max(1, cols - hangIndent.Length) : cols;
 
         void NewRow()
         {
@@ -158,7 +163,7 @@ internal sealed class LiveRegion
             {
                 if (sub.i > 0) NewRow(); // explicit newline inside a span
                 string sgr = span.Style.ToAnsi();
-                foreach (var piece in WrapPieces(sub.t, cols))
+                foreach (var piece in WrapPieces(sub.t, textWidth))
                 {
                     int pw = TuiMarkup.Width(piece.Text);
                     if (curW + pw > cols && curW > 0) NewRow();

@@ -193,6 +193,10 @@ public class TuiCoreTests
             // Strip any leading ANSI SGR (ESC[...m) then assert the visible text starts with 2 spaces.
             string visible = System.Text.RegularExpressions.Regex.Replace(r, "\u001b\\[[0-9;]*m", "");
             Assert.StartsWith("  ", visible);
+            // CRITICAL: hang(2) + text must NOT exceed cols, else the terminal soft-wraps the overflow
+            // back to col 0 (the residual flush-left wrap bug). Every row must fit within the width.
+            Assert.True(TuiMarkup.Width(visible) <= cols,
+                $"row exceeds width {cols}: '{visible}' (w={TuiMarkup.Width(visible)})");
         }
     }
 
@@ -207,9 +211,13 @@ public class TuiCoreTests
         var rows = LiveRegion.WrapMarkupLine(dotLine, cols);
         Assert.True(rows.Count >= 2);
         // Row 0 begins with the dot; later rows begin with the 2-space hang indent.
-        for (int i = 1; i < rows.Count; i++)
+        for (int i = 0; i < rows.Count; i++)
         {
             string visible = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;]*m", "");
+            // No row may exceed the width (dot row included) - overflow would reflow to col 0.
+            Assert.True(TuiMarkup.Width(visible) <= cols,
+                $"row {i} exceeds width {cols}: '{visible}' (w={TuiMarkup.Width(visible)})");
+            if (i == 0) continue;
             Assert.StartsWith("  ", visible);
             Assert.DoesNotContain("\u25cf", visible); // dot only on the first row
         }
