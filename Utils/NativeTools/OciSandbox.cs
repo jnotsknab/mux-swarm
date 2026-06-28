@@ -33,6 +33,9 @@ internal sealed class OciSandbox : IDisposable
     private string _containerName = "";
     private string _proxyName = "";
     private string _netName = "";
+    // Maps Windows UNC allowed-paths (e.g. \\banknas\...) to temp drive letters so Docker for Windows
+    // can bind them; no-op on Linux/macOS and for non-UNC paths. Torn down with the sandbox.
+    private readonly UncDriveMapper _uncMapper = new();
 
     public const string GuestWorkDir = "/work";
 
@@ -105,9 +108,24 @@ internal sealed class OciSandbox : IDisposable
             // (always RW); host AllowedPaths are bound at /host/<leaf> with RO/RW per the fs security
             // posture (see SandboxBackend.ResolveMounts) so sandboxed code works on the real project.
             var binds = new System.Text.StringBuilder();
-            binds.Append("-v ").Append(MountSpec(_hostWorkDir, GuestWorkDir, readOnly: false));
+            // _hostWorkDir is always local (%LOCALAPPDATA%) so it never needs UNC mapping.
+            binds.Append("-v ").Append(MountSpec(_uncMapper.ToMountable(_hostWorkDir), GuestWorkDir, readOnly: false));
+            var skipped = new List<string>();
             foreach (var m in _spec.Mounts)
-                binds.Append(" -v ").Append(MountSpec(m.HostPath, m.GuestPath, m.ReadOnly));
+            {
+                string source;
+                try { source = _uncMapper.ToMountable(m.HostPath); }
+                catch (SandboxException ex)
+                {
+                    // A path we cannot make docker-mountable (e.g. a NAS share that won't map) is SKIPPED
+                    // rather than failing the whole container - the rest of the workspace still mounts.
+                    skipped.Add($"{m.HostPath} ({ex.Message})");
+                    continue;
+                }
+                binds.Append(" -v ").Append(MountSpec(source, m.GuestPath, m.ReadOnly));
+            }
+            if (skipped.Count > 0)
+                MuxConsole.WriteWarning($"[sandbox] skipped {skipped.Count} un-mountable path(s): {string.Join("; ", skipped)}");
             string args = $"run -d --name {_containerName} {runtimeArg} {hardenArg} {netArg} {proxyEnv} " +
                           $"{binds} -w {GuestWorkDir} " +
                           $"--entrypoint sh {_spec.Image} -c \"sleep infinity\"";
@@ -213,6 +231,7 @@ internal sealed class OciSandbox : IDisposable
         if (!string.IsNullOrEmpty(_containerName)) Run(_spec.Binary, $"rm -f {_containerName}", allowFail: true);
         if (!string.IsNullOrEmpty(_proxyName)) Run(_spec.Binary, $"rm -f {_proxyName}", allowFail: true);
         if (!string.IsNullOrEmpty(_netName)) Run(_spec.Binary, $"network rm {_netName}", allowFail: true);
+        try { _uncMapper.Dispose(); } catch { /* best-effort drive unmap */ }
     }
 
     // ---- helpers ----
