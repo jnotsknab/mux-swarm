@@ -65,13 +65,18 @@ internal sealed class OciSandbox : IDisposable
             }
 
             string runtimeArg = _spec.Runtime is { } rt ? $"--runtime={rt}" : "";
+            // Hardening for untrusted execution (matches the posture audit's follow-ups): drop ALL
+            // Linux capabilities and forbid privilege escalation via setuid binaries. We keep the
+            // container's default user (many base images need root for pip/apt); userns-remap is a
+            // daemon-level choice the operator can enable separately so container-root != host-root.
+            const string hardenArg = "--cap-drop=ALL --security-opt=no-new-privileges";
             // Proxy env so the sandbox routes HTTP(S) through the sidecar when an allowlist is active.
             string proxyEnv = _spec.UsesAllowlist
                 ? $"-e HTTP_PROXY=http://{_proxyName}:8080 -e HTTPS_PROXY=http://{_proxyName}:8080 -e http_proxy=http://{_proxyName}:8080 -e https_proxy=http://{_proxyName}:8080"
                 : "";
 
             // Persistent container: sleep forever, we exec into it. Mount the work dir at /work.
-            string args = $"run -d --name {_containerName} {runtimeArg} {netArg} {proxyEnv} " +
+            string args = $"run -d --name {_containerName} {runtimeArg} {hardenArg} {netArg} {proxyEnv} " +
                           $"-v {MountSpec(_hostWorkDir, GuestWorkDir)} -w {GuestWorkDir} " +
                           $"--entrypoint sh {_spec.Image} -c \"sleep infinity\"";
             var (ok, _, err) = Run(_spec.Binary, args, allowFail: true);

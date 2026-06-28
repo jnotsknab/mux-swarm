@@ -494,4 +494,56 @@ public class TuiCoreTests
         Assert.Contains(Ansi.ClearScreen, term.Output);
         Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
     }
+    // --- emoji / wide-grapheme display width (table border alignment) -----------------------
+
+    [Fact]
+    public void Width_EmojiAndSymbols_AreDoubleWidth()
+    {
+        // The posture-report emoji set: red/yellow/green circles + check mark all render width 2.
+        Assert.Equal(2, TuiMarkup.Width("\U0001F534")); // red circle
+        Assert.Equal(2, TuiMarkup.Width("\U0001F7E1")); // yellow circle
+        Assert.Equal(2, TuiMarkup.Width("\U0001F7E2")); // green circle
+        Assert.Equal(2, TuiMarkup.Width("\u2705"));      // white heavy check mark (was mis-sized as 1)
+        Assert.Equal(2, TuiMarkup.Width("\u26A0\uFE0F")); // warning sign + VS16 (emoji presentation)
+    }
+
+    [Fact]
+    public void Width_AsciiAndCjk_Unchanged()
+    {
+        Assert.Equal(5, TuiMarkup.Width("hello"));
+        Assert.Equal(2, TuiMarkup.Width("\u4E2D"));      // CJK char = width 2
+        Assert.Equal(0, TuiMarkup.Width(""));
+    }
+
+    [Fact]
+    public void Table_WithEmojiCells_InnerSeparatorAligns()
+    {
+        // Emoji cells must be measured as width 2 so the INNER column separator lines up across rows.
+        // (Trailing spaces on the final cell are trimmed, so we check the inner separator position by
+        // display width, not raw line length.) Pre-fix, the check-mark (U+2705) was sized as 1 so the
+        // first column was a cell short and the inner border drifted.
+        var rows = new List<string>
+        {
+            "Vector | Status",
+            "Privileged | \u2705 Closed",
+            "Root remap | \U0001F7E1 Standard",
+            "Docker socket | \u2705 Closed",
+        };
+        var outp = TuiTable.Render(rows, width: 60);
+        // Every non-blank rendered row (borders + data) must have the SAME display width, so the right
+        // border lines up. The check-mark (U+2705) rows have fewer CHARS but equal DISPLAY width because
+        // the emoji is now measured as 2. Pre-fix those rows were one column short and the border drifted.
+        int? rowW = null;
+        int contentRows = 0;
+        foreach (var line in outp)
+        {
+            string plain = TuiMarkup.Plain(line);
+            if (plain.Trim().Length == 0) continue;     // skip the leading/trailing blank lines
+            int w = TuiMarkup.Width(plain);
+            if (rowW is null) rowW = w;
+            else Assert.Equal(rowW, w);
+            contentRows++;
+        }
+        Assert.True(contentRows >= 6);                  // top border + header + sep + 3 data + bottom
+    }
 }
