@@ -2082,7 +2082,15 @@ public class App
             
             opts.AddPolicy(new CustomHeaderPolicy(resolvedHeaders), PipelinePosition.PerCall);
         }
-        
+
+        // CLIProxyAPI Claude-path fixes (internalized from the external cliproxy-filter shim): when the
+        // active provider is the local cliproxy sidecar, strip sampling params the Claude/OAuth backend
+        // rejects and fold system/developer messages into the first user turn (else the bridge drops them
+        // and the agent loses all system context). Gated to Claude/Opus models inside the policy; other
+        // models + other providers are untouched.
+        if (string.Equals(provider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+            opts.AddPolicy(new CliProxyClaudePolicy(), PipelinePosition.PerCall);
+
         return new OpenAIClient(new ApiKeyCredential(apiKey), opts);
     }
 
