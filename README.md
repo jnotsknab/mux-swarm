@@ -152,13 +152,13 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 ## Key Capabilities
 
-**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing.
+**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing. **Named [teams](#interactive-commands)** (`/teams`, `/createteam`) with a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and inter-agent mailbox; **Giga mode** (`/giga`) lets a single agent spin up teams and workflows on the fly. Live sessions can be parked with `/detach` and resumed with `/attach`.
 
-**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
+**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. **Native in-process Filesystem and Shell/REPL tools** (no external MCP subprocess) with per-session scoping, plus a **pluggable execution sandbox** (`/sandbox`) spanning Docker, Podman, gVisor, and Kata microVMs with an optional network allowlist. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
 
-**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS).
+**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS). **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity via a bundled, auto-managed CLIProxyAPI sidecar — no API keys to paste. Editor integration through the **Zed Agent Client Protocol** (`--acp`).
 
-**[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
+**[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, **configurable security postures** for the native Filesystem (`standard`/`secure`/`lax`/`none`) and Shell/REPL (`off`/`prompt`/`allowlist`) tools, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
 
 ---
 
@@ -199,6 +199,26 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /workflow       Run a deterministic workflow from a JSON file
 /resume         Resume a previous single-agent session (shows #tags)
 /onboard        Create or update your operator profile (BRAIN.md + MEMORY.md)
+/detach         Park the live session in the background; resume later with /attach
+/attach         Re-attach a detached session (or pick from the backslash menu)
+```
+
+**Teams & coordination**
+```
+/teams          List and launch named teams from swarm.json
+/createteam     Guided wizard to define a team (lead, members, coordination, parallelism)
+/kanban         Editable task board driving member self-claim (todo/blocked/in-progress/done)
+/giga           Toggle Giga mode - grant the agent spawn_team / run_workflow superpowers
+/background     (/bg) Run an agent on a goal as a fire-and-forget background job
+/daemon         (/da) Runtime trigger control: cron/watch/on/off/jobs/cancel
+```
+
+**Subscription & proxy**
+```
+/login          Sign in to a subscription provider (Claude/Codex/Kimi/xAI/Antigravity) via browser
+/ping           Check provider connectivity through the local sidecar
+/proxy          Manage the bundled CLIProxyAPI sidecar: status | update
+/sandbox        View or switch the execution sandbox backend (host/docker/podman/gvisor/kata/...)
 ```
 
 **Execution & reasoning**
@@ -914,6 +934,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 - Expanded OTEL coverage: memory read/write tracking, hook dispatch spans, workflow step spans, WS lifecycle in ServeMode
 ### Shipped
 
+- **v0.12.0 — Teams, Subscription Sign-In, Native Tools & Sandboxing**: Named multi-agent **teams** (`/teams`, `/createteam`) with a dependency-gated TaskBoard, an editable `/kanban`, peer self-claim, and a file-backed inter-agent **mailbox**; **Giga mode** (`/giga`) grants a single agent on-the-fly team and workflow orchestration. **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity through a bundled, auto-downloaded CLIProxyAPI sidecar that outlives the process and is reused across runs — no API keys to paste; `/ping` and `/proxy status|update` for diagnostics. **Native in-process Filesystem and Shell/REPL tools** (replacing external MCP subprocesses) with per-session isolation and cross-platform **security postures** (filesystem `standard`/`secure`/`lax`/`none`; shell `off`/`prompt`/`allowlist`). **Pluggable execution sandbox** (`/sandbox`) across Docker, Podman, nerdctl, gVisor, and **Kata microVMs**, with a deny-by-default network allowlist. Editor integration via the **Zed Agent Client Protocol** (`--acp`). Live-session `/detach` + `/attach`, `/background` jobs, and runtime `/daemon` trigger control. Intelligent setup that probes the provider's model list for sensible defaults. Plus a major live-TUI polish pass (smooth streaming, aligned output, flicker-free rendering via Synchronized Output).
 - **v0.11.0 — Live TUI, Session Tags & Full Agent CRUD**: New live full-screen TUI renderer (default on capable terminals; `/classic` opts out) with a fuzzy slash-command palette, in-place active-turn rendering, collapsible tool/sub-agent output, and a vim-style transcript navigation/copy mode. Session tagging via `/tag` (sidecar `.muxtag`, surfaced and fuzzy-matched in resume) with an optional one-shot MEMORY.md stub. Full swarm-agent CRUD from the REPL — `/newagent`, `/editagent`, `/delagent` — plus universal config editing: `/set <key> <value>` now reaches every scalar leaf of `config.json` and `swarm.json` by dotted path, and `/config` lists them all. `/showreasoning` gates streamed reasoning text (full/summary shown, none hidden) as a client-side display control. Per-file BRAIN.md / MEMORY.md character caps (off/warn/force). `/ultra` deep-reasoning mode and a `sub` footer badge for active delegation.
 - **v0.9.0 -- Enterprise Observability & Chat App Bridge Access**: OpenTelemetry tracing with native OTEL spans for agent sessions, turns, tool calls, orchestrator iterations, and delegations. Structured logs as span events with severity levels. Metrics counters and histograms for tokens, sessions, compaction, stuck counts, and tool call duration. Configurable telemetry block (endpoint, protocol, verbosity, headers) with OTLP export to Jaeger, Tempo, Datadog, or any compatible backend. Daemon bridge triggers for persistent sidecar process supervision with auto-restart and PID tracking. Bundled Telegram and Discord bridges with Whisper voice transcription, WebSocket auto-reconnect, and chat authorization.
 - **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
