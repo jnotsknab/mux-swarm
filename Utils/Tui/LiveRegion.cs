@@ -194,15 +194,21 @@ internal sealed class LiveRegion
     private static string ComputeHangIndent(IReadOnlyList<Span> spans)
     {
         if (spans.Count == 0) return "";
-        // Reconstruct the leading plain text to measure the indent.
-        var first = spans[0].Text ?? "";
-        // Lead-dot marker: "● " (dot + space) => its text begins at column 2.
-        if (first.StartsWith("\u25cf ") || first.StartsWith("\u25cf"))
-            return "  ";
-        int n = 0;
-        while (n < first.Length && first[n] == ' ') n++;
-        if (n == 0) return "";
-        return new string(' ', Math.Min(n, 8));
+        // Reconstruct the line's plain text (the dot is a styled span on its own, so it would be
+        // missed by only inspecting spans[0]) to find the column where the BODY text begins. That
+        // column is the hang indent every wrapped continuation row re-applies so the block stays in
+        // one aligned column. Lead-dot lines ("  * body", dot at col 2) put body at col 4; a plainly
+        // indented line uses its own leading whitespace.
+        string plain = string.Concat(spans.Select(s => s.Text ?? ""));
+        int i = 0;
+        while (i < plain.Length && plain[i] == ' ') i++;          // leading whitespace
+        if (i < plain.Length && plain[i] == '\u25cf')            // the lead dot ...
+        {
+            i++;
+            while (i < plain.Length && plain[i] == ' ') i++;      // ... and the space(s) after it
+        }
+        if (i == 0) return "";
+        return new string(' ', Math.Min(i, 8));
     }
 
     private static IEnumerable<Piece> WrapPieces(string text, int cols)

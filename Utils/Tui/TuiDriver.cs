@@ -39,10 +39,11 @@ internal sealed class TuiDriver
     // single grey lead dot (Claude-Code style) is stamped once per OUTPUT BLOCK - not per line and
     // not per turn. Set in BeginStream, cleared when the first non-reasoning line commits.
     private bool _streamBlockDotPending;
-    // Left margin for streamed agent prose/reasoning so every line aligns under the turn header and
-    // the lead dot's text (col 2). The dot itself sits at col 0 with its text at col 2, so the first
-    // line uses the dot prefix and later lines use this plain 2-space indent - one aligned column.
-    private const string StreamIndent = "  ";
+    // Left margin for streamed agent prose/reasoning so every line aligns under the lead dot's TEXT.
+    // The output dot is rendered "  *" (dot at col 2, matching the turn-header marker and tool-call
+    // dot), so its text begins at col 4. The first line of a block uses the dot prefix; later lines
+    // use this 4-space indent so the whole block reads as one column under "* <agent>".
+    private const string StreamIndent = "    ";
     // Stream repaint coalescing: model tokens arrive many-per-second and a full live-frame rebuild
     // per token (BuildLiveFrame re-runs the markdown renderer over the whole growing tail) is what
     // makes non-ACP streaming look chunky. We mark the live tail dirty per chunk but only actually
@@ -990,7 +991,7 @@ internal sealed class TuiDriver
             if (_streamBlockDotPending)
             {
                 _streamBlockDotPending = false;
-                built = $"[{TuiComponents.Muted}]\u25cf[/] " + built;
+                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
             }
             else
             {
@@ -1066,7 +1067,7 @@ internal sealed class TuiDriver
             if (string.IsNullOrWhiteSpace(t))
                 preview = previewBody;
             else if (!_streamReasoning && _streamBlockDotPending)
-                preview = $"[{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
             else
                 preview = StreamIndent + previewBody;
             lines.Add(preview);

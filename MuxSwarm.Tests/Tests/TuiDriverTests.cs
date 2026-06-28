@@ -433,10 +433,10 @@ public class TuiDriverTests
     [Fact]
     public void Driver_StreamBlock_AlignsContinuationLinesUnderLeadDot()
     {
-        // Alignment fix: the lead dot sits at col 0 with its text at col 2, and EVERY subsequent
-        // answer line is indented to that same col-2 margin (a 2-space prefix), so the block reads
-        // as one aligned column instead of a flush-left stagger. The first line carries the dot
-        // (not the bare indent); later non-blank lines carry the 2-space indent (no extra dot).
+        // Alignment: the output dot is rendered "  *" (dot at col 2, matching the turn-header and
+        // tool-call markers) so its text begins at col 4, and EVERY subsequent answer line is
+        // indented to that same col-4 margin, so the block reads as one aligned column. The first
+        // line carries the dot; later non-blank lines carry the 4-space indent (no extra dot).
         var term = new FakeTerminal();
         var d = new TuiDriver(term);
         d.SetFooter(0, 0, false, false, false);
@@ -447,9 +447,9 @@ public class TuiDriverTests
         string outp = term.Output;
         // Exactly one dot (first line only) ...
         Assert.Equal(1, outp.Split('\u25cf').Length - 1);
-        // ... and the second line is present with a 2-space leading indent matching the dot's text
-        // column. The committed line for "beta" must start with two spaces before the text.
-        Assert.Contains("  beta", outp);
+        // ... and the second line is present with a 4-space leading indent matching the dot's text
+        // column (dot at col 2 => text at col 4). The committed "beta" line starts with 4 spaces.
+        Assert.Contains("    beta", outp);
         Assert.Contains("alpha", outp);
     }
 

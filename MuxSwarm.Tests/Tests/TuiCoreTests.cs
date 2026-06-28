@@ -203,14 +203,14 @@ public class TuiCoreTests
     [Fact]
     public void WrapMarkupLine_HangIndents_ContinuationRowsUnderLeadDot()
     {
-        // A streamed answer's first line carries the grey lead dot ("* " => text at col 2). When it
-        // wraps, the continuation rows must align under that col-2 text (2-space hang indent), not
+        // A streamed answer's first line is rendered "  *  text" (dot at col 2 => text at col 4). When
+        // it wraps, the continuation rows must align under that col-4 text (4-space hang indent), not
         // fall back to col 0.
         int cols = 24;
-        string dotLine = "[grey]\u25cf[/] alpha beta gamma delta epsilon zeta eta";
+        string dotLine = "  [grey]\u25cf[/] alpha beta gamma delta epsilon zeta eta";
         var rows = LiveRegion.WrapMarkupLine(dotLine, cols);
         Assert.True(rows.Count >= 2);
-        // Row 0 begins with the dot; later rows begin with the 2-space hang indent.
+        // Row 0 begins with the dot; later rows begin with the 4-space hang indent.
         for (int i = 0; i < rows.Count; i++)
         {
             string visible = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;]*m", "");
@@ -218,7 +218,7 @@ public class TuiCoreTests
             Assert.True(TuiMarkup.Width(visible) <= cols,
                 $"row {i} exceeds width {cols}: '{visible}' (w={TuiMarkup.Width(visible)})");
             if (i == 0) continue;
-            Assert.StartsWith("  ", visible);
+            Assert.StartsWith("    ", visible);   // 4-space hang (dot col 2 => text col 4)
             Assert.DoesNotContain("\u25cf", visible); // dot only on the first row
         }
     }
