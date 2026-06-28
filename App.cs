@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.62";
+    public static readonly string DebugTag = "g12.63";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -342,6 +342,10 @@ public class App
                 MuxConsole.WriteWarning($"--sandbox {sbxBackend} ignored: {sbxErr}");
             }
         }
+
+        // Resolve the authoritative sandbox state ONCE after all startup overrides (--sandbox,
+        // --dockerexec, config) have settled, so the preamble's ACTIVE block tracks the real backend.
+        MuxSwarm.Utils.NativeTools.SandboxRuntime.Refresh();
 
         if (parsed.McpStrictOverride.HasValue)
         {

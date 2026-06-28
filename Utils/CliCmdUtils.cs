@@ -117,6 +117,9 @@ public static class CliCmdUtils
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
         SkillLoader.LoadSkills();   // swap bundled vs bundled-docker so the directive set matches
+        // Re-resolve the authoritative sandbox state so the preamble (ACTIVE block + /work + /host/*
+        // mounts) tracks the new backend instead of the stale loose intent flag.
+        MuxSwarm.Utils.NativeTools.SandboxRuntime.Refresh();
 
         MuxConsole.WriteInfo($"Sandbox backend is now: {backend}");
         MuxConsole.WriteMuted(containerized

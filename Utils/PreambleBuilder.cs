@@ -6,7 +6,7 @@
 /// </summary>
 public static class PreambleBuilder
 {
-    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
+    public static string Build(string agentName, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
     {
         var preamble = "";
 
@@ -102,7 +102,11 @@ public static class PreambleBuilder
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
-        if (isUsingDockerForExec)
+        // Gate on the authoritative resolved sandbox state (SandboxRuntime), NOT the loose
+        // IsUsingDockerForExec intent bool: the latter can drift from the real backend (e.g. left true
+        // while sandbox.backend is "host"), which made this block claim an ACTIVE container + /work that
+        // does not exist. SandboxRuntime resolves the SAME sandbox config block the exec tools use.
+        if (MuxSwarm.Utils.NativeTools.SandboxRuntime.IsActive)
         {
             // Execution sandbox is ACTIVE: the native shell + Python tools transparently run inside the
             // configured sandbox backend (one container/session). This is enforced by the tools, not by
@@ -115,18 +119,16 @@ public static class PreambleBuilder
                 + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n";
             // Surface the allowed-path mounts so the agent knows WHERE its project files are inside the
             // sandbox and which are read-only (mapped from the filesystem security posture).
-            try
+            // Mounts come from the ACTIVE spec (only OCI backends bind /host/* paths; wrapper/custom
+            // backends have none), so the list always matches what is really mounted in this session.
+            var mounts = MuxSwarm.Utils.NativeTools.SandboxRuntime.Active?.Mounts;
+            if (mounts is { Count: > 0 })
             {
-                var mounts = MuxSwarm.Utils.NativeTools.SandboxBackend.ResolveMounts(App.Config.Filesystem);
-                if (mounts.Count > 0)
-                {
-                    preamble += "Host paths are mounted inside the sandbox as:\n";
-                    foreach (var m in mounts)
-                        preamble += $"  {m.HostPath} -> {m.GuestPath}{(m.ReadOnly ? " (read-only)" : " (read-write)")}\n";
-                    preamble += "Operate on your project under those /host/* paths; /work is scratch.\n";
-                }
+                preamble += "Host paths are mounted inside the sandbox as:\n";
+                foreach (var m in mounts)
+                    preamble += $"  {m.HostPath} -> {m.GuestPath}{(m.ReadOnly ? " (read-only)" : " (read-write)")}\n";
+                preamble += "Operate on your project under those /host/* paths; /work is scratch.\n";
             }
-            catch { /* sandbox config may be host/invalid; no mount list to show */ }
             if (hasSkills)
                 preamble += "For sandbox conventions (what runs where, output retrieval), you may read_skill(\"docker-sandbox\").\n";
         }
@@ -300,9 +302,9 @@ public static class PreambleBuilder
         return preamble;
     }
 
-    public static string WrapTask(string agentName, string subTask, bool isUsingDockerForExec)
+    public static string WrapTask(string agentName, string subTask)
     {
-        var preamble = Build(agentName, isUsingDockerForExec);
+        var preamble = Build(agentName);
         return $"{preamble}\nSub-task: {subTask}\nComplete this task. Call signal_task_complete with status and summary when done.";
     }
 }

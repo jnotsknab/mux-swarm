@@ -394,7 +394,6 @@ public static class SingleAgentOrchestrator
 
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
-            App.Config.IsUsingDockerForExec,
             continuous,
             shouldPlan,
             App.UltraMode);

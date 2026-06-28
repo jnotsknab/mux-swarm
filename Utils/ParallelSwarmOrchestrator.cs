@@ -444,7 +444,7 @@ public static class ParallelSwarmOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", agentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -1294,7 +1294,7 @@ public static class ParallelSwarmOrchestrator
 
             if (isFirstIteration)
             {
-                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask, App.Config.IsUsingDockerForExec);
+                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask);
 
                 var imageRegex = new Regex(
                     @"(?:\[image:\s*)?((?:[A-Za-z]:\\|\\\\|/)[\w\\\/.:\-\s]+\.(?:png|jpe?g|gif|webp))(?:\s*\])?",
@@ -1307,7 +1307,7 @@ public static class ParallelSwarmOrchestrator
                     var contentParts = new List<AIContent>();
                     string textPart = imageRegex.Replace(subTask, "").Trim();
                     contentParts.Add(new TextContent(
-                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart, App.Config.IsUsingDockerForExec)));
+                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart)));
 
                     foreach (Match match in imageMatches)
                     {
