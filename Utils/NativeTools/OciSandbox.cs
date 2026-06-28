@@ -24,6 +24,11 @@ internal sealed class OciSandbox : IDisposable
     private readonly object _gate = new();
     private bool _started;
     private bool _disposed;
+    // Self-heal guard: bound consecutive (re)build attempts so a container that dies IMMEDIATELY every
+    // time (bad image, cap conflict, mount denied) surfaces the real error once instead of looping.
+    private int _buildAttempts;
+    private string _lastBuildError = "";
+    private const int MaxBuildAttempts = 3;
 
     private string _containerName = "";
     private string _proxyName = "";
@@ -38,12 +43,33 @@ internal sealed class OciSandbox : IDisposable
         _key = key;
     }
 
-    /// <summary>Lazily create the network/proxy/container. Idempotent; throws SandboxException on failure.</summary>
+    /// <summary>
+    /// Ensure the per-session container (and proxy/network if an allowlist is active) exist AND are
+    /// running. Self-healing: if we created one before but it has since died/been removed (OOM, crash,
+    /// daemon restart, manual docker rm), it is rebuilt rather than left dead. Idempotent when already
+    /// healthy. Throws SandboxException only when the backend itself is unusable (e.g. daemon down).
+    /// </summary>
     public void EnsureStarted()
     {
         lock (_gate)
         {
-            if (_started || _disposed) return;
+            if (_disposed) return;
+            if (_started)
+            {
+                if (ContainerRunning()) return;       // healthy - nothing to do
+                // Container is gone/dead: tear down stale proxy+net and rebuild from scratch.
+                RebuildTeardown_NoLock();
+            }
+
+            // Bound rebuild attempts: if the container will not stay up, stop hammering the daemon and
+            // surface the real docker error (captured below) so the user/model sees WHY, not a silent loop.
+            if (_buildAttempts >= MaxBuildAttempts)
+                throw new SandboxException(
+                    $"sandbox container failed to start {MaxBuildAttempts}x and will not be retried this session. " +
+                    $"Last error: {(_lastBuildError.Length > 0 ? _lastBuildError : "unknown")}. " +
+                    "Check the image, docker daemon, and `/sandbox` config (or set sandbox.backend host).");
+            _buildAttempts++;
+
             string sfx = Sanitize(_key) + "_" + Guid.NewGuid().ToString("N")[..6];
             _containerName = "mux_sbx_" + sfx;
             Directory.CreateDirectory(_hostWorkDir);
@@ -88,11 +114,26 @@ internal sealed class OciSandbox : IDisposable
             var (ok, _, err) = Run(_spec.Binary, args, allowFail: true);
             if (!ok)
             {
-                // best-effort cleanup of any partial state
-                DisposeNoLock();
-                throw new SandboxException($"failed to start sandbox container ({_spec.Backend}): {err.Trim()}");
+                _lastBuildError = err.Trim();
+                // Tear down partial state but DO NOT dispose the whole object - we want to allow a bounded
+                // retry on the next tool call (transient daemon hiccups self-heal); the attempt counter
+                // stops a hard loop.
+                RebuildTeardown_NoLock();
+                throw new SandboxException($"failed to start sandbox container ({_spec.Backend}): {_lastBuildError}");
             }
+            // Confirm it actually STAYED up (an image whose entrypoint exits immediately would pass `run`
+            // but not be running) before we trust it. If it died on boot, capture logs as the error.
             _started = true;
+            if (!ContainerRunning())
+            {
+                var (_, logs, lerr) = Run(_spec.Binary, $"logs {_containerName}", allowFail: true);
+                _lastBuildError = (logs + lerr).Trim();
+                RebuildTeardown_NoLock();
+                throw new SandboxException($"sandbox container exited immediately ({_spec.Backend}). " +
+                    $"Image entrypoint may be wrong or a dropped capability is required. Detail: {_lastBuildError}");
+            }
+            _buildAttempts = 0;          // healthy - reset the self-heal budget
+            _lastBuildError = "";
         }
     }
 
@@ -138,6 +179,26 @@ internal sealed class OciSandbox : IDisposable
         EnsureStarted();
         string args = $"exec -i -w {GuestWorkDir} {_containerName} python {guestWorkerPath}";
         return (_spec.Binary, args);
+    }
+
+    /// <summary>True when the session container exists AND is in the running state. Cheap docker inspect.</summary>
+    private bool ContainerRunning()
+    {
+        if (string.IsNullOrEmpty(_containerName)) return false;
+        // `inspect -f {{.State.Running}}` prints "true"/"false"; non-zero exit => container absent.
+        var (ok, outp, _) = Run(_spec.Binary,
+            $"inspect -f {{{{.State.Running}}}} {_containerName}", allowFail: true);
+        return ok && outp.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Tear down a dead container's leftovers before a rebuild (force-rm container/proxy, rm net).</summary>
+    private void RebuildTeardown_NoLock()
+    {
+        if (!string.IsNullOrEmpty(_containerName)) Run(_spec.Binary, $"rm -f {_containerName}", allowFail: true);
+        if (!string.IsNullOrEmpty(_proxyName)) Run(_spec.Binary, $"rm -f {_proxyName}", allowFail: true);
+        if (!string.IsNullOrEmpty(_netName)) Run(_spec.Binary, $"network rm {_netName}", allowFail: true);
+        _containerName = ""; _proxyName = ""; _netName = "";
+        _started = false;
     }
 
     public void Dispose()

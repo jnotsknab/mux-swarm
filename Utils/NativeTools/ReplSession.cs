@@ -88,7 +88,8 @@ internal sealed class ReplSession : IDisposable
     public async Task<string> ExecutePythonAsync(string code, CancellationToken ct)
     {
         if (SandboxGuard() is { } guard) return guard;
-        await EnsureWorkerAsync(ct);
+        try { await EnsureWorkerAsync(ct); }
+        catch (SandboxException ex) { return $"[SANDBOX ERROR] {ex.Message}"; }
         lock (_lock)
         {
             if (_jobStatus == "running")
@@ -367,8 +368,12 @@ internal sealed class ReplSession : IDisposable
     public async Task<string> StartShellJobAsync(string command, CancellationToken ct)
     {
         if (SandboxGuard() is { } guard) return guard;
-        if (OciSandboxed) _oci!.EnsureStarted();           // command runs inside the container
-        else if (!Sandboxed) await EnsureVenvAsync(ct);    // host: activate the session venv
+        try
+        {
+            if (OciSandboxed) _oci!.EnsureStarted();           // command runs inside the container
+            else if (!Sandboxed) await EnsureVenvAsync(ct);    // host: activate the session venv
+        }
+        catch (SandboxException ex) { return $"[SANDBOX ERROR] {ex.Message}"; }
         return StartShellJob(command);
     }
 
@@ -391,7 +396,8 @@ internal sealed class ReplSession : IDisposable
         if (OciSandboxed)
         {
             // Inside the container, install with pip (the base image's python). No host venv.
-            _oci!.EnsureStarted();
+            try { _oci!.EnsureStarted(); }
+            catch (SandboxException ex) { return $"[SANDBOX ERROR] {ex.Message}"; }
             return StartShellJob($"python -m pip install {package}");
         }
         await EnsureVenvAsync(ct);
