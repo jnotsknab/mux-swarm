@@ -178,6 +178,44 @@ public class TuiCoreTests
     }
 
     [Fact]
+    public void WrapMarkupLine_HangIndents_ContinuationRowsOfIndentedLine()
+    {
+        // A committed agent-prose line that is visually indented (2 leading spaces) and longer than
+        // the width must wrap so that the CONTINUATION rows re-apply the indent - otherwise long
+        // lines soft-wrap back to column 0 and break the aligned output column (the off-indentation
+        // bug). Every wrapped row's first non-ANSI char should be a space (the hang indent).
+        int cols = 24;
+        string longBody = "alpha beta gamma delta epsilon zeta eta theta";
+        var rows = LiveRegion.WrapMarkupLine("  " + longBody, cols);
+        Assert.True(rows.Count >= 2, "the line should wrap into multiple rows at this width");
+        foreach (var r in rows)
+        {
+            // Strip any leading ANSI SGR (ESC[...m) then assert the visible text starts with 2 spaces.
+            string visible = System.Text.RegularExpressions.Regex.Replace(r, "\u001b\\[[0-9;]*m", "");
+            Assert.StartsWith("  ", visible);
+        }
+    }
+
+    [Fact]
+    public void WrapMarkupLine_HangIndents_ContinuationRowsUnderLeadDot()
+    {
+        // A streamed answer's first line carries the grey lead dot ("* " => text at col 2). When it
+        // wraps, the continuation rows must align under that col-2 text (2-space hang indent), not
+        // fall back to col 0.
+        int cols = 24;
+        string dotLine = "[grey]\u25cf[/] alpha beta gamma delta epsilon zeta eta";
+        var rows = LiveRegion.WrapMarkupLine(dotLine, cols);
+        Assert.True(rows.Count >= 2);
+        // Row 0 begins with the dot; later rows begin with the 2-space hang indent.
+        for (int i = 1; i < rows.Count; i++)
+        {
+            string visible = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;]*m", "");
+            Assert.StartsWith("  ", visible);
+            Assert.DoesNotContain("\u25cf", visible); // dot only on the first row
+        }
+    }
+
+    [Fact]
     public void LiveRegion_Clear_ErasesAndShowsCursor()
     {
         var term = new FakeTerminal();

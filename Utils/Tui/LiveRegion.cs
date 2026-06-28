@@ -136,11 +136,19 @@ internal sealed class LiveRegion
         var cur = new StringBuilder();
         int curW = 0;
 
+        // Hang-indent: when a logical line is visually indented (leading spaces, or a lead-dot
+        // "* " marker that puts its text at col 2), every WRAPPED continuation row must re-apply
+        // that indent - otherwise long agent-prose lines soft-wrap back to col 0 and break the
+        // aligned column (the flush-left "off-indentation" bug). The hang width is the leading
+        // plain-text whitespace of the line, or 2 when the line starts with the U+25CF lead dot.
+        string hangIndent = ComputeHangIndent(spans);
+
         void NewRow()
         {
             if (curW > 0 || cur.Length > 0) { cur.Append(Ansi.Reset); }
             outRows.Add(cur.ToString());
             cur.Clear(); curW = 0;
+            if (hangIndent.Length > 0) { cur.Append(hangIndent); curW = hangIndent.Length; }
         }
 
         foreach (var span in spans)
@@ -172,6 +180,26 @@ internal sealed class LiveRegion
     /// Break a plain run into pieces that each fit within <paramref name="cols"/>. Pieces
     /// that exactly fill a row are flagged ForceBreak so the caller starts a new row.
     /// </summary>
+    /// <summary>
+    /// Leading indent to re-apply on each wrapped continuation row, derived from the logical line's
+    /// own leading whitespace - or 2 columns when the line opens with the U+25CF lead dot ("* text",
+    /// dot at col 0, text at col 2). Returns "" for flush-left lines (continuation stays at col 0).
+    /// Capped so a deeply-indented line can never consume the whole width.
+    /// </summary>
+    private static string ComputeHangIndent(IReadOnlyList<Span> spans)
+    {
+        if (spans.Count == 0) return "";
+        // Reconstruct the leading plain text to measure the indent.
+        var first = spans[0].Text ?? "";
+        // Lead-dot marker: "● " (dot + space) => its text begins at column 2.
+        if (first.StartsWith("\u25cf ") || first.StartsWith("\u25cf"))
+            return "  ";
+        int n = 0;
+        while (n < first.Length && first[n] == ' ') n++;
+        if (n == 0) return "";
+        return new string(' ', Math.Min(n, 8));
+    }
+
     private static IEnumerable<Piece> WrapPieces(string text, int cols)
     {
         if (string.IsNullOrEmpty(text)) { yield return new Piece("", false); yield break; }
