@@ -238,7 +238,10 @@ public sealed class ProcessCleanup : IDisposable
             {
                 BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
                 {
-                    LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    // BREAKAWAY_OK lets a child opt out of the job (CREATE_BREAKAWAY_FROM_JOB) so a
+                    // deliberately persistent sidecar (e.g. the CLIProxyAPI subscription proxy) can
+                    // survive Mux exit. Other children don't request breakaway, so they're still reaped.
+                    LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
                 }
             };
 
@@ -277,6 +280,7 @@ public sealed class ProcessCleanup : IDisposable
     }
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
 
     private enum JobObjectInfoType
     {

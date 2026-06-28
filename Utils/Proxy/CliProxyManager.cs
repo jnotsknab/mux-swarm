@@ -226,23 +226,17 @@ internal static class CliProxyManager
     public const int PreferredPort = 49317;
 
     private static readonly SemaphoreSlim RunGate = new(1, 1);
-    private static Process? _proc;
     private static int _runningPort;
     private static string? _apiKey;       // client bearer for /v1
     private static string? _mgmtKey;      // management bearer for /v0/management
     private static HttpClient? _client;
 
-    /// <summary>True if the sidecar is currently spawned and tracked by this process.</summary>
-    public static bool IsRunning
-    {
-        get
-        {
-            var p = _proc;
-            if (p is null) return false;
-            try { return !p.HasExited; }
-            catch { return false; }
-        }
-    }
+    /// <summary>
+    /// True if THIS process currently considers a sidecar to be up on the chosen port. Note the sidecar is
+    /// deliberately DETACHED (survives Mux exit), so "running" is determined by a port/health probe rather
+    /// than by owning a child Process handle: a proxy started by a previous Mux session counts as running.
+    /// </summary>
+    public static bool IsRunning => _runningPort > 0;
 
     /// <summary>The loopback base URL ("http://127.0.0.1:&lt;port&gt;") once running; null otherwise.</summary>
     public static string? BaseUrl => _runningPort > 0 ? $"http://127.0.0.1:{_runningPort}" : null;
@@ -273,67 +267,98 @@ internal static class CliProxyManager
     /// <summary>The persistent OAuth token store (survives restarts); shared across pinned versions.</summary>
     public static string AuthDir => Path.Combine(ConfigDir, "auth");
 
+    /// <summary>Path to the persisted client api-key (loopback bearer). Stable across restarts.</summary>
+    private static string ClientKeyPath => Path.Combine(ConfigDir, "client.key");
+
+    /// <summary>Path to the persisted management secret-key. Stable across restarts.</summary>
+    private static string MgmtKeyPath => Path.Combine(ConfigDir, "mgmt.key");
+
+    /// <summary>Env var the registered provider's apiKeyEnvVar points at; set at spawn/adopt time.</summary>
+    public const string ClientKeyEnvVar = "MUX_CLIPROXY_KEY";
+
     /// <summary>
-    /// Ensures the sidecar binary is present AND a managed server instance is running, returning the
-    /// loopback OpenAI-compatible endpoint. Idempotent: a healthy running instance is reused. Picks the
-    /// fixed <see cref="PreferredPort"/>, falling back to an ephemeral free port if taken. The child is
-    /// covered by the process-wide Windows Job Object (descendants inherit kill-on-close) and Track()ed on
-    /// Unix for the SIGTERM shutdown path.
+    /// Loads a persisted secret from <paramref name="path"/>, generating + writing one on first use. Keys
+    /// are stable across restarts so a provider entry (and a sidecar from a prior session) keep working.
+    /// </summary>
+    private static string LoadOrCreateKey(string path, string prefix)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                var existing = File.ReadAllText(path).Trim();
+                if (existing.Length > 0) return existing;
+            }
+        }
+        catch { /* fall through to regenerate */ }
+
+        var key = prefix + Guid.NewGuid().ToString("N");
+        try
+        {
+            Directory.CreateDirectory(ConfigDir);
+            File.WriteAllText(path, key);
+            if (!OperatingSystem.IsWindows())
+            {
+                try { File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite); } catch { }
+            }
+        }
+        catch { /* best effort; in-memory key still works for this session */ }
+        return key;
+    }
+
+    private static void EnsureKeysLoaded()
+    {
+        _apiKey ??= LoadOrCreateKey(ClientKeyPath, "mux-");
+        _mgmtKey ??= LoadOrCreateKey(MgmtKeyPath, "mux-mgmt-");
+        // Expose the client key to the OpenAI provider path via env var (apiKeyEnvVar resolution).
+        Environment.SetEnvironmentVariable(ClientKeyEnvVar, _apiKey);
+    }
+
+    /// <summary>
+    /// Ensures the sidecar binary is present AND a server instance is reachable, returning the loopback
+    /// OpenAI-compatible endpoint. The sidecar is DETACHED so it outlives Mux: on entry we first probe the
+    /// fixed <see cref="PreferredPort"/> and ADOPT a healthy instance (possibly started by a prior Mux
+    /// session) with zero spawn. Only if nothing healthy is listening do we spawn a new detached process
+    /// (Windows: CREATE_BREAKAWAY_FROM_JOB so it escapes Mux's kill-on-close Job Object; Unix: setsid so it
+    /// leaves Mux's process group and survives the group SIGTERM). Lazy: only called on first
+    /// subscription-provider use.
     /// </summary>
     public static async Task<string> EnsureRunningAsync(CancellationToken ct = default)
     {
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
+        EnsureKeysLoaded();
 
-        // Fast path: already healthy.
-        if (IsRunning && BaseUrl is not null && await IsHealthyAsync(ct).ConfigureAwait(false))
+        // Fast path: we already adopted/started one this session and it is still healthy.
+        if (IsRunning && await IsHealthyAsync(ct).ConfigureAwait(false))
             return OpenAiEndpoint!;
 
         await RunGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (IsRunning && BaseUrl is not null && await IsHealthyAsync(ct).ConfigureAwait(false))
+            if (IsRunning && await IsHealthyAsync(ct).ConfigureAwait(false))
                 return OpenAiEndpoint!;
 
-            StopInternal(); // clear any dead handle
+            // Adopt-by-port: a detached sidecar from a previous session may already be serving the fixed
+            // port. If it answers /v1/models with our persisted key, reuse it — no spawn, minimal latency.
+            if (await IsPortHealthyAsync(PreferredPort, ct).ConfigureAwait(false))
+            {
+                _runningPort = PreferredPort;
+                return OpenAiEndpoint!;
+            }
 
             int port = PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
-            _apiKey ??= "mux-" + Guid.NewGuid().ToString("N");
-            _mgmtKey ??= "mux-mgmt-" + Guid.NewGuid().ToString("N");
 
             Directory.CreateDirectory(AuthDir);
             await File.WriteAllTextAsync(ConfigPath, BuildConfigYaml(port, _apiKey!, _mgmtKey!, AuthDir), ct)
                 .ConfigureAwait(false);
 
-            var psi = new ProcessStartInfo
-            {
-                FileName = ExecutablePath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                // Do NOT redirect stdout/stderr: CLIProxyAPI logs continuously, and draining redirected
-                // pipes via async readers deadlocks under a single-threaded sync context (e.g. xunit). We
-                // don't consume the proxy's logs, so let them go to the (hidden) console with no pipe.
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
-                WorkingDirectory = InstallDir,
-            };
-            psi.ArgumentList.Add("-config");
-            psi.ArgumentList.Add(ConfigPath);
-
-            var proc = new Process { StartInfo = psi };
-            proc.Start();
-
-            // On Unix, register for SIGTERM-on-shutdown. On Windows the self-assigned Job Object already
-            // makes every descendant inherit kill-on-job-close, so no explicit Track() is required.
-            if (!OperatingSystem.IsWindows())
-                ProcessCleanup.Instance.Track(proc);
-
-            _proc = proc;
+            SpawnDetached(port);
             _runningPort = port;
 
             bool healthy = await WaitForHealthyAsync(TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
             if (!healthy)
             {
-                StopInternal();
+                _runningPort = 0;
                 throw new InvalidOperationException(
                     $"CLIProxyAPI started on port {port} but did not become healthy within 20s.");
             }
@@ -347,7 +372,68 @@ internal static class CliProxyManager
         }
     }
 
-    /// <summary>Stops the managed sidecar if running. Safe to call repeatedly.</summary>
+    /// <summary>
+    /// Spawns the proxy DETACHED from Mux's lifecycle so it survives Mux exit. Windows uses CreateProcess
+    /// with CREATE_BREAKAWAY_FROM_JOB (escapes the kill-on-job-close Job Object) + CREATE_NO_WINDOW; if
+    /// breakaway is denied it falls back to a normal spawn (then it dies with Mux and is simply re-spawned
+    /// next launch). Unix launches via `setsid` to start a new session/process-group so Mux's shutdown
+    /// `kill -TERM -&lt;pgid&gt;` group sweep cannot reach it; stdio is redirected to the null device.
+    /// </summary>
+    private static void SpawnDetached(int port)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (WindowsProcess.TryCreateBreakaway(ExecutablePath, $"-config \"{ConfigPath}\"", InstallDir))
+                return;
+            // Fallback: normal (job-bound) spawn — survives only for this session.
+            var psi = new ProcessStartInfo
+            {
+                FileName = ExecutablePath,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = InstallDir,
+            };
+            psi.ArgumentList.Add("-config");
+            psi.ArgumentList.Add(ConfigPath);
+            Process.Start(psi);
+            return;
+        }
+
+        // Unix: setsid <exe> -config <cfg>, stdio -> /dev/null, new session => detached from Mux's group.
+        var upsi = new ProcessStartInfo
+        {
+            FileName = "setsid",
+            UseShellExecute = false,
+            WorkingDirectory = InstallDir,
+        };
+        upsi.ArgumentList.Add(ExecutablePath);
+        upsi.ArgumentList.Add("-config");
+        upsi.ArgumentList.Add(ConfigPath);
+        try
+        {
+            Process.Start(upsi); // NOT Track()ed: must survive Mux exit
+        }
+        catch
+        {
+            // setsid missing (rare): fall back to a plain spawn without tracking. It may still be swept by
+            // the group SIGTERM, but will be re-spawned on next launch.
+            var fpsi = new ProcessStartInfo
+            {
+                FileName = ExecutablePath,
+                UseShellExecute = false,
+                WorkingDirectory = InstallDir,
+            };
+            fpsi.ArgumentList.Add("-config");
+            fpsi.ArgumentList.Add(ConfigPath);
+            Process.Start(fpsi);
+        }
+    }
+
+    /// <summary>
+    /// Explicitly stops the sidecar (used by `/proxy` and tests). Because the proxy is detached we do NOT
+    /// own a child handle, so we terminate whatever process is listening on our port. NOT called on Mux
+    /// exit — the sidecar is meant to persist for future sessions.
+    /// </summary>
     public static void Stop()
     {
         RunGate.Wait();
@@ -357,13 +443,17 @@ internal static class CliProxyManager
 
     private static void StopInternal()
     {
-        var p = _proc;
-        _proc = null;
+        int port = _runningPort;
         _runningPort = 0;
-        if (p is null) return;
-        try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
-        try { p.Dispose(); } catch { }
+        if (port <= 0) return;
+        try { KillListenerOnPort(port); } catch { }
     }
+
+    /// <summary>
+    /// Test hook: clears this process's in-memory "running" state WITHOUT stopping the detached proxy, to
+    /// simulate a fresh Mux session for the adopt-by-port path. Does not touch persisted keys.
+    /// </summary>
+    internal static void ResetSessionStateForTests() => _runningPort = 0;
 
     /// <summary>
     /// Queries the management API for the current set of authenticated provider credentials. Returns the
@@ -427,7 +517,7 @@ internal static class CliProxyManager
         while (DateTime.UtcNow < deadline)
         {
             if (ct.IsCancellationRequested) return false;
-            if (_proc is { HasExited: true }) return false;
+            // Detached spawn: we don't hold a child handle, so health is polled purely via the port.
             if (await IsHealthyAsync(ct).ConfigureAwait(false)) return true;
             try { await Task.Delay(250, ct).ConfigureAwait(false); } catch { return false; }
         }
@@ -446,6 +536,81 @@ internal static class CliProxyManager
             return resp.IsSuccessStatusCode;
         }
         catch { return false; }
+    }
+
+    /// <summary>
+    /// Probes a specific port for a healthy CLIProxyAPI answering /v1/models with our persisted client key.
+    /// Used to ADOPT a detached sidecar started by a previous Mux session (reuse, no spawn). A short timeout
+    /// keeps the no-survivor case cheap.
+    /// </summary>
+    private static async Task<bool> IsPortHealthyAsync(int port, CancellationToken ct)
+    {
+        try
+        {
+            using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{port}/v1/models");
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_apiKey}");
+            using var resp = await probe.SendAsync(req, ct).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    /// <summary>
+    /// Terminates the process listening on <paramref name="port"/>. Since the sidecar is detached we don't
+    /// hold its handle; we resolve the owning PID from the OS (Windows: netstat; Unix: lsof/fuser) and kill
+    /// its tree. Best-effort.
+    /// </summary>
+    private static void KillListenerOnPort(int port)
+    {
+        foreach (int pid in ListenerPids(port))
+        {
+            try
+            {
+                using var p = Process.GetProcessById(pid);
+                p.Kill(entireProcessTree: true);
+            }
+            catch { /* already gone / access — best effort */ }
+        }
+    }
+
+    /// <summary>Resolves PIDs listening on a loopback port via OS tooling. Empty if none/unsupported.</summary>
+    private static IEnumerable<int> ListenerPids(int port)
+    {
+        var pids = new HashSet<int>();
+        try
+        {
+            ProcessStartInfo psi;
+            if (OperatingSystem.IsWindows())
+            {
+                psi = new ProcessStartInfo("netstat", "-ano")
+                { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                using var proc = Process.Start(psi)!;
+                string outp = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit(3000);
+                foreach (var line in outp.Split('\n'))
+                {
+                    // e.g.  TCP    127.0.0.1:49317   0.0.0.0:0   LISTENING   12345
+                    if (!line.Contains("LISTENING")) continue;
+                    if (!line.Contains($":{port} ") && !line.Contains($":{port}\t")) continue;
+                    var parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 0 && int.TryParse(parts[^1], out int pid)) pids.Add(pid);
+                }
+            }
+            else
+            {
+                // lsof -t -iTCP:<port> -sTCP:LISTEN  -> one PID per line
+                psi = new ProcessStartInfo("lsof", $"-t -iTCP:{port} -sTCP:LISTEN")
+                { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+                using var proc = Process.Start(psi)!;
+                string outp = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit(3000);
+                foreach (var line in outp.Split('\n'))
+                    if (int.TryParse(line.Trim(), out int pid)) pids.Add(pid);
+            }
+        }
+        catch { /* tooling missing — nothing to kill */ }
+        return pids;
     }
 
     private static bool PortIsFree(int port)
@@ -497,4 +662,66 @@ internal static class CliProxyManager
         el.TryGetProperty(name, out var v) &&
         (v.ValueKind == System.Text.Json.JsonValueKind.True ||
          (v.ValueKind == System.Text.Json.JsonValueKind.String && bool.TryParse(v.GetString(), out var b) && b));
+}
+
+/// <summary>
+/// Windows-only P/Invoke helper to launch a process that BREAKS AWAY from the parent's Job Object, so a
+/// deliberately persistent sidecar survives Mux exit (Mux's job is created with BREAKAWAY_OK). Uses raw
+/// CreateProcess because System.Diagnostics.Process offers no breakaway-flag knob.
+/// </summary>
+internal static partial class WindowsProcess
+{
+    private const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+    private const uint CREATE_NO_WINDOW = 0x08000000;
+    private const uint DETACHED_PROCESS = 0x00000008;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct STARTUPINFO
+    {
+        public uint cb;
+        public IntPtr lpReserved, lpDesktop, lpTitle;
+        public uint dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+        public ushort wShowWindow, cbReserved2;
+        public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess, hThread;
+        public uint dwProcessId, dwThreadId;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcess(
+        string? lpApplicationName, string lpCommandLine,
+        IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles,
+        uint dwCreationFlags, IntPtr lpEnvironment, string? lpCurrentDirectory,
+        ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    /// <summary>
+    /// Launches <paramref name="exePath"/> <paramref name="args"/> detached from the parent's Job Object.
+    /// Returns true on success; false if CreateProcess fails (caller falls back to a normal spawn).
+    /// </summary>
+    public static bool TryCreateBreakaway(string exePath, string args, string workingDir)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var si = new STARTUPINFO { cb = (uint)System.Runtime.InteropServices.Marshal.SizeOf<STARTUPINFO>() };
+        // Quote the exe path; args already quoted by caller.
+        string cmd = $"\"{exePath}\" {args}";
+        uint flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_NO_WINDOW | DETACHED_PROCESS;
+        try
+        {
+            bool ok = CreateProcess(null, cmd, IntPtr.Zero, IntPtr.Zero, false,
+                flags, IntPtr.Zero, workingDir, ref si, out var pi);
+            if (!ok) return false;
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+            return true;
+        }
+        catch { return false; }
+    }
 }

@@ -80,21 +80,48 @@ public class CliProxyManagerTests
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             string endpoint = await CliProxyManager.EnsureRunningAsync(cts.Token).ConfigureAwait(false);
 
-            Assert.EndsWith("/v1", endpoint);
+            Assert.Equal($"http://127.0.0.1:{CliProxyManager.PreferredPort}/v1", endpoint);
             Assert.True(CliProxyManager.IsRunning);
             Assert.NotNull(CliProxyManager.ClientApiKey);
+            // The client key is exposed via env var for the OpenAI provider path to resolve.
+            Assert.Equal(CliProxyManager.ClientApiKey,
+                Environment.GetEnvironmentVariable(CliProxyManager.ClientKeyEnvVar));
 
             // /v1/models is the health endpoint; auth-files is the provider-readiness probe.
             var files = await CliProxyManager.GetAuthFilesAsync(cts.Token).ConfigureAwait(false);
             Assert.NotNull(files); // empty on a fresh box (no providers logged in) — that's valid
-
-            // No provider should be "ready" before any login.
             Assert.False(await CliProxyManager.IsProviderReadyAsync("claude", cts.Token).ConfigureAwait(false));
+
+            // Detached-survival / adopt-by-port: simulate a NEW Mux session by clearing this process's
+            // in-memory "running" state, then EnsureRunning again. It must ADOPT the still-listening
+            // detached proxy on the same port without spawning a second one.
+            CliProxyManager.ResetSessionStateForTests();
+            Assert.False(CliProxyManager.IsRunning);
+            string endpoint2 = await CliProxyManager.EnsureRunningAsync(cts.Token).ConfigureAwait(false);
+            Assert.Equal(endpoint, endpoint2);           // same port, adopted
+            Assert.True(CliProxyManager.IsRunning);
         }
         finally
         {
             CliProxyManager.Stop();
+            // Give the OS a moment to release the port after the tree kill.
+            await Task.Delay(1500).ConfigureAwait(false);
             Assert.False(CliProxyManager.IsRunning);
         }
+    }
+
+    [Fact]
+    public async Task Live_Spawn_Survives_ProcessExit_Marker()
+    {
+        // Gated, and ONLY the spawn half: starts a detached sidecar and intentionally does NOT stop it, so
+        // an external harness can verify it outlives this test-host process. A companion env var
+        // MUX_CLIPROXY_NOSTOP=1 is required to actually leave it running.
+        if (Environment.GetEnvironmentVariable("MUX_CLIPROXY_LIVE") != "1") return;
+        if (Environment.GetEnvironmentVariable("MUX_CLIPROXY_NOSTOP") != "1") return;
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        string endpoint = await CliProxyManager.EnsureRunningAsync(cts.Token).ConfigureAwait(false);
+        Assert.True(CliProxyManager.IsRunning);
+        // Deliberately leave it running: the whole point is to prove detached survival.
     }
 }
