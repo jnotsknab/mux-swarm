@@ -978,6 +978,9 @@ public class App
                 case var pg when pg == "/ping" || pg.StartsWith("/ping "):
                     await CliCmdUtils.HandlePingAsync(userInput);
                     break;
+                case var px when px == "/proxy" || px.StartsWith("/proxy "):
+                    await CliCmdUtils.HandleProxyAsync(userInput);
+                    break;
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
                     break;
@@ -2090,13 +2093,16 @@ public class App
         // surfaced. ExecutionLimits.MaxToolIterationsPerTurn defaults high; <= 0 means unlimited.
         int toolIters = ExecutionLimits.Current.MaxToolIterationsPerTurn;
 
-        // Native subscription-OAuth path: when the active provider is an OAuth provider, talk DIRECTLY to
-        // the provider with the captured bearer (no OpenAI-compatible endpoint/key). Off-oauth providers
-        // fall through to the byte-identical OpenAI path below.
+        // Local CLIProxyAPI sidecar: subscription providers (Claude/Codex/...) route through a managed
+        // loopback proxy that is a plain OpenAI-compatible endpoint. When the active provider points at it
+        // (apiKeyEnvVar == the manager's key var), ensure the detached sidecar is up (lazy, reused across
+        // sessions) and its api key is exported before building the byte-identical OpenAI client below.
         if (ActiveProvider == null) InitLlmProvider();
-        var authType = ActiveProvider?.AuthType?.Trim().ToLowerInvariant();
-        if (authType == "oauth-claude")
-            return MuxSwarm.Utils.Auth.AnthropicOAuthChatClientFactory.Create(modelId, toolIters);
+        if (string.Equals(ActiveProvider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        {
+            try { MuxSwarm.Utils.Proxy.CliProxyManager.EnsureRunningAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex) { MuxConsole.WriteWarning($"CLIProxyAPI sidecar unavailable: {ex.Message}"); }
+        }
 
         return CreateOpenAiClient()
             .GetChatClient(modelId)

@@ -20,10 +20,9 @@ public class ProviderConfig
     public Dictionary<string, string>? Headers { get; set; }
 
     /// <summary>
-    /// Optional native subscription-OAuth auth type. Null/absent/"apikey" => the normal OpenAI-compatible
-    /// path (endpoint + key), byte-identical to before. "oauth-claude" => the engine talks DIRECTLY to
-    /// Anthropic with the captured OAuth bearer (see AnthropicOAuthChatClientFactory), no endpoint/key
-    /// needed. (Codex "oauth-codex" is a later milestone.)
+    /// Optional auth type tag. Null/absent/"apikey" => the normal OpenAI-compatible path (endpoint + key).
+    /// Retained for backward compatibility with existing configs; subscription providers now route through
+    /// the local CLIProxyAPI sidecar as ordinary OpenAI-compatible endpoints (see CliProxyManager).
     /// </summary>
     [JsonPropertyName("authType")]
     public string? AuthType { get; set; }

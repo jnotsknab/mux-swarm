@@ -4,7 +4,6 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using MuxSwarm.Setup;
 using MuxSwarm.State;
-using MuxSwarm.Utils.Auth;
 using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm.Utils;
@@ -993,110 +992,52 @@ public static class CliCmdUtils
             : (p.Endpoint ?? "no endpoint");
 
     /// <summary>
-    /// After a successful OAuth login, ensure a native provider entry exists in config (so the login is
-    /// selectable + persisted), and offer to activate it. The entry carries authType=oauth-&lt;id&gt; and no
-    /// endpoint/key - the engine routes it directly via the captured token (Claude path wired; others
-    /// land with their milestone). Idempotent: updates the existing entry instead of duplicating.
-    /// </summary>
-    private static void RegisterNativeOAuthProvider(MuxSwarm.Utils.Auth.IOAuthProvider provider, MuxSwarm.Utils.Auth.OAuthTokens tokens, string cfgPath)
-    {
-        string name = provider.Id + "-native";
-        string authType = "oauth-" + provider.Id;
-        var config = LoadConfig(cfgPath);
-        config.LlmProviders ??= new List<ProviderConfig>();
-
-        var existing = config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        if (existing is null)
-        {
-            existing = new ProviderConfig { Name = name, Enabled = true, AuthType = authType };
-            config.LlmProviders.Add(existing);
-            MuxConsole.WriteInfo($"Registered native provider '{name}' (authType={authType}).");
-        }
-        else
-        {
-            existing.Enabled = true;
-            existing.AuthType = authType;
-            MuxConsole.WriteMuted($"Native provider '{name}' already present - refreshed.");
-        }
-
-        bool wired = authType == "oauth-claude";
-        string prompt = wired
-            ? $"Switch the active provider to {name} now? (y/n): "
-            : $"Register only (its request path lands in a later build). Make {name} active anyway? (y/n): ";
-        string ans = MuxConsole.Prompt(prompt);
-        bool activate = ans?.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase) == true;
-
-        if (activate)
-        {
-            config.LlmProviders.Remove(existing);
-            config.LlmProviders.Insert(0, existing);
-        }
-        File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
-        App.Config = LoadConfig(cfgPath);
-
-        if (activate)
-        {
-            App.ActiveProvider = App.Config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? existing;
-            MuxConsole.WriteSuccess($"Active provider is now {name}." + (wired ? "" : " (NOTE: request routing for this provider is not wired yet.)"));
-            if (wired)
-                MuxConsole.WriteMuted("Set your agent model id to a Claude model (e.g. claude-opus-4-6) in Swarm.json / via /model.");
-        }
-        else
-        {
-            MuxConsole.WriteMuted($"Use /ping {provider.Id} to test, or switch later via the provider menu.");
-        }
-    }
-
-    /// <summary>
-    /// /login [provider] - native subscription OAuth login (browser PKCE) for an OAuth provider. With no
-    /// arg, shows a picker of the registered OAuth providers. Captures + persists the token to the local
-    /// restricted auth store; does NOT change the chat request path (that is gated separately). Lets you
-    /// test the live OAuth capture before the full setup overhaul wires it in.
+    /// /login [provider] - subscription OAuth login via the local CLIProxyAPI sidecar. With no arg, shows a
+    /// picker of the proxy's supported providers (claude, codex, kimi, ...). Ensures the sidecar is up,
+    /// runs its native browser OAuth, and on success registers the single local 'cliproxy' provider entry
+    /// (subsequent logins just join the proxy's dynamic router, routed by model id).
     /// </summary>
     public static async Task HandleLoginAsync(string userInput, string cfgPath)
     {
-        var mgr = OAuthManager.Instance;
         var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
 
+        var supported = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
         if (providerId is null)
         {
-            var labels = mgr.Providers.Select(p => $"{p.Id} - {p.DisplayName}").ToList();
+            var labels = supported.ToList();
             labels.Add("cancel");
-            string pick = MuxConsole.Select("Log in with which provider?", labels);
+            string pick = MuxConsole.Select("Log in with which subscription provider?", labels);
             if (pick.StartsWith("cancel")) { MuxConsole.WriteMuted("Login cancelled."); return; }
-            providerId = pick.Split(' ')[0];
+            providerId = pick;
         }
 
-        var provider = mgr.Get(providerId);
-        if (provider is null)
+        if (!MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.ContainsKey(providerId))
         {
-            MuxConsole.WriteWarning($"Unknown OAuth provider '{providerId}'. Known: {string.Join(", ", mgr.Providers.Select(p => p.Id))}.");
+            MuxConsole.WriteWarning($"Unsupported provider '{providerId}'. Supported: {string.Join(", ", supported)}.");
             return;
         }
 
-        if (AuthCredentialStore.Exists(provider.Id))
-        {
-            string again = MuxConsole.Select($"A login for '{provider.Id}' already exists. Re-login?", new[] { "Yes, re-login", "No, keep existing" });
-            if (again.StartsWith("No")) { MuxConsole.WriteMuted("Keeping existing login."); return; }
-        }
-
-        MuxConsole.WriteInfo($"Opening your browser to log in with {provider.DisplayName}...");
+        MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
         MuxConsole.WriteMuted("(Subscription OAuth reuses the official client id - same posture as other subscription tools.)");
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            var tokens = await mgr.LoginAsync(provider.Id, url =>
+            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token);
+            if (!ok)
             {
-                MuxConsole.WriteMuted("If the browser did not open, paste this URL:");
-                MuxConsole.WriteMuted("  " + url);
-            }, cts.Token);
-            MuxConsole.WriteInfo($"Logged in to {provider.DisplayName}" + (tokens.Email is { Length: > 0 } e ? $" as {e}" : "") + ".");
-            MuxConsole.WriteMuted($"Credential saved to {AuthCredentialStore.AuthDirectory} (local, not synced).");
-            // Register (and optionally activate) a native provider entry so the captured login is
-            // selectable + persisted. Only the Claude native request path is wired today (oauth-claude);
-            // for other providers we still register the entry but note it routes once its path lands.
-            RegisterNativeOAuthProvider(provider, tokens, cfgPath);
+                MuxConsole.WriteWarning($"Login for '{providerId}' did not complete.");
+                return;
+            }
+
+            // First successful cliproxy login registers the single local provider entry; subsequent logins
+            // just join the proxy's dynamic router (no new entry needed - it routes by model id).
+            bool added = RegisterCliProxyProvider(cfgPath);
+            if (added)
+                MuxConsole.WriteSuccess($"Logged in. Registered local provider 'cliproxy' -> {MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint}.");
+            else
+                MuxConsole.WriteSuccess($"Logged in. '{providerId}' added to the cliproxy dynamic router (select it by model id).");
+            MuxConsole.WriteMuted("Set your agent model id to a provider model (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json / via /model, then activate 'cliproxy' via /provider.");
         }
         catch (OperationCanceledException)
         {
@@ -1109,47 +1050,127 @@ public static class CliCmdUtils
     }
 
     /// <summary>
+    /// Ensures the single local 'cliproxy' provider entry exists in config, pointing at the managed loopback
+    /// endpoint with its api key resolved from the env var the manager sets at spawn. Returns true if it was
+    /// newly added (false if it already existed). The entry is a plain OpenAI-compatible provider - the
+    /// unchanged CreateOpenAiClient path serves it; the sidecar is lazily ensured at request time.
+    /// </summary>
+    private static bool RegisterCliProxyProvider(string cfgPath)
+    {
+        const string name = "cliproxy";
+        var config = LoadConfig(cfgPath);
+        config.LlmProviders ??= new List<ProviderConfig>();
+
+        var existing = config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
+            ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+
+        if (existing is not null)
+        {
+            existing.Endpoint = endpoint;
+            existing.ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar;
+            File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+            App.Config = LoadConfig(cfgPath);
+            return false;
+        }
+
+        config.LlmProviders.Add(new ProviderConfig
+        {
+            Name = name,
+            Enabled = true,
+            Endpoint = endpoint,
+            ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+        });
+        File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+        App.Config = LoadConfig(cfgPath);
+        return true;
+    }
+
+    /// <summary>
     /// /ping [provider] - test a configured provider's connectivity. For an OAuth provider it ensures a
     /// valid (refreshed) token and lists models via the provider endpoint; reports OK + latency or the
     /// precise error. With no arg, pings every provider that has a stored OAuth credential.
     /// </summary>
     public static async Task HandlePingAsync(string userInput)
     {
-        var mgr = OAuthManager.Instance;
         var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
 
-        var targets = providerId is not null
-            ? new[] { providerId }
-            : AuthCredentialStore.ListProviders().Where(p => mgr.Get(p) is not null).ToArray();
-
-        if (targets.Length == 0)
+        try
         {
-            MuxConsole.WriteMuted("No OAuth providers to ping. Log in first with /login.");
-            return;
-        }
-
-        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-        foreach (var id in targets)
-        {
-            var provider = mgr.Get(id);
-            if (provider is null) { MuxConsole.WriteWarning($"  {id}: unknown provider"); continue; }
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            try
+            await MuxSwarm.Utils.Proxy.CliProxyManager.EnsureRunningAsync(cts.Token);
+            sw.Stop();
+            MuxConsole.WriteInfo($"  cliproxy sidecar: OK  {sw.ElapsedMilliseconds}ms  ({MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint})");
+
+            var files = await MuxSwarm.Utils.Proxy.CliProxyManager.GetAuthFilesAsync(cts.Token);
+            if (providerId is not null)
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-                var tokens = await mgr.GetValidTokensAsync(id, cts.Token);
-                var models = await provider.ListModelsAsync(tokens, http, cts.Token);
-                sw.Stop();
-                string ms = $"{sw.ElapsedMilliseconds}ms";
-                string modelHint = models.Count > 0 ? $" ({models.Count} models, e.g. {models[0]})" : "";
-                MuxConsole.WriteInfo($"  {id}: OK  {ms}{modelHint}");
+                bool ready = await MuxSwarm.Utils.Proxy.CliProxyManager.IsProviderReadyAsync(providerId, cts.Token);
+                MuxConsole.WriteInfo($"  {providerId}: {(ready ? "READY" : "not logged in - run /login " + providerId)}");
             }
-            catch (Exception ex)
+            else if (files.Count == 0)
             {
-                sw.Stop();
-                MuxConsole.WriteWarning($"  {id}: FAILED - {ex.Message}");
+                MuxConsole.WriteMuted("  No providers logged in yet. Run /login <provider>.");
             }
+            else
+            {
+                foreach (var f in files)
+                {
+                    string state = f.Disabled ? "disabled" : f.Unavailable ? "unavailable" : f.Status is { Length: > 0 } ? f.Status : "ready";
+                    string who = f.Email is { Length: > 0 } e ? $" ({e})" : "";
+                    MuxConsole.WriteInfo($"  {f.Provider}: {state}{who}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"  cliproxy ping FAILED - {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// /proxy [status|update] - manage the local CLIProxyAPI sidecar. `status` (default) reports the pinned
+    /// version, running state + endpoint, and per-provider auth readiness. `update` re-downloads + verifies
+    /// the pinned binary and restarts the sidecar if it was running.
+    /// </summary>
+    public static async Task HandleProxyAsync(string userInput)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string sub = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : "status";
+
+        try
+        {
+            if (sub == "update")
+            {
+                MuxConsole.WriteInfo($"Updating CLIProxyAPI to the pinned v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}...");
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+                await MuxSwarm.Utils.Proxy.CliProxyManager.UpdateAsync(cts.Token);
+                MuxConsole.WriteSuccess($"CLIProxyAPI is now at v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}.");
+                return;
+            }
+
+            // status
+            MuxConsole.WriteInfo($"CLIProxyAPI pinned version: v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}");
+            MuxConsole.WriteMuted($"  binary present: {MuxSwarm.Utils.Proxy.CliProxyManager.IsBinaryPresent} ({MuxSwarm.Utils.Proxy.CliProxyManager.ExecutablePath})");
+            if (MuxSwarm.Utils.Proxy.CliProxyManager.IsRunning)
+            {
+                MuxConsole.WriteMuted($"  running: yes -> {MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint}");
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var files = await MuxSwarm.Utils.Proxy.CliProxyManager.GetAuthFilesAsync(cts.Token);
+                if (files.Count == 0) MuxConsole.WriteMuted("  providers: none logged in (run /login <provider>)");
+                foreach (var f in files)
+                    MuxConsole.WriteMuted($"  provider {f.Provider}: {(f.Disabled ? "disabled" : f.Unavailable ? "unavailable" : f.Status is { Length: > 0 } s ? s : "ready")}");
+            }
+            else
+            {
+                MuxConsole.WriteMuted("  running: no (starts lazily on first use or /login)");
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"/proxy {sub} failed: {ex.Message}");
         }
     }
 }

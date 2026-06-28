@@ -124,4 +124,36 @@ public class CliProxyManagerTests
         Assert.True(CliProxyManager.IsRunning);
         // Deliberately leave it running: the whole point is to prove detached survival.
     }
+
+    [Fact]
+    public void LoginProviders_CoverSubscriptionProviders_WithCorrectFlags()
+    {
+        var lp = CliProxyManager.LoginProviders;
+        Assert.Equal("-claude-login", lp["claude"]);
+        Assert.Equal("-codex-login", lp["codex"]);
+        Assert.True(lp.ContainsKey("kimi"));
+        Assert.True(lp.ContainsKey("xai"));
+        Assert.True(lp.ContainsKey("antigravity"));
+        // Case-insensitive lookup.
+        Assert.Equal("-claude-login", lp["CLAUDE"]);
+    }
+
+    [Fact]
+    public async Task LoginAsync_UnknownProvider_Throws()
+    {
+        await Assert.ThrowsAsync<ArgumentException>(
+            () => CliProxyManager.LoginAsync("not-a-provider", CancellationToken.None));
+    }
+
+    [Fact]
+    public void PinnedVersion_MatchesAssetTable()
+    {
+        Assert.Equal(CliProxyAssets.Version, CliProxyManager.PinnedVersion);
+    }
+
+    [Fact]
+    public void ClientKeyEnvVar_IsStable()
+    {
+        Assert.Equal("MUX_CLIPROXY_KEY", CliProxyManager.ClientKeyEnvVar);
+    }
 }

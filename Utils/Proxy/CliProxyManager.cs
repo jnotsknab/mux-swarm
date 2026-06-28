@@ -455,6 +455,70 @@ internal static class CliProxyManager
     /// </summary>
     internal static void ResetSessionStateForTests() => _runningPort = 0;
 
+    // ───────────────────────── Slice 5/2.6: login + /proxy surface ─────────────────────────
+
+    /// <summary>
+    /// Subscription providers whose OAuth login CLIProxyAPI performs natively, mapped to the binary's login
+    /// flag (from `cli-proxy-api --help`). The proxy opens the browser, runs the PKCE flow, and writes the
+    /// token into <see cref="AuthDir"/>; the running server hot-reloads the new credential.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, string> LoginProviders =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["claude"] = "-claude-login",
+            ["codex"] = "-codex-login",
+            ["kimi"] = "-kimi-login",
+            ["antigravity"] = "-antigravity-login",
+            ["xai"] = "-xai-login",
+        };
+
+    /// <summary>
+    /// Runs CLIProxyAPI's native browser OAuth login for <paramref name="provider"/>. Ensures the binary +
+    /// server are up first (so the config/auth-dir exist and the server can hot-reload the new token), then
+    /// launches `cli-proxy-api -config &lt;cfg&gt; -&lt;provider&gt;-login` which auto-opens the browser. Inherits the
+    /// console so the flow is interactive. Returns true on a zero exit code. Throws for an unknown provider.
+    /// </summary>
+    public static async Task<bool> LoginAsync(string provider, CancellationToken ct = default)
+    {
+        if (!LoginProviders.TryGetValue(provider, out var flag))
+            throw new ArgumentException(
+                $"CLIProxyAPI has no native login for '{provider}'. Supported: {string.Join(", ", LoginProviders.Keys)}.");
+
+        await EnsureRunningAsync(ct).ConfigureAwait(false);
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = ExecutablePath,
+            UseShellExecute = false,   // inherit console for the interactive login flow
+            WorkingDirectory = InstallDir,
+        };
+        psi.ArgumentList.Add("-config");
+        psi.ArgumentList.Add(ConfigPath);
+        psi.ArgumentList.Add(flag);   // browser auto-opens (no -no-browser)
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start the CLIProxyAPI login process.");
+        await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+        return proc.ExitCode == 0;
+    }
+
+    /// <summary>The pinned proxy version this build expects (mirrors <see cref="CliProxyAssets.Version"/>).</summary>
+    public static string PinnedVersion => CliProxyAssets.Version;
+
+    /// <summary>
+    /// Re-provisions the pinned binary: removes the installed copy and re-downloads + verifies it, then (if a
+    /// sidecar was running) restarts it so the new binary takes effect. Used by `/proxy update`.
+    /// </summary>
+    public static async Task UpdateAsync(CancellationToken ct = default)
+    {
+        bool wasRunning = IsRunning;
+        Stop();
+        try { if (Directory.Exists(InstallDir)) Directory.Delete(InstallDir, recursive: true); } catch { }
+        await EnsureBinaryAsync(ct).ConfigureAwait(false);
+        if (wasRunning)
+            await EnsureRunningAsync(ct).ConfigureAwait(false);
+    }
+
     /// <summary>
     /// Queries the management API for the current set of authenticated provider credentials. Returns the
     /// parsed list (possibly empty) so the caller can decide whether a provider needs an interactive login.
