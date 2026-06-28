@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -356,8 +357,23 @@ public static class Setup
 
     private static bool StepCollectEndpointConfig()
     {
-        MuxConsole.WriteStep(4, "Model Endpoint Configuration");
+        MuxConsole.WriteStep(4, "Model Provider");
 
+        // Two ways to provide a model backend:
+        //  1) Manual OpenAI-compatible endpoint + key (default; keeps prior behavior + scripted-setup tests).
+        //  2) Subscription login (Claude/Codex/...) via the local CLIProxyAPI sidecar - no endpoint/key typing.
+        MuxConsole.WriteBody("How do you want to connect to a model?");
+        MuxConsole.WriteLine();
+        var choice = MuxConsole.Select("Choose a connection method:", new[]
+        {
+            "Manual - OpenAI-compatible endpoint + API key",
+            "Subscription login - Claude / Codex / Kimi / ... (browser OAuth, recommended)",
+        });
+
+        if (choice.StartsWith("Subscription", StringComparison.Ordinal))
+            return StepSubscriptionLogin();
+
+        MuxConsole.WriteLine();
         MuxConsole.WriteBody("Enter your OpenAI-compatible API endpoint.");
         MuxConsole.WriteMuted("Example: https://openrouter.ai/api/v1");
 
@@ -421,6 +437,69 @@ public static class Setup
         _appConfig.LlmProviders.Add(provider);
 
         return true;
+    }
+
+    /// <summary>
+    /// Subscription-login path for step 4: runs CLIProxyAPI's native browser OAuth for the chosen provider,
+    /// then registers the single local 'cliproxy' provider entry (loopback endpoint, key via env var). The
+    /// sidecar is downloaded on demand. Falls back gracefully if login is cancelled/fails - the user can
+    /// re-run /login later, but setup still needs a usable provider, so a failed login returns false.
+    /// </summary>
+    private static bool StepSubscriptionLogin()
+    {
+        var providers = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Log in to a subscription provider. Your browser will open for OAuth.");
+        MuxConsole.WriteMuted("(Reuses the official client id - same posture as other subscription tools.)");
+        MuxConsole.WriteLine();
+        var providerChoices = providers.ToList();
+        providerChoices.Add("cancel");
+        string pick = MuxConsole.Select("Which provider?", providerChoices);
+        if (pick == "cancel")
+        {
+            MuxConsole.WriteWarning("Subscription login cancelled. Re-run setup or use /login later.");
+            return false;
+        }
+
+        try
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token).GetAwaiter().GetResult();
+            if (!ok)
+            {
+                MuxConsole.WriteWarning($"Login for '{pick}' did not complete.");
+                return false;
+            }
+
+            string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
+                ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+
+            _appConfig.LlmProviders ??= [];
+            _appConfig.LlmProviders.Clear();
+            _appConfig.LlmProviders.Add(new ProviderConfig
+            {
+                Name = "cliproxy",
+                Enabled = true,
+                Endpoint = endpoint,
+                ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            });
+
+            MuxConsole.WriteSuccess($"Logged in. Provider 'cliproxy' configured -> {endpoint}.");
+            MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /model.");
+            MuxConsole.WriteMuted("Log in to additional providers anytime with /login - they join the same router.");
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            MuxConsole.WriteWarning("Login timed out / cancelled.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Subscription login failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static bool StepCollectUserInfo()
