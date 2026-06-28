@@ -373,12 +373,12 @@ public static class CliCmdUtils
         }
 
         var current = App.ActiveProvider?.Name ?? "none";
-        MuxConsole.WriteInfo($"Active provider: {current} ({App.ActiveProvider?.Endpoint ?? "no endpoint"})");
+        MuxConsole.WriteInfo($"Active provider: {current} ({(App.ActiveProvider is { } ap ? ProviderEndpointLabel(ap) : "no endpoint")})");
         MuxConsole.WriteLine();
 
         var pIdxW = providers.Count.ToString().Length;
         var lines = string.Join("\n", providers.Select((p, i) =>
-            $"{(i + 1).ToString().PadLeft(pIdxW)}  {p.Name} — {p.Endpoint ?? "no endpoint"}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
+            $"{(i + 1).ToString().PadLeft(pIdxW)}  {p.Name} — {ProviderEndpointLabel(p)}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
 
         MuxConsole.WritePanel("Select a provider or press Enter to keep current", lines);
 
@@ -403,7 +403,7 @@ public static class CliCmdUtils
         }
 
         App.ActiveProvider = matched;
-        MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({matched.Endpoint}), be sure to update your model ID's in Swarm.json");
+        MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({ProviderEndpointLabel(matched)}), be sure to update your model ID's in Swarm.json");
 
         string setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
         if (setDefault?.Trim().Equals("y", StringComparison.OrdinalIgnoreCase) == true)
@@ -985,6 +985,12 @@ public static class CliCmdUtils
                 MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
         }
     }
+
+    /// <summary>Display label for a provider's endpoint column: OAuth providers route direct, no URL.</summary>
+    private static string ProviderEndpointLabel(ProviderConfig p) =>
+        !string.IsNullOrWhiteSpace(p.AuthType) && p.AuthType.StartsWith("oauth", StringComparison.OrdinalIgnoreCase)
+            ? $"direct {p.AuthType} (no endpoint)"
+            : (p.Endpoint ?? "no endpoint");
 
     /// <summary>
     /// After a successful OAuth login, ensure a native provider entry exists in config (so the login is
