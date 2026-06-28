@@ -175,7 +175,7 @@ public static class SwarmDefaults
         if (HasEnabled("Memory")) singleAgentServers.Add("Memory");
         if (HasEnabled("ChromaDB")) singleAgentServers.Add("ChromaDB");
         if (HasEnabled("BraveSearchMCP")) singleAgentServers.Add("BraveSearchMCP");
-        if (HasEnabled("ReplShellMcp")) singleAgentServers.Add("ReplShellMcp");
+        if (HasEnabled("Shell")) singleAgentServers.Add("Shell");
 
 
         var filteredFsPattern = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
@@ -188,6 +188,7 @@ public static class SwarmDefaults
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             agents.Add(new
             {
@@ -206,7 +207,7 @@ public static class SwarmDefaults
             var mcp = new List<string>();
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Playwright")) mcp.Add("Playwright");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             agents.Add(new
             {
@@ -226,7 +227,7 @@ public static class SwarmDefaults
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             /*var toolPatterns = PlatformContext.IsWindows
                 ? new[] { "Windows_Shell" }
@@ -263,12 +264,12 @@ public static class SwarmDefaults
             });
         }
 
-        // DataAnalysisAgent (only if ReplShellMcp exists at all)
-        if (HasAny("ReplShellMcp"))
+        // DataAnalysisAgent (Python REPL specialist; needs the native Shell toolset)
+        if (HasAny("Shell"))
         {
             var mcp = new List<string>();
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
 
