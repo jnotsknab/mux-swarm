@@ -431,6 +431,29 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_StreamBlock_AlignsContinuationLinesUnderLeadDot()
+    {
+        // Alignment fix: the lead dot sits at col 0 with its text at col 2, and EVERY subsequent
+        // answer line is indented to that same col-2 margin (a 2-space prefix), so the block reads
+        // as one aligned column instead of a flush-left stagger. The first line carries the dot
+        // (not the bare indent); later non-blank lines carry the 2-space indent (no extra dot).
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("alpha\nbeta\n", reasoning: false);
+        d.EndStream();
+        string outp = term.Output;
+        // Exactly one dot (first line only) ...
+        Assert.Equal(1, outp.Split('\u25cf').Length - 1);
+        // ... and the second line is present with a 2-space leading indent matching the dot's text
+        // column. The committed line for "beta" must start with two spaces before the text.
+        Assert.Contains("  beta", outp);
+        Assert.Contains("alpha", outp);
+    }
+
+    [Fact]
     public void Driver_StreamBlock_ReasoningLinesGetNoLeadDot()
     {
         // Reasoning is grey+italic already; it must not receive the answer-block lead dot. The dot

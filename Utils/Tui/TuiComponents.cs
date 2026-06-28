@@ -80,7 +80,9 @@ internal static class TuiComponents
     public static List<string> UserEcho(string line) => new()
     {
         "",
-        $"  [{Accent}]\u258e[/] [{Text}]{Esc(line ?? "")}[/]"
+        // Echo glyph at col 0 (like the live input bar and the turn-header dot), text at col 2 - so
+        // the submitted line aligns with the agent output column instead of sitting 2 cols deeper.
+        $"[{Accent}]\u258e[/] [{Text}]{Esc(line ?? "")}[/]"
     };
 
     /// <summary>Braille spinner frames for the live "thinking/working" indicator

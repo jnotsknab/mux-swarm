@@ -39,6 +39,10 @@ internal sealed class TuiDriver
     // single grey lead dot (Claude-Code style) is stamped once per OUTPUT BLOCK - not per line and
     // not per turn. Set in BeginStream, cleared when the first non-reasoning line commits.
     private bool _streamBlockDotPending;
+    // Left margin for streamed agent prose/reasoning so every line aligns under the turn header and
+    // the lead dot's text (col 2). The dot itself sits at col 0 with its text at col 2, so the first
+    // line uses the dot prefix and later lines use this plain 2-space indent - one aligned column.
+    private const string StreamIndent = "  ";
     // Stream repaint coalescing: model tokens arrive many-per-second and a full live-frame rebuild
     // per token (BuildLiveFrame re-runs the markdown renderer over the whole growing tail) is what
     // makes non-ACP streaming look chunky. We mark the live tail dirty per chunk but only actually
@@ -967,17 +971,31 @@ internal sealed class TuiDriver
         // run through the markdown renderer (reasoning is free-form thought, not formatted output).
         if (_streamReasoning)
         {
-            CommitMirrored(Lane(new[] { $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]" }));
+            // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
+            // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
+            string r = string.IsNullOrWhiteSpace(raw)
+                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+            CommitMirrored(Lane(new[] { r }));
             return;
         }
         string built = TuiMarkdown.ToMarkup(raw);
-        // Stamp a single grey lead dot on the FIRST answer line of this output block (Claude-Code
-        // style: a quiet marker that a new agent message has begun). Once per block - cleared after
-        // the first non-blank answer line - never on reasoning, blanks, code, or tables.
-        if (_streamBlockDotPending && !string.IsNullOrWhiteSpace(raw))
+        // Align every answer line to the col-2 text margin (matching the turn header and the dot's
+        // text), so continuation lines sit under the message instead of falling back to col 0. The
+        // FIRST non-blank line of the block carries the grey lead dot IN PLACE OF the indent (the
+        // dot sits at col 0, its text at col 2 - same margin); later lines get a plain 2-col indent.
+        // Claude-Code style: one quiet marker per block, never on reasoning, blanks, code, or tables.
+        if (!string.IsNullOrWhiteSpace(raw))
         {
-            _streamBlockDotPending = false;
-            built = $"[{TuiComponents.Muted}]\u25cf[/] " + built;
+            if (_streamBlockDotPending)
+            {
+                _streamBlockDotPending = false;
+                built = $"[{TuiComponents.Muted}]\u25cf[/] " + built;
+            }
+            else
+            {
+                built = StreamIndent + built;
+            }
         }
         CommitMirrored(Lane(new[] { built }));
     }
@@ -1035,9 +1053,24 @@ internal sealed class TuiDriver
         var lines = new List<string>();
 
         if (_streaming && _streamTail.Length > 0)
-            lines.Add(_streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(_streamTail.ToString())}[/]"
-                : TuiMarkdown.ToMarkup(_streamTail.ToString()));
+        {
+            // Live partial-tail preview must use the SAME col-2 margin the committed line will get,
+            // so the text does not jump left->right when the line finalizes. First non-blank answer
+            // line of the block shows the lead dot (its text at col 2); reasoning + later lines get
+            // the plain 2-col indent; blanks stay bare.
+            string t = _streamTail.ToString();
+            string previewBody = _streamReasoning
+                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                : TuiMarkdown.ToMarkup(t);
+            string preview;
+            if (string.IsNullOrWhiteSpace(t))
+                preview = previewBody;
+            else if (!_streamReasoning && _streamBlockDotPending)
+                preview = $"[{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+            else
+                preview = StreamIndent + previewBody;
+            lines.Add(preview);
+        }
 
         // Mid-turn EXPANDED sub-agent: a bounded, tail-anchored panel rendered IN the live region
         // (toggled by Ctrl+E, never committed to scrollback). Bounded to a slice of the viewport so
