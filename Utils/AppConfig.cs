@@ -161,6 +161,17 @@ public class SandboxConfig
     /// </summary>
     [JsonPropertyName("command")]
     public string Command { get; set; } = "";
+
+    /// <summary>
+    /// Explicit OCI runtime to pass as <c>--runtime=&lt;value&gt;</c> for OCI backends (docker/podman/
+    /// nerdctl/gvisor/kata). Optional. When empty the backend's default runtime is used, except the
+    /// microVM / sandboxed-kernel backends which imply their runtime (gvisor =&gt; runsc, kata =&gt;
+    /// kata-runtime). Set this to layer a microVM runtime onto a base OCI backend (e.g. backend=podman
+    /// runtime=kata-runtime, or backend=nerdctl runtime=io.containerd.kata.v2). Ignored by
+    /// wrapper/custom/host backends. Additive: absent in older configs =&gt; backend default.
+    /// </summary>
+    [JsonPropertyName("runtime")]
+    public string Runtime { get; set; } = "";
 }
 
 public class ContextLimitsConfig

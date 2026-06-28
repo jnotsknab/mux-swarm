@@ -61,7 +61,7 @@ internal sealed class SandboxException : Exception
 internal static class SandboxBackend
 {
     private static readonly HashSet<string> OciBackends =
-        new(StringComparer.OrdinalIgnoreCase) { "docker", "podman", "nerdctl", "gvisor" };
+        new(StringComparer.OrdinalIgnoreCase) { "docker", "podman", "nerdctl", "gvisor", "kata" };
 
     private static readonly HashSet<string> WrapperBackends =
         new(StringComparer.OrdinalIgnoreCase) { "bwrap", "firejail", "sandbox-exec" };
@@ -100,9 +100,27 @@ internal static class SandboxBackend
         // ----- OCI family -----
         if (OciBackends.Contains(backend))
         {
-            // gvisor is docker + --runtime=runsc.
-            string binary = backend == "gvisor" ? "docker" : backend;
-            string? runtime = backend == "gvisor" ? "runsc" : null;
+            // gvisor + kata are runtimes layered on a base OCI engine (docker by default): gvisor =>
+            // docker --runtime=runsc (user-space kernel); kata => docker --runtime=kata-runtime (true
+            // microVM with its own guest kernel). Both reuse the persistent-container + `exec` lifecycle
+            // (kata-agent over vsock services `exec`, like runsc) so the OciSandbox model is unchanged.
+            string binary = backend is "gvisor" or "kata" ? "docker" : backend;
+            // Runtime resolution: an explicit sandbox.runtime wins (lets you layer any runtime onto any
+            // base engine, e.g. podman + kata-runtime); otherwise the microVM/sandboxed-kernel backends
+            // imply their canonical runtime, and plain docker/podman/nerdctl default to the engine default.
+            string? runtime = !string.IsNullOrWhiteSpace(cfg.Runtime) ? cfg.Runtime.Trim()
+                : backend switch { "gvisor" => "runsc", "kata" => "kata-runtime", _ => null };
+            // Kata is a hardware-virtualization microVM: it needs Linux + KVM. Fail loud (never a silent
+            // host or weaker-isolation fallback) when the platform can't actually provide a microVM.
+            if (backend == "kata")
+            {
+                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                    throw new SandboxException("sandbox.backend 'kata' is a microVM runtime that requires Linux + KVM; " +
+                        "it is not available on this OS. Use docker/podman/nerdctl (containers) or gvisor (user-space kernel) instead.");
+                if (!File.Exists("/dev/kvm"))
+                    throw new SandboxException("sandbox.backend 'kata' needs hardware virtualization (/dev/kvm) but it was not found. " +
+                        "Enable KVM (and nested virtualization if inside a VM), install kata-containers, then retry.");
+            }
             EnsureBinaryReady(binary, ociDaemonCheck: true);
             if (string.IsNullOrWhiteSpace(cfg.Image))
                 throw new SandboxException($"sandbox.backend '{backend}' requires sandbox.image to be set.");
@@ -134,7 +152,7 @@ internal static class SandboxBackend
         }
 
         throw new SandboxException($"Unknown sandbox.backend '{cfg.Backend}'. Valid: host, docker, podman, nerdctl, " +
-            "gvisor, bwrap, firejail, sandbox-exec, custom.");
+            "gvisor, kata, bwrap, firejail, sandbox-exec, custom.");
     }
 
     /// <summary>Validate WITHOUT throwing - returns the error string (or null if ok). For /sandbox + startup.</summary>

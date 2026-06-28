@@ -161,6 +161,72 @@ can load its login prompt. Token compare is constant-time, never logged, and nev
 returned by `/api/config` (which exposes only a boolean `authRequired`). If enabled
 but no token resolves, auth stays inactive with a warning (never silently locks out).
 
+## Execution Sandbox
+
+Native shell + Python execution (`repl_shell_exec`, `execute_command_async`, the REPL worker, and
+`install_package_async`) can be confined to a sandbox. The `sandbox` block in **config.json** selects the
+backend; both exec surfaces run inside the SAME confinement (model code cannot escape by picking a
+different tool). The sandbox is resolved once per session and is per-agent scoped (one sandbox per
+sub-agent). An invalid/unavailable backend fails LOUD at first tool use -- never a silent fall back to
+host execution.
+
+```json
+"sandbox": {
+  "backend": "host",
+  "image": "python:3.12-slim",
+  "network": false,
+  "allowedDomains": [],
+  "command": "",
+  "runtime": ""
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `backend` | `host` (default, no sandbox) \| `docker` \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
+| `image` | Container image for OCI backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
+| `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
+| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. |
+| `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
+| `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for OCI backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by wrapper/custom/host. |
+
+### Isolation tiers (weakest -> strongest)
+
+| Backend | Mechanism | Isolation |
+|---|---|---|
+| `host` | none | no isolation (runs natively) |
+| `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only) |
+| `sandbox-exec` | macOS Seatbelt (SBPL) | OS-native (macOS only) |
+| `docker` / `podman` / `nerdctl` | OCI container (namespaces/cgroups) | container |
+| `gvisor` | docker + `--runtime=runsc` | user-space kernel (syscall interposition) |
+| `kata` | docker/podman + `--runtime=kata-runtime` | **microVM** -- a real guest kernel via hardware virtualization |
+| `custom` | user template | whatever the template points at |
+
+OCI backends run a persistent per-session container (`sleep infinity`) that the session's shell jobs and
+Python worker `exec` into. `gvisor` and `kata` reuse that exact lifecycle -- they only change the OCI
+runtime, so all of the OCI features (network allowlist proxy, allowed-path bind mounts mapped to
+`filesystem.securityMode`, OCI hardening `--cap-drop=ALL --security-opt=no-new-privileges`, self-heal,
+Windows UNC drive-mapping) apply unchanged.
+
+### microVM isolation (kata)
+
+`kata` is the strongest local tier: a true microVM with its own guest kernel (QEMU / Cloud-Hypervisor /
+Firecracker under Kata), giving a hardware-virtualization boundary instead of a shared host kernel. Use it
+when running untrusted code on a multi-tenant host (a container/gVisor boundary may be insufficient).
+
+- **Requirements:** Linux + hardware virtualization (`/dev/kvm`) + `kata-containers` installed and
+  registered as a runtime for the OCI engine. Both are validated up front; a missing OS/KVM/runtime is a
+  hard, legible error (never a silent fallback to host or a weaker backend).
+- **Swap it in:** `/sandbox kata` (or set `sandbox.backend: kata` in config.json). To layer Kata onto
+  podman/nerdctl, keep `backend` as that engine and set `runtime` to the engine's kata runtime
+  (e.g. `io.containerd.kata.v2` for nerdctl/containerd).
+
+**Deliberately NOT supported (deferred):** `libkrun`/`krun` and direct Firecracker/Cloud-Hypervisor/E2B
+control planes. The sandbox lifecycle is built on container `exec`; `krun` microVMs do not service
+`exec` into the guest (exec runs on the host kernel), and the VM-direct platforms have no `exec`
+semantics at all -- both would need a separate vsock/SSH exec channel and control plane. Kata is the
+microVM path that fits the existing model.
+
 ## Daemon Triggers
 
 There are exactly four trigger types: `watch`, `cron`, `status`, and `bridge`. No other values are valid.

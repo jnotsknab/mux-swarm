@@ -55,7 +55,7 @@ public static class CliCmdUtils
 
     /// <summary>
     /// /sandbox [backend] [image] - hot-swap the execution sandbox backend (host/docker/podman/nerdctl/
-    /// gvisor/bwrap/firejail/sandbox-exec/custom). Validates the new backend BEFORE applying; on failure
+    /// gvisor/kata/bwrap/firejail/sandbox-exec/custom). Validates the new backend BEFORE applying; on failure
     /// the current backend is untouched and the error is surfaced. With no args, prints current status.
     /// </summary>
     public static void HandleSandbox(string userInput, string cfgPath)
@@ -81,7 +81,7 @@ public static class CliCmdUtils
             }
             var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(s);
             MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");
-            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|bwrap|firejail|sandbox-exec|custom> [image]");
+            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
             return;
         }
         string backend = parts[1].Trim().ToLowerInvariant();

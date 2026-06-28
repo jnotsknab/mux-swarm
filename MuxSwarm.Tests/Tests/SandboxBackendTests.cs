@@ -145,4 +145,39 @@ public class SandboxBackendTests
         Assert.Equal(2, m.Count);
         Assert.NotEqual(m[0].GuestPath, m[1].GuestPath);
     }
+
+    [Fact]
+    public void UnknownBackend_ListsKata()
+    {
+        // The valid-backends hint must advertise kata so users discover the microVM option.
+        var err = SandboxBackend.Validate(Cfg("garbage-backend"));
+        Assert.NotNull(err);
+        Assert.Contains("kata", err);
+    }
+
+    [Fact]
+    public void Kata_IsOsAndKvmGated_NeverSilentFallback()
+    {
+        // kata is a microVM runtime: on non-Linux (or Linux without /dev/kvm) it MUST be a hard
+        // validation error, never a silent fall-through to host or a weaker backend.
+        var err = SandboxBackend.Validate(Cfg("kata"));
+        if (OperatingSystem.IsWindows() || !System.IO.File.Exists("/dev/kvm"))
+        {
+            Assert.NotNull(err);
+            // The failure must name kata/microVM/KVM so the reason is legible, not a generic miss.
+            Assert.True(
+                err!.Contains("kata", StringComparison.OrdinalIgnoreCase) ||
+                err.Contains("microVM", StringComparison.OrdinalIgnoreCase) ||
+                err.Contains("kvm", StringComparison.OrdinalIgnoreCase),
+                $"kata gating error should explain the microVM/KVM requirement, got: {err}");
+        }
+    }
+
+    [Fact]
+    public void Kata_RejectsAllowlist_OnNonKvmHost()
+    {
+        // An allowlist is only meaningful once the backend resolves; on a host that can't run kata the
+        // OS/KVM gate fires first, but EITHER way a kata config on this (Windows) test host never validates.
+        Assert.NotNull(SandboxBackend.Validate(Cfg("kata", allow: new() { "pypi.org" })));
+    }
 }
