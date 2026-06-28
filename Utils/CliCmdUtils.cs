@@ -987,6 +987,61 @@ public static class CliCmdUtils
     }
 
     /// <summary>
+    /// After a successful OAuth login, ensure a native provider entry exists in config (so the login is
+    /// selectable + persisted), and offer to activate it. The entry carries authType=oauth-&lt;id&gt; and no
+    /// endpoint/key - the engine routes it directly via the captured token (Claude path wired; others
+    /// land with their milestone). Idempotent: updates the existing entry instead of duplicating.
+    /// </summary>
+    private static void RegisterNativeOAuthProvider(MuxSwarm.Utils.Auth.IOAuthProvider provider, MuxSwarm.Utils.Auth.OAuthTokens tokens, string cfgPath)
+    {
+        string name = provider.Id + "-native";
+        string authType = "oauth-" + provider.Id;
+        var config = LoadConfig(cfgPath);
+        config.LlmProviders ??= new List<ProviderConfig>();
+
+        var existing = config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (existing is null)
+        {
+            existing = new ProviderConfig { Name = name, Enabled = true, AuthType = authType };
+            config.LlmProviders.Add(existing);
+            MuxConsole.WriteInfo($"Registered native provider '{name}' (authType={authType}).");
+        }
+        else
+        {
+            existing.Enabled = true;
+            existing.AuthType = authType;
+            MuxConsole.WriteMuted($"Native provider '{name}' already present - refreshed.");
+        }
+
+        bool wired = authType == "oauth-claude";
+        string prompt = wired
+            ? $"Switch the active provider to {name} now? (y/n): "
+            : $"Register only (its request path lands in a later build). Make {name} active anyway? (y/n): ";
+        string ans = MuxConsole.Prompt(prompt);
+        bool activate = ans?.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase) == true;
+
+        if (activate)
+        {
+            config.LlmProviders.Remove(existing);
+            config.LlmProviders.Insert(0, existing);
+        }
+        File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+        App.Config = LoadConfig(cfgPath);
+
+        if (activate)
+        {
+            App.ActiveProvider = App.Config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? existing;
+            MuxConsole.WriteSuccess($"Active provider is now {name}." + (wired ? "" : " (NOTE: request routing for this provider is not wired yet.)"));
+            if (wired)
+                MuxConsole.WriteMuted("Set your agent model id to a Claude model (e.g. claude-opus-4-6) in Swarm.json / via /model.");
+        }
+        else
+        {
+            MuxConsole.WriteMuted($"Use /ping {provider.Id} to test, or switch later via the provider menu.");
+        }
+    }
+
+    /// <summary>
     /// /login [provider] - native subscription OAuth login (browser PKCE) for an OAuth provider. With no
     /// arg, shows a picker of the registered OAuth providers. Captures + persists the token to the local
     /// restricted auth store; does NOT change the chat request path (that is gated separately). Lets you
@@ -1031,7 +1086,11 @@ public static class CliCmdUtils
                 MuxConsole.WriteMuted("  " + url);
             }, cts.Token);
             MuxConsole.WriteInfo($"Logged in to {provider.DisplayName}" + (tokens.Email is { Length: > 0 } e ? $" as {e}" : "") + ".");
-            MuxConsole.WriteMuted($"Credential saved to {AuthCredentialStore.AuthDirectory} (local, not synced). Use /ping {provider.Id} to test it.");
+            MuxConsole.WriteMuted($"Credential saved to {AuthCredentialStore.AuthDirectory} (local, not synced).");
+            // Register (and optionally activate) a native provider entry so the captured login is
+            // selectable + persisted. Only the Claude native request path is wired today (oauth-claude);
+            // for other providers we still register the entry but note it routes once its path lands.
+            RegisterNativeOAuthProvider(provider, tokens, cfgPath);
         }
         catch (OperationCanceledException)
         {

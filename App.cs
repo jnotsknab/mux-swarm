@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.68";
+    public static readonly string DebugTag = "g12.69";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -2089,6 +2089,15 @@ public class App
         // (unbounded-ish SDK default) made long autonomous tool chains stop mid-task with no error
         // surfaced. ExecutionLimits.MaxToolIterationsPerTurn defaults high; <= 0 means unlimited.
         int toolIters = ExecutionLimits.Current.MaxToolIterationsPerTurn;
+
+        // Native subscription-OAuth path: when the active provider is an OAuth provider, talk DIRECTLY to
+        // the provider with the captured bearer (no OpenAI-compatible endpoint/key). Off-oauth providers
+        // fall through to the byte-identical OpenAI path below.
+        if (ActiveProvider == null) InitLlmProvider();
+        var authType = ActiveProvider?.AuthType?.Trim().ToLowerInvariant();
+        if (authType == "oauth-claude")
+            return MuxSwarm.Utils.Auth.AnthropicOAuthChatClientFactory.Create(modelId, toolIters);
+
         return CreateOpenAiClient()
             .GetChatClient(modelId)
             .AsIChatClient()
