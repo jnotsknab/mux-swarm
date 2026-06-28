@@ -102,6 +102,8 @@ internal static class TuiCommands
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
         new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
+        new("/login",        "Log in with Claude / ChatGPT (subscription OAuth)", Scope.ReplOnly),
+        new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
 
         // --- global utilities (App.cs menu) ---

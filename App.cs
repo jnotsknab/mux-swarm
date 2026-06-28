@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.67";
+    public static readonly string DebugTag = "g12.68";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -971,6 +971,12 @@ public class App
                     break;
                 case var sbx when sbx == "/sandbox" || sbx.StartsWith("/sandbox "):
                     CliCmdUtils.HandleSandbox(userInput, ConfigPath);
+                    break;
+                case var lg when lg == "/login" || lg.StartsWith("/login "):
+                    await CliCmdUtils.HandleLoginAsync(userInput, ConfigPath);
+                    break;
+                case var pg when pg == "/ping" || pg.StartsWith("/ping "):
+                    await CliCmdUtils.HandlePingAsync(userInput);
                     break;
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();

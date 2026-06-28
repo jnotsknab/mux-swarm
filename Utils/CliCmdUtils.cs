@@ -4,6 +4,7 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using MuxSwarm.Setup;
 using MuxSwarm.State;
+using MuxSwarm.Utils.Auth;
 using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm.Utils;
@@ -982,6 +983,108 @@ public static class CliCmdUtils
             MuxConsole.WriteInfo($"Persisted/resumable teams ({live.Count}):");
             foreach (var s in live)
                 MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+        }
+    }
+
+    /// <summary>
+    /// /login [provider] - native subscription OAuth login (browser PKCE) for an OAuth provider. With no
+    /// arg, shows a picker of the registered OAuth providers. Captures + persists the token to the local
+    /// restricted auth store; does NOT change the chat request path (that is gated separately). Lets you
+    /// test the live OAuth capture before the full setup overhaul wires it in.
+    /// </summary>
+    public static async Task HandleLoginAsync(string userInput, string cfgPath)
+    {
+        var mgr = OAuthManager.Instance;
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+
+        if (providerId is null)
+        {
+            var labels = mgr.Providers.Select(p => $"{p.Id} - {p.DisplayName}").ToList();
+            labels.Add("cancel");
+            string pick = MuxConsole.Select("Log in with which provider?", labels);
+            if (pick.StartsWith("cancel")) { MuxConsole.WriteMuted("Login cancelled."); return; }
+            providerId = pick.Split(' ')[0];
+        }
+
+        var provider = mgr.Get(providerId);
+        if (provider is null)
+        {
+            MuxConsole.WriteWarning($"Unknown OAuth provider '{providerId}'. Known: {string.Join(", ", mgr.Providers.Select(p => p.Id))}.");
+            return;
+        }
+
+        if (AuthCredentialStore.Exists(provider.Id))
+        {
+            string again = MuxConsole.Select($"A login for '{provider.Id}' already exists. Re-login?", new[] { "Yes, re-login", "No, keep existing" });
+            if (again.StartsWith("No")) { MuxConsole.WriteMuted("Keeping existing login."); return; }
+        }
+
+        MuxConsole.WriteInfo($"Opening your browser to log in with {provider.DisplayName}...");
+        MuxConsole.WriteMuted("(Subscription OAuth reuses the official client id - same posture as other subscription tools.)");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            var tokens = await mgr.LoginAsync(provider.Id, url =>
+            {
+                MuxConsole.WriteMuted("If the browser did not open, paste this URL:");
+                MuxConsole.WriteMuted("  " + url);
+            }, cts.Token);
+            MuxConsole.WriteInfo($"Logged in to {provider.DisplayName}" + (tokens.Email is { Length: > 0 } e ? $" as {e}" : "") + ".");
+            MuxConsole.WriteMuted($"Credential saved to {AuthCredentialStore.AuthDirectory} (local, not synced). Use /ping {provider.Id} to test it.");
+        }
+        catch (OperationCanceledException)
+        {
+            MuxConsole.WriteWarning("Login timed out / cancelled.");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Login failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// /ping [provider] - test a configured provider's connectivity. For an OAuth provider it ensures a
+    /// valid (refreshed) token and lists models via the provider endpoint; reports OK + latency or the
+    /// precise error. With no arg, pings every provider that has a stored OAuth credential.
+    /// </summary>
+    public static async Task HandlePingAsync(string userInput)
+    {
+        var mgr = OAuthManager.Instance;
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+
+        var targets = providerId is not null
+            ? new[] { providerId }
+            : AuthCredentialStore.ListProviders().Where(p => mgr.Get(p) is not null).ToArray();
+
+        if (targets.Length == 0)
+        {
+            MuxConsole.WriteMuted("No OAuth providers to ping. Log in first with /login.");
+            return;
+        }
+
+        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        foreach (var id in targets)
+        {
+            var provider = mgr.Get(id);
+            if (provider is null) { MuxConsole.WriteWarning($"  {id}: unknown provider"); continue; }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+                var tokens = await mgr.GetValidTokensAsync(id, cts.Token);
+                var models = await provider.ListModelsAsync(tokens, http, cts.Token);
+                sw.Stop();
+                string ms = $"{sw.ElapsedMilliseconds}ms";
+                string modelHint = models.Count > 0 ? $" ({models.Count} models, e.g. {models[0]})" : "";
+                MuxConsole.WriteInfo($"  {id}: OK  {ms}{modelHint}");
+            }
+            catch (Exception ex)
+            {
+                sw.Stop();
+                MuxConsole.WriteWarning($"  {id}: FAILED - {ex.Message}");
+            }
         }
     }
 }
