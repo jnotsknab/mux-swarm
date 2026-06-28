@@ -448,7 +448,7 @@ public static class SwarmDefaults
                     if (prop.Name == "promptPath" && prop.Value.ValueKind == JsonValueKind.String)
                     {
                         var original = prop.Value.GetString() ?? "";
-                        var patched = SwapPromptVariant(original, config.IsUsingDockerForExec);
+                        var patched = SwapPromptVariant(original);
                         writer.WriteStringValue(patched);
                     }
                     else
@@ -472,29 +472,21 @@ public static class SwarmDefaults
         }
     }
 
-    private static string SwapPromptVariant(string promptPath, bool useDocker)
+    private static string SwapPromptVariant(string promptPath)
     {
-        var dir = Path.GetDirectoryName(promptPath) ?? "";
+        // Docker/non-docker prompt variants were retired: execution containerization is now enforced at
+        // the process level by the pluggable sandbox (sandbox.backend / /sandbox), and the runtime injects
+        // an authoritative "Execution Sandbox (ACTIVE)" preamble block (gated on SandboxRuntime) when a
+        // sandbox is live. Agents no longer choose whether to containerize, so the prompt no longer needs a
+        // docker-posture twin. Always resolve to the canonical base prompt; if a legacy "_docker" path is
+        // still referenced in an old swarm.json, fold it back to the base name.
         var name = Path.GetFileNameWithoutExtension(promptPath);
-        var ext = Path.GetExtension(promptPath);
-
-        if (useDocker)
-        {
-            // Already docker variant
-            if (name.EndsWith("_docker")) return promptPath;
-
-            var dockerName = $"{name}_docker{ext}";
-            var dockerPath = Path.Combine(dir, dockerName).Replace("\\", "/");
-            var fullPath = Path.Combine(PlatformContext.BaseDirectory, dockerPath);
-            return File.Exists(fullPath) ? dockerPath : promptPath;
-        }
-
-        // Strip _docker suffix if present
         if (!name.EndsWith("_docker")) return promptPath;
 
-        var standardName = $"{name[..^7]}{ext}";
-        var standardPath = Path.Combine(dir, standardName).Replace("\\", "/");
-        return standardPath;
+        var dir = Path.GetDirectoryName(promptPath) ?? "";
+        var ext = Path.GetExtension(promptPath);
+        var baseName = $"{name[..^7]}{ext}";
+        return Path.Combine(dir, baseName).Replace("\\", "/");
     }
 
     private class SwarmModelSet
