@@ -37,7 +37,10 @@ internal static class TuiCommands
     public static readonly Entry[] All =
     {
         // --- in-session meta-loop (SingleAgentOrchestrator) ---
-        new("/compact",      "Compact the live session context", Scope.SessionOnly),
+        new("/compact",      "Compact the live session context (/compact [steering])", Scope.SessionOnly),
+        new("/handoff",      "Write a cold-resume handoff doc (/handoff [steering|path.md])", Scope.SessionOnly),
+        new("/heal",         "Review session, propose BRAIN/MEMORY write-backs (/heal [deep] [steering])", Scope.SessionOnly),
+        new("/reflect",      "Alias of /heal - self-review + memory write-backs (/reflect [deep])", Scope.SessionOnly),
         new("/wipe",         "Wipe session context, start fresh", Scope.SessionOnly),
         new("/tokens",       "Show context/token usage", Scope.SessionOnly),
         new("/context",      "Show context/token usage", Scope.SessionOnly),
@@ -140,6 +143,7 @@ internal static class TuiCommands
         "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
+        "/compact", "/handoff", "/heal", "/reflect",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

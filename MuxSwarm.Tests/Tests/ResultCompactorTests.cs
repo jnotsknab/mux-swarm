@@ -1,7 +1,10 @@
+using System.Runtime.CompilerServices;
+using Microsoft.Extensions.AI;
 using MuxSwarm.Utils;
 
 namespace MuxSwarm.Tests.Tests;
 
+[Collection("ExecLimitsState")]
 public class ResultCompactorTests
 {
     // ── CompactAsync: short results pass through ───────────────────────
@@ -102,4 +105,96 @@ public class ResultCompactorTests
             raw, completionStatus: null, completionSummary: null, completionArtifacts: null, charBudget: 800);
         Assert.Equal(raw, result);
     }
+
+    // ── Sub-agent summary modes (subAgentSummaryMode) ──────────────────
+
+    // Canned non-streaming client: returns a fixed summary so auto/llm mode can be exercised
+    // without a network model.
+    private sealed class CannedClient : IChatClient
+    {
+        private readonly string _reply;
+        public CannedClient(string reply) => _reply = reply;
+        public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
+            ChatOptions? options = null, CancellationToken ct = default)
+            => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, _reply)));
+        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    private static void SetMode(string mode) =>
+        ExecutionLimits.Current = new ExecutionLimits { SubAgentSummaryMode = mode };
+
+    [Fact]
+    public async Task CompactAsync_ExtractiveMode_NeverCallsLlm()
+    {
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("extractive");
+            var longText = string.Join("\n", Enumerable.Range(0, 60)
+                .Select(i => $"Line {i}: Error on /home/user/file{i}.cs at port 80{i}."));
+            // A client that throws if called proves extractive mode skipped the LLM.
+            var boom = new CannedClient("SHOULD NOT BE USED");
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 300, chatClient: boom);
+            Assert.DoesNotContain("SHOULD NOT BE USED", result);
+            Assert.True(result.Length <= 400);
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
+    [Fact]
+    public async Task CompactAsync_AutoMode_AppendsExtractedReferences()
+    {
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("auto");
+            var longText = string.Join("\n", Enumerable.Range(0, 40)
+                .Select(i => $"Created /home/user/project/file{i}.cs"))
+                + "\nException: NullReferenceException at Foo.Bar()";
+            var client = new CannedClient("Summary: created many files and hit one exception.");
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 1200, chatClient: client);
+            Assert.Contains("Summary: created many files", result);
+            Assert.Contains("[EXTRACTED REFERENCES]", result);
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
+    [Fact]
+    public async Task CompactAsync_AutoMode_NoClient_FallsBackToExtractive()
+    {
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("auto");
+            var longText = string.Join("\n", Enumerable.Range(0, 40)
+                .Select(i => $"Result line {i}: status success item {i}."));
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 300, chatClient: null);
+            Assert.DoesNotContain("[EXTRACTED REFERENCES]", result); // pure extract, no merge framing
+            Assert.True(result.Length <= 400);
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
+    [Fact]
+    public async Task CompactAsync_Extractive_PrefersHashesAndExceptions()
+    {
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("extractive");
+            var longText = string.Join("\n",
+                Enumerable.Range(0, 30).Select(i => $"chatter line {i} nothing important here at all really")
+                    .Append("Build SHA256 ABCDEF0123456789ABCDEF0123456789ABCDEF01")
+                    .Append("Traceback: ValueError raised in module.py:42"));
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 250, chatClient: null);
+            Assert.True(result.Contains("SHA256") || result.Contains("Traceback"),
+                "High-signal hash/exception line should survive extraction.");
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
 }

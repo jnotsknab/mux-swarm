@@ -154,6 +154,9 @@ public static class PreambleBuilder
         6. **DOCS.md** -- system reference (config formats, daemon schemas, bridge setup, CLI flags, service registration). Located at {PlatformContext.ContextDirectory}/DOCS.md. Read before modifying any config files.
 
         ### Memory discipline (keep the loop tight)
+        - **Retrieve by judgement, not reflex:** pull from memory when a task plausibly has prior
+          context (a named project, a recurring workflow, a past decision); skip the lookup entirely
+          for self-contained/stateless turns. Do not re-read the same layer every turn out of habit.
         - **Index-card rule:** the primary layers stay SMALL. When something is dense, write the full content to the
           Knowledge Graph or ChromaDB and leave ONE LINE in BRAIN/MEMORY with a STRICT pointer -- `-> KG:<entity>` or
           `-> chroma:<collection>/<id>`. Following a stub means a DIRECT lookup (e.g. open_nodes on that exact entity),

@@ -207,6 +207,169 @@ public static class SingleAgentOrchestrator
         }
     }
 
+    /// <summary>
+    /// /handoff [instruction|path.md] - generate a cold-resume handoff document using the ACTIVE
+    /// session model. Default save path is the sandbox reports dir; if the first token ends in
+    /// ".md" it is treated as an explicit path override and the rest is the steering instruction.
+    /// Offers to record a one-line pointer stub in MEMORY.md afterward.
+    /// </summary>
+    private static async Task HandleHandoffAsync(
+        string metaCmd,
+        IChatClient? client,
+        IReadOnlyList<ChatMessage> history,
+        ChatOptions? chatOptions)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /handoff.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var arg = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+
+        string? instruction;
+        string savePath;
+        var ts = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+
+        var firstToken = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (firstToken.Length > 0 && firstToken[0].EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            savePath = firstToken[0];
+            instruction = firstToken.Length > 1 ? firstToken[1].Trim() : null;
+        }
+        else
+        {
+            var sandbox = App.Config.Filesystem?.SandboxPath;
+            var reportsDir = string.IsNullOrWhiteSpace(sandbox)
+                ? Path.Combine(PlatformContext.ContextDirectory, "reports")
+                : Path.Combine(sandbox, "reports");
+            savePath = Path.Combine(reportsDir, $"HANDOFF_session_{ts}.md");
+            instruction = string.IsNullOrWhiteSpace(arg) ? null : arg;
+        }
+
+        string? content = null;
+        await MuxConsole.WithSpinnerAsync("Generating session handoff", async () =>
+        {
+            content = await SessionHandoff.GenerateAsync(history, client, instruction, chatOptions);
+        });
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            MuxConsole.WriteWarning("Handoff generation returned nothing.");
+            return;
+        }
+
+        try
+        {
+            var dir = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            await File.WriteAllTextAsync(savePath, content);
+            MuxConsole.WriteSuccess($"Handoff written to {savePath}");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write handoff: {ex.Message}");
+            return;
+        }
+
+        if (MuxConsole.Confirm("Record a pointer stub for this handoff in MEMORY.md?", false))
+        {
+            try
+            {
+                var memPath = Path.Combine(PlatformContext.ContextDirectory, ContextCap.MemoryFile);
+                var utc = DateTime.UtcNow.ToString("yyyy-MM-dd");
+                var stub = $"- `{ts}` handoff -> {savePath} (written {utc} UTC)";
+                const string header = "## Session Handoffs";
+                string existing = File.Exists(memPath) ? await File.ReadAllTextAsync(memPath) : string.Empty;
+                string updated;
+                int idx = existing.IndexOf(header, StringComparison.Ordinal);
+                if (idx >= 0)
+                {
+                    int lineEnd = existing.IndexOf('\n', idx);
+                    if (lineEnd < 0) lineEnd = existing.Length;
+                    updated = existing[..lineEnd] + "\r\n" + stub + existing[lineEnd..];
+                }
+                else
+                {
+                    var sep = existing.Length > 0 && !existing.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                    updated = existing + sep + header + "\r\n" + stub + "\r\n";
+                }
+                Directory.CreateDirectory(PlatformContext.ContextDirectory);
+                await File.WriteAllTextAsync(memPath, updated);
+                MuxConsole.WriteSuccess($"Recorded handoff stub in {ContextCap.MemoryFile}.");
+            }
+            catch (Exception ex)
+            {
+                MuxConsole.WriteWarning($"Failed to write MEMORY.md stub: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// /heal [deep] [instruction] and /reflect [deep] [instruction] - self-examination pass over
+    /// the current session using the ACTIVE session model. Surfaces proposed BRAIN/MEMORY
+    /// write-backs and writes only the ones the user selects (MultiSelect). "deep" prints a
+    /// cost/latency disclaimer; the cross-session swarm consolidation is a follow-up - deep
+    /// currently runs the same single-pass analysis with consolidation guidance.
+    /// </summary>
+    private static async Task HandleHealAsync(
+        string metaCmd,
+        IChatClient? client,
+        IReadOnlyList<ChatMessage> history,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        ChatOptions? chatOptions,
+        CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /heal.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool deep = false;
+        var rest = new List<string>();
+        for (int i = 1; i < parts.Length; i++)
+        {
+            if (!deep && parts[i].Equals("deep", StringComparison.OrdinalIgnoreCase))
+                deep = true;
+            else
+                rest.Add(parts[i]);
+        }
+        var instruction = rest.Count > 0 ? string.Join(' ', rest) : null;
+
+        if (deep)
+            MuxConsole.WriteMuted("Deep reflect reviews the whole session and may take longer / use more tokens.");
+
+        List<SelfHeal.Proposal> proposals = new();
+        await MuxConsole.WithSpinnerAsync(deep ? "Deep reflecting on session" : "Reviewing session", async () =>
+        {
+            proposals = await SelfHeal.AnalyzeAsync(history, client, deep, instruction, chatOptions, ct);
+        });
+
+        if (proposals.Count == 0)
+        {
+            MuxConsole.WriteMuted("No memory write-backs proposed.");
+            return;
+        }
+
+        var labels = proposals.Select(pr => pr.Label).ToList();
+        var picked = MuxConsole.MultiSelect(
+            "Select the memory write-backs to apply (space to toggle, enter to confirm):", labels);
+
+        if (picked.Count == 0)
+        {
+            MuxConsole.WriteMuted("Nothing selected; no changes written.");
+            return;
+        }
+
+        var accepted = proposals.Where(pr => picked.Contains(pr.Label)).ToList();
+        await SelfHeal.ApplyAsync(accepted, chatClientFactory, resolvedModelId, ct);
+        MuxConsole.WriteSuccess($"Applied {accepted.Count} memory write-back(s) to BRAIN/MEMORY.");
+    }
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -797,7 +960,7 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
 
         _pendingCompaction = false;
-        async Task<bool> TryCompactAsync()
+        async Task<bool> TryCompactAsync(string? instruction = null)
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -820,7 +983,7 @@ public static class SingleAgentOrchestrator
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
-                    conversationHistory, cc, chatOptions: compactionChatOptions);
+                    conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
 
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
@@ -1435,9 +1598,25 @@ public static class SingleAgentOrchestrator
             while (true)
             {
                 string metaCmd = nextInput!.Trim();
-                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase))
+                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/compact ", StringComparison.OrdinalIgnoreCase))
                 {
-                    await TryCompactAsync();
+                    var cParts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    var cInstruction = cParts.Length > 1 ? cParts[1].Trim() : null;
+                    await TryCompactAsync(cInstruction);
+                }
+                else if (metaCmd.Equals("/handoff", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/handoff ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleHandoffAsync(metaCmd, client, conversationHistory, compactionChatOptions);
+                }
+                else if (metaCmd.Equals("/heal", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/heal ", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/reflect", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/reflect ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleHealAsync(metaCmd, client, conversationHistory,
+                        resolvedModelId, chatClientFactory, compactionChatOptions, cancellationToken);
                 }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {

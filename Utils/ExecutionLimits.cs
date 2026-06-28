@@ -36,6 +36,21 @@ public class ExecutionLimits
     [JsonPropertyName("compactionMaxMessageChars")]
     public int CompactionMaxMessageChars { get; set; } = 2500;
 
+    /// <summary>
+    /// How sub-agent / cross-agent results are compacted when they exceed the budget but are not
+    /// huge. Three modes:
+    ///   "auto"       - (default) run the LLM summarizer AND append signal-scored extracted
+    ///                  references, so the lead gets a dense summary plus the concrete
+    ///                  paths/errors/identifiers the summary may have dropped. Uses the existing
+    ///                  cross-agent budget.
+    ///   "llm"        - LLM summary with extracted references as supplemental.
+    ///   "extractive" - NEVER call the LLM. Always use the improved extractive algorithm only
+    ///                  (the money-saving mode).
+    /// Unknown/empty falls back to "auto".
+    /// </summary>
+    [JsonPropertyName("subAgentSummaryMode")]
+    public string SubAgentSummaryMode { get; set; } = "auto";
+
     [JsonPropertyName("activityTimeoutSeconds")]
     public int ActivityTimeoutSeconds { get; set; } = 1200;
 

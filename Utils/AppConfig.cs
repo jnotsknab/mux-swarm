@@ -187,6 +187,16 @@ public class ContextLimitsConfig
 
     [JsonPropertyName("memoryMdCapMode")]
     public string MemoryMdCapMode { get; set; } = "off";
+
+    /// <summary>
+    /// Optional background prune pulse. When &gt; 0 AND at least one context file is in "force"
+    /// mode, a background timer re-checks the capped files every N seconds (first tick +30s after
+    /// start) and force-rewrites any that are over their limit. A status line is surfaced ONLY
+    /// when a rewrite actually fires; idle ticks are silent. 0 (default) disables the pulse, so
+    /// existing installs are unaffected. Interactive sessions only (never stdio/serve/acp).
+    /// </summary>
+    [JsonPropertyName("prunePulseSeconds")]
+    public int PrunePulseSeconds { get; set; } = 0;
 }
 
 /// <summary>

@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.11.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.74";
+    public static readonly string DebugTag = "g12.75";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -282,6 +282,26 @@ public class App
                 await ContextCap.CheckFileAsync(ContextCap.MemoryFile);
             }
             catch { /* cap check is best-effort */ }
+
+            // Item 5: optional background prune pulse. Opt-in (contextLimits.prunePulseSeconds > 0
+            // AND a file in "force" mode); first tick +30s, then every N seconds. Surfaces a status
+            // line ONLY when a rewrite actually fires. Interactive only - never stdio/serve/acp.
+            if (!parsed.AcpMode && parsed.ServePort <= 0 && ContextCap.ShouldPulse())
+            {
+                try
+                {
+                    var swarm = App.SwarmConfig;
+                    string? pulseModel = swarm?.CompactionAgent?.Model;
+                    if (string.IsNullOrWhiteSpace(pulseModel))
+                    {
+                        var models = Common.LoadAgentModels();
+                        pulseModel = models.Values.FirstOrDefault();
+                    }
+                    if (!string.IsNullOrWhiteSpace(pulseModel))
+                        ContextCap.StartPulse(modelId => CreateChatClient(modelId), pulseModel);
+                }
+                catch { /* pulse is best-effort */ }
+            }
         }
 
         
