@@ -10,7 +10,7 @@
 [![Build](https://img.shields.io/badge/CI-Depot-blue)](https://depot.dev)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
 [![OS](https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
-[![License](https://img.shields.io/badge/license-See%20LICENSE-lightgrey)](#license)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](#license)
 
 <a href="#quick-start"><strong>Quick Start »</strong></a>
 &nbsp;·&nbsp;
@@ -36,12 +36,6 @@
 
 [https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f](https://github.com/user-attachments/assets/3e817e6b-d339-4016-a386-23b9bfe4b72d)
 > **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
-
-## Case Study: Autonomous Model Specialization
-
-A single goal file triggered an end-to-end autonomous pipeline including domain research, synthetic data generation via frontier model distillation, self-recovering training (4 consecutive failures fixed without human intervention), evaluation, and iterative self-improvement. Total cost: ~$11.
-
-**[Read the full case study →](https://www.muxswarm.dev/case-study.html)**
 
 ## Table of Contents
 
@@ -152,7 +146,7 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 ## Key Capabilities
 
-**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing. **Named [teams](#interactive-commands)** (`/teams`, `/createteam`) with a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and inter-agent mailbox; **Giga mode** (`/giga`) lets a single agent spin up teams and workflows on the fly. Live sessions can be parked with `/detach` and resumed with `/attach`.
+**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries across single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing. The **single-agent loop is itself a full execution surface**: ephemeral sub-agent delegation (`/subagents`, `/parasubagents`), deep-reasoning **`/ultra`** mode (plan + maximum reasoning + heavy delegation), and **Giga mode** (`/giga`) that lets one agent spin up named teams and deterministic workflows on the fly. **Named [teams](#interactive-commands)** (`/teams`, `/createteam`) add a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and a file-backed inter-agent mailbox. Live sessions can be parked with `/detach` and resumed with `/attach`, or run as fire-and-forget `/background` jobs. On-demand session **`/handoff`** docs and **`/heal`** self-review round out long-running work.
 
 **[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. **Native in-process Filesystem and Shell/REPL tools** (no external MCP subprocess) with per-session scoping, plus a **pluggable execution sandbox** (`/sandbox`) spanning Docker, Podman, gVisor, and Kata microVMs with an optional network allowlist. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
 
@@ -234,7 +228,9 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 
 **Session**
 ```
-/compact        Compact current session context (single-agent loops only)
+/compact [steer] Compact current session context (single-agent loops only); optional steering text guides the summary
+/handoff [text]  Write a cold-resume handoff doc via the active model (sandbox/reports by default; or pass a .md path)
+/heal [deep]     Review the session for lessons; propose BRAIN.md/MEMORY.md write-backs to approve (alias /reflect)
 /tag <text>     Tag the live session with free-form text for easy resume/search (optional MEMORY.md stub)
 /sessions       List all saved sessions with type and agent count
 /report [<id>]  Generate full session audit report(s); pass an id to audit one session
@@ -624,6 +620,51 @@ Defines which external integrations are available, where the runtime can read/wr
 ```
 > **Enterprise Storage:** `allowedPaths` works with any storage that presents as a filesystem path — Azure Blob Storage ([BlobFuse](https://github.com/Azure/azure-storage-fuse)), AWS S3 ([Mountpoint](https://github.com/awslabs/mountpoint-s3), [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)), Google Cloud Storage ([GCS FUSE](https://cloud.google.com/storage/docs/cloud-storage-fuse/overview)), SMB/CIFS shares, and NFS mounts. Mount your cloud or network storage, add the mount path to `allowedPaths`, and agents read/write to it like any local directory. No code changes required.
 
+#### Filesystem & Shell Security (`filesystem.securityMode`, `shell`)
+
+The native in-process Filesystem and Shell/REPL tools enforce configurable security postures independent of any MCP server.
+
+```json
+"filesystem": { "securityMode": "standard" },
+"shell": { "securityMode": "off", "allowedCommands": [] }
+```
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
+| `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` disables shell tools; `prompt` confirms each command; `allowlist` permits only `allowedCommands`. |
+| `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
+
+#### Execution Sandbox (`sandbox`)
+
+Optionally run native shell + REPL execution inside a per-session sandbox. See [`/sandbox`](#interactive-commands) to hot-swap at runtime.
+
+```json
+"sandbox": { "backend": "host", "image": "python:3.12-slim", "network": false, "allowedDomains": [] }
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `host` | `host` (no sandbox), `docker`, `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap`/`firejail`/`sandbox-exec`, or `custom`. |
+| `image` | `python:3.12-slim` | Container image for OCI backends. |
+| `network` | `false` | Allow network egress. With a non-empty `allowedDomains`, a deny-by-default CONNECT allowlist is enforced. |
+| `allowedDomains` | `[]` | Domains the sandbox may reach (OCI backends only). |
+| `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
+
+#### Context File Caps (`contextLimits`)
+
+Optional hard char-caps on the long-lived `BRAIN.md` / `MEMORY.md` memory files, with an opt-in background prune.
+
+```json
+"contextLimits": { "memoryMdCharLimit": 0, "memoryMdCapMode": "off", "prunePulseSeconds": 0 }
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `brainMdCharLimit` / `memoryMdCharLimit` | `0` | Char cap per file (`0` = uncapped). |
+| `brainMdCapMode` / `memoryMdCapMode` | `off` | `off`, `warn` (warn when over cap), or `force` (LLM-rewrite under the cap, backing up first). |
+| `prunePulseSeconds` | `0` | When `> 0` and a file is in `force` mode, a background pulse re-checks every N seconds (first tick +30s) and rewrites only when over cap. `0` disables. |
+
 ### Telemetry (`telemetry`)
 
 Optional OpenTelemetry configuration for exporting traces, logs, and metrics. All agent sessions, turns, tool calls, delegations, and orchestrator iterations emit OTEL spans. Structured logs attach as span events. Token counters, turn durations, and compaction metrics export as OTEL metrics.
@@ -669,7 +710,9 @@ Defines which agents exist, what they specialize in, which models and MCP server
     "maxOrchestratorIterations": 15,
     "maxSubAgentIterations": 8,
     "maxSubTaskRetries": 4,
-    "maxStuckCount": 3
+    "maxStuckCount": 3,
+    "compactionCharBudget": 6000,
+    "subAgentSummaryMode": "auto"
   },
   "compactionAgent": {
     "model": "google/gemini-3-flash-preview",
@@ -804,6 +847,10 @@ Optional tuning for orchestration budgets, iteration caps, and retry behavior. A
 | `maxSubAgentIterations` | 8 | Tool-call loops per sub-agent delegation before forced completion. |
 | `maxSubTaskRetries` | 4 | Retry attempts per failed sub-task with progressive recovery hints. |
 | `maxStuckCount` | 3 | Consecutive empty responses before aborting. |
+| `compactionCharBudget` | 6000 | Target char budget for the LLM session-compaction summary (`/compact`, auto-compaction). |
+| `maxToolIterationsPerTurn` | 1000 | Max model→tool round-trips within a single turn before the tool loop stops. `<= 0` = unlimited. |
+| `maxAutoContinuesPerTurn` | 3 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
+| `subAgentSummaryMode` | `auto` | How an over-budget sub-agent result is compacted before returning to the lead: `auto`/`llm` run the compaction model and append signal-scored extracted references; `extractive` skips the LLM entirely (no extra cost). |
 ### Prompts: `Prompts/Agents/*.md`
 
 Prompt files define the **behavioral contract** for each role — how an agent reasons, what it owns, which workflows it follows, and what constraints it respects. This is the main place to tune agent behavior without changing the runtime. See [Architecture](#architecture) for how prompts fit into the control plane model.
@@ -862,7 +909,7 @@ graph TD
 
     subgraph ToolLayer["Tool Layer"]
         WebAgent --> MCP1["BraveSearch · Fetch"]
-        CodeAgent --> MCP2["Filesystem · PythonRepl"]
+        CodeAgent --> MCP2["Native FS · Shell/REPL"]
         MemoryAgent --> MCP3["ChromaDB · Memory"]
         MuxAgent --> MCP4["All Scoped Tools"]
     end
@@ -959,4 +1006,4 @@ Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## License
 
-This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.

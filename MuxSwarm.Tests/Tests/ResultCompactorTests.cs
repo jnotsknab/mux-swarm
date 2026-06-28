@@ -197,4 +197,43 @@ public class ResultCompactorTests
         finally { ExecutionLimits.Current = prev; }
     }
 
+
+    [Fact]
+    public async Task CompactAsync_NullClient_AutoMode_ReturnsExtractive_NotMerge()
+    {
+        // Regression: the single-agent sub-agent path passed a NULL compaction client, which made
+        // auto/llm silently degrade to extractive. With a null client, output MUST be the bare
+        // extract (no [EXTRACTED REFERENCES] merge framing) - this documents the symptom so a
+        // future null-client regression is caught here rather than in the field.
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("auto");
+            var longText = string.Join("\n", Enumerable.Range(0, 60)
+                .Select(i => $"Created /home/user/project/file{i}.cs at line {i}."));
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 300, chatClient: null);
+            Assert.DoesNotContain("[EXTRACTED REFERENCES]", result);
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
+    [Fact]
+    public async Task CompactAsync_NonNullClient_AutoMode_ProducesDistinguishableMerge()
+    {
+        // The fix supplies a real client to the sub-agent path. With a client present, auto/llm
+        // MUST produce the merge framing so the result is visually distinguishable from extractive.
+        var prev = ExecutionLimits.Current;
+        try
+        {
+            SetMode("auto");
+            var longText = string.Join("\n", Enumerable.Range(0, 60)
+                .Select(i => $"Created /home/user/project/file{i}.cs at line {i}."));
+            var client = new CannedClient("LLM SUMMARY: created sixty source files.");
+            var result = await ResultCompactor.CompactAsync(longText, charBudget: 1500, chatClient: client);
+            Assert.Contains("LLM SUMMARY: created sixty source files.", result);
+            Assert.Contains("[EXTRACTED REFERENCES]", result);
+        }
+        finally { ExecutionLimits.Current = prev; }
+    }
+
 }

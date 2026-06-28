@@ -652,13 +652,22 @@ public static class SingleAgentOrchestrator
             string compacted = "";
             await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
             {
+                // Resolve a compaction client for sub-agent result summarization. The swarm-only
+                // static MultiAgentOrchestrator.CompactionClient is NULL in a single-agent session
+                // (MultiAgentOrchestrator.RunAsync never ran), which previously forced extractive-
+                // only compaction here regardless of subAgentSummaryMode. Prefer the lazily-resolved
+                // compaction-agent client (same one /compact uses), then the swarm static, and fall
+                // back to the active session model so auto/llm modes actually summarize.
+                var subCompactionClient = ResolveCompactionClient()
+                    ?? MultiAgentOrchestrator.CompactionClient
+                    ?? client;
                 compacted = await ResultCompactor.CompactAsync(
                     rawResult,
                     completionStatus: status,
                     completionSummary: summary,
                     completionArtifacts: artifacts,
                     charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: MultiAgentOrchestrator.CompactionClient,
+                    chatClient: subCompactionClient,
                     chatOptions: compactChatOpts);
             });
 
@@ -772,10 +781,18 @@ public static class SingleAgentOrchestrator
                     await semaphore.WaitAsync(batchCt);
                     try
                     {
+                        // Resolve a compaction client for the parallel workers. The local
+                        // compactionClient is only populated lazily by ResolveCompactionClient()
+                        // (via /compact); a parallel delegation before any /compact would otherwise
+                        // pass null -> extractive-only regardless of subAgentSummaryMode. Resolve +
+                        // fall back to the active session model so auto/llm modes summarize.
+                        var batchCompactionClient = ResolveCompactionClient()
+                            ?? MultiAgentOrchestrator.CompactionClient
+                            ?? client;
                         return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
                             req.AgentName, req.Task, singleAgentDef.Name,
                             specialists, pDelegationResults, retryRegistry,
-                            chatClientFactory, Models, compactionClient, compactionChatOptions,
+                            chatClientFactory, Models, batchCompactionClient, compactionChatOptions,
                             maxIterations, false, ct: batchCt, cleanSession: true);
                     }
                     catch (OperationCanceledException) when (batchCt.IsCancellationRequested)
