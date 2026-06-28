@@ -134,6 +134,10 @@ public static class Setup
 
         if (!StepCollectUserInfo()) return false;
 
+        MuxConsole.WriteRule();
+
+        if (!StepSecurityPosture()) return false;
+
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
 
         MuxConsole.WriteRule();
@@ -638,9 +642,77 @@ public static class Setup
         return true;
     }
 
+    /// <summary>
+    /// Configures the security posture for the NATIVE in-process Filesystem and Shell/REPL tools that Mux
+    /// now owns (formerly external MCP servers). Both default to their safe/no-friction values, so a user
+    /// can accept the defaults with one key. Filesystem governs read/write within AllowedPaths; Shell
+    /// governs command + python execution gating.
+    /// </summary>
+    private static bool StepSecurityPosture()
+    {
+        MuxConsole.WriteStep(6, "Security Posture");
+
+        MuxConsole.WriteBody("Mux runs the Filesystem and Shell/REPL tools in-process and can gate them.");
+        MuxConsole.WriteMuted("Pick how strict each should be. The defaults keep today's no-friction behavior.");
+        MuxConsole.WriteLine();
+
+        if (!MuxConsole.Confirm("Customize security posture? (No = keep safe defaults)", defaultValue: false))
+        {
+            _appConfig.Filesystem ??= new FilesystemConfig();
+            _appConfig.Shell ??= new ShellConfig();
+            MuxConsole.WriteSuccess($"Filesystem: {_appConfig.Filesystem.SecurityMode}   Shell: {_appConfig.Shell.SecurityMode} (defaults).");
+            return true;
+        }
+
+        // Filesystem posture
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Filesystem tools (read / write / edit within your allowed paths):");
+        var fsChoice = MuxConsole.Select("Filesystem security mode:", new[]
+        {
+            "standard - read + write within allowed paths (recommended)",
+            "secure   - read freely; every write/edit/move asks you first",
+            "lax      - read + write anywhere except system/sensitive paths",
+            "none     - unrestricted, no path checks",
+        });
+        _appConfig.Filesystem ??= new FilesystemConfig();
+        _appConfig.Filesystem.SecurityMode = fsChoice.Split(' ')[0];
+        MuxConsole.WriteSuccess($"Filesystem mode: {_appConfig.Filesystem.SecurityMode}");
+
+        // Shell / REPL posture
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Shell + Python REPL tools (command and code execution):");
+        var shChoice = MuxConsole.Select("Shell security mode:", new[]
+        {
+            "off       - run anything, no prompts (recommended for trusted local use)",
+            "prompt    - every command + python exec asks you first",
+            "allowlist - listed command prefixes run freely; everything else asks",
+        });
+        _appConfig.Shell ??= new ShellConfig();
+        _appConfig.Shell.SecurityMode = shChoice.Split(' ')[0];
+
+        if (_appConfig.Shell.SecurityMode == "allowlist")
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteMuted("Enter command prefixes that may run without a prompt (comma separated).");
+            MuxConsole.WriteMuted("Example: git, ls, cat, python, rg, dotnet");
+            var allowInput = MuxConsole.Prompt("Allowed commands: ");
+            var cmds = allowInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                 .Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _appConfig.Shell.AllowedCommands = cmds;
+            if (cmds.Count == 0)
+                MuxConsole.WriteWarning("No commands listed - allowlist mode will prompt for everything.");
+        }
+        MuxConsole.WriteSuccess($"Shell mode: {_appConfig.Shell.SecurityMode}");
+
+        MuxConsole.WriteLine();
+        MuxConsole.WriteMuted("Note: in non-interactive contexts (serve / ACP / sub-agents / daemon) any");
+        MuxConsole.WriteMuted("non-default mode auto-denies gated actions. You can change these later in config.json.");
+        return true;
+    }
+
     private static bool StepCollectMcpSecrets()
     {
-        MuxConsole.WriteStep(6, "MCP API Keys");
+        MuxConsole.WriteStep(7, "MCP API Keys");
 
         MuxConsole.WriteBody("Some MCP servers require API keys.");
         MuxConsole.WriteBody("By default, MuxSwarm stores ONLY the env-var names in config (no secrets).");
@@ -719,11 +791,19 @@ public static class Setup
 
     private static bool StepResolveMcpServerPaths()
     {
-        MuxConsole.WriteStep(7, "MCP Server Validation");
+        MuxConsole.WriteStep(8, "MCP Server Validation");
 
         foreach (var (name, server) in _appConfig.McpServers)
         {
             if (!server.Enabled) continue;
+
+            // Native in-process toolsets (Filesystem + Shell) carry the native-runtime-tools marker
+            // instead of a real binary - validating them against PATH would falsely warn. Show as native.
+            if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(server))
+            {
+                MuxConsole.WriteSuccess($"{name} - native (in-process)");
+                continue;
+            }
 
             if (!server.Type.Equals("http", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(server.Command))
             {
@@ -803,6 +883,8 @@ public static class Setup
             ("Shell",         PlatformContext.Shell),
             ("Sandbox",       _appConfig.Filesystem?.SandboxPath ?? "-"),
             ("Allowed paths", string.Join(", ", _appConfig.Filesystem?.AllowedPaths ?? [])),
+            ("FS security",   _appConfig.Filesystem?.SecurityMode ?? "standard"),
+            ("Shell security", _appConfig.Shell?.SecurityMode ?? "off"),
             ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "-"),
             ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "-"),
         });
