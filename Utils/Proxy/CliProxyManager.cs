@@ -470,6 +470,7 @@ internal static class CliProxyManager
             ["kimi"] = "-kimi-login",
             ["antigravity"] = "-antigravity-login",
             ["xai"] = "-xai-login",
+            ["codex-device"] = "-codex-device-login",
         };
 
     /// <summary>
@@ -570,6 +571,70 @@ internal static class CliProxyManager
     /// <summary>A single authenticated-credential record from the management auth-files endpoint.</summary>
     public sealed record AuthFile(
         string Id, string Provider, string Status, string Email, bool Disabled, bool Unavailable);
+
+    /// <summary>
+    /// Lists the model ids the running sidecar currently serves (GET /v1/models). Returns an empty list
+    /// if the sidecar is not running or the call fails. Used by setup to derive real default model ids for
+    /// the just-logged-in subscription provider instead of guessing from the loopback endpoint URL.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> ListModelsAsync(CancellationToken ct = default)
+    {
+        if (!IsRunning || BaseUrl is null) return [];
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{BaseUrl}/v1/models");
+            req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {_apiKey}");
+            using var resp = await Http().SendAsync(req, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return [];
+            var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return ParseModelIds(json);
+        }
+        catch { return []; }
+    }
+
+    /// <summary>
+    /// Probes an arbitrary OpenAI-compatible endpoint for its model ids (GET {endpoint}/models with an
+    /// optional bearer key). Best-effort: returns an empty list on any failure. Used by the manual
+    /// endpoint+key setup path so we can offer real default model ids there too.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> ProbeEndpointModelsAsync(string endpoint, string? apiKey, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint)) return [];
+        try
+        {
+            var url = endpoint.TrimEnd('/') + "/models";
+            using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrEmpty(apiKey))
+                req.Headers.TryAddWithoutValidation("Authorization", $"Bearer {apiKey}");
+            using var resp = await probe.SendAsync(req, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return [];
+            var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+            return ParseModelIds(json);
+        }
+        catch { return []; }
+    }
+
+    /// <summary>Parses an OpenAI /v1/models response body into the list of model id strings.</summary>
+    private static IReadOnlyList<string> ParseModelIds(string json)
+    {
+        var ids = new List<string>();
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.TryGetProperty("data", out var arr) &&
+                arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var el in arr.EnumerateArray())
+                {
+                    var id = GetStr(el, "id");
+                    if (!string.IsNullOrWhiteSpace(id)) ids.Add(id);
+                }
+            }
+        }
+        catch { /* malformed - return what we have */ }
+        return ids;
+    }
 
     // ───────────────────────── health + ports + config ─────────────────────────
 

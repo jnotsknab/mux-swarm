@@ -23,6 +23,73 @@ public static class SwarmDefaults
     /// Used at the end of RunSetup to ensure model IDs match the just-configured provider.
     /// Returns false if the provider is unrecognized.
     /// </summary>
+    /// <summary>
+    /// Model ids chosen during setup (probed from the live provider + optionally user-picked). When set,
+    /// these take priority over endpoint-URL heuristics in <see cref="ResolveModelIds"/>, so a subscription
+    /// login (loopback endpoint) gets real model ids instead of the localhost/ollama fallback.
+    /// </summary>
+    public static ModelDefaults? PreferredModels { get; set; }
+
+    /// <summary>A resolved set of model ids for the four swarm roles.</summary>
+    public sealed record ModelDefaults(string Orchestrator, string Agent, string Light, string Compaction);
+
+    /// <summary>
+    /// Ranks a flat list of model ids (e.g. from GET /v1/models) into sensible defaults for the four swarm
+    /// roles using keyword heuristics: the strongest reasoning model drives orchestrator/agent, the
+    /// cheapest/fastest drives light/compaction. Returns null if the list is empty.
+    /// </summary>
+    public static ModelDefaults? RankModels(IReadOnlyList<string> models)
+    {
+        if (models is null || models.Count == 0) return null;
+
+        var ordered = models.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToList();
+        if (ordered.Count == 0) return null;
+
+        string strongest = ordered.OrderByDescending(StrongScore).ThenBy(m => m.Length).First();
+        string lightest  = ordered.OrderByDescending(LightScore).ThenByDescending(StrongScore).First();
+
+        // Prefer a distinct mid/orchestrator model when one clearly exists; else reuse the strongest.
+        string orchestrator = ordered
+            .Where(m => m != strongest)
+            .OrderByDescending(StrongScore)
+            .FirstOrDefault() is { } second && StrongScore(second) >= StrongScore(strongest) - 15
+                ? second
+                : strongest;
+
+        return new ModelDefaults(
+            Orchestrator: orchestrator,
+            Agent: strongest,
+            Light: lightest,
+            Compaction: lightest);
+    }
+
+    // Higher = stronger reasoning. Keyword heuristic over the lowercased model id.
+    private static int StrongScore(string id)
+    {
+        var s = id.ToLowerInvariant();
+        bool light = IsLightId(s);
+        int score = 50;
+        if (s.Contains("opus")) score += 50;
+        else if (s.Contains("gpt-5") || s.Contains("gpt5")) score += 45;
+        else if (s.Contains("pro")) score += 40;
+        else if (s.Contains("sonnet")) score += 30;
+        else if (s.Contains("gpt-4")) score += 20;
+        else if (s.Contains("grok")) score += 25;
+        if (light) score -= 45;
+        return score;
+    }
+
+    // Higher = cheaper/faster (good light/compaction candidate).
+    private static int LightScore(string id)
+    {
+        var s = id.ToLowerInvariant();
+        return IsLightId(s) ? 100 : 0;
+    }
+
+    private static bool IsLightId(string s) =>
+        s.Contains("haiku") || s.Contains("flash") || s.Contains("mini") || s.Contains("lite") ||
+        s.Contains("nano") || s.Contains("small") || s.Contains("tiny");
+
     public static bool ForceWrite(AppConfig config)
     {
         var swarmPath = PlatformContext.SwarmPath;
@@ -280,6 +347,17 @@ public static class SwarmDefaults
     /// </summary>
     private static SwarmModelSet ResolveModelIds(AppConfig config)
     {
+        if (PreferredModels is { } pm)
+        {
+            return new SwarmModelSet
+            {
+                OrchestratorModel = pm.Orchestrator,
+                AgentModel = pm.Agent,
+                LightModel = pm.Light,
+                CompactionModel = pm.Compaction
+            };
+        }
+
         var endpoint = App.ActiveProvider?.Endpoint?.ToLowerInvariant()
                        ?? config.LlmProviders.FirstOrDefault(p => p.Enabled)?.Endpoint?.ToLowerInvariant()
                        ?? "";

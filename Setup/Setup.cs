@@ -222,15 +222,34 @@ public static class Setup
         else
             MuxConsole.WriteMuted("Example: /home/john, /mnt/data, /opt/projects");
 
-        MuxConsole.WriteLine();
-        var input = MuxConsole.Prompt("Paths: ");
-
-        var paths = ParsePaths(input);
-
-        if (paths.Count == 0)
+        // Offer sensible suggestions so the user can accept reasonable defaults with one key
+        // instead of typing every path. They can still type a custom comma-separated list.
+        var suggested = SuggestAllowedPaths();
+        if (suggested.Count > 0)
         {
-            MuxConsole.WriteError("No valid paths provided. Setup failed.");
-            return false;
+            MuxConsole.WriteLine();
+            MuxConsole.WriteBody("Suggested paths (detected on this machine):");
+            for (int i = 0; i < suggested.Count; i++)
+                MuxConsole.WriteInfo($"[{i + 1}] {suggested[i]}");
+            MuxConsole.WriteLine();
+        }
+
+        List<string> paths;
+        if (suggested.Count > 0 && MuxConsole.Confirm("Use these suggested paths?", defaultValue: true))
+        {
+            paths = suggested;
+        }
+        else
+        {
+            MuxConsole.WriteLine();
+            var input = MuxConsole.Prompt("Paths: ");
+            paths = ParsePaths(input);
+
+            if (paths.Count == 0)
+            {
+                MuxConsole.WriteError("No valid paths provided. Setup failed.");
+                return false;
+            }
         }
 
         MuxConsole.WriteLine();
@@ -242,7 +261,7 @@ public static class Setup
         MuxConsole.WriteBody("Which path should be used as the agent output sandbox?");
         MuxConsole.WriteMuted("This is where agents will write files and artifacts.");
 
-        var sandboxInput = MuxConsole.Prompt("Enter number or full path: ");
+        var sandboxInput = MuxConsole.Prompt("Enter number or full path (Enter = [1])", "1");
         string sandboxPath;
 
         if (int.TryParse(sandboxInput, out int idx) && idx >= 1 && idx <= paths.Count)
@@ -436,6 +455,8 @@ public static class Setup
         _appConfig.LlmProviders.Clear();
         _appConfig.LlmProviders.Add(provider);
 
+        ResolveAndPickModels(endpoint, apiKeyEnvVar, isSubscription: false);
+
         return true;
     }
 
@@ -488,6 +509,9 @@ public static class Setup
             MuxConsole.WriteSuccess($"Logged in. Provider 'cliproxy' configured -> {endpoint}.");
             MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /model.");
             MuxConsole.WriteMuted("Log in to additional providers anytime with /login - they join the same router.");
+
+            ResolveAndPickModels(endpoint, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, isSubscription: true);
+
             return true;
         }
         catch (OperationCanceledException)
@@ -499,6 +523,78 @@ public static class Setup
         {
             MuxConsole.WriteWarning($"Subscription login failed: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// After a provider is configured (manual endpoint+key OR subscription login), probe its live model
+    /// list and pick sensible default model ids for the swarm roles. Shows the recommended pick with a
+    /// one-key accept, or lets the user choose a different agent model. Doubles as a connectivity check.
+    /// Sets <see cref="SwarmDefaults.PreferredModels"/> so the generated swarm.json gets real ids instead
+    /// of the loopback/ollama URL-heuristic fallback. Best-effort: silent on probe failure.
+    /// </summary>
+    private static void ResolveAndPickModels(string? endpoint, string? apiKeyEnvVar, bool isSubscription)
+    {
+        try
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteInfo("Checking which models your provider offers...");
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            IReadOnlyList<string> models;
+            if (isSubscription)
+            {
+                models = MuxSwarm.Utils.Proxy.CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
+            }
+            else
+            {
+                var key = string.IsNullOrEmpty(apiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(apiKeyEnvVar);
+                models = MuxSwarm.Utils.Proxy.CliProxyManager
+                    .ProbeEndpointModelsAsync(endpoint ?? "", key, cts.Token).GetAwaiter().GetResult();
+            }
+
+            if (models.Count == 0)
+            {
+                MuxConsole.WriteWarning("Could not retrieve a model list (endpoint may not list models, or key not set yet).");
+                MuxConsole.WriteMuted("Falling back to provider-based default model ids. You can edit them in swarm.json or via /model.");
+                return;
+            }
+
+            var ranked = SwarmDefaults.RankModels(models);
+            if (ranked is null)
+            {
+                MuxConsole.WriteWarning("Model list was empty after filtering. Using provider-based defaults.");
+                return;
+            }
+
+            MuxConsole.WriteSuccess($"Provider reachable - {models.Count} model(s) available.");
+            MuxConsole.WriteLine();
+            MuxConsole.WriteBody("Recommended model defaults:");
+            MuxConsole.WriteInfo($"  Agent / Orchestrator : {ranked.Agent}");
+            if (ranked.Orchestrator != ranked.Agent)
+                MuxConsole.WriteInfo($"  Orchestrator         : {ranked.Orchestrator}");
+            MuxConsole.WriteInfo($"  Light / Compaction   : {ranked.Light}");
+            MuxConsole.WriteLine();
+
+            if (MuxConsole.Confirm("Use these recommended models?", defaultValue: true))
+            {
+                SwarmDefaults.PreferredModels = ranked;
+                MuxConsole.WriteSuccess("Model defaults set.");
+                return;
+            }
+
+            // Customize: let the user pick the primary agent model from the full list; derive the rest.
+            var choices = models.OrderByDescending(m => m == ranked.Agent).ToList();
+            var pick = MuxConsole.Select("Choose your primary agent model:", choices);
+            var light = SwarmDefaults.RankModels(models)?.Light ?? pick;
+            SwarmDefaults.PreferredModels = new SwarmDefaults.ModelDefaults(
+                Orchestrator: pick, Agent: pick, Light: light, Compaction: light);
+            MuxConsole.WriteSuccess($"Primary model set to {pick}.");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Model probe skipped: {ex.Message}");
+            MuxConsole.WriteMuted("Using provider-based default model ids.");
         }
     }
 
@@ -718,6 +814,40 @@ public static class Setup
 
     public static bool TryFindBinaryPath(string binary, out string? fullPath) =>
         BinaryResolver.TryFindBinaryPath(binary, out fullPath);
+
+    /// <summary>
+    /// Builds a list of reasonable, existing allowed-path suggestions for this machine: the current working
+    /// directory, the user profile, and common doc/dev folders. Deduplicated, only-existing, ordered by
+    /// usefulness. The user can accept these wholesale or type their own list instead.
+    /// </summary>
+    private static List<string> SuggestAllowedPaths()
+    {
+        var candidates = new List<string?>
+        {
+            Environment.CurrentDirectory,
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(home))
+        {
+            foreach (var sub in new[] { "Projects", "Dev", "Development", "Code", "src", "Desktop" })
+                candidates.Add(Path.Combine(home, sub));
+        }
+
+        var result = new List<string>();
+        foreach (var c in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(c)) continue;
+            string full;
+            try { full = Path.GetFullPath(c); } catch { continue; }
+            if (!Directory.Exists(full)) continue;
+            if (!result.Contains(full, StringComparer.OrdinalIgnoreCase))
+                result.Add(full);
+        }
+        return result;
+    }
 
     private static List<string> ParsePaths(string input)
     {
