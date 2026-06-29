@@ -650,6 +650,7 @@ public static class SingleAgentOrchestrator
             }
 
             string compacted = "";
+            MuxSwarm.Utils.DelegationStore.Retained? retained = null;
             await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
             {
                 // Resolve a compaction client for sub-agent result summarization. The swarm-only
@@ -661,17 +662,19 @@ public static class SingleAgentOrchestrator
                 var subCompactionClient = ResolveCompactionClient()
                     ?? MultiAgentOrchestrator.CompactionClient
                     ?? client;
-                compacted = await ResultCompactor.CompactAsync(
+                (compacted, retained) = await DelegationStore.TierResultAsync(
+                    DelegationStore.CurrentScope,
+                    agentName,
                     rawResult,
-                    completionStatus: status,
-                    completionSummary: summary,
-                    completionArtifacts: artifacts,
-                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: subCompactionClient,
-                    chatOptions: compactChatOpts);
+                    status,
+                    summary,
+                    artifacts,
+                    subCompactionClient,
+                    compactChatOpts);
             });
 
-            delegationResults.Add(new MultiAgentOrchestrator.DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new MultiAgentOrchestrator.DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
 
             if (!succeeded && attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
             {
@@ -850,6 +853,13 @@ public static class SingleAgentOrchestrator
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
         }
 
+        // Size-tiered context passing: whenever this lead can spawn sub-agents (sequential, parallel,
+        // or a team), grant read_delegation so it can surgically pull the FULL raw output of any
+        // delegation whose result was spilled to disk and returned as a pointer/handle. Covers
+        // /sub, /psub, /ultra, /giga, and team-lead; swarm/pswarm get it via the orchestrator lists.
+        if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
+            singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
+
         // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and
         // build the member specialist registry so member dispatch (ExecuteParallelWorker) can
         // resolve them. Members surface live in the Agent View via the existing capture path.
@@ -964,6 +974,12 @@ public static class SingleAgentOrchestrator
         // Surface the active session id in the docked footer; the badge replaces the noisy
         // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
         MuxConsole.SetTuiSessionId(sessionTimestamp);
+
+        // Size-tiered delegation retention scope: a single-agent session that spawns sub-agents
+        // (/sub, /psub, /ultra, /giga, team-lead) keys its spilled raw + cumulative lead-cap counter
+        // off this session id. MAO.RunAsync never runs here, so set it on the single-agent path.
+        DelegationStore.SetScope(sessionTimestamp);
+        DelegationStore.ResetScope(sessionTimestamp);
 
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)

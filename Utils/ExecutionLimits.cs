@@ -51,6 +51,16 @@ public class ExecutionLimits
     [JsonPropertyName("subAgentSummaryMode")]
     public string SubAgentSummaryMode { get; set; } = "auto";
 
+    /// <summary>
+    /// How many days spilled sub-agent raw outputs (the size-tiered delegation retention dir under
+    /// &lt;sandbox&gt;/delegations or %LOCALAPPDATA%/Mux-Swarm/delegations) are kept before a startup
+    /// prune deletes them. 0 disables pruning. The retention dir holds the FULL raw output a lead
+    /// reads on demand via read_delegation; everything else in the tiering engine scales off the
+    /// existing progress budgets, so this is the only new knob.
+    /// </summary>
+    [JsonPropertyName("delegationRetentionDays")]
+    public int DelegationRetentionDays { get; set; } = 30;
+
     [JsonPropertyName("activityTimeoutSeconds")]
     public int ActivityTimeoutSeconds { get; set; } = 1200;
 

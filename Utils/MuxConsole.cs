@@ -915,6 +915,17 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>
+    /// Structured signal for the size-tiered delegation engine: which posture a sub-agent result
+    /// took (inline | summary | pointer | pointer-stub | summary-fallback). Surfaced to the web app
+    /// / stdio via the JSON event stream; no-op visual side effect (the muted text line is written
+    /// separately by the caller).
+    /// </summary>
+    public static void EmitDelegationCompacted(string agent, int rawLen, string posture, string? handle)
+    {
+        EmitJson("delegation_compacted", D(("agent", agent), ("rawLen", rawLen), ("posture", posture), ("handle", handle)));
+    }
+
     public static void WriteMuted(string message)
     {
         WithConsole(() =>

@@ -35,7 +35,10 @@ public static class ParallelSwarmOrchestrator
         string CompactedResult,
         string? Status,
         string? Summary,
-        string? Artifacts
+        string? Artifacts,
+        string? RawHandle = null,
+        string? RawPath = null,
+        int RawLen = 0
     );
 
     public record RetryState(int AttemptCount, string? LastFailureReason);
@@ -205,6 +208,11 @@ public static class ParallelSwarmOrchestrator
         using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
         sessionSpan?.SetTag("mode", "pswarm");
         sessionSpan?.SetTag("goal_id", goalId);
+
+        // Size-tiered delegation retention scope (see MultiAgentOrchestrator.RunAsync).
+        var delegationScope = goalId ?? sessionSpan?.Id ?? DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        DelegationStore.SetScope(delegationScope);
+        DelegationStore.ResetScope(delegationScope);
         sessionSpan?.SetTag("continuous", continuous);
         sessionSpan?.SetTag("max_parallelism", App.MaxDegreeParallelism);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
@@ -512,6 +520,7 @@ public static class ParallelSwarmOrchestrator
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
+            LocalAiFunctions.ReadDelegationTool,
             ..orchestratorFilteredTools
         ];
 
@@ -1206,19 +1215,21 @@ public static class ParallelSwarmOrchestrator
             }
         }
 
-        // Compact the result
-        string compacted = await ResultCompactor.CompactAsync(
+        // Compact the result (size-tiered: small inline, medium summary, large -> spill + pointer)
+        var (compacted, retained) = await DelegationStore.TierResultAsync(
+            DelegationStore.CurrentScope,
+            agentName,
             rawResult,
-            completionStatus: status,
-            completionSummary: summary,
-            completionArtifacts: artifacts,
-            charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-            chatClient: compactionClient,
-            chatOptions: compactionChatOptions);
+            status,
+            summary,
+            artifacts,
+            compactionClient,
+            compactionChatOptions);
 
         lock (_stateLock)
         {
-            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
         }
 
         if (prodMode)

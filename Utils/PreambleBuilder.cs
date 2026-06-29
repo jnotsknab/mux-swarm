@@ -308,6 +308,14 @@ public static class PreambleBuilder
     public static string WrapTask(string agentName, string subTask)
     {
         var preamble = Build(agentName);
-        return $"{preamble}\nSub-task: {subTask}\nComplete this task. Call signal_task_complete with status and summary when done.";
+        // Lightweight, always-on sub-agent persona (this path only; the lead/single-agent preamble
+        // from Build(...) is unchanged). Keep it generic steering -- no user/system conventions.
+        var persona =
+            "## You are a delegated sub-agent\n" +
+            "- The lead's context is finite and you are one of possibly many. Lead with the answer, stay concise.\n" +
+            "- For LARGE output, WRITE it to a file and return the PATH plus a 3-line summary -- do NOT paste big blobs.\n" +
+            "- Your large outputs may be spilled to disk and surfaced to the lead on demand via the read_delegation tool, so a tight summary plus a path is far more useful than a wall of text.\n" +
+            "- Always finish with signal_task_complete: status + a tight summary + any artifact paths.\n\n";
+        return $"{preamble}\n{persona}Sub-task: {subTask}\nComplete this task. Call signal_task_complete with status and summary when done.";
     }
 }

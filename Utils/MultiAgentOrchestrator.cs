@@ -41,7 +41,10 @@ public static class MultiAgentOrchestrator
         string CompactedResult,
         string? Status,
         string? Summary,
-        string? Artifacts
+        string? Artifacts,
+        string? RawHandle = null,
+        string? RawPath = null,
+        int RawLen = 0
     );
 
     /// <summary>
@@ -189,6 +192,12 @@ public static class MultiAgentOrchestrator
         using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
         sessionSpan?.SetTag("mode", "swarm");
         sessionSpan?.SetTag("goal_id", goalId);
+
+        // Size-tiered delegation retention scope: spilled raw + the cumulative lead-cap counter are
+        // keyed off this id so a whole swarm session shares one retention dir and budget.
+        var delegationScope = goalId ?? sessionSpan?.Id ?? DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        DelegationStore.SetScope(delegationScope);
+        DelegationStore.ResetScope(delegationScope);
         sessionSpan?.SetTag("continuous", continuous);
         sessionSpan?.SetTag("max_iterations", maxOrchestratorIterations);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
@@ -267,19 +276,22 @@ public static class MultiAgentOrchestrator
             }
 
             string compacted = "";
+            DelegationStore.Retained? retained = null;
             await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
             {
-                compacted = await ResultCompactor.CompactAsync(
+                (compacted, retained) = await DelegationStore.TierResultAsync(
+                    DelegationStore.CurrentScope,
+                    agentName,
                     rawResult,
-                    completionStatus: status,
-                    completionSummary: summary,
-                    completionArtifacts: artifacts,
-                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: CompactionClient,
-                    chatOptions: compactionChatOptions);
+                    status,
+                    summary,
+                    artifacts,
+                    CompactionClient,
+                    compactionChatOptions);
             });
 
-            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
 
             if (prodMode)
                 compacted = $"[[START_AGENT_TURN]]{agentName}[[END_AGENT_NAME]]{compacted}[[END_AGENT_TURN]]";
@@ -536,6 +548,7 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
+            LocalAiFunctions.ReadDelegationTool,
             ..orchestratorFilteredTools
         ];
 

@@ -210,8 +210,11 @@ public class App
                         $"Max Orchestrator Iterations: {limits.MaxOrchestratorIterations}, Max Stuck Count: {limits.MaxStuckCount}, " +
                         $"Max Sub-Agent Iterations: {limits.MaxSubAgentIterations}, Max Sub-Task Retries{limits.MaxSubTaskRetries}, " +
                         $"Progress Entry Budget: {limits.ProgressEntryBudget}, Progress Log Total Budget: {limits.ProgressLogTotalBudget}");
-        
-        
+
+        // Startup prune of spilled sub-agent delegation raw older than the retention window
+        // (size-tiered context passing). Best-effort; never blocks startup.
+        try { MuxSwarm.Utils.DelegationStore.PruneOldRetention(limits.DelegationRetentionDays); } catch { }
+
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
