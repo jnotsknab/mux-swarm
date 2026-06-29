@@ -370,6 +370,39 @@ public static class SingleAgentOrchestrator
         MuxConsole.WriteSuccess($"Applied {accepted.Count} memory write-back(s) to BRAIN/MEMORY.");
     }
 
+    // /fix [symptom]: collect a live runtime snapshot and have the active model diagnose what is
+    // wrong + propose ordered, copy-pasteable repair steps (favouring Mux's own /refresh, /proxy,
+    // /reloadskills, /provider, /setup, /sandbox commands). Read-only: it diagnoses, never mutates.
+    private static async Task HandleFixAsync(
+        string metaCmd,
+        IChatClient? client,
+        ChatOptions? chatOptions,
+        CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /fix.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var symptom = parts.Length > 1 ? parts[1].Trim() : null;
+
+        string diagnosis = "";
+        await MuxConsole.WithSpinnerAsync("Diagnosing Mux runtime", async () =>
+        {
+            diagnosis = await SystemDiagnostics.DiagnoseAsync(symptom, client, chatOptions, ct);
+        });
+
+        if (string.IsNullOrWhiteSpace(diagnosis))
+        {
+            MuxConsole.WriteMuted("No diagnosis produced. Try /status, /tools, or /proxy status for raw state.");
+            return;
+        }
+
+        MuxConsole.WritePanel("/fix - diagnosis & repair plan", diagnosis);
+    }
+
     public static async Task ChatAgentAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
@@ -830,6 +863,85 @@ public static class SingleAgentOrchestrator
                          "an AgentName and a Task string. Tip: Execute once with random string if no agent names are known to return err output with available agents"
         );
 
+        // Non-blocking delegation: fire one or more sub-agent tasks into the BACKGROUND and return
+        // their job ids immediately so YOU (the lead) keep working while they run. Poll/collect with
+        // check_delegations. This is the async counterpart to delegate_to_agent_lite/delegate_parallel
+        // (which block until the children finish) -- use it when you have other work to do meanwhile.
+        var delegateAsyncTool = AIFunctionFactory.Create(
+            method: async (
+                [Description("One or more agent assignments to run in the background simultaneously. Each has an AgentName and a Task.")]
+                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
+            ) =>
+            {
+                if (chatClientFactory == null)
+                    return "[Error] Cannot create chat client for agent, chat client is null";
+                var list = assignments?.ToList() ?? new();
+                if (list.Count == 0)
+                    return "[delegate_async] No assignments given. Provide a list of {AgentName, Task}.";
+
+                var launched = new List<string>();
+                var failed = new List<string>();
+                foreach (var req in list)
+                {
+                    var job = await DetachedRunner.LaunchAsync(
+                        req.AgentName, req.Task, chatClientFactory, Models,
+                        StdinCancelMonitor.Instance?.ActiveTurnToken ?? cancellationToken);
+                    if (job is null) failed.Add(req.AgentName);
+                    else launched.Add($"{job.Id} <- {req.AgentName}");
+                }
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[delegate_async] Launched {launched.Count} background job(s); they run while you continue.");
+                foreach (var l in launched) sb.AppendLine($"  {l}");
+                if (failed.Count > 0)
+                    sb.AppendLine($"  Could not launch: {string.Join(", ", failed)} (unknown agent?)");
+                sb.AppendLine("Keep working. Call check_delegations (optionally with these ids) to poll status and collect results.");
+                return sb.ToString();
+            },
+            name: "delegate_async",
+            description: "Delegate one or more sub-tasks to background agents and return their job ids IMMEDIATELY " +
+                         "(non-blocking) so you keep working while they run. Each assignment is an AgentName + Task. " +
+                         "Unlike delegate_parallel (which blocks until done), this returns at once; use check_delegations " +
+                         "to poll status and collect finished results. Prefer this when you have other work to do meanwhile."
+        );
+
+        // Poll + collect background delegations launched via delegate_async (and any /background jobs).
+        var checkDelegationsTool = AIFunctionFactory.Create(
+            method: (
+                [Description("Optional job id (e.g. bg3) to check just one; omit to list ALL background jobs.")]
+                string? jobId
+            ) =>
+            {
+                var jobs = DetachedRunner.Jobs();
+                if (!string.IsNullOrWhiteSpace(jobId))
+                    jobs = jobs.Where(j => j.Id.Equals(jobId.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (jobs.Count == 0)
+                    return string.IsNullOrWhiteSpace(jobId)
+                        ? "[check_delegations] No background jobs. Launch some with delegate_async."
+                        : $"[check_delegations] No background job with id '{jobId}'.";
+
+                var sb = new System.Text.StringBuilder();
+                int running = jobs.Count(j => j.Status == DetachedStatus.Running);
+                sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
+                foreach (var j in jobs)
+                {
+                    sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
+                    if (j.Status != DetachedStatus.Running && !string.IsNullOrWhiteSpace(j.Result))
+                    {
+                        var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
+                        sb.AppendLine($"  result:\n{r}");
+                    }
+                }
+                if (running > 0) sb.AppendLine("Some jobs are still running; call check_delegations again later to collect them.");
+                return sb.ToString();
+            },
+            name: "check_delegations",
+            description: "Poll the status of background delegations launched via delegate_async (and /background jobs). " +
+                         "Pass a job id to check one, or omit to list all. Returns each job's status and, for finished jobs, " +
+                         "its full result so you can collect work you fired earlier without blocking."
+        );
+
         var singleAgentTools = (IList<AITool>)
         [
             listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool,
@@ -859,6 +971,16 @@ public static class SingleAgentOrchestrator
         // /sub, /psub, /ultra, /giga, and team-lead; swarm/pswarm get it via the orchestrator lists.
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
             singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
+
+        // Non-blocking delegation: when this lead can spawn sub-agents, also grant the async pair
+        // (delegate_async fires work into the background + returns at once; check_delegations polls/
+        // collects). Optional alongside the blocking tools -- the model chooses to use them when it
+        // has other work to do while children run. Same gate as read_delegation.
+        if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
+        {
+            singleAgentTools.Add(delegateAsyncTool);
+            singleAgentTools.Add(checkDelegationsTool);
+        }
 
         // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and
         // build the member specialist registry so member dispatch (ExecuteParallelWorker) can
@@ -1678,6 +1800,11 @@ public static class SingleAgentOrchestrator
                 {
                     await HandleHealAsync(metaCmd, client, conversationHistory,
                         resolvedModelId, chatClientFactory, compactionChatOptions, cancellationToken);
+                }
+                else if (metaCmd.Equals("/fix", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/fix ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleFixAsync(metaCmd, client, compactionChatOptions, cancellationToken);
                 }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {

@@ -35,12 +35,12 @@ Top-level fields:
 ### mcpServers
 
 Each key is a server name. Two transport types: `stdio` and `http`. A top-level
-`mcpConnectTimeoutSeconds` (default 60) bounds how long each server's connect + initial
+`mcpConnectTimeoutSeconds` (default 90) bounds how long each server's connect + initial
 tool-list may take before it is skipped; a slow cold-starting server (npx download, venv build,
 remote HTTP MCP) that exceeds it is reported as an error rather than blocking startup forever.
 
 ```json
-"mcpConnectTimeoutSeconds": 60
+"mcpConnectTimeoutSeconds": 90
 ```
 
 ```json
@@ -458,7 +458,7 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "compactionMaxMessageChars": 2500,
   "subAgentSummaryMode": "auto",
   "delegationRetentionDays": 30,
-  "activityTimeoutSeconds": 43200,
+  "activityTimeoutSeconds": 3600,
   "maxToolIterationsPerTurn": 1000,
   "maxAutoContinuesPerTurn": 3
 }
@@ -475,7 +475,7 @@ Any key may be omitted; missing keys inherit the built-in default shown above.
 - `contextInjection` - `full` (default) injects full prior context; other modes trim it.
 - `subAgentSummaryMode` - how mid-size sub-agent results are compacted: `auto`/`llm` (LLM summary + extracted refs) or `extractive` (no LLM call, money-saving).
 - `delegationRetentionDays` - days spilled sub-agent raw outputs are kept under `<sandbox>/delegations` (or `%LOCALAPPDATA%/Mux-Swarm/delegations`) before a startup prune. 0 disables pruning.
-- `activityTimeoutSeconds` - deadman's-switch window for a single streaming response (reset on every chunk) and the OpenAI client HTTP NetworkTimeout. NOT an idle-between-turns timeout. Default 43200 (12h) so long tool-running turns and slow providers are tolerated.
+- `activityTimeoutSeconds` - deadman's-switch window for a single streaming response (reset on every chunk) and the OpenAI client HTTP NetworkTimeout. NOT an idle-between-turns timeout. Default 3600 (1h) so long tool-running turns and slow providers are tolerated.
 - `maxToolIterationsPerTurn` - max model->tool round-trips per turn before the invocation middleware stops looping (<= 0 = unlimited).
 - `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
 
@@ -986,6 +986,13 @@ The lead pulls detail on demand from a spilled result with the **`read_delegatio
 `<sandbox>/delegations/<scope>/` (or `%LOCALAPPDATA%/Mux-Swarm/delegations/` when the sandbox
 is unwritable) and is pruned after `delegationRetentionDays`. All thresholds scale off the
 existing `executionLimits` budgets; the only dedicated knob is `delegationRetentionDays`.
+
+**Blocking vs non-blocking delegation.** `delegate_to_agent_lite` and `delegate_parallel`
+block the lead until the children finish. The optional `delegate_async` + `check_delegations`
+pair instead fires sub-agents into the **background** and returns job ids immediately, so the
+lead keeps working and collects results later by polling `check_delegations` (background jobs
+also appear in the `\` Agent View and are managed by `/background`). The model chooses which
+to use; non-blocking is never forced.
 
 ## Workflow Engine
 

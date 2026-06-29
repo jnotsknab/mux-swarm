@@ -1879,8 +1879,8 @@ public class App
     // healthy stdio spawn flaky). Non-positive / unset falls back to the AppConfig default (60s).
     private static int McpConnectTimeoutSeconds(AppConfig config)
     {
-        int v = config?.McpConnectTimeoutSeconds ?? 60;
-        return v <= 0 ? 60 : Math.Max(5, v);
+        int v = config?.McpConnectTimeoutSeconds ?? 90;
+        return v <= 0 ? 90 : Math.Max(5, v);
     }
 
     private static async Task<McpInitResult?> ConnectMcpServerAsync(string name, McpServerConfig serverConfig, string baseDir, AppConfig config)

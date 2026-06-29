@@ -115,15 +115,15 @@ public class ConfigModelTests
     [Fact]
     public void ExecutionLimits_Defaults_ActivityTimeoutIsTwelveHours()
     {
-        // QOL default: a long idle/stall tolerance (12h) so long tool-running turns and slow
+        // QOL default: a generous stall tolerance (1h) so long tool-running turns and slow
         // providers are not torn down mid-turn. Pin it so a future edit doesn't silently shrink it.
-        Assert.Equal(43200, new ExecutionLimits().ActivityTimeoutSeconds);
+        Assert.Equal(3600, new ExecutionLimits().ActivityTimeoutSeconds);
     }
 
     [Fact]
-    public void AppConfig_Defaults_McpConnectTimeoutIsSixtySeconds()
+    public void AppConfig_Defaults_McpConnectTimeoutIsNinetySeconds()
     {
-        Assert.Equal(60, new AppConfig().McpConnectTimeoutSeconds);
+        Assert.Equal(90, new AppConfig().McpConnectTimeoutSeconds);
     }
 
     [Fact]

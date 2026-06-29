@@ -41,6 +41,7 @@ internal static class TuiCommands
         new("/handoff",      "Write a cold-resume handoff doc (/handoff [steering|path.md])", Scope.SessionOnly),
         new("/heal",         "Review session, propose BRAIN/MEMORY write-backs (/heal [deep] [steering])", Scope.SessionOnly),
         new("/reflect",      "Alias of /heal - self-review + memory write-backs (/reflect [deep])", Scope.SessionOnly),
+        new("/fix",          "Diagnose + propose repairs for a misbehaving Mux subsystem (/fix [what is wrong])", Scope.SessionOnly),
         new("/wipe",         "Wipe session context, start fresh", Scope.SessionOnly),
         new("/tokens",       "Show context/token usage", Scope.SessionOnly),
         new("/context",      "Show context/token usage", Scope.SessionOnly),
