@@ -4,6 +4,7 @@ using MuxSwarm.Utils;
 
 namespace MuxSwarm.Tests.Tests;
 
+[Collection("ConsoleState")]
 public class UltraReasoningTests
 {
     // ── UltraConfig defaults ───────────────────────────────────────────

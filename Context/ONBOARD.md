@@ -32,13 +32,22 @@ Note for recommended setup posture and onboarding you can reference the setup gu
 - `/swarm` -- multi-agent orchestration where a coordinator delegates to specialist agents (web, code, analysis, memory, system ops)
 - `/pswarm` -- parallel swarm for concurrent batch dispatch of independent subtasks
 - `/stateless` -- stateless single-agent loop for one-off tasks with no session persistence
+- `/teams` / `/createteam` -- named multi-agent teams with a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and an inter-agent mailbox
+- `/giga` -- Giga mode: grants a single agent on-the-fly team and workflow orchestration
+- `/detach` / `/attach` -- park a live session in the background and re-attach later
 - `/workflow` -- deterministic replayable pipelines defined as JSON files
 - `--continuous` -- autonomous loop execution with configurable timing
 - `--daemon` -- background trigger loops (file watch, cron, status checks, messaging bridges)
 - `--serve` -- embedded web UI accessible from any browser on the network
 
-**Tool Integration (MCP)**
-The runtime is MCP-native (Model Context Protocol). Default MCP servers include filesystem access, memory (knowledge graph), web search (Brave Search), fetch, ChromaDB (vector store), and a Python REPL. Per-agent MCP scoping controls which tools each role can access.
+**Tool Integration (MCP + native)**
+The runtime is MCP-native (Model Context Protocol). Filesystem and Shell/REPL now run as fast **native in-process tools** (no external subprocess) with per-session isolation; other default servers include memory (knowledge graph), web search (Brave Search), fetch, and ChromaDB (vector store). Per-agent scoping controls which tools each role can access.
+
+**Subscription Sign-In**
+Operators can sign in to a subscription provider -- Claude, Codex, Kimi, xAI, or Antigravity -- with `/login` (browser OAuth, no API keys to paste). A bundled CLIProxyAPI sidecar is downloaded and managed automatically. `/ping` and `/proxy status|update` cover diagnostics.
+
+**Execution Sandbox**
+Native shell and Python execution can be confined to a per-session sandbox via `/sandbox` -- backends include Docker, Podman, nerdctl, gVisor, and Kata microVMs, with an optional deny-by-default network allowlist.
 
 **Skills System**
 Skills are reusable operational modules agents discover and load at runtime. Operators can create custom skills, reload mid-session, and scope per-agent.
@@ -57,7 +66,7 @@ Telegram, Discord, and Signal bridges let operators interact with agents from an
 `--serve` starts an embedded web interface with streaming responses, markdown rendering, file browser, drag-drop upload, theme engine, voice input, and mobile support. Accessible on LAN and Tailscale. Zero dependencies, single HTML file.
 
 **Security Posture**
-Filesystem allowlist enforcement, least-privilege per-agent MCP scoping, prompt- and config-level role separation, deterministic completion signaling, session-based provenance, configurable Docker execution, environment-variable secret handling, hook execution gating, and daemon trigger isolation.
+Filesystem allowlist enforcement plus **per-tool security modes** -- filesystem `standard`/`secure`/`lax`/`none` and shell/REPL `off`/`prompt`/`allowlist` (set during `/setup`, editable anytime). Least-privilege per-agent scoping, prompt- and config-level role separation, deterministic completion signaling, session-based provenance, the pluggable execution sandbox above, environment-variable secret handling, hook execution gating, and daemon trigger isolation.
 
 **OS Service Registration**
 The runtime can register as a system service (`--register`) that starts on boot across Windows (Task Scheduler), Linux (systemd), and macOS (launchd). Combined with `--watchdog` and daemon status triggers, this creates a three-layer resilience stack.
@@ -144,12 +153,12 @@ Note their preference in MEMORY.md.
 Ask what security posture they want, offering these choices:
 - Relaxed (trust agents to operate freely within allowed paths)
 - Standard (agents ask before destructive operations)
-- Strict (plan mode always on and Docker execution for scripts)
+- Strict (plan mode always on, gated execution, sandboxed scripts)
 
 Based on their answer:
-- **Relaxed**: Note in BRAIN.md that agents should execute without excessive confirmation. Plan mode off.
-- **Standard**: Note agents should confirm before file deletions, system commands, or operations outside the sandbox. Plan mode optional.
-- **Strict**: Note in BRAIN.md that plan mode should always be active. Recommend Docker execution in MEMORY.md. Mention they can enable it with `/dockerexec`.
+- **Relaxed**: Note in BRAIN.md that agents should execute without excessive confirmation. Plan mode off. Filesystem `standard`, shell `off` (the `/setup` defaults) are a fine match.
+- **Standard**: Note agents should confirm before file deletions, system commands, or operations outside the sandbox. Plan mode optional. Suggest filesystem `secure` (writes elevate to a prompt) and shell `prompt` or `allowlist` -- both are set in `/setup` or via `/set filesystem.securityMode` / `/set shell.securityMode`.
+- **Strict**: Note in BRAIN.md that plan mode should always be active. Recommend filesystem `secure` + shell `prompt`, and confining script execution to a sandbox via `/sandbox` (Docker/Podman/gVisor/Kata). Mention these are configured in `/setup` and adjustable anytime.
 
 ### Phase 6: Anything Else + Discover More Features
 
@@ -160,6 +169,11 @@ If the operator responds with "Nothing else" or an empty answer, proceed. If the
 Based on the operator's experience level from Phase 1, present a curated selection of features they have not yet been told about. Do not repeat features already covered in earlier phases (interfaces, bridges, daemon basics, security). The goal is to make operators aware of capabilities they might not know exist, and let them opt in to learning more.
 
 **For developers**, ask which of these features interest them (allow multiple selections):
+- Named teams + Kanban (coordinated multi-agent work with a shared task board)
+- Giga mode (let one agent spawn teams and workflows on the fly)
+- Subscription sign-in (`/login` to Claude/Codex/Kimi via browser -- no API keys)
+- Execution sandbox (`/sandbox` -- run scripts in Docker/Podman/gVisor/Kata microVMs)
+- Editor integration (Zed Agent Client Protocol via `--acp`)
 - Workflow engine (JSON pipelines for repeatable tasks)
 - Event hooks (run scripts on agent lifecycle events)
 - Custom agents (add your own specialist roles to the swarm)
@@ -168,14 +182,18 @@ Based on the operator's experience level from Phase 1, present a curated selecti
 - Parallel swarm (concurrent batch dispatch)
 
 **For power users**, ask which of these features interest them (allow multiple selections):
+- Named teams + Kanban (coordinate several agents on a shared task board)
+- Subscription sign-in (`/login` -- use your Claude/Codex/Kimi plan, no API keys)
+- Execution sandbox (`/sandbox` -- Docker/Podman/gVisor/Kata isolation + network allowlist)
+- Background jobs + detach (`/background`, `/detach` -- park work and keep going)
 - File watchers (trigger agents when files change)
 - Cron jobs (schedule recurring agent tasks)
 - Parallel swarm (run multiple tasks at once)
 - OS service registration (start on boot)
-- Docker execution (sandbox agent scripts)
 - Workflow engine (JSON pipelines for repeatable tasks)
 
 **For casual users**, ask which of these features interest them (allow multiple selections):
+- Subscription sign-in (`/login` -- connect your Claude or ChatGPT plan, no API keys)
 - Continuous mode (agents keep working autonomously)
 - Web UI themes and file browser
 - Messaging bridges (talk to agents from your phone)

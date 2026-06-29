@@ -10,12 +10,43 @@ public static class LocalAiFunctions
     public static AIFunction SleepTool = null!;
     public static AIFunction MuxRefreshTool = null!;
     public static AIFunction AskUserTool = null!;
+    public static AIFunction ReadDelegationTool = null!;
 
     private static readonly SemaphoreSlim _askUserGate = new(1, 1);
 
     static LocalAiFunctions()
     {
         CreateSkillFuncs();
+        CreateReadDelegationTool();
+    }
+
+    /// <summary>
+    /// read_delegation: surgical reader over a sub-agent delegation whose full raw output was spilled
+    /// to disk and returned to the lead only as a pointer/handle (size-tiered context passing). Lets
+    /// the lead pull specific detail on demand instead of carrying the whole blob in context.
+    /// </summary>
+    private static void CreateReadDelegationTool()
+    {
+        ReadDelegationTool = AIFunctionFactory.Create(
+            method: (
+                [System.ComponentModel.Description("The d:Agent#N handle from a delegation pointer (e.g. d:WebAgent#3).")]
+                string handle,
+                [System.ComponentModel.Description("Optional regex/substring to grep within the raw output; returns matching lines plus a small context window.")]
+                string? pattern,
+                [System.ComponentModel.Description("Optional: return only the first N lines (used when no pattern is given).")]
+                int? head,
+                [System.ComponentModel.Description("Optional: return only the last N lines (used when no pattern is given).")]
+                int? tail
+            ) =>
+            {
+                if (string.IsNullOrWhiteSpace(handle))
+                    return "[read_delegation] a handle is required (e.g. d:WebAgent#3 from a delegation pointer).";
+                return DelegationStore.ReadSlice(handle, pattern, head, tail, DelegationStore.ReadMaxChars);
+            },
+            name: "read_delegation",
+            description: "Read the FULL raw output of a prior sub-agent delegation that was spilled to disk and " +
+                         "returned to you only as a pointer/handle. Use to pull specific detail on demand without " +
+                         "loading everything: pass a 'pattern' to grep, or 'head'/'tail' for line slices. Output is bounded.");
     }
 
     public static AIFunction CreateAnalyzeImageTool(
@@ -96,13 +127,21 @@ public static class LocalAiFunctions
     private static void CreateSkillFuncs()
     {
         ListSkillsTool = AIFunctionFactory.Create(
-            method: () =>
+            method: (
+                [System.ComponentModel.Description(
+                    "When true, include each skill's one-line description (more tokens). Default false returns names only.")]
+                bool withDescriptions = false
+            ) =>
             {
                 var skills = SkillLoader.GetSkillMetadata();
-                return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
+                return withDescriptions
+                    ? string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"))
+                    : string.Join("\n", skills.Select(s => $"- {s.Name}"));
             },
             name: "list_skills",
-            description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill."
+            description: "List available skill NAMES (cheap, names-only by default). Call this first to discover "
+                       + "what skills exist. Pass withDescriptions=true to also get each skill's one-line description, "
+                       + "or call read_skill <name> for a skill's full instructions."
         );
 
         ReadSkillTool = AIFunctionFactory.Create(
@@ -127,11 +166,25 @@ public static class LocalAiFunctions
         SleepTool = AIFunctionFactory.Create(
             method: async (
                 [System.ComponentModel.Description("Seconds to pause.")]
-                int seconds
+                int seconds,
+                // Bound automatically by the function-invocation middleware to the turn's token, so
+                // Esc (the EscapeKeyListener cancels the turn CTS) interrupts the sleep instead of
+                // blocking until it elapses. Fallback: when no cancellable token is supplied (default
+                // CancellationToken.None), this behaves exactly as the prior uninterruptible delay.
+                CancellationToken cancellationToken = default
                 ) =>
             {
-                await Task.Delay(TimeSpan.FromSeconds(seconds));
-                return $"Slept for {seconds} seconds.";
+                if (seconds <= 0) return "Slept for 0 seconds.";
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
+                    return $"Slept for {seconds} seconds.";
+                }
+                catch (OperationCanceledException)
+                {
+                    // Turn cancelled mid-sleep: report it cleanly rather than throwing a raw error.
+                    return $"Sleep of {seconds}s interrupted (cancelled).";
+                }
             },
             name: "system_sleep",
             description: "Pause execution for N minutes without consuming tokens. Use between polling cycles, while waiting for long-running processes, or for scheduled intervals."

@@ -613,4 +613,183 @@ public class TuiVimFeatureTests
         Assert.False(TuiConfigCommands.NeedsInteractive("/set renderMode tui")); // full form -> direct
         Assert.True(TuiConfigCommands.NeedsInteractive("/newagent"));
     }
+
+    // --- v0.12.0 M1-polish + bracketed paste (g12.03) ------------------------
+
+    [Fact]
+    public void LineEditor_InsertText_KeepsNewlinesAsMultilineCompose()
+    {
+        var ed = new LineEditor();
+        ed.InsertText("first line\nsecond line\nthird");
+        // Multi-line paste lands as a single compose buffer with literal newlines, cursor at end.
+        Assert.Equal("first line\nsecond line\nthird", ed.Buffer);
+        Assert.Equal(ed.Buffer.Length, ed.Cursor);
+        // Renders as three input rows (not a truncated single line).
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert);
+        Assert.Equal(3, rows.Count);
+    }
+
+    [Fact]
+    public void LineEditor_InsertText_NormalizesCrlf()
+    {
+        var ed = new LineEditor();
+        ed.InsertText("a\r\nb\rc");
+        Assert.Equal("a\nb\nc", ed.Buffer);
+    }
+
+    [Fact]
+    public void InputRows_Highlight_ShadesEveryRow()
+    {
+        // highlight=false (default) is unchanged; highlight=true wraps each row in the InputBg band.
+        var plain = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: false);
+        Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
+        var shaded = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: true);
+        Assert.All(shaded, r => Assert.Contains(TuiComponents.InputBg, r));
+        // Highlighting must not change the visible text.
+        Assert.Contains("hello", TuiMarkup.Plain(shaded[0]));
+    }
+
+    [Fact]
+    public void ToolResultPanel_Markdown_RendersHeadingNotRaw()
+    {
+        var rows = TuiComponents.ToolResultPanel("delegate", "### BATCH DONE\nbody text",
+            error: false, width: 60, expanded: true, markdown: true);
+        var plain = TuiMarkup.Plain(string.Join("\n", rows));
+        Assert.Contains("BATCH DONE", plain);
+        Assert.DoesNotContain("### BATCH DONE", plain);   // ATX hashes consumed by markdown rendering
+        // markdown=false leaves the raw text intact (old behavior).
+        var rawRows = TuiComponents.ToolResultPanel("delegate", "### BATCH DONE\nbody text",
+            error: false, width: 60, expanded: true, markdown: false);
+        Assert.Contains("### BATCH DONE", TuiMarkup.Plain(string.Join("\n", rawRows)));
+    }
+
+    [Fact]
+    public void DelegationSummary_IsOneCollapsibleLine()
+    {
+        string s = TuiComponents.DelegationSummary("Orchestrator", "WebAgent",
+            "Do a very long task prompt that should be truncated in the collapsed summary row so it stays scannable");
+        var plain = TuiMarkup.Plain(s);
+        Assert.Contains("Orchestrator", plain);
+        Assert.Contains("WebAgent", plain);
+        Assert.Contains("ctrl+e expand", plain);
+        Assert.DoesNotContain("\n", s);   // single line
+    }
+
+    [Fact]
+    public void InputRows_Highlight_SubtleRail_FillsRowWidth()
+    {
+        // Option B (g12.04 follow-up): each shaded row carries a thin accent left-rail glyph and a
+        // FAINT shade that fills the full field width (the earlier text-width-clipped band looked
+        // broken). The faint colour keeps a full-width fill from reading as a heavy strip.
+        var rows = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: true);
+        var first = rows[0];
+        Assert.Contains("\u2502", TuiMarkup.Plain(first));        // left rail present
+        Assert.Contains(TuiComponents.InputBg, first);            // faint shade present
+        // The field row fills the configured width (rail + shaded body span the whole row).
+        Assert.Equal(120, TuiMarkup.MarkupWidth(first));
+        // highlight=false stays unshaded.
+        var plain = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: false);
+        Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
+    }
+
+    // --- g12.06 dynamic tool action labels ----------------------------------
+
+    [Theory]
+    [InlineData("ReplShellMcp_execute_command_async", "Running command")]
+    [InlineData("Filesystem_read_text_file", "Reading text file")]
+    [InlineData("analyze_image", "Analyzing image")]
+    [InlineData("Filesystem_write_file", "Writing file")]
+    [InlineData("delegate_parallel", "Dispatching parallel")]
+    [InlineData("ReplShellMcp_check_job_status", "Checking job status")]
+    public void ToolActionLabel_MapsVerbToGerund(string raw, string expected)
+    {
+        Assert.Equal(expected, ToolActionLabel.Describe(raw));
+    }
+
+    [Fact]
+    public void ToolActionLabel_UnknownVerb_HumanizesNeverRawId()
+    {
+        // An unmapped verb still yields a readable label (humanized), never the raw identifier.
+        string s = ToolActionLabel.Describe("notion_frobnicate_widget");
+        Assert.DoesNotContain("_", s);
+        Assert.False(string.IsNullOrWhiteSpace(s));
+        Assert.Equal(char.ToUpperInvariant(s[0]), s[0]);   // capitalized
+    }
+
+    [Fact]
+    public void ToolActionLabel_NullOrEmpty_FallsBackToWorking()
+    {
+        Assert.Equal("Working", ToolActionLabel.Describe(null));
+        Assert.Equal("Working", ToolActionLabel.Describe(""));
+        Assert.Equal("Working", ToolActionLabel.Describe("   "));
+    }
+
+    [Fact]
+    public void InputRows_AfterMultilineReset_CursorFlushLeft_NoResidualIndent()
+    {
+        // Send a multi-line buffer, then reset (as ReadLine does on submit). The next empty
+        // prompt must render the cursor flush at the prompt column - no leftover continuation
+        // gutter/indent from the prior multi-line compose.
+        var ed = new LineEditor();
+        ed.InsertText("alpha\nbeta\ngamma");
+        Assert.Equal(3, TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80).Count);
+        ed.Reset();
+        Assert.Equal(0, ed.Cursor);
+        Assert.Equal("", ed.Buffer);
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80);
+        Assert.Single(rows);
+        // The single empty row begins at the prompt lead (two spaces + prompt glyph), not a deeper
+        // continuation indent. Plain text starts with the prompt chevron after the 2-space lead.
+        string plain = TuiMarkup.Plain(rows[0]);
+        Assert.StartsWith("  \u203a", plain);   // "  >" prompt, flush
+    }
+
+    [Fact]
+    public void AgentView_Dashboard_MarksForegroundedAgentWithPin()
+    {
+        var av = new AgentView();
+        av.SetRows(new System.Collections.Generic.List<(string, string, string)>
+        {
+            ("CodeAgent", "working", TuiComponents.AgentTint("CodeAgent")),
+            ("WebAgent", "working", TuiComponents.AgentTint("WebAgent")),
+        }, System.DateTime.UtcNow);
+        av.Open();
+        // Distinctive pin marker (star + word) so the footer's "Enter foreground" hint never collides.
+        const string Pin = "\u2605 foreground";
+        // No foreground -> no pin tag anywhere.
+        var none = string.Join("\n", av.RenderDashboard(80, System.DateTime.UtcNow, 0));
+        Assert.DoesNotContain(Pin, TuiMarkup.Plain(none));
+        // Foreground WebAgent -> exactly that row carries the pin tag.
+        var rows = av.RenderDashboard(80, System.DateTime.UtcNow, 0, foregrounded: "WebAgent");
+        var webRow = rows.First(r => TuiMarkup.Plain(r).Contains("WebAgent"));
+        Assert.Contains(Pin, TuiMarkup.Plain(webRow));
+        var codeRow = rows.First(r => TuiMarkup.Plain(r).Contains("CodeAgent"));
+        Assert.DoesNotContain(Pin, TuiMarkup.Plain(codeRow));
+    }
+
+    // --- g12.11 per-user shuffled thinking quips -----------------------------
+
+    [Fact]
+    public void ThinkingQuips_Shuffle_DeterministicPerSeed_SameElements()
+    {
+        string[] pool = { "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot" };
+        var a = ThinkingIndicator.Shuffle(pool, 1234);
+        var b = ThinkingIndicator.Shuffle(pool, 1234);
+        // Same seed -> identical order (deterministic, so it is stable per user across runs).
+        Assert.Equal(a, b);
+        // Shuffle is a permutation: same multiset of elements, none lost/added.
+        Assert.Equal(pool.OrderBy(x => x), a.OrderBy(x => x));
+        // The source array is not mutated.
+        Assert.Equal("Alpha", pool[0]);
+    }
+
+    [Fact]
+    public void ThinkingQuips_Shuffle_DifferentSeeds_DifferentOrder()
+    {
+        string[] pool = { "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel" };
+        var a = ThinkingIndicator.Shuffle(pool, 1);
+        var b = ThinkingIndicator.Shuffle(pool, 999983);
+        // Two different users (seeds) get different rotations (vanishingly unlikely to collide).
+        Assert.NotEqual(a, b);
+    }
 }

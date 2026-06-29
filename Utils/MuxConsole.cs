@@ -21,6 +21,22 @@ public static partial class MuxConsole
     public static bool StdioMode { get; set; } = false;
 
     /// <summary>
+    /// True while an ACP (--acp) adapter session owns stdout. ACP and stdio are mutually
+    /// exclusive transports: when AcpActive is set, structured events are routed to
+    /// <see cref="AcpSink"/> instead of being written as NDJSON to stdout (which is reserved
+    /// for ACP JSON-RPC). Off the --acp path this is always false and every emit path is
+    /// byte-identical to before.
+    /// </summary>
+    public static bool AcpActive { get; set; } = false;
+
+    /// <summary>
+    /// Optional sink that receives structured events (type + fields) INSTEAD of the NDJSON
+    /// stdout writer while an ACP session is active. The ACP adapter installs this to
+    /// translate Mux events into ACP session/update notifications. Null off --acp.
+    /// </summary>
+    public static Action<string, IReadOnlyDictionary<string, object?>>? AcpSink { get; set; }
+
+    /// <summary>
     /// Interactive render layer (v0.11.0). This is orthogonal to <see cref="StdioMode"/>:
     /// stdio/serve always emits NDJSON and short-circuits BEFORE any render-mode branch,
     /// so the machine/web contract is byte-identical regardless of this value.
@@ -141,6 +157,31 @@ public static partial class MuxConsole
 
     private static void EmitJson(string type, object? data = null)
     {
+        // ACP transport owns stdout (pure JSON-RPC), so structured events are diverted to the
+        // ACP sink instead of being written as an NDJSON line. The 'type' field is implicit in
+        // the (type, fields) pair handed to the sink; only the extra fields are forwarded.
+        if (AcpSink is { } sink)
+        {
+            var fields = new Dictionary<string, object?>();
+            if (data is Dictionary<string, object?> sdict)
+            {
+                foreach (var kvp in sdict)
+                    fields[kvp.Key] = kvp.Value;
+            }
+            else if (data is not null)
+            {
+                fields["message"] = data;
+            }
+            sink(type, fields);
+            return;
+        }
+
+        // ACP transport is active but its sink is not yet installed (startup events before
+        // AcpServer.RunAsync wires it up). stdout is reserved for ACP JSON-RPC, so these
+        // pre-session NDJSON frames are dropped rather than written.
+        if (AcpActive)
+            return;
+
         var payload = new Dictionary<string, object?> { ["type"] = type };
         if (data is Dictionary<string, object?> dict)
         {
@@ -704,13 +745,20 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode)
+            {
                 // agent key is added only when non-null so single-agent stream frames are
                 // byte-identical; parallel callers pass the specialist name so the web app
                 // can demultiplex concurrent sub-agent streams. (Dictionary entries are not
                 // covered by WhenWritingNull, so the key must be omitted explicitly.)
-                EmitJson("stream", agentName is null
+                // The reasoning flag is attached ONLY under the ACP adapter so it can split
+                // agent_message_chunk vs agent_thought_chunk; off --acp the NDJSON contract is
+                // unchanged (AcpActive is always false there).
+                var streamFields = agentName is null
                     ? D(("text", text))
-                    : D(("text", text), ("agent", agentName)));
+                    : D(("text", text), ("agent", agentName));
+                if (AcpActive && muted) streamFields["reasoning"] = true;
+                EmitJson("stream", streamFields);
+            }
             else if (ViaDriver)
                 // Live-region TUI: feed the chunk to the driver, which commits complete
                 // lines into scrollback and shows the partial tail live above the footer. The
@@ -865,6 +913,17 @@ public static partial class MuxConsole
             if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
         });
+    }
+
+    /// <summary>
+    /// Structured signal for the size-tiered delegation engine: which posture a sub-agent result
+    /// took (inline | summary | pointer | pointer-stub | summary-fallback). Surfaced to the web app
+    /// / stdio via the JSON event stream; no-op visual side effect (the muted text line is written
+    /// separately by the caller).
+    /// </summary>
+    public static void EmitDelegationCompacted(string agent, int rawLen, string posture, string? handle)
+    {
+        EmitJson("delegation_compacted", D(("agent", agent), ("rawLen", rawLen), ("posture", posture), ("handle", handle)));
     }
 
     public static void WriteMuted(string message)

@@ -35,7 +35,10 @@ public static class ParallelSwarmOrchestrator
         string CompactedResult,
         string? Status,
         string? Summary,
-        string? Artifacts
+        string? Artifacts,
+        string? RawHandle = null,
+        string? RawPath = null,
+        int RawLen = 0
     );
 
     public record RetryState(int AttemptCount, string? LastFailureReason);
@@ -171,6 +174,11 @@ public static class ParallelSwarmOrchestrator
         uint sessionRetention = 10,
         CancellationToken cancellationToken = default)
     {
+        // Merge native tools (Filesystem + shell/REPL) into the pool so per-agent + orchestrator
+        // ToolFilters gate them like MCP tools (swarm.json mcpServers "Filesystem"/"Shell").
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 
@@ -200,6 +208,11 @@ public static class ParallelSwarmOrchestrator
         using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
         sessionSpan?.SetTag("mode", "pswarm");
         sessionSpan?.SetTag("goal_id", goalId);
+
+        // Size-tiered delegation retention scope (see MultiAgentOrchestrator.RunAsync).
+        var delegationScope = goalId ?? sessionSpan?.Id ?? DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        DelegationStore.SetScope(delegationScope);
+        DelegationStore.ResetScope(delegationScope);
         sessionSpan?.SetTag("continuous", continuous);
         sessionSpan?.SetTag("max_parallelism", App.MaxDegreeParallelism);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "pswarm"));
@@ -286,7 +299,7 @@ public static class ParallelSwarmOrchestrator
 
                               ## Memory Policy (MANDATORY)
 
-                              **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+                              **At the START of your task:** Relevant BRAIN.md / MEMORY.md context is usually already injected above - read it first. If a stub points to a heavy store (`-> KG:<entity>` or `-> chroma:<coll>/<id>`), follow it with a DIRECT lookup, not a fresh re-search. For broader prior context not already provided, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip the delegation if context was already passed in your task instructions.
 
                               **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Pass it:
                               - Task name and outcome (success/failure)
@@ -405,6 +418,17 @@ public static class ParallelSwarmOrchestrator
                             chatClientFactory, agentModels, compactionClient, compactionChatOptions,
                             maxSubAgentIterations, prodMode, ct: cancellationToken);
                     }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        // Real turn cancellation propagates and unwinds the batch.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // One agent throwing (rate-limit/provider error) must not nuke the batch:
+                        // return its error string so siblings' results are preserved.
+                        return $"[ERROR {req.AgentName}] {ex.Message}";
+                    }
                     finally
                     {
                         semaphore.Release();
@@ -428,7 +452,7 @@ public static class ParallelSwarmOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", agentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -496,6 +520,7 @@ public static class ParallelSwarmOrchestrator
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
+            LocalAiFunctions.ReadDelegationTool,
             ..orchestratorFilteredTools
         ];
 
@@ -564,6 +589,11 @@ public static class ParallelSwarmOrchestrator
             MuxConsole.WriteRule();
         }
 
+        // Switch the docked-footer slash palette to the in-session (unified) command set so the
+        // session-agnostic meta commands (/background, /daemon, /kanban) and the slash-anywhere
+        // REPL hand-off are discoverable here, not just the top-level mode-launch set. The App
+        // menu re-asserts top-level scope when control returns, so this is self-restoring.
+        MuxConsole.EnableDockedFooter(topLevel: false);
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -585,6 +615,15 @@ public static class ParallelSwarmOrchestrator
                     MuxConsole.WriteSuccess("Exited from Parallel Swarm interface successfully!");
                     break;
                 }
+
+                // Session-agnostic meta commands (/background, /daemon, /kanban) + slash-anywhere
+                // REPL hand-off, mirroring the single-agent loop. Handled in place -> re-prompt;
+                // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
+                // the top-level menu runs it. Non-meta input falls through as a goal.
+                var disp = await MetaCommandDispatch.TryHandleAsync(
+                    input, chatClientFactory, agentModels, cancellationToken);
+                if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
+                if (disp == MetaCommandDispatch.Result.Handled) continue;
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
 
@@ -634,7 +673,8 @@ public static class ParallelSwarmOrchestrator
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken,
                     onExpand: () => MuxConsole.TuiExpandLatestInline(),
-                    onView: () => MuxConsole.TuiEnterViewMode());
+                    onView: () => MuxConsole.TuiEnterViewMode(),
+                    onAgents: () => MuxConsole.TuiEnterAgentView());
 
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
@@ -1175,19 +1215,21 @@ public static class ParallelSwarmOrchestrator
             }
         }
 
-        // Compact the result
-        string compacted = await ResultCompactor.CompactAsync(
+        // Compact the result (size-tiered: small inline, medium summary, large -> spill + pointer)
+        var (compacted, retained) = await DelegationStore.TierResultAsync(
+            DelegationStore.CurrentScope,
+            agentName,
             rawResult,
-            completionStatus: status,
-            completionSummary: summary,
-            completionArtifacts: artifacts,
-            charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-            chatClient: compactionClient,
-            chatOptions: compactionChatOptions);
+            status,
+            summary,
+            artifacts,
+            compactionClient,
+            compactionChatOptions);
 
         lock (_stateLock)
         {
-            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
         }
 
         if (prodMode)
@@ -1228,6 +1270,19 @@ public static class ParallelSwarmOrchestrator
         // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
+        // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
+        // Python worker + shell jobs are its own (disposed when the run ends). This is what makes
+        // parallel sub-agents isolated by construction - they never share one REPL/job table.
+        using var _replScope = MuxSwarm.Utils.NativeTools.ReplShellTools.BeginScope(
+            "sub_" + Guid.NewGuid().ToString("N")[..12]);
+
+        // Per-child cancellation source registered under this lane, so a scoped Esc on the
+        // foregrounded/expanded sub-agent cancels only this child (siblings keep their shared
+        // batch token). Whole-turn cancel still flows through the linked token. Auto-deregisters.
+        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
+        cancellationToken = _subCts.Token;
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "parallel_sub_agent");
@@ -1250,7 +1305,7 @@ public static class ParallelSwarmOrchestrator
 
             if (isFirstIteration)
             {
-                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask, App.Config.IsUsingDockerForExec);
+                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask);
 
                 var imageRegex = new Regex(
                     @"(?:\[image:\s*)?((?:[A-Za-z]:\\|\\\\|/)[\w\\\/.:\-\s]+\.(?:png|jpe?g|gif|webp))(?:\s*\])?",
@@ -1263,7 +1318,7 @@ public static class ParallelSwarmOrchestrator
                     var contentParts = new List<AIContent>();
                     string textPart = imageRegex.Replace(subTask, "").Trim();
                     contentParts.Add(new TextContent(
-                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart, App.Config.IsUsingDockerForExec)));
+                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart)));
 
                     foreach (Match match in imageMatches)
                     {

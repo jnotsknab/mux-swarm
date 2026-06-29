@@ -149,7 +149,7 @@ public static class Common
 
                     foreach (var server in agent.McpServers)
                     {
-                        if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                        if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                         {
                             include = true;
                             break;
@@ -227,7 +227,7 @@ public static class Common
 
             foreach (var server in servers)
             {
-                if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                 {
                     include = true;
                     break;
@@ -287,7 +287,7 @@ public static class Common
                 bool include = false;
                 foreach (var server in agent.McpServers)
                 {
-                    if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                    if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                     { include = true; break; }
                 }
                 if (!include && agent.ToolPatterns.Count > 0)

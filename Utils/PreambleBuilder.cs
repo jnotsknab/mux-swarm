@@ -6,7 +6,7 @@
 /// </summary>
 public static class PreambleBuilder
 {
-    public static string Build(string agentName, bool isUsingDockerForExec, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
+    public static string Build(string agentName, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
     {
         var preamble = "";
 
@@ -102,24 +102,77 @@ public static class PreambleBuilder
             ";
 
         var hasSkills = SkillLoader.GetSkillMetadata(agentName).Count > 0;
-        if (hasSkills && isUsingDockerForExec)
+        // Gate on the authoritative resolved sandbox state (SandboxRuntime), NOT the loose
+        // IsUsingDockerForExec intent bool: the latter can drift from the real backend (e.g. left true
+        // while sandbox.backend is "host"), which made this block claim an ACTIVE container + /work that
+        // does not exist. SandboxRuntime resolves the SAME sandbox config block the exec tools use.
+        if (MuxSwarm.Utils.NativeTools.SandboxRuntime.IsActive)
         {
-            preamble += "CRITICAL: You MUST call read_skill(\"docker-sandbox\") as your VERY FIRST action. "
-                + "No exceptions. Do not check directories or execute any code before reading docker-sandbox. "
-                + "After reading docker-sandbox, call list_skills to discover other available skills and read any that match your task.\n";
+            // Execution sandbox is ACTIVE: the native shell + Python tools transparently run inside the
+            // configured sandbox backend (one container/session). This is enforced by the tools, not by
+            // your cooperation - you cannot escape to the host by choosing a different tool. Artifacts you
+            // want to keep must land in the mounted work dir. Filesystem tools still operate on the host
+            // (within allowed paths), matching the docker-sandbox skill's "don't use the sandbox just to
+            // write files" rule.
+            preamble += "## Execution Sandbox (ACTIVE)\n"
+                + "Your shell commands and Python execution run INSIDE a sandbox container, not on the host. "
+                + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n";
+            // Surface the allowed-path mounts so the agent knows WHERE its project files are inside the
+            // sandbox and which are read-only (mapped from the filesystem security posture).
+            // Mounts come from the ACTIVE spec (only OCI backends bind /host/* paths; wrapper/custom
+            // backends have none), so the list always matches what is really mounted in this session.
+            var mounts = MuxSwarm.Utils.NativeTools.SandboxRuntime.Active?.Mounts;
+            if (mounts is { Count: > 0 })
+            {
+                preamble += "Host paths are mounted inside the sandbox as:\n";
+                foreach (var m in mounts)
+                    preamble += $"  {m.HostPath} -> {m.GuestPath}{(m.ReadOnly ? " (read-only)" : " (read-write)")}\n";
+                preamble += "Operate on your project under those /host/* paths; /work is scratch.\n";
+            }
+            if (hasSkills)
+                preamble += "For sandbox conventions (what runs where, output retrieval), you may read_skill(\"docker-sandbox\").\n";
         }
 
         preamble += $@"
         ## Memory Layers
-        You have access to multiple memory layers. Use the appropriate layer for the task:
+        You have a layered memory system. The two markdown layers are PRIMARY (compact, always-read,
+        usually auto-injected below); the graph + vector stores are heavy on-demand stores you reach
+        VIA stubs left in the primary layers. Use the right layer for the job:
 
-        1. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what exists.
-        2. **Vector DB (ChromaDB)** -- semantic search over prior knowledge. Use for recall without loading full histories.
-        3. **Knowledge Graph** -- entities, relationships, structured facts. Use for deterministic queries where relationships matter.
-        4. **BRAIN.md** -- shared context all agents inherit. Located at {PlatformContext.ContextDirectory}/BRAIN.md. Contains agent identity / name and conventions, communication preferences, and standing directives that apply across all sessions. If it exists, read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for anything related to your role, specialization, or task execution strategy.
-        5. **MEMORY.md** -- shared working context. Located at {PlatformContext.ContextDirectory}/MEMORY.md. Contains active projects, goals, environment details, and constraints. Reference this for task-relevant decisions. If it exists, read it before your first action.
-        6. **DOCS.md** -- system reference documentation. Located at {PlatformContext.ContextDirectory}/DOCS.md. Contains configuration formats, daemon trigger schemas, bridge setup instructions, CLI flags, and service registration details. Read this before modifying any config files. 
+        1. **BRAIN.md (PRIMARY -- BEHAVIORAL: how to act).** Located at {PlatformContext.ContextDirectory}/BRAIN.md.
+           Agent identity/name, conventions, communication preferences, standing directives, and -- importantly --
+           learned ANTI-PATTERNS, REFLEXES, and self-healing loopback (things you got wrong before and must not
+           repeat). Keep it as structured-freeform under canonical headers like `## Anti-Patterns` and `## Reflexes`.
+           Read it before your first action. Your agent-specific system prompt takes precedence over BRAIN.md for
+           your role/specialization/task strategy.
+        2. **MEMORY.md (PRIMARY -- FACTUAL: what is true + who the user is).** Located at {PlatformContext.ContextDirectory}/MEMORY.md.
+           Active projects, environment, constraints, and a dedicated `## About User / Conventions` section. Read it
+           before your first action; reference it for task-relevant decisions.
+        3. **Knowledge Graph (heavy, on-demand)** -- entities, relationships, structured facts. Reach it via stubs.
+        4. **Vector DB (ChromaDB) (heavy, on-demand)** -- semantic recall over prior knowledge without loading full histories. Reach it via stubs.
+        5. **Filesystem** -- artifacts, deliverables, intermediate outputs. Ground truth for what physically exists.
+        6. **DOCS.md** -- system reference (config formats, daemon schemas, bridge setup, CLI flags, service registration). Located at {PlatformContext.ContextDirectory}/DOCS.md. Read before modifying any config files.
+
+        ### Memory discipline (keep the loop tight)
+        - **Retrieve by judgement, not reflex:** pull from memory when a task plausibly has prior
+          context (a named project, a recurring workflow, a past decision); skip the lookup entirely
+          for self-contained/stateless turns. Do not re-read the same layer every turn out of habit.
+        - **Index-card rule:** the primary layers stay SMALL. When something is dense, write the full content to the
+          Knowledge Graph or ChromaDB and leave ONE LINE in BRAIN/MEMORY with a STRICT pointer -- `-> KG:<entity>` or
+          `-> chroma:<collection>/<id>`. Following a stub means a DIRECT lookup (e.g. open_nodes on that exact entity),
+          NEVER a fresh semantic re-search -- the stub already names the target, so re-searching just wastes a roundtrip.
+        - **Write-back triggers (do this proactively, do not wait to be told):**
+          - BRAIN.md when you think ""I have hit this before"" or ""I keep doing this wrong"" -- record the anti-pattern/reflex
+            so future you (and every other agent/instance that inherits BRAIN) does not repeat it.
+          - MEMORY.md when you learn a durable fact about the user or the working world.
+          Favor short, specific entries in the right layer over verbose journaling; skip transient noise and secrets.
+        - **Per-agent escape valve (convention, not forced):** agent-specific, high-volume lessons can live in
+          `BRAIN.<YourAgentName>.md` / `MEMORY.<YourAgentName>.md` (auto-injected when present), with a single stub left in
+          shared BRAIN (e.g. `- <Agent> anti-patterns -> BRAIN.<Agent>.md`). Keep UNIVERSAL lessons in shared BRAIN so
+          every agent inherits them.
+
         Priority order for conflicting instructions: agent system prompt > BRAIN.md > inferred context.
+        Source-of-truth for whether an ARTIFACT exists/is current: filesystem wins over any memory layer.
         ";
         if (continuousMode)
             preamble += @"
@@ -176,6 +229,13 @@ public static class PreambleBuilder
 
         Prefer sleep over rapid retries. A sleeping agent costs nothing.
 
+        ## File Reads & Context Hygiene (rule of thumb)
+        Filesystem read tools load a file's FULL contents into context. For large files, logs, or any
+        sizable codebase file, PREFER the shell/REPL tools (e.g. wc -l, sed -n, head/tail, rg, or a
+        python read) to inspect only what you need. Before using a Filesystem read tool on a file you
+        are unsure about, verify its size first (a quick shell stat / wc -l) - unless the user
+        explicitly says to ""read the file"". Reading a big file whole is the most common way to blow context.
+
         ## Filesystem Write Rules (STRICT)
         You MUST only write files to directories that are explicitly allowed.
 
@@ -201,6 +261,11 @@ public static class PreambleBuilder
         string? content = null;
         var brainPath = Path.Combine(PlatformContext.ContextDirectory, "BRAIN.md");
         var memPath = Path.Combine(PlatformContext.ContextDirectory, "MEMORY.md");
+        // Per-agent escape-valve files (memory-loop hardening): agent-specific BRAIN/MEMORY layered
+        // ON TOP of the shared ones. File-existence gated, so when absent the injected block is
+        // byte-identical to before. Reuses the same AutoInject mode gating as the shared files.
+        var agentBrainPath = Path.Combine(PlatformContext.ContextDirectory, $"BRAIN.{agentName}.md");
+        var agentMemPath = Path.Combine(PlatformContext.ContextDirectory, $"MEMORY.{agentName}.md");
         switch (AutoInject.Current)
         {
             case AutoInject.Mode.None:
@@ -209,10 +274,14 @@ public static class PreambleBuilder
                 content = "[INJECTED CONTEXT FROM BRAIN.md]\n";
                 if (File.Exists(brainPath))
                     content += File.ReadAllText(brainPath);
+                if (File.Exists(agentBrainPath))
+                    content += $"\n[INJECTED CONTEXT FROM BRAIN.{agentName}.md]\n" + File.ReadAllText(agentBrainPath);
 
                 content += "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
+                if (File.Exists(agentMemPath))
+                    content += $"\n[INJECTED CONTEXT FROM MEMORY.{agentName}.md]\n" + File.ReadAllText(agentMemPath);
 
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;
@@ -220,6 +289,8 @@ public static class PreambleBuilder
                 content = "[INJECTED CONTEXT FROM MEMORY.md]\n";
                 if (File.Exists(memPath))
                     content += File.ReadAllText(memPath);
+                if (File.Exists(agentMemPath))
+                    content += $"\n[INJECTED CONTEXT FROM MEMORY.{agentName}.md]\n" + File.ReadAllText(agentMemPath);
 
                 content += "[END OF INJECTED CONTEXT]\n";
                 break;
@@ -234,9 +305,17 @@ public static class PreambleBuilder
         return preamble;
     }
 
-    public static string WrapTask(string agentName, string subTask, bool isUsingDockerForExec)
+    public static string WrapTask(string agentName, string subTask)
     {
-        var preamble = Build(agentName, isUsingDockerForExec);
-        return $"{preamble}\nSub-task: {subTask}\nComplete this task. Call signal_task_complete with status and summary when done.";
+        var preamble = Build(agentName);
+        // Lightweight, always-on sub-agent persona (this path only; the lead/single-agent preamble
+        // from Build(...) is unchanged). Keep it generic steering -- no user/system conventions.
+        var persona =
+            "## You are a delegated sub-agent\n" +
+            "- The lead's context is finite and you are one of possibly many. Lead with the answer, stay concise.\n" +
+            "- For LARGE output, WRITE it to a file and return the PATH plus a 3-line summary -- do NOT paste big blobs.\n" +
+            "- Your large outputs may be spilled to disk and surfaced to the lead on demand via the read_delegation tool, so a tight summary plus a path is far more useful than a wall of text.\n" +
+            "- Always finish with signal_task_complete: status + a tight summary + any artifact paths.\n\n";
+        return $"{preamble}\n{persona}Sub-task: {subTask}\nComplete this task. Call signal_task_complete with status and summary when done.";
     }
 }

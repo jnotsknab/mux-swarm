@@ -37,7 +37,16 @@ internal static class TuiCommands
     public static readonly Entry[] All =
     {
         // --- in-session meta-loop (SingleAgentOrchestrator) ---
-        new("/compact",      "Compact the live session context", Scope.SessionOnly),
+        new("/compact",      "Compact the live session context (/compact [steering])", Scope.SessionOnly),
+        new("/handoff",      "Write a cold-resume handoff doc (/handoff [steering|path.md])", Scope.SessionOnly),
+        new("/heal",         "Review session, propose BRAIN/MEMORY write-backs (/heal [deep] [steering])", Scope.SessionOnly),
+        new("/reflect",      "Alias of /heal - self-review + memory write-backs (/reflect [deep])", Scope.SessionOnly),
+        new("/fix",          "Diagnose + propose repairs for a misbehaving Mux subsystem (/fix [what is wrong])", Scope.SessionOnly),
+        new("/diff",         "Show the working-tree git diff (collapsible)", Scope.SessionOnly),
+        new("/doctor",       "Health check: providers, MCP, sandbox, proxy (no model call)", Scope.SessionOnly),
+        new("/cost",         "Session token usage + estimated cost (usage-only for subscriptions)", Scope.SessionOnly),
+        new("/init",         "Analyze the workspace and scaffold a project context file (AGENTS.md)", Scope.SessionOnly),
+        new("/review",       "AI review of the working-tree diff (read-only findings)", Scope.SessionOnly),
         new("/wipe",         "Wipe session context, start fresh", Scope.SessionOnly),
         new("/tokens",       "Show context/token usage", Scope.SessionOnly),
         new("/context",      "Show context/token usage", Scope.SessionOnly),
@@ -46,6 +55,27 @@ internal static class TuiCommands
         new("/redo",         "Retry the last message", Scope.SessionOnly),
         new("/effort",       "Cycle reasoning effort (low/med/high)", Scope.SessionOnly),
         new("/tag",          "Tag this session for easy resume/search (/tag <text>)", Scope.SessionOnly),
+        new("/kanban",        "Editable team board (taskboard teams) - shows the board", Scope.SessionOnly),
+        new("/kanban add",    "Add a TODO task to the team board (/kanban add <subject>)", Scope.SessionOnly),
+        new("/kanban assign", "Designate a member for a task (/kanban assign <id> <member>)", Scope.SessionOnly),
+        new("/kanban block",  "Set task dependencies (/kanban block <id> <dep-ids>)", Scope.SessionOnly),
+        new("/kanban ready",  "Clear blockers/owner so a task is claimable (/kanban ready <id>)", Scope.SessionOnly),
+        new("/kanban move",   "Set a task's status (/kanban move <id> <todo|blocked|inprogress|done|failed>)", Scope.SessionOnly),
+        new("/kanban remove", "Remove a task, or 'clear' the whole board (/kanban remove <id>)", Scope.SessionOnly),
+        new("/kanban peer",   "Toggle the peer self-claim engine (/kanban peer <on|off>)", Scope.SessionOnly),
+        new("/background",        "Run an agent on a goal in the background, watchable via \\ (alias /bg) (/background <agent> <goal>)", Scope.SessionOnly),
+        new("/background jobs",   "List background agent jobs", Scope.SessionOnly),
+        new("/background cancel", "Cancel a running background job (/background cancel <id>)", Scope.SessionOnly),
+        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.SessionOnly),
+        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.SessionOnly),
+        new("/daemon off",    "Stop the daemon", Scope.SessionOnly),
+        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.SessionOnly),
+        new("/daemon cron",   "Add a cron trigger at runtime (/daemon cron \"<expr>\" <mode> <goal>)", Scope.SessionOnly),
+        new("/daemon watch",  "Add a file-watch trigger at runtime (/daemon watch <glob> <mode> <goal>)", Scope.SessionOnly),
+        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
+        new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
+        new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
+        new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -57,11 +87,14 @@ internal static class TuiCommands
         new("/subagents",    "Enable sub-agent delegation (/sub)", Scope.ReplOnly),
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
         new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
+        new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
+        new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
         new("/plan",         "Toggle plan mode (approve before exec)", Scope.ReplOnly),
         new("/ultra",        "Toggle deep-reasoning mode (plan + max reasoning)", Scope.ReplOnly),
+        new("/giga",         "Toggle giga mode (ultra + dynamic team/workflow orchestration)", Scope.ReplOnly),
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
@@ -75,13 +108,18 @@ internal static class TuiCommands
         new("/swap",         "Swap the active single-agent model", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
+        new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
+        new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
+        new("/login",        "Log in with Claude / ChatGPT (subscription OAuth)", Scope.ReplOnly),
+        new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
 
         // --- global utilities (App.cs menu) ---
         new("/classic",      "Switch to the classic line renderer", Scope.ReplOnly),
         new("/tui",          "Switch to the live TUI renderer", Scope.ReplOnly),
         new("/resume",       "Resume a previous single-agent session", Scope.ReplOnly),
+        new("/attach",       "Re-enter a detached session (/attach [id])", Scope.ReplOnly),
         new("/model",        "View current swarm models", Scope.ReplOnly),
         new("/provider",     "View or switch the active LLM provider", Scope.ReplOnly),
         new("/workspace",    "Show or set the @-file workspace root (/workspace <path>)", Scope.ReplOnly),
@@ -92,6 +130,7 @@ internal static class TuiCommands
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
+        new("/installskill", "Install a skill by name (openai/skills, VoltAgent) or a GitHub repo URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
         new("/clear",        "Clear the screen", Scope.ReplOnly),
@@ -108,9 +147,10 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
-        "/tag", "/showreasoning", "/workspace",
+        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
+        "/compact", "/handoff", "/heal", "/reflect",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
@@ -127,7 +167,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> InteractivePicker = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext",
+        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam",
     };
 
     /// <summary>True when <paramref name="line"/> is a bare command that opens an interactive picker
@@ -172,6 +212,48 @@ internal static class TuiCommands
     /// <summary>Commands offered inside an agent/swarm session (session-native set).</summary>
     public static readonly (string Cmd, string Desc)[] Session = ForScope(Scope.SessionOnly);
 
+    /// <summary>
+    /// Unified in-session palette: session-native commands FIRST, then the REPL/mode-launch
+    /// commands so they are discoverable everywhere (v0.12.0 - one palette). Selecting a REPL-only
+    /// command inside a live session is still handled by the slash-anywhere path, which WARNS that
+    /// it ends the active session before running it at the top-level menu. The descriptions of the
+    /// mode-launch commands here carry an "(ends session)" hint so the consequence is visible.
+    /// </summary>
+    public static readonly (string Cmd, string Desc)[] SessionUnified = BuildUnified();
+
+    private static (string Cmd, string Desc)[] BuildUnified()
+    {
+        var list = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (cmd, desc) in Session)
+            if (seen.Add(cmd)) list.Add((cmd, desc));
+        foreach (var e in All)
+            if (e.Scope == Scope.ReplOnly && seen.Add(e.Cmd))
+                list.Add((e.Cmd, e.Desc + "  (ends session)"));
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// Unified TOP-LEVEL (menu) palette: REPL/mode-launch commands FIRST, then the session-native
+    /// commands so they are discoverable at the menu too (v0.12.0 full symmetry). Selecting a
+    /// session-native command at the menu does NOT run it (there is no live session); the App menu
+    /// WARNS that it needs an active session. Their descriptions carry a "(needs a session)" hint
+    /// so the consequence is visible before selecting.
+    /// </summary>
+    public static readonly (string Cmd, string Desc)[] ReplUnified = BuildReplUnified();
+
+    private static (string Cmd, string Desc)[] BuildReplUnified()
+    {
+        var list = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (cmd, desc) in Repl)
+            if (seen.Add(cmd)) list.Add((cmd, desc));
+        foreach (var e in All)
+            if (e.Scope == Scope.SessionOnly && seen.Add(e.Cmd))
+                list.Add((e.Cmd, e.Desc + "  (needs a session)"));
+        return list.ToArray();
+    }
+
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
     /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
     /// the transcript/expand overlay).</summary>
@@ -202,6 +284,7 @@ internal static class TuiCommands
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
         new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
+        new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc",         "Cancel the current turn", "turn"),

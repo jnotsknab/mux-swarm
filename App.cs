@@ -13,9 +13,9 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.11.1";
+    public static readonly string Version = "0.12.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g11.33";
+    public static readonly string DebugTag = "";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -24,7 +24,8 @@ public class App
     public static IList<McpClientTool>? McpTools;
     private static string? _cliModelOverride;
     private static bool _watchDogEnabled;
-    private static readonly bool VerboseInit = Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
+    private static bool _verboseToggle;
+    private static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
@@ -45,6 +46,12 @@ public class App
     public static bool UltraMode = false;
     private static bool _ultraPriorPlan = false;
     private static bool _ultraPriorParaSub = false;
+    // v0.12.0 M6 Giga mode: a superset of /ultra that also grants dynamic orchestration tools
+    // (spawn_team / run_team / write_workflow / run_workflow). Public so orchestrators + /api can read it.
+    public static bool GigaMode = false;
+    private static bool _gigaPriorPlan = false;
+    private static bool _gigaPriorParaSub = false;
+    private static bool _gigaPriorUltra = false;
 
     // Interactive render-mode preference from the CLI (--classic / --tui). Null = use
     // console.renderMode config (default "auto"). Never affects stdio/serve output.
@@ -73,6 +80,30 @@ public class App
             }
             return _cts;
         }
+    }
+
+    /// <summary>
+    /// Drive a detachable interactive session until it either PARKS (the user typed /detach inside
+    /// it) or FINISHES (quit/completed/error). The session's ChatAgentAsync runs as
+    /// <c>handle.ChatTask</c>; we race it against the handle's detach signal so the menu reclaims
+    /// the single console reader the instant the frame parks - the frame stays alive (its whole
+    /// closure preserved) awaiting a later /attach. Returns true when the session is DONE (already
+    /// removed from the registry), false when it merely parked and remains attachable. Single
+    /// console reader at all times: this method only returns once the parked frame has stopped
+    /// reading (it is blocked on the attach gate) or the task has completed.
+    /// </summary>
+    private static async Task<bool> PumpSessionAsync(MuxSwarm.Utils.InteractiveSession handle)
+    {
+        var winner = await Task.WhenAny(handle.ChatTask!, handle.WaitForDetachAsync());
+        if (winner == handle.ChatTask)
+        {
+            try { await handle.ChatTask!; }
+            catch (OperationCanceledException) { /* quit/cancel is a normal session end */ }
+            MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+            return true;
+        }
+        // Parked: the frame is blocked on its attach gate; the menu owns the console again.
+        return false;
     }
 
     // Awaits the background MCP init (idempotent). On total connection failure,
@@ -179,15 +210,23 @@ public class App
                         $"Max Orchestrator Iterations: {limits.MaxOrchestratorIterations}, Max Stuck Count: {limits.MaxStuckCount}, " +
                         $"Max Sub-Agent Iterations: {limits.MaxSubAgentIterations}, Max Sub-Task Retries{limits.MaxSubTaskRetries}, " +
                         $"Progress Entry Budget: {limits.ProgressEntryBudget}, Progress Log Total Budget: {limits.ProgressLogTotalBudget}");
-        
-        
+
+        // Startup prune of spilled sub-agent delegation raw older than the retention window
+        // (size-tiered context passing). Best-effort; never blocks startup.
+        try { MuxSwarm.Utils.DelegationStore.PruneOldRetention(limits.DelegationRetentionDays); } catch { }
+
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
         // Kick off MCP server connections in the background so the user is
         // dropped into the interactive prompt immediately. Connection results
         // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.
-        McpInitTask = InitMcpServersAsync(Config);
+        //
+        // Task.Run so the SYNCHRONOUS prelude of InitMcpServersAsync (config patching +
+        // setting up ~14 subprocess connections before the first real await yields) runs on a
+        // background thread too. Calling it directly stalled startup ~700ms before the kickoff
+        // returned; this makes time-to-prompt effectively instant.
+        McpInitTask = Task.Run(() => InitMcpServersAsync(Config));
 
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
@@ -211,6 +250,11 @@ public class App
 
     private async Task<int> AppLoop(string[] args)
     {
+        // Prepend persisted startup args (config.startupArgs) before the real argv so the
+        // user can boot straight into a mode/agent every run (e.g. "--agent CodeAgent --giga").
+        // Real CLI flags come AFTER and therefore win on any single-valued override. Set via
+        // /startargs. Machine transports (--stdio/--serve/--acp) ignore startup mode entry.
+        args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
 
         // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
@@ -222,6 +266,11 @@ public class App
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
+        MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
+        MuxConsole.InputHighlight = Config.Console.InputHighlight;
+        MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
+        MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
+        MuxConsole.BracketedPaste = Config.Console.BracketedPaste;
         MuxConsole.ShowReasoning = Config.ShowReasoning;
 
         // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
@@ -236,6 +285,26 @@ public class App
                 await ContextCap.CheckFileAsync(ContextCap.MemoryFile);
             }
             catch { /* cap check is best-effort */ }
+
+            // Item 5: optional background prune pulse. Opt-in (contextLimits.prunePulseSeconds > 0
+            // AND a file in "force" mode); first tick +30s, then every N seconds. Surfaces a status
+            // line ONLY when a rewrite actually fires. Interactive only - never stdio/serve/acp.
+            if (!parsed.AcpMode && parsed.ServePort <= 0 && ContextCap.ShouldPulse())
+            {
+                try
+                {
+                    var swarm = App.SwarmConfig;
+                    string? pulseModel = swarm?.CompactionAgent?.Model;
+                    if (string.IsNullOrWhiteSpace(pulseModel))
+                    {
+                        var models = Common.LoadAgentModels();
+                        pulseModel = models.Values.FirstOrDefault();
+                    }
+                    if (!string.IsNullOrWhiteSpace(pulseModel))
+                        ContextCap.StartPulse(modelId => CreateChatClient(modelId), pulseModel);
+                }
+                catch { /* pulse is best-effort */ }
+            }
         }
 
         
@@ -245,6 +314,20 @@ public class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
+        if (parsed.AcpMode)
+        {
+            // ACP owns stdin (JSON-RPC line transport) and drives the single-agent REPL
+            // headlessly. Start the cancel monitor PAUSED so session/cancel can abort a turn
+            // without the monitor's background reader also consuming ACP's stdin.
+            //
+            // MCP init is NOT awaited here: it runs in the background (McpInitTask) and is
+            // awaited lazily inside the session loop right before the first turn needs tools.
+            // This lets the ACP handshake (initialize / session/new) respond in milliseconds
+            // instead of blocking ~15s on MCP subprocess spawns.
+            StdinCancelMonitor.Start(startPaused: true);
+            return await RunAcpAsync();
+        }
+
         if (MuxConsole.StdioMode)
             StdinCancelMonitor.Start();
 
@@ -253,7 +336,39 @@ public class App
             Config.IsUsingDockerForExec = parsed.DockerExecOverride.Value;
             MuxConsole.WriteInfo($"Docker Exec set to: {Config.IsUsingDockerForExec}");
             OtelLogger.Info($"Docker Exec set to: {Config.IsUsingDockerForExec}");
+            // Skills were loaded in the ctor with the pre-flag (default) value, so reload now that
+            // --dockerexec has flipped it - otherwise the bundled-docker skill set (incl. the
+            // docker-sandbox directive skill) is not active for this run.
+            SkillLoader.LoadSkills();
         }
+
+        if (_startupSandboxBackend is { } sbxBackend)
+        {
+            // --sandbox <backend> applied at startup: validate, set the config backend, sync the
+            // docker-exec flag + reload skills so the directive set matches. Invalid backend warns
+            // and leaves host execution intact (no silent half-apply).
+            var candidate = new SandboxConfig
+            {
+                Backend = sbxBackend, Image = Config.Sandbox.Image, Network = Config.Sandbox.Network,
+                AllowedDomains = Config.Sandbox.AllowedDomains, Command = Config.Sandbox.Command,
+            };
+            var sbxErr = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(candidate);
+            if (sbxErr is null)
+            {
+                Config.Sandbox = candidate;
+                Config.IsUsingDockerForExec = sbxBackend.Trim().ToLowerInvariant() is not ("host" or "none" or "");
+                SkillLoader.LoadSkills();
+                MuxConsole.WriteInfo($"Sandbox backend set to: {sbxBackend}");
+            }
+            else
+            {
+                MuxConsole.WriteWarning($"--sandbox {sbxBackend} ignored: {sbxErr}");
+            }
+        }
+
+        // Resolve the authoritative sandbox state ONCE after all startup overrides (--sandbox,
+        // --dockerexec, config) have settled, so the preamble's ACTIVE block tracks the real backend.
+        MuxSwarm.Utils.NativeTools.SandboxRuntime.Refresh();
 
         if (parsed.McpStrictOverride.HasValue)
         {
@@ -342,6 +457,24 @@ public class App
             string? pendingFromSession = SingleAgentOrchestrator.PendingReplCommand;
             if (pendingFromSession is not null)
                 SingleAgentOrchestrator.PendingReplCommand = null;
+
+            // Startup mode entry: a startup flag (--swarm/--pswarm/--stateless/--teams/
+            // --agent-mode/--agent <name>) requested booting straight into a mode. Run it once
+            // as the first input, exactly as if the user typed it at the menu. Consumed here so
+            // it only fires on the very first loop iteration.
+            if (_startupCommand is not null && pendingFromSession is null)
+            {
+                pendingFromSession = _startupCommand;
+                _startupCommand = null;
+                if (_startupAgentName is not null)
+                {
+                    var defs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+                    var matched = defs.FirstOrDefault(d => d.Name.Equals(_startupAgentName, StringComparison.OrdinalIgnoreCase));
+                    if (matched is not null) SingleAgentOrchestrator.AgentDef = matched;
+                    else MuxConsole.WriteWarning($"Startup agent '{_startupAgentName}' not found; using default.");
+                    _startupAgentName = null;
+                }
+            }
 
             // When the live-region driver is active it owns the input box (pinned at the
             // bottom) and its own key loop (Esc -> cancel), so skip the inline "> " prompt and
@@ -436,6 +569,55 @@ public class App
                     if (setupSuccess) MuxConsole.WriteSuccess("Setup complete!");
                     break;
 
+                case var tc when tc == "/teams" || tc.StartsWith("/teams ", StringComparison.Ordinal):
+                {
+                    await EnsureMcpReadyAsync();
+                    Config = LoadConfig(ConfigPath);
+                    var teamsArg = tc.Length > "/teams".Length ? tc.Substring("/teams".Length).Trim() : "";
+                    var teamsModels = Common.LoadAgentModels();
+
+                    if (teamsArg.Length == 0)
+                    {
+                        CliCmdUtils.HandleListTeams(SwarmConfig);
+                        break;
+                    }
+
+                    var teamCfg = MuxSwarm.Utils.Teams.TeamController.Find(SwarmConfig, teamsArg);
+                    if (teamCfg is null)
+                    {
+                        MuxConsole.WriteWarning($"No team named '{teamsArg}' in swarm.json. Run /teams to list configured teams.");
+                        break;
+                    }
+
+                    var teamsCts = GetOrResetCts();
+                    var teamScope = MuxSwarm.Utils.Teams.TeamController.Build(
+                        teamCfg, SwarmConfig ?? new SwarmConfig(),
+                        modelId => CreateChatClient(modelId), teamsModels, teamsCts.Token);
+                    if (teamScope is null) break;
+
+                    var teamLeadModel = teamsModels.GetValueOrDefault(
+                        teamScope.LeadDef.Name, LoadSingleAgentModel());
+
+                    ServeMode.ActiveMode = "teams";
+                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    try {
+                    await SingleAgentOrchestrator.ChatAgentAsync(
+                        client: CreateChatClient(teamLeadModel),
+                        teamsCts.Token,
+                        maxIterations: 3,
+                        mcpTools: McpTools,
+                        continuous: ContinuousExec,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
+                        minDelaySeconds: (uint)MinContDelay!,
+                        showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan,
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        teamScope: teamScope
+                    );
+                    } finally { ServeMode.ActiveMode = "interactive"; MuxSwarm.Utils.Teams.TeamController.Clear(); }
+                    break;
+                }
+
                 case "/swarm":
                     await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
@@ -487,7 +669,9 @@ public class App
                     ServeMode.ActiveMode = "agent";
                     MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
-                    await SingleAgentOrchestrator.ChatAgentAsync(
+                    var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                        "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
+                    agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel),
                         agentCts.Token,
                         maxIterations: 3,
@@ -499,21 +683,23 @@ public class App
                         shouldPlan: ShouldPlan, 
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         allowSubAgents: AllowSubagents,
-                        allowParallelSubAgents: AllowParallelSubAgents
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: agentHandle
                     );
+                    await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
                 case "/sub":
                 case "/subagents":
                     AllowSubagents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowSubagents);
                     // Reflect the sub badge in the docked footer immediately.
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/psub":
                 case "/parasubagents":
                     AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
                     // Reflect the psub badge in the docked footer immediately.
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
@@ -535,7 +721,9 @@ public class App
                     ServeMode.ActiveMode = "stateless";
                     MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
                     try {
-                    await SingleAgentOrchestrator.ChatAgentAsync(
+                    var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                        "stateless", "stateless");
+                    statelessHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
                         statelessAgentCts.Token,
                         maxIterations: 3,
@@ -548,10 +736,47 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         persistSession: false,
                         allowSubAgents: AllowSubagents,
-                        allowParallelSubAgents: AllowParallelSubAgents
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: statelessHandle
                     );
+                    await PumpSessionAsync(statelessHandle);
                     } finally { ServeMode.ActiveMode = "interactive"; }
                     break;
+
+                case var atc when atc == "/attach" || atc.StartsWith("/attach ", StringComparison.Ordinal):
+                {
+                    // Re-enter a session parked via /detach. "/attach" lists parked sessions; "/attach
+                    // <id>" releases that frame's attach gate (handing the console back to it) and
+                    // pumps it again until it re-parks or finishes. Single console reader throughout:
+                    // the menu stops reading the moment it releases the gate.
+                    var parked = MuxSwarm.Utils.InteractiveSessionRegistry.ListParked();
+                    var attachArg = atc.Length > "/attach".Length ? atc.Substring("/attach".Length).Trim() : "";
+                    if (parked.Count == 0)
+                    {
+                        MuxConsole.WriteMuted("No detached sessions. Launch /agent or /stateless, then /detach.");
+                        break;
+                    }
+                    if (attachArg.Length == 0)
+                    {
+                        MuxConsole.WriteInfo("Detached sessions:");
+                        foreach (var (pid, plabel, pmode, ptok) in parked)
+                            MuxConsole.WriteMuted($"  {pid}  {plabel} ({pmode}) ~{ptok:N0} tok  - /attach {pid}");
+                        break;
+                    }
+                    var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Find(attachArg);
+                    if (handle is null || handle.Status != "parked")
+                    {
+                        MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
+                        break;
+                    }
+                    MuxConsole.StartTuiLoopClock();
+                    ServeMode.ActiveMode = handle.Mode;
+                    try {
+                        handle.ReleaseAttach();             // resume the parked frame (it takes the console)
+                        await PumpSessionAsync(handle);     // returns when it re-parks or finishes
+                    } finally { ServeMode.ActiveMode = "interactive"; }
+                    break;
+                }
                 
                 case "/addcontext":
                     CliCmdUtils.HandleContextInject();
@@ -621,7 +846,7 @@ public class App
                         MuxConsole.WriteMuted("Agents will execute immediately without plan confirmation.");
                     }
                     // Reflect the plan badge in the docked footer immediately (not after stream).
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/classic":
                 case "/tui":
@@ -666,6 +891,14 @@ public class App
                         ? "Sub-agent view: collapsed (delegated agents fold into one expandable line)"
                         : "Sub-agent view: expanded (delegated agents stream inline)");
                     break;
+                case "/daemonview":
+                case "/dv":
+                    MuxConsole.CollapseDaemonOutput = !MuxConsole.CollapseDaemonOutput;
+                    Config.Console.CollapseDaemon = MuxConsole.CollapseDaemonOutput;
+                    MuxConsole.WriteSuccess(MuxConsole.CollapseDaemonOutput
+                        ? "Daemon view: collapsed (daemon-fired goals fold into one expandable line)"
+                        : "Daemon view: expanded (daemon-fired goals stream inline)");
+                    break;
                 case "/ultra":
                 case "/ultraplan":
                     UltraMode = !UltraMode;
@@ -692,7 +925,35 @@ public class App
                         MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
                     // Reflect the new mode badges in the docked footer immediately (not after stream).
-                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents);
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
+                    break;
+                case "/giga":
+                    GigaMode = !GigaMode;
+                    if (GigaMode)
+                    {
+                        // Giga is a superset of ultra: force plan + max reasoning (via UltraMode) AND
+                        // grant dynamic-orchestration tools. Capture prior flags to restore on toggle-off.
+                        _gigaPriorPlan = ShouldPlan;
+                        _gigaPriorParaSub = AllowParallelSubAgents;
+                        _gigaPriorUltra = UltraMode;
+                        UltraMode = true;
+                        ShouldPlan = true;
+                        if (App.Config.Ultra.AutoSubAgents)
+                            AllowParallelSubAgents = true;
+                        MuxConsole.WriteSuccess("Giga Mode enabled");
+                        MuxConsole.WriteMuted("Dynamic orchestration unlocked: the agent can spawn_team, run_team, and write/run workflows on its own.");
+                        MuxConsole.WriteMuted($"Maximum reasoning + plan discipline on (thinking budget {App.Config.Ultra.ThinkingBudget}). Giga teams are tagged 'giga:'.");
+                    }
+                    else
+                    {
+                        ShouldPlan = _gigaPriorPlan;
+                        AllowParallelSubAgents = _gigaPriorParaSub;
+                        UltraMode = _gigaPriorUltra;
+                        MuxSwarm.Utils.Teams.GigaMode.Reset();
+                        MuxConsole.WriteSuccess("Giga Mode disabled");
+                        MuxConsole.WriteMuted($"Orchestration tools removed; reasoning/plan flags restored (Ultra: {(UltraMode ? "on" : "off")}, Plan: {(ShouldPlan ? "on" : "off")}).");
+                    }
+                    MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
                 case "/tools":
                     if (McpTools != null) Common.LogAvailableTools(McpTools);
@@ -730,6 +991,18 @@ public class App
 
                 case "/dockerexec":
                     CliCmdUtils.HandleDockerExec(ConfigPath);
+                    break;
+                case var sbx when sbx == "/sandbox" || sbx.StartsWith("/sandbox "):
+                    CliCmdUtils.HandleSandbox(userInput, ConfigPath);
+                    break;
+                case var lg when lg == "/login" || lg.StartsWith("/login "):
+                    await CliCmdUtils.HandleLoginAsync(userInput, ConfigPath);
+                    break;
+                case var pg when pg == "/ping" || pg.StartsWith("/ping "):
+                    await CliCmdUtils.HandlePingAsync(userInput);
+                    break;
+                case var px when px == "/proxy" || px.StartsWith("/proxy "):
+                    await CliCmdUtils.HandleProxyAsync(userInput);
                     break;
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
@@ -769,6 +1042,10 @@ public class App
 
                 case "/reloadskills":
                     CliCmdUtils.ReloadSkills();
+                    break;
+
+                case var iskl when iskl == "/installskill" || iskl.StartsWith("/installskill "):
+                    await CliCmdUtils.HandleInstallSkillAsync(userInput);
                     break;
 
                 case "/refresh":
@@ -849,6 +1126,29 @@ public class App
                     break;
                 }
 
+                case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs "):
+                {
+                    // Persist CLI args applied automatically at every startup (config.startupArgs).
+                    // No arg -> show current value. "clear" -> empty it. Otherwise set verbatim.
+                    // Takes effect on the NEXT launch (args are merged before ParseArgs at boot).
+                    var saParts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (saParts.Length < 2)
+                    {
+                        var cur = string.IsNullOrWhiteSpace(Config.StartupArgs) ? "(none)" : Config.StartupArgs;
+                        MuxConsole.WriteInfo($"startupArgs = {cur}");
+                        MuxConsole.WriteMuted("Set with /startargs <args>  (e.g. /startargs --agent CodeAgent --giga). Clear with /startargs clear. Applies next launch.");
+                        break;
+                    }
+                    var saVal = saParts[1].Trim();
+                    Config.StartupArgs = saVal.Equals("clear", StringComparison.OrdinalIgnoreCase) ? "" : saVal;
+                    Common.SaveConfig(Config);
+                    Config = LoadConfig(ConfigPath);
+                    MuxConsole.WriteSuccess(string.IsNullOrEmpty(Config.StartupArgs)
+                        ? "Cleared startupArgs."
+                        : $"startupArgs set to: {Config.StartupArgs}  (applies next launch).");
+                    break;
+                }
+
                 case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
                 {
                     // The wizard may offer to spawn a helper agent (like /onboard) to author the
@@ -885,6 +1185,18 @@ public class App
                     break;
                 }
 
+                case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam "):
+                {
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
+                    if (res.Ok)
+                    {
+                        MuxConsole.WriteSuccess(res.Message);
+                        SwarmConfig = LoadSwarm();
+                    }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
                 case var eaCmd when eaCmd == "/editagent" || eaCmd.StartsWith("/editagent ")
                                  || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ")
                                  || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent "):
@@ -901,7 +1213,16 @@ public class App
 
                 default:
                     if (userInput.StartsWith("/"))
-                        MuxConsole.WriteWarning("Unknown command. Type /help.");
+                    {
+                        // Slash-anywhere symmetry: a SESSION-native command typed at the menu has
+                        // no live session to act on. Warn that it needs an active session instead
+                        // of the generic "unknown command", so the user knows to launch one first.
+                        var menuCmd = userInput.Split(' ', 2)[0];
+                        if (MuxSwarm.Utils.Tui.TuiCommands.IsSessionNative(menuCmd))
+                            MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
+                        else
+                            MuxConsole.WriteWarning("Unknown command. Type /help.");
+                    }
                     else
                         MuxConsole.WriteMuted("Type /help for commands.");
                     break;
@@ -939,6 +1260,69 @@ public class App
         return string.Empty;
     }
 
+    /// <summary>
+    /// Run the ACP (Zed Agent Client Protocol) adapter. Each ACP session maps to one
+    /// interactive single-agent loop, fed by an <see cref="MuxSwarm.Utils.Acp.AcpInputReader"/>
+    /// (installed as InputOverride) and observed via MuxConsole.AcpSink. Blocks until the
+    /// client closes stdin.
+    /// </summary>
+    private async Task<int> RunAcpAsync()
+    {
+        var server = new MuxSwarm.Utils.Acp.AcpServer(
+            version: Version,
+            // Model selector for ACP clients' /models: current = the resolved single-agent
+            // model, available = the distinct model ids configured across swarm.json. Setting
+            // it applies a CLI-style model override for the next session/turn.
+            modelsProvider: () =>
+            {
+                string current = LoadSingleAgentModel();
+                var available = Common.LoadAgentModels().Values
+                    .Where(m => !string.IsNullOrEmpty(m))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+                return (current, (IReadOnlyList<string>)available);
+            },
+            setModel: m => { if (!string.IsNullOrWhiteSpace(m)) _cliModelOverride = m; },
+            runSession: async (reader, resume) =>
+            {
+                // Tools are needed once the model actually runs a turn; await MCP readiness
+                // here (not at transport start) so the ACP handshake stays instant.
+                await EnsureMcpReadyAsync();
+                var model = LoadSingleAgentModel();
+                var acpCts = GetOrResetCts();
+                ServeMode.ActiveMode = "agent";
+                var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                    "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
+                try
+                {
+                    handle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
+                        client: CreateChatClient(model),
+                        acpCts.Token,
+                        maxIterations: 3,
+                        mcpTools: McpTools,
+                        continuous: ContinuousExec,
+                        autoCompactTokenThreshold: SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold,
+                        minDelaySeconds: (uint)MinContDelay!,
+                        showToolResultCalls: _showToolCallResults,
+                        shouldPlan: ShouldPlan,
+                        chatClientFactory: modelId => CreateChatClient(modelId),
+                        resumedSession: resume?.Data,
+                        resumedSessionDir: resume?.Dir,
+                        allowSubAgents: AllowSubagents,
+                        allowParallelSubAgents: AllowParallelSubAgents,
+                        interactiveHandle: handle);
+                    await handle.ChatTask;
+                }
+                finally
+                {
+                    ServeMode.ActiveMode = "interactive";
+                    MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+                }
+            });
+        await server.RunAsync();
+        return 0;
+    }
+
     private record ParsedArgs(
         string? Goal,
         bool Continuous,
@@ -955,7 +1339,8 @@ public class App
         bool ReportAll,
         string AgentName,
         int? ServePort,
-        bool DaemonMode
+        bool DaemonMode,
+        bool AcpMode
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -966,6 +1351,49 @@ public class App
         var v = (i + 1 < args.Length) ? args[i + 1] : null;
         if (v != null && bool.TryParse(v, out var b)) { i++; return b; }
         return null;
+    }
+
+    /// <summary>The mode-entry command (e.g. "/agent", "/swarm") to auto-run as the first
+    /// interactive input, set by startup mode flags. Null = land at the menu as usual.</summary>
+    private static string? _startupCommand;
+    /// <summary>Sandbox backend from --sandbox, applied to Config after load. Null = leave config as-is.</summary>
+    private static string? _startupSandboxBackend;
+    /// <summary>Agent name from --agent, applied when booting into a startup /agent session.</summary>
+    private static string? _startupAgentName;
+
+    /// <summary>
+    /// Tokenize <paramref name="startupArgs"/> (a single config string) and prepend the tokens
+    /// before the real argv. Honors simple double-quoted groups so a quoted value with spaces
+    /// survives. Returns the original argv unchanged when there are no startup args.
+    /// </summary>
+    internal static string[] MergeStartupArgs(string? startupArgs, string[] argv)
+    {
+        if (string.IsNullOrWhiteSpace(startupArgs)) return argv;
+        var tokens = TokenizeArgString(startupArgs);
+        if (tokens.Count == 0) return argv;
+        var merged = new string[tokens.Count + argv.Length];
+        tokens.CopyTo(merged, 0);
+        argv.CopyTo(merged, tokens.Count);
+        return merged;
+    }
+
+    /// <summary>Split a shell-like argument string into tokens, respecting double quotes.</summary>
+    internal static List<string> TokenizeArgString(string s)
+    {
+        var tokens = new List<string>();
+        var sb = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        foreach (char c in s)
+        {
+            if (c == '"') { inQuotes = !inQuotes; continue; }
+            if (char.IsWhiteSpace(c) && !inQuotes)
+            {
+                if (sb.Length > 0) { tokens.Add(sb.ToString()); sb.Clear(); }
+            }
+            else sb.Append(c);
+        }
+        if (sb.Length > 0) tokens.Add(sb.ToString());
+        return tokens;
     }
 
     private static ParsedArgs ParseArgs(string[] args)
@@ -985,6 +1413,7 @@ public class App
         bool reportAll = false;
         string? agentName = null;
         bool daemonMode = false;
+        bool acpMode = false;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -1023,6 +1452,14 @@ public class App
 
                 case "--stdio":
                     MuxConsole.StdioMode = true;
+                    break;
+                case "--acp":
+                    // ACP (Zed Agent Client Protocol) adapter. Routes structured events to the
+                    // ACP sink (JSON-RPC over stdio) instead of NDJSON; StdioMode keeps the
+                    // orchestrators on their machine-output path while AcpActive diverts it.
+                    acpMode = true;
+                    MuxConsole.StdioMode = true;
+                    MuxConsole.AcpActive = true;
                     break;
                 case "--delimiter":
                     var delim = NextValue(args, ref i);
@@ -1071,10 +1508,20 @@ public class App
                 case "--docker-exec":
                     dockerExecOverride = NextBool(args, ref i) ?? true;
                     break;
+                case "--sandbox":
+                    _startupSandboxBackend = (i + 1 < args.Length) ? args[++i] : "docker";
+                    break;
                 case "--agent":
                     var an = NextValue(args, ref i);
                     if (!string.IsNullOrWhiteSpace(an))
+                    {
                         agentName = an;
+                        // Interactive: pick this agent AND boot into a single-agent session
+                        // (unless another startup mode was explicitly requested). For a
+                        // goal-driven (--goal) or machine run, AgentName alone is used downstream.
+                        _startupCommand ??= "/agent";
+                        _startupAgentName = an;
+                    }
                     break;
                 
                 case "--plan":
@@ -1092,6 +1539,43 @@ public class App
                     break;
                 case "--tui":
                     _cliRenderModeOverride = "tui";
+                    break;
+                case "--giga":
+                    // Dynamic team/workflow orchestration (parity with /giga).
+                    GigaMode = true;
+                    if (Config.Ultra.AutoSubAgents)
+                        AllowParallelSubAgents = true;
+                    break;
+                case "--sub":
+                case "--subagents":
+                    // Enable single-agent delegation to sub-agents (parity with /sub).
+                    AllowSubagents = true;
+                    break;
+                case "--psub":
+                case "--parasubagents":
+                    // Enable parallel sub-agent delegation (parity with /psub).
+                    AllowParallelSubAgents = true;
+                    break;
+                case "--verbose":
+                    // Verbose MCP/init logging (parity with /verbose).
+                    _verboseToggle = true;
+                    break;
+                case "--swarm":
+                    _startupCommand = "/swarm";
+                    break;
+                case "--pswarm":
+                    _startupCommand = "/pswarm";
+                    break;
+                case "--stateless":
+                    _startupCommand = "/stateless";
+                    break;
+                case "--teams":
+                    _startupCommand = "/teams";
+                    break;
+                case "--agent-mode":
+                    // Boot straight into a single-agent session (parity with /agent). Combine
+                    // with --agent <name> to also pick which agent drives it.
+                    _startupCommand = "/agent";
                     break;
                 case "--clear":
                     Console.Clear();
@@ -1199,7 +1683,8 @@ public class App
             reportAll,
             agentName,
             ServePort,
-            daemonMode
+            daemonMode,
+            acpMode
         );
     }
 
@@ -1329,7 +1814,33 @@ public class App
             }
         }
 
-        var enabledServers = config.McpServers.Where(kvp => kvp.Value.Enabled).ToList();
+        // The native in-house REPL/shell tools (ReplShellTools) replace the mcp-async-repl server,
+        // which used ONE shared worker/connection across all agents and clashed under parallel
+        // sub-agents. Skip connecting any stdio server that launches it (by command or args) so
+        // existing configs that still list it do not double-register the same tool names. This is
+        // a runtime safety net; the bundled template no longer ships the entry.
+        static bool IsNativeReplShellServer(McpServerConfig c)
+        {
+            bool Has(string? s) => s is not null && s.Contains("mcp-async-repl", StringComparison.OrdinalIgnoreCase);
+            if (Has(c.Command)) return true;
+            if (c.Args is not null)
+                foreach (var a in c.Args) if (Has(a)) return true;
+            return false;
+        }
+
+        // Native in-house toolsets (Filesystem + shell/REPL) are bound in-process via NativeToolRegistry,
+        // NOT spawned as MCP subprocesses. Skip connecting any server that (a) carries the
+        // native-runtime-tools marker, (b) is the legacy npx @modelcontextprotocol/server-filesystem
+        // entry (now satisfied natively - existing configs upgrade transparently), or (c) launches the
+        // old mcp-async-repl. This removes default subprocesses (faster startup) without losing surface.
+        bool SkipBecauseNative(McpServerConfig c) =>
+            IsNativeReplShellServer(c)
+            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(c)
+            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsLegacyFilesystemEntry(c);
+
+        var enabledServers = config.McpServers
+            .Where(kvp => kvp.Value.Enabled && !SkipBecauseNative(kvp.Value))
+            .ToList();
         int enabledCount = enabledServers.Count;
 
         // Connect to all enabled servers concurrently; shared collections are
@@ -1368,6 +1879,14 @@ public class App
 
     private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
 
+    // Resolve the MCP connect timeout from config with a 5s floor (a sub-5s value would make even a
+    // healthy stdio spawn flaky). Non-positive / unset falls back to the AppConfig default (60s).
+    private static int McpConnectTimeoutSeconds(AppConfig config)
+    {
+        int v = config?.McpConnectTimeoutSeconds ?? 90;
+        return v <= 0 ? 90 : Math.Max(5, v);
+    }
+
     private static async Task<McpInitResult?> ConnectMcpServerAsync(string name, McpServerConfig serverConfig, string baseDir, AppConfig config)
     {
         try
@@ -1398,9 +1917,10 @@ public class App
                 };
 
                 var httpTransport = new HttpClientTransport(httpOptions);
-                var httpClient = await McpClient.CreateAsync(httpTransport);
+                using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
+                var httpClient = await McpClient.CreateAsync(httpTransport, cancellationToken: httpCts.Token);
 
-                var httpTools = await httpClient.ListToolsAsync();
+                var httpTools = await httpClient.ListToolsAsync(cancellationToken: httpCts.Token);
                 var namedHttpTools = httpTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
 
                 return new McpInitResult(name, httpClient, namedHttpTools, IsHttp: true);
@@ -1436,7 +1956,7 @@ public class App
                         MuxConsole.WriteMuted($"  ENV: '{k}' = '{MaskSecret(v)}'");
                 }
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
                 var stdioClient = await McpClient.CreateAsync(stdioTransport, cancellationToken: cts.Token);
 
                 var stdioTools = await stdioClient.ListToolsAsync(cancellationToken: cts.Token);
@@ -1490,6 +2010,13 @@ public class App
         }
 
         ActiveProvider = provider;
+
+        // CLIProxyAPI sidecar provider: its bearer key lives in a persisted file and is exported to
+        // the env var lazily at sidecar spawn. Export it from disk NOW (cheap, no spawn) so the
+        // env-var check below passes - otherwise every launch after /login warns + prompts for a key
+        // that is never user-supplied. The sidecar itself is still started lazily on first request.
+        if (string.Equals(provider.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+            MuxSwarm.Utils.Proxy.CliProxyManager.ExportPersistedKey();
 
         if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
@@ -1598,7 +2125,15 @@ public class App
             
             opts.AddPolicy(new CustomHeaderPolicy(resolvedHeaders), PipelinePosition.PerCall);
         }
-        
+
+        // CLIProxyAPI Claude-path fixes (internalized from the external cliproxy-filter shim): when the
+        // active provider is the local cliproxy sidecar, strip sampling params the Claude/OAuth backend
+        // rejects and fold system/developer messages into the first user turn (else the bridge drops them
+        // and the agent loses all system context). Gated to Claude/Opus models inside the policy; other
+        // models + other providers are untouched.
+        if (string.Equals(provider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+            opts.AddPolicy(new CliProxyClaudePolicy(), PipelinePosition.PerCall);
+
         return new OpenAIClient(new ApiKeyCredential(apiKey), opts);
     }
 
@@ -1608,6 +2143,18 @@ public class App
         // (unbounded-ish SDK default) made long autonomous tool chains stop mid-task with no error
         // surfaced. ExecutionLimits.MaxToolIterationsPerTurn defaults high; <= 0 means unlimited.
         int toolIters = ExecutionLimits.Current.MaxToolIterationsPerTurn;
+
+        // Local CLIProxyAPI sidecar: subscription providers (Claude/Codex/...) route through a managed
+        // loopback proxy that is a plain OpenAI-compatible endpoint. When the active provider points at it
+        // (apiKeyEnvVar == the manager's key var), ensure the detached sidecar is up (lazy, reused across
+        // sessions) and its api key is exported before building the byte-identical OpenAI client below.
+        if (ActiveProvider == null) InitLlmProvider();
+        if (string.Equals(ActiveProvider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        {
+            try { MuxSwarm.Utils.Proxy.CliProxyManager.EnsureRunningAsync().GetAwaiter().GetResult(); }
+            catch (Exception ex) { MuxConsole.WriteWarning($"CLIProxyAPI sidecar unavailable: {ex.Message}"); }
+        }
+
         return CreateOpenAiClient()
             .GetChatClient(modelId)
             .AsIChatClient()

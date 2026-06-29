@@ -41,7 +41,10 @@ public static class MultiAgentOrchestrator
         string CompactedResult,
         string? Status,
         string? Summary,
-        string? Artifacts
+        string? Artifacts,
+        string? RawHandle = null,
+        string? RawPath = null,
+        int RawLen = 0
     );
 
     /// <summary>
@@ -126,6 +129,11 @@ public static class MultiAgentOrchestrator
     {
         AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
 
+        // Merge native tools (Filesystem + shell/REPL) into the pool so the per-agent and
+        // orchestrator ToolFilters gate them like MCP tools (swarm.json mcpServers "Filesystem"/"Shell").
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
+
         if (maxOrchestratorIterations < 0) maxOrchestratorIterations = ExecutionLimits.Current.MaxOrchestratorIterations;
         if (maxSubAgentIterations < 0) maxSubAgentIterations = ExecutionLimits.Current.MaxSubAgentIterations;
 
@@ -184,6 +192,12 @@ public static class MultiAgentOrchestrator
         using var sessionSpan = OtelTracer.GetSource().StartActivity("swarm_session");
         sessionSpan?.SetTag("mode", "swarm");
         sessionSpan?.SetTag("goal_id", goalId);
+
+        // Size-tiered delegation retention scope: spilled raw + the cumulative lead-cap counter are
+        // keyed off this id so a whole swarm session shares one retention dir and budget.
+        var delegationScope = goalId ?? sessionSpan?.Id ?? DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+        DelegationStore.SetScope(delegationScope);
+        DelegationStore.ResetScope(delegationScope);
         sessionSpan?.SetTag("continuous", continuous);
         sessionSpan?.SetTag("max_iterations", maxOrchestratorIterations);
         OtelMetrics.SessionsStarted.Add(1, new KeyValuePair<string, object?>("mode", "swarm"));
@@ -262,19 +276,22 @@ public static class MultiAgentOrchestrator
             }
 
             string compacted = "";
+            DelegationStore.Retained? retained = null;
             await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
             {
-                compacted = await ResultCompactor.CompactAsync(
+                (compacted, retained) = await DelegationStore.TierResultAsync(
+                    DelegationStore.CurrentScope,
+                    agentName,
                     rawResult,
-                    completionStatus: status,
-                    completionSummary: summary,
-                    completionArtifacts: artifacts,
-                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: CompactionClient,
-                    chatOptions: compactionChatOptions);
+                    status,
+                    summary,
+                    artifacts,
+                    CompactionClient,
+                    compactionChatOptions);
             });
 
-            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
 
             if (prodMode)
                 compacted = $"[[START_AGENT_TURN]]{agentName}[[END_AGENT_NAME]]{compacted}[[END_AGENT_TURN]]";
@@ -347,7 +364,7 @@ public static class MultiAgentOrchestrator
 
                                   ## Memory Policy (MANDATORY)
 
-                                  **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+                                  **At the START of your task:** Relevant BRAIN.md / MEMORY.md context is usually already injected above - read it first. If a stub points to a heavy store (`-> KG:<entity>` or `-> chroma:<coll>/<id>`), follow it with a DIRECT lookup, not a fresh re-search. For broader prior context not already provided, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip the delegation if context was already passed in your task instructions.
 
                                   **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Better safe than sorry when coming to your memory. Pass it:
                                   - Task name and outcome (success/failure)
@@ -473,7 +490,7 @@ public static class MultiAgentOrchestrator
 
         string orchestratorPrompt = await Common.LoadPromptAsync(orchestratorPromptPath);
 
-        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", App.Config.IsUsingDockerForExec, continuous, shouldPlan, App.UltraMode);
+        orchestratorPrompt += PreambleBuilder.Build("Orchestrator", continuous, shouldPlan, App.UltraMode);
 
         string agentRoster = string.Join("\n", AgentDefs.Select(d =>
             $"  - {d.Name}: {d.Description}"));
@@ -531,6 +548,7 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.ReadSkillTool,
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
+            LocalAiFunctions.ReadDelegationTool,
             ..orchestratorFilteredTools
         ];
 
@@ -597,6 +615,12 @@ public static class MultiAgentOrchestrator
             MuxConsole.WriteRule();
         }
 
+        // Switch the docked-footer slash palette to the in-session (unified) command set so the
+        // session-agnostic meta commands (/background, /daemon, /kanban) and the slash-anywhere
+        // REPL hand-off are discoverable here, not just the top-level mode-launch set. The App
+        // menu re-asserts top-level scope when control returns, so this is self-restoring.
+        MuxConsole.EnableDockedFooter(topLevel: false);
+
         //Main loop 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -618,6 +642,14 @@ public static class MultiAgentOrchestrator
                     break;
                 }
 
+                // Session-agnostic meta commands (/background, /daemon, /kanban) + slash-anywhere
+                // REPL hand-off, mirroring the single-agent loop. Handled in place -> re-prompt;
+                // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
+                // the top-level menu runs it. Non-meta input falls through as a goal.
+                var disp = await MetaCommandDispatch.TryHandleAsync(
+                    input, chatClientFactory, agentModels, cancellationToken);
+                if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
+                if (disp == MetaCommandDispatch.Result.Handled) continue;
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
 
@@ -666,7 +698,8 @@ public static class MultiAgentOrchestrator
             if (!prodMode)
                 escapeListener = EscapeKeyListener.Start(goalCts, cancellationToken,
                     onExpand: () => MuxConsole.TuiExpandLatestInline(),
-                    onView: () => MuxConsole.TuiEnterViewMode());
+                    onView: () => MuxConsole.TuiEnterViewMode(),
+                    onAgents: () => MuxConsole.TuiEnterAgentView());
 
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
@@ -786,8 +819,13 @@ public static class MultiAgentOrchestrator
     }
 
 
-    public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools)
+    public static async Task BuildSpecialists(Dictionary<string, string> agentModels, Func<string, IChatClient> chatClientFactory, IList<AITool> mcpTools,
+        Func<Common.AgentDefinition, IList<AITool>>? extraToolsPerAgent = null)
     {
+        // Merge native tools (Filesystem + shell/REPL) into the pool BEFORE per-agent ToolFilter,
+        // so each specialist gets them only when its swarm.json mcpServers lists "Filesystem"/"Shell".
+        mcpTools = new List<AITool>(mcpTools);
+        foreach (var nt in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config)) mcpTools.Add(nt);
         foreach (var def in AgentDefs)
         {
             string prompt = await Common.LoadPromptAsync(def.SystemPromptPath);
@@ -806,7 +844,7 @@ public static class MultiAgentOrchestrator
 
                               ## Memory Policy (MANDATORY)
 
-                              **At the START of your task:** If relevant prior context has not already been provided to you, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip this if context was already passed in your task instructions.
+                              **At the START of your task:** Relevant BRAIN.md / MEMORY.md context is usually already injected above - read it first. If a stub points to a heavy store (`-> KG:<entity>` or `-> chroma:<coll>/<id>`), follow it with a DIRECT lookup, not a fresh re-search. For broader prior context not already provided, delegate to MemoryAgent to search for related decisions, research, or artifacts before beginning work. Skip the delegation if context was already passed in your task instructions.
 
                               **At the END of your task:** It is recommended you delegate to MemoryAgent to persist your findings before calling signal_task_complete. Better safe than sorry when coming to your memory. Pass it:
                               - Task name and outcome (success/failure)
@@ -884,6 +922,15 @@ public static class MultiAgentOrchestrator
             var agentTools = new List<AITool> { taskCompleteTool, listSkillsTool, readSkillTool, LocalAiFunctions.SleepTool, LocalAiFunctions.MuxRefreshTool };
             if (analyzeImageTool != null) agentTools.Add(analyzeImageTool);
             agentTools.AddRange(filteredTools);
+
+            // v0.12.0 M4 - per-agent extra tools (e.g. a team member's identity-bound mailbox
+            // send_message/read_inbox). Null factory (every off-team path) leaves the toolset
+            // byte-identical to before.
+            if (extraToolsPerAgent is not null)
+            {
+                foreach (var extra in extraToolsPerAgent(def))
+                    agentTools.Add(extra);
+            }
 
             var agentChatOptions = new ChatOptions
             {
@@ -1364,6 +1411,21 @@ public static class MultiAgentOrchestrator
         // concurrent parallel sub-agents each capture independently.
         using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
 
+        // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
+        // Python worker + shell jobs are its own (disposed when the run ends). This is what makes
+        // parallel sub-agents isolated by construction - they never share one REPL/job table.
+        using var _replScope = MuxSwarm.Utils.NativeTools.ReplShellTools.BeginScope(
+            "sub_" + Guid.NewGuid().ToString("N")[..12]);
+
+        // Give THIS sub-agent its own cancellation source (linked to the incoming token) and
+        // register it under its capture lane, so a scoped Esc on the foregrounded/expanded
+        // sub-agent cancels just this child. The whole-turn cancel still flows through the linked
+        // token. The IDisposable lane-deregistration + CTS dispose run when the scope exits (no
+        // try/finally needed around the method body's many returns).
+        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
+        cancellationToken = _subCts.Token;
+
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
         subAgentSpan?.SetTag("mode", "sub_agent");
@@ -1386,7 +1448,7 @@ public static class MultiAgentOrchestrator
 
             if (isFirstIteration)
             {
-                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask, App.Config.IsUsingDockerForExec);
+                var taskInstruction = PreambleBuilder.WrapTask(specialist.Def.Name, subTask);
 
                 var imageRegex = new Regex(
                     @"(?:\[image:\s*)?((?:[A-Za-z]:\\|\\\\|/)[\w\\\/.:\-\s]+\.(?:png|jpe?g|gif|webp))(?:\s*\])?",
@@ -1400,7 +1462,7 @@ public static class MultiAgentOrchestrator
 
                     string textPart = imageRegex.Replace(subTask, "").Trim();
                     contentParts.Add(new TextContent(
-                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart, App.Config.IsUsingDockerForExec)));
+                        PreambleBuilder.WrapTask(specialist.Def.Name, textPart)));
 
                     foreach (Match match in imageMatches)
                     {

@@ -1,4 +1,4 @@
-namespace MuxSwarm.Utils.Tui;
+﻿namespace MuxSwarm.Utils.Tui;
 
 /// <summary>
 /// Pure builders that turn render events (session header, tool call/result, diff,
@@ -20,6 +20,7 @@ internal static class TuiComponents
     public const string Text    = "#C8C8C8";
     public const string Plan    = "#B48EAD";
     public const string Ultra   = "#D08770";
+    public const string Giga    = "#B48EAD";
     public const string DiffAdd = "#78C88C";
     public const string DiffDel = "#D46C6C";
     public const string Border  = "#3A3A3A";
@@ -30,6 +31,7 @@ internal static class TuiComponents
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background.
     public const string CardBg  = "#1C2530";
+    public const string InputBg = "#12161C";   // very faint shade behind the compose field (subtle)
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
     public const string DiffAddBg = "#16261C";
     public const string DiffDelBg = "#2A1A1C";
@@ -78,7 +80,9 @@ internal static class TuiComponents
     public static List<string> UserEcho(string line) => new()
     {
         "",
-        $"  [{Accent}]\u258e[/] [{Text}]{Esc(line ?? "")}[/]"
+        // Echo glyph at col 0 (like the live input bar and the turn-header dot), text at col 2 - so
+        // the submitted line aligns with the agent output column instead of sitting 2 cols deeper.
+        $"[{Accent}]\u258e[/] [{Text}]{Esc(line ?? "")}[/]"
     };
 
     /// <summary>Braille spinner frames for the live "thinking/working" indicator
@@ -92,6 +96,16 @@ internal static class TuiComponents
     /// from the main agent's Braille dots so concurrent sub-agent activity reads as its own lane.</summary>
     public static readonly string[] SubAgentFrames =
         { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
+
+    /// <summary>Pulsing dot used to mark the SINGLE in-flight tool per live lane: a dot that
+    /// "breathes" small-&gt;large-&gt;small. Same glyph vocabulary as the static result dots, so the
+    /// only signal is motion (alive) vs stillness (done). Rides the shared ~100ms ticker frame.</summary>
+    public static readonly string[] PulseFrames =
+        { "\u00b7", "\u2022", "\u25CF", "\u2022" };   // middot -> bullet -> big circle -> bullet
+
+    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative).</summary>
+    public static string PulseDot(int frame)
+        => PulseFrames[((frame % PulseFrames.Length) + PulseFrames.Length) % PulseFrames.Length];
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
@@ -212,13 +226,20 @@ internal static class TuiComponents
         };
     }
 
-    /// <summary>Tool-call line: a running glyph, tool name, and a compact arg hint.</summary>
-    public static List<string> ToolCall(string tool, string? args)
+    /// <summary>Tool-call line: a running glyph, a human ACTION label (verb-derived from the tool
+    /// id so it reads "Running command" not "ReplShellMcp_execute_command_async"), and a compact
+    /// arg hint. Falls back to a humanized name then "Working" - never a raw identifier.</summary>
+    public static List<string> ToolCall(string tool, string? args) => ToolCall(tool, args, -1);
+
+    /// <summary>Tool-call line; when <paramref name="frame"/> &gt;= 0 the head dot PULSES (live
+    /// in-flight call), else a static running dot (committed/flushed line). Action label as above.</summary>
+    public static List<string> ToolCall(string tool, string? args, int frame)
     {
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        return new() { $"  [{Warn}]\u25cf[/] [{Accent}]{Esc(tool)}[/]{hint}" };
+        string dot = frame >= 0 ? PulseDot(frame) : "\u25cf";
+        return new() { $"  [{Warn}]{dot}[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -228,6 +249,11 @@ internal static class TuiComponents
     /// non-diff result; otherwise the call and result render as separate blocks.
     /// </summary>
     public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error = false, bool expandable = false)
+        => ToolCallResultMerged(tool, args, resultText, error, expandable, -1);
+
+    /// <summary>As above; when <paramref name="frame"/> &gt;= 0 the OK head dot pulses (the most-
+    /// recent completed call, held in the live region) - the red failure glyph never pulses.</summary>
+    public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error, bool expandable, int frame)
     {
         var lines = (resultText ?? "").Replace("\r\n", "\n").Split('\n')
             .Where(l => l.Trim().Length > 0).ToArray();
@@ -278,7 +304,9 @@ internal static class TuiComponents
             : "";
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]\u25cf[/]";
+        // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
+        string okDot = frame >= 0 ? PulseDot(frame) : "\u25cf";
+        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]{okDot}[/]";
         string failTag = error ? $" [{Err}]failed[/]" : "";
         string resultPart = first.Length > 0
             ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"
@@ -340,7 +368,8 @@ internal static class TuiComponents
     {
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
-        string spin = SubAgentFrames[((frame % SubAgentFrames.Length) + SubAgentFrames.Length) % SubAgentFrames.Length];
+        // Pulsing dot marks the live lane head (motion = working); same dot vocabulary as static rows.
+        string spin = PulseDot(frame);
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
@@ -353,7 +382,7 @@ internal static class TuiComponents
     }
 
     /// <summary>Expanded tool result as a bordered card with a status glyph.</summary>
-    public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false)
+    public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false, bool markdown = false)
     {
         string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]\u2713[/]";
         string col = error ? Err : Border;
@@ -370,9 +399,17 @@ internal static class TuiComponents
         string headMarkup = $"{glyph} [{Accent} on {CardBg}]{Esc(tool)}[/]";
         string headPlain   = $"\u2713 {tool}";   // glyph(1)+space(1)+tool; width drives the fill pad
         var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBg, inner) };
+        // markdown=true renders the BODY as muted markdown (uniform with sub-agent panels): headings/
+        // bold/inline-code styled but subordinate, no literal ###/**. Tool name/status stay literal.
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        {
+            if (markdown)
+                foreach (var w in TuiMarkup.WrapMarkup(TuiMarkdown.ToMarkup(raw), inner))
+                    outp.Add(ShadedMarkdownRow(col, w, CardBg, inner));
+            else
+                foreach (var w in TuiMarkup.WrapPlain(raw, inner))
+                    outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+        }
         outp.Add(ShadedRow(col, "", Text, CardBg, inner));
         return outp;
     }
@@ -388,15 +425,21 @@ internal static class TuiComponents
     /// are caller-supplied so tool results and sub-agents read distinctly.
     /// </summary>
     public static List<string> BoundedLivePanel(
-        string title, string body, string tintHex, int width, int maxRows, bool anchorTail, bool error = false)
+        string title, string body, string tintHex, int width, int maxRows, bool anchorTail, bool error = false, bool markdown = false)
     {
         string tint = error ? Err : tintHex;
         int inner = Math.Max(8, width - 4);
         int cap = Math.Max(1, maxRows);
+        // SubAgent panels render their transcript as MUTED markdown (headings/bold/inline-code
+        // still differentiate, but subordinate to the main viewport); everything else stays plain.
         var wrapped = new List<string>();
         foreach (var raw in TrimTrailingBlankLines(body ?? "").Split('\n'))
-            foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                wrapped.Add(w);
+        {
+            if (markdown)
+                foreach (var w in TuiMarkup.WrapMarkup(TuiMarkdown.ToMarkup(raw), inner)) wrapped.Add(w);
+            else
+                foreach (var w in TuiMarkup.WrapPlain(raw, inner)) wrapped.Add(w);
+        }
         int hidden = 0;
         if (wrapped.Count > cap)
         {
@@ -412,7 +455,7 @@ internal static class TuiComponents
         if (hidden > 0 && anchorTail)
             outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBg, inner));
         foreach (var w in wrapped)
-            outp.Add(ShadedRow(tint, w, Text, CardBg, inner));
+            outp.Add(markdown ? ShadedMarkdownRow(tint, w, CardBg, inner) : ShadedRow(tint, w, Text, CardBg, inner));
         // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
         if (hidden > 0 && !anchorTail)
             outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBg, inner));
@@ -495,6 +538,16 @@ internal static class TuiComponents
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
         => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
 
+    /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
+    /// WrapMarkup). The base fill is Muted so the sub-agent transcript reads as subordinate to the
+    /// main viewport, while nested tags (headings/bold/inline-code) still apply on top. Padded by
+    /// DISPLAY width so the band is exactly inner cells wide (matching the plain body rows).</summary>
+    private static string ShadedMarkdownRow(string railCol, string markupContent, string bg, int inner)
+    {
+        int pad = Math.Max(0, inner - TuiMarkup.MarkupWidth(markupContent));
+        return $"  [{railCol} on {bg}]\u2502[/][{Muted} on {bg}] {markupContent}{new string(' ', pad)}[/]";
+    }
+
     /// <summary>Header band of a shaded card: same rail-on-fill treatment, carrying pre-styled
     /// markup (glyph + tool name) + a trailing fill computed from the header's DISPLAY width so the
     /// band is exactly `inner` cells wide (matching the body rows). Passing a full `inner` of spaces
@@ -534,6 +587,12 @@ internal static class TuiComponents
         return true;
     }
 
+    /// <summary>One-line collapsed delegation summary: "from -> to  <short task>  (ctrl+e expand)".
+    /// The full prompt is retained as expandable data by the driver, mirroring sub-agent collapse.</summary>
+    public static string DelegationSummary(string from, string to, string task)
+        => $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{Accent}]\u2192 {Esc(to)}[/]  "
+         + $"[{Muted}]{Esc(Trunc(CollapseWs(task), 60))}[/]  [{Dim}](ctrl+e expand)[/]";
+
     /// <summary>Delegation rendered as a small from -> to tree.</summary>
     public static List<string> Delegation(string from, string to, string task, int truncLength) => new()
     {
@@ -551,14 +610,22 @@ internal static class TuiComponents
     /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
     /// region and is repainted every frame, so it never strands or scrolls away.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null, bool giga = false)
     {
         // No standing "tui" badge - it is noise. Only show active modes.
         // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
         // active the three mode badges are redundant noise - collapse them to a single "ultra"
         // chip. Otherwise show whichever discrete modes are on.
+        // Giga is a SUPERSET of ultra (ultra reasoning + plan + dynamic team/workflow
+        // orchestration), so when giga is active it supersedes the ultra chip - one "giga" badge
+        // stands for the whole stack. Otherwise ultra collapses plan/psub/sub into one chip, and
+        // failing that the discrete modes show individually.
         var badges = new List<string>();
-        if (ultra)
+        if (giga)
+        {
+            badges.Add($"[{Giga}]giga[/]");
+        }
+        else if (ultra)
         {
             badges.Add($"[{Ultra}]ultra[/]");
         }
@@ -577,7 +644,7 @@ internal static class TuiComponents
         // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
         // fresh session does not show a noisy "0m".
         if (sessionElapsed is { } se && se.TotalSeconds >= 60)
-            badges.Add($"[{Dim}]\u23f1 {ClockHM(se)}[/]");
+            badges.Add($"[{Dim}]{ClockHM(se)}[/]");
 
         // Context meter: full bar+percent when a threshold is known; a bare token count when
         // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
@@ -677,9 +744,31 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0, bool highlight = false)
     {
         const string cur = "#E0E0E0";
+        // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
+        // full width so the compose field reads as a contained region. Applied as a final pass over
+        // the rows so the cursor/markup math below is unchanged (highlight=false is byte-identical).
+        // Subtle treatment (option B): a thin accent left-rail + a FAINT shade FILLING the field row.
+        // The shade starts flush at the rail (the leading space is inside the band, no gap) and spans
+        // the full width so the field reads as one contained region - the faint colour keeps it from
+        // looking like a heavy strip. The 2-space lead each row already carries becomes rail(1)+
+        // space(1), so the text stays at its original column. highlight=false stays byte-identical.
+        List<string> Shade(List<string> rows)
+        {
+            if (!highlight || width <= 0) return rows;
+            var outp = new List<string>(rows.Count);
+            foreach (var r in rows)
+            {
+                int vis = TuiMarkup.MarkupWidth(r);          // includes the 2 leading spaces
+                // Fill the rest of the row with the faint shade: rail(1) + " " + body + pad == width.
+                int pad = Math.Max(0, width - vis);
+                string body = r.StartsWith("  ") ? r.Substring(2) : r;
+                outp.Add($"[{Accent}]\u2502[/][on {InputBg}] {body}{new string(' ', pad)}[/]");
+            }
+            return outp;
+        }
         string prompt = mode == EditorMode.Normal
             ? $"[{Warn}]\u25c6[/] [black on {Warn}] NORMAL [/]"
             : $"[{Accent}]\u203a[/]";
@@ -693,12 +782,12 @@ internal static class TuiComponents
         int contLeadCols   = 2 + TuiMarkup.MarkupWidth(contGutter) + 1;
 
         if (string.IsNullOrEmpty(buffer))
-            return new List<string>
+            return Shade(new List<string>
             {
                 mode == EditorMode.Normal
                     ? $"{promptLead}[black on {cur}] [/]"
                     : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
-            };
+            });
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
 
@@ -765,7 +854,7 @@ internal static class TuiComponents
                 if (pos >= seg.Length) break;
             }
         }
-        return rows;
+        return Shade(rows);
     }
 
     /// <summary>
@@ -1076,5 +1165,71 @@ internal static class TuiComponents
             if (p[i] == q[qi]) { if (first < 0) first = i; last = i; qi++; }
         if (qi < q.Length) return -1;                     // not a subsequence at all
         return 1000 + (last - first);
+    }
+
+    /// <summary>
+    /// The v0.12.0 M2 TaskBoard strip (Ctrl+T): a one-line progress bar over the shared team
+    /// board plus up to a few color-coded task rows (pending=dim, in-progress=accent,
+    /// blocked=warn, done=ok, failed=err). Pure - the driver passes a tally + pre-flattened
+    /// rows (id, status, owner, subject) so this stays free of any State dependency and is
+    /// unit-testable. Rendered with auto-wrap OFF by the live region like every other strip.
+    /// </summary>
+    public static List<string> TaskBoardStrip(
+        int total, int done, int inProgress, int blocked, int failed,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> rows,
+        int maxRows = 5, int offset = 0)
+    {
+        var outRows = new List<string>();
+        int segs = 6;
+        int filled = total > 0 ? (int)System.Math.Round(segs * (double)done / total) : 0;
+        filled = System.Math.Clamp(filled, 0, segs);
+        string bar = new string('\u2593', filled) + new string('\u2591', segs - filled);
+        string blockedNote = blocked > 0 ? $" [{Warn}]\u00b7 {blocked} blocked[/]" : "";
+        string failedNote = failed > 0 ? $" [{Err}]\u00b7 {failed} failed[/]" : "";
+        outRows.Add($"  [{Accent}]\u25a4 board[/] [{Dim}]{bar}[/] [{Text}]{done}/{total} done[/]{blockedNote}{failedNote}");
+
+        if (total == 0)
+        {
+            outRows.Add($"    [{Dim}]no tasks yet[/]");
+            return outRows;
+        }
+
+        // Window the (possibly long) task list through a maxRows-tall viewport scrollable with
+        // Up/Down while the Ctrl+T strip is open (offset clamped by the driver). The "above" /
+        // "more" affordances show how many rows are hidden in each direction so the user knows
+        // there is more to scroll to.
+        int maxOffset = System.Math.Max(0, rows.Count - maxRows);
+        offset = System.Math.Clamp(offset, 0, maxOffset);
+        if (offset > 0)
+            outRows.Add($"    [{Dim}]\u2191 {offset} above[/]");
+        int shown = System.Math.Min(maxRows, rows.Count - offset);
+        for (int i = 0; i < shown; i++)
+        {
+            var (id, status, owner, subject) = rows[offset + i];
+            string tint = status switch
+            {
+                "InProgress" => Accent,
+                "Blocked" => Warn,
+                "Done" => Ok,
+                "Failed" => Err,
+                _ => Dim,
+            };
+            string glyph = status switch
+            {
+                "Done" => "\u2713",
+                "Failed" => "\u2717",
+                "InProgress" => "\u25cf",
+                "Blocked" => "\u25cb",
+                _ => "\u00b7",
+            };
+            string who = string.IsNullOrEmpty(owner) ? "" : $" [{Dim}]@{Esc(owner)}[/]";
+            string subj = subject ?? "";
+            if (subj.Length > 48) subj = subj[..47] + "\u2026";
+            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}");
+        }
+        int below = rows.Count - offset - shown;
+        if (below > 0)
+            outRows.Add($"    [{Dim}]\u2193 +{below} more[/]");
+        return outRows;
     }
 }

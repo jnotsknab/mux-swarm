@@ -10,7 +10,7 @@
 [![Build](https://img.shields.io/badge/CI-Depot-blue)](https://depot.dev)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
 [![OS](https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
-[![License](https://img.shields.io/badge/license-See%20LICENSE-lightgrey)](#license)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue)](#license)
 
 <a href="#quick-start"><strong>Quick Start »</strong></a>
 &nbsp;·&nbsp;
@@ -36,12 +36,6 @@
 
 [https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f](https://github.com/user-attachments/assets/3e817e6b-d339-4016-a386-23b9bfe4b72d)
 > **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
-
-## Case Study: Autonomous Model Specialization
-
-A single goal file triggered an end-to-end autonomous pipeline including domain research, synthetic data generation via frontier model distillation, self-recovering training (4 consecutive failures fixed without human intervention), evaluation, and iterative self-improvement. Total cost: ~$11.
-
-**[Read the full case study →](https://www.muxswarm.dev/case-study.html)**
 
 ## Table of Contents
 
@@ -152,13 +146,13 @@ The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprot
 
 ## Key Capabilities
 
-**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries, single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing.
+**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries across single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing. The **single-agent loop is itself a full execution surface**: ephemeral sub-agent delegation (`/subagents`, `/parasubagents`), deep-reasoning **`/ultra`** mode (plan + maximum reasoning + heavy delegation), and **Giga mode** (`/giga`) that lets one agent spin up named teams and deterministic workflows on the fly. **Named [teams](#interactive-commands)** (`/teams`, `/createteam`) add a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and a file-backed inter-agent mailbox. Live sessions can be parked with `/detach` and resumed with `/attach`, or run as fire-and-forget `/background` jobs. On-demand session **`/handoff`** docs and **`/heal`** self-review round out long-running work.
 
-**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, sandboxed Docker execution, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
+**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. **Native in-process Filesystem and Shell/REPL tools** (no external MCP subprocess) with per-session scoping, plus a **pluggable execution sandbox** (`/sandbox`) spanning Docker, Podman, gVisor, and Kata microVMs with an optional network allowlist. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
 
-**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS).
+**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS). **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity via a bundled, auto-managed CLIProxyAPI sidecar — no API keys to paste. Editor integration through the **Zed Agent Client Protocol** (`--acp`).
 
-**[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
+**[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, **configurable security postures** for the native Filesystem (`standard`/`secure`/`lax`/`none`) and Shell/REPL (`off`/`prompt`/`allowlist`) tools, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
 
 ---
 
@@ -199,6 +193,26 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /workflow       Run a deterministic workflow from a JSON file
 /resume         Resume a previous single-agent session (shows #tags)
 /onboard        Create or update your operator profile (BRAIN.md + MEMORY.md)
+/detach         Park the live session in the background; resume later with /attach
+/attach         Re-attach a detached session (or pick from the backslash menu)
+```
+
+**Teams & coordination**
+```
+/teams          List and launch named teams from swarm.json
+/createteam     Guided wizard to define a team (lead, members, coordination, parallelism)
+/kanban         Editable task board driving member self-claim (todo/blocked/in-progress/done)
+/giga           Toggle Giga mode - grant the agent spawn_team / run_workflow superpowers
+/background     (/bg) Run an agent on a goal as a fire-and-forget background job
+/daemon         (/da) Runtime trigger control: cron/watch/on/off/jobs/cancel
+```
+
+**Subscription & proxy**
+```
+/login          Sign in to a subscription provider (Claude/Codex/Kimi/xAI/Antigravity) via browser
+/ping           Check provider connectivity through the local sidecar
+/proxy          Manage the bundled CLIProxyAPI sidecar: status | update
+/sandbox        View or switch the execution sandbox backend (host/docker/podman/gvisor/kata/...)
 ```
 
 **Execution & reasoning**
@@ -214,7 +228,9 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 
 **Session**
 ```
-/compact        Compact current session context (single-agent loops only)
+/compact [steer] Compact current session context (single-agent loops only); optional steering text guides the summary
+/handoff [text]  Write a cold-resume handoff doc via the active model (sandbox/reports by default; or pass a .md path)
+/heal [deep]     Review the session for lessons; propose BRAIN.md/MEMORY.md write-backs to approve (alias /reflect)
 /tag <text>     Tag the live session with free-form text for easy resume/search (optional MEMORY.md stub)
 /sessions       List all saved sessions with type and agent count
 /report [<id>]  Generate full session audit report(s); pass an id to audit one session
@@ -604,6 +620,51 @@ Defines which external integrations are available, where the runtime can read/wr
 ```
 > **Enterprise Storage:** `allowedPaths` works with any storage that presents as a filesystem path — Azure Blob Storage ([BlobFuse](https://github.com/Azure/azure-storage-fuse)), AWS S3 ([Mountpoint](https://github.com/awslabs/mountpoint-s3), [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)), Google Cloud Storage ([GCS FUSE](https://cloud.google.com/storage/docs/cloud-storage-fuse/overview)), SMB/CIFS shares, and NFS mounts. Mount your cloud or network storage, add the mount path to `allowedPaths`, and agents read/write to it like any local directory. No code changes required.
 
+#### Filesystem & Shell Security (`filesystem.securityMode`, `shell`)
+
+The native in-process Filesystem and Shell/REPL tools enforce configurable security postures independent of any MCP server.
+
+```json
+"filesystem": { "securityMode": "standard" },
+"shell": { "securityMode": "off", "allowedCommands": [] }
+```
+
+| Key | Values | Description |
+|-----|--------|-------------|
+| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
+| `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` disables shell tools; `prompt` confirms each command; `allowlist` permits only `allowedCommands`. |
+| `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
+
+#### Execution Sandbox (`sandbox`)
+
+Optionally run native shell + REPL execution inside a per-session sandbox. See [`/sandbox`](#interactive-commands) to hot-swap at runtime.
+
+```json
+"sandbox": { "backend": "host", "image": "python:3.12-slim", "network": false, "allowedDomains": [] }
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `backend` | `host` | `host` (no sandbox), `docker`, `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap`/`firejail`/`sandbox-exec`, or `custom`. |
+| `image` | `python:3.12-slim` | Container image for OCI backends. |
+| `network` | `false` | Allow network egress. With a non-empty `allowedDomains`, a deny-by-default CONNECT allowlist is enforced. |
+| `allowedDomains` | `[]` | Domains the sandbox may reach (OCI backends only). |
+| `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
+
+#### Context File Caps (`contextLimits`)
+
+Optional hard char-caps on the long-lived `BRAIN.md` / `MEMORY.md` memory files, with an opt-in background prune.
+
+```json
+"contextLimits": { "memoryMdCharLimit": 0, "memoryMdCapMode": "off", "prunePulseSeconds": 0 }
+```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `brainMdCharLimit` / `memoryMdCharLimit` | `0` | Char cap per file (`0` = uncapped). |
+| `brainMdCapMode` / `memoryMdCapMode` | `off` | `off`, `warn` (warn when over cap), or `force` (LLM-rewrite under the cap, backing up first). |
+| `prunePulseSeconds` | `0` | When `> 0` and a file is in `force` mode, a background pulse re-checks every N seconds (first tick +30s) and rewrites only when over cap. `0` disables. |
+
 ### Telemetry (`telemetry`)
 
 Optional OpenTelemetry configuration for exporting traces, logs, and metrics. All agent sessions, turns, tool calls, delegations, and orchestrator iterations emit OTEL spans. Structured logs attach as span events. Token counters, turn durations, and compaction metrics export as OTEL metrics.
@@ -649,7 +710,9 @@ Defines which agents exist, what they specialize in, which models and MCP server
     "maxOrchestratorIterations": 15,
     "maxSubAgentIterations": 8,
     "maxSubTaskRetries": 4,
-    "maxStuckCount": 3
+    "maxStuckCount": 3,
+    "compactionCharBudget": 6000,
+    "subAgentSummaryMode": "auto"
   },
   "compactionAgent": {
     "model": "google/gemini-3-flash-preview",
@@ -784,6 +847,10 @@ Optional tuning for orchestration budgets, iteration caps, and retry behavior. A
 | `maxSubAgentIterations` | 8 | Tool-call loops per sub-agent delegation before forced completion. |
 | `maxSubTaskRetries` | 4 | Retry attempts per failed sub-task with progressive recovery hints. |
 | `maxStuckCount` | 3 | Consecutive empty responses before aborting. |
+| `compactionCharBudget` | 6000 | Target char budget for the LLM session-compaction summary (`/compact`, auto-compaction). |
+| `maxToolIterationsPerTurn` | 1000 | Max model→tool round-trips within a single turn before the tool loop stops. `<= 0` = unlimited. |
+| `maxAutoContinuesPerTurn` | 3 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
+| `subAgentSummaryMode` | `auto` | How an over-budget sub-agent result is compacted before returning to the lead: `auto`/`llm` run the compaction model and append signal-scored extracted references; `extractive` skips the LLM entirely (no extra cost). |
 ### Prompts: `Prompts/Agents/*.md`
 
 Prompt files define the **behavioral contract** for each role — how an agent reasons, what it owns, which workflows it follows, and what constraints it respects. This is the main place to tune agent behavior without changing the runtime. See [Architecture](#architecture) for how prompts fit into the control plane model.
@@ -842,7 +909,7 @@ graph TD
 
     subgraph ToolLayer["Tool Layer"]
         WebAgent --> MCP1["BraveSearch · Fetch"]
-        CodeAgent --> MCP2["Filesystem · PythonRepl"]
+        CodeAgent --> MCP2["Native FS · Shell/REPL"]
         MemoryAgent --> MCP3["ChromaDB · Memory"]
         MuxAgent --> MCP4["All Scoped Tools"]
     end
@@ -914,6 +981,7 @@ mux-swarm is designed around scoped execution, explicit boundaries, and inspecta
 - Expanded OTEL coverage: memory read/write tracking, hook dispatch spans, workflow step spans, WS lifecycle in ServeMode
 ### Shipped
 
+- **v0.12.0 — Teams, Subscription Sign-In, Native Tools & Sandboxing**: Named multi-agent **teams** (`/teams`, `/createteam`) with a dependency-gated TaskBoard, an editable `/kanban`, peer self-claim, and a file-backed inter-agent **mailbox**; **Giga mode** (`/giga`) grants a single agent on-the-fly team and workflow orchestration. **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity through a bundled, auto-downloaded CLIProxyAPI sidecar that outlives the process and is reused across runs — no API keys to paste; `/ping` and `/proxy status|update` for diagnostics. **Native in-process Filesystem and Shell/REPL tools** (replacing external MCP subprocesses) with per-session isolation and cross-platform **security postures** (filesystem `standard`/`secure`/`lax`/`none`; shell `off`/`prompt`/`allowlist`). **Pluggable execution sandbox** (`/sandbox`) across Docker, Podman, nerdctl, gVisor, and **Kata microVMs**, with a deny-by-default network allowlist. Editor integration via the **Zed Agent Client Protocol** (`--acp`). Live-session `/detach` + `/attach`, `/background` jobs, and runtime `/daemon` trigger control. Intelligent setup that probes the provider's model list for sensible defaults. Plus a major live-TUI polish pass (smooth streaming, aligned output, flicker-free rendering via Synchronized Output).
 - **v0.11.0 — Live TUI, Session Tags & Full Agent CRUD**: New live full-screen TUI renderer (default on capable terminals; `/classic` opts out) with a fuzzy slash-command palette, in-place active-turn rendering, collapsible tool/sub-agent output, and a vim-style transcript navigation/copy mode. Session tagging via `/tag` (sidecar `.muxtag`, surfaced and fuzzy-matched in resume) with an optional one-shot MEMORY.md stub. Full swarm-agent CRUD from the REPL — `/newagent`, `/editagent`, `/delagent` — plus universal config editing: `/set <key> <value>` now reaches every scalar leaf of `config.json` and `swarm.json` by dotted path, and `/config` lists them all. `/showreasoning` gates streamed reasoning text (full/summary shown, none hidden) as a client-side display control. Per-file BRAIN.md / MEMORY.md character caps (off/warn/force). `/ultra` deep-reasoning mode and a `sub` footer badge for active delegation.
 - **v0.9.0 -- Enterprise Observability & Chat App Bridge Access**: OpenTelemetry tracing with native OTEL spans for agent sessions, turns, tool calls, orchestrator iterations, and delegations. Structured logs as span events with severity levels. Metrics counters and histograms for tokens, sessions, compaction, stuck counts, and tool call duration. Configurable telemetry block (endpoint, protocol, verbosity, headers) with OTLP export to Jaeger, Tempo, Datadog, or any compatible backend. Daemon bridge triggers for persistent sidecar process supervision with auto-restart and PID tracking. Bundled Telegram and Discord bridges with Whisper voice transcription, WebSocket auto-reconnect, and chat authorization.
 - **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
@@ -938,4 +1006,4 @@ Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ## License
 
-This project is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for details.
+This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.

@@ -1,4 +1,4 @@
-using MuxSwarm.Utils.Tui;
+﻿using MuxSwarm.Utils.Tui;
 using Spectre.Console;
 
 namespace MuxSwarm.Utils;
@@ -63,6 +63,22 @@ public static partial class MuxConsole
     /// from config at startup and pushed to the driver on activation + live via /set.</summary>
     public static int DelegationSpacing { get; set; } = 1;
 
+    /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
+    /// on activation + live via /set. Ignored outside the live TUI.</summary>
+    public static bool InputHighlight { get; set; } = true;
+
+    /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).
+    /// Pushed to the driver on activation + live via /set.</summary>
+    public static bool CardMarkdown { get; set; } = true;
+
+    /// <summary>Auto-collapse delegation dispatch lines to one expandable summary row
+    /// (console.collapseDelegations). Read by RenderTuiDelegation; toggled live via /set.</summary>
+    public static bool CollapseDelegations { get; set; } = true;
+
+    /// <summary>Capture multi-line pastes as one block (console.bracketedPaste, DECSET 2004).
+    /// Pushed to the driver on activation + live via /set.</summary>
+    public static bool BracketedPaste { get; set; } = true;
+
     /// <summary>
     /// When true (default) a delegated sub-agent's live output is captured and collapsed into a
     /// single expandable transcript line instead of streaming inline (Claude-Code Task style).
@@ -71,6 +87,15 @@ public static partial class MuxConsole
     /// the live TUI - stdio/serve always streams (the web app demultiplexes sub-agent streams).
     /// </summary>
     public static bool CollapseSubAgents { get; set; } = true;
+
+    /// <summary>
+    /// When true (default), goals fired by the in-house daemon collapse their whole agent run into
+    /// one expandable Agent-View line (reusing the sub-agent capture machinery), instead of
+    /// streaming the full reasoning + tool transcript into the main viewport. Set from
+    /// console.collapseDaemon; toggled at runtime by /daemonview (alias /dv). Independent of the
+    /// /sav sub-agent toggle. Only affects the live TUI - stdio/serve always streams.
+    /// </summary>
+    public static bool CollapseDaemonOutput { get; set; } = true;
 
     // --- sub-agent output capture (collapse-by-default) ----------------------
     // While a delegated sub-agent runs, its streamed text / reasoning / tool-result summaries are
@@ -81,6 +106,13 @@ public static partial class MuxConsole
     private sealed class SubAgentCapture
     {
         public required string Agent;
+        // Stable, disambiguated lane name unique among ALIVE captures: "WebAgent", "WebAgent 2",
+        // "WebAgent 3", ... Assigned once at registration so the Agent View can key selection +
+        // body lookup per LANE (duplicate same-name delegations no longer collapse to one row).
+        public string Lane = "";
+        // /hide: when true the lane is removed from the docked activity strip + viewport but kept
+        // in the backslash Agent View (tagged "hidden"), so the user can unhide it later.
+        public volatile bool Hidden;
         public readonly System.Text.StringBuilder Buffer = new();
         // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
         public readonly System.Text.StringBuilder Tail = new();
@@ -97,6 +129,14 @@ public static partial class MuxConsole
     // shared live line and flickered heavily). Guarded by _captureGate.
     private static readonly object _captureGate = new();
     private static readonly List<SubAgentCapture> _activeCaptures = new();
+
+    // Lane -> per-sub-agent CancellationTokenSource, so Esc can cancel a SINGLE foregrounded
+    // sub-agent (the one expanded via the backslash Agent View) instead of the whole turn. The
+    // orchestrator registers each child's own linked CTS under its capture lane for the lifetime
+    // of the run; the cancel path looks the lane up from TuiDriver.ForegroundAgent. Guarded by
+    // _captureGate. Cancelling one lane lets siblings continue (their batch token is unaffected).
+    private static readonly Dictionary<string, CancellationTokenSource> _laneCts =
+        new(StringComparer.Ordinal);
     private static System.Threading.Timer? _subAgentTimer;
     private static int _subAgentFrame;
     // Always-on resize poll: ticks ~100ms while the live-region driver is active and forces a
@@ -107,6 +147,11 @@ public static partial class MuxConsole
     /// <summary>True when the current async flow is a captured (collapsed) sub-agent.</summary>
     private static bool Capturing => _capture.Value is not null;
 
+    /// <summary>Public read of whether the calling async flow is inside a sub-agent / daemon
+    /// capture lane (no live interactive user). Used by native-tool security to auto-deny
+    /// elevation prompts that would otherwise block on input that never comes.</summary>
+    public static bool InSubAgentCapture => _capture.Value is not null;
+
     /// <summary>The active capture for this async flow, or null. Used by the gated sinks.</summary>
     private static SubAgentCapture? CurrentCapture => _capture.Value;
 
@@ -116,6 +161,29 @@ public static partial class MuxConsole
     /// or null when capture does not apply (collapse disabled, stdio/serve, or non-TUI) - in
     /// which case the sub-agent streams inline as before. Safe to <c>using</c> the nullable.
     /// </summary>
+    /// <summary>
+    /// Begin capturing a daemon-fired goal's live output so the whole run collapses to one
+    /// expandable Agent-View line (tagged with the trigger label), gated on the INDEPENDENT
+    /// <see cref="CollapseDaemonOutput"/> flag rather than the /sav sub-agent toggle. Reuses the
+    /// proven sub-agent capture plumbing. Returns null (stream inline as today) when collapse is
+    /// off, in stdio/serve, or outside the TUI. Safe to <c>using</c> the nullable.
+    /// </summary>
+    public static IDisposable? BeginDaemonCapture(string label)
+    {
+        if (!CollapseDaemonOutput || StdioMode || !IsTui) return null;
+        var cap = new SubAgentCapture { Agent = label };
+        var prev = _capture.Value;
+        _capture.Value = cap;
+        lock (_captureGate)
+        {
+            cap.Lane = NextLane_NoGate(label);
+            _activeCaptures.Add(cap);
+            EnsureSubAgentTicker_NoGate();
+        }
+        PushSubAgentActivity();
+        return new CaptureScope(cap, prev);
+    }
+
     public static IDisposable? BeginSubAgentCapture(string agent)
     {
         if (!CollapseSubAgents || StdioMode || !IsTui) return null;
@@ -124,11 +192,64 @@ public static partial class MuxConsole
         _capture.Value = cap;
         lock (_captureGate)
         {
+            cap.Lane = NextLane_NoGate(agent);
             _activeCaptures.Add(cap);
             EnsureSubAgentTicker_NoGate();
         }
         PushSubAgentActivity();
         return new CaptureScope(cap, prev);
+    }
+
+    /// <summary>
+    /// Register a sub-agent's own cancellation source under the CURRENT capture lane (so a scoped
+    /// Esc on the foregrounded/expanded sub-agent cancels just that child) and return an
+    /// IDisposable that deregisters it when the run ends. No-op (returns a null-object disposable)
+    /// when not capturing - non-TUI / collapse disabled - in which case only the whole-turn cancel
+    /// applies. Safe to <c>using</c>.
+    /// </summary>
+    public static IDisposable ScopedLaneCts(CancellationTokenSource cts)
+    {
+        var cap = _capture.Value;
+        if (cap is null || string.IsNullOrEmpty(cap.Lane)) return _noopDisposable;
+        string lane = cap.Lane;
+        lock (_captureGate) { _laneCts[lane] = cts; }
+        return new LaneCtsScope(lane);
+    }
+
+    private static readonly IDisposable _noopDisposable = new NoopDisposable();
+    private sealed class NoopDisposable : IDisposable { public void Dispose() { } }
+    private sealed class LaneCtsScope : IDisposable
+    {
+        private readonly string _lane;
+        private bool _done;
+        public LaneCtsScope(string lane) { _lane = lane; }
+        public void Dispose()
+        {
+            if (_done) return;
+            _done = true;
+            lock (_captureGate) { _laneCts.Remove(_lane); }
+        }
+    }
+
+    /// <summary>
+    /// Scoped cancellation entry point for Esc while sub-agents are live. If the user has
+    /// FOREGROUNDED a specific sub-agent (Enter in the backslash Agent View -> sticky
+    /// <c>TuiDriver.ForegroundAgent</c>) and that lane has a live CTS, cancel ONLY that child and
+    /// return true (siblings + the lead turn keep running). Otherwise return false so the caller
+    /// falls back to cancelling the whole turn. No sub-agents / none foregrounded -> false.
+    /// </summary>
+    public static bool TryCancelForegroundedSubAgent()
+    {
+        if (!ViaDriver) return false;
+        string? lane;
+        lock (ConsoleLock) { lane = _driver!.ForegroundAgent; }
+        if (string.IsNullOrEmpty(lane)) return false;
+        CancellationTokenSource? cts;
+        lock (_captureGate) { _laneCts.TryGetValue(lane, out cts); }
+        if (cts is null || cts.IsCancellationRequested) return false;
+        try { cts.Cancel(); } catch (ObjectDisposedException) { return false; }
+        WriteInfo($"Cancelled sub-agent: {lane}");
+        return true;
     }
 
     /// <summary>Record the sub-agent's completion status (from signal_task_complete) on the
@@ -172,6 +293,74 @@ public static partial class MuxConsole
 
     // --- consolidated live activity panel (single ticker, no per-agent flicker) --------------
 
+    /// <summary>Assign a unique disambiguated lane name for a new capture among the ALIVE lanes:
+    /// the first "WebAgent" stays "WebAgent"; a concurrent second becomes "WebAgent 2", etc. Caller
+    /// holds <see cref="_captureGate"/>.</summary>
+    private static string NextLane_NoGate(string agent)
+    {
+        var baseName = string.IsNullOrWhiteSpace(agent) ? "agent" : agent.Trim();
+        var taken = new HashSet<string>(_activeCaptures.Select(c => c.Lane), StringComparer.Ordinal);
+        if (!taken.Contains(baseName)) return baseName;
+        for (int n = 2; ; n++)
+        {
+            var cand = $"{baseName} {n}";
+            if (!taken.Contains(cand)) return cand;
+        }
+    }
+
+    /// <summary>/hide: hide a live sub-agent LANE from the docked strip + viewport (kept in the
+    /// backslash Agent View, tagged "hidden"). Resolves <paramref name="lane"/> by exact lane name,
+    /// else by base agent name (first match). Returns the resolved lane name, or null if not found.</summary>
+    public static string? HideSubAgentLane(string lane)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && !c.Hidden);
+            if (cap is not null) { cap.Hidden = true; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
+    }
+
+    /// <summary>Unhide a previously /hide'd lane (exact lane name, else base agent name). Returns the
+    /// resolved lane, or null if not found.</summary>
+    public static string? UnhideSubAgentLane(string lane)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden)
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden);
+            if (cap is not null) { cap.Hidden = false; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
+    }
+
+    /// <summary>The live lane names (for /hide + /unhide autocomplete). Visible lanes first, then
+    /// hidden ones suffixed with " (hidden)".</summary>
+    public static IReadOnlyList<string> ActiveSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Select(c => c.Hidden ? $"{c.Lane} (hidden)" : c.Lane).ToList();
+    }
+
+    /// <summary>Lane names eligible for /hide (the currently-visible lanes).</summary>
+    public static IReadOnlyList<string> VisibleSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Where(c => !c.Hidden).Select(c => c.Lane).ToList();
+    }
+
+    /// <summary>Lane names eligible for /unhide (the currently-hidden lanes).</summary>
+    public static IReadOnlyList<string> HiddenSubAgentLanes()
+    {
+        lock (_captureGate)
+            return _activeCaptures.Where(c => c.Hidden).Select(c => c.Lane).ToList();
+    }
+
     /// <summary>Start the shared ~100ms ticker that animates the active-sub-agent panel. Caller
     /// holds <see cref="_captureGate"/>. Idempotent.</summary>
     private static void EnsureSubAgentTicker_NoGate()
@@ -200,7 +389,8 @@ public static partial class MuxConsole
         {
             if (advanceFrame) _subAgentFrame++;
             items = _activeCaptures
-                .Select(c => (c.Agent, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
+                .Where(c => !c.Hidden)
+                .Select(c => (c.Lane, c.LiveStatus, TuiComponents.AgentTint(c.Agent)))
                 .ToList();
         }
         lock (ConsoleLock) { _driver!.SetSubAgentActivity(items, _subAgentFrame); }
@@ -224,14 +414,25 @@ public static partial class MuxConsole
             lock (ConsoleLock) { _driver!.UpdateSubAgentExpandedBody(cap.Agent, cap.Buffer.ToString().Trim()); }
     }
 
-    /// <summary>Record a captured tool-result summary line + bump the tool counter.</summary>
+    /// <summary>Record a captured tool marker as a clean one-line "\u00b7 &lt;Action&gt;" dot row
+    /// (main-viewport style) + bump the tool counter, instead of a raw "[tool] &lt;dump&gt;" blob -
+    /// so the expanded card reads as prose interleaved with tidy tool dots, not truncated JSON. The
+    /// <paramref name="summary"/> is shaped "&lt;tool&gt;: &lt;result text&gt;"; the action label is
+    /// derived from the tool id (Describe never returns a raw id), with a short trailing detail.
+    /// Fallback: no parseable "tool:" prefix -&gt; dot + the trimmed text.</summary>
     private static void CaptureToolResult(string summary)
     {
         if (_capture.Value is not { } cap) return;
         cap.ToolCalls++;
-        string clean = CollapseWhitespace(summary ?? "");
-        if (clean.Length > 0)
-            cap.Buffer.Append('\n').Append("[tool] ").Append(clean.Length > 200 ? clean[..200] + "\u2026" : clean);
+        string raw = CollapseWhitespace(summary ?? "");
+        if (raw.Length == 0) return;
+        string toolId = raw, detail = "";
+        int colon = raw.IndexOf(':');
+        if (colon > 0) { toolId = raw[..colon].Trim(); detail = raw[(colon + 1)..].Trim(); }
+        string action = ToolActionLabel.Describe(toolId);
+        string detailShort = detail.Length > 80 ? detail[..80] + "\u2026" : detail;
+        string row = detailShort.Length > 0 ? $"\u00b7 {action} \u2014 {detailShort}" : $"\u00b7 {action}";
+        cap.Buffer.Append('\n').Append(row);
     }
 
     /// <summary>
@@ -256,8 +457,11 @@ public static partial class MuxConsole
                 // bug): freeze it to the final transcript and let the user close it (Ctrl+E) or have
                 // it fold away naturally when the input prompt returns. Otherwise drop any unrelated
                 // in-region expansion so a stale one never lingers.
+                // A finishing agent never collapses a panel - not its own (kept open through
+                // completion) and crucially not a DIFFERENT agent's open panel (the old
+                // ClearSubAgentExpanded() here closed whoever was expanded when ANY sibling
+                // finished). Panels close only on the user's Ctrl+E or when the prompt returns.
                 bool keepOpen = _driver!.IsSubAgentExpanded(cap.Agent);
-                if (!keepOpen) _driver!.ClearSubAgentExpanded();
                 // Retain the full transcript expandable when there is anything to expand; otherwise
                 // commit a bare collapsed line (an empty sub-agent turn).
                 if (body.Length > 0)
@@ -286,7 +490,7 @@ public static partial class MuxConsole
 
     // Cached footer state so any render path can repaint the footer with current values.
     private static uint _fTokens, _fThreshold, _fCached;
-    private static bool _fPlan, _fUltra, _fPsub, _fSub;
+    private static bool _fPlan, _fUltra, _fPsub, _fSub, _fGiga;
 
     /// <summary>True when the frame-owned live-region driver is running.</summary>
     public static bool TuiActive => _tuiActive && _driver is not null;
@@ -318,6 +522,23 @@ public static partial class MuxConsole
                 {
                     _driver = new TuiDriver();
                     _tuiActive = true;
+                    // Idle-prompt backslash opens the Agent View dashboard (same entry as the
+                    // mid-turn EscapeKeyListener path). Returns false when no agents are running,
+                    // so backslash then inserts as a literal char.
+                    _driver.AgentViewOpener = TuiEnterAgentView;
+                    // Idle-prompt Ctrl+E targets the live sub-agent panel (toggle open/closed),
+                    // mirroring the mid-turn EscapeKeyListener expand; TuiDriver.ReadLine falls back
+                    // to the NAV overlay when no sub-agents are running.
+                    _driver.OnSubAgentExpand = TuiExpandLatestInline;
+                    // Backslash at the idle prompt with no live sub-agents offers the detached
+                    // interactive sessions (v0.12.0 /detach). One parked session -> attach it
+                    // directly; several -> route to the "/attach" list so the user picks an id.
+                    _driver.AttachPicker = () =>
+                    {
+                        var parked = InteractiveSessionRegistry.ListParked();
+                        if (parked.Count == 0) return null;
+                        return parked.Count == 1 ? $"/attach {parked[0].Id}" : "/attach";
+                    };
                     InstallTeardownHook_NoLock();
                     // Start the resize poll once, alongside the driver.
                     _resizeTimer ??= new System.Threading.Timer(_ => TuiPollResize(), null, 100, 100);
@@ -344,7 +565,10 @@ public static partial class MuxConsole
                 catch { /* files optional */ }
                 _driver.SetCollapseThreshold(CollapseToolLines);
                 _driver.SetBlockGap(DelegationSpacing);
-                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub);
+                _driver.SetInputHighlight(InputHighlight);
+                _driver.SetCardMarkdown(CardMarkdown);
+                _driver.SetBracketedPaste(BracketedPaste);
+                _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
             }
             catch
             {
@@ -444,22 +668,22 @@ public static partial class MuxConsole
     /// values so subsequent commits keep the footer current. No-op when the driver is not
     /// active.
     /// </summary>
-    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
+    public static void UpdateDockedFooter(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false, bool giga = false)
     {
-        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fCached = cached;
+        _fTokens = tokens; _fThreshold = threshold; _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fCached = cached; _fGiga = giga;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, sub, cached); }
+        lock (ConsoleLock) { _driver!.SetFooter(tokens, threshold, plan, ultra, parallelSub, sub, cached, giga); }
     }
 
     /// <summary>Refresh ONLY the footer mode badges (plan / ultra / parallel-sub) immediately,
     /// reusing the last cached token/threshold values. Used by slash-command toggles like /ultra
     /// so the badge updates the instant the mode flips, instead of waiting for the next
     /// post-stream status push.</summary>
-    public static void RefreshDockedFooterModes(bool plan, bool ultra, bool parallelSub, bool sub = false)
+    public static void RefreshDockedFooterModes(bool plan, bool ultra, bool parallelSub, bool sub = false, bool giga = false)
     {
-        _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub;
+        _fPlan = plan; _fUltra = ultra; _fPsub = parallelSub; _fSub = sub; _fGiga = giga;
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached); }
+        lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached, giga); }
     }
 
     /// <summary>Start the loop clock (live "&#x25cf; m:ss" footer badge) - called when an agentic
@@ -505,6 +729,30 @@ public static partial class MuxConsole
 
     /// <summary>Set the delegation spacing (blank lines above each delegation block) live. Takes
     /// effect on the next delegation render; no driver state needed.</summary>
+    /// <summary>Toggle input-field shading live (console.inputHighlight) + push to the driver.</summary>
+    public static void SetTuiInputHighlight(bool on)
+    {
+        InputHighlight = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetInputHighlight(on); }
+    }
+
+    /// <summary>Toggle muted-markdown card bodies live (console.cardMarkdown) + push to the driver.</summary>
+    public static void SetTuiCardMarkdown(bool on)
+    {
+        CardMarkdown = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetCardMarkdown(on); }
+    }
+
+    /// <summary>Toggle bracketed-paste capture live (console.bracketedPaste) + push to the driver.</summary>
+    public static void SetTuiBracketedPaste(bool on)
+    {
+        BracketedPaste = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetBracketedPaste(on); }
+    }
+
     public static void SetTuiDelegationSpacing(int lines)
     {
         DelegationSpacing = Math.Max(0, lines);
@@ -527,6 +775,25 @@ public static partial class MuxConsole
     /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
     /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
     internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Toggle the team TaskBoard strip (v0.12.0 M2, Ctrl+T). No-op outside the TUI.</summary>
+    internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoardRepaint(); } }
+
+    /// <summary>Install (or clear) the board-snapshot provider that feeds the TaskBoard strip.
+    /// Set by TeamController when a taskboard team launches; cleared when it ends.</summary>
+    internal static void TuiSetTaskBoardProvider(
+        Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
+            IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? provider)
+    {
+        if (_driver is not null) _driver.TaskBoardProvider = provider;
+    }
+
+    /// <summary>Install (or clear) the Agent View 'm' message-log provider (M4 Mailbox). Set by
+    /// TeamController when a team launches; cleared when it ends.</summary>
+    internal static void TuiSetMessageLogProvider(Func<string, IReadOnlyList<string>>? provider)
+    {
+        if (_driver is not null) _driver.MessageLogProvider = provider;
+    }
 
     /// <summary>Resize poll tick: detect a terminal size change and force a clean repaint. No-op
     /// outside the TUI. Called from the shared resize-poll timer.</summary>
@@ -555,11 +822,25 @@ public static partial class MuxConsole
     internal static bool TuiExpandLatestInline()
     {
         if (!ViaDriver) return false;
-        // Prefer the most-recent STILL-RUNNING sub-agent: expand its buffered-so-far transcript
+        // True toggle: if a sub-agent panel is already open, Ctrl+E CLOSES it (whatever it is) and
+        // stops - instead of recomputing a possibly-different target and opening that one, which
+        // read as "collapse just changed the content". Only when nothing is open do we compute a
+        // fresh target below.
+        lock (ConsoleLock) { if (_driver!.CollapseOpenSubAgentPanel()) return false; }
+        // Ctrl+E quick-open targets, in priority order: (1) the agent the user last FOREGROUNDED
+        // via the backslash dashboard (sticky focus, issue #1) when it is still running, else
+        // (2) the most-recent still-running sub-agent. This expands its buffered-so-far transcript
         // inline so Ctrl+E works mid-stream, not only after the agent completes. Falls back to the
         // latest finished expandable block (large tool result / committed sub-agent) when none run.
         SubAgentCapture? live = null;
-        lock (_captureGate) { if (_activeCaptures.Count > 0) live = _activeCaptures[^1]; }
+        string? focus = null;
+        lock (ConsoleLock) { focus = _driver!.ForegroundAgent; }
+        lock (_captureGate)
+        {
+            if (focus is not null)
+                live = _activeCaptures.FindLast(c => string.Equals(c.Agent, focus, StringComparison.Ordinal));
+            if (live is null && _activeCaptures.Count > 0) live = _activeCaptures[^1];
+        }
         if (live is not null)
         {
             string body = live.Buffer.ToString().Trim();
@@ -580,6 +861,40 @@ public static partial class MuxConsole
     {
         if (!ViaDriver) return false;
         lock (ConsoleLock) { return _driver!.EnterViewMode(); }
+    }
+
+    /// <summary>
+    /// Foreground the inline Agent View dashboard (v0.12.0 M1, the backslash key). Safe to call
+    /// mid-stream from the EscapeKeyListener thread. Builds the running-agent snapshot from the
+    /// live capture registry and supplies a by-name body provider so Enter can attach the chosen
+    /// agent's buffered-so-far transcript through the driver's sub-agent expand path. No-op (false)
+    /// outside the TUI or when no agents are running. Holds the console lock for the session, like
+    /// the Ctrl+G view overlay, so concurrent commits defer while the dashboard owns the screen.
+    /// </summary>
+    internal static bool TuiEnterAgentView()
+    {
+        if (!ViaDriver) return false;
+        List<(string Agent, string Status, string Tint)> snapshot;
+        Dictionary<string, string> bodies;
+        lock (_captureGate)
+        {
+            if (_activeCaptures.Count == 0) return false;
+            // The Agent View lists every LANE (including /hide'd ones, tagged "hidden" in the
+            // status) keyed by the unique lane name, so duplicate same-name delegations are
+            // individually selectable + attachable.
+            snapshot = _activeCaptures
+                .Select(c => (c.Lane,
+                              c.Hidden ? $"hidden \u00b7 {c.LiveStatus}" : c.LiveStatus,
+                              TuiComponents.AgentTint(c.Agent)))
+                .ToList();
+            bodies = _activeCaptures
+                .ToDictionary(c => c.Lane, c => c.Buffer.ToString().Trim(), StringComparer.Ordinal);
+        }
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterAgentView(snapshot,
+                agent => bodies.TryGetValue(agent, out var b) ? b : null);
+        }
     }
 
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
@@ -637,10 +952,10 @@ public static partial class MuxConsole
     /// G7 - context-meter + mode-badge status bar. With the driver active this updates the
     /// pinned footer in place; otherwise it prints an inline status line before the prompt.
     /// </summary>
-    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false)
+    public static void RenderTuiStatusBar(uint tokens, uint threshold, bool plan, bool ultra, bool parallelSub, uint cached = 0, bool sub = false, bool giga = false)
     {
         if (!IsTui) return;
-        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached, sub); return; }
+        if (TuiActive) { UpdateDockedFooter(tokens, threshold, plan, ultra, parallelSub, cached, sub, giga); return; }
         WithConsole(() =>
         {
             AnsiConsole.MarkupLine(TuiComponents.Footer(tokens, threshold, plan, ultra, parallelSub, sub));
@@ -761,7 +1076,23 @@ public static partial class MuxConsole
     /// <summary>G8 - delegation rendered as a small from -> to tree.</summary>
     public static void RenderTuiDelegation(string fromAgent, string toAgent, string task, int truncLength)
     {
-        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(fromAgent); _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); } return; }
+        if (ViaDriver)
+        {
+            lock (ConsoleLock)
+            {
+                ApplyLaneTint(fromAgent);
+                if (CollapseDelegations)
+                {
+                    // Collapse the dispatch to one expandable summary row (the full prompt is retained
+                    // behind Ctrl+E), matching how sub-agent results already collapse. Keeps dense
+                    // parallel fanout scannable instead of printing every full prompt inline.
+                    string summary = TuiComponents.DelegationSummary(fromAgent, toAgent, task);
+                    _driver!.CommitCollapsed(summary, fromAgent, CollapseWhitespace(task));
+                }
+                else { _driver!.Commit(TuiComponents.Delegation(fromAgent, toAgent, task, truncLength)); }
+            }
+            return;
+        }
         WithConsole(() =>
         {
             var tree = new Tree($"[{TC.Agent}]{Esc(fromAgent)}[/] [{TC.Dim}]delegates[/]")
@@ -892,7 +1223,7 @@ public static partial class MuxConsole
 
     private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.Repl;
 
-    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.Session;
+    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.SessionUnified;
 
     /// <summary>Collapsed result: a status glyph + first informative line + "(+N lines)" hint.
     /// Errors get a red cross and a "failed" tag instead of the dim ok marker.</summary>

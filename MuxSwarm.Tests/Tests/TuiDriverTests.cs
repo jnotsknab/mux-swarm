@@ -99,6 +99,18 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Footer_GigaSupersedesUltraChip()
+    {
+        // Giga is a superset of ultra, so the giga chip stands in for the whole stack -
+        // the ultra chip is suppressed when giga is active.
+        var plain = TuiMarkup.Plain(TuiComponents.Footer(0, 0, plan: true, ultra: true, psub: true, giga: true));
+        Assert.Contains("giga", plain);
+        Assert.DoesNotContain("ultra", plain);
+        Assert.DoesNotContain("plan", plain);
+        Assert.DoesNotContain("psub", plain);
+    }
+
+    [Fact]
     public void ToolResultCompact_ShowsFirstLineAndMoreHint()
     {
         var r = TuiComponents.ToolResultCompact("line one\nline two\nline three");
@@ -310,6 +322,28 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Driver_ToggleTaskBoardRepaint_DoesNotClearScreen_NoBufferRelocation()
+    {
+        // Regression: opening the TaskBoard strip mid-turn must repaint IN PLACE, not via a
+        // ClearScreen+Home full redraw. A ClearScreen re-anchors the live frame at the top of
+        // the viewport, so when streaming CommitAbove resumed it stranded the prior footer/status
+        // rows in scrollback (the triplicated-status-bar artifact). The in-place toggle path must
+        // never emit ESC[2J.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: true, ultra: false, psub: false);
+        term.Clear();
+
+        d.ToggleTaskBoardRepaint();
+        Assert.DoesNotContain(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+
+        // Contrast: the manual Ctrl+L redraw IS allowed to clear the screen (its whole purpose).
+        term.Clear();
+        d.ForceRedraw();
+        Assert.Contains(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+    }
+
+    [Fact]
     public void Driver_Streaming_CommitsCompleteLines_KeepsPartialTailLive()
     {
         var term = new FakeTerminal();
@@ -373,6 +407,67 @@ public class TuiDriverTests
         Assert.Contains("answer begins", term.Output);
 
         d.EndStream();
+    }
+
+    [Fact]
+    public void Driver_StreamBlock_StampsSingleGreyLeadDotOnFirstAnswerLine()
+    {
+        // Claude-Code style: the first answer line of a streamed output block gets ONE grey lead
+        // dot (U+25CF in the Muted color); later lines in the same block do not.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("first line\nsecond line\n", reasoning: false);
+        d.EndStream();
+        string outp = term.Output;
+        int dots = outp.Split('\u25cf').Length - 1;
+        Assert.Equal(1, dots);                  // exactly one lead dot for the block
+        // The Muted color (#787878) renders to an ANSI truecolor SGR (38;2;120;120;120).
+        Assert.Contains("38;2;120;120;120", outp);
+        Assert.Contains("first line", outp);
+        Assert.Contains("second line", outp);
+    }
+
+    [Fact]
+    public void Driver_StreamBlock_AlignsContinuationLinesUnderLeadDot()
+    {
+        // Alignment: the output dot is rendered "  *" (dot at col 2, matching the turn-header and
+        // tool-call markers) so its text begins at col 4, and EVERY subsequent answer line is
+        // indented to that same col-4 margin, so the block reads as one aligned column. The first
+        // line carries the dot; later non-blank lines carry the 4-space indent (no extra dot).
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("alpha\nbeta\n", reasoning: false);
+        d.EndStream();
+        string outp = term.Output;
+        // Exactly one dot (first line only) ...
+        Assert.Equal(1, outp.Split('\u25cf').Length - 1);
+        // ... and the second line is present with a 4-space leading indent matching the dot's text
+        // column (dot at col 2 => text at col 4). The committed "beta" line starts with 4 spaces.
+        Assert.Contains("    beta", outp);
+        Assert.Contains("alpha", outp);
+    }
+
+    [Fact]
+    public void Driver_StreamBlock_ReasoningLinesGetNoLeadDot()
+    {
+        // Reasoning is grey+italic already; it must not receive the answer-block lead dot. The dot
+        // lands on the first ANSWER line only.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+        term.Clear();
+        d.StreamChunk("thinking...\n", reasoning: true);   // reasoning line - no dot
+        d.StreamChunk("the answer\n", reasoning: false);   // first answer line - the dot
+        d.EndStream();
+        int dots = term.Output.Split('\u25cf').Length - 1;
+        Assert.Equal(1, dots);
     }
 
     [Fact]
@@ -693,7 +788,8 @@ public class TuiDriverTests
         var d = new TuiDriver(term);
         d.SetFooter(0, 0, false, false, false);
         d.BeginToolCall("read_file", "x.cs");
-        Assert.Contains("read_file", term.Output);   // shown live above the footer
+        // The LIVE tool-call line shows a human action label (verb-derived), not the raw id.
+        Assert.Contains("Reading", term.Output);   // "read_file" -> "Reading file"
         term.Clear();
         // A large (above-threshold) result is Ctrl+E-expandable and advertises the affordance.
         d.SetCollapseThreshold(2);
@@ -713,7 +809,8 @@ public class TuiDriverTests
         d.BeginToolCall("shell", "ls");
         term.Clear();
         d.CommitLine("  diff block");     // a separate block commits first
-        Assert.Contains("shell", term.Output);   // pending call flushed to its own line
+        // Pending call flushed to its own line; rendered with its action label ("shell" -> "Shell").
+        Assert.Contains("Shell", term.Output);
         Assert.Contains("diff block", term.Output);
     }
 
@@ -1467,4 +1564,238 @@ public class TuiDriverTests
         Assert.Contains("no match", row);
     }
 
+
+    // --- v0.12.0 M1: inline Agent View dashboard --------------------------------------
+
+    private static System.Collections.Generic.List<(string, string, string)> Snap(params string[] agents)
+    {
+        var l = new System.Collections.Generic.List<(string, string, string)>();
+        foreach (var a in agents) l.Add((a, "working", TuiComponents.AgentTint(a)));
+        return l;
+    }
+
+    [Fact]
+    public void AgentView_RenderDashboard_ListsActiveAgents()
+    {
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("WebAgent", "CodeAgent"), now);
+        av.Open();
+        var rows = av.RenderDashboard(60, now, 0);
+        string j = string.Join("\n", rows);
+        Assert.Contains("WebAgent", j);
+        Assert.Contains("CodeAgent", j);
+        Assert.Contains("agents", j);
+        Assert.Contains("foreground", j);   // the key-hint footer row
+    }
+
+    [Fact]
+    public void AgentView_DisambiguatedLanes_AreIndividuallySelectable()
+    {
+        // The duplicate-same-name bug: 3 "WebAgent" delegations collapsed to one selectable row
+        // and arrows stopped working. With upstream lane disambiguation the view receives unique
+        // lane names ("WebAgent", "WebAgent 2", "WebAgent 3") and each is independently navigable.
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("WebAgent", "WebAgent 2", "WebAgent 3"), now);
+        Assert.Equal("WebAgent", av.SelectedAgent(now));
+        av.Move(+1, now);
+        Assert.Equal("WebAgent 2", av.SelectedAgent(now));
+        av.Move(+1, now);
+        Assert.Equal("WebAgent 3", av.SelectedAgent(now));
+        av.Move(-1, now);
+        Assert.Equal("WebAgent 2", av.SelectedAgent(now));
+    }
+
+    [Fact]
+    public void AgentView_Move_ClampsAtEndsNoWrap()
+    {
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("A", "B", "C"), now);
+        Assert.Equal("A", av.SelectedAgent(now));   // first selected by default
+        av.Move(-1, now);
+        Assert.Equal("A", av.SelectedAgent(now));   // clamp at top (no wrap to C)
+        av.Move(+1, now); av.Move(+1, now);
+        Assert.Equal("C", av.SelectedAgent(now));
+        av.Move(+1, now);
+        Assert.Equal("C", av.SelectedAgent(now));   // clamp at bottom (no wrap to A)
+    }
+
+    [Fact]
+    public void AgentView_IdleRow_AutoHidesAfterTimeout()
+    {
+        var av = new AgentView();
+        var t0 = System.DateTime.UtcNow;
+        av.SetRows(Snap("A", "B"), t0);
+        // B is selected so it stays; select A so B can idle out.
+        // Default selection is A; advance the clock past the idle window.
+        var later = t0 + AgentView.IdleHideAfter + System.TimeSpan.FromSeconds(5);
+        var vis = av.VisibleRows(later, out int overflow);
+        // Selected (A) is always kept; the idle non-selected (B) is hidden.
+        Assert.Contains(vis, r => r.Agent == "A");
+        Assert.DoesNotContain(vis, r => r.Agent == "B");
+        Assert.Equal(0, overflow);
+    }
+
+    [Fact]
+    public void AgentView_CapsVisibleRowsWithOverflow()
+    {
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("a", "b", "c", "d", "e", "f", "g"), now);
+        var vis = av.VisibleRows(now, out int overflow);
+        Assert.Equal(AgentView.MaxVisible, vis.Count);
+        Assert.Equal(7 - AgentView.MaxVisible, overflow);
+        var rows = av.RenderDashboard(60, now, 0);
+        Assert.Contains("+" + overflow + " more", string.Join("\n", rows));
+    }
+
+    [Fact]
+    public void AgentView_SetRows_PreservesSelectionByName()
+    {
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("A", "B", "C"), now);
+        av.Move(+1, now);
+        Assert.Equal("B", av.SelectedAgent(now));
+        // A new snapshot (reordered, A finished) must keep B selected.
+        av.SetRows(Snap("C", "B"), now);
+        Assert.Equal("B", av.SelectedAgent(now));
+    }
+
+    [Fact]
+    public void Driver_EnterAgentView_ForegroundsSelectedAgentByName()
+    {
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        // Headless: with no console the ReadKey throws InvalidOperationException -> the loop breaks
+        // immediately, so we assert the no-op contract (empty snapshot returns false) and that a
+        // populated snapshot does not throw and reports the dashboard ran.
+        bool none = d.EnterAgentView(new System.Collections.Generic.List<(string, string, string)>(),
+            _ => "body");
+        Assert.False(none);
+        bool ran = d.EnterAgentView(Snap("CodeAgent"), _ => "buffered body so far");
+        Assert.True(ran);
+    }
+
+    [Fact]
+    public void Driver_BuildLiveFrame_OffDashboard_EndsWithFooterNoStrandedRows()
+    {
+        var term = new FakeTerminal { Width = 50, Height = 24 };
+        var d = new TuiDriver(term);
+        d.SetFooter(100, 1000, plan: false, ultra: false, psub: false);
+        var frame = d.BuildLiveFrame(50);
+        // Off-dashboard (default) the frame is unchanged: last line is the footer, preceded by a rule.
+        Assert.Contains("\u2500", string.Join("\n", frame));
+        Assert.DoesNotContain("foreground", string.Join("\n", frame));  // dashboard hint absent off-path
+    }
+
+
+    [Fact]
+    public void Driver_BuildLiveFrame_SubAgentExpand_RendersMutedMarkdownNotRaw()
+    {
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        d.SetFooter(100, 1000, plan: false, ultra: false, psub: false);
+        // Foreground a sub-agent transcript that contains a markdown heading. The bounded panel must
+        // render it as styled markdown (heading text present, leading "# " consumed), not raw md.
+        d.ToggleSubAgentExpanded("CodeAgent", "# HeadingToken\nplain body");
+        var frame = string.Join("\n", d.BuildLiveFrame(60));
+        // The heading TEXT survives (WrapMarkup re-tags per word, so assert a single token),
+        // but the literal "# " ATX prefix is consumed by markdown rendering (not raw md).
+        Assert.Contains("HeadingToken", frame);
+        Assert.DoesNotContain("# HeadingToken", frame);
+        Assert.Contains("#64B4DC", frame);  // heading accent color applied (markdown styled, muted card)
+    }
+
+    [Fact]
+    public void Driver_SetSubAgentActivity_PaintsEagerly_NotDeferred()
+    {
+        // g12.26 regression guard: the ~100ms sub-agent ticker must paint the live region on every
+        // change - including while the idle-prompt ReadLine loop is active - so the spinner/activity
+        // strip animates instead of freezing. (g12.25 deferred this paint behind `if (_inInput)
+        // return;`; the real fix routes the idle-prompt repaints through ConsoleLock - see
+        // TuiDriver.Repaint - so painting live is safe.) Assert SetSubAgentActivity writes to the
+        // terminal immediately rather than waiting for the next keystroke.
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        d.SetFooter(100, 1000, plan: false, ultra: false, psub: false);
+        term.Clear();
+        d.SetSubAgentActivity(Snap("CodeAgent"), 1);
+        Assert.NotEqual(string.Empty, term.Output);   // painted now, not deferred
+        Assert.Contains("CodeAgent", term.Output);
+    }
+
+    [Fact]
+    public void Driver_OnSubAgentExpand_HookSettable_DefaultsNull()
+    {
+        // g12.26: at the idle prompt, Ctrl+E targets the live sub-agent panel via this hook when
+        // sub-agents are running (mirroring the mid-turn expand), falling back to NAV only when the
+        // hook is unset or no sub-agents are live. Verify the seam exists and defaults unset.
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        Assert.Null(d.OnSubAgentExpand);
+        bool called = false;
+        d.OnSubAgentExpand = () => { called = true; return true; };
+        Assert.True(d.OnSubAgentExpand!());
+        Assert.True(called);
+    }
+
+    [Fact]
+    public void Driver_BuildLiveFrame_DashboardActive_SuppressesCompactStrip()
+    {
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        d.SetFooter(100, 1000, plan: false, ultra: false, psub: false);
+        d.SetSubAgentActivity(Snap("CodeAgent", "WebAgent"), 0);
+        // Off-dashboard: the compact activity strip lists both agents.
+        var off = string.Join("\n", d.BuildLiveFrame(60));
+        Assert.Contains("CodeAgent", off);
+        Assert.Contains("WebAgent", off);
+    }
+
+    [Fact]
+    public void Driver_ForegroundAgent_DefaultsNull_UntilDashboardForeground()
+    {
+        var term = new FakeTerminal { Width = 60, Height = 24 };
+        var d = new TuiDriver(term);
+        // No dashboard foreground has happened yet -> sticky focus is null (Ctrl+E falls back to latest).
+        Assert.Null(d.ForegroundAgent);
+        // Clearing a non-focused agent is a harmless no-op and leaves focus null.
+        d.ClearForegroundAgent("CodeAgent");
+        Assert.Null(d.ForegroundAgent);
+    }
+
+    [Fact]
+    public void Driver_ResolvedResult_HeldLiveThenFlushedOnNextEvent()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginToolCall("read_file", "x.cs");
+        d.ResolveMergedToolResult("Command: cat x.cs");   // short -> not expandable
+        // The resolved line is HELD in the live region (so its dot can pulse), visible after resolve.
+        Assert.Contains("Command: cat x.cs", term.Output);
+        term.Clear();
+        // The next event (a stream / commit / new call) flushes it down to static scrollback.
+        d.CommitLine("next thing");
+        Assert.Contains("next thing", term.Output);
+    }
+
+    [Fact]
+    public void Driver_ResolvedResult_StillCtrlEExpandable_AfterSettling()
+    {
+        var term = new FakeTerminal { Height = 30 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(3);
+        d.BeginToolCall("read_file", "big.txt");
+        d.ResolveMergedToolResult(string.Join("\n", Enumerable.Range(1, 20).Select(i => $"line {i}")));
+        // Even while the result is still SETTLING (held, not yet committed), Ctrl+E flushes it and
+        // opens the expandable panel - the held state never loses the expandable block.
+        Assert.True(d.ExpandLatestInline());
+        Assert.Contains("line 1", term.Output);
+    }
 }

@@ -1,3 +1,4 @@
+using System.Threading;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -133,6 +134,10 @@ public static class Setup
 
         if (!StepCollectUserInfo()) return false;
 
+        MuxConsole.WriteRule();
+
+        if (!StepSecurityPosture()) return false;
+
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
 
         MuxConsole.WriteRule();
@@ -221,15 +226,34 @@ public static class Setup
         else
             MuxConsole.WriteMuted("Example: /home/john, /mnt/data, /opt/projects");
 
-        MuxConsole.WriteLine();
-        var input = MuxConsole.Prompt("Paths: ");
-
-        var paths = ParsePaths(input);
-
-        if (paths.Count == 0)
+        // Offer sensible suggestions so the user can accept reasonable defaults with one key
+        // instead of typing every path. They can still type a custom comma-separated list.
+        var suggested = SuggestAllowedPaths();
+        if (suggested.Count > 0)
         {
-            MuxConsole.WriteError("No valid paths provided. Setup failed.");
-            return false;
+            MuxConsole.WriteLine();
+            MuxConsole.WriteBody("Suggested paths (detected on this machine):");
+            for (int i = 0; i < suggested.Count; i++)
+                MuxConsole.WriteInfo($"[{i + 1}] {suggested[i]}");
+            MuxConsole.WriteLine();
+        }
+
+        List<string> paths;
+        if (suggested.Count > 0 && MuxConsole.Confirm("Use these suggested paths?", defaultValue: true))
+        {
+            paths = suggested;
+        }
+        else
+        {
+            MuxConsole.WriteLine();
+            var input = MuxConsole.Prompt("Paths: ");
+            paths = ParsePaths(input);
+
+            if (paths.Count == 0)
+            {
+                MuxConsole.WriteError("No valid paths provided. Setup failed.");
+                return false;
+            }
         }
 
         MuxConsole.WriteLine();
@@ -241,7 +265,7 @@ public static class Setup
         MuxConsole.WriteBody("Which path should be used as the agent output sandbox?");
         MuxConsole.WriteMuted("This is where agents will write files and artifacts.");
 
-        var sandboxInput = MuxConsole.Prompt("Enter number or full path: ");
+        var sandboxInput = MuxConsole.Prompt("Enter number or full path (Enter = [1])", "1");
         string sandboxPath;
 
         if (int.TryParse(sandboxInput, out int idx) && idx >= 1 && idx <= paths.Count)
@@ -356,8 +380,23 @@ public static class Setup
 
     private static bool StepCollectEndpointConfig()
     {
-        MuxConsole.WriteStep(4, "Model Endpoint Configuration");
+        MuxConsole.WriteStep(4, "Model Provider");
 
+        // Two ways to provide a model backend:
+        //  1) Manual OpenAI-compatible endpoint + key (default; keeps prior behavior + scripted-setup tests).
+        //  2) Subscription login (Claude/Codex/...) via the local CLIProxyAPI sidecar - no endpoint/key typing.
+        MuxConsole.WriteBody("How do you want to connect to a model?");
+        MuxConsole.WriteLine();
+        var choice = MuxConsole.Select("Choose a connection method:", new[]
+        {
+            "Manual - OpenAI-compatible endpoint + API key",
+            "Subscription login - Claude / Codex / Kimi / ... (browser OAuth, recommended)",
+        });
+
+        if (choice.StartsWith("Subscription", StringComparison.Ordinal))
+            return StepSubscriptionLogin();
+
+        MuxConsole.WriteLine();
         MuxConsole.WriteBody("Enter your OpenAI-compatible API endpoint.");
         MuxConsole.WriteMuted("Example: https://openrouter.ai/api/v1");
 
@@ -420,7 +459,147 @@ public static class Setup
         _appConfig.LlmProviders.Clear();
         _appConfig.LlmProviders.Add(provider);
 
+        ResolveAndPickModels(endpoint, apiKeyEnvVar, isSubscription: false);
+
         return true;
+    }
+
+    /// <summary>
+    /// Subscription-login path for step 4: runs CLIProxyAPI's native browser OAuth for the chosen provider,
+    /// then registers the single local 'cliproxy' provider entry (loopback endpoint, key via env var). The
+    /// sidecar is downloaded on demand. Falls back gracefully if login is cancelled/fails - the user can
+    /// re-run /login later, but setup still needs a usable provider, so a failed login returns false.
+    /// </summary>
+    private static bool StepSubscriptionLogin()
+    {
+        var providers = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Log in to a subscription provider. Your browser will open for OAuth.");
+        MuxConsole.WriteMuted("(Reuses the official client id - same posture as other subscription tools.)");
+        MuxConsole.WriteLine();
+        var providerChoices = providers.ToList();
+        providerChoices.Add("cancel");
+        string pick = MuxConsole.Select("Which provider?", providerChoices);
+        if (pick == "cancel")
+        {
+            MuxConsole.WriteWarning("Subscription login cancelled. Re-run setup or use /login later.");
+            return false;
+        }
+
+        try
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token).GetAwaiter().GetResult();
+            if (!ok)
+            {
+                MuxConsole.WriteWarning($"Login for '{pick}' did not complete.");
+                return false;
+            }
+
+            string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
+                ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+
+            _appConfig.LlmProviders ??= [];
+            _appConfig.LlmProviders.Clear();
+            _appConfig.LlmProviders.Add(new ProviderConfig
+            {
+                Name = "cliproxy",
+                Enabled = true,
+                Endpoint = endpoint,
+                ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            });
+
+            MuxConsole.WriteSuccess($"Logged in. Provider 'cliproxy' configured -> {endpoint}.");
+            MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /model.");
+            MuxConsole.WriteMuted("Log in to additional providers anytime with /login - they join the same router.");
+
+            ResolveAndPickModels(endpoint, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, isSubscription: true);
+
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            MuxConsole.WriteWarning("Login timed out / cancelled.");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Subscription login failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// After a provider is configured (manual endpoint+key OR subscription login), probe its live model
+    /// list and pick sensible default model ids for the swarm roles. Shows the recommended pick with a
+    /// one-key accept, or lets the user choose a different agent model. Doubles as a connectivity check.
+    /// Sets <see cref="SwarmDefaults.PreferredModels"/> so the generated swarm.json gets real ids instead
+    /// of the loopback/ollama URL-heuristic fallback. Best-effort: silent on probe failure.
+    /// </summary>
+    private static void ResolveAndPickModels(string? endpoint, string? apiKeyEnvVar, bool isSubscription)
+    {
+        try
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteInfo("Checking which models your provider offers...");
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+            IReadOnlyList<string> models;
+            if (isSubscription)
+            {
+                models = MuxSwarm.Utils.Proxy.CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
+            }
+            else
+            {
+                var key = string.IsNullOrEmpty(apiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(apiKeyEnvVar);
+                models = MuxSwarm.Utils.Proxy.CliProxyManager
+                    .ProbeEndpointModelsAsync(endpoint ?? "", key, cts.Token).GetAwaiter().GetResult();
+            }
+
+            if (models.Count == 0)
+            {
+                MuxConsole.WriteWarning("Could not retrieve a model list (endpoint may not list models, or key not set yet).");
+                MuxConsole.WriteMuted("Falling back to provider-based default model ids. You can edit them in swarm.json or via /model.");
+                return;
+            }
+
+            var ranked = SwarmDefaults.RankModels(models);
+            if (ranked is null)
+            {
+                MuxConsole.WriteWarning("Model list was empty after filtering. Using provider-based defaults.");
+                return;
+            }
+
+            MuxConsole.WriteSuccess($"Provider reachable - {models.Count} model(s) available.");
+            MuxConsole.WriteLine();
+            MuxConsole.WriteBody("Recommended model defaults:");
+            MuxConsole.WriteInfo($"  Agent / Orchestrator : {ranked.Agent}");
+            if (ranked.Orchestrator != ranked.Agent)
+                MuxConsole.WriteInfo($"  Orchestrator         : {ranked.Orchestrator}");
+            MuxConsole.WriteInfo($"  Light / Compaction   : {ranked.Light}");
+            MuxConsole.WriteLine();
+
+            if (MuxConsole.Confirm("Use these recommended models?", defaultValue: true))
+            {
+                SwarmDefaults.PreferredModels = ranked;
+                MuxConsole.WriteSuccess("Model defaults set.");
+                return;
+            }
+
+            // Customize: let the user pick the primary agent model from the full list; derive the rest.
+            var choices = models.OrderByDescending(m => m == ranked.Agent).ToList();
+            var pick = MuxConsole.Select("Choose your primary agent model:", choices);
+            var light = SwarmDefaults.RankModels(models)?.Light ?? pick;
+            SwarmDefaults.PreferredModels = new SwarmDefaults.ModelDefaults(
+                Orchestrator: pick, Agent: pick, Light: light, Compaction: light);
+            MuxConsole.WriteSuccess($"Primary model set to {pick}.");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Model probe skipped: {ex.Message}");
+            MuxConsole.WriteMuted("Using provider-based default model ids.");
+        }
     }
 
     private static bool StepCollectUserInfo()
@@ -463,9 +642,77 @@ public static class Setup
         return true;
     }
 
+    /// <summary>
+    /// Configures the security posture for the NATIVE in-process Filesystem and Shell/REPL tools that Mux
+    /// now owns (formerly external MCP servers). Both default to their safe/no-friction values, so a user
+    /// can accept the defaults with one key. Filesystem governs read/write within AllowedPaths; Shell
+    /// governs command + python execution gating.
+    /// </summary>
+    private static bool StepSecurityPosture()
+    {
+        MuxConsole.WriteStep(6, "Security Posture");
+
+        MuxConsole.WriteBody("Mux runs the Filesystem and Shell/REPL tools in-process and can gate them.");
+        MuxConsole.WriteMuted("Pick how strict each should be. The defaults keep today's no-friction behavior.");
+        MuxConsole.WriteLine();
+
+        if (!MuxConsole.Confirm("Customize security posture? (No = keep safe defaults)", defaultValue: false))
+        {
+            _appConfig.Filesystem ??= new FilesystemConfig();
+            _appConfig.Shell ??= new ShellConfig();
+            MuxConsole.WriteSuccess($"Filesystem: {_appConfig.Filesystem.SecurityMode}   Shell: {_appConfig.Shell.SecurityMode} (defaults).");
+            return true;
+        }
+
+        // Filesystem posture
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Filesystem tools (read / write / edit within your allowed paths):");
+        var fsChoice = MuxConsole.Select("Filesystem security mode:", new[]
+        {
+            "standard - read + write within allowed paths (recommended)",
+            "secure   - read freely; every write/edit/move asks you first",
+            "lax      - read + write anywhere except system/sensitive paths",
+            "none     - unrestricted, no path checks",
+        });
+        _appConfig.Filesystem ??= new FilesystemConfig();
+        _appConfig.Filesystem.SecurityMode = fsChoice.Split(' ')[0];
+        MuxConsole.WriteSuccess($"Filesystem mode: {_appConfig.Filesystem.SecurityMode}");
+
+        // Shell / REPL posture
+        MuxConsole.WriteLine();
+        MuxConsole.WriteBody("Shell + Python REPL tools (command and code execution):");
+        var shChoice = MuxConsole.Select("Shell security mode:", new[]
+        {
+            "off       - run anything, no prompts (recommended for trusted local use)",
+            "prompt    - every command + python exec asks you first",
+            "allowlist - listed command prefixes run freely; everything else asks",
+        });
+        _appConfig.Shell ??= new ShellConfig();
+        _appConfig.Shell.SecurityMode = shChoice.Split(' ')[0];
+
+        if (_appConfig.Shell.SecurityMode == "allowlist")
+        {
+            MuxConsole.WriteLine();
+            MuxConsole.WriteMuted("Enter command prefixes that may run without a prompt (comma separated).");
+            MuxConsole.WriteMuted("Example: git, ls, cat, python, rg, dotnet");
+            var allowInput = MuxConsole.Prompt("Allowed commands: ");
+            var cmds = allowInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                                 .Where(c => c.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            _appConfig.Shell.AllowedCommands = cmds;
+            if (cmds.Count == 0)
+                MuxConsole.WriteWarning("No commands listed - allowlist mode will prompt for everything.");
+        }
+        MuxConsole.WriteSuccess($"Shell mode: {_appConfig.Shell.SecurityMode}");
+
+        MuxConsole.WriteLine();
+        MuxConsole.WriteMuted("Note: in non-interactive contexts (serve / ACP / sub-agents / daemon) any");
+        MuxConsole.WriteMuted("non-default mode auto-denies gated actions. You can change these later in config.json.");
+        return true;
+    }
+
     private static bool StepCollectMcpSecrets()
     {
-        MuxConsole.WriteStep(6, "MCP API Keys");
+        MuxConsole.WriteStep(7, "MCP API Keys");
 
         MuxConsole.WriteBody("Some MCP servers require API keys.");
         MuxConsole.WriteBody("By default, MuxSwarm stores ONLY the env-var names in config (no secrets).");
@@ -544,11 +791,19 @@ public static class Setup
 
     private static bool StepResolveMcpServerPaths()
     {
-        MuxConsole.WriteStep(7, "MCP Server Validation");
+        MuxConsole.WriteStep(8, "MCP Server Validation");
 
         foreach (var (name, server) in _appConfig.McpServers)
         {
             if (!server.Enabled) continue;
+
+            // Native in-process toolsets (Filesystem + Shell) carry the native-runtime-tools marker
+            // instead of a real binary - validating them against PATH would falsely warn. Show as native.
+            if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(server))
+            {
+                MuxConsole.WriteSuccess($"{name} - native (in-process)");
+                continue;
+            }
 
             if (!server.Type.Equals("http", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(server.Command))
             {
@@ -628,6 +883,8 @@ public static class Setup
             ("Shell",         PlatformContext.Shell),
             ("Sandbox",       _appConfig.Filesystem?.SandboxPath ?? "-"),
             ("Allowed paths", string.Join(", ", _appConfig.Filesystem?.AllowedPaths ?? [])),
+            ("FS security",   _appConfig.Filesystem?.SecurityMode ?? "standard"),
+            ("Shell security", _appConfig.Shell?.SecurityMode ?? "off"),
             ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "-"),
             ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "-"),
         });
@@ -639,6 +896,40 @@ public static class Setup
 
     public static bool TryFindBinaryPath(string binary, out string? fullPath) =>
         BinaryResolver.TryFindBinaryPath(binary, out fullPath);
+
+    /// <summary>
+    /// Builds a list of reasonable, existing allowed-path suggestions for this machine: the current working
+    /// directory, the user profile, and common doc/dev folders. Deduplicated, only-existing, ordered by
+    /// usefulness. The user can accept these wholesale or type their own list instead.
+    /// </summary>
+    private static List<string> SuggestAllowedPaths()
+    {
+        var candidates = new List<string?>
+        {
+            Environment.CurrentDirectory,
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+        };
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrEmpty(home))
+        {
+            foreach (var sub in new[] { "Projects", "Dev", "Development", "Code", "src", "Desktop" })
+                candidates.Add(Path.Combine(home, sub));
+        }
+
+        var result = new List<string>();
+        foreach (var c in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(c)) continue;
+            string full;
+            try { full = Path.GetFullPath(c); } catch { continue; }
+            if (!Directory.Exists(full)) continue;
+            if (!result.Contains(full, StringComparer.OrdinalIgnoreCase))
+                result.Add(full);
+        }
+        return result;
+    }
 
     private static List<string> ParsePaths(string input)
     {

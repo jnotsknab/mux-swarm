@@ -27,6 +27,9 @@ public sealed class EscapeKeyListener : IDisposable
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand)
         => Start(targetCts, outerToken, onExpand, onView: null);
 
+    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView)
+        => Start(targetCts, outerToken, onExpand, onView, onAgents: null);
+
     /// <summary>
     /// Start the listener with optional mid-stream affordances. While the agent is producing
     /// output: Esc cancels the turn (as before); Ctrl+E fires <paramref name="onExpand"/> to
@@ -38,11 +41,16 @@ public sealed class EscapeKeyListener : IDisposable
     /// name="onView"/> runs the overlay loop synchronously on THIS thread, so there is never a
     /// second concurrent key reader.
     /// </summary>
-    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView)
+    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
 
-        _ = Task.Run(() =>
+        // Run the key poll on a DEDICATED thread, never the thread pool. During sub-agent
+        // fan-out the pool is saturated by concurrent model streams + MCP subprocess calls, so a
+        // pool-scheduled poll (Task.Run) is starved and the Esc keystroke is not read until the
+        // batch finishes - it then "fires afterwards". A dedicated thread reads Esc immediately.
+        // (Same starvation class as the ACP stdin-read fix.)
+        var listenerThread = new Thread(() =>
         {
             try
             {
@@ -58,6 +66,12 @@ public sealed class EscapeKeyListener : IDisposable
                         var key = Console.ReadKey(intercept: true);
                         if (key.Key == ConsoleKey.Escape)
                         {
+                            // Scoped cancel: if the user foregrounded (expanded) a specific
+                            // sub-agent via the backslash Agent View, Esc cancels ONLY that child
+                            // and keeps listening (siblings + the lead turn continue). With no
+                            // sub-agents / none foregrounded, Esc cancels the whole turn as before.
+                            if (MuxConsole.TryCancelForegroundedSubAgent())
+                                continue;
                             targetCts.Cancel();
                             break;
                         }
@@ -70,6 +84,15 @@ public sealed class EscapeKeyListener : IDisposable
                         {
                             try { if (onView is not null) onView(); else onExpand!(); }
                             catch { /* overlay is best-effort */ }
+                            continue;
+                        }
+                        // Backslash: foreground the inline Agent View dashboard (v0.12.0 M1) -
+                        // a keyboard-navigable session list over the running sub-agents - WITHOUT
+                        // cancelling. Runs the dashboard loop synchronously on this thread, so there
+                        // is never a second concurrent key reader (same contract as the Ctrl+G view).
+                        if (key.KeyChar == '\\' && onAgents is not null)
+                        {
+                            try { onAgents(); } catch { /* dashboard is best-effort */ }
                             continue;
                         }
                         // Ctrl+E: expand the latest tool result inline without cancelling the turn.
@@ -86,13 +109,21 @@ public sealed class EscapeKeyListener : IDisposable
                             try { MuxConsole.TuiForceRedraw(); } catch { /* redraw is best-effort */ }
                             continue;
                         }
+                        // Ctrl+T: toggle the team TaskBoard strip mid-turn (v0.12.0 M2) without
+                        // cancelling. No-op when no team board is active.
+                        if (ctrl && key.Key == ConsoleKey.T)
+                        {
+                            try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
+                            continue;
+                        }
                     }
                     Thread.Sleep(100);
                 }
             }
             catch (OperationCanceledException) { }
             catch (InvalidOperationException) { }
-        }, listenerCts.Token);
+        }) { IsBackground = true, Name = "EscapeKeyListener" };
+        listenerThread.Start();
 
         return new EscapeKeyListener(listenerCts);
     }

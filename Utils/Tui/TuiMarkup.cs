@@ -209,10 +209,31 @@ internal static class TuiMarkup
             (cp >= 0xFE30 && cp <= 0xFE4F) ||  // CJK compat forms
             (cp >= 0xFF00 && cp <= 0xFF60) ||  // Fullwidth forms
             (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-            (cp >= 0x1F300 && cp <= 0x1FAFF) || // emoji / pictographs
+            (cp >= 0x1F300 && cp <= 0x1FAFF) || // emoji / pictographs (incl. 0x1F534 red, 0x1F7E1/E2 circles)
+            (cp >= 0x1F000 && cp <= 0x1F2FF) || // mahjong/dominoes/playing cards/enclosed
+            (cp >= 0x2600 && cp <= 0x27BF) ||   // Misc Symbols + Dingbats (incl. 0x2705 check mark, 0x26A0 warn)
+            (cp == 0x2B50 || cp == 0x2B55) ||   // star, heavy circle (emoji)
+            (cp >= 0x2300 && cp <= 0x23FF) ||   // Misc Technical (hourglass/watch/etc render wide as emoji)
             (cp >= 0x20000 && cp <= 0x3FFFD))   // CJK Ext B+
             return 2;
         return 1;
+    }
+
+    /// <summary>
+    /// Display width of a whole grapheme cluster (text element), not just its first rune. Handles the
+    /// emoji variation selector (U+FE0F forces emoji presentation =&gt; width 2 even for a base char that
+    /// is otherwise narrow, e.g. the warning sign) and ZWJ sequences (one cluster, width 2). This is the
+    /// correct unit for column math; measuring only the base rune mis-sizes emoji and breaks table borders.
+    /// </summary>
+    public static int TextElementWidth(string element)
+    {
+        if (string.IsNullOrEmpty(element)) return 0;
+        int baseW = RuneWidth(char.ConvertToUtf32(element, 0));
+        // VS16 (emoji presentation selector) anywhere in the cluster -> emoji -> width 2.
+        if (element.Contains('\uFE0F')) return 2;
+        // A ZWJ emoji sequence is a single cluster (e.g. family/profession emoji); render as width 2.
+        if (element.Contains('\u200D')) return 2;
+        return baseW;
     }
 
     /// <summary>Visible (display) width of plain text, summing rune widths.</summary>
@@ -224,7 +245,7 @@ internal static class TuiMarkup
         while (e.MoveNext())
         {
             string el = (string)e.Current;
-            w += RuneWidth(char.ConvertToUtf32(el, 0));
+            w += TextElementWidth(el);
         }
         return w;
     }
@@ -248,7 +269,7 @@ internal static class TuiMarkup
         while (e.MoveNext())
         {
             string el = (string)e.Current;
-            int ew = RuneWidth(char.ConvertToUtf32(el, 0));
+            int ew = TextElementWidth(el);
             if (w + ew > budget) break;
             sb.Append(el);
             w += ew;
@@ -322,7 +343,7 @@ internal static class TuiMarkup
         while (e.MoveNext())
         {
             string el = (string)e.Current;
-            int ew = RuneWidth(char.ConvertToUtf32(el, 0));
+            int ew = TextElementWidth(el);
             if (w + ew > width) { yield return sb.ToString(); sb.Clear(); w = 0; }
             sb.Append(el); w += ew;
         }
