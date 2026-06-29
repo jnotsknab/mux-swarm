@@ -994,14 +994,45 @@ public static class SingleAgentOrchestrator
         var delegateParallelTool = AIFunctionFactory.Create(
             method: async (
                 [Description("A list of agent assignments to run simultaneously")]
-                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
+                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments,
+                [Description("When true, fire the tasks into the BACKGROUND and return their job ids " +
+                    "IMMEDIATELY (non-blocking) so you keep working; poll/collect later with check_delegations. " +
+                    "Default false blocks until the whole batch finishes and returns all results.")]
+                bool background = false
             ) =>
             {
                 if (chatClientFactory == null)
                     return "[Error] Cannot create chat client for agent, chat client is null";
 
                 var specialists = MultiAgentOrchestrator.Specialists;
-                var assignmentList = assignments.ToList();
+                var assignmentList = assignments?.ToList() ?? new();
+                if (assignmentList.Count == 0)
+                    return "[delegate_parallel] No assignments given. Provide a list of {AgentName, Task}.";
+
+                // Non-blocking path: fire each task into the background via DetachedRunner and return
+                // job ids at once so the lead keeps working. Collect with check_delegations.
+                if (background)
+                {
+                    var launched = new List<string>();
+                    var failed = new List<string>();
+                    foreach (var req in assignmentList)
+                    {
+                        var job = await DetachedRunner.LaunchAsync(
+                            req.AgentName, req.Task, chatClientFactory, Models,
+                            StdinCancelMonitor.Instance?.ActiveTurnToken ?? cancellationToken);
+                        if (job is null) failed.Add(req.AgentName);
+                        else launched.Add($"{job.Id} <- {req.AgentName}");
+                    }
+
+                    var bg = new StringBuilder();
+                    bg.AppendLine($"[delegate_parallel · background] Launched {launched.Count} background job(s); they run while you continue.");
+                    foreach (var l in launched) bg.AppendLine($"  {l}");
+                    if (failed.Count > 0)
+                        bg.AppendLine($"  Could not launch: {string.Join(", ", failed)} (unknown agent?)");
+                    bg.AppendLine("Keep working. Call check_delegations (optionally with these ids) to poll status and collect results.");
+                    return bg.ToString();
+                }
+
                 MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
 
                 // Link the captured app/session token with the live PER-TURN token so Esc (which
@@ -1060,52 +1091,13 @@ public static class SingleAgentOrchestrator
             name: "delegate_parallel",
             description: "Executes multiple sub-tasks simultaneously. Use this for independent tasks like " +
                          "researching different topics or auditing multiple files. Each assignment specifies " +
-                         "an AgentName and a Task string. Tip: Execute once with random string if no agent names are known to return err output with available agents"
+                         "an AgentName and a Task string. Blocks until all finish and returns their results. " +
+                         "Pass background=true to instead launch them in the background and return job ids at once " +
+                         "(poll with check_delegations) when you have other work to do meanwhile. " +
+                         "Tip: Execute once with random string if no agent names are known to return err output with available agents"
         );
 
-        // Non-blocking delegation: fire one or more sub-agent tasks into the BACKGROUND and return
-        // their job ids immediately so YOU (the lead) keep working while they run. Poll/collect with
-        // check_delegations. This is the async counterpart to delegate_to_agent_lite/delegate_parallel
-        // (which block until the children finish) -- use it when you have other work to do meanwhile.
-        var delegateAsyncTool = AIFunctionFactory.Create(
-            method: async (
-                [Description("One or more agent assignments to run in the background simultaneously. Each has an AgentName and a Task.")]
-                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
-            ) =>
-            {
-                if (chatClientFactory == null)
-                    return "[Error] Cannot create chat client for agent, chat client is null";
-                var list = assignments?.ToList() ?? new();
-                if (list.Count == 0)
-                    return "[delegate_async] No assignments given. Provide a list of {AgentName, Task}.";
-
-                var launched = new List<string>();
-                var failed = new List<string>();
-                foreach (var req in list)
-                {
-                    var job = await DetachedRunner.LaunchAsync(
-                        req.AgentName, req.Task, chatClientFactory, Models,
-                        StdinCancelMonitor.Instance?.ActiveTurnToken ?? cancellationToken);
-                    if (job is null) failed.Add(req.AgentName);
-                    else launched.Add($"{job.Id} <- {req.AgentName}");
-                }
-
-                var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"[delegate_async] Launched {launched.Count} background job(s); they run while you continue.");
-                foreach (var l in launched) sb.AppendLine($"  {l}");
-                if (failed.Count > 0)
-                    sb.AppendLine($"  Could not launch: {string.Join(", ", failed)} (unknown agent?)");
-                sb.AppendLine("Keep working. Call check_delegations (optionally with these ids) to poll status and collect results.");
-                return sb.ToString();
-            },
-            name: "delegate_async",
-            description: "Delegate one or more sub-tasks to background agents and return their job ids IMMEDIATELY " +
-                         "(non-blocking) so you keep working while they run. Each assignment is an AgentName + Task. " +
-                         "Unlike delegate_parallel (which blocks until done), this returns at once; use check_delegations " +
-                         "to poll status and collect finished results. Prefer this when you have other work to do meanwhile."
-        );
-
-        // Poll + collect background delegations launched via delegate_async (and any /background jobs).
+        // Poll + collect background delegations launched via delegate_parallel(background:true) (and /background jobs).
         var checkDelegationsTool = AIFunctionFactory.Create(
             method: (
                 [Description("Optional job id (e.g. bg3) to check just one; omit to list ALL background jobs.")]
@@ -1118,7 +1110,7 @@ public static class SingleAgentOrchestrator
 
                 if (jobs.Count == 0)
                     return string.IsNullOrWhiteSpace(jobId)
-                        ? "[check_delegations] No background jobs. Launch some with delegate_async."
+                        ? "[check_delegations] No background jobs. Launch some with delegate_parallel(background:true)."
                         : $"[check_delegations] No background job with id '{jobId}'.";
 
                 var sb = new System.Text.StringBuilder();
@@ -1137,7 +1129,7 @@ public static class SingleAgentOrchestrator
                 return sb.ToString();
             },
             name: "check_delegations",
-            description: "Poll the status of background delegations launched via delegate_async (and /background jobs). " +
+            description: "Poll the status of background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
                          "Pass a job id to check one, or omit to list all. Returns each job's status and, for finished jobs, " +
                          "its full result so you can collect work you fired earlier without blocking."
         );
@@ -1172,13 +1164,12 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
             singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
 
-        // Non-blocking delegation: when this lead can spawn sub-agents, also grant the async pair
-        // (delegate_async fires work into the background + returns at once; check_delegations polls/
-        // collects). Optional alongside the blocking tools -- the model chooses to use them when it
-        // has other work to do while children run. Same gate as read_delegation.
+        // Non-blocking delegation: when this lead can spawn sub-agents, also grant check_delegations
+        // (delegate_parallel(background:true) fires work into the background + returns at once;
+        // check_delegations polls/collects). Optional alongside the blocking tools. Same gate as
+        // read_delegation.
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
         {
-            singleAgentTools.Add(delegateAsyncTool);
             singleAgentTools.Add(checkDelegationsTool);
         }
 

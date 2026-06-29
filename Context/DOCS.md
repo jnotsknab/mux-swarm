@@ -996,8 +996,8 @@ is unwritable) and is pruned after `delegationRetentionDays`. All thresholds sca
 existing `executionLimits` budgets; the only dedicated knob is `delegationRetentionDays`.
 
 **Blocking vs non-blocking delegation.** `delegate_to_agent_lite` and `delegate_parallel`
-block the lead until the children finish. The optional `delegate_async` + `check_delegations`
-pair instead fires sub-agents into the **background** and returns job ids immediately, so the
+block the lead until the children finish. Passing `background:true` to `delegate_parallel`
+instead fires the sub-agents into the **background** and returns job ids immediately, so the
 lead keeps working and collects results later by polling `check_delegations` (background jobs
 also appear in the `\` Agent View and are managed by `/background`). The model chooses which
 to use; non-blocking is never forced.
