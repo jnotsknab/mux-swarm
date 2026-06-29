@@ -315,6 +315,18 @@ internal static class CliProxyManager
     }
 
     /// <summary>
+    /// Export the persisted loopback bearer key to <see cref="ClientKeyEnvVar"/> WITHOUT spawning or
+    /// contacting the sidecar. Cheap, disk-only, safe to call at startup so the cliproxy provider's
+    /// apiKeyEnvVar always resolves (the actual sidecar is still started lazily on first request).
+    /// This prevents a spurious "API key env var not set" warning on every launch after /login.
+    /// </summary>
+    public static void ExportPersistedKey()
+    {
+        try { EnsureKeysLoaded(); }
+        catch { /* best-effort; lazy EnsureRunningAsync will set it later */ }
+    }
+
+    /// <summary>
     /// Ensures the sidecar binary is present AND a server instance is reachable, returning the loopback
     /// OpenAI-compatible endpoint. The sidecar is DETACHED so it outlives Mux: on entry we first probe the
     /// fixed <see cref="PreferredPort"/> and ADOPT a healthy instance (possibly started by a prior Mux

@@ -1995,6 +1995,13 @@ public class App
 
         ActiveProvider = provider;
 
+        // CLIProxyAPI sidecar provider: its bearer key lives in a persisted file and is exported to
+        // the env var lazily at sidecar spawn. Export it from disk NOW (cheap, no spawn) so the
+        // env-var check below passes - otherwise every launch after /login warns + prompts for a key
+        // that is never user-supplied. The sidecar itself is still started lazily on first request.
+        if (string.Equals(provider.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+            MuxSwarm.Utils.Proxy.CliProxyManager.ExportPersistedKey();
+
         if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
             var apiKeyValue = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
