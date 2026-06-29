@@ -292,7 +292,7 @@ public static class SwarmDefaults
             compactionAgent = new
             {
                 model = models.CompactionModel,
-                autoCompactTokenThreshold = 80000
+                autoCompactTokenThreshold = 200000
             },
             singleAgent = new
             {

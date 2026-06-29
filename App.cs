@@ -1875,6 +1875,14 @@ public class App
 
     private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
 
+    // Resolve the MCP connect timeout from config with a 5s floor (a sub-5s value would make even a
+    // healthy stdio spawn flaky). Non-positive / unset falls back to the AppConfig default (60s).
+    private static int McpConnectTimeoutSeconds(AppConfig config)
+    {
+        int v = config?.McpConnectTimeoutSeconds ?? 60;
+        return v <= 0 ? 60 : Math.Max(5, v);
+    }
+
     private static async Task<McpInitResult?> ConnectMcpServerAsync(string name, McpServerConfig serverConfig, string baseDir, AppConfig config)
     {
         try
@@ -1905,9 +1913,10 @@ public class App
                 };
 
                 var httpTransport = new HttpClientTransport(httpOptions);
-                var httpClient = await McpClient.CreateAsync(httpTransport);
+                using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
+                var httpClient = await McpClient.CreateAsync(httpTransport, cancellationToken: httpCts.Token);
 
-                var httpTools = await httpClient.ListToolsAsync();
+                var httpTools = await httpClient.ListToolsAsync(cancellationToken: httpCts.Token);
                 var namedHttpTools = httpTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
 
                 return new McpInitResult(name, httpClient, namedHttpTools, IsHttp: true);
@@ -1943,7 +1952,7 @@ public class App
                         MuxConsole.WriteMuted($"  ENV: '{k}' = '{MaskSecret(v)}'");
                 }
 
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
                 var stdioClient = await McpClient.CreateAsync(stdioTransport, cancellationToken: cts.Token);
 
                 var stdioTools = await stdioClient.ListToolsAsync(cancellationToken: cts.Token);

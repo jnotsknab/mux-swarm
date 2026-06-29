@@ -61,8 +61,17 @@ public class ExecutionLimits
     [JsonPropertyName("delegationRetentionDays")]
     public int DelegationRetentionDays { get; set; } = 30;
 
+    /// <summary>
+    /// Deadman's-switch window (seconds) for a single streaming response: a turn is cancelled if no
+    /// stream chunk arrives within this span (reset on every chunk). This value is ALSO reused as the
+    /// OpenAI client HTTP NetworkTimeout, so it bounds how long a single request may stall before the
+    /// connection is torn down. It is NOT an idle timeout between turns -- sitting at the prompt or
+    /// between requests never trips it. Default 43200 (12h) so long tool-running turns, system_sleep
+    /// gaps inside a turn, and slow providers are tolerated; a genuinely hung stream still surfaces
+    /// eventually. Lower it if you want hung streams to fail fast.
+    /// </summary>
     [JsonPropertyName("activityTimeoutSeconds")]
-    public int ActivityTimeoutSeconds { get; set; } = 1200;
+    public int ActivityTimeoutSeconds { get; set; } = 43200;
 
 
     /// <summary>

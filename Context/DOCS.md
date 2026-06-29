@@ -34,7 +34,14 @@ Top-level fields:
 
 ### mcpServers
 
-Each key is a server name. Two transport types: `stdio` and `http`.
+Each key is a server name. Two transport types: `stdio` and `http`. A top-level
+`mcpConnectTimeoutSeconds` (default 60) bounds how long each server's connect + initial
+tool-list may take before it is skipped; a slow cold-starting server (npx download, venv build,
+remote HTTP MCP) that exceeds it is reported as an error rather than blocking startup forever.
+
+```json
+"mcpConnectTimeoutSeconds": 60
+```
 
 ```json
 "Filesystem": {
@@ -54,6 +61,12 @@ Each key is a server name. Two transport types: `stdio` and `http`.
   "enabled": true
 }
 ```
+
+`Filesystem` and `Shell` are served by **native in-process tools** by default (no external
+MCP process); they still appear here so the two-gate model is unchanged (config `enabled` =
+global on/off; per-agent `mcpServers` in swarm.json = who gets them). A native entry has
+`"command": "native-runtime-tools"`. Listing the npx `@modelcontextprotocol/server-filesystem`
+form instead overrides Filesystem back to the external server.
 
 ### llmProviders
 
@@ -439,19 +452,45 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "maxOrchestratorIterations": 15,
   "maxSubAgentIterations": 8,
   "maxSubTaskRetries": 4,
-  "maxStuckCount": 3
+  "maxStuckCount": 3,
+  "compactionCharBudget": 6000,
+  "contextInjection": "full",
+  "compactionMaxMessageChars": 2500,
+  "subAgentSummaryMode": "auto",
+  "delegationRetentionDays": 30,
+  "activityTimeoutSeconds": 43200,
+  "maxToolIterationsPerTurn": 1000,
+  "maxAutoContinuesPerTurn": 3
 }
 ```
+
+Any key may be omitted; missing keys inherit the built-in default shown above.
+
+- `progressEntryBudget` - char budget for a single sub-agent result handed back to the lead. Governs the size-tiered delegation engine: results <= this go inline; the spill-to-pointer threshold is `3x` this value.
+- `crossAgentContextBudget` - char cap on prior-agent context auto-injected into a new sub-agent (swarm/pswarm only).
+- `progressLogTotalBudget` - char budget for the orchestrator running progress log; also the soft cap for the delegation blowout gate (hard cap = 2x).
+- `maxOrchestratorIterations` / `maxSubAgentIterations` - orchestration and sub-agent loop ceilings.
+- `maxSubTaskRetries` / `maxStuckCount` - retry + stall-detection ceilings.
+- `compactionCharBudget` / `compactionMaxMessageChars` - conversation-compaction budgets.
+- `contextInjection` - `full` (default) injects full prior context; other modes trim it.
+- `subAgentSummaryMode` - how mid-size sub-agent results are compacted: `auto`/`llm` (LLM summary + extracted refs) or `extractive` (no LLM call, money-saving).
+- `delegationRetentionDays` - days spilled sub-agent raw outputs are kept under `<sandbox>/delegations` (or `%LOCALAPPDATA%/Mux-Swarm/delegations`) before a startup prune. 0 disables pruning.
+- `activityTimeoutSeconds` - deadman's-switch window for a single streaming response (reset on every chunk) and the OpenAI client HTTP NetworkTimeout. NOT an idle-between-turns timeout. Default 43200 (12h) so long tool-running turns and slow providers are tolerated.
+- `maxToolIterationsPerTurn` - max model->tool round-trips per turn before the invocation middleware stops looping (<= 0 = unlimited).
+- `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
+
 
 ### compactionAgent
 
 ```json
 "compactionAgent": {
   "model": "google/gemini-3-flash-preview",
-  "autoCompactTokenThreshold": 80000,
+  "autoCompactTokenThreshold": 200000,
   "modelOpts": { "temperature": 0.2, "topP": 0.85, "maxOutputTokens": 4096 }
 }
 ```
+
+`autoCompactTokenThreshold` is the session-token count at which a single-agent session auto-compacts its history (default 200000). It also drives the docked context-meter denominator. `0` disables auto-compaction.
 
 ### singleAgent
 
@@ -608,12 +647,26 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --model <id>               Override single-agent model
 --mcp-strict [true|false]  Require all MCP servers
 --docker-exec [true|false] Route execution through Docker
+--sandbox [backend [img]]  Run shell/REPL exec inside a sandbox (host|docker|podman|gvisor|kata|bwrap|...)
+--acp                      Zed Agent Client Protocol transport (JSON-RPC over stdio)
+--stateless                Boot straight into a stateless single-agent loop
+--agent-mode               Boot straight into the standard single-agent loop
+--swarm / --pswarm         Boot straight into multi-agent / parallel swarm
+--teams                    Boot into teams mode
+--sub / --subagents        Enable sub-agent delegation in the single-agent loop
+--psub / --parasubagents   Enable parallel sub-agent delegation in the single-agent loop
+--giga                     Giga mode (agent can spawn teams + author/run workflows)
+--verbose                  Verbose MCP/init logging
 --report [session-id]      Generate report(s) and exit
 --cfg <path>               Override config.json path
 --swarmcfg <path>          Override swarm.json path
 --clear                    Clear terminal
 --help, -h                 Show help
 ```
+
+Persist any combination of launch flags so they apply every start with `/startargs <args>`
+(stored in `config.startupArgs`; clear with `/startargs clear`). Real flags passed on the
+command line override the persisted set.
 
 Flags can be combined. Common stacks:
 
@@ -625,40 +678,88 @@ Flags can be combined. Common stacks:
 
 ## Interactive Commands
 
+### Modes
 ```
 /swarm          Multi-agent orchestrated loop
 /pswarm         Parallel concurrent dispatch
 /agent          Single-agent conversation
 /stateless      Stateless single-agent (no session persistence)
-/onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
-/plan           Toggle plan mode
+/sub, /psub     Enable sub-agent / parallel sub-agent delegation in the single-agent loop
+/plan           Toggle plan mode (agent presents a plan + asks approval before executing)
+/ultra          Toggle deep-reasoning mode (plan + max reasoning budget + heavy delegation)
+/giga           Toggle giga mode (ultra + agent can spawn teams and author/run workflows)
 /continuous     Toggle autonomous execution (/cont shorthand)
-/workflow       Run a workflow file
-/teams          List configured teams, or launch one: /teams <name>
+/workflow <f>   Run a deterministic, replayable workflow file
+```
+
+### Teams
+```
+/teams [name]   List configured teams, or launch one (members stream into the Agent View)
 /createteam     Guided wizard to create a team (saved to swarm.json teams[])
 /kanban         (in a taskboard team) editable board: add/assign/move/ready/remove tasks +
                 toggle the peer self-claim engine. /kanban help for the full verb list.
-/resume         Resume previous session
-/compact        Compress session context
+```
+
+### Session (inside an active single-agent session)
+```
+/compact [msg]  Compact session context now (optional steering instruction for the summarizer)
+/handoff [msg|path.md]  Write a resume-from-cold handoff doc (active model) to the sandbox reports dir
+/heal, /reflect [deep] [msg]  Review the session and propose BRAIN/MEMORY self-heal entries (approve to apply)
+/tokens         Show the current token / context breakdown
+/effort         Cycle the live reasoning-effort tier (also Shift+Tab)
+/undo           Drop the last exchange from history
+/retry          Re-run the last turn
+/wipe           Clear the session history
+/tag <text>     Tag the live session for easy resume/search
+/detach         Park the live session to the background (re-enter with /attach)
+/qc, /qm        Exit the active session
+```
+
+### Session lifecycle
+```
+/resume         Resume a previous single-agent session
+/sessions       List saved sessions with type + agent count
+/attach [id]    Re-enter a session parked via /detach (no id = pick from list)
+/background, /bg  Manage detached background jobs (alias of the old /detach job command)
+/report [id]    Generate session audit report(s); /report <id> audits a specific session
+```
+
+### Config & models
+```
 /model          View model assignments
-/setmodel       Change model for any agent
-/swap           Swap active single-agent
-/provider       View or switch provider
-/limits         Display execution limits
-/tools          List MCP tools
+/setmodel       Change the model for any agent / orchestrator / compaction agent
+/swap           Swap the active single-agent
+/newagent, /editagent, /delagent  Create / edit / remove a swarm agent
+/provider       View or switch the active LLM provider
+/login [prov]   Log in to a subscription provider (claude|codex|kimi|...) via the CLIProxyAPI sidecar
+/ping [prov]    Test the CLIProxyAPI sidecar + show per-provider login readiness
+/proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update
+/config         Show ALL config settings (every key is /set-able)
+/set <key> <v>  Edit any config key (e.g. /set ultra.thinkingBudget 20000)
+/showreasoning  full | summary (shown, grey italic) | none (hidden); persists to config
+/sandbox [b][i] Show or swap the exec sandbox backend (host|docker|podman|gvisor|kata|bwrap|...)
+/dockerexec     Toggle Docker execution mode
+/startargs <a>  Persist launch flags to run every start (clear with /startargs clear)
+/limits         Display current execution limits
+/workspace <p>  Show or set the @-file workspace root
+/addcontext     Configure what context each agent is injected with
+```
+
+### System
+```
+/onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
+/tools          List available MCP + native tools
 /skills         List loaded skills
 /memory         View knowledge graph
-/sessions       List saved sessions
-/status         System status overview
-/dockerexec     Toggle Docker execution
-/setup          Reconfigure
-/reloadskills   Refresh skills
-/refresh        Full system refresh (config, MCP, skills)
-/report         Generate session audit reports
-/report <id>    Audit specific session
+/status         System status overview (provider, models, tools, skills, sessions)
+/setup          Run initial setup / reconfigure
+/reloadskills   Refresh the skills directory
+/refresh        Full system refresh (config, MCP servers, skills)
+/classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
+/verbose, /sav  Toggle full-vs-collapsed tool output / sub-agent output
+/shortcuts      Show keyboard shortcuts (alias /keys)
 /clear          Clear terminal
 /exit           Exit runtime
-/qc, /qm        Exit active session
 ```
 
 ## Teams & TaskBoard
@@ -821,6 +922,70 @@ is read-only.
 Optional app-level auth is configured via `serve.auth` (see [serve](#serve)). The
 web app prompts for the token, stores it in `sessionStorage`, and attaches it to all
 API/WS calls. App auth complements (does not replace) an nginx perimeter.
+
+## Subscription Auth (CLIProxy sidecar)
+
+Besides plain API-key providers, Mux can authenticate with subscription accounts
+(Claude Max/Pro, ChatGPT/Codex, Kimi, etc.) through a bundled **CLIProxyAPI** sidecar -
+a small MIT loopback proxy that holds the OAuth tokens and exposes a normal
+OpenAI-compatible endpoint Mux talks to unchanged.
+
+- `/login [provider]` - run the provider's OAuth flow (browser opens automatically).
+  Providers: `claude`, `codex`, `codex-device` (headless device-code), `kimi`, `xai`,
+  `antigravity`. The first successful login auto-registers a single `cliproxy` provider
+  (endpoint `http://127.0.0.1:<port>/v1`, bearer via the `MUX_CLIPROXY_KEY` env var);
+  the proxy then routes by model id, so later logins add nothing.
+- `/ping [provider]` - ensure the sidecar is up and report per-provider login readiness.
+- `/proxy status` - pinned version, binary presence, running state + endpoint, auth state.
+- `/proxy update` - re-download + verify the pinned proxy binary and restart it.
+
+The sidecar is downloaded on first use into `%LOCALAPPDATA%/Mux-Swarm/cliproxy/<ver>/`
+(SHA256-verified), runs detached so it survives Mux exit, and is re-adopted by port on the
+next launch (no respawn). After login, activate the provider with `/provider`, set the
+agent model to a real id (e.g. `claude-opus-4-6`, `gpt-5-codex`), and chat.
+
+## ACP Transport (Zed Agent Client Protocol)
+
+`mux-swarm --acp` exposes Mux as an ACP agent over stdio (JSON-RPC 2.0, newline-delimited;
+stdout is pure protocol, logs go to stderr). This lets ACP-capable editors/clients (Zed,
+GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-agent session.
+
+- Supports: `initialize`, `session/new`, `session/load` (transcript replay -> context
+  resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
+  `session/set_mode`, `session/resume`, model selection (both the canonical
+  `configOptions` and the Zed `models` / `session/set_model` mechanisms), `logout`.
+- Streams: `agent_message_chunk`, `agent_thought_chunk` (reasoning), `tool_call` +
+  `tool_call_update` (with diffs + locations), `plan`, `usage_update`; stop reasons
+  `end_turn` / `cancelled`.
+- Filesystem + terminal execution and permission prompting deliberately stay inside Mux's
+  own tool layer (not rerouted through the ACP client) - this is spec-compliant (those
+  client capabilities are optional).
+
+## Native Tools & Size-Tiered Delegation
+
+**Native tools.** Filesystem, shell, and a persistent Python REPL are implemented natively
+in-process (no external MCP server) and are **session-scoped**: each sub-agent run gets its
+own REPL worker + shell-job table, so parallel sub-agents never clash on shared interpreter
+state. Exposed as `repl_shell_exec` (+ `check_python_status`, `send_python_input`,
+`list_variables`, `restart_python_worker`) and `execute_command_async` (+ `check_job_status`,
+`send_command_input`, `install_package_async`). Filesystem/shell access is gated by the
+`filesystem.securityMode` / `shell.securityMode` settings, and may run inside a sandbox (see
+[Execution Sandbox](#execution-sandbox)).
+
+**Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
+result is returned to the lead at a cost scaled to need:
+
+| Result size | Lead receives |
+|---|---|
+| small (<= `progressEntryBudget`) | full raw, inline |
+| medium (<= `3x` budget) | summary + extracted references (`subAgentSummaryMode`) |
+| large (> spill threshold) or lead near its cap | a short pointer (status + 3-line headline + a `d:Agent#N` handle); the raw is spilled to disk |
+
+The lead pulls detail on demand from a spilled result with the **`read_delegation`** tool
+(`handle` + optional `pattern` grep / `head` / `tail`). Spilled raw lives under
+`<sandbox>/delegations/<scope>/` (or `%LOCALAPPDATA%/Mux-Swarm/delegations/` when the sandbox
+is unwritable) and is pruned after `delegationRetentionDays`. All thresholds scale off the
+existing `executionLimits` budgets; the only dedicated knob is `delegationRetentionDays`.
 
 ## Workflow Engine
 

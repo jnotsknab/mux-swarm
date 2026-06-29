@@ -16,6 +16,15 @@ public class AppConfig
     [JsonPropertyName("mcpServers")]
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
 
+    /// <summary>
+    /// Timeout (seconds) for establishing a connection to an MCP server (stdio spawn + handshake, or
+    /// HTTP transport connect) and the initial ListTools call. A slow-starting server (npx cold start,
+    /// a Python server building a venv, a remote HTTP MCP) that exceeds this is skipped with an error
+    /// rather than blocking startup forever. Default 60. Applies to both stdio and HTTP MCP transports.
+    /// </summary>
+    [JsonPropertyName("mcpConnectTimeoutSeconds")]
+    public int McpConnectTimeoutSeconds { get; set; } = 60;
+
     [JsonPropertyName("llmProviders")]
     public List<ProviderConfig> LlmProviders { get; set; } = [];
 
