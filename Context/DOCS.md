@@ -705,6 +705,13 @@ Flags can be combined. Common stacks:
 /compact [msg]  Compact session context now (optional steering instruction for the summarizer)
 /handoff [msg|path.md]  Write a resume-from-cold handoff doc (active model) to the sandbox reports dir
 /heal, /reflect [deep] [msg]  Review the session and propose BRAIN/MEMORY self-heal entries (approve to apply)
+/fix [symptom]  Diagnose + propose repairs for a misbehaving subsystem (config, MCP, proxy, skills, sandbox)
+/diff           Show the working-tree git diff (collapsible)
+/doctor         Health check: providers, MCP servers, sandbox, proxy (no model call)
+/cost           Session token usage + estimated cost ($ for API providers; usage-only for subscriptions)
+/init           Analyze the workspace and scaffold a project context file (AGENTS.md)
+/review         AI review of the working-tree diff (read-only findings)
+!<command>      Run a shell command and inject its output into the conversation context
 /tokens         Show the current token / context breakdown
 /effort         Cycle the live reasoning-effort tier (also Shift+Tab)
 /undo           Drop the last exchange from history
@@ -754,6 +761,7 @@ Flags can be combined. Common stacks:
 /status         System status overview (provider, models, tools, skills, sessions)
 /setup          Run initial setup / reconfigure
 /reloadskills   Refresh the skills directory
+/installskill   Install a skill by name (openai/skills, VoltAgent) or from a GitHub repo URL
 /refresh        Full system refresh (config, MCP servers, skills)
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /verbose, /sav  Toggle full-vs-collapsed tool output / sub-agent output

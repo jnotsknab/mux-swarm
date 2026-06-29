@@ -684,6 +684,59 @@ public static class CliCmdUtils
         }
     }
 
+    // /installskill: install a skill into the live skills dir, by curated name or from a GitHub URL.
+    // Bare invocation lists curated installable names. Network-resilient (never throws to the menu).
+    public static async Task HandleInstallSkillAsync(string userInput)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // strip the command token + an optional "overwrite"/"--overwrite" flag
+        bool overwrite = false;
+        var rest = new List<string>();
+        for (int i = 1; i < parts.Length; i++)
+        {
+            if (parts[i].Equals("--overwrite", StringComparison.OrdinalIgnoreCase)
+                || parts[i].Equals("overwrite", StringComparison.OrdinalIgnoreCase))
+                overwrite = true;
+            else
+                rest.Add(parts[i]);
+        }
+
+        if (rest.Count == 0)
+        {
+            List<string> names = new();
+            await MuxConsole.WithSpinnerAsync("Listing curated skills", async () =>
+            {
+                names = await SkillInstaller.ListCuratedAsync();
+            });
+            if (names.Count == 0)
+            {
+                MuxConsole.WriteWarning("Could not reach the curated skill sources (check your network).");
+                MuxConsole.WriteMuted("Usage: /installskill <name> | /installskill <github-tree-url> [overwrite]");
+                return;
+            }
+            MuxConsole.WritePanel("Installable skills (curated)",
+                string.Join("\n", names.Select(n => "- " + n))
+                + "\n\nInstall with: /installskill <name>  (add 'overwrite' to replace an existing one)");
+            return;
+        }
+
+        string target = rest[0];
+        string result = "";
+        bool isUrl = target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                  || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        await MuxConsole.WithSpinnerAsync($"Installing skill '{target}'", async () =>
+        {
+            result = isUrl
+                ? await SkillInstaller.InstallFromUrlAsync(target, overwrite)
+                : await SkillInstaller.InstallByNameAsync(target, overwrite);
+        });
+
+        if (result.StartsWith("Installed ", StringComparison.Ordinal))
+            MuxConsole.WriteSuccess(result);
+        else
+            MuxConsole.WriteWarning(result);
+    }
+
     public static async Task ReloadMcpServersAsync(
         Func<AppConfig, Task<bool>> initMcpServers,
         string configPath)

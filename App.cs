@@ -1044,6 +1044,10 @@ public class App
                     CliCmdUtils.ReloadSkills();
                     break;
 
+                case var iskl when iskl == "/installskill" || iskl.StartsWith("/installskill "):
+                    await CliCmdUtils.HandleInstallSkillAsync(userInput);
+                    break;
+
                 case "/refresh":
                     Config = LoadConfig(ConfigPath);
                     SwarmConfig = LoadSwarm();

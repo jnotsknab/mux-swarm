@@ -26,6 +26,10 @@ public static class SingleAgentOrchestrator
     private static uint _cachedTokens;
     //total tokens in session (cached + uncached)
     private static uint _sessionTokens;
+    // Cumulative authoritative input/output token counts for the live session (for /cost).
+    // Snapped from each UsageContent checkpoint's running totals; cleared on /wipe.
+    private static long _cumInputTokens;
+    private static long _cumOutputTokens;
 
     private static bool _pendingCompaction;
 
@@ -401,6 +405,202 @@ public static class SingleAgentOrchestrator
         }
 
         MuxConsole.WritePanel("/fix - diagnosis & repair plan", diagnosis);
+    }
+
+    // /diff: show the working-tree git diff (staged fallback) through the collapsible diff renderer.
+    private static async Task HandleDiffAsync(CancellationToken ct)
+    {
+        string root = PlatformContext.WorkspaceRoot;
+        if (!Directory.Exists(Path.Combine(root, ".git")))
+        {
+            // Walk up a few levels in case the workspace root is a subdir of the repo.
+            var probe = new DirectoryInfo(root);
+            bool found = false;
+            for (int i = 0; i < 6 && probe is not null; i++)
+            {
+                if (Directory.Exists(Path.Combine(probe.FullName, ".git"))) { root = probe.FullName; found = true; break; }
+                probe = probe.Parent;
+            }
+            if (!found)
+            {
+                MuxConsole.WriteMuted("not a git repository");
+                return;
+            }
+        }
+
+        ShellCapture.Result res = await ShellCapture.RunAsync("git diff", root, 30, 200_000, ct);
+        string diff = res.Stdout;
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            var staged = await ShellCapture.RunAsync("git diff --staged", root, 30, 200_000, ct);
+            diff = staged.Stdout;
+        }
+
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            MuxConsole.WriteMuted("No changes in the working tree.");
+            return;
+        }
+
+        MuxConsole.RenderTuiDiff("git diff", diff);
+        if (!MuxConsole.IsTui)
+            MuxConsole.WritePanel("git diff", diff);
+    }
+
+    // /doctor: non-LLM health rollup. Prints the SystemDiagnostics snapshot plus a terse PASS/WARN
+    // summary computed in C# (no model call - cheap and offline).
+    private static void HandleDoctor()
+    {
+        var snapshot = SystemDiagnostics.BuildSnapshot();
+
+        var warns = new List<string>();
+        if (App.ActiveProvider is null)
+            warns.Add("no active LLM provider (use /provider or /setup)");
+        var configured = App.Config?.McpServers ?? new();
+        foreach (var (name, cfg) in configured)
+        {
+            bool nativeMarker = string.Equals(cfg.Command, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)
+                || (cfg.Args?.Any(a => string.Equals(a, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)) ?? false);
+            if (nativeMarker || !cfg.Enabled) continue;
+            if (!App.McpClients.ContainsKey(name))
+                warns.Add($"MCP '{name}' NOT CONNECTED");
+        }
+        if (SkillLoader.GetSkillMetadata().Count == 0)
+            warns.Add("no skills loaded");
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(snapshot.TrimEnd());
+        sb.Append("\n\n## Health\n");
+        if (warns.Count == 0)
+            sb.Append("PASS - providers, MCP servers, skills, and sandbox all look healthy.");
+        else
+        {
+            sb.Append($"WARN - {warns.Count} issue(s):\n");
+            foreach (var w in warns) sb.Append("  - ").Append(w).Append('\n');
+        }
+        MuxConsole.WritePanel("/doctor - runtime health", sb.ToString().TrimEnd());
+    }
+
+    // /cost: session token usage + estimated $ for API providers. Subscription providers routed
+    // through the CLIProxy sidecar are flat-rate -> show usage only, no dollars.
+    private static void HandleCost(string resolvedModelId)
+    {
+        long inTok = _cumInputTokens;
+        long outTok = _cumOutputTokens;
+        long cached = _cachedTokens;
+        long total = _sessionTokens;
+
+        bool isSubscription = string.Equals(
+            App.ActiveProvider?.ApiKeyEnvVar,
+            MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            StringComparison.Ordinal);
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"model: {(string.IsNullOrWhiteSpace(resolvedModelId) ? "(unknown)" : resolvedModelId)}\n");
+        sb.Append($"input tokens:  {inTok:N0}\n");
+        sb.Append($"output tokens: {outTok:N0}\n");
+        sb.Append($"cached input:  {cached:N0}\n");
+        sb.Append($"session total: {total:N0}\n");
+
+        if (isSubscription)
+        {
+            sb.Append("\ncost: subscription provider (CLIProxy sidecar) - flat-rate plan, no per-token cost. Showing usage only.");
+        }
+        else if (ModelPricing.Estimate(resolvedModelId, inTok, outTok) is { } usd)
+        {
+            var price = ModelPricing.Lookup(resolvedModelId)!.Value;
+            sb.Append($"\nrate: ${price.InputPer1M:0.##}/1M in, ${price.OutputPer1M:0.##}/1M out (list-price estimate)\n");
+            sb.Append($"estimated cost: ${usd:0.0000}");
+        }
+        else
+        {
+            sb.Append("\ncost: unknown (no price for this model id; set a ModelPricing override). Showing usage only.");
+        }
+        MuxConsole.WritePanel("/cost - session usage", sb.ToString());
+    }
+
+    // /init: scan the workspace and have the active model author an AGENTS.md at its root.
+    private static async Task HandleInitAsync(IChatClient? client, ChatOptions? chatOptions, CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /init.");
+            return;
+        }
+        string root = PlatformContext.WorkspaceRoot;
+        string savePath = Path.Combine(root, "AGENTS.md");
+        if (File.Exists(savePath) &&
+            !MuxConsole.Confirm($"AGENTS.md already exists at {savePath}. Overwrite?", false))
+        {
+            MuxConsole.WriteMuted("Left existing AGENTS.md unchanged.");
+            return;
+        }
+
+        string? content = null;
+        await MuxConsole.WithSpinnerAsync("Analyzing workspace", async () =>
+        {
+            content = await ProjectInit.GenerateAsync(root, client, chatOptions, ct);
+        });
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            MuxConsole.WriteWarning("Project analysis returned nothing.");
+            return;
+        }
+        try
+        {
+            await File.WriteAllTextAsync(savePath, content, ct);
+            MuxConsole.WriteSuccess($"Project context written to {savePath}");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write AGENTS.md: {ex.Message}");
+        }
+    }
+
+    // /review: read-only AI review of the working-tree diff (active model, no edits).
+    private static async Task HandleReviewAsync(IChatClient? client, ChatOptions? chatOptions, CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /review.");
+            return;
+        }
+        string root = PlatformContext.WorkspaceRoot;
+        if (!Directory.Exists(Path.Combine(root, ".git")))
+        {
+            var probe = new DirectoryInfo(root);
+            for (int i = 0; i < 6 && probe is not null; i++)
+            {
+                if (Directory.Exists(Path.Combine(probe.FullName, ".git"))) { root = probe.FullName; break; }
+                probe = probe.Parent;
+            }
+        }
+
+        var res = await ShellCapture.RunAsync("git diff", root, 30, 200_000, ct);
+        string diff = res.Stdout;
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            var staged = await ShellCapture.RunAsync("git diff --staged", root, 30, 200_000, ct);
+            diff = staged.Stdout;
+        }
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            MuxConsole.WriteMuted("nothing to review (clean working tree)");
+            return;
+        }
+
+        string findings = "";
+        await MuxConsole.WithSpinnerAsync("Reviewing diff", async () =>
+        {
+            findings = await CodeReview.ReviewAsync(diff, client, chatOptions, ct);
+        });
+        if (string.IsNullOrWhiteSpace(findings))
+        {
+            MuxConsole.WriteMuted("Review produced no findings.");
+            return;
+        }
+        MuxConsole.WritePanel("/review - diff findings", findings);
     }
 
     public static async Task ChatAgentAsync(
@@ -1577,6 +1777,9 @@ public static class SingleAgentOrchestrator
                                     if (details.TotalTokenCount is long total && total > 0)
                                         _sessionTokens = (uint)total;
                                     _cachedTokens = (uint)(details.CachedInputTokenCount ?? _cachedTokens);
+                                    // Track cumulative input/output for the /cost gauge (authoritative running totals).
+                                    if (details.InputTokenCount is long inTok && inTok > 0) _cumInputTokens = inTok;
+                                    if (details.OutputTokenCount is long outTok && outTok > 0) _cumOutputTokens = outTok;
                                     // Reset the per-checkpoint char accumulator so the next live tick bridges only the
                                     // gap SINCE this checkpoint -- not the whole turn (kills the "drops on turn end"
                                     // artifact), and repaint the meter immediately with the real number.
@@ -1781,7 +1984,25 @@ public static class SingleAgentOrchestrator
             while (true)
             {
                 string metaCmd = nextInput!.Trim();
-                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
+                // !<command>: run a shell command, show its output, and inject "[ran: <cmd>]\n<output>"
+                // as the next user turn so the model sees the result. Intercepted before slash dispatch.
+                if (metaCmd.StartsWith("!") && metaCmd.Length > 1)
+                {
+                    string shellCmd = metaCmd[1..].Trim();
+                    if (shellCmd.Length == 0) { MuxConsole.WriteMuted("Usage: !<command>"); }
+                    else
+                    {
+                        ShellCapture.Result r = await ShellCapture.RunAsync(
+                            shellCmd, PlatformContext.WorkspaceRoot, 60, 60_000, cancellationToken);
+                        string output = r.Combined;
+                        if (string.IsNullOrWhiteSpace(output)) output = "(no output)";
+                        MuxConsole.WritePanel($"! {shellCmd}", output);
+                        currentGoal = $"[ran: {shellCmd}]\n{output}";
+                        retryGoalSet = true;
+                        break;
+                    }
+                }
+                else if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/compact ", StringComparison.OrdinalIgnoreCase))
                 {
                     var cParts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
@@ -1806,12 +2027,34 @@ public static class SingleAgentOrchestrator
                 {
                     await HandleFixAsync(metaCmd, client, compactionChatOptions, cancellationToken);
                 }
+                else if (metaCmd.Equals("/diff", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleDiffAsync(cancellationToken);
+                }
+                else if (metaCmd.Equals("/doctor", StringComparison.OrdinalIgnoreCase))
+                {
+                    HandleDoctor();
+                }
+                else if (metaCmd.Equals("/cost", StringComparison.OrdinalIgnoreCase))
+                {
+                    HandleCost(resolvedModelId);
+                }
+                else if (metaCmd.Equals("/init", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleInitAsync(client, compactionChatOptions, cancellationToken);
+                }
+                else if (metaCmd.Equals("/review", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleReviewAsync(client, compactionChatOptions, cancellationToken);
+                }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {
                     session = await agent.CreateSessionAsync();
                     conversationHistory.Clear();
                     _sessionTokens = 0;
                     _cachedTokens = 0;
+                    _cumInputTokens = 0;
+                    _cumOutputTokens = 0;
                     _pendingCompaction = false;
                     _pendingReseed = false;
                     ServeMode.EmitEvent(new { type = "session_wiped" });

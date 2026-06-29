@@ -42,6 +42,11 @@ internal static class TuiCommands
         new("/heal",         "Review session, propose BRAIN/MEMORY write-backs (/heal [deep] [steering])", Scope.SessionOnly),
         new("/reflect",      "Alias of /heal - self-review + memory write-backs (/reflect [deep])", Scope.SessionOnly),
         new("/fix",          "Diagnose + propose repairs for a misbehaving Mux subsystem (/fix [what is wrong])", Scope.SessionOnly),
+        new("/diff",         "Show the working-tree git diff (collapsible)", Scope.SessionOnly),
+        new("/doctor",       "Health check: providers, MCP, sandbox, proxy (no model call)", Scope.SessionOnly),
+        new("/cost",         "Session token usage + estimated cost (usage-only for subscriptions)", Scope.SessionOnly),
+        new("/init",         "Analyze the workspace and scaffold a project context file (AGENTS.md)", Scope.SessionOnly),
+        new("/review",       "AI review of the working-tree diff (read-only findings)", Scope.SessionOnly),
         new("/wipe",         "Wipe session context, start fresh", Scope.SessionOnly),
         new("/tokens",       "Show context/token usage", Scope.SessionOnly),
         new("/context",      "Show context/token usage", Scope.SessionOnly),
@@ -125,6 +130,7 @@ internal static class TuiCommands
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
+        new("/installskill", "Install a skill by name (openai/skills, VoltAgent) or a GitHub repo URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
         new("/clear",        "Clear the screen", Scope.ReplOnly),
@@ -141,7 +147,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/skill", "/skills", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
         "/compact", "/handoff", "/heal", "/reflect",
