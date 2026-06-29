@@ -1118,25 +1118,39 @@ public static class SingleAgentOrchestrator
                 + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
         }
 
-        // G11: live token estimate during a streaming turn. The provider only reports the
-        // authoritative token count AFTER the turn completes, so the docked meter would otherwise
-        // sit frozen while a long response streams. We tick a throttled estimate = the last known
-        // session total + (chars streamed this turn / ~2.5), giving the user a live-growing meter
-        // that snaps to the real count when usage details arrive. Reset at the start of each turn.
+        // G11 / v0.12: live token estimate during a streaming turn. The provider reports the
+        // AUTHORITATIVE token count only via UsageContent frames, so between those frames the
+        // docked meter would otherwise sit frozen. We tick a throttled estimate that extrapolates
+        // FORWARD from the last ground-truth checkpoint: est = _sessionTokens (last authoritative
+        // total) + (output chars streamed SINCE that checkpoint / ~2.5).
+        //
+        // Reconciliation model (matches Codex/Cline): every UsageContent frame snaps _sessionTokens
+        // /_cachedTokens to truth AND resets _liveTurnChars to 0 (see ReconcileLiveBaseline), so the
+        // estimate only ever bridges the small gap since the last checkpoint -- never the whole turn.
+        // This eliminates the old "drops on turn end" artifact, which came from (a) counting tool-call
+        // arg + tool-result CHARS as live tokens (they are already folded into the provider's
+        // InputTokenCount on the next iteration -- double-counting) and (b) a cached-offset that
+        // shifted mid-turn. We now tick ONLY on streamed answer + reasoning text (output the model is
+        // actively generating that is not yet in any usage frame). The meter still inherits the REAL
+        // post-cache drop from the provider numbers -- that is honest, not an estimate error, so we do
+        // NOT clamp it monotonically (no mature harness does; it would hide the true caching effect).
         long _liveTurnChars = 0;
         DateTime _lastLivePush = DateTime.MinValue;
         void ResetLiveTokenEstimate() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
+        // Snap the live-estimate baseline to authoritative usage: zero the per-checkpoint char
+        // accumulator so the next estimate extrapolates forward from the just-arrived ground truth.
+        void ReconcileLiveBaseline() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
         void TickLiveTokens(int addedChars)
         {
             if (!MuxConsole.TuiActive) return;
             _liveTurnChars += Math.Max(0, addedChars);
-            // Throttle to ~10 Hz so we don\u0027t repaint the whole region on every micro-chunk.
+            // Throttle to ~20 Hz: responsive live motion without repainting the region on every
+            // micro-chunk.
             var now = DateTime.UtcNow;
-            if ((now - _lastLivePush).TotalMilliseconds < 100) return;
+            if ((now - _lastLivePush).TotalMilliseconds < 50) return;
             _lastLivePush = now;
             uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
-            uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
-            uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
+            uint displayEst = LiveTokenMeter.Estimate(_sessionTokens, _liveTurnChars, _cachedTokens);
             MuxConsole.RenderTuiStatusBar(displayEst, threshold,
                 App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
@@ -1368,8 +1382,11 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
-                                    // Keep the live token meter moving during tool calls (args contribute to context).
-                                    TickLiveTokens((functionCall.Name?.Length ?? 0) + (functionCall.Arguments?.ToString()?.Length ?? 0));
+                                    // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
+                                    // the provider's InputTokenCount on the next iteration's UsageContent frame, so
+                                    // counting their chars here double-counts and inflates the estimate (the old
+                                    // "drops on turn end" artifact). The authoritative usage frame moves the meter
+                                    // (see ReconcileLiveBaseline); the thinking indicator shows tool work in progress.
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -1401,8 +1418,9 @@ public static class SingleAgentOrchestrator
                                 else if (content is FunctionResultContent functionResult)
                                 {
                                     var resultText = functionResult.Result?.ToString();
-                                    // Tool results add to context - advance the live meter so it does not freeze during tool work.
-                                    TickLiveTokens(resultText?.Length ?? 0);
+                                    // NOTE: do NOT tick the live meter on tool-result text -- like tool-call args it is
+                                    // folded into the provider's InputTokenCount on the next iteration, so char-ticking
+                                    // here double-counts. The authoritative UsageContent frame moves the meter.
                                     Activity.Current?.SetTag("success", true);
                                     if (resultText != null)
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1430,8 +1448,18 @@ public static class SingleAgentOrchestrator
                                 else if (content is UsageContent usageContent)
                                 {
                                     var details = usageContent.Details;
-                                    _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
-                                    _cachedTokens = (uint)(details.CachedInputTokenCount ?? 0);
+                                    // Authoritative checkpoint: snap to the provider's real counts. A multi-iteration
+                                    // tool turn emits one of these PER sub-call, so this is the ground truth the live
+                                    // estimate extrapolates forward from. Only overwrite when the provider actually
+                                    // reported a total (some intermediate frames carry only partial fields).
+                                    if (details.TotalTokenCount is long total && total > 0)
+                                        _sessionTokens = (uint)total;
+                                    _cachedTokens = (uint)(details.CachedInputTokenCount ?? _cachedTokens);
+                                    // Reset the per-checkpoint char accumulator so the next live tick bridges only the
+                                    // gap SINCE this checkpoint -- not the whole turn (kills the "drops on turn end"
+                                    // artifact), and repaint the meter immediately with the real number.
+                                    ReconcileLiveBaseline();
+                                    RenderStatusBar();
                                     OtelMetrics.RecordTokens(
                                         singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
                                         );

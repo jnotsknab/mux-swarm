@@ -360,7 +360,10 @@ internal static class DelegationStore
 
     private static void Emit(string agentName, int rawLen, string posture, string? handle)
     {
-        MuxConsole.WriteMuted($"[delegation] {agentName}: {rawLen}ch -> {posture}{(handle is null ? "" : $" ({handle})")}");
+        // Structured-only: the web app / stdio integrations consume this event, but the TUI does NOT
+        // surface a muted "[delegation] ... -> posture" line -- it added terminal noise (raw console
+        // text that can't be collapsed) and exposes inner mechanics the user doesn't need. The user
+        // just sees that delegation worked, not how it was tiered.
         MuxConsole.EmitDelegationCompacted(agentName, rawLen, posture, handle);
     }
 
