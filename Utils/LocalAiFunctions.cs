@@ -127,13 +127,21 @@ public static class LocalAiFunctions
     private static void CreateSkillFuncs()
     {
         ListSkillsTool = AIFunctionFactory.Create(
-            method: () =>
+            method: (
+                [System.ComponentModel.Description(
+                    "When true, include each skill's one-line description (more tokens). Default false returns names only.")]
+                bool withDescriptions = false
+            ) =>
             {
                 var skills = SkillLoader.GetSkillMetadata();
-                return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
+                return withDescriptions
+                    ? string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"))
+                    : string.Join("\n", skills.Select(s => $"- {s.Name}"));
             },
             name: "list_skills",
-            description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill."
+            description: "List available skill NAMES (cheap, names-only by default). Call this first to discover "
+                       + "what skills exist. Pass withDescriptions=true to also get each skill's one-line description, "
+                       + "or call read_skill <name> for a skill's full instructions."
         );
 
         ReadSkillTool = AIFunctionFactory.Create(
