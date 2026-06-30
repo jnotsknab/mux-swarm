@@ -709,10 +709,12 @@ Flags can be combined. Common stacks:
 /diff           Show the working-tree git diff (collapsible)
 /doctor         Health check: providers, MCP servers, sandbox, proxy (no model call)
 /cost           Session token usage + estimated cost ($ for API providers; usage-only for subscriptions)
+/cost all       Per-model matrixed breakdown: system/tools/cached/input/output/reasoning, session + rolling, $
 /init           Analyze the workspace and scaffold a project context file (AGENTS.md)
 /review         AI review of the working-tree diff (read-only findings)
 !<command>      Run a shell command and inject its output into the conversation context
 /tokens         Show the current token / context breakdown
+/tokens all     Per-model matrixed cost/token breakdown (alias of /cost all)
 /effort         Cycle the live reasoning-effort tier (also Shift+Tab)
 /undo           Drop the last exchange from history
 /retry          Re-run the last turn
@@ -757,7 +759,9 @@ Flags can be combined. Common stacks:
 /onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
 /tools          List available MCP + native tools
 /skills         List loaded skills
-/memory         View knowledge graph
+/memory         Deep-memory status / toggle (/memory [deep|standard|show])
+/deep           Toggle deep memory on/off (/deep [off])
+/taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
 /status         System status overview (provider, models, tools, skills, sessions)
 /setup          Run initial setup / reconfigure
 /reloadskills   Refresh the skills directory
@@ -887,6 +891,125 @@ inboxes/
 
 The Agent View `m` key shows any agent's full message history (the m-log) on demand, without
 draining its inbox.
+
+tasks then run only when the lead assigns them.
+
+## Deep Memory (reflectionAgent)
+
+A background "deep memory" subsystem (off by default). When enabled, a background **gatherer**
+distills durable reflections from the live session into `Context/Reflections/` (one JSON per
+reflection) and an **injector** selects a small, scored, budget-capped block to push into agent
+preambles -- so working agents never spend a turn querying memory.
+
+Enable/inspect with `/memory` (or `/deep`):
+
+```
+/memory            Status: mode, reflection model, inject budget, poll interval, scope,
+                   reflection count, last-reflection time, store health (chroma/KG).
+/memory deep       Enable deep mode (persists reflectionAgent.mode = "deep" to Swarm.json).
+/deep              Alias for /memory deep.
+/memory standard   Back to standard (inert, byte-identical to today). /deep off is the alias.
+/memory show       Legacy knowledge-graph JSON dump (power users).
+/memory set <k> <v> Tune a reflectionAgent field + persist (keys: model, budget, poll, floor,
+                   scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches,
+                   digMaxReadChars).
+```
+
+Swarm.json block (all keys optional; absent = inert standard mode):
+
+```jsonc
+"reflectionAgent": {
+  "mode": "standard",          // "standard" (default) | "deep"
+  "model": null,               // null -> orchestrator/compaction model (a cheap model is recommended)
+  "modelOpts": { },            // optional ChatOptions for the gatherer call
+  "injectTokenBudget": 1500,   // hard cap on the injected block (truncated, never overflowed)
+  "pollIntervalSeconds": 90,   // background cadence; NO LLM call on a tick with no activity
+  "relevanceFloor": 0.35,      // min score to inject (anti-noise)
+  "scope": "lead",             // "lead" (lead/orchestrator only) | "all" (also sub-agents)
+  "maxReflections": 1000,      // single-file store prune cap (oldest evicted)
+  "historyWindow": 30,         // recent messages the Pass-1 distill observes
+  "maxDigsPerTick": 2,         // Pass-2 read-only digs chased per gatherer tick
+  "digMaxFilesScanned": 4000,  // Pass-2 grep file scan cap
+  "digMaxMatches": 40,         // Pass-2 grep match cap
+  "digMaxReadChars": 8000      // Pass-2 single-file read cap
+}
+```
+
+A bare top-level `"memoryMode": "deep"` is also accepted and overrides the nested `mode`.
+
+**Store tiers (filesystem-first, graceful degrade):** `Context/Reflections/` is always the primary,
+durable store. The ChromaDB + Memory (knowledge-graph) MCP servers are OPTIONAL accelerators -- when
+connected the gatherer mirrors reflections into them for semantic recall. When they are absent or
+failing, deep mode STAYS ACTIVE and the injector degrades silently to lexical + recency + importance
+scoring over the filesystem reflections (no warning, no drop to standard).
+
+**Activity-gated:** the gatherer makes at most one light model call per poll, and skips the call
+entirely when nothing has happened since the last reflection. Interactive sessions only (never
+serve/acp/stdio). The distillation is grounded by BRAIN.md + MEMORY.md so reflections track the real
+working world. Injected reflections are background hints only; agents are told not to query memory
+themselves and to flag any reflection that conflicts with what they observe.
+
+`/heal` / `/reflect` can additionally propose a new `SKILL` (alongside BRAIN/MEMORY write-backs):
+accepting one scaffolds a `SKILL.md` under the skills dir and hot-reloads the skill manifest.
+
+## Cost breakdown — `/cost all` / `/tokens all`
+
+`/cost` and `/tokens` are unchanged (session usage, footer-mirrored). Adding the `all` arg renders a
+per-model matrixed breakdown sourced from an in-process ledger (the OTEL counters are write-only):
+
+```
+/cost all       Per-model table: system prompt | tools (schema) | input | cached | output | reasoning
+/tokens all     Alias of /cost all
+```
+
+Each model shows two columns — **session** (current, cleared on `/wipe`) and **rolling** (process-
+lifetime, survives `/wipe`) — plus tool-call and compaction counts and a proportional split bar.
+Real `$` comes from `ModelPricing.cs` (list-price estimate, input+output) for priced models;
+subscription/cliproxy providers render tokens-only (flat-rate, no `$`). System-prompt and tool-schema
+rows are the one-time static estimates already shown in the footer breakdown.
+
+## Task auto-decomposition — `task_decompose` + `/taskgraph`
+
+`task_decompose(goal)` is a lead/giga tool (and an opt-in background dispatcher) that turns a high-
+level goal into a ready `blockedBy` task graph on the active board via ONE light-model call —
+subtasks + dependency edges + suggested assignees — instead of hand-authoring many `task_create`
+calls. The model returns a strict JSON array; tasks are created in topological order with local
+indices mapped to real board ids, cycles are rejected, and unknown assignees fall back to null.
+
+```
+/taskgraph status    Show enabled/running + poll interval + maxSubtasks + model
+/taskgraph on        Persist decompose.enabled=true; start the background tick dispatcher (taskboard team)
+/taskgraph off       Persist decompose.enabled=false; stop the dispatcher (one-shot tool still available)
+```
+
+The dispatcher mirrors the auto-runner: a single non-blocking loop on the session token, floored
+poll interval, activity-gated (zero LLM calls when its goal queue is empty). OFF by default. The
+one-shot `task_decompose` tool works regardless of the toggle.
+
+Swarm.json block (all keys optional; absent = off):
+
+```jsonc
+"decompose": {
+  "enabled": false,            // /taskgraph on|off persists this
+  "model": null,               // null -> compaction model, then orchestrator (keep it LIGHT)
+  "pollIntervalSeconds": 60,   // background dispatcher cadence (floor 10)
+  "maxSubtasks": 12            // hard ceiling on subtasks per decompose call
+}
+```
+
+## Interactive-prompt bailout (`ask_user`, Select/Confirm/MultiSelect)
+
+The `ask_user` tool and the underlying choice prompts no longer trap the user into the offered
+options. Each choice prompt carries two bailout affordances:
+
+- **Cancel** — back out entirely; the tool returns a "cancelled" result the model handles gracefully
+  (no forced choice, no wasted extra turn).
+- **Enter custom** — type a free-text value outside the option set; returned as a custom response.
+
+Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `ConfirmChoice` /
+`MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are
+unchanged, so existing callers keep their behaviour. (Spectre's blocking picker exposes no raw Esc
+hook, so cancellation is delivered via an explicit "cancel" affordance labelled with Esc.)
 
 ## OS Service Registration
 

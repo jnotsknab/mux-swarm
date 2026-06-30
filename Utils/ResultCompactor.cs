@@ -194,7 +194,20 @@ public static class ResultCompactor
                 new(ChatRole.User, transcript.ToString())
             };
 
-            var response = await chatClient.GetResponseAsync(messages, chatOptions);
+            // Defense-in-depth: compaction is a pure text-summarization call. Even though the
+            // configured compaction options never carry tools today, the chat client is always built
+            // with function-invocation middleware, so a future caller passing tool-bearing options
+            // could trigger accidental tool runoff mid-compaction. Strip any tools from a clone so the
+            // model can only emit text here.
+            ChatOptions? safeOptions = chatOptions;
+            if (safeOptions?.Tools is { Count: > 0 })
+            {
+                safeOptions = safeOptions.Clone();
+                safeOptions.Tools = null;
+                safeOptions.ToolMode = ChatToolMode.None;
+            }
+
+            var response = await chatClient.GetResponseAsync(messages, safeOptions);
             summary = response.Text ?? transcript.ToString();
 
             var extracted = ExtractTopLines(transcript.ToString(), charBudget / 2);

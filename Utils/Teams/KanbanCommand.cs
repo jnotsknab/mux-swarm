@@ -49,7 +49,7 @@ public static class KanbanCommand
     };
 
     /// <summary>A parsed /kanban subcommand.</summary>
-    public enum Action { Show, Help, Add, Move, Assign, Block, Ready, Remove, Clear, Peer, Unknown }
+    public enum Action { Show, Help, Add, Move, Assign, Block, Ready, Remove, Clear, Peer, Artifacts, Unknown }
 
     /// <summary>The result of parsing a /kanban command line: the action and its positional args.</summary>
     public readonly record struct Parsed(Action Action, string Arg1, string Arg2, string Rest);
@@ -87,6 +87,7 @@ public static class KanbanCommand
             "remove" or "rm" or "del" => new Parsed(Action.Remove, a1, "", ""),
             "clear" => new Parsed(Action.Clear, "", "", ""),
             "peer" => new Parsed(Action.Peer, a1, "", ""),
+            "artifacts" or "files" or "artifact" => new Parsed(Action.Artifacts, a1, "", a2),
             _ => new Parsed(Action.Unknown, verb, "", ""),
         };
     }
@@ -126,7 +127,8 @@ public static class KanbanCommand
             {
                 var who = t.Owner is not null ? $"@{t.Owner}" : t.Assignee is not null ? $"->{t.Assignee}" : "";
                 var deps = t.BlockedBy.Count > 0 ? $" blockedBy=[{string.Join(",", t.BlockedBy)}]" : "";
-                sb.AppendLine($"  {t.Id} {who} {t.Subject}{deps}".Replace("  ", " ").TrimEnd());
+                var files = t.Artifacts.Count > 0 ? $" \U0001F4CE{t.Artifacts.Count}" : "";
+                sb.AppendLine($"  {t.Id} {who} {t.Subject}{deps}{files}".Replace("  ", " ").TrimEnd());
             }
         }
         return sb.ToString();
@@ -143,6 +145,7 @@ public static class KanbanCommand
         "  /kanban move <id> <status>   set status (todo|blocked|inprogress|done|failed)",
         "  /kanban remove <id> | clear  remove one task | the whole board",
         "  /kanban peer <on|off> [secs] toggle the peer self-claim engine that drains the board",
+        "  /kanban artifacts <id> <p..> attach filepaths to a task (no paths = list)",
     };
 
     /// <summary>
@@ -209,6 +212,23 @@ public static class KanbanCommand
 
             case Action.Peer:
                 TogglePeer(p.Arg1);
+                break;
+
+            case Action.Artifacts:
+                if (p.Arg1.Length == 0) { MuxConsole.WriteWarning("Usage: /kanban artifacts <id> <path...>  (no paths = list)"); return; }
+                if (p.Rest.Trim().Length == 0)
+                {
+                    var cur = board.Get(p.Arg1);
+                    if (cur is null) { MuxConsole.WriteWarning($"[kanban] no such task '{p.Arg1}'."); return; }
+                    MuxConsole.WriteInfo(cur.Artifacts.Count == 0
+                        ? $"{p.Arg1} has no artifacts."
+                        : $"{p.Arg1} artifacts:\n" + string.Join("\n", cur.Artifacts.Select(a => $"  - {a}")));
+                    return;
+                }
+                var addPaths = p.Rest.Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (board.SetArtifacts(p.Arg1, add: addPaths, remove: null, set: null, out var aRes))
+                    MuxConsole.WriteSuccess($"{p.Arg1} {aRes}.");
+                else MuxConsole.WriteWarning($"[kanban] {aRes}.");
                 break;
 
             case Action.Unknown:

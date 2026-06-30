@@ -1226,4 +1226,199 @@ public static class CliCmdUtils
             MuxConsole.WriteWarning($"/proxy {sub} failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// /memory and /deep: deep-memory (reflectionAgent) status + toggle. Replaces the old bare
+    /// knowledge-graph JSON dump, which now lives behind "/memory show". Persists reflectionAgent.mode
+    /// to Swarm.json so the user never edits files.
+    ///   /memory               -> status (mode, model, budget, poll, scope, store health, count)
+    ///   /memory deep | /deep  -> enable deep mode (persist)
+    ///   /memory standard      -> back to standard (persist); "/deep off" is the alias
+    ///   /memory show          -> the legacy KG JSON dump (power users)
+    /// </summary>
+    public static void HandleMemory(
+        string userInput, Dictionary<string, McpClient> mcpClients, IList<McpClientTool>? mcpTools = null)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string cmd = parts.Length > 0 ? parts[0].ToLowerInvariant() : "/memory";
+        string? sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : null;
+
+        // "/deep" with no arg == enable; "/deep off|standard" == disable.
+        if (cmd == "/deep")
+            sub = sub is "off" or "standard" or "0" or "false" ? "standard" : "deep";
+
+        switch (sub)
+        {
+            case "deep":
+                SetMemoryMode("deep");
+                break;
+            case "standard":
+            case "off":
+                SetMemoryMode("standard");
+                break;
+            case "show":
+            case "graph":
+            case "kg":
+                ShowKnowledgeGraph(mcpClients, mcpTools);
+                break;
+            case "set":
+                // /memory set <key> <value> - mutate + persist a reflectionAgent tunable.
+                SetMemoryOption(parts.Length > 2 ? parts[2] : null, parts.Length > 3 ? string.Join(' ', parts[3..]) : null);
+                break;
+            case null:
+            case "status":
+                ShowMemoryStatus();
+                break;
+            default:
+                MuxConsole.WriteWarning("Usage: /memory [deep|standard|show|set <key> <value>] (or /deep [off]).");
+                MuxConsole.WriteMuted("  set keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars");
+                break;
+        }
+    }
+
+    private static void ShowMemoryStatus()
+    {
+        var s = MuxSwarm.Utils.Memory.ReflectionGatherer.Status();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"mode            : {(s.deep ? "deep" : "standard")}");
+        sb.AppendLine($"reflection model: {s.model}");
+        sb.AppendLine($"inject budget   : {s.budget} tokens");
+        sb.AppendLine($"poll interval   : {s.poll}s");
+        sb.AppendLine($"relevance floor : {s.floor:0.##}");
+        sb.AppendLine($"scope           : {s.scope}");
+        sb.AppendLine($"history window  : {s.historyWindow} msgs");
+        sb.AppendLine($"reflections     : {s.count} / {s.max} max  in {MuxSwarm.Utils.Memory.ReflectionStore.Directory}");
+        sb.AppendLine($"last reflection : {(s.last is { } t ? t.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "(none yet)")}");
+        sb.AppendLine($"chroma (semantic): {(s.chroma ? "connected" : "absent - lexical fallback")}");
+        sb.AppendLine($"knowledge graph : {(s.kg ? "connected" : "absent - filesystem only")}");
+        if (!s.deep)
+            sb.AppendLine("\nDeep memory is OFF. Enable with: /memory deep   (or /deep)");
+        MuxConsole.WritePanel("Deep Memory", sb.ToString().TrimEnd());
+    }
+
+
+    /// <summary>
+    /// /memory set &lt;key&gt; &lt;value&gt; - mutate a single reflectionAgent tunable and persist it to
+    /// Swarm.json. Validates the value per key (numeric ranges, scope enum) and confirms. Never
+    /// throws into the caller. Keys mirror the /memory status display + the Swarm.json schema.
+    /// </summary>
+    private static void SetMemoryOption(string? key, string? rawValue)
+    {
+        key = (key ?? string.Empty).Trim().ToLowerInvariant();
+        var val = (rawValue ?? string.Empty).Trim();
+        if (key.Length == 0 || val.Length == 0)
+        {
+            MuxConsole.WriteWarning("Usage: /memory set <key> <value>");
+            MuxConsole.WriteMuted("  keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars");
+            return;
+        }
+
+        try
+        {
+            var swarm = App.SwarmConfig ?? new SwarmConfig();
+            swarm.ReflectionAgent ??= new MuxSwarm.Utils.ReflectionConfig();
+            var r = swarm.ReflectionAgent;
+
+            bool Int(out int n) => int.TryParse(val, out n);
+            string applied;
+
+            switch (key)
+            {
+                case "model":
+                    r.Model = val.Equals("null", StringComparison.OrdinalIgnoreCase) || val.Equals("default", StringComparison.OrdinalIgnoreCase)
+                        ? null : val;
+                    applied = $"model = {r.Model ?? "(orchestrator default)"}";
+                    break;
+                case "budget":
+                case "injecttokenbudget":
+                    if (!Int(out var b) || b < 100) { MuxConsole.WriteWarning("budget must be an integer >= 100 (tokens)."); return; }
+                    r.InjectTokenBudget = b; applied = $"inject budget = {b} tokens";
+                    break;
+                case "poll":
+                case "pollintervalseconds":
+                    if (!Int(out var p) || p < 10) { MuxConsole.WriteWarning("poll must be an integer >= 10 (seconds)."); return; }
+                    r.PollIntervalSeconds = p; applied = $"poll interval = {p}s";
+                    break;
+                case "floor":
+                case "relevancefloor":
+                    if (!double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) || f < 0 || f > 1)
+                    { MuxConsole.WriteWarning("floor must be a number between 0 and 1."); return; }
+                    r.RelevanceFloor = f; applied = $"relevance floor = {f:0.##}";
+                    break;
+                case "scope":
+                    var sc = val.ToLowerInvariant();
+                    if (sc != "lead" && sc != "all") { MuxConsole.WriteWarning("scope must be 'lead' or 'all'."); return; }
+                    r.Scope = sc; applied = $"scope = {sc}";
+                    break;
+                case "max":
+                case "maxreflections":
+                    if (!Int(out var mx) || mx < 10) { MuxConsole.WriteWarning("max must be an integer >= 10."); return; }
+                    r.MaxReflections = mx; applied = $"maxReflections = {mx}";
+                    break;
+                case "historywindow":
+                    if (!Int(out var hw) || hw < 4) { MuxConsole.WriteWarning("historyWindow must be an integer >= 4 (messages)."); return; }
+                    r.HistoryWindow = hw; applied = $"historyWindow = {hw} msgs";
+                    break;
+                case "maxdigspertick":
+                    if (!Int(out var md) || md < 0) { MuxConsole.WriteWarning("maxDigsPerTick must be an integer >= 0."); return; }
+                    r.MaxDigsPerTick = md; applied = $"maxDigsPerTick = {md}";
+                    break;
+                case "digmaxfilesscanned":
+                    if (!Int(out var df) || df < 50) { MuxConsole.WriteWarning("digMaxFilesScanned must be an integer >= 50."); return; }
+                    r.DigMaxFilesScanned = df; applied = $"digMaxFilesScanned = {df}";
+                    break;
+                case "digmaxmatches":
+                    if (!Int(out var dm) || dm < 1) { MuxConsole.WriteWarning("digMaxMatches must be an integer >= 1."); return; }
+                    r.DigMaxMatches = dm; applied = $"digMaxMatches = {dm}";
+                    break;
+                case "digmaxreadchars":
+                    if (!Int(out var dr) || dr < 200) { MuxConsole.WriteWarning("digMaxReadChars must be an integer >= 200."); return; }
+                    r.DigMaxReadChars = dr; applied = $"digMaxReadChars = {dr}";
+                    break;
+                default:
+                    MuxConsole.WriteWarning($"Unknown memory key '{key}'. Keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars.");
+                    return;
+            }
+
+            File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(swarm, CfgSerialOpts));
+            App.SwarmConfig = swarm;
+            MuxConsole.WriteSuccess($"Deep memory: {applied}  (persisted to Swarm.json).");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"Failed to update memory option: {ex.Message}");
+        }
+    }
+
+    private static void SetMemoryMode(string mode)
+    {
+        try
+        {
+            var swarm = App.SwarmConfig ?? new SwarmConfig();
+            swarm.ReflectionAgent ??= new MuxSwarm.Utils.ReflectionConfig();
+            swarm.ReflectionAgent.Mode = mode;
+            // Keep the top-level alias in sync so the persisted file is unambiguous.
+            swarm.MemoryMode = mode;
+            File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(swarm, CfgSerialOpts));
+            App.SwarmConfig = swarm;
+
+            if (mode == "deep")
+            {
+                bool chroma = MuxSwarm.Utils.Memory.ReflectionStore.ChromaAvailable();
+                bool kg = MuxSwarm.Utils.Memory.ReflectionStore.KgAvailable();
+                MuxConsole.WriteSuccess("Deep memory ENABLED. Background reflection gatherer is active.");
+                MuxConsole.WriteMuted(chroma || kg
+                    ? $"  accelerators: {(chroma ? "chroma " : "")}{(kg ? "knowledge-graph" : "")}".TrimEnd()
+                    : "  accelerators: none connected - using filesystem reflections (lexical recall).");
+            }
+            else
+            {
+                MuxConsole.WriteSuccess("Deep memory set to STANDARD. Reflection subsystem is inert.");
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"Failed to update memory mode: {ex.Message}");
+        }
+    }
 }

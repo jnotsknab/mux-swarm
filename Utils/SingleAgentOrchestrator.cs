@@ -519,6 +519,92 @@ public static class SingleAgentOrchestrator
         MuxConsole.WritePanel("/cost - session usage", sb.ToString());
     }
 
+    // /cost all + /tokens all: Claude-Code-style matrixed breakdown sourced from the in-process
+    // CostLedger (the OTEL counters are write-only). Per model: system-prompt / tools / cached /
+    // input / output / reasoning, session AND rolling-cumulative, plus tool-call + compaction
+    // counts and a proportional ASCII bar. Real $ from ModelPricing where the provider has prices;
+    // subscription/cliproxy providers render tokens-only. Bare /cost + /tokens are unchanged.
+    private static void HandleCostBreakdown(string resolvedModelId)
+    {
+        var rows = CostLedger.Snapshot();
+        if (rows.Count == 0)
+        {
+            MuxConsole.WriteInfo("No usage recorded yet this run. Take a turn, then try /cost all.");
+            return;
+        }
+
+        bool isSubscription = string.Equals(
+            App.ActiveProvider?.ApiKeyEnvVar,
+            MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            StringComparison.Ordinal);
+
+        var sb = new System.Text.StringBuilder();
+        double grandSessUsd = 0;
+        bool anyPrice = false;
+
+        foreach (var r in rows)
+        {
+            sb.Append($"\nmodel: {r.Model}\n");
+
+            // Matrix: category | session | rolling. system-prompt + tools are a static subset of input.
+            sb.Append("  category        session        rolling\n");
+            sb.Append($"  system prompt   {r.SysPromptTok,12:N0}   {r.SysPromptTok,12:N0}\n");
+            sb.Append($"  tools (schema)  {r.ToolsTok,12:N0}   {r.ToolsTok,12:N0}\n");
+            sb.Append($"  input           {r.SessInput,12:N0}   {r.RollInput,12:N0}\n");
+            sb.Append($"  cached input    {r.SessCached,12:N0}   {r.RollCached,12:N0}\n");
+            sb.Append($"  output          {r.SessOutput,12:N0}   {r.RollOutput,12:N0}\n");
+            sb.Append($"  reasoning       {r.SessReasoning,12:N0}   {r.RollReasoning,12:N0}\n");
+            sb.Append($"  total           {r.SessTotal,12:N0}   {r.RollTotal,12:N0}\n");
+            sb.Append($"  tool calls      {r.SessToolCalls,12:N0}   {r.RollToolCalls,12:N0}\n");
+            sb.Append($"  compactions     {r.SessCompactions,12:N0}   {r.RollCompactions,12:N0}\n");
+
+            // Proportional bar of the session input/output/cached/reasoning split.
+            long barTotal = r.SessInput + r.SessOutput + r.SessReasoning;
+            if (barTotal > 0)
+            {
+                sb.Append("  split  ");
+                sb.Append(Bar("in", r.SessInput, barTotal));
+                sb.Append(Bar("out", r.SessOutput, barTotal));
+                if (r.SessReasoning > 0) sb.Append(Bar("rsn", r.SessReasoning, barTotal));
+                sb.Append('\n');
+            }
+
+            // Cost: per-model $ from list price (input+output), or tokens-only for subscription.
+            if (isSubscription)
+            {
+                sb.Append("  cost: subscription provider (flat-rate) - tokens only, no $\n");
+            }
+            else if (ModelPricing.Estimate(r.Model, r.SessInput, r.SessOutput) is { } sessUsd)
+            {
+                anyPrice = true;
+                grandSessUsd += sessUsd;
+                var rollUsd = ModelPricing.Estimate(r.Model, r.RollInput, r.RollOutput) ?? 0;
+                var price = ModelPricing.Lookup(r.Model)!.Value;
+                sb.Append($"  rate: ${price.InputPer1M:0.##}/1M in, ${price.OutputPer1M:0.##}/1M out (list-price estimate)\n");
+                sb.Append($"  cost: session ${sessUsd:0.0000}   rolling ${rollUsd:0.0000}\n");
+            }
+            else
+            {
+                sb.Append("  cost: unknown (no ModelPricing entry for this model id) - tokens only\n");
+            }
+        }
+
+        if (!isSubscription && anyPrice && rows.Count > 1)
+            sb.Append($"\ngrand total (session, priced models): ${grandSessUsd:0.0000}\n");
+
+        MuxConsole.WritePanel("/cost all - per-model breakdown", sb.ToString().TrimEnd());
+    }
+
+    // Small fixed-width proportional bar segment for the /cost all split line.
+    private static string Bar(string label, long value, long total)
+    {
+        if (total <= 0) return string.Empty;
+        int filled = (int)Math.Round((double)value / total * 10);
+        filled = Math.Clamp(filled, 0, 10);
+        double pct = (double)value / total * 100.0;
+        return $"{label}[{new string('#', filled)}{new string('.', 10 - filled)}]{pct,3:F0}% ";
+    }
+
     // /init: scan the workspace and have the active model author an AGENTS.md at its root.
     private static async Task HandleInitAsync(IChatClient? client, ChatOptions? chatOptions, CancellationToken ct)
     {
@@ -988,7 +1074,8 @@ public static class SingleAgentOrchestrator
             name: "delegate_to_agent_lite",
             description: "Delegate a sub-task to an agent by name. " +
                          "Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. " +
-                         "Cannot delegate to the Orchestrator. Note: Synchronous Version - Tip: Execute once with random string if no agent names are known to return err output with available agents"
+                         "Cannot delegate to the Orchestrator. Note: Synchronous Version. " +
+                         Common.DelegableAgentNames()
         );
 
         var delegateParallelTool = AIFunctionFactory.Create(
@@ -1094,7 +1181,7 @@ public static class SingleAgentOrchestrator
                          "an AgentName and a Task string. Blocks until all finish and returns their results. " +
                          "Pass background=true to instead launch them in the background and return job ids at once " +
                          "(poll with check_delegations) when you have other work to do meanwhile. " +
-                         "Tip: Execute once with random string if no agent names are known to return err output with available agents"
+                         Common.DelegableAgentNames()
         );
 
         // Poll + collect background delegations launched via delegate_parallel(background:true) (and /background jobs).
@@ -1235,6 +1322,7 @@ public static class SingleAgentOrchestrator
             uint sysTok = (uint)Math.Ceiling(sysChars / 2.5);
             uint toolTok = (uint)Math.Ceiling(toolChars / 2.5);
             MuxConsole.SetTuiTokenBreakdown(sysTok, toolTok);
+            CostLedger.SetStatic(resolvedModelId, sysTok, toolTok);
         }
 
         // Merge modelOpts from swarm.json if present
@@ -1305,6 +1393,19 @@ public static class SingleAgentOrchestrator
         if (resumedSession.HasValue)
             MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
 
+        // Deep memory (reflectionAgent.mode == "deep"): expose this session's history to the
+        // background gatherer and start its activity-gated loop. Inert in standard mode; interactive
+        // only (the gatherer makes its own LLM calls, never in serve/acp/stdio - gated by caller).
+        if (!MuxConsole.StdioMode && App.ServePort <= 0)
+        {
+            // Fresh lead session: clear the per-session injected-id tracking so the first turn's
+            // full block + later deltas are computed cleanly for this session.
+            MuxSwarm.Utils.Memory.ReflectionInjector.ResetSession();
+            MuxSwarm.Utils.Memory.ReflectionGatherer.HistoryProvider =
+                () => conversationHistory.ToList();
+            MuxSwarm.Utils.Memory.ReflectionGatherer.Start(chatClientFactory, cancellationToken);
+        }
+
         _pendingCompaction = false;
         async Task<bool> TryCompactAsync(string? instruction = null)
         {
@@ -1342,6 +1443,7 @@ public static class SingleAgentOrchestrator
 
             compactSw.Stop();
             OtelMetrics.CompactionRuns.Add(1);
+            CostLedger.RecordCompaction(resolvedModelId);
             OtelMetrics.CompactionDuration.Record(compactSw.ElapsedMilliseconds);
             if (beforeTokens > 0)
                 OtelMetrics.CompactionRatio.Record((double)_sessionTokens / beforeTokens);
@@ -1563,6 +1665,14 @@ public static class SingleAgentOrchestrator
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
+            // Deep memory: this turn's goal is the relevance query for injection, and a new turn is
+            // activity the background gatherer should reflect on. No-ops in standard mode. The actual
+            // mid-turn delta injection is handled by MidTurnReflectionClient (wrapped around the lead
+            // client INSIDE the function-invocation loop), so freshly-gathered reflections reach the
+            // model on every model<->tool round-trip - not just at this turn boundary.
+            MuxSwarm.Utils.Memory.ReflectionInjector.CurrentQuery = currentGoal;
+            MuxSwarm.Utils.Memory.ReflectionGatherer.Touch();
+
             int stuckCount = 0;
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -1695,6 +1805,7 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
+                                    CostLedger.RecordToolCall(resolvedModelId);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old
@@ -1779,6 +1890,10 @@ public static class SingleAgentOrchestrator
                                     OtelMetrics.RecordTokens(
                                         singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
                                         );
+                                    CostLedger.RecordUsage(resolvedModelId,
+                                        details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
+                                        details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
+                                        details.TotalTokenCount ?? 0);
                                 }
                             }
                         }
@@ -2026,9 +2141,14 @@ public static class SingleAgentOrchestrator
                 {
                     HandleDoctor();
                 }
-                else if (metaCmd.Equals("/cost", StringComparison.OrdinalIgnoreCase))
+                else if (metaCmd.Equals("/cost", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/cost ", StringComparison.OrdinalIgnoreCase))
                 {
-                    HandleCost(resolvedModelId);
+                    var costArg = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (costArg.Length > 1 && costArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                        HandleCostBreakdown(resolvedModelId);
+                    else
+                        HandleCost(resolvedModelId);
                 }
                 else if (metaCmd.Equals("/init", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2048,13 +2168,20 @@ public static class SingleAgentOrchestrator
                     _cumOutputTokens = 0;
                     _pendingCompaction = false;
                     _pendingReseed = false;
+                    CostLedger.ResetSession();
                     ServeMode.EmitEvent(new { type = "session_wiped" });
                     MuxConsole.WriteSuccess("Session context wiped. Starting fresh.");
                 }
                 else if (metaCmd.Equals("/tokens", StringComparison.OrdinalIgnoreCase)
-                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase))
+                      || metaCmd.StartsWith("/tokens ", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/context ", StringComparison.OrdinalIgnoreCase))
                 {
-                    PrintTokenUsage();
+                    var tokArg = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (tokArg.Length > 1 && tokArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                        HandleCostBreakdown(resolvedModelId);
+                    else
+                        PrintTokenUsage();
                 }
                 else if (metaCmd == "/" || metaCmd == "/?")
                 {

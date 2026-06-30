@@ -1176,7 +1176,7 @@ internal static class TuiComponents
     /// </summary>
     public static List<string> TaskBoardStrip(
         int total, int done, int inProgress, int blocked, int failed,
-        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> rows,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject, int Artifacts)> rows,
         int maxRows = 5, int offset = 0)
     {
         var outRows = new List<string>();
@@ -1205,7 +1205,7 @@ internal static class TuiComponents
         int shown = System.Math.Min(maxRows, rows.Count - offset);
         for (int i = 0; i < shown; i++)
         {
-            var (id, status, owner, subject) = rows[offset + i];
+            var (id, status, owner, subject, artifacts) = rows[offset + i];
             string tint = status switch
             {
                 "InProgress" => Accent,
@@ -1225,7 +1225,8 @@ internal static class TuiComponents
             string who = string.IsNullOrEmpty(owner) ? "" : $" [{Dim}]@{Esc(owner)}[/]";
             string subj = subject ?? "";
             if (subj.Length > 48) subj = subj[..47] + "\u2026";
-            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}");
+            string files = artifacts > 0 ? $" [{Dim}]\U0001F4CE{artifacts}[/]" : "";
+            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}{files}");
         }
         int below = rows.Count - offset - shown;
         if (below > 0)

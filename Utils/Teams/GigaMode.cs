@@ -267,7 +267,15 @@ public static class GigaMode
             {
                 var box = TeamController.ActiveMailbox;
                 if (box is null) return "[giga] No active team.";
-                var msgs = box.ReadInbox(LeadName, drain: true);
+                // Members route lead-bound replies to the team's RESOLVED lead identity
+                // (scope.LeadDef.Name, e.g. "MuxAgent"), which differs from the giga alias "Giga".
+                // Drain BOTH so a reply lands no matter which identity it was addressed under
+                // (fixes the giga lead-identity gap where member->lead answers were stranded).
+                var msgs = new List<MuxSwarm.State.TeamMessage>(box.ReadInbox(LeadName, drain: true));
+                var resolvedLead = _activeScope?.LeadDef.Name;
+                if (!string.IsNullOrWhiteSpace(resolvedLead)
+                    && !string.Equals(resolvedLead, LeadName, StringComparison.OrdinalIgnoreCase))
+                    msgs.AddRange(box.ReadInbox(resolvedLead!, drain: true));
                 if (msgs.Count == 0) return "[giga] No new messages.";
                 var sb = new StringBuilder($"### INBOX ({msgs.Count} new) ###");
                 sb.AppendLine();
@@ -295,6 +303,21 @@ public static class GigaMode
             },
             name: "task_create",
             description: "Create a task on the active giga team's board (taskboard teams). Optionally assign it and/or declare blockedBy deps."));
+
+        tools.Add(AIFunctionFactory.Create(
+            method: async (
+                [Description("High-level goal to break down into a blockedBy task graph on the active board.")] string goal) =>
+            {
+                var board = TeamController.ActiveBoard;
+                if (board is null) return "[giga] The active team has no task board (spawn a 'taskboard' team).";
+                var (dclient, dopts) = ResolveDecomposeClient(chatClientFactory, agentModels);
+                int cap = App.SwarmConfig?.Decompose?.MaxSubtasks ?? 12;
+                var roster = MultiAgentOrchestrator.Specialists.Keys
+                    .Where(k => !k.Equals("Orchestrator", StringComparison.OrdinalIgnoreCase)).ToList();
+                return await TaskDecomposer.DecomposeAsync(board, goal, roster, dclient, dopts, cap, ct);
+            },
+            name: "task_decompose",
+            description: "Decompose a high-level goal into a ready blockedBy task graph (subtasks + dependency edges + suggested assignees) on the active board, in one call - instead of hand-authoring many task_create calls."));
 
         tools.Add(AIFunctionFactory.Create(
             method: (
@@ -420,6 +443,28 @@ public static class GigaMode
             description: "List the saved workflow files you can run with run_workflow."));
 
         return tools;
+    }
+
+    /// <summary>
+    /// Resolve a LIGHT client for task_decompose: decompose.model -> compaction model -> Orchestrator
+    /// model. Returns (null, null) when none resolve (the decomposer then reports it gracefully).
+    /// </summary>
+    private static (IChatClient? client, ChatOptions? options) ResolveDecomposeClient(
+        Func<string, IChatClient> chatClientFactory, Dictionary<string, string> agentModels)
+    {
+        try
+        {
+            var model = App.SwarmConfig?.Decompose?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = App.SwarmConfig?.CompactionAgent?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = agentModels.TryGetValue("Compaction", out var cm) ? cm
+                      : agentModels.TryGetValue("Orchestrator", out var om) ? om : null;
+            if (string.IsNullOrWhiteSpace(model)) return (null, null);
+            var opts = App.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
+            return (chatClientFactory(model!), opts);
+        }
+        catch { return (null, null); }
     }
 
     /// <summary>One assignment for run_team (giga ephemeral dispatch).</summary>

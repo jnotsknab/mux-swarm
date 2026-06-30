@@ -61,6 +61,21 @@ public sealed class TeamTask
     /// <summary>Earliest time the auto-runner may start this task. Null = eligible immediately.</summary>
     [JsonPropertyName("startAt")]
     public DateTimeOffset? StartAt { get; set; }
+
+    /// <summary>How many times this task has been (re)claimed/run. Bumped on each claim and on a
+    /// stale requeue; the bounded-retry circuit-breaker trips it to Failed at maxTaskAttempts.</summary>
+    [JsonPropertyName("attempts")]
+    public int Attempts { get; set; }
+
+    /// <summary>Last liveness ping from the running owner. Refreshed by the runner loop's heartbeat;
+    /// used with <see cref="ClaimedAt"/> by the stale-task reaper to detect a dead worker.</summary>
+    [JsonPropertyName("lastHeartbeat")]
+    public DateTimeOffset? LastHeartbeat { get; set; }
+
+    /// <summary>Filepaths / refs relevant to this task. Set at create or via task_artifacts; surfaced
+    /// in task_info, the task brief (so whoever claims it gets its files), and the board strip.</summary>
+    [JsonPropertyName("artifacts")]
+    public List<string> Artifacts { get; set; } = [];
 }
 
 /// <summary>
@@ -159,7 +174,7 @@ public sealed class TaskBoard
     /// not yet Done, else Pending. Returns the assigned id.
     /// </summary>
     public TeamTask Create(string subject, string description, IEnumerable<string>? blockedBy = null,
-        string? assignee = null, DateTimeOffset? startAt = null)
+        string? assignee = null, DateTimeOffset? startAt = null, IEnumerable<string>? artifacts = null)
     {
         lock (_gate)
         {
@@ -178,6 +193,7 @@ public sealed class TaskBoard
                 Status = TeamTaskStatus.Pending,
                 Assignee = string.IsNullOrWhiteSpace(assignee) ? null : assignee!.Trim(),
                 StartAt = startAt,
+                Artifacts = NormalizeArtifacts(artifacts),
             };
 
             foreach (var depId in deps)
@@ -250,6 +266,8 @@ public sealed class TaskBoard
             t.Owner = owner;
             t.Status = TeamTaskStatus.InProgress;
             t.ClaimedAt = DateTimeOffset.UtcNow;
+            t.LastHeartbeat = t.ClaimedAt;
+            t.Attempts++;
             Persist(t);
             reason = "claimed";
             return true;
@@ -451,6 +469,93 @@ public sealed class TaskBoard
         }
     }
 
+    /// <summary>
+    /// Refresh the liveness heartbeat for a task the given owner is actively running. No-op (returns
+    /// false) if the task is unknown or not owned by <paramref name="who"/>. Called periodically by
+    /// the runner loop so the stale-task reaper can tell a live worker from a dead one.
+    /// </summary>
+    public bool Heartbeat(string id, string who)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue((id ?? string.Empty).Trim(), out var t)) return false;
+            if (t.Owner is null || !string.Equals(t.Owner, who, StringComparison.OrdinalIgnoreCase)) return false;
+            t.LastHeartbeat = DateTimeOffset.UtcNow;
+            Persist(t);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Sweep for InProgress tasks whose owner has gone dark - no heartbeat (or, absent any heartbeat,
+    /// no claim) newer than <paramref name="ttl"/> before <paramref name="now"/>. Each such task is
+    /// reclaimed: owner cleared, status re-derived to Pending/Blocked (so a dependent gate still
+    /// holds), and - because the failed run already bumped Attempts at claim time - tasks that have
+    /// burned through <paramref name="maxAttempts"/> are tripped to terminal Failed instead of being
+    /// requeued (bounded-retry circuit breaker). Returns the ids that were reaped (requeued OR failed).
+    /// </summary>
+    public IReadOnlyList<string> ReapStale(TimeSpan ttl, int maxAttempts, DateTimeOffset now)
+    {
+        var reaped = new List<string>();
+        lock (_gate)
+        {
+            foreach (var t in _tasks.Values)
+            {
+                if (t.Status != TeamTaskStatus.InProgress) continue;
+                var last = t.LastHeartbeat ?? t.ClaimedAt;
+                if (last is null || (now - last.Value) < ttl) continue;
+
+                // Owner went dark past the TTL.
+                t.Owner = null;
+                t.ClaimedAt = null;
+                t.LastHeartbeat = null;
+
+                if (maxAttempts > 0 && t.Attempts >= maxAttempts)
+                {
+                    // Burned the retry budget - stop respawning it.
+                    t.Status = TeamTaskStatus.Failed;
+                }
+                else
+                {
+                    t.Status = DepsSatisfied_NoLock(t) ? TeamTaskStatus.Pending : TeamTaskStatus.Blocked;
+                }
+                Persist(t);
+                reaped.Add(t.Id);
+            }
+        }
+        return reaped;
+    }
+
+    /// <summary>
+    /// Edit a task's artifact list: add, remove, or replace (set). Any combination may be supplied;
+    /// they apply in order set -> remove -> add. Returns false for an unknown task. Persisted.
+    /// </summary>
+    public bool SetArtifacts(string id, IEnumerable<string>? add, IEnumerable<string>? remove,
+        IEnumerable<string>? set, out string reason)
+    {
+        lock (_gate)
+        {
+            if (!_tasks.TryGetValue((id ?? string.Empty).Trim(), out var t)) { reason = $"no such task '{id}'"; return false; }
+            if (set is not null) t.Artifacts = NormalizeArtifacts(set);
+            if (remove is not null)
+                foreach (var r in remove.Select(x => (x ?? string.Empty).Trim()).Where(x => x.Length > 0))
+                    t.Artifacts.RemoveAll(a => string.Equals(a, r, StringComparison.OrdinalIgnoreCase));
+            if (add is not null)
+                foreach (var a in add.Select(x => (x ?? string.Empty).Trim()).Where(x => x.Length > 0))
+                    if (!t.Artifacts.Contains(a, StringComparer.OrdinalIgnoreCase)) t.Artifacts.Add(a);
+            Persist(t);
+            reason = $"artifacts: {t.Artifacts.Count}";
+            return true;
+        }
+    }
+
+    private static List<string> NormalizeArtifacts(IEnumerable<string>? items)
+        => (items ?? Enumerable.Empty<string>())
+            .Select(a => (a ?? string.Empty).Trim())
+            .Where(a => a.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
     /// <summary>True when every blocker of <paramref name="t"/> is Done.</summary>
     private bool DepsSatisfied_NoLock(TeamTask t)
         => t.BlockedBy.All(d => _tasks.TryGetValue(d, out var dep) && dep.Status == TeamTaskStatus.Done);
@@ -480,5 +585,6 @@ public sealed class TaskBoard
         Status = t.Status, Blocks = new List<string>(t.Blocks), BlockedBy = new List<string>(t.BlockedBy),
         Created = t.Created, ClaimedAt = t.ClaimedAt, CompletedAt = t.CompletedAt,
         Assignee = t.Assignee, StartAt = t.StartAt,
+        Attempts = t.Attempts, LastHeartbeat = t.LastHeartbeat, Artifacts = new List<string>(t.Artifacts),
     };
 }

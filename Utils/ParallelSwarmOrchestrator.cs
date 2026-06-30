@@ -274,7 +274,8 @@ public static class ParallelSwarmOrchestrator
                     maxSubAgentIterations, prodMode, ct: cancellationToken);
             },
             name: "delegate_to_agent",
-            description: "Delegate a sub-task to a specialist agent by name. Cannot delegate to the Orchestrator."
+            description: "Delegate a sub-task to a specialist agent by name. Cannot delegate to the Orchestrator. " +
+                         Common.DelegableAgentNames()
         );
 
         // Build specialist agents
@@ -445,7 +446,8 @@ public static class ParallelSwarmOrchestrator
             name: "delegate_parallel",
             description: "Executes multiple sub-tasks simultaneously. Use this for independent tasks like " +
                          "researching different topics or auditing multiple files. Each assignment specifies " +
-                         "an AgentName and a Task string."
+                         "an AgentName and a Task string. " +
+                         Common.DelegableAgentNames()
         );
 
         //Build the orchestrator

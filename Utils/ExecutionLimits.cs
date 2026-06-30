@@ -94,4 +94,22 @@ public class ExecutionLimits
     [JsonPropertyName("maxAutoContinuesPerTurn")]
     public int MaxAutoContinuesPerTurn { get; set; } = 3;
 
+    /// <summary>
+    /// Claim time-to-live (seconds) for a running team task. When a task has been InProgress with no
+    /// heartbeat (or, absent heartbeats, no claim) newer than this, the stale-task reaper treats its
+    /// owner as dead and requeues the task (or trips it to Failed once <see cref="MaxTaskAttempts"/>
+    /// is exhausted). Default 900 (15 min). The runner loop heartbeats well inside this window.
+    /// </summary>
+    [JsonPropertyName("taskClaimTtlSeconds")]
+    public int TaskClaimTtlSeconds { get; set; } = 900;
+
+    /// <summary>
+    /// Maximum times a single team task may be (re)claimed/run before the bounded-retry circuit
+    /// breaker marks it terminal Failed instead of requeuing it again - so a task that kills its
+    /// worker every time can't respawn forever. Default 3. A value &lt;= 0 disables the breaker
+    /// (tasks requeue indefinitely on staleness).
+    /// </summary>
+    [JsonPropertyName("maxTaskAttempts")]
+    public int MaxTaskAttempts { get; set; } = 3;
+
 }
