@@ -322,11 +322,15 @@ internal static class TuiComponents
         var lines = (text ?? "").Replace("\r\n", "\n").Split('\n')
             .Where(l => l.Trim().Length > 0).ToArray();
         if (lines.Length == 0) return new();
-        // Prefer the most informative line: for async-shell dispatches the result leads with an
-        // opaque "Job ID:" GUID, so surface the "Command:" line instead (Claude-Code style - show
-        // what is actually running, not the bookkeeping id).
+        // Prefer the most informative line: shell/REPL dispatches lead with bookkeeping ("Job ID:"
+        // GUID or "Status:"), so surface the line that shows WHAT actually ran instead (Claude-Code
+        // style) - "Command:" for async shell jobs, "Code:" for the Python REPL.
         int pick = Array.FindIndex(lines, l =>
-            l.TrimStart().StartsWith("Command:", StringComparison.OrdinalIgnoreCase));
+        {
+            var t = l.TrimStart();
+            return t.StartsWith("Command:", StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith("Code:", StringComparison.OrdinalIgnoreCase);
+        });
         if (pick < 0) pick = 0;
         string first = Trunc(CollapseWs(lines[pick]), 110);
         int more = lines.Length - 1;

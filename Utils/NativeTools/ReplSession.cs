@@ -1,5 +1,6 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 
@@ -30,6 +31,7 @@ internal sealed class ReplSession : IDisposable
     private string _workerFile = "";
     private volatile string _jobStatus = "idle"; // idle|running|completed|error|dead|waiting_input
     private string? _currentJobId;
+    private string _currentCode = "";  // last code submitted, surfaced in the result preview
     private readonly StringBuilder _out = new();
     private readonly StringBuilder _err = new();
     private string _inputPrompt = "";
@@ -102,6 +104,7 @@ internal sealed class ReplSession : IDisposable
         lock (_lock)
         {
             _currentJobId = Guid.NewGuid().ToString("N")[..12];
+            _currentCode = code ?? "";
             _jobStatus = "running";
             _out.Clear();
             _err.Clear();
@@ -120,8 +123,8 @@ internal sealed class ReplSession : IDisposable
             if (quick == done.Task)
                 return RenderResult(prefix: null);
             if (_jobStatus == "waiting_input")
-                return $"Job ID: {_currentJobId}\nStatus: waiting_input\nPrompt: {_inputPrompt}\n\nThe code called input(). Use send_python_input to provide the response.";
-            return $"Job ID: {_currentJobId}\nStatus: running (in background)\n\nUse check_python_status to see intermediary output or check completion.";
+                return $"Job ID: {_currentJobId}\nStatus: waiting_input\nCode: {CodePreview(_currentCode)}\nPrompt: {_inputPrompt}\n\nThe code called input(). Use send_python_input to provide the response.";
+            return $"Job ID: {_currentJobId}\nStatus: running (in background)\nCode: {CodePreview(_currentCode)}\n\nUse check_python_status to see intermediary output or check completion.";
         }
     }
 
@@ -183,9 +186,27 @@ internal sealed class ReplSession : IDisposable
         var sb = new StringBuilder();
         if (prefix is not null) sb.Append(prefix);
         sb.Append("Status: ").Append(_jobStatus).Append('\n');
+        // Surface WHAT ran so the TUI's collapsed one-line preview shows the code, not just the
+        // status. ToolResultCompact picks the "Code:" line (mirrors the async-shell "Command:" line).
+        sb.Append("Code: ").Append(CodePreview(_currentCode)).Append('\n');
         if (_out.Length > 0) sb.Append("\n--- STDOUT ---\n").Append(_out);
         if (_err.Length > 0) sb.Append("\n--- STDERR ---\n").Append(_err);
         return sb.ToString().TrimEnd();
+    }
+
+    /// <summary>One-line preview of submitted code for the collapsed tool-result summary: the first
+    /// non-blank line, with a "(+N more)" marker when the snippet spans multiple lines. The full code
+    /// is not echoed here (the STDOUT/STDERR body and the model's own call already hold it).</summary>
+    private static string CodePreview(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return "(empty)";
+        var lines = code.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var nonBlank = lines.Where(l => l.Trim().Length > 0).ToArray();
+        if (nonBlank.Length == 0) return "(empty)";
+        string first = nonBlank[0].Trim();
+        if (first.Length > 140) first = first[..139] + "\u2026";
+        int more = nonBlank.Length - 1;
+        return more > 0 ? $"{first}  (+{more} more line{(more == 1 ? "" : "s")})" : first;
     }
 
     private async Task EnsureWorkerAsync(CancellationToken ct)
