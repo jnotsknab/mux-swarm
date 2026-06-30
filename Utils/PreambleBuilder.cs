@@ -6,7 +6,7 @@
 /// </summary>
 public static class PreambleBuilder
 {
-    public static string Build(string agentName, bool continuousMode = false, bool shouldPlan = false, bool ultra = false)
+    public static string Build(string agentName, bool continuousMode = false, bool shouldPlan = false, bool ultra = false, bool isLead = true)
     {
         var preamble = "";
 
@@ -302,12 +302,21 @@ public static class PreambleBuilder
         }
 
         preamble += content;
+
+        // Deep-memory: append the budgeted, scored reflection block (gated on reflectionAgent.mode
+        // == "deep" + scope). Returns empty (byte-identical to before) in standard mode or when no
+        // reflection clears the relevance floor. Working agents never query memory - this is the
+        // only read path.
+        var reflectionBlock = MuxSwarm.Utils.Memory.ReflectionInjector.BuildBlock(agentName, isLead);
+        if (!string.IsNullOrEmpty(reflectionBlock))
+            preamble += "\n\n" + reflectionBlock;
+
         return preamble;
     }
 
     public static string WrapTask(string agentName, string subTask)
     {
-        var preamble = Build(agentName);
+        var preamble = Build(agentName, isLead: false);
         // Lightweight, always-on sub-agent persona (this path only; the lead/single-agent preamble
         // from Build(...) is unchanged). Keep it generic steering -- no user/system conventions.
         var persona =

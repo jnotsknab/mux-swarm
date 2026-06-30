@@ -271,9 +271,13 @@ public static class LocalAiFunctions
 
                         string result = normalized switch
                         {
-                            "confirm" => MuxConsole.Confirm(question,
-                                defaultValue?.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase) ?? true)
-                                ? "User confirmed: yes" : "User declined: no",
+                            "confirm" => ((Func<string>)(() =>
+                            {
+                                var cc = MuxConsole.ConfirmChoice(question,
+                                    defaultValue?.Trim().StartsWith("y", StringComparison.OrdinalIgnoreCase) ?? true);
+                                if (cc.Cancelled) return "User cancelled the prompt (no yes/no answer given).";
+                                return cc.Value == "yes" ? "User confirmed: yes" : "User declined: no";
+                            }))(),
                             "select" => MuxConsole.AskSelect(question, options),
                             "multi_select" => MuxConsole.AskMultiSelect(question, options),
                             _ => ((Func<string>)(() =>
@@ -314,7 +318,9 @@ public static class LocalAiFunctions
                 "before executing, need the user to choose between approaches, or require info that cannot be " +
                 "inferred from context. Supports 'text' (free-form), 'confirm' (yes/no), 'select' (pick one), " +
                 "and 'multi_select' (pick several). Do NOT use for trivial decisions you can make yourself. " +
-                "DO use before destructive operations or when multiple valid approaches exist."
+                "DO use before destructive operations or when multiple valid approaches exist. " +
+                "Note: for confirm/select/multi_select the user may CANCEL the prompt or enter a CUSTOM " +
+                "free-text response outside the offered options; handle either result gracefully without erroring."
         );
     }
 }

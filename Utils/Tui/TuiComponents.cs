@@ -9,20 +9,22 @@
 /// </summary>
 internal static class TuiComponents
 {
-    // Palette (kept in sync with MuxConsole.Tui TC).
-    public const string Accent  = "#64B4DC";
-    public const string Agent   = "#8FB8D4";
-    public const string Ok      = "#78C88C";
-    public const string Warn    = "#D4A054";
-    public const string Err     = "#D46C6C";
-    public const string Muted   = "#787878";
+    // Palette: foreground accent/semantic roles resolve from the ACTIVE theme (Theme.cs) so /theme
+    // recolors the live footer/badges/panels; structural shades (Dim/Border/backgrounds/badge tints/
+    // gutter/lane colors below) stay fixed UI semantics. Default theme reproduces the prior palette.
+    public static string Accent  => Theme.Active.Accent;
+    public static string Agent   => Theme.Active.Agent;
+    public static string Ok      => Theme.Active.Success;
+    public static string Warn    => Theme.Active.Warning;
+    public static string Err     => Theme.Active.Error;
+    public static string Muted   => Theme.Active.Muted;
     public const string Dim     = "#5A5A5A";
-    public const string Text    = "#C8C8C8";
+    public static string Text    => Theme.Active.Prompt;
     public const string Plan    = "#B48EAD";
     public const string Ultra   = "#D08770";
     public const string Giga    = "#B48EAD";
-    public const string DiffAdd = "#78C88C";
-    public const string DiffDel = "#D46C6C";
+    public static string DiffAdd => Theme.Active.Success;
+    public static string DiffDel => Theme.Active.Error;
     public const string Border  = "#3A3A3A";
     // Calm "working" cyan for the thinking/spinner line (NOT Warn - orange reads as an error).
     public const string Think    = "#7AA2C0";
@@ -320,11 +322,15 @@ internal static class TuiComponents
         var lines = (text ?? "").Replace("\r\n", "\n").Split('\n')
             .Where(l => l.Trim().Length > 0).ToArray();
         if (lines.Length == 0) return new();
-        // Prefer the most informative line: for async-shell dispatches the result leads with an
-        // opaque "Job ID:" GUID, so surface the "Command:" line instead (Claude-Code style - show
-        // what is actually running, not the bookkeeping id).
+        // Prefer the most informative line: shell/REPL dispatches lead with bookkeeping ("Job ID:"
+        // GUID or "Status:"), so surface the line that shows WHAT actually ran instead (Claude-Code
+        // style) - "Command:" for async shell jobs, "Code:" for the Python REPL.
         int pick = Array.FindIndex(lines, l =>
-            l.TrimStart().StartsWith("Command:", StringComparison.OrdinalIgnoreCase));
+        {
+            var t = l.TrimStart();
+            return t.StartsWith("Command:", StringComparison.OrdinalIgnoreCase)
+                || t.StartsWith("Code:", StringComparison.OrdinalIgnoreCase);
+        });
         if (pick < 0) pick = 0;
         string first = Trunc(CollapseWs(lines[pick]), 110);
         int more = lines.Length - 1;
@@ -1176,7 +1182,7 @@ internal static class TuiComponents
     /// </summary>
     public static List<string> TaskBoardStrip(
         int total, int done, int inProgress, int blocked, int failed,
-        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> rows,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject, int Artifacts)> rows,
         int maxRows = 5, int offset = 0)
     {
         var outRows = new List<string>();
@@ -1205,7 +1211,7 @@ internal static class TuiComponents
         int shown = System.Math.Min(maxRows, rows.Count - offset);
         for (int i = 0; i < shown; i++)
         {
-            var (id, status, owner, subject) = rows[offset + i];
+            var (id, status, owner, subject, artifacts) = rows[offset + i];
             string tint = status switch
             {
                 "InProgress" => Accent,
@@ -1225,7 +1231,8 @@ internal static class TuiComponents
             string who = string.IsNullOrEmpty(owner) ? "" : $" [{Dim}]@{Esc(owner)}[/]";
             string subj = subject ?? "";
             if (subj.Length > 48) subj = subj[..47] + "\u2026";
-            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}");
+            string files = artifacts > 0 ? $" [{Dim}]\U0001F4CE{artifacts}[/]" : "";
+            outRows.Add($"    [{tint}]{glyph}[/] [{Dim}]{Esc(id)}[/] [{Text}]{Esc(subj)}[/]{who}{files}");
         }
         int below = rows.Count - offset - shown;
         if (below > 0)

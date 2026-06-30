@@ -89,6 +89,8 @@ internal static class TuiCommands
         new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
         new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
         new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
+        new("/createhook",   "Guided wizard to scaffold a swarm hook (/createhook [id])", Scope.ReplOnly),
+        new("/hooks",        "Hooks status / toggle / create (/hooks on|off|create)", Scope.ReplOnly),
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
@@ -126,7 +128,10 @@ internal static class TuiCommands
         new("/limits",       "Display current execution limits", Scope.ReplOnly),
         new("/tools",        "List available MCP tools", Scope.ReplOnly),
         new("/skills",       "List available local skills", Scope.ReplOnly),
-        new("/memory",       "View the knowledge graph", Scope.ReplOnly),
+        new("/memory",       "Deep-memory status/toggle (/memory [deep|standard|show])", Scope.ReplOnly),
+        new("/deep",         "Toggle deep memory on/off (/deep [off])", Scope.ReplOnly),
+        new("/taskgraph",    "Auto-decompose goals into a blockedBy task graph (/taskgraph on|off|status)", Scope.ReplOnly),
+        new("/theme",        "View or switch the TUI color theme (/theme [name])", Scope.ReplOnly),
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
@@ -148,7 +153,7 @@ internal static class TuiCommands
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
         "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
-        "/workflow", "/report", "/addcontext", "/set", "/newagent", "/editagent", "/delagent",
+        "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
         "/compact", "/handoff", "/heal", "/reflect",
     };

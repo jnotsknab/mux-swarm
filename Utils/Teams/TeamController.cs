@@ -218,6 +218,13 @@ public static class TeamController
             out var autoRunner, out var peerRunner, out var memberToolFactory);
         ActiveRunner = autoRunner;
         ActivePeerRunner = peerRunner;
+        // Capture the roster + context so /taskgraph can lazily spin up a DecomposeDispatcher on
+        // demand (it is OFF by default; nothing runs until the user enables it). board may be null
+        // for fanout teams - the command checks ActiveBoard before starting.
+        ActiveDecomposeDispatcher = null;
+        ActiveDecomposeContext = board is not null
+            ? (members, chatClientFactory, agentModels, ct)
+            : null;
 
         // Start the auto-runner at launch when the team config opts in (taskboard only).
         if (autoRunner is not null && coordination == "taskboard" && team.AutoRun)
@@ -251,8 +258,10 @@ public static class TeamController
         MuxConsole.TuiSetMessageLogProvider(null);
         try { ActiveRunner?.Stop(); } catch { /* best-effort */ }
         try { ActivePeerRunner?.Stop(); } catch { /* best-effort */ }
+        try { ActiveDecomposeDispatcher?.Stop(); } catch { /* best-effort */ }
         ActiveRunner = null;
         ActivePeerRunner = null;
+        ActiveDecomposeDispatcher = null;
     }
 
     /// <summary>The auto-runner of the currently-running team, stopped on Clear().</summary>
@@ -260,6 +269,83 @@ public static class TeamController
 
     /// <summary>The peer self-claim engine of the currently-running team, stopped on Clear().</summary>
     public static MemberRunner? ActivePeerRunner { get; private set; }
+
+    /// <summary>The opt-in background task-decompose dispatcher (/taskgraph) of the currently-running
+    /// team, stopped + cleared on Clear(). Null when /taskgraph is off (the default).</summary>
+    public static DecomposeDispatcher? ActiveDecomposeDispatcher { get; internal set; }
+
+    /// <summary>The roster + cancellation context of the active team, captured so /taskgraph can spin
+    /// up its dispatcher on demand without re-plumbing through the command layer.</summary>
+    internal static (IReadOnlyList<string> Members, Func<string, IChatClient> Factory,
+        Dictionary<string, string> Models, CancellationToken Ct)? ActiveDecomposeContext { get; set; }
+
+    /// <summary>
+    /// /taskgraph on|off|status: persist the decompose.enabled flag and, when an active taskboard
+    /// team exists, start/stop its background DecomposeDispatcher. Returns a human-readable status.
+    /// The dispatcher only acts on goals enqueued via EnqueueDecomposeGoal; one-shot task_decompose
+    /// works regardless of this toggle.
+    /// </summary>
+    public static string ToggleDecompose(string? arg)
+    {
+        var sub = (arg ?? "status").Trim().ToLowerInvariant();
+        var cfg = App.SwarmConfig?.Decompose ?? new DecomposeConfig();
+
+        if (sub == "on" || sub == "off")
+        {
+            bool on = sub == "on";
+            cfg.Enabled = on;
+            App.SwarmConfig ??= new SwarmConfig();
+            App.SwarmConfig.Decompose = cfg;
+            try
+            {
+                File.WriteAllText(PlatformContext.SwarmPath,
+                    System.Text.Json.JsonSerializer.Serialize(App.SwarmConfig,
+                        new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception ex) { return $"[taskgraph] Failed to persist config: {ex.Message}"; }
+
+            if (on)
+            {
+                if (ActiveBoard is null || ActiveDecomposeContext is null)
+                    return "[taskgraph] Enabled (persisted). No active taskboard team yet - the background " +
+                           "dispatcher starts when you launch one. One-shot task_decompose is available now.";
+                StartDecomposeDispatcher();
+                return $"[taskgraph] ON (persisted). Background dispatcher running every " +
+                       $"{ActiveDecomposeDispatcher?.IntervalSeconds ?? cfg.PollIntervalSeconds}s; " +
+                       "enqueue goals with task_decompose-style intents.";
+            }
+            else
+            {
+                try { ActiveDecomposeDispatcher?.Stop(); } catch { /* best-effort */ }
+                ActiveDecomposeDispatcher = null;
+                return "[taskgraph] OFF (persisted). Dispatcher stopped; one-shot task_decompose still available.";
+            }
+        }
+
+        // status
+        bool enabled = cfg.Enabled;
+        bool running = ActiveDecomposeDispatcher?.IsRunning == true;
+        return $"[taskgraph] enabled={enabled} running={running} pollInterval={cfg.PollIntervalSeconds}s " +
+               $"maxSubtasks={cfg.MaxSubtasks} model={(string.IsNullOrWhiteSpace(cfg.Model) ? "(compaction/orchestrator fallback)" : cfg.Model)}";
+    }
+
+    /// <summary>Spin up (or restart) the active team's DecomposeDispatcher using the captured context.</summary>
+    private static void StartDecomposeDispatcher()
+    {
+        if (ActiveBoard is null || ActiveDecomposeContext is null) return;
+        var (members, factory, models, ct) = ActiveDecomposeContext.Value;
+        var cfg = App.SwarmConfig?.Decompose ?? new DecomposeConfig();
+        ActiveDecomposeDispatcher = new DecomposeDispatcher(
+            ActiveBoard, members,
+            () => ResolveDecomposeClient(factory, models).client,
+            () => ResolveDecomposeClient(factory, models).options,
+            cfg.MaxSubtasks, ct);
+        ActiveDecomposeDispatcher.Start(cfg.PollIntervalSeconds);
+    }
+
+    /// <summary>Enqueue a goal for the active background decompose dispatcher (no-op when off).</summary>
+    public static void EnqueueDecomposeGoal(string goal)
+        => ActiveDecomposeDispatcher?.Enqueue(goal);
 
     /// <summary>Feed the driver's Ctrl+T TaskBoard strip a point-in-time snapshot of the board
     /// (tally + flattened rows), keeping the TUI layer free of any State/Teams dependency.</summary>
@@ -269,10 +355,10 @@ public static class TeamController
         {
             var (total, done, prog, blocked, failed) = board.Tally();
             var rows = board.Snapshot()
-                .Select(t => (t.Id, t.Status.ToString(), t.Owner, t.Subject))
+                .Select(t => (t.Id, t.Status.ToString(), t.Owner, t.Subject, t.Artifacts.Count))
                 .ToList();
             return (total, done, prog, blocked, failed,
-                (IReadOnlyList<(string, string, string?, string)>)rows);
+                (IReadOnlyList<(string, string, string?, string, int)>)rows);
         });
     }
 
@@ -466,7 +552,8 @@ public static class TeamController
                     [Description("Fuller task description / instructions for the assignee.")] string description,
                     [Description("Optional comma-separated task ids that must finish before this one (e.g. 't1,t2').")] string? blockedBy,
                     [Description("Optional team member to designate as the assignee (required for auto-run to pick it up).")] string? assignee,
-                    [Description("Optional delay in seconds before the auto-runner may start this task (a timer/trigger). 0 or omitted = eligible immediately.")] int? startInSeconds) =>
+                    [Description("Optional delay in seconds before the auto-runner may start this task (a timer/trigger). 0 or omitted = eligible immediately.")] int? startInSeconds,
+                    [Description("Optional comma-separated filepaths/refs relevant to this task; handed to whoever claims it.")] string? artifacts) =>
                 {
                     var deps = (blockedBy ?? string.Empty)
                         .Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
@@ -481,16 +568,37 @@ public static class TeamController
                                "Create those tasks first, or omit them. (No task was created.)";
                     DateTimeOffset? startAt = startInSeconds is { } s && s > 0
                         ? DateTimeOffset.UtcNow.AddSeconds(s) : null;
-                    var t = board.Create(subject, description, deps, who, startAt);
+                    var arts = (artifacts ?? string.Empty)
+                        .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var t = board.Create(subject, description, deps, who, startAt, arts);
                     return $"Created {t.Id} \"{t.Subject}\" status={t.Status}" +
                            (t.BlockedBy.Count > 0 ? $" blockedBy=[{string.Join(",", t.BlockedBy)}]" : "") +
                            (t.Assignee is not null ? $" assignee={t.Assignee}" : "") +
-                           (t.StartAt is not null ? $" startAt={t.StartAt:HH:mm:ss}" : "");
+                           (t.StartAt is not null ? $" startAt={t.StartAt:HH:mm:ss}" : "") +
+                           (t.Artifacts.Count > 0 ? $" artifacts={t.Artifacts.Count}" : "");
                 },
                 name: "task_create",
                 description: "Create a task on the shared team board. Tasks can declare dependencies via blockedBy " +
                              "(a blocked task cannot run until its blockers are Done), an assignee (the member who runs " +
-                             "it), and startInSeconds (a timer before the auto-runner may start it)."));
+                             "it), startInSeconds (a timer before the auto-runner may start it), and artifacts " +
+                             "(comma-separated filepaths handed to whoever claims it)."));
+
+            // task_decompose: one light-model call that expands a high-level goal into a blockedBy
+            // task graph on this board (subtasks + deps + suggested assignees), instead of hand-
+            // authoring many task_create calls. Always available to the lead; the background
+            // dispatcher (/taskgraph) is the opt-in periodic form.
+            tools.Add(AIFunctionFactory.Create(
+                method: async (
+                    [Description("High-level goal to break down into a blockedBy task graph on this board.")] string goal) =>
+                {
+                    var (dclient, dopts) = ResolveDecomposeClient(chatClientFactory, agentModels);
+                    int cap = MultiAgentOrchestrator.SwarmConfig?.Decompose?.MaxSubtasks ?? 12;
+                    return await TaskDecomposer.DecomposeAsync(board, goal, members, dclient, dopts, cap, ct);
+                },
+                name: "task_decompose",
+                description: "Decompose a high-level goal into a ready blockedBy task graph (subtasks + dependency " +
+                             "edges + suggested assignees) on the shared board in one call, instead of hand-authoring " +
+                             "many task_create calls."));
 
             // task_assign: assign/REASSIGN a task to a member, claim it (file-locked), run it, and
             // mark it Done/Failed so dependents auto-unblock. If the task is already owned it is moved
@@ -600,15 +708,49 @@ public static class TeamController
                         sb.AppendLine($"  blockedBy: [{string.Join(",", t.BlockedBy)}]  ({string.Join("; ", notes)})");
                     }
                     if (t.Blocks.Count > 0) sb.AppendLine($"  blocks: [{string.Join(",", t.Blocks)}]");
+                    if (t.Artifacts.Count > 0) sb.AppendLine($"  artifacts: {string.Join(", ", t.Artifacts)}");
                     sb.AppendLine($"  created: {t.Created:u}" +
                                   (t.StartAt is not null ? $"   startAt: {t.StartAt:u}" : "") +
                                   (t.ClaimedAt is not null ? $"   claimed: {t.ClaimedAt:u}" : "") +
                                   (t.CompletedAt is not null ? $"   completed: {t.CompletedAt:u}" : ""));
+                    if (t.Attempts > 0)
+                        sb.AppendLine($"  attempts: {t.Attempts}" +
+                                      (t.LastHeartbeat is not null ? $"   lastHeartbeat: {t.LastHeartbeat:u}" : ""));
                     return sb.ToString();
                 },
                 name: "task_info",
                 description: "Show full detail for one task: status, owner, assignee, dependencies (and which are still " +
                              "pending), what it blocks, and its timestamps."));
+
+            // task_artifacts: attach/detach/replace the filepaths relevant to a task.
+            tools.Add(AIFunctionFactory.Create(
+                method: (
+                    [Description("The task id to edit (e.g. 't1').")] string taskId,
+                    [Description("Optional comma-separated paths to ADD.")] string? add,
+                    [Description("Optional comma-separated paths to REMOVE.")] string? remove,
+                    [Description("Optional comma-separated paths to REPLACE the whole list with.")] string? set) =>
+                {
+                    var id = (taskId ?? string.Empty).Trim();
+                    string[]? Split(string? s) => string.IsNullOrWhiteSpace(s) ? null
+                        : s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (Split(add) is null && Split(remove) is null && Split(set) is null)
+                    {
+                        var cur = board.Get(id);
+                        if (cur is null) return $"[teams] no such task '{id}'.";
+                        return cur.Artifacts.Count == 0
+                            ? $"{id} has no artifacts."
+                            : $"{id} artifacts:\n" + string.Join("\n", cur.Artifacts.Select(a => $"  - {a}"));
+                    }
+                    if (!board.SetArtifacts(id, Split(add), Split(remove), Split(set), out var reason))
+                        return $"[teams] {reason}";
+                    var t = board.Get(id);
+                    return $"{id} {reason}" + (t is { Artifacts.Count: > 0 }
+                        ? "\n" + string.Join("\n", t.Artifacts.Select(a => $"  - {a}")) : "");
+                },
+                name: "task_artifacts",
+                description: "View or edit the filepaths/refs attached to a task. With no add/remove/set, lists current " +
+                             "artifacts. Artifacts are handed to whoever claims the task (shown in its brief) and surfaced " +
+                             "in task_info and the board strip."));
 
             // task_list: render the current board for the lead.
             tools.Add(AIFunctionFactory.Create(
@@ -688,6 +830,13 @@ public static class TeamController
         // read_inbox whose "from"/inbox identity is the member itself (vs the lead's, above), built
         // via BuildSpecialists' per-agent extra-tool factory so a member can answer the lead /
         // message a peer. Members only; the lead/Orchestrator already has its own pair.
+        // The lead is addressable by BOTH the team-lead alias (team.Lead, e.g. the giga constant
+        // "Giga") AND the resolved lead agent's real name (leadDef.Name, e.g. "MuxAgent"). A member
+        // runs as its own persona and may address the lead by either, so accept both and NORMALIZE
+        // to the single canonical leadName the lead actually drains - otherwise a member->lead reply
+        // routed to the unresolved alias lands in an inbox nobody reads (the giga lead-identity gap).
+        var leadAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { leadName };
+        if (!string.IsNullOrWhiteSpace(team.Lead)) leadAliases.Add(team.Lead!.Trim());
         memberToolFactory = mailbox is null ? null : def =>
         {
             var extra = new List<AITool>();
@@ -703,6 +852,8 @@ public static class TeamController
                     var dest = (to ?? string.Empty).Trim();
                     if (dest.Length == 0) return "[mailbox] No recipient specified.";
                     bool bcast = dest.Equals("all", StringComparison.OrdinalIgnoreCase) || dest == "*";
+                    // Any lead alias -> the canonical leadName the lead's read_inbox drains.
+                    if (leadAliases.Contains(dest)) dest = leadName;
                     if (!bcast && !memberSet.Contains(dest)
                         && !dest.Equals(leadName, StringComparison.OrdinalIgnoreCase))
                         return $"[mailbox] '{dest}' is not the lead or a member. Lead: {leadName}. Members: {roster}";
@@ -781,6 +932,28 @@ public static class TeamController
         catch { return null; }
     }
 
+    /// <summary>
+    /// Resolve a LIGHT (client, options) for task_decompose: decompose.model -> compaction model ->
+    /// Orchestrator model. Returns (null, null) when none resolve.
+    /// </summary>
+    private static (IChatClient? client, ChatOptions? options) ResolveDecomposeClient(
+        Func<string, IChatClient> chatClientFactory, Dictionary<string, string> agentModels)
+    {
+        try
+        {
+            var model = MultiAgentOrchestrator.SwarmConfig?.Decompose?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = agentModels.TryGetValue("Compaction", out var cm) ? cm
+                      : agentModels.TryGetValue("Orchestrator", out var om) ? om : null;
+            if (string.IsNullOrWhiteSpace(model)) return (null, null);
+            var opts = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
+            return (chatClientFactory(model!), opts);
+        }
+        catch { return (null, null); }
+    }
+
     /// <summary>Normalize the pickup policy; unknown values fall back to "assigned".</summary>
     private static string NormalizePickupPolicy(string? p)
         => (p ?? "assigned").Trim().ToLowerInvariant() == "open" ? "open" : "assigned";
@@ -816,6 +989,9 @@ public static class TeamController
         var sb = new StringBuilder();
         sb.AppendLine($"You are assigned team task {t.Id}: {t.Subject}");
         if (!string.IsNullOrWhiteSpace(t.Description)) sb.AppendLine().AppendLine(t.Description);
+        if (t.Artifacts.Count > 0)
+            sb.AppendLine().AppendLine("Relevant artifacts/paths:")
+              .AppendLine(string.Join("\n", t.Artifacts.Select(a => $"  - {a}")));
         return sb.ToString();
     }
 }
@@ -883,6 +1059,11 @@ public sealed class AutoRunner
         {
             while (!ct.IsCancellationRequested)
             {
+                // Reap dead-owner tasks before scanning: a worker that died mid-task (crash, kill,
+                // hung stream past the TTL) has its claim reclaimed so the task can run again, or is
+                // tripped to Failed once its retry budget is spent (circuit breaker).
+                SweepStale();
+
                 // Drain everything currently runnable, then wait a poll interval. Each NextRunnable
                 // call excludes assignees that already have an in-flight task (one per member).
                 while (!ct.IsCancellationRequested)
@@ -914,6 +1095,7 @@ public sealed class AutoRunner
         try
         {
             string result;
+            using var hb = StartHeartbeat(id, who, ct);
             try { result = await _runMember(who, BriefFor(id)); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -930,6 +1112,27 @@ public sealed class AutoRunner
         }
     }
 
+    /// <summary>Reap stale (dead-owner) tasks using the configured TTL + attempt cap. Best-effort.</summary>
+    private void SweepStale()
+    {
+        try
+        {
+            var lim = MuxSwarm.Utils.ExecutionLimits.Current;
+            var ttl = TimeSpan.FromSeconds(Math.Max(1, lim.TaskClaimTtlSeconds));
+            var reaped = _board.ReapStale(ttl, lim.MaxTaskAttempts, DateTimeOffset.UtcNow);
+            if (reaped.Count > 0)
+                MuxConsole.WriteMuted($"[teams] reaped {reaped.Count} stale task(s): {string.Join(", ", reaped)}");
+        }
+        catch { /* never let the sweep break the loop */ }
+    }
+
+    /// <summary>
+    /// Start a background heartbeat that pings the board for an in-flight task every ~TTL/3 seconds
+    /// so the reaper sees a live worker. Dispose (end of the run) stops it. Best-effort.
+    /// </summary>
+    private IDisposable StartHeartbeat(string id, string who, CancellationToken ct)
+        => new Heartbeater(_board, id, who, ct);
+
     private string BriefFor(string id)
     {
         var t = _board.Get(id);
@@ -937,7 +1140,48 @@ public sealed class AutoRunner
         var sb = new StringBuilder();
         sb.AppendLine($"You are assigned team task {t.Id}: {t.Subject}");
         if (!string.IsNullOrWhiteSpace(t.Description)) sb.AppendLine().AppendLine(t.Description);
+        if (t.Artifacts.Count > 0)
+            sb.AppendLine().AppendLine("Relevant artifacts/paths:")
+              .AppendLine(string.Join("\n", t.Artifacts.Select(a => $"  - {a}")));
         return sb.ToString();
+    }
+}
+
+/// <summary>
+/// Background heartbeater: while alive, periodically pings TaskBoard.Heartbeat(id, who) so the
+/// stale-task reaper can distinguish a live long-running worker from a dead one. Shared by both
+/// runner engines. Stops on Dispose or session cancellation. Interval is TTL/3 (floor 5s).
+/// </summary>
+internal sealed class Heartbeater : IDisposable
+{
+    private readonly CancellationTokenSource _cts;
+    private readonly Task _loop;
+
+    public Heartbeater(TaskBoard board, string id, string who, CancellationToken sessionCt)
+    {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(sessionCt);
+        var ct = _cts.Token;
+        int ttl = Math.Max(1, MuxSwarm.Utils.ExecutionLimits.Current.TaskClaimTtlSeconds);
+        int every = Math.Max(5, ttl / 3);
+        _loop = Task.Run(async () =>
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested)
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(every), ct); }
+                    catch (OperationCanceledException) { break; }
+                    try { board.Heartbeat(id, who); } catch { /* best-effort */ }
+                }
+            }
+            catch { /* never surface */ }
+        }, ct);
+    }
+
+    public void Dispose()
+    {
+        try { _cts.Cancel(); } catch { }
+        try { _cts.Dispose(); } catch { }
     }
 }
 
@@ -1033,6 +1277,9 @@ public sealed class MemberRunner
 
                 bool didWork = false;
 
+                // Reap dead-owner tasks (TTL + retry breaker) before this member scans for work.
+                SweepStale();
+
                 // Drain everything this member can claim right now, one task at a time. Each task's
                 // brief is prepended with any unread inbox messages (handled in RunMember), so a
                 // working member naturally consumes its mailbox.
@@ -1045,6 +1292,7 @@ public sealed class MemberRunner
                     didWork = true;
 
                     string result;
+                    using var hb = new Heartbeater(_board, next.Id, who, ct);
                     try { result = await _runMember(who, BriefFor(next.Id)); }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -1083,6 +1331,20 @@ public sealed class MemberRunner
         catch (Exception ex) { MuxConsole.WriteWarning($"[teams] Peer loop for {who} stopped on error: {ex.Message}"); }
     }
 
+    /// <summary>Reap stale (dead-owner) tasks using the configured TTL + attempt cap. Best-effort.</summary>
+    private void SweepStale()
+    {
+        try
+        {
+            var lim = MuxSwarm.Utils.ExecutionLimits.Current;
+            var ttl = TimeSpan.FromSeconds(Math.Max(1, lim.TaskClaimTtlSeconds));
+            var reaped = _board.ReapStale(ttl, lim.MaxTaskAttempts, DateTimeOffset.UtcNow);
+            if (reaped.Count > 0)
+                MuxConsole.WriteMuted($"[teams] reaped {reaped.Count} stale task(s): {string.Join(", ", reaped)}");
+        }
+        catch { /* never let the sweep break the loop */ }
+    }
+
     private string BriefFor(string id)
     {
         var t = _board.Get(id);
@@ -1090,6 +1352,9 @@ public sealed class MemberRunner
         var sb = new StringBuilder();
         sb.AppendLine($"You are assigned team task {t.Id}: {t.Subject}");
         if (!string.IsNullOrWhiteSpace(t.Description)) sb.AppendLine().AppendLine(t.Description);
+        if (t.Artifacts.Count > 0)
+            sb.AppendLine().AppendLine("Relevant artifacts/paths:")
+              .AppendLine(string.Join("\n", t.Artifacts.Select(a => $"  - {a}")));
         return sb.ToString();
     }
 }

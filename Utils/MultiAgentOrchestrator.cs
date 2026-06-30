@@ -328,7 +328,8 @@ public static class MultiAgentOrchestrator
             },
             name: "delegate_to_agent",
             description: "Delegates a sub-task to a specialist agent and returns their result. " +
-                         "Use this to assign work to the appropriate agent based on the task type."
+                         "Use this to assign work to the appropriate agent based on the task type. " +
+                         Common.DelegableAgentNames()
         );
 
         var subAgentDelegateTool = AIFunctionFactory.Create(
@@ -340,7 +341,8 @@ public static class MultiAgentOrchestrator
                 return await ExecuteDelegation(agentName, task, "SubAgent", restrictToSpecialists: true);
             },
             name: "delegate_to_agent",
-            description: "Delegate a sub-task to a specialist agent by name. Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. Cannot delegate to the Orchestrator."
+            description: "Delegate a sub-task to a specialist agent by name. Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. Cannot delegate to the Orchestrator. " +
+                         Common.DelegableAgentNames()
         );
 
         //Build specialist agents

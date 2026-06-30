@@ -226,6 +226,15 @@ public class ConsoleConfig
     public string RenderMode { get; set; } = "auto";
 
     /// <summary>
+    /// Named TUI color theme (see <see cref="Theme"/>): one of default | dark | light | mono |
+    /// solarized | dracula | gruvbox. Selected via <c>/theme &lt;name&gt;</c> or the <c>/setup</c>
+    /// theme step. <c>"default"</c> (or any unknown value) yields the original hardcoded palette,
+    /// so an absent/legacy config is byte-identical to prior behaviour. Ignored in stdio/serve mode.
+    /// </summary>
+    [JsonPropertyName("theme")]
+    public string Theme { get; set; } = "default";
+
+    /// <summary>
     /// Tool-output verbosity in the TUI renderer. <c>"compact"</c> (default) collapses
     /// each tool result to a one-line summary (Claude-Code style); errors and diffs still
     /// expand. <c>"full"</c> renders the full bordered result panel. Toggled at runtime by

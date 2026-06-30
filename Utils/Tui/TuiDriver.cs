@@ -110,7 +110,7 @@ internal sealed class TuiDriver
     private const int TaskBoardWindow = 5;
     public bool TaskBoardVisible => _taskBoardVisible;
     public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
-        IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? TaskBoardProvider { get; set; }
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject, int Artifacts)> Rows)?>? TaskBoardProvider { get; set; }
 
     // M4 Mailbox: per-agent message-log provider for the Agent View 'm' key. Given an agent name,
     // returns pre-formatted markup rows of that agent's inbox history (oldest-first), or empty.

@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.12.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "";
+    public static readonly string DebugTag = "g12.87-replpreview";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -261,6 +261,7 @@ public class App
         // console.renderMode config; default "auto" is capability-aware. No effect on the
         // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
         MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
@@ -672,7 +673,9 @@ public class App
                     var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
                     agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateChatClient(singleAgentModel),
+                        client: CreateChatClient(singleAgentModel, null,
+                            wrapMidTurnReflection: true,
+                            reflectionAgentName: SingleAgentOrchestrator.AgentDef?.Name ?? "Agent"),
                         agentCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -1032,12 +1035,26 @@ public class App
                     }
                     break;
 
-                case "/memory":
-                    CliCmdUtils.ShowKnowledgeGraph(McpClients, McpTools);
+                case var mem when mem == "/memory" || mem.StartsWith("/memory ")
+                                  || mem == "/deep" || mem.StartsWith("/deep "):
+                    CliCmdUtils.HandleMemory(userInput, McpClients, McpTools);
+                    break;
+
+                case var tg when tg == "/taskgraph" || tg.StartsWith("/taskgraph "):
+                    {
+                        var tgArg = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        var msg = MuxSwarm.Utils.Teams.TeamController.ToggleDecompose(
+                            tgArg.Length > 1 ? tgArg[1] : "status");
+                        MuxConsole.WriteInfo(msg);
+                    }
                     break;
 
                 case "/skills":
                     CliCmdUtils.ShowLoadedSkills();
+                    break;
+
+                case var th when th == "/theme" || th.StartsWith("/theme "):
+                    CliCmdUtils.HandleTheme(userInput);
                     break;
 
                 case "/reloadskills":
@@ -1185,6 +1202,88 @@ public class App
                     break;
                 }
 
+                case var hkCmd when hkCmd == "/createhook" || hkCmd.StartsWith("/createhook "):
+                {
+                    await EnsureMcpReadyAsync();
+                    var helperModel = LoadSingleAgentModel();
+                    // Helper that drafts a hook SCRIPT to the given file path (vs /newagent's prompt file).
+                    void SpawnHookScriptHelper(string scriptPath, string purpose)
+                    {
+                        var task = BuildHookHelperBrief(scriptPath, purpose);
+                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
+                        try
+                        {
+                            SingleAgentOrchestrator.ChatAgentAsync(
+                                client: CreateChatClient(helperModel),
+                                GetOrResetCts().Token,
+                                maxIterations: 4,
+                                mcpTools: McpTools,
+                                continuous: false).GetAwaiter().GetResult();
+                        }
+                        finally { MuxConsole.InputOverride = System.Console.In; }
+                    }
+
+                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
+                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); SwarmConfig = LoadSwarm(); }
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var hksCmd when hksCmd == "/hooks" || hksCmd.StartsWith("/hooks "):
+                {
+                    var hp = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    var sub = hp.Length > 1 ? hp[1].Trim().ToLowerInvariant() : "";
+                    switch (sub)
+                    {
+                        case "on":
+                            MuxSwarm.State.HookWorker.Enabled = true;
+                            MuxConsole.WriteSuccess($"Hooks ENABLED ({MuxSwarm.State.HookWorker.Count} configured).");
+                            break;
+                        case "off":
+                            MuxSwarm.State.HookWorker.Enabled = false;
+                            MuxConsole.WriteSuccess("Hooks DISABLED for this session (events are dropped).");
+                            break;
+                        case "create":
+                        case "new":
+                        {
+                            await EnsureMcpReadyAsync();
+                            var helperModel2 = LoadSingleAgentModel();
+                            void SpawnHookScriptHelper2(string scriptPath, string purpose)
+                            {
+                                var task = BuildHookHelperBrief(scriptPath, purpose);
+                                MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
+                                try
+                                {
+                                    SingleAgentOrchestrator.ChatAgentAsync(
+                                        client: CreateChatClient(helperModel2), GetOrResetCts().Token,
+                                        maxIterations: 4, mcpTools: McpTools, continuous: false).GetAwaiter().GetResult();
+                                }
+                                finally { MuxConsole.InputOverride = System.Console.In; }
+                            }
+                            var cres = MuxSwarm.Utils.Tui.TuiConfigCommands.RunCreateHookWizard(
+                                new[] { "/createhook" }, SpawnHookScriptHelper2);
+                            if (cres.Ok) { MuxConsole.WriteSuccess(cres.Message); SwarmConfig = LoadSwarm(); }
+                            else MuxConsole.WriteWarning(cres.Message);
+                            break;
+                        }
+                        default:
+                        {
+                            var status = MuxSwarm.State.HookWorker.Enabled ? "ON" : "OFF";
+                            var sb = new System.Text.StringBuilder();
+                            sb.AppendLine($"Hooks: {status}  ({MuxSwarm.State.HookWorker.Count} configured)");
+                            foreach (var h in MuxSwarm.State.HookWorker.Loaded)
+                                sb.AppendLine($"  - {h.Id}: on {h.When.Event}" +
+                                    (h.When.Agent is not null ? $" [agent={h.When.Agent}]" : "") +
+                                    (h.When.Tool is not null ? $" [tool={h.When.Tool}]" : "") +
+                                    $"  ({h.Mode})");
+                            sb.Append("Usage: /hooks on|off|create");
+                            MuxConsole.WriteInfo(sb.ToString().TrimEnd());
+                            break;
+                        }
+                    }
+                    break;
+                }
+
                 case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam "):
                 {
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
@@ -1235,6 +1334,66 @@ public class App
         return Environment.ExitCode;
     }
     
+    /// <summary>
+    /// Build the grounding brief handed to the helper agent that authors a hook script. Gives the
+    /// agent the full hook contract - how hooks run, the exact event payload schema, the canonical
+    /// event list, the stdin/exit-code/timeout semantics, and safety rules - so it is not flying
+    /// blind. Used by /createhook and /hooks create.
+    /// </summary>
+    private static string BuildHookHelperBrief(string scriptPath, string purpose)
+    {
+        var ext = System.IO.Path.GetExtension(scriptPath).ToLowerInvariant();
+        var lang = ext switch
+        {
+            ".ps1" => "PowerShell",
+            ".sh" => "bash",
+            ".py" => "Python",
+            ".js" => "Node.js",
+            _ => "a shell script"
+        };
+        return
+$@"You are writing a Mux-Swarm EVENT HOOK script. Write the finished, runnable {lang} script to this
+EXACT path and nothing else there: {scriptPath}
+
+PURPOSE (what the user wants this hook to do):
+{purpose}
+
+HOW MUX-SWARM HOOKS WORK (authoritative - do not invent behavior):
+- A hook is an external command Mux-Swarm runs when a lifecycle EVENT fires. It is configured in
+  swarm.json under hooks[] (the /createhook wizard writes that entry; you only write the SCRIPT).
+- DELIVERY: every time the event fires, Mux writes ONE line of JSON to your script's STDIN (newline-
+  delimited). Read exactly one line from stdin and JSON-parse it. For a 'persistent' hook the process
+  stays alive and receives a STREAM of such lines (loop over stdin); for async/blocking it is invoked
+  once per event with a single line then stdin closes.
+- The command is split on the FIRST space into executable + args, so your script must be invoked as a
+  single program (the wizard wraps it, e.g. 'bash <path>' or 'powershell -File <path>').
+- OUTPUT: stdout/stderr are NOT captured or shown - do your own logging/IO (write a file, hit a
+  webhook, send a notification). Exit code 0 = success. A 'blocking' hook is awaited up to its
+  timeoutSeconds (default 30) and then killed; 'async' fire-and-forget; do not block forever unless
+  the hook is configured persistent.
+
+EVENT PAYLOAD (camelCase JSON fields; some are null depending on the event):
+  event      string  - the event name (see list below)
+  agent      string? - agent involved (e.g. the agent that called a tool)
+  tool       string? - tool name (on tool_call / tool_result)
+  text       string? - streamed text/reasoning chunk (on text_chunk / thinking_chunk)
+  args       string? - tool-call arguments
+  summary    string? - short summary (turn_end, delegation, task_complete, daemon_*)
+  goalId     string? - active goal/session id when present
+  timestamp  string  - ISO-8601 UTC time the event fired
+
+CANONICAL EVENTS you can trigger on (use the one that matches the purpose):
+  user_input, agent_turn_start, tool_call, tool_result, text_chunk, thinking_chunk,
+  turn_end, delegation, task_complete, session_start, session_end, runtime_ready,
+  daemon_start, daemon_stop, daemon_trigger, daemon_status, daemon_bridge
+
+SAFETY: the hook runs with the user's permissions. Keep it minimal, validate the parsed JSON, never
+hardcode secrets (read them from environment variables), and fail safe (a missing field must not crash).
+
+Ask the user at most one or two focused clarifying questions ONLY if the purpose is ambiguous, then
+write the complete script to {scriptPath} (overwrite the seed). Confirm the path when done.";
+    }
+
     private string LoadSingleAgentModel()
     {
         if (!string.IsNullOrEmpty(_cliModelOverride))
@@ -2138,6 +2297,16 @@ public class App
     }
 
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
+        => CreateChatClient(modelId, chatOptions, wrapMidTurnReflection: false, reflectionAgentName: null);
+
+    /// <summary>
+    /// Build a chat client. When <paramref name="wrapMidTurnReflection"/> is true the client is
+    /// wrapped (INSIDE the function-invocation middleware) so freshly-gathered deep-memory deltas are
+    /// injected on every model<->tool round-trip, not just at user-turn boundaries. Used for the LEAD
+    /// single-agent client only; no-op pass-through in standard mode.
+    /// </summary>
+    public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions,
+        bool wrapMidTurnReflection, string? reflectionAgentName)
     {
         // Cap the function-invocation middleware's model->tool round-trips per turn. The default
         // (unbounded-ish SDK default) made long autonomous tool chains stop mid-task with no error
@@ -2155,13 +2324,21 @@ public class App
             catch (Exception ex) { MuxConsole.WriteWarning($"CLIProxyAPI sidecar unavailable: {ex.Message}"); }
         }
 
-        return CreateOpenAiClient()
+        var client = CreateOpenAiClient()
             .GetChatClient(modelId)
             .AsIChatClient()
             .AsBuilder()
             .UseFunctionInvocation(configure: c =>
                 c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
             .Build();
+
+        // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every
+        // round-trip. The wrapper sits INSIDE the function-invocation loop (built above), so it is
+        // invoked per tool round-trip. Inert in standard mode (BuildDelta returns empty).
+        if (wrapMidTurnReflection)
+            client = new MuxSwarm.Utils.Memory.MidTurnReflectionClient(client, reflectionAgentName ?? "Agent");
+
+        return client;
     }
     
     private async Task<int> HandleParsedRun(ParsedArgs? parsed)

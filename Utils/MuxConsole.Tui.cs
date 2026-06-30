@@ -783,7 +783,7 @@ public static partial class MuxConsole
     /// Set by TeamController when a taskboard team launches; cleared when it ends.</summary>
     internal static void TuiSetTaskBoardProvider(
         Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
-            IReadOnlyList<(string Id, string Status, string? Owner, string Subject)> Rows)?>? provider)
+            IReadOnlyList<(string Id, string Status, string? Owner, string Subject, int Artifacts)> Rows)?>? provider)
     {
         if (_driver is not null) _driver.TaskBoardProvider = provider;
     }

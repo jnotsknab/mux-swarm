@@ -223,10 +223,10 @@ public class TuiRenderTests
 
     // --- g12.28: TaskBoard strip scroll windowing -----------------------------
 
-    private static System.Collections.Generic.List<(string, string, string?, string)> BoardRows(int n)
+    private static System.Collections.Generic.List<(string, string, string?, string, int)> BoardRows(int n)
     {
-        var l = new System.Collections.Generic.List<(string, string, string?, string)>();
-        for (int i = 0; i < n; i++) l.Add(($"t{i}", "Todo", null, $"task subject {i}"));
+        var l = new System.Collections.Generic.List<(string, string, string?, string, int)>();
+        for (int i = 0; i < n; i++) l.Add(($"t{i}", "Todo", null, $"task subject {i}", 0));
         return l;
     }
 

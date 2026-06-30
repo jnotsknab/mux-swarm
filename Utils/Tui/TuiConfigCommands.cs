@@ -526,6 +526,7 @@ internal static class TuiConfigCommands
         if (head == "/newagent") return true;                    // always wizard (uses prompts)
         if (head is "/editagent" or "/delagent" or "/removeagent") return true;
         if (head == "/createteam") return true;                  // always wizard (uses prompts)
+        if (head == "/createhook") return true;                  // always wizard (uses prompts)
         return false;
     }
 
@@ -554,6 +555,9 @@ internal static class TuiConfigCommands
 
         if (head == "/createteam")
             return RunCreateTeamWizard(parts);
+
+        if (head == "/createhook")
+            return RunCreateHookWizard(parts, spawnHelper);
 
         return new Result(false, false, "");
     }
@@ -733,6 +737,25 @@ internal static class TuiConfigCommands
             });
             System.IO.File.WriteAllText(PlatformContext.SwarmPath, System.Text.Json.JsonSerializer.Serialize(swarm, SwarmJsonOpts));
 
+            // Verify the round-trip: reload the swarm and confirm the new agent resolves to the
+            // prompt file we just wrote (catches a silent promptPath drift before the user launches).
+            try
+            {
+                var check = LoadSwarmOrNew().Agents
+                    .FirstOrDefault(a => string.Equals(a.Name, name, System.StringComparison.OrdinalIgnoreCase));
+                if (check is null || string.IsNullOrWhiteSpace(check.PromptPath))
+                    MuxConsole.WriteWarning($"[newagent] WARNING: '{name}' was saved without a promptPath - it would fall back to a default prompt. Check Swarm.json.");
+                else
+                {
+                    var resolved = System.IO.Path.IsPathRooted(check.PromptPath)
+                        ? check.PromptPath
+                        : System.IO.Path.Combine(PlatformContext.PromptsDirectory, check.PromptPath);
+                    if (!System.IO.File.Exists(resolved))
+                        MuxConsole.WriteWarning($"[newagent] WARNING: promptPath '{check.PromptPath}' does not resolve to a file at {resolved}.");
+                }
+            }
+            catch { /* verification is best-effort; the write above already succeeded */ }
+
             string serversNote = (mcpServers is { Count: > 0 })
                 ? $"MCP: {string.Join(", ", mcpServers)}"
                 : "MCP: none";
@@ -857,6 +880,185 @@ internal static class TuiConfigCommands
         catch (System.Exception ex)
         {
             return Bad($"Failed to create team: {ex.Message}");
+        }
+    }
+
+    // ---- /createhook + /hooks: interactive hook scaffolder ------------------------------
+
+    private static readonly string[] HookEvents =
+    {
+        "user_input", "agent_turn_start", "tool_call", "tool_result", "text_chunk",
+        "thinking_chunk", "turn_end", "delegation", "task_complete", "session_start",
+        "session_end", "runtime_ready",
+    };
+
+    /// <summary>Per-language seed skeleton for a new hook script: documents the stdin-JSON contract
+    /// and parses the event so the file is runnable even before a helper fleshes it out.</summary>
+    private static string SeedHookScript(string ext, string id, string purpose)
+    {
+        string hdr = $"Mux-Swarm hook: {id}  |  Purpose: {purpose}";
+        return ext switch
+        {
+            ".ps1" =>
+                $"# {hdr}\r\n" +
+                "# Mux writes ONE JSON line to STDIN per event (camelCase: event, agent, tool, text,\r\n" +
+                "#   args, summary, goalId, timestamp). Exit 0 = ok.\r\n" +
+                "$line = [Console]::In.ReadLine()\r\n" +
+                "if (-not $line) { exit 0 }\r\n" +
+                "$ev = $line | ConvertFrom-Json\r\n" +
+                "switch ($ev.event) {\r\n" +
+                "    default { } # TODO: act on $ev.agent / $ev.tool / $ev.summary ...\r\n" +
+                "}\r\n",
+            ".py" =>
+                "#!/usr/bin/env python3\n" +
+                $"# {hdr}\n" +
+                "# Mux writes ONE JSON line to STDIN per event (camelCase: event, agent, tool, text,\n" +
+                "#   args, summary, goalId, timestamp). Exit 0 = ok.\n" +
+                "import sys, json\n" +
+                "line = sys.stdin.readline()\n" +
+                "if not line:\n" +
+                "    sys.exit(0)\n" +
+                "ev = json.loads(line)\n" +
+                "# TODO: act on ev['event'], ev.get('agent'), ev.get('tool'), ev.get('summary') ...\n",
+            ".js" =>
+                $"// {hdr}\n" +
+                "// Mux writes ONE JSON line to STDIN per event (camelCase: event, agent, tool, text,\n" +
+                "//   args, summary, goalId, timestamp). Exit 0 = ok.\n" +
+                "const data = require('fs').readFileSync(0, 'utf8').trim();\n" +
+                "if (!data) process.exit(0);\n" +
+                "const ev = JSON.parse(data.split('\\n')[0]);\n" +
+                "// TODO: act on ev.event, ev.agent, ev.tool, ev.summary ...\n",
+            _ =>
+                "#!/usr/bin/env bash\n" +
+                $"# {hdr}\n" +
+                "# Mux writes ONE JSON line to STDIN per event (camelCase: event, agent, tool, text,\n" +
+                "#   args, summary, goalId, timestamp). Exit 0 = ok.\n" +
+                "read -r EVENT || exit 0\n" +
+                "# Parse with jq, e.g.: EV=$(printf '%s' \"$EVENT\" | jq -r .event)\n" +
+                "# TODO: act on the event here.\n",
+        };
+    }
+
+    /// <summary>
+    /// Guided /createhook wizard: choose/author a hook script (new via a helper agent, or point at
+    /// an existing script/command), pick the trigger event(s) + optional agent/tool filter + mode,
+    /// and persist an additive HookConfig to swarm.json hooks[]. <paramref name="spawnScriptHelper"/>
+    /// (when provided) is invoked to draft a brand-new hook script interactively.
+    /// </summary>
+    public static Result RunCreateHookWizard(string[] parts, System.Action<string, string>? spawnScriptHelper)
+    {
+        var swarm = LoadSwarmOrNew();
+
+        // Hook id.
+        string id = parts.Length >= 2 ? parts[1].Trim()
+            : MuxConsole.Prompt("Hook id (single word, e.g. notify-on-complete)").Trim();
+        if (string.IsNullOrWhiteSpace(id)) return Bad("A hook id is required.");
+        if (id.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || id.Contains(' '))
+            return Bad($"Invalid hook id '{id}'. Use a single file-system-safe word.");
+        if (swarm.Hooks.Exists(h => string.Equals(h.Id, id, System.StringComparison.OrdinalIgnoreCase)))
+            return Bad($"A hook with id '{id}' already exists in Swarm.json.");
+
+        // Script source: write a new script (helper) | existing script/command.
+        string command;
+        var sourceChoices = new List<string>();
+        if (spawnScriptHelper is not null) sourceChoices.Add("Write a NEW hook script (a helper drafts it)");
+        sourceChoices.Add("Point at an EXISTING script or shell command");
+        var source = sourceChoices.Count == 1 ? sourceChoices[0]
+            : MuxConsole.Select("How should this hook run?", sourceChoices);
+
+        if (source.StartsWith("Write a NEW") && spawnScriptHelper is not null)
+        {
+            string purpose = MuxConsole.Prompt("What should this hook DO when it fires?").Trim();
+
+            // Let the user CHOOSE the script language (cross-platform) rather than host-forcing it.
+            // The host's native shell is offered first as the default.
+            var langChoices = PlatformContext.IsWindows
+                ? new[] { "PowerShell (.ps1)", "Bash (.sh)", "Python (.py)", "Node.js (.js)" }
+                : new[] { "Bash (.sh)", "Python (.py)", "Node.js (.js)", "PowerShell (.ps1)" };
+            string langPick = MuxConsole.Select("Hook script language", langChoices);
+            (string ext, string runner) = langPick switch
+            {
+                var s when s.StartsWith("PowerShell") => (".ps1", "powershell"),
+                var s when s.StartsWith("Python")     => (".py", "python"),
+                var s when s.StartsWith("Node")       => (".js", "node"),
+                _                                      => (".sh", "bash"),
+            };
+
+            string hooksDir = System.IO.Path.Combine(PlatformContext.BaseDirectory, "Hooks");
+            System.IO.Directory.CreateDirectory(hooksDir);
+            string scriptPath = System.IO.Path.Combine(hooksDir, id + ext);
+            if (!System.IO.File.Exists(scriptPath))
+                System.IO.File.WriteAllText(scriptPath, SeedHookScript(ext, id, purpose));
+
+            command = ext switch
+            {
+                ".ps1" => $"powershell -ExecutionPolicy Bypass -File \"{scriptPath}\"",
+                ".py"  => $"python \"{scriptPath}\"",
+                ".js"  => $"node \"{scriptPath}\"",
+                _      => $"bash \"{scriptPath}\"",
+            };
+
+            MuxConsole.WriteInfo($"Spawning a helper to author the hook script '{id}'...");
+            try { spawnScriptHelper(scriptPath, purpose); }
+            catch (System.Exception ex) { MuxConsole.WriteWarning($"Helper failed ({ex.Message}); seed script kept at {scriptPath}."); }
+        }
+        else
+        {
+            command = MuxConsole.Prompt("Full command or script path to run on trigger").Trim();
+            if (string.IsNullOrWhiteSpace(command)) return Bad("A command/script is required.");
+        }
+
+        // Trigger event.
+        var evChoices = new List<string>(HookEvents) { "(type a custom event name)" };
+        string ev = MuxConsole.Select("Fire on which event?", evChoices);
+        if (ev == "(type a custom event name)")
+            ev = MuxConsole.Prompt("Custom event name").Trim();
+        if (string.IsNullOrWhiteSpace(ev)) return Bad("A trigger event is required.");
+
+        // Optional filters.
+        string? agentFilter = null;
+        if (MuxConsole.Confirm("Restrict to a specific agent?", false))
+        {
+            var a = MuxConsole.Prompt("Agent name (blank = any)").Trim();
+            agentFilter = string.IsNullOrWhiteSpace(a) ? null : a;
+        }
+        string? toolFilter = null;
+        if (ev is "tool_call" or "tool_result" && MuxConsole.Confirm("Restrict to a specific tool?", false))
+        {
+            var tname = MuxConsole.Prompt("Tool name (blank = any)").Trim();
+            toolFilter = string.IsNullOrWhiteSpace(tname) ? null : tname;
+        }
+
+        // Mode.
+        bool blocking = MuxConsole.Confirm("Run BLOCKING (wait for the hook before continuing)?", false);
+        int timeout = 30;
+        if (blocking)
+        {
+            var ts = MuxConsole.Prompt("Blocking timeout seconds", "30").Trim();
+            if (!int.TryParse(ts, out timeout) || timeout <= 0) timeout = 30;
+        }
+
+        try
+        {
+            swarm.Hooks.Add(new HookConfig
+            {
+                Id = id,
+                Command = command,
+                Mode = blocking ? HookMode.Blocking : HookMode.Async,
+                TimeoutSeconds = timeout,
+                When = new HookClause { Event = ev, Agent = agentFilter, Tool = toolFilter },
+            });
+            SaveSwarm(swarm);
+            return Ok(
+                $"Created hook '{id}'.\n" +
+                $"  event: {ev}{(agentFilter is not null ? $"  agent: {agentFilter}" : "")}{(toolFilter is not null ? $"  tool: {toolFilter}" : "")}\n" +
+                $"  mode: {(blocking ? $"blocking ({timeout}s)" : "async")}\n" +
+                $"  command: {command}\n" +
+                "Run /refresh (or restart) to activate it. Toggle hooks with /hooks on|off.");
+        }
+        catch (System.Exception ex)
+        {
+            return Bad($"Failed to create hook: {ex.Message}");
         }
     }
 

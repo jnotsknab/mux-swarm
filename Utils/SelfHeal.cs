@@ -61,6 +61,8 @@ public static class SelfHeal
         system.AppendLine("Output ONE proposal per line, EXACTLY in this pipe format, nothing else:");
         system.AppendLine("  BRAIN|<short key>|<concise one-line content>");
         system.AppendLine("  MEMORY|<short key>|<concise one-line content>");
+        system.AppendLine("  SKILL|<skill-name>|<one-line what-it-does>   (ONLY if a reusable");
+        system.AppendLine("        procedure emerged worth codifying as a standing skill)");
         system.AppendLine();
         system.AppendLine("Keep each proposal a single line. Propose only HIGH-VALUE, durable items");
         system.AppendLine("(skip transient noise, secrets, and anything already obvious). If there is");
@@ -110,7 +112,7 @@ public static class SelfHeal
             if (parts.Length < 3) continue;
 
             var type = parts[0].Trim().ToUpperInvariant();
-            if (type != "BRAIN" && type != "MEMORY") continue;
+            if (type != "BRAIN" && type != "MEMORY" && type != "SKILL") continue;
 
             var key = parts[1].Trim();
             var content = string.Join("|", parts.Skip(2)).Trim();
@@ -147,9 +149,80 @@ public static class SelfHeal
             accepted.Where(p => p.Type == "MEMORY").ToList(),
             $"## Heal {stamp}", ct);
 
+        // SKILL proposals scaffold a new SKILL.md under the skills dir and hot-reload the manifest
+        // (same path /installskill uses), so a reusable procedure becomes a standing skill without
+        // a separate curator step.
+        var skillProps = accepted.Where(p => p.Type == "SKILL").ToList();
+        if (skillProps.Count > 0)
+        {
+            bool any = false;
+            foreach (var p in skillProps)
+                any |= ScaffoldSkill(p.Key, p.Content);
+            if (any)
+            {
+                try { SkillLoader.LoadSkills(); }
+                catch (Exception ex) { MuxConsole.WriteWarning($"[heal] skill hot-reload failed: {ex.Message}"); }
+            }
+        }
+
         // Honor the char-cap on the files we just grew.
         await ContextCap.CheckFileAsync(ContextCap.BrainFile, chatClientFactory, model, ct);
         await ContextCap.CheckFileAsync(ContextCap.MemoryFile, chatClientFactory, model, ct);
+    }
+
+    /// <summary>
+    /// Scaffold a new skill directory (<c>{SkillsDirectory}/{name}/SKILL.md</c>) following the
+    /// AgentSkills frontmatter convention. The proposal content seeds the description + a body stub.
+    /// Best-effort: returns false (and warns) on failure; never overwrites an existing skill.
+    /// </summary>
+    private static bool ScaffoldSkill(string rawName, string description)
+    {
+        try
+        {
+            var name = SanitizeSkillName(rawName);
+            if (name.Length == 0) return false;
+
+            var dir = Path.Combine(PlatformContext.SkillsDirectory, name);
+            var skillMd = Path.Combine(dir, "SKILL.md");
+            if (File.Exists(skillMd))
+            {
+                MuxConsole.WriteWarning($"[heal] skill '{name}' already exists - skipped.");
+                return false;
+            }
+            Directory.CreateDirectory(dir);
+
+            var desc = description.Replace("\r", " ").Replace("\n", " ").Trim();
+            var sb = new StringBuilder();
+            sb.Append("---\n");
+            sb.Append($"name: {name}\n");
+            sb.Append($"description: {desc}\n");
+            sb.Append("---\n\n");
+            sb.Append($"# {name}\n\n");
+            sb.Append($"{desc}\n\n");
+            sb.Append("## Steps\n\n");
+            sb.Append("<!-- Seeded by /heal SelfHeal. Flesh out the reusable procedure here. -->\n");
+
+            File.WriteAllText(skillMd, sb.ToString());
+            MuxConsole.WriteSuccess($"[heal] scaffolded skill '{name}' -> {skillMd}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"[heal] failed to scaffold skill '{rawName}': {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Lowercase kebab-case, filesystem-safe skill folder name.</summary>
+    private static string SanitizeSkillName(string raw)
+    {
+        var sb = new StringBuilder();
+        foreach (var ch in raw.Trim().ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+            else if (ch is ' ' or '_' or '-' && sb.Length > 0 && sb[^1] != '-') sb.Append('-');
+        }
+        return sb.ToString().Trim('-');
     }
 
     private static async Task AppendGroupAsync(
