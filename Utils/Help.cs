@@ -68,6 +68,7 @@ public struct Help
         "  /limits         Display current execution limits for orchestration and agents",
         "  /tools          List available MCP tools across enabled servers",
         "  /skills         List available local skills",
+        "  /theme          View or switch the TUI color theme (/theme [default|dark|light|mono|solarized|dracula|gruvbox])",
         "  /memory         Deep-memory status/toggle/tune (/memory [deep|standard|show|set <key> <value>])",
         "  /deep           Toggle deep memory on/off (/deep [off])",
         "  /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)",

@@ -204,20 +204,23 @@ public static partial class MuxConsole
         return dict;
     }
 
-    public const string PromptColor = "#E0E0E0";
+    public static string PromptColor => Theme.Active.Prompt;
 
+    // Color roles now resolve from the ACTIVE theme (see Theme.cs) rather than hardcoded consts, so
+    // /theme + the setup theme step recolor all chrome live. The default theme reproduces the exact
+    // pre-theme palette, so unset/default is byte-identical to prior behaviour.
     private static class C
     {
-        public const string Step = "#64B4DC";
-        public const string Success = "#78C88C";
-        public const string Warning = "#D4A054";
-        public const string Error = "#D46C6C";
-        public const string Info = "#909090";
-        public const string Muted = "#787878";
-        public const string Accent = "#64B4DC";
-        public const string Prompt = "#B0B0B0";
-        public const string Banner = "#64B4DC";
-        public const string Agent = "#8FB8D4";
+        public static string Step => Theme.Active.Step;
+        public static string Success => Theme.Active.Success;
+        public static string Warning => Theme.Active.Warning;
+        public static string Error => Theme.Active.Error;
+        public static string Info => Theme.Active.Info;
+        public static string Muted => Theme.Active.Muted;
+        public static string Accent => Theme.Active.Accent;
+        public static string Prompt => Theme.Active.Prompt;
+        public static string Banner => Theme.Active.Banner;
+        public static string Agent => Theme.Active.Agent;
     }
 
     private static void WithConsole(Action write, bool clearIndicator = true)
@@ -1098,6 +1101,12 @@ public static partial class MuxConsole
     /// </summary>
     public static void EmitDelegationCompacted(string agent, int rawLen, string posture, string? handle)
     {
+        // Structured event for the web app / stdio JSON stream ONLY. EmitJson writes a raw NDJSON
+        // line to stdout (or the ACP sink); in interactive TUI/console mode that line would leak
+        // into the rendered transcript (the "{\"type\":\"delegation_compacted\",...}" artifact).
+        // Gate it like every other EmitJson caller: emit in stdio/serve or ACP transport, never in
+        // the interactive console. The muted human-readable line is written separately by the caller.
+        if (!StdioMode && AcpSink is null && !AcpActive) return;
         EmitJson("delegation_compacted", D(("agent", agent), ("rawLen", rawLen), ("posture", posture), ("handle", handle)));
     }
 

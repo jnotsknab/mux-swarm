@@ -9,20 +9,22 @@
 /// </summary>
 internal static class TuiComponents
 {
-    // Palette (kept in sync with MuxConsole.Tui TC).
-    public const string Accent  = "#64B4DC";
-    public const string Agent   = "#8FB8D4";
-    public const string Ok      = "#78C88C";
-    public const string Warn    = "#D4A054";
-    public const string Err     = "#D46C6C";
-    public const string Muted   = "#787878";
+    // Palette: foreground accent/semantic roles resolve from the ACTIVE theme (Theme.cs) so /theme
+    // recolors the live footer/badges/panels; structural shades (Dim/Border/backgrounds/badge tints/
+    // gutter/lane colors below) stay fixed UI semantics. Default theme reproduces the prior palette.
+    public static string Accent  => Theme.Active.Accent;
+    public static string Agent   => Theme.Active.Agent;
+    public static string Ok      => Theme.Active.Success;
+    public static string Warn    => Theme.Active.Warning;
+    public static string Err     => Theme.Active.Error;
+    public static string Muted   => Theme.Active.Muted;
     public const string Dim     = "#5A5A5A";
-    public const string Text    = "#C8C8C8";
+    public static string Text    => Theme.Active.Prompt;
     public const string Plan    = "#B48EAD";
     public const string Ultra   = "#D08770";
     public const string Giga    = "#B48EAD";
-    public const string DiffAdd = "#78C88C";
-    public const string DiffDel = "#D46C6C";
+    public static string DiffAdd => Theme.Active.Success;
+    public static string DiffDel => Theme.Active.Error;
     public const string Border  = "#3A3A3A";
     // Calm "working" cyan for the thinking/spinner line (NOT Warn - orange reads as an error).
     public const string Think    = "#7AA2C0";

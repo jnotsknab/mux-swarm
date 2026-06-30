@@ -17,17 +17,18 @@ namespace MuxSwarm.Utils.Tui;
 /// </summary>
 internal static class TuiMarkdown
 {
-    // Palette aligned with TuiComponents.
-    private const string Head = "#64B4DC";   // headings (accent)
-    private const string Code = "#D4A054";   // inline code (warn/amber)
-    private const string Bullet = "#787878"; // list bullet (muted)
-    private const string Link = "#64B4DC";   // links (accent, underlined)
-    private const string CodeBg = "#1E1E1E"; // fenced code background
-    private const string DiffAdd = "#78C88C";  // diff added line (green, matches C.DiffAdd)
-    private const string DiffDel = "#D46C6C";  // diff removed line (red, matches C.DiffDel)
-    private const string DiffHunk = "#64B4DC"; // diff hunk header @@ (accent)
-    private const string DiffMeta = "#787878"; // diff file/meta headers (muted)
-    private const string DiffCtx = "#A0A0A0";  // diff context line (neutral grey)
+    // Palette resolves from the ACTIVE theme (Theme.cs) so /theme recolors rendered markdown too.
+    // Code BACKGROUNDS stay fixed dark shades (legible across themes); foregrounds are themed.
+    private static string Head => Theme.Active.MdHeading;   // headings
+    private static string Code => Theme.Active.MdCode;      // inline code
+    private static string Bullet => Theme.Active.Muted;     // list bullet
+    private static string Link => Theme.Active.MdLink;      // links (underlined)
+    private const string CodeBg = "#1E1E1E";                // fenced code background (fixed)
+    private static string DiffAdd => Theme.Active.Success;  // diff added line
+    private static string DiffDel => Theme.Active.Error;    // diff removed line
+    private static string DiffHunk => Theme.Active.Accent;  // diff hunk header @@
+    private static string DiffMeta => Theme.Active.Muted;   // diff file/meta headers
+    private const string DiffCtx = "#A0A0A0";               // diff context line (fixed neutral grey)
 
     private static readonly Regex BoldStar = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);

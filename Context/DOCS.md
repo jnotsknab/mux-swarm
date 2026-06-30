@@ -759,6 +759,7 @@ Flags can be combined. Common stacks:
 /onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
 /tools          List available MCP + native tools
 /skills         List loaded skills
+/theme          View or switch the TUI color theme (/theme [default|dark|light|mono|solarized|dracula|gruvbox])
 /memory         Deep-memory status / toggle (/memory [deep|standard|show])
 /deep           Toggle deep memory on/off (/deep [off])
 /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
@@ -1010,6 +1011,29 @@ Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `
 `MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are
 unchanged, so existing callers keep their behaviour. (Spectre's blocking picker exposes no raw Esc
 hook, so cancellation is delivered via an explicit "cancel" affordance labelled with Esc.)
+
+## TUI color themes — `/theme` + setup step
+
+The interactive TUI palette (banner/accent, success/warning/error, info/muted, prompt text, the
+agent-name color, and rendered-markdown heading/code/link/quote colors) is theme-driven, not
+hardcoded. Built-in presets: `default` (original palette), `dark`, `light`, `mono` (no-color /
+accessibility — inherits the terminal foreground), `solarized`, `dracula`, `gruvbox`.
+
+```
+/theme            List presets with live color swatches + the active marker
+/theme <name>     Apply + persist to config.json (console.theme); live-applies immediately
+```
+
+`/setup` includes a **Color Theme** step that shows each preset's swatch row and a sample of themed
+chrome before you pick. The choice persists to `config.json`:
+
+```jsonc
+"console": { "theme": "default" }   // default | dark | light | mono | solarized | dracula | gruvbox
+```
+
+The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
+configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
+per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
 
 ## OS Service Registration
 

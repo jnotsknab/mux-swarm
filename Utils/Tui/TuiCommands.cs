@@ -131,6 +131,7 @@ internal static class TuiCommands
         new("/memory",       "Deep-memory status/toggle (/memory [deep|standard|show])", Scope.ReplOnly),
         new("/deep",         "Toggle deep memory on/off (/deep [off])", Scope.ReplOnly),
         new("/taskgraph",    "Auto-decompose goals into a blockedBy task graph (/taskgraph on|off|status)", Scope.ReplOnly),
+        new("/theme",        "View or switch the TUI color theme (/theme [name])", Scope.ReplOnly),
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),

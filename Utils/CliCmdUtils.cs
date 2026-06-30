@@ -1421,4 +1421,71 @@ public static class CliCmdUtils
             MuxConsole.WriteError($"Failed to update memory mode: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// /theme  -> list presets + preview swatches; /theme &lt;name&gt; -> apply + persist to
+    /// config.json (console.theme). Live-applies (the color roles read Theme.Active each render).
+    /// </summary>
+    public static void HandleTheme(string userInput)
+    {
+        var parts = (userInput ?? string.Empty).Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        string? arg = parts.Length > 1 ? parts[1].Trim() : null;
+
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            ShowThemeGallery();
+            return;
+        }
+
+        var theme = MuxSwarm.Utils.Theme.Find(arg);
+        if (theme is null)
+        {
+            MuxConsole.WriteWarning($"Unknown theme '{arg}'. Available: {string.Join(", ", MuxSwarm.Utils.Theme.Names)}");
+            return;
+        }
+
+        MuxSwarm.Utils.Theme.Set(theme);
+        try
+        {
+            App.Config.Console.Theme = theme.Name;
+            Common.SaveConfig(App.Config);
+            MuxConsole.WriteSuccess($"Theme set to '{theme.Name}' (persisted to config.json).");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Theme applied for this session, but could not persist: {ex.Message}");
+        }
+        RenderThemePreview(theme);
+    }
+
+    /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
+    private static void ShowThemeGallery()
+    {
+        MuxConsole.WriteInfo($"Themes (active: {MuxSwarm.Utils.Theme.Active.Name}). Apply with /theme <name>:");
+        foreach (var t in MuxSwarm.Utils.Theme.Presets)
+        {
+            string mark = t.Name == MuxSwarm.Utils.Theme.Active.Name ? "*" : " ";
+            string swatch =
+                $"[{t.Banner}]\u2588\u2588[/]" +
+                $"[{t.Accent}]\u2588\u2588[/]" +
+                $"[{t.Success}]\u2588\u2588[/]" +
+                $"[{t.Warning}]\u2588\u2588[/]" +
+                $"[{t.Error}]\u2588\u2588[/]" +
+                $"[{t.Info}]\u2588\u2588[/]" +
+                $"[{t.Muted}]\u2588\u2588[/]";
+            MuxConsole.WriteMarkup($"  {mark} {swatch}  [{t.Prompt}]{t.Name}[/]",
+                stdioFallback: $"  {mark} {t.Name}");
+        }
+    }
+
+    /// <summary>Render a labelled swatch + a tiny sample of themed chrome for one theme.</summary>
+    private static void RenderThemePreview(MuxSwarm.Utils.Theme t)
+    {
+        MuxConsole.WriteMarkup($"  [{t.Banner}]\u25CF MUX-SWARM[/]  [{t.Muted}](preview)[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.Accent}]\u203a accent[/]   [{t.Success}]\u2713 success[/]   "
+            + $"[{t.Warning}]\u26a0 warning[/]   [{t.Error}]\u2717 error[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.MdHeading}]# heading[/]   [{t.MdCode}]`code`[/]   "
+            + $"[{t.MdLink}]link[/]   [{t.MdQuote}]> quote[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.Agent}]CodeAgent[/] [{t.Prompt}]ready.[/]", stdioFallback: null);
+    }
 }

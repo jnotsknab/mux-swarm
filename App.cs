@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.12.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.85-prompt3";
+    public static readonly string DebugTag = "g12.86-theme";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -261,6 +261,7 @@ public class App
         // console.renderMode config; default "auto" is capability-aware. No effect on the
         // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
         MuxConsole.ResolveRenderMode(_cliRenderModeOverride ?? Config.Console.RenderMode);
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
@@ -1050,6 +1051,10 @@ public class App
 
                 case "/skills":
                     CliCmdUtils.ShowLoadedSkills();
+                    break;
+
+                case var th when th == "/theme" || th.StartsWith("/theme "):
+                    CliCmdUtils.HandleTheme(userInput);
                     break;
 
                 case "/reloadskills":

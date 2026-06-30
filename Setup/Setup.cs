@@ -138,6 +138,10 @@ public static class Setup
 
         if (!StepSecurityPosture()) return false;
 
+        MuxConsole.WriteRule();
+
+        if (!StepChooseTheme()) return false;
+
         McpServerDefaults.EnsureDefaultsPresent(_appConfig);
 
         MuxConsole.WriteRule();
@@ -707,6 +711,52 @@ public static class Setup
         MuxConsole.WriteLine();
         MuxConsole.WriteMuted("Note: in non-interactive contexts (serve / ACP / sub-agents / daemon) any");
         MuxConsole.WriteMuted("non-default mode auto-denies gated actions. You can change these later in config.json.");
+        return true;
+    }
+
+    /// <summary>
+    /// Theme picker (Claude-Code style): show each preset with a live color swatch + a small sample
+    /// of themed chrome, then persist the choice to config.console.theme. Keeping the default is a
+    /// no-op (byte-identical to the prior hardcoded palette).
+    /// </summary>
+    private static bool StepChooseTheme()
+    {
+        MuxConsole.WriteStep(7, "Color Theme");
+
+        MuxConsole.WriteBody("Pick a color theme for the interactive TUI (chrome, badges, rendered markdown).");
+        MuxConsole.WriteMuted("Each row shows its palette: banner / accent / success / warning / error / info / muted.");
+        MuxConsole.WriteLine();
+
+        // Swatch gallery so the user can SEE each theme before choosing.
+        foreach (var t in MuxSwarm.Utils.Theme.Presets)
+        {
+            string swatch =
+                $"[{t.Banner}]\u2588\u2588[/]" +
+                $"[{t.Accent}]\u2588\u2588[/]" +
+                $"[{t.Success}]\u2588\u2588[/]" +
+                $"[{t.Warning}]\u2588\u2588[/]" +
+                $"[{t.Error}]\u2588\u2588[/]" +
+                $"[{t.Info}]\u2588\u2588[/]" +
+                $"[{t.Muted}]\u2588\u2588[/]";
+            MuxConsole.WriteMarkup($"  {swatch}  [{t.Prompt}]{t.Name}[/]", stdioFallback: $"  {t.Name}");
+        }
+        MuxConsole.WriteLine();
+
+        var choice = MuxConsole.Select("Theme:", MuxSwarm.Utils.Theme.Presets
+            .Select(t => $"{t.Name}").ToList());
+        var picked = MuxSwarm.Utils.Theme.Find(choice) ?? MuxSwarm.Utils.Theme.Default;
+
+        _appConfig.Console ??= new ConsoleConfig();
+        _appConfig.Console.Theme = picked.Name;
+        MuxSwarm.Utils.Theme.Set(picked);
+
+        // Live preview of the chosen theme's chrome so the choice is confirmed visually.
+        MuxConsole.WriteLine();
+        MuxConsole.WriteMarkup($"  [{picked.Accent}]\u203a accent[/]   [{picked.Success}]\u2713 success[/]   "
+            + $"[{picked.Warning}]\u26a0 warning[/]   [{picked.Error}]\u2717 error[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{picked.MdHeading}]# heading[/]   [{picked.MdCode}]`code`[/]   "
+            + $"[{picked.MdLink}]link[/]   [{picked.MdQuote}]> quote[/]", stdioFallback: null);
+        MuxConsole.WriteSuccess($"Theme set to '{picked.Name}'. Change anytime with /theme.");
         return true;
     }
 
