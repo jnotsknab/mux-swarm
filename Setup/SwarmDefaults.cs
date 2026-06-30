@@ -23,6 +23,73 @@ public static class SwarmDefaults
     /// Used at the end of RunSetup to ensure model IDs match the just-configured provider.
     /// Returns false if the provider is unrecognized.
     /// </summary>
+    /// <summary>
+    /// Model ids chosen during setup (probed from the live provider + optionally user-picked). When set,
+    /// these take priority over endpoint-URL heuristics in <see cref="ResolveModelIds"/>, so a subscription
+    /// login (loopback endpoint) gets real model ids instead of the localhost/ollama fallback.
+    /// </summary>
+    public static ModelDefaults? PreferredModels { get; set; }
+
+    /// <summary>A resolved set of model ids for the four swarm roles.</summary>
+    public sealed record ModelDefaults(string Orchestrator, string Agent, string Light, string Compaction);
+
+    /// <summary>
+    /// Ranks a flat list of model ids (e.g. from GET /v1/models) into sensible defaults for the four swarm
+    /// roles using keyword heuristics: the strongest reasoning model drives orchestrator/agent, the
+    /// cheapest/fastest drives light/compaction. Returns null if the list is empty.
+    /// </summary>
+    public static ModelDefaults? RankModels(IReadOnlyList<string> models)
+    {
+        if (models is null || models.Count == 0) return null;
+
+        var ordered = models.Where(m => !string.IsNullOrWhiteSpace(m)).Distinct().ToList();
+        if (ordered.Count == 0) return null;
+
+        string strongest = ordered.OrderByDescending(StrongScore).ThenBy(m => m.Length).First();
+        string lightest  = ordered.OrderByDescending(LightScore).ThenByDescending(StrongScore).First();
+
+        // Prefer a distinct mid/orchestrator model when one clearly exists; else reuse the strongest.
+        string orchestrator = ordered
+            .Where(m => m != strongest)
+            .OrderByDescending(StrongScore)
+            .FirstOrDefault() is { } second && StrongScore(second) >= StrongScore(strongest) - 15
+                ? second
+                : strongest;
+
+        return new ModelDefaults(
+            Orchestrator: orchestrator,
+            Agent: strongest,
+            Light: lightest,
+            Compaction: lightest);
+    }
+
+    // Higher = stronger reasoning. Keyword heuristic over the lowercased model id.
+    private static int StrongScore(string id)
+    {
+        var s = id.ToLowerInvariant();
+        bool light = IsLightId(s);
+        int score = 50;
+        if (s.Contains("opus")) score += 50;
+        else if (s.Contains("gpt-5") || s.Contains("gpt5")) score += 45;
+        else if (s.Contains("pro")) score += 40;
+        else if (s.Contains("sonnet")) score += 30;
+        else if (s.Contains("gpt-4")) score += 20;
+        else if (s.Contains("grok")) score += 25;
+        if (light) score -= 45;
+        return score;
+    }
+
+    // Higher = cheaper/faster (good light/compaction candidate).
+    private static int LightScore(string id)
+    {
+        var s = id.ToLowerInvariant();
+        return IsLightId(s) ? 100 : 0;
+    }
+
+    private static bool IsLightId(string s) =>
+        s.Contains("haiku") || s.Contains("flash") || s.Contains("mini") || s.Contains("lite") ||
+        s.Contains("nano") || s.Contains("small") || s.Contains("tiny");
+
     public static bool ForceWrite(AppConfig config)
     {
         var swarmPath = PlatformContext.SwarmPath;
@@ -108,7 +175,7 @@ public static class SwarmDefaults
         if (HasEnabled("Memory")) singleAgentServers.Add("Memory");
         if (HasEnabled("ChromaDB")) singleAgentServers.Add("ChromaDB");
         if (HasEnabled("BraveSearchMCP")) singleAgentServers.Add("BraveSearchMCP");
-        if (HasEnabled("ReplShellMcp")) singleAgentServers.Add("ReplShellMcp");
+        if (HasEnabled("Shell")) singleAgentServers.Add("Shell");
 
 
         var filteredFsPattern = new[] { "Filesystem_list_allowed_directories", "Filesystem_read_file", "Filesystem_read_text_file", "Filesystem_search_files", "Filesystem_list_directory" };
@@ -121,6 +188,7 @@ public static class SwarmDefaults
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             agents.Add(new
             {
@@ -139,7 +207,7 @@ public static class SwarmDefaults
             var mcp = new List<string>();
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Playwright")) mcp.Add("Playwright");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             agents.Add(new
             {
@@ -159,7 +227,7 @@ public static class SwarmDefaults
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
 
             /*var toolPatterns = PlatformContext.IsWindows
                 ? new[] { "Windows_Shell" }
@@ -196,12 +264,12 @@ public static class SwarmDefaults
             });
         }
 
-        // DataAnalysisAgent (only if ReplShellMcp exists at all)
-        if (HasAny("ReplShellMcp"))
+        // DataAnalysisAgent (Python REPL specialist; needs the native Shell toolset)
+        if (HasAny("Shell"))
         {
             var mcp = new List<string>();
             if (HasEnabled("Filesystem")) mcp.Add("Filesystem");
-            if (HasEnabled("ReplShellMcp")) mcp.Add("ReplShellMcp");
+            if (HasEnabled("Shell")) mcp.Add("Shell");
             if (HasEnabled("Fetch")) mcp.Add("Fetch");
             if (HasEnabled("BraveSearchMCP")) mcp.Add("BraveSearchMCP");
 
@@ -224,7 +292,7 @@ public static class SwarmDefaults
             compactionAgent = new
             {
                 model = models.CompactionModel,
-                autoCompactTokenThreshold = 80000
+                autoCompactTokenThreshold = 200000
             },
             singleAgent = new
             {
@@ -280,6 +348,17 @@ public static class SwarmDefaults
     /// </summary>
     private static SwarmModelSet ResolveModelIds(AppConfig config)
     {
+        if (PreferredModels is { } pm)
+        {
+            return new SwarmModelSet
+            {
+                OrchestratorModel = pm.Orchestrator,
+                AgentModel = pm.Agent,
+                LightModel = pm.Light,
+                CompactionModel = pm.Compaction
+            };
+        }
+
         var endpoint = App.ActiveProvider?.Endpoint?.ToLowerInvariant()
                        ?? config.LlmProviders.FirstOrDefault(p => p.Enabled)?.Endpoint?.ToLowerInvariant()
                        ?? "";
@@ -369,7 +448,7 @@ public static class SwarmDefaults
                     if (prop.Name == "promptPath" && prop.Value.ValueKind == JsonValueKind.String)
                     {
                         var original = prop.Value.GetString() ?? "";
-                        var patched = SwapPromptVariant(original, config.IsUsingDockerForExec);
+                        var patched = SwapPromptVariant(original);
                         writer.WriteStringValue(patched);
                     }
                     else
@@ -393,29 +472,21 @@ public static class SwarmDefaults
         }
     }
 
-    private static string SwapPromptVariant(string promptPath, bool useDocker)
+    private static string SwapPromptVariant(string promptPath)
     {
-        var dir = Path.GetDirectoryName(promptPath) ?? "";
+        // Docker/non-docker prompt variants were retired: execution containerization is now enforced at
+        // the process level by the pluggable sandbox (sandbox.backend / /sandbox), and the runtime injects
+        // an authoritative "Execution Sandbox (ACTIVE)" preamble block (gated on SandboxRuntime) when a
+        // sandbox is live. Agents no longer choose whether to containerize, so the prompt no longer needs a
+        // docker-posture twin. Always resolve to the canonical base prompt; if a legacy "_docker" path is
+        // still referenced in an old swarm.json, fold it back to the base name.
         var name = Path.GetFileNameWithoutExtension(promptPath);
-        var ext = Path.GetExtension(promptPath);
-
-        if (useDocker)
-        {
-            // Already docker variant
-            if (name.EndsWith("_docker")) return promptPath;
-
-            var dockerName = $"{name}_docker{ext}";
-            var dockerPath = Path.Combine(dir, dockerName).Replace("\\", "/");
-            var fullPath = Path.Combine(PlatformContext.BaseDirectory, dockerPath);
-            return File.Exists(fullPath) ? dockerPath : promptPath;
-        }
-
-        // Strip _docker suffix if present
         if (!name.EndsWith("_docker")) return promptPath;
 
-        var standardName = $"{name[..^7]}{ext}";
-        var standardPath = Path.Combine(dir, standardName).Replace("\\", "/");
-        return standardPath;
+        var dir = Path.GetDirectoryName(promptPath) ?? "";
+        var ext = Path.GetExtension(promptPath);
+        var baseName = $"{name[..^7]}{ext}";
+        return Path.Combine(dir, baseName).Replace("\\", "/");
     }
 
     private class SwarmModelSet

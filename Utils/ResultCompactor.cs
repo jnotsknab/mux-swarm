@@ -53,6 +53,21 @@ public static class ResultCompactor
         
         // Penalty: restating the task
         (new Regex(@"\b(you asked|the task|the goal|the sub-task|my job is to)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), -2.0, "restate"),
+
+        // High value: hashes / long hex identifiers (build SHAs, commit ids, checksums)
+        (new Regex(@"\b[0-9a-fA-F]{7,64}\b", RegexOptions.Compiled), 2.5, "hash"),
+
+        // High value: exceptions / stack-trace lines / explicit failures
+        (new Regex(@"(Exception|Error|Traceback|stack trace|at [\w.]+\([^)]*\)|errno|exit code|non-zero)", RegexOptions.IgnoreCase | RegexOptions.Compiled), 3.0, "exception"),
+
+        // High value: decisions / outcomes / next steps
+        (new Regex(@"\b(decided|chose|because|result|outcome|conclusion|next step|TODO|FIXME|blocked|blocker|done|completed|verified|passing|failing|green|red)\b", RegexOptions.IgnoreCase | RegexOptions.Compiled), 2.0, "decision"),
+
+        // Medium value: markdown headings and code fences (structure anchors)
+        (new Regex(@"^\s*(#{1,6}\s|```)", RegexOptions.Compiled), 1.0, "structure"),
+
+        // Medium value: line/column references (e.g. file.cs:123)
+        (new Regex(@"\b[\w./\\-]+:\d+\b", RegexOptions.Compiled), 1.5, "loc-ref"),
     ];
 
     // ── Public API ───────────────────────────────────────────────────────
@@ -87,12 +102,25 @@ public static class ResultCompactor
         if (rawResult.Length <= charBudget)
             return rawResult;
 
+        // Resolve the configured compaction policy (swarm.json executionLimits.subAgentSummaryMode).
+        string mode = (ExecutionLimits.Current.SubAgentSummaryMode ?? "auto").Trim().ToLowerInvariant();
+        bool extractiveOnly = mode == "extractive";
+
+        // Extractive pass is always computed: it is the whole answer in "extractive" mode, the
+        // supplemental high-signal reference block in "auto"/"llm", and the fallback when no LLM
+        // client is available.
         string extracted = ExtractTopLines(rawResult, charBudget);
 
-        if (extracted.Length <= charBudget || chatClient == null)
+        // No LLM available, or extractive-only mode requested -> return the extract.
+        if (extractiveOnly || chatClient == null)
             return extracted;
 
-        return await LlmSummarizeAsync(chatClient, rawResult, charBudget, chatOptions);
+        // "auto"/"llm": summarize, then APPEND the extracted references so concrete
+        // paths/errors/identifiers the summary may have elided still reach the lead. The combined
+        // output is capped to the budget (summary keeps the lion's share; references get whatever
+        // headroom remains, with a floor so they are never squeezed to nothing).
+        string summary = await LlmSummarizeAsync(chatClient, rawResult, charBudget, chatOptions);
+        return MergeSummaryAndReferences(summary, extracted, charBudget);
     }
 
     /// <summary>
@@ -111,7 +139,8 @@ public static class ResultCompactor
     public static async Task<ChatMessage> CompactConversationAsync(
         IReadOnlyList<ChatMessage> history,
         IChatClient chatClient,
-        ChatOptions? chatOptions = null)
+        ChatOptions? chatOptions = null,
+        string? instruction = null)
     {
         int charBudget = ExecutionLimits.Current.CompactionCharBudget;
         int? maxContentPassed = App.SwarmConfig?.CompactionAgent?.ModelOpts?.MaxOutputTokens;
@@ -124,6 +153,15 @@ public static class ResultCompactor
             if (text.Length > maxContentPassed)
                 text = text[(Range)(..maxContentPassed)] + "...";
             transcript.AppendLine($"[{role}]: {text}");
+        }
+
+        // Honor the configured compaction policy: "extractive" never calls the LLM.
+        string mode = (ExecutionLimits.Current.SubAgentSummaryMode ?? "auto").Trim().ToLowerInvariant();
+        if (mode == "extractive")
+        {
+            var extractiveOnly = ExtractTopLines(transcript.ToString(), charBudget);
+            return new ChatMessage(ChatRole.User,
+                $"[CONTEXT SUMMARY — extractive]\n{extractiveOnly}\n[END SUMMARY — continue from here]");
         }
 
         string summary;
@@ -149,11 +187,27 @@ public static class ResultCompactor
                     [CONTEXT SUMMARY — prior conversation compacted]
                     ...content...
                     [END SUMMARY — continue from here]
-                    """),
+                    """
+                    + (string.IsNullOrWhiteSpace(instruction)
+                        ? string.Empty
+                        : $"\n\nAdditional instruction from the user: {instruction.Trim()}")),
                 new(ChatRole.User, transcript.ToString())
             };
 
-            var response = await chatClient.GetResponseAsync(messages, chatOptions);
+            // Defense-in-depth: compaction is a pure text-summarization call. Even though the
+            // configured compaction options never carry tools today, the chat client is always built
+            // with function-invocation middleware, so a future caller passing tool-bearing options
+            // could trigger accidental tool runoff mid-compaction. Strip any tools from a clone so the
+            // model can only emit text here.
+            ChatOptions? safeOptions = chatOptions;
+            if (safeOptions?.Tools is { Count: > 0 })
+            {
+                safeOptions = safeOptions.Clone();
+                safeOptions.Tools = null;
+                safeOptions.ToolMode = ChatToolMode.None;
+            }
+
+            var response = await chatClient.GetResponseAsync(messages, safeOptions);
             summary = response.Text ?? transcript.ToString();
 
             var extracted = ExtractTopLines(transcript.ToString(), charBudget / 2);
@@ -193,17 +247,24 @@ public static class ResultCompactor
         )).OrderByDescending(x => x.Score).ToList();
 
         var selected = new List<(string Line, int Index, double Score)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int totalChars = 0;
 
         foreach (var item in scored)
         {
+            // Skip exact-duplicate lines so repeated content does not consume the budget twice.
+            if (!seen.Add(item.Line))
+                continue;
+
             if (totalChars + item.Line.Length + 1 > charBudget)
             {
                 if (selected.Count == 0)
                 {
                     selected.Add((item.Line[..Math.Min(item.Line.Length, charBudget)], item.Index, item.Score));
                 }
-                break;
+                // Keep scanning: a later, shorter high-signal line may still fit the remaining budget.
+                if (totalChars >= charBudget) break;
+                continue;
             }
 
             selected.Add(item);
@@ -289,5 +350,56 @@ public static class ResultCompactor
         {
             return ExtractTopLines(text, charBudget);
         }
+    }
+
+    // ── Summary + references merge ────────────────────────────────────────
+
+    /// <summary>
+    /// Combines an LLM summary with a signal-scored extractive reference block, capped to the
+    /// char budget. The summary is primary; the reference block is appended with whatever budget
+    /// remains (down to a minimum floor) so concrete artifacts (paths, errors, identifiers) the
+    /// summary may have dropped still reach the consuming agent. Deduplicates reference lines that
+    /// already appear verbatim in the summary to avoid wasting budget on repeats.
+    /// </summary>
+    private static string MergeSummaryAndReferences(string summary, string extracted, int charBudget)
+    {
+        summary = (summary ?? string.Empty).TrimEnd();
+
+        if (string.IsNullOrWhiteSpace(summary))
+            return extracted;
+        if (string.IsNullOrWhiteSpace(extracted))
+            return summary;
+
+        // Drop reference lines whose content is already present in the summary text.
+        var refLines = extracted.Split('\n')
+            .Select(l => l.TrimEnd())
+            .Where(l => l.Trim().Length > 0 && !summary.Contains(l.Trim(), StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (refLines.Count == 0)
+            return summary.Length > charBudget ? summary[..charBudget] : summary;
+
+        const string head = "\n\n[EXTRACTED REFERENCES]\n";
+        const string tail = "\n[END REFERENCES]";
+
+        // Budget left for the reference block after the summary + framing. Keep a floor so the
+        // references are never squeezed entirely away (they are the high-signal part for the lead).
+        int floor = Math.Min(400, charBudget / 4);
+        int remaining = charBudget - summary.Length - head.Length - tail.Length;
+        int refBudget = Math.Max(floor, remaining);
+
+        var sb = new StringBuilder();
+        int used = 0;
+        foreach (var line in refLines)
+        {
+            if (used + line.Length + 1 > refBudget)
+                break;
+            sb.Append(line).Append('\n');
+            used += line.Length + 1;
+        }
+        string refBlock = sb.ToString().TrimEnd('\n');
+        if (refBlock.Length == 0)
+            return summary;
+
+        return summary + head + refBlock + tail;
     }
 }

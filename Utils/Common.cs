@@ -63,6 +63,42 @@ public static class Common
     }
 
     /// <summary>
+    /// Quietly read the delegable agent roster from swarm.json (excludes the Orchestrator). Used to
+    /// embed the valid agent names directly into delegate_* tool descriptions so the lead never has
+    /// to waste a turn probing for them. Best-effort: returns an empty list on any failure (no logs).
+    /// </summary>
+    public static List<AgentDefinition> DelegableAgents()
+    {
+        try
+        {
+            var path = MultiAgentOrchestrator.SwarmConfPath;
+            if (!File.Exists(path)) return new();
+            var config = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(path));
+            if (config?.Agents is null) return new();
+            return ParseAgentDefinitions(config)
+                .Where(a => !a.Name.Equals("Orchestrator", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        catch { return new(); }
+    }
+
+    /// <summary>Comma-joined delegable agent names, e.g. "Available agents: CodeAgent, WebAgent".
+    /// Returns empty string when none are defined.</summary>
+    public static string DelegableAgentNames()
+    {
+        var names = DelegableAgents().Select(a => a.Name).ToList();
+        return names.Count == 0 ? string.Empty : "Available agents: " + string.Join(", ", names);
+    }
+
+    /// <summary>Newline list of "- Name: Description" for the delegable agents (roster blurb).</summary>
+    public static string DelegableAgentRoster()
+    {
+        var defs = DelegableAgents();
+        return defs.Count == 0 ? string.Empty
+            : string.Join("\n", defs.Select(a => $"  - {a.Name}: {a.Description}"));
+    }
+
+    /// <summary>
     /// Resolves the serialized chat-message array from a session document, tolerant of both
     /// the current shape (<c>stateBag.InMemoryChatHistoryProvider.messages</c>) and the legacy
     /// shape (<c>chatHistoryProviderState.messages</c>). Returns false if neither is present.
@@ -149,7 +185,7 @@ public static class Common
 
                     foreach (var server in agent.McpServers)
                     {
-                        if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                        if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                         {
                             include = true;
                             break;
@@ -227,7 +263,7 @@ public static class Common
 
             foreach (var server in servers)
             {
-                if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                 {
                     include = true;
                     break;
@@ -287,7 +323,7 @@ public static class Common
                 bool include = false;
                 foreach (var server in agent.McpServers)
                 {
-                    if (tool.Name.StartsWith($"{server}_", StringComparison.OrdinalIgnoreCase))
+                    if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.ServerMatches(tool.Name, server))
                     { include = true; break; }
                 }
                 if (!include && agent.ToolPatterns.Count > 0)

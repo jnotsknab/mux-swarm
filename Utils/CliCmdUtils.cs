@@ -47,16 +47,84 @@ public static class CliCmdUtils
 
     public static void HandleDockerExec(string cfgPath)
     {
-        App.Config.IsUsingDockerForExec = !App.Config.IsUsingDockerForExec;
-        MuxConsole.WriteInfo($"Docker Exec is now: {App.Config.IsUsingDockerForExec}");
+        // /dockerexec is now shorthand for the sandbox backend: toggle between host and docker. The
+        // docker-sandbox directive skill set + the IsUsingDockerForExec flag track the backend.
+        bool turningOn = App.Config.Sandbox.Backend.Trim().ToLowerInvariant() is "host" or "" or "none";
+        ApplySandboxBackend(turningOn ? "docker" : "host", image: null, cfgPath);
+    }
 
-        MuxConsole.WriteMuted(App.Config.IsUsingDockerForExec
-            ? "Agents will route script execution, Python, and git operations through Docker containers. File I/O still uses Filesystem MCP directly."
-            : "Agents will execute natively on the host. Docker sandbox is disabled.");
+    /// <summary>
+    /// /sandbox [backend] [image] - hot-swap the execution sandbox backend (host/docker/podman/nerdctl/
+    /// gvisor/kata/bwrap/firejail/sandbox-exec/custom). Validates the new backend BEFORE applying; on failure
+    /// the current backend is untouched and the error is surfaced. With no args, prints current status.
+    /// </summary>
+    public static void HandleSandbox(string userInput, string cfgPath)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 2)
+        {
+            var s = App.Config.Sandbox;
+            MuxConsole.WriteInfo($"Sandbox backend: {s.Backend}");
+            if (!string.Equals(s.Backend, "host", StringComparison.OrdinalIgnoreCase))
+            {
+                MuxConsole.WriteMuted($"  image: {s.Image}");
+                MuxConsole.WriteMuted(s.AllowedDomains.Count > 0
+                    ? $"  network: allowlist [{string.Join(", ", s.AllowedDomains)}]"
+                    : $"  network: {(s.Network ? "open" : "air-gapped")}");
+                var mounts = MuxSwarm.Utils.NativeTools.SandboxBackend.ResolveMounts(App.Config.Filesystem);
+                if (mounts.Count > 0)
+                {
+                    MuxConsole.WriteMuted($"  mounts (from filesystem.securityMode={App.Config.Filesystem.SecurityMode}):");
+                    foreach (var m in mounts)
+                        MuxConsole.WriteMuted($"    {m.HostPath} -> {m.GuestPath} {(m.ReadOnly ? "[ro]" : "[rw]")}");
+                }
+            }
+            var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(s);
+            MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");
+            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
+            return;
+        }
+        string backend = parts[1].Trim().ToLowerInvariant();
+        string? image = parts.Length >= 3 ? parts[2].Trim() : null;
+        ApplySandboxBackend(backend, image, cfgPath);
+    }
+
+    private static void ApplySandboxBackend(string backend, string? image, string cfgPath)
+    {
+        // Build a candidate config and VALIDATE before committing - never half-apply an unusable backend.
+        var candidate = new SandboxConfig
+        {
+            Backend = backend,
+            Image = image ?? App.Config.Sandbox.Image,
+            Network = App.Config.Sandbox.Network,
+            AllowedDomains = App.Config.Sandbox.AllowedDomains,
+            Command = App.Config.Sandbox.Command,
+        };
+        var err = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(candidate);
+        if (err is not null)
+        {
+            MuxConsole.WriteWarning($"Sandbox backend '{backend}' not applied: {err}");
+            return;
+        }
+
+        App.Config.Sandbox = candidate;
+        // Keep the legacy docker-exec flag in sync so the preamble's docker directive + bundled-docker
+        // skill set track any container backend (docker/podman/nerdctl/gvisor all imply 'use the sandbox').
+        bool containerized = backend is not ("host" or "none" or "");
+        App.Config.IsUsingDockerForExec = containerized;
 
         Common.SaveConfig(App.Config);
         App.Config = LoadConfig(cfgPath);
         SwarmDefaults.PatchPromptPaths(App.Config);
+        SkillLoader.LoadSkills();   // swap bundled vs bundled-docker so the directive set matches
+        // Re-resolve the authoritative sandbox state so the preamble (ACTIVE block + /work + /host/*
+        // mounts) tracks the new backend instead of the stale loose intent flag.
+        MuxSwarm.Utils.NativeTools.SandboxRuntime.Refresh();
+
+        MuxConsole.WriteInfo($"Sandbox backend is now: {backend}");
+        MuxConsole.WriteMuted(containerized
+            ? "New agent sessions run shell + Python execution inside the sandbox. Existing live sessions keep their current backend until they end."
+            : "Agents execute natively on the host. Sandbox disabled.");
     }
 
     public static void ShowExecutionLimits()
@@ -304,12 +372,12 @@ public static class CliCmdUtils
         }
 
         var current = App.ActiveProvider?.Name ?? "none";
-        MuxConsole.WriteInfo($"Active provider: {current} ({App.ActiveProvider?.Endpoint ?? "no endpoint"})");
+        MuxConsole.WriteInfo($"Active provider: {current} ({(App.ActiveProvider is { } ap ? ProviderEndpointLabel(ap) : "no endpoint")})");
         MuxConsole.WriteLine();
 
         var pIdxW = providers.Count.ToString().Length;
         var lines = string.Join("\n", providers.Select((p, i) =>
-            $"{(i + 1).ToString().PadLeft(pIdxW)}  {p.Name} — {p.Endpoint ?? "no endpoint"}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
+            $"{(i + 1).ToString().PadLeft(pIdxW)}  {p.Name} — {ProviderEndpointLabel(p)}{(p.Name.Equals(current, StringComparison.OrdinalIgnoreCase) ? " (active)" : "")}"));
 
         MuxConsole.WritePanel("Select a provider or press Enter to keep current", lines);
 
@@ -334,7 +402,7 @@ public static class CliCmdUtils
         }
 
         App.ActiveProvider = matched;
-        MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({matched.Endpoint}), be sure to update your model ID's in Swarm.json");
+        MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({ProviderEndpointLabel(matched)}), be sure to update your model ID's in Swarm.json");
 
         string setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
         if (setDefault?.Trim().Equals("y", StringComparison.OrdinalIgnoreCase) == true)
@@ -534,7 +602,8 @@ public static class CliCmdUtils
             $"Tools        {toolCount}",
             $"Skills       {skillCount}",
             $"Sessions     {sessionCount}",
-            $"Docker Exec  {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}"
+            $"Docker Exec  {(App.Config.IsUsingDockerForExec ? "enabled" : "disabled")}",
+            $"Sandbox      {App.Config.Sandbox.Backend}"
         );
 
         MuxConsole.WritePanel("Mux-Swarm Status", lines);
@@ -613,6 +682,59 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteSuccess($"Reloaded {skills.Count} skills.");
         }
+    }
+
+    // /installskill: install a skill into the live skills dir, by curated name or from a GitHub URL.
+    // Bare invocation lists curated installable names. Network-resilient (never throws to the menu).
+    public static async Task HandleInstallSkillAsync(string userInput)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // strip the command token + an optional "overwrite"/"--overwrite" flag
+        bool overwrite = false;
+        var rest = new List<string>();
+        for (int i = 1; i < parts.Length; i++)
+        {
+            if (parts[i].Equals("--overwrite", StringComparison.OrdinalIgnoreCase)
+                || parts[i].Equals("overwrite", StringComparison.OrdinalIgnoreCase))
+                overwrite = true;
+            else
+                rest.Add(parts[i]);
+        }
+
+        if (rest.Count == 0)
+        {
+            List<string> names = new();
+            await MuxConsole.WithSpinnerAsync("Listing curated skills", async () =>
+            {
+                names = await SkillInstaller.ListCuratedAsync();
+            });
+            if (names.Count == 0)
+            {
+                MuxConsole.WriteWarning("Could not reach the curated skill sources (check your network).");
+                MuxConsole.WriteMuted("Usage: /installskill <name> | /installskill <github-tree-url> [overwrite]");
+                return;
+            }
+            MuxConsole.WritePanel("Installable skills (curated)",
+                string.Join("\n", names.Select(n => "- " + n))
+                + "\n\nInstall with: /installskill <name>  (add 'overwrite' to replace an existing one)");
+            return;
+        }
+
+        string target = rest[0];
+        string result = "";
+        bool isUrl = target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                  || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        await MuxConsole.WithSpinnerAsync($"Installing skill '{target}'", async () =>
+        {
+            result = isUrl
+                ? await SkillInstaller.InstallFromUrlAsync(target, overwrite)
+                : await SkillInstaller.InstallByNameAsync(target, overwrite);
+        });
+
+        if (result.StartsWith("Installed ", StringComparison.Ordinal))
+            MuxConsole.WriteSuccess(result);
+        else
+            MuxConsole.WriteWarning(result);
     }
 
     public static async Task ReloadMcpServersAsync(
@@ -880,5 +1002,490 @@ public static class CliCmdUtils
             ? a.Length - b.Length
             : string.Compare(a, b, StringComparison.OrdinalIgnoreCase));
         return outList;
+    }
+
+    /// <summary>
+    /// List configured teams (swarm.json teams[]) plus any persisted/resumable teams found in
+    /// the install-dir Teams directory. Read-only - launching is /teams &lt;name&gt;.
+    /// </summary>
+    public static void HandleListTeams(SwarmConfig? config)
+    {
+        var configured = config?.Teams ?? new List<TeamConfig>();
+        if (configured.Count == 0)
+        {
+            MuxConsole.WriteWarning("No teams configured. Add a \"teams\" array to swarm.json (see docs).");
+        }
+        else
+        {
+            MuxConsole.WriteInfo($"Configured teams ({configured.Count}):");
+            foreach (var t in configured)
+            {
+                var members = t.Members is { Count: > 0 } ? string.Join(", ", t.Members) : "(none)";
+                var lead = string.IsNullOrWhiteSpace(t.Lead) ? "Orchestrator" : t.Lead;
+                MuxConsole.WriteMuted($"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
+                if (!string.IsNullOrWhiteSpace(t.Description))
+                    MuxConsole.WriteMuted($"      {t.Description}");
+            }
+            MuxConsole.WriteMuted("  Launch with: /teams <name>");
+        }
+
+        var live = MuxSwarm.Utils.Teams.TeamState.LoadAll();
+        if (live.Count > 0)
+        {
+            MuxConsole.WriteInfo($"Persisted/resumable teams ({live.Count}):");
+            foreach (var s in live)
+                MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+        }
+    }
+
+    /// <summary>Display label for a provider's endpoint column: OAuth providers route direct, no URL.</summary>
+    private static string ProviderEndpointLabel(ProviderConfig p) =>
+        !string.IsNullOrWhiteSpace(p.AuthType) && p.AuthType.StartsWith("oauth", StringComparison.OrdinalIgnoreCase)
+            ? $"direct {p.AuthType} (no endpoint)"
+            : (p.Endpoint ?? "no endpoint");
+
+    /// <summary>
+    /// /login [provider] - subscription OAuth login via the local CLIProxyAPI sidecar. With no arg, shows a
+    /// picker of the proxy's supported providers (claude, codex, kimi, ...). Ensures the sidecar is up,
+    /// runs its native browser OAuth, and on success registers the single local 'cliproxy' provider entry
+    /// (subsequent logins just join the proxy's dynamic router, routed by model id).
+    /// </summary>
+    public static async Task HandleLoginAsync(string userInput, string cfgPath)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+
+        var supported = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
+        if (providerId is null)
+        {
+            var labels = supported.ToList();
+            labels.Add("cancel");
+            string pick = MuxConsole.Select("Log in with which subscription provider?", labels);
+            if (pick.StartsWith("cancel")) { MuxConsole.WriteMuted("Login cancelled."); return; }
+            providerId = pick;
+        }
+
+        if (!MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.ContainsKey(providerId))
+        {
+            MuxConsole.WriteWarning($"Unsupported provider '{providerId}'. Supported: {string.Join(", ", supported)}.");
+            return;
+        }
+
+        MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
+        MuxConsole.WriteMuted("(Subscription OAuth reuses the official client id - same posture as other subscription tools.)");
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token);
+            if (!ok)
+            {
+                MuxConsole.WriteWarning($"Login for '{providerId}' did not complete.");
+                return;
+            }
+
+            // First successful cliproxy login registers the single local provider entry; subsequent logins
+            // just join the proxy's dynamic router (no new entry needed - it routes by model id).
+            bool added = RegisterCliProxyProvider(cfgPath);
+            if (added)
+                MuxConsole.WriteSuccess($"Logged in. Registered local provider 'cliproxy' -> {MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint}.");
+            else
+                MuxConsole.WriteSuccess($"Logged in. '{providerId}' added to the cliproxy dynamic router (select it by model id).");
+            MuxConsole.WriteMuted("Set your agent model id to a provider model (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json / via /model, then activate 'cliproxy' via /provider.");
+        }
+        catch (OperationCanceledException)
+        {
+            MuxConsole.WriteWarning("Login timed out / cancelled.");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Login failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Ensures the single local 'cliproxy' provider entry exists in config, pointing at the managed loopback
+    /// endpoint with its api key resolved from the env var the manager sets at spawn. Returns true if it was
+    /// newly added (false if it already existed). The entry is a plain OpenAI-compatible provider - the
+    /// unchanged CreateOpenAiClient path serves it; the sidecar is lazily ensured at request time.
+    /// </summary>
+    private static bool RegisterCliProxyProvider(string cfgPath)
+    {
+        const string name = "cliproxy";
+        var config = LoadConfig(cfgPath);
+        config.LlmProviders ??= new List<ProviderConfig>();
+
+        var existing = config.LlmProviders.FirstOrDefault(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+        string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
+            ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+
+        if (existing is not null)
+        {
+            existing.Endpoint = endpoint;
+            existing.ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar;
+            File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+            App.Config = LoadConfig(cfgPath);
+            return false;
+        }
+
+        config.LlmProviders.Add(new ProviderConfig
+        {
+            Name = name,
+            Enabled = true,
+            Endpoint = endpoint,
+            ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+        });
+        File.WriteAllText(PlatformContext.ConfigPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+        App.Config = LoadConfig(cfgPath);
+        return true;
+    }
+
+    /// <summary>
+    /// /ping [provider] - test a configured provider's connectivity. For an OAuth provider it ensures a
+    /// valid (refreshed) token and lists models via the provider endpoint; reports OK + latency or the
+    /// precise error. With no arg, pings every provider that has a stored OAuth credential.
+    /// </summary>
+    public static async Task HandlePingAsync(string userInput)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            await MuxSwarm.Utils.Proxy.CliProxyManager.EnsureRunningAsync(cts.Token);
+            sw.Stop();
+            MuxConsole.WriteInfo($"  cliproxy sidecar: OK  {sw.ElapsedMilliseconds}ms  ({MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint})");
+
+            var files = await MuxSwarm.Utils.Proxy.CliProxyManager.GetAuthFilesAsync(cts.Token);
+            if (providerId is not null)
+            {
+                bool ready = await MuxSwarm.Utils.Proxy.CliProxyManager.IsProviderReadyAsync(providerId, cts.Token);
+                MuxConsole.WriteInfo($"  {providerId}: {(ready ? "READY" : "not logged in - run /login " + providerId)}");
+            }
+            else if (files.Count == 0)
+            {
+                MuxConsole.WriteMuted("  No providers logged in yet. Run /login <provider>.");
+            }
+            else
+            {
+                foreach (var f in files)
+                {
+                    string state = f.Disabled ? "disabled" : f.Unavailable ? "unavailable" : f.Status is { Length: > 0 } ? f.Status : "ready";
+                    string who = f.Email is { Length: > 0 } e ? $" ({e})" : "";
+                    MuxConsole.WriteInfo($"  {f.Provider}: {state}{who}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"  cliproxy ping FAILED - {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// /proxy [status|update] - manage the local CLIProxyAPI sidecar. `status` (default) reports the pinned
+    /// version, running state + endpoint, and per-provider auth readiness. `update` re-downloads + verifies
+    /// the pinned binary and restarts the sidecar if it was running.
+    /// </summary>
+    public static async Task HandleProxyAsync(string userInput)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string sub = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : "status";
+
+        try
+        {
+            if (sub == "update")
+            {
+                MuxConsole.WriteInfo($"Updating CLIProxyAPI to the pinned v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}...");
+                using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+                await MuxSwarm.Utils.Proxy.CliProxyManager.UpdateAsync(cts.Token);
+                MuxConsole.WriteSuccess($"CLIProxyAPI is now at v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}.");
+                return;
+            }
+
+            // status
+            MuxConsole.WriteInfo($"CLIProxyAPI pinned version: v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}");
+            MuxConsole.WriteMuted($"  binary present: {MuxSwarm.Utils.Proxy.CliProxyManager.IsBinaryPresent} ({MuxSwarm.Utils.Proxy.CliProxyManager.ExecutablePath})");
+            if (MuxSwarm.Utils.Proxy.CliProxyManager.IsRunning)
+            {
+                MuxConsole.WriteMuted($"  running: yes -> {MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint}");
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                var files = await MuxSwarm.Utils.Proxy.CliProxyManager.GetAuthFilesAsync(cts.Token);
+                if (files.Count == 0) MuxConsole.WriteMuted("  providers: none logged in (run /login <provider>)");
+                foreach (var f in files)
+                    MuxConsole.WriteMuted($"  provider {f.Provider}: {(f.Disabled ? "disabled" : f.Unavailable ? "unavailable" : f.Status is { Length: > 0 } s ? s : "ready")}");
+            }
+            else
+            {
+                MuxConsole.WriteMuted("  running: no (starts lazily on first use or /login)");
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"/proxy {sub} failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// /memory and /deep: deep-memory (reflectionAgent) status + toggle. Replaces the old bare
+    /// knowledge-graph JSON dump, which now lives behind "/memory show". Persists reflectionAgent.mode
+    /// to Swarm.json so the user never edits files.
+    ///   /memory               -> status (mode, model, budget, poll, scope, store health, count)
+    ///   /memory deep | /deep  -> enable deep mode (persist)
+    ///   /memory standard      -> back to standard (persist); "/deep off" is the alias
+    ///   /memory show          -> the legacy KG JSON dump (power users)
+    /// </summary>
+    public static void HandleMemory(
+        string userInput, Dictionary<string, McpClient> mcpClients, IList<McpClientTool>? mcpTools = null)
+    {
+        var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        string cmd = parts.Length > 0 ? parts[0].ToLowerInvariant() : "/memory";
+        string? sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : null;
+
+        // "/deep" with no arg == enable; "/deep off|standard" == disable.
+        if (cmd == "/deep")
+            sub = sub is "off" or "standard" or "0" or "false" ? "standard" : "deep";
+
+        switch (sub)
+        {
+            case "deep":
+                SetMemoryMode("deep");
+                break;
+            case "standard":
+            case "off":
+                SetMemoryMode("standard");
+                break;
+            case "show":
+            case "graph":
+            case "kg":
+                ShowKnowledgeGraph(mcpClients, mcpTools);
+                break;
+            case "set":
+                // /memory set <key> <value> - mutate + persist a reflectionAgent tunable.
+                SetMemoryOption(parts.Length > 2 ? parts[2] : null, parts.Length > 3 ? string.Join(' ', parts[3..]) : null);
+                break;
+            case null:
+            case "status":
+                ShowMemoryStatus();
+                break;
+            default:
+                MuxConsole.WriteWarning("Usage: /memory [deep|standard|show|set <key> <value>] (or /deep [off]).");
+                MuxConsole.WriteMuted("  set keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars");
+                break;
+        }
+    }
+
+    private static void ShowMemoryStatus()
+    {
+        var s = MuxSwarm.Utils.Memory.ReflectionGatherer.Status();
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"mode            : {(s.deep ? "deep" : "standard")}");
+        sb.AppendLine($"reflection model: {s.model}");
+        sb.AppendLine($"inject budget   : {s.budget} tokens");
+        sb.AppendLine($"poll interval   : {s.poll}s");
+        sb.AppendLine($"relevance floor : {s.floor:0.##}");
+        sb.AppendLine($"scope           : {s.scope}");
+        sb.AppendLine($"history window  : {s.historyWindow} msgs");
+        sb.AppendLine($"reflections     : {s.count} / {s.max} max  in {MuxSwarm.Utils.Memory.ReflectionStore.Directory}");
+        sb.AppendLine($"last reflection : {(s.last is { } t ? t.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "(none yet)")}");
+        sb.AppendLine($"chroma (semantic): {(s.chroma ? "connected" : "absent - lexical fallback")}");
+        sb.AppendLine($"knowledge graph : {(s.kg ? "connected" : "absent - filesystem only")}");
+        if (!s.deep)
+            sb.AppendLine("\nDeep memory is OFF. Enable with: /memory deep   (or /deep)");
+        MuxConsole.WritePanel("Deep Memory", sb.ToString().TrimEnd());
+    }
+
+
+    /// <summary>
+    /// /memory set &lt;key&gt; &lt;value&gt; - mutate a single reflectionAgent tunable and persist it to
+    /// Swarm.json. Validates the value per key (numeric ranges, scope enum) and confirms. Never
+    /// throws into the caller. Keys mirror the /memory status display + the Swarm.json schema.
+    /// </summary>
+    private static void SetMemoryOption(string? key, string? rawValue)
+    {
+        key = (key ?? string.Empty).Trim().ToLowerInvariant();
+        var val = (rawValue ?? string.Empty).Trim();
+        if (key.Length == 0 || val.Length == 0)
+        {
+            MuxConsole.WriteWarning("Usage: /memory set <key> <value>");
+            MuxConsole.WriteMuted("  keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars");
+            return;
+        }
+
+        try
+        {
+            var swarm = App.SwarmConfig ?? new SwarmConfig();
+            swarm.ReflectionAgent ??= new MuxSwarm.Utils.ReflectionConfig();
+            var r = swarm.ReflectionAgent;
+
+            bool Int(out int n) => int.TryParse(val, out n);
+            string applied;
+
+            switch (key)
+            {
+                case "model":
+                    r.Model = val.Equals("null", StringComparison.OrdinalIgnoreCase) || val.Equals("default", StringComparison.OrdinalIgnoreCase)
+                        ? null : val;
+                    applied = $"model = {r.Model ?? "(orchestrator default)"}";
+                    break;
+                case "budget":
+                case "injecttokenbudget":
+                    if (!Int(out var b) || b < 100) { MuxConsole.WriteWarning("budget must be an integer >= 100 (tokens)."); return; }
+                    r.InjectTokenBudget = b; applied = $"inject budget = {b} tokens";
+                    break;
+                case "poll":
+                case "pollintervalseconds":
+                    if (!Int(out var p) || p < 10) { MuxConsole.WriteWarning("poll must be an integer >= 10 (seconds)."); return; }
+                    r.PollIntervalSeconds = p; applied = $"poll interval = {p}s";
+                    break;
+                case "floor":
+                case "relevancefloor":
+                    if (!double.TryParse(val, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var f) || f < 0 || f > 1)
+                    { MuxConsole.WriteWarning("floor must be a number between 0 and 1."); return; }
+                    r.RelevanceFloor = f; applied = $"relevance floor = {f:0.##}";
+                    break;
+                case "scope":
+                    var sc = val.ToLowerInvariant();
+                    if (sc != "lead" && sc != "all") { MuxConsole.WriteWarning("scope must be 'lead' or 'all'."); return; }
+                    r.Scope = sc; applied = $"scope = {sc}";
+                    break;
+                case "max":
+                case "maxreflections":
+                    if (!Int(out var mx) || mx < 10) { MuxConsole.WriteWarning("max must be an integer >= 10."); return; }
+                    r.MaxReflections = mx; applied = $"maxReflections = {mx}";
+                    break;
+                case "historywindow":
+                    if (!Int(out var hw) || hw < 4) { MuxConsole.WriteWarning("historyWindow must be an integer >= 4 (messages)."); return; }
+                    r.HistoryWindow = hw; applied = $"historyWindow = {hw} msgs";
+                    break;
+                case "maxdigspertick":
+                    if (!Int(out var md) || md < 0) { MuxConsole.WriteWarning("maxDigsPerTick must be an integer >= 0."); return; }
+                    r.MaxDigsPerTick = md; applied = $"maxDigsPerTick = {md}";
+                    break;
+                case "digmaxfilesscanned":
+                    if (!Int(out var df) || df < 50) { MuxConsole.WriteWarning("digMaxFilesScanned must be an integer >= 50."); return; }
+                    r.DigMaxFilesScanned = df; applied = $"digMaxFilesScanned = {df}";
+                    break;
+                case "digmaxmatches":
+                    if (!Int(out var dm) || dm < 1) { MuxConsole.WriteWarning("digMaxMatches must be an integer >= 1."); return; }
+                    r.DigMaxMatches = dm; applied = $"digMaxMatches = {dm}";
+                    break;
+                case "digmaxreadchars":
+                    if (!Int(out var dr) || dr < 200) { MuxConsole.WriteWarning("digMaxReadChars must be an integer >= 200."); return; }
+                    r.DigMaxReadChars = dr; applied = $"digMaxReadChars = {dr}";
+                    break;
+                default:
+                    MuxConsole.WriteWarning($"Unknown memory key '{key}'. Keys: model, budget, poll, floor, scope, max, historyWindow, maxDigsPerTick, digMaxFilesScanned, digMaxMatches, digMaxReadChars.");
+                    return;
+            }
+
+            File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(swarm, CfgSerialOpts));
+            App.SwarmConfig = swarm;
+            MuxConsole.WriteSuccess($"Deep memory: {applied}  (persisted to Swarm.json).");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"Failed to update memory option: {ex.Message}");
+        }
+    }
+
+    private static void SetMemoryMode(string mode)
+    {
+        try
+        {
+            var swarm = App.SwarmConfig ?? new SwarmConfig();
+            swarm.ReflectionAgent ??= new MuxSwarm.Utils.ReflectionConfig();
+            swarm.ReflectionAgent.Mode = mode;
+            // Keep the top-level alias in sync so the persisted file is unambiguous.
+            swarm.MemoryMode = mode;
+            File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(swarm, CfgSerialOpts));
+            App.SwarmConfig = swarm;
+
+            if (mode == "deep")
+            {
+                bool chroma = MuxSwarm.Utils.Memory.ReflectionStore.ChromaAvailable();
+                bool kg = MuxSwarm.Utils.Memory.ReflectionStore.KgAvailable();
+                MuxConsole.WriteSuccess("Deep memory ENABLED. Background reflection gatherer is active.");
+                MuxConsole.WriteMuted(chroma || kg
+                    ? $"  accelerators: {(chroma ? "chroma " : "")}{(kg ? "knowledge-graph" : "")}".TrimEnd()
+                    : "  accelerators: none connected - using filesystem reflections (lexical recall).");
+            }
+            else
+            {
+                MuxConsole.WriteSuccess("Deep memory set to STANDARD. Reflection subsystem is inert.");
+            }
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"Failed to update memory mode: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// /theme  -> list presets + preview swatches; /theme &lt;name&gt; -> apply + persist to
+    /// config.json (console.theme). Live-applies (the color roles read Theme.Active each render).
+    /// </summary>
+    public static void HandleTheme(string userInput)
+    {
+        var parts = (userInput ?? string.Empty).Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        string? arg = parts.Length > 1 ? parts[1].Trim() : null;
+
+        if (string.IsNullOrWhiteSpace(arg))
+        {
+            ShowThemeGallery();
+            return;
+        }
+
+        var theme = MuxSwarm.Utils.Theme.Find(arg);
+        if (theme is null)
+        {
+            MuxConsole.WriteWarning($"Unknown theme '{arg}'. Available: {string.Join(", ", MuxSwarm.Utils.Theme.Names)}");
+            return;
+        }
+
+        MuxSwarm.Utils.Theme.Set(theme);
+        try
+        {
+            App.Config.Console.Theme = theme.Name;
+            Common.SaveConfig(App.Config);
+            MuxConsole.WriteSuccess($"Theme set to '{theme.Name}' (persisted to config.json).");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Theme applied for this session, but could not persist: {ex.Message}");
+        }
+        RenderThemePreview(theme);
+    }
+
+    /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
+    private static void ShowThemeGallery()
+    {
+        MuxConsole.WriteInfo($"Themes (active: {MuxSwarm.Utils.Theme.Active.Name}). Apply with /theme <name>:");
+        foreach (var t in MuxSwarm.Utils.Theme.Presets)
+        {
+            string mark = t.Name == MuxSwarm.Utils.Theme.Active.Name ? "*" : " ";
+            string swatch =
+                $"[{t.Banner}]\u2588\u2588[/]" +
+                $"[{t.Accent}]\u2588\u2588[/]" +
+                $"[{t.Success}]\u2588\u2588[/]" +
+                $"[{t.Warning}]\u2588\u2588[/]" +
+                $"[{t.Error}]\u2588\u2588[/]" +
+                $"[{t.Info}]\u2588\u2588[/]" +
+                $"[{t.Muted}]\u2588\u2588[/]";
+            MuxConsole.WriteMarkup($"  {mark} {swatch}  [{t.Prompt}]{t.Name}[/]",
+                stdioFallback: $"  {mark} {t.Name}");
+        }
+    }
+
+    /// <summary>Render a labelled swatch + a tiny sample of themed chrome for one theme.</summary>
+    private static void RenderThemePreview(MuxSwarm.Utils.Theme t)
+    {
+        MuxConsole.WriteMarkup($"  [{t.Banner}]\u25CF MUX-SWARM[/]  [{t.Muted}](preview)[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.Accent}]\u203a accent[/]   [{t.Success}]\u2713 success[/]   "
+            + $"[{t.Warning}]\u26a0 warning[/]   [{t.Error}]\u2717 error[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.MdHeading}]# heading[/]   [{t.MdCode}]`code`[/]   "
+            + $"[{t.MdLink}]link[/]   [{t.MdQuote}]> quote[/]", stdioFallback: null);
+        MuxConsole.WriteMarkup($"  [{t.Agent}]CodeAgent[/] [{t.Prompt}]ready.[/]", stdioFallback: null);
     }
 }

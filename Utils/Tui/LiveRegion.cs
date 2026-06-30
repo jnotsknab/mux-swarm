@@ -136,11 +136,24 @@ internal sealed class LiveRegion
         var cur = new StringBuilder();
         int curW = 0;
 
+        // Hang-indent: when a logical line is visually indented (leading spaces, or a lead-dot
+        // "* " marker that puts its text at col 2), every WRAPPED continuation row must re-apply
+        // that indent - otherwise long agent-prose lines soft-wrap back to col 0 and break the
+        // aligned column (the flush-left "off-indentation" bug). The hang width is the leading
+        // plain-text whitespace of the line, or 2 when the line starts with the U+25CF lead dot.
+        string hangIndent = ComputeHangIndent(spans);
+        // Reserve room for the hang indent so a continuation row (hangIndent + wrapped text) never
+        // EXCEEDS the terminal width. Without this, pieces wrapped to the full `cols` plus the 2-col
+        // hang prefix sum to cols+2 and the terminal soft-wraps the overflow back to col 0 - the
+        // residual flush-left wrap bug. Wrapping text to (cols - hang) keeps every row within `cols`.
+        int textWidth = hangIndent.Length > 0 ? Math.Max(1, cols - hangIndent.Length) : cols;
+
         void NewRow()
         {
             if (curW > 0 || cur.Length > 0) { cur.Append(Ansi.Reset); }
             outRows.Add(cur.ToString());
             cur.Clear(); curW = 0;
+            if (hangIndent.Length > 0) { cur.Append(hangIndent); curW = hangIndent.Length; }
         }
 
         foreach (var span in spans)
@@ -150,7 +163,7 @@ internal sealed class LiveRegion
             {
                 if (sub.i > 0) NewRow(); // explicit newline inside a span
                 string sgr = span.Style.ToAnsi();
-                foreach (var piece in WrapPieces(sub.t, cols))
+                foreach (var piece in WrapPieces(sub.t, textWidth))
                 {
                     int pw = TuiMarkup.Width(piece.Text);
                     if (curW + pw > cols && curW > 0) NewRow();
@@ -172,6 +185,32 @@ internal sealed class LiveRegion
     /// Break a plain run into pieces that each fit within <paramref name="cols"/>. Pieces
     /// that exactly fill a row are flagged ForceBreak so the caller starts a new row.
     /// </summary>
+    /// <summary>
+    /// Leading indent to re-apply on each wrapped continuation row, derived from the logical line's
+    /// own leading whitespace - or 2 columns when the line opens with the U+25CF lead dot ("* text",
+    /// dot at col 0, text at col 2). Returns "" for flush-left lines (continuation stays at col 0).
+    /// Capped so a deeply-indented line can never consume the whole width.
+    /// </summary>
+    private static string ComputeHangIndent(IReadOnlyList<Span> spans)
+    {
+        if (spans.Count == 0) return "";
+        // Reconstruct the line's plain text (the dot is a styled span on its own, so it would be
+        // missed by only inspecting spans[0]) to find the column where the BODY text begins. That
+        // column is the hang indent every wrapped continuation row re-applies so the block stays in
+        // one aligned column. Lead-dot lines ("  * body", dot at col 2) put body at col 4; a plainly
+        // indented line uses its own leading whitespace.
+        string plain = string.Concat(spans.Select(s => s.Text ?? ""));
+        int i = 0;
+        while (i < plain.Length && plain[i] == ' ') i++;          // leading whitespace
+        if (i < plain.Length && plain[i] == '\u25cf')            // the lead dot ...
+        {
+            i++;
+            while (i < plain.Length && plain[i] == ' ') i++;      // ... and the space(s) after it
+        }
+        if (i == 0) return "";
+        return new string(' ', Math.Min(i, 8));
+    }
+
     private static IEnumerable<Piece> WrapPieces(string text, int cols)
     {
         if (string.IsNullOrEmpty(text)) { yield return new Piece("", false); yield break; }
@@ -279,6 +318,9 @@ internal sealed class LiveRegion
             // from the top of the region; distance from the cursor up to row r is
             // (_paintedRows - r). Rewrite each changed row in place.
             var sb = new StringBuilder();
+            // Synchronized Output: batch the whole in-place rewrite into ONE atomic frame so
+            // the spinner/timer tick never shows a half-erased row (the flicker source).
+            sb.Append(Ansi.BeginSyncOutput);
             sb.Append(WrapEscape(disabled: true)); // keep rows un-reflowable during in-place rewrite
             int cursorOffset = 0; // current cursor distance above the home (below-last) line
             foreach (int r in changed)
@@ -295,6 +337,7 @@ internal sealed class LiveRegion
             // Return the cursor to the home line (below the last row).
             if (cursorOffset > 0) sb.Append(Ansi.CursorDown(cursorOffset));
             sb.Append(Ansi.CursorLeft);
+            sb.Append(Ansi.EndSyncOutput);   // present the batched frame atomically
             _term.Write(sb.ToString());
             _lastRows = newRows;
             _term.Flush();
@@ -302,9 +345,12 @@ internal sealed class LiveRegion
         }
 
         // Row count changed, width changed, or first paint: full erase + repaint. Reuse the
-        // rows we already rendered above instead of wrapping the frame a second time.
+        // rows we already rendered above instead of wrapping the frame a second time. The
+        // erase+repaint is wrapped in Synchronized Output so it presents as one atomic frame.
+        _term.Write(Ansi.BeginSyncOutput);
         EraseLiveRegion();
         PaintLiveRegion(newRows);
+        _term.Write(Ansi.EndSyncOutput);
         _term.Flush();
     }
 
@@ -327,8 +373,9 @@ internal sealed class LiveRegion
         _rowCache.Clear();
         _rowCacheWidth = -1;
         _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
-        _term.Write(Ansi.ClearScreen + Ansi.Home);
+        _term.Write(Ansi.BeginSyncOutput + Ansi.ClearScreen + Ansi.Home);
         PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
+        _term.Write(Ansi.EndSyncOutput);
         _term.Flush();
     }
 

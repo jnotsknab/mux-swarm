@@ -137,7 +137,10 @@ public sealed class ProcessCleanup : IDisposable
             _trackedPids.Clear();
         }
 
-        if (pids.Count == 0) return;
+        // NOTE: do NOT early-return when pids.Count == 0. MCP servers are not Track()ed
+        // (only HookWorker processes are), so the tracked-PID list is usually empty even
+        // when MCP subprocesses are alive. The MCP client disposal + own-tree kill below must
+        // still run; the Windows Job Object is the authoritative backstop on handle close.
 
         // Phase 1: Graceful termination
         foreach (var pid in pids)
@@ -235,7 +238,10 @@ public sealed class ProcessCleanup : IDisposable
             {
                 BasicLimitInformation = new JOBOBJECT_BASIC_LIMIT_INFORMATION
                 {
-                    LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+                    // BREAKAWAY_OK lets a child opt out of the job (CREATE_BREAKAWAY_FROM_JOB) so a
+                    // deliberately persistent sidecar (e.g. the CLIProxyAPI subscription proxy) can
+                    // survive Mux exit. Other children don't request breakaway, so they're still reaped.
+                    LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK
                 }
             };
 
@@ -252,7 +258,20 @@ public sealed class ProcessCleanup : IDisposable
                 Marshal.FreeHGlobal(infoPtr);
             }
 
-            Debug.WriteLine("[CLEANUP] Windows Job Object created");
+            // Assign THE CURRENT PROCESS to the job. On Windows, child processes a job member
+            // spawns are automatically added to the same job (Win8+ allows nested jobs), so every
+            // descendant - MCP stdio servers spawned internally by the MCP library AND their own
+            // grandchildren (e.g. chroma-mcp's Python workers) - inherits the job WITHOUT any
+            // per-process Track() call. When Mux exits and the handle closes,
+            // KILL_ON_JOB_CLOSE terminates the whole tree, so nothing (notably ChromaDB) leaks.
+            try
+            {
+                if (!AssignProcessToJobObject(_jobHandle, GetCurrentProcess()))
+                    Debug.WriteLine($"[CLEANUP] AssignProcessToJobObject(self) failed: {Marshal.GetLastWin32Error()}");
+            }
+            catch (Exception ex) { Debug.WriteLine($"[CLEANUP] self-assign threw: {ex.Message}"); }
+
+            Debug.WriteLine("[CLEANUP] Windows Job Object created + self assigned");
         }
         catch (Exception ex)
         {
@@ -261,6 +280,7 @@ public sealed class ProcessCleanup : IDisposable
     }
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const uint JOB_OBJECT_LIMIT_BREAKAWAY_OK = 0x00000800;
 
     private enum JobObjectInfoType
     {
@@ -312,6 +332,9 @@ public sealed class ProcessCleanup : IDisposable
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GetCurrentProcess();
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

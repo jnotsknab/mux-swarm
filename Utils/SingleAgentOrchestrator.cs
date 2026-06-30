@@ -26,6 +26,10 @@ public static class SingleAgentOrchestrator
     private static uint _cachedTokens;
     //total tokens in session (cached + uncached)
     private static uint _sessionTokens;
+    // Cumulative authoritative input/output token counts for the live session (for /cost).
+    // Snapped from each UsageContent checkpoint's running totals; cleared on /wipe.
+    private static long _cumInputTokens;
+    private static long _cumOutputTokens;
 
     private static bool _pendingCompaction;
 
@@ -186,12 +190,12 @@ public static class SingleAgentOrchestrator
                 // Insert the stub right after the header line.
                 int lineEnd = content.IndexOf('\n', idx);
                 if (lineEnd < 0) lineEnd = content.Length;
-                updated = content[..lineEnd] + "\n" + stub + content[lineEnd..];
+                updated = content[..lineEnd] + "\r\n" + stub + content[lineEnd..];
             }
             else
             {
-                var sep = content.Length > 0 && !content.EndsWith("\n") ? "\n\n" : "\n";
-                updated = content + sep + header + "\n" + stub + "\n";
+                var sep = content.Length > 0 && !content.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                updated = content + sep + header + "\r\n" + stub + "\r\n";
             }
 
             Directory.CreateDirectory(PlatformContext.ContextDirectory);
@@ -205,6 +209,484 @@ public static class SingleAgentOrchestrator
         {
             MuxConsole.WriteWarning($"Failed to write MEMORY.md tag stub: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// /handoff [instruction|path.md] - generate a cold-resume handoff document using the ACTIVE
+    /// session model. Default save path is the sandbox reports dir; if the first token ends in
+    /// ".md" it is treated as an explicit path override and the rest is the steering instruction.
+    /// Offers to record a one-line pointer stub in MEMORY.md afterward.
+    /// </summary>
+    private static async Task HandleHandoffAsync(
+        string metaCmd,
+        IChatClient? client,
+        IReadOnlyList<ChatMessage> history,
+        ChatOptions? chatOptions)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /handoff.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var arg = parts.Length > 1 ? parts[1].Trim() : string.Empty;
+
+        string? instruction;
+        string savePath;
+        var ts = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+
+        var firstToken = arg.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (firstToken.Length > 0 && firstToken[0].EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+        {
+            savePath = firstToken[0];
+            instruction = firstToken.Length > 1 ? firstToken[1].Trim() : null;
+        }
+        else
+        {
+            var sandbox = App.Config.Filesystem?.SandboxPath;
+            var reportsDir = string.IsNullOrWhiteSpace(sandbox)
+                ? Path.Combine(PlatformContext.ContextDirectory, "reports")
+                : Path.Combine(sandbox, "reports");
+            savePath = Path.Combine(reportsDir, $"HANDOFF_session_{ts}.md");
+            instruction = string.IsNullOrWhiteSpace(arg) ? null : arg;
+        }
+
+        string? content = null;
+        await MuxConsole.WithSpinnerAsync("Generating session handoff", async () =>
+        {
+            content = await SessionHandoff.GenerateAsync(history, client, instruction, chatOptions);
+        });
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            MuxConsole.WriteWarning("Handoff generation returned nothing.");
+            return;
+        }
+
+        try
+        {
+            var dir = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            await File.WriteAllTextAsync(savePath, content);
+            MuxConsole.WriteSuccess($"Handoff written to {savePath}");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write handoff: {ex.Message}");
+            return;
+        }
+
+        if (MuxConsole.Confirm("Record a pointer stub for this handoff in MEMORY.md?", false))
+        {
+            try
+            {
+                var memPath = Path.Combine(PlatformContext.ContextDirectory, ContextCap.MemoryFile);
+                var utc = DateTime.UtcNow.ToString("yyyy-MM-dd");
+                var stub = $"- `{ts}` handoff -> {savePath} (written {utc} UTC)";
+                const string header = "## Session Handoffs";
+                string existing = File.Exists(memPath) ? await File.ReadAllTextAsync(memPath) : string.Empty;
+                string updated;
+                int idx = existing.IndexOf(header, StringComparison.Ordinal);
+                if (idx >= 0)
+                {
+                    int lineEnd = existing.IndexOf('\n', idx);
+                    if (lineEnd < 0) lineEnd = existing.Length;
+                    updated = existing[..lineEnd] + "\r\n" + stub + existing[lineEnd..];
+                }
+                else
+                {
+                    var sep = existing.Length > 0 && !existing.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                    updated = existing + sep + header + "\r\n" + stub + "\r\n";
+                }
+                Directory.CreateDirectory(PlatformContext.ContextDirectory);
+                await File.WriteAllTextAsync(memPath, updated);
+                MuxConsole.WriteSuccess($"Recorded handoff stub in {ContextCap.MemoryFile}.");
+            }
+            catch (Exception ex)
+            {
+                MuxConsole.WriteWarning($"Failed to write MEMORY.md stub: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// /heal [deep] [instruction] and /reflect [deep] [instruction] - self-examination pass over
+    /// the current session using the ACTIVE session model. Surfaces proposed BRAIN/MEMORY
+    /// write-backs and writes only the ones the user selects (MultiSelect). "deep" prints a
+    /// cost/latency disclaimer; the cross-session swarm consolidation is a follow-up - deep
+    /// currently runs the same single-pass analysis with consolidation guidance.
+    /// </summary>
+    private static async Task HandleHealAsync(
+        string metaCmd,
+        IChatClient? client,
+        IReadOnlyList<ChatMessage> history,
+        string resolvedModelId,
+        Func<string, IChatClient>? chatClientFactory,
+        ChatOptions? chatOptions,
+        CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /heal.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        bool deep = false;
+        var rest = new List<string>();
+        for (int i = 1; i < parts.Length; i++)
+        {
+            if (!deep && parts[i].Equals("deep", StringComparison.OrdinalIgnoreCase))
+                deep = true;
+            else
+                rest.Add(parts[i]);
+        }
+        var instruction = rest.Count > 0 ? string.Join(' ', rest) : null;
+
+        if (deep)
+            MuxConsole.WriteMuted("Deep reflect reviews the whole session and may take longer / use more tokens.");
+
+        List<SelfHeal.Proposal> proposals = new();
+        await MuxConsole.WithSpinnerAsync(deep ? "Deep reflecting on session" : "Reviewing session", async () =>
+        {
+            proposals = await SelfHeal.AnalyzeAsync(history, client, deep, instruction, chatOptions, ct);
+        });
+
+        if (proposals.Count == 0)
+        {
+            MuxConsole.WriteMuted("No memory write-backs proposed.");
+            return;
+        }
+
+        var labels = proposals.Select(pr => pr.Label).ToList();
+        var picked = MuxConsole.MultiSelect(
+            "Select the memory write-backs to apply (space to toggle, enter to confirm):", labels);
+
+        if (picked.Count == 0)
+        {
+            MuxConsole.WriteMuted("Nothing selected; no changes written.");
+            return;
+        }
+
+        var accepted = proposals.Where(pr => picked.Contains(pr.Label)).ToList();
+        await SelfHeal.ApplyAsync(accepted, chatClientFactory, resolvedModelId, ct);
+        MuxConsole.WriteSuccess($"Applied {accepted.Count} memory write-back(s) to BRAIN/MEMORY.");
+    }
+
+    // /fix [symptom]: collect a live runtime snapshot and have the active model diagnose what is
+    // wrong + propose ordered, copy-pasteable repair steps (favouring Mux's own /refresh, /proxy,
+    // /reloadskills, /provider, /setup, /sandbox commands). Read-only: it diagnoses, never mutates.
+    private static async Task HandleFixAsync(
+        string metaCmd,
+        IChatClient? client,
+        ChatOptions? chatOptions,
+        CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /fix.");
+            return;
+        }
+
+        var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        var symptom = parts.Length > 1 ? parts[1].Trim() : null;
+
+        string diagnosis = "";
+        await MuxConsole.WithSpinnerAsync("Diagnosing Mux runtime", async () =>
+        {
+            diagnosis = await SystemDiagnostics.DiagnoseAsync(symptom, client, chatOptions, ct);
+        });
+
+        if (string.IsNullOrWhiteSpace(diagnosis))
+        {
+            MuxConsole.WriteMuted("No diagnosis produced. Try /status, /tools, or /proxy status for raw state.");
+            return;
+        }
+
+        MuxConsole.WritePanel("/fix - diagnosis & repair plan", diagnosis);
+    }
+
+    // /diff: show the working-tree git diff (staged fallback) through the collapsible diff renderer.
+    private static async Task HandleDiffAsync(CancellationToken ct)
+    {
+        string root = PlatformContext.WorkspaceRoot;
+        if (!Directory.Exists(Path.Combine(root, ".git")))
+        {
+            // Walk up a few levels in case the workspace root is a subdir of the repo.
+            var probe = new DirectoryInfo(root);
+            bool found = false;
+            for (int i = 0; i < 6 && probe is not null; i++)
+            {
+                if (Directory.Exists(Path.Combine(probe.FullName, ".git"))) { root = probe.FullName; found = true; break; }
+                probe = probe.Parent;
+            }
+            if (!found)
+            {
+                MuxConsole.WriteMuted("not a git repository");
+                return;
+            }
+        }
+
+        ShellCapture.Result res = await ShellCapture.RunAsync("git diff", root, 30, 200_000, ct);
+        string diff = res.Stdout;
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            var staged = await ShellCapture.RunAsync("git diff --staged", root, 30, 200_000, ct);
+            diff = staged.Stdout;
+        }
+
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            MuxConsole.WriteMuted("No changes in the working tree.");
+            return;
+        }
+
+        MuxConsole.RenderTuiDiff("git diff", diff);
+        if (!MuxConsole.IsTui)
+            MuxConsole.WritePanel("git diff", diff);
+    }
+
+    // /doctor: non-LLM health rollup. Prints the SystemDiagnostics snapshot plus a terse PASS/WARN
+    // summary computed in C# (no model call - cheap and offline).
+    private static void HandleDoctor()
+    {
+        var snapshot = SystemDiagnostics.BuildSnapshot();
+
+        var warns = new List<string>();
+        if (App.ActiveProvider is null)
+            warns.Add("no active LLM provider (use /provider or /setup)");
+        var configured = App.Config?.McpServers ?? new();
+        foreach (var (name, cfg) in configured)
+        {
+            bool nativeMarker = string.Equals(cfg.Command, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)
+                || (cfg.Args?.Any(a => string.Equals(a, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)) ?? false);
+            if (nativeMarker || !cfg.Enabled) continue;
+            if (!App.McpClients.ContainsKey(name))
+                warns.Add($"MCP '{name}' NOT CONNECTED");
+        }
+        if (SkillLoader.GetSkillMetadata().Count == 0)
+            warns.Add("no skills loaded");
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(snapshot.TrimEnd());
+        sb.Append("\n\n## Health\n");
+        if (warns.Count == 0)
+            sb.Append("PASS - providers, MCP servers, skills, and sandbox all look healthy.");
+        else
+        {
+            sb.Append($"WARN - {warns.Count} issue(s):\n");
+            foreach (var w in warns) sb.Append("  - ").Append(w).Append('\n');
+        }
+        MuxConsole.WritePanel("/doctor - runtime health", sb.ToString().TrimEnd());
+    }
+
+    // /cost: session token usage + estimated $ for API providers. Subscription providers routed
+    // through the CLIProxy sidecar are flat-rate -> show usage only, no dollars.
+    private static void HandleCost(string resolvedModelId)
+    {
+        long inTok = _cumInputTokens;
+        long outTok = _cumOutputTokens;
+        long cached = _cachedTokens;
+        long total = _sessionTokens;
+
+        bool isSubscription = string.Equals(
+            App.ActiveProvider?.ApiKeyEnvVar,
+            MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            StringComparison.Ordinal);
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"model: {(string.IsNullOrWhiteSpace(resolvedModelId) ? "(unknown)" : resolvedModelId)}\n");
+        sb.Append($"input tokens:  {inTok:N0}\n");
+        sb.Append($"output tokens: {outTok:N0}\n");
+        sb.Append($"cached input:  {cached:N0}\n");
+        sb.Append($"session total: {total:N0}\n");
+
+        if (isSubscription)
+        {
+            sb.Append("\ncost: subscription provider (CLIProxy sidecar) - flat-rate plan, no per-token cost. Showing usage only.");
+        }
+        else if (ModelPricing.Estimate(resolvedModelId, inTok, outTok) is { } usd)
+        {
+            var price = ModelPricing.Lookup(resolvedModelId)!.Value;
+            sb.Append($"\nrate: ${price.InputPer1M:0.##}/1M in, ${price.OutputPer1M:0.##}/1M out (list-price estimate)\n");
+            sb.Append($"estimated cost: ${usd:0.0000}");
+        }
+        else
+        {
+            sb.Append("\ncost: unknown (no price for this model id; set a ModelPricing override). Showing usage only.");
+        }
+        MuxConsole.WritePanel("/cost - session usage", sb.ToString());
+    }
+
+    // /cost all + /tokens all: Claude-Code-style matrixed breakdown sourced from the in-process
+    // CostLedger (the OTEL counters are write-only). Per model: system-prompt / tools / cached /
+    // input / output / reasoning, session AND rolling-cumulative, plus tool-call + compaction
+    // counts and a proportional ASCII bar. Real $ from ModelPricing where the provider has prices;
+    // subscription/cliproxy providers render tokens-only. Bare /cost + /tokens are unchanged.
+    private static void HandleCostBreakdown(string resolvedModelId)
+    {
+        var rows = CostLedger.Snapshot();
+        if (rows.Count == 0)
+        {
+            MuxConsole.WriteInfo("No usage recorded yet this run. Take a turn, then try /cost all.");
+            return;
+        }
+
+        bool isSubscription = string.Equals(
+            App.ActiveProvider?.ApiKeyEnvVar,
+            MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+            StringComparison.Ordinal);
+
+        var sb = new System.Text.StringBuilder();
+        double grandSessUsd = 0;
+        bool anyPrice = false;
+
+        foreach (var r in rows)
+        {
+            sb.Append($"\nmodel: {r.Model}\n");
+
+            // Matrix: category | session | rolling. system-prompt + tools are a static subset of input.
+            sb.Append("  category        session        rolling\n");
+            sb.Append($"  system prompt   {r.SysPromptTok,12:N0}   {r.SysPromptTok,12:N0}\n");
+            sb.Append($"  tools (schema)  {r.ToolsTok,12:N0}   {r.ToolsTok,12:N0}\n");
+            sb.Append($"  input           {r.SessInput,12:N0}   {r.RollInput,12:N0}\n");
+            sb.Append($"  cached input    {r.SessCached,12:N0}   {r.RollCached,12:N0}\n");
+            sb.Append($"  output          {r.SessOutput,12:N0}   {r.RollOutput,12:N0}\n");
+            sb.Append($"  reasoning       {r.SessReasoning,12:N0}   {r.RollReasoning,12:N0}\n");
+            sb.Append($"  total           {r.SessTotal,12:N0}   {r.RollTotal,12:N0}\n");
+            sb.Append($"  tool calls      {r.SessToolCalls,12:N0}   {r.RollToolCalls,12:N0}\n");
+            sb.Append($"  compactions     {r.SessCompactions,12:N0}   {r.RollCompactions,12:N0}\n");
+
+            // Proportional bar of the session input/output/cached/reasoning split.
+            long barTotal = r.SessInput + r.SessOutput + r.SessReasoning;
+            if (barTotal > 0)
+            {
+                sb.Append("  split  ");
+                sb.Append(Bar("in", r.SessInput, barTotal));
+                sb.Append(Bar("out", r.SessOutput, barTotal));
+                if (r.SessReasoning > 0) sb.Append(Bar("rsn", r.SessReasoning, barTotal));
+                sb.Append('\n');
+            }
+
+            // Cost: per-model $ from list price (input+output), or tokens-only for subscription.
+            if (isSubscription)
+            {
+                sb.Append("  cost: subscription provider (flat-rate) - tokens only, no $\n");
+            }
+            else if (ModelPricing.Estimate(r.Model, r.SessInput, r.SessOutput) is { } sessUsd)
+            {
+                anyPrice = true;
+                grandSessUsd += sessUsd;
+                var rollUsd = ModelPricing.Estimate(r.Model, r.RollInput, r.RollOutput) ?? 0;
+                var price = ModelPricing.Lookup(r.Model)!.Value;
+                sb.Append($"  rate: ${price.InputPer1M:0.##}/1M in, ${price.OutputPer1M:0.##}/1M out (list-price estimate)\n");
+                sb.Append($"  cost: session ${sessUsd:0.0000}   rolling ${rollUsd:0.0000}\n");
+            }
+            else
+            {
+                sb.Append("  cost: unknown (no ModelPricing entry for this model id) - tokens only\n");
+            }
+        }
+
+        if (!isSubscription && anyPrice && rows.Count > 1)
+            sb.Append($"\ngrand total (session, priced models): ${grandSessUsd:0.0000}\n");
+
+        MuxConsole.WritePanel("/cost all - per-model breakdown", sb.ToString().TrimEnd());
+    }
+
+    // Small fixed-width proportional bar segment for the /cost all split line.
+    private static string Bar(string label, long value, long total)
+    {
+        if (total <= 0) return string.Empty;
+        int filled = (int)Math.Round((double)value / total * 10);
+        filled = Math.Clamp(filled, 0, 10);
+        double pct = (double)value / total * 100.0;
+        return $"{label}[{new string('#', filled)}{new string('.', 10 - filled)}]{pct,3:F0}% ";
+    }
+
+    // /init: scan the workspace and have the active model author an AGENTS.md at its root.
+    private static async Task HandleInitAsync(IChatClient? client, ChatOptions? chatOptions, CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /init.");
+            return;
+        }
+        string root = PlatformContext.WorkspaceRoot;
+        string savePath = Path.Combine(root, "AGENTS.md");
+        if (File.Exists(savePath) &&
+            !MuxConsole.Confirm($"AGENTS.md already exists at {savePath}. Overwrite?", false))
+        {
+            MuxConsole.WriteMuted("Left existing AGENTS.md unchanged.");
+            return;
+        }
+
+        string? content = null;
+        await MuxConsole.WithSpinnerAsync("Analyzing workspace", async () =>
+        {
+            content = await ProjectInit.GenerateAsync(root, client, chatOptions, ct);
+        });
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            MuxConsole.WriteWarning("Project analysis returned nothing.");
+            return;
+        }
+        try
+        {
+            await File.WriteAllTextAsync(savePath, content, ct);
+            MuxConsole.WriteSuccess($"Project context written to {savePath}");
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteWarning($"Failed to write AGENTS.md: {ex.Message}");
+        }
+    }
+
+    // /review: read-only AI review of the working-tree diff (active model, no edits).
+    private static async Task HandleReviewAsync(IChatClient? client, ChatOptions? chatOptions, CancellationToken ct)
+    {
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No active session model available for /review.");
+            return;
+        }
+        string root = PlatformContext.WorkspaceRoot;
+        if (!Directory.Exists(Path.Combine(root, ".git")))
+        {
+            var probe = new DirectoryInfo(root);
+            for (int i = 0; i < 6 && probe is not null; i++)
+            {
+                if (Directory.Exists(Path.Combine(probe.FullName, ".git"))) { root = probe.FullName; break; }
+                probe = probe.Parent;
+            }
+        }
+
+        var res = await ShellCapture.RunAsync("git diff", root, 30, 200_000, ct);
+        string diff = res.Stdout;
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            var staged = await ShellCapture.RunAsync("git diff --staged", root, 30, 200_000, ct);
+            diff = staged.Stdout;
+        }
+        if (string.IsNullOrWhiteSpace(diff))
+        {
+            MuxConsole.WriteMuted("nothing to review (clean working tree)");
+            return;
+        }
+
+        string findings = "";
+        await MuxConsole.WithSpinnerAsync("Reviewing diff", async () =>
+        {
+            findings = await CodeReview.ReviewAsync(diff, client, chatOptions, ct);
+        });
+        if (string.IsNullOrWhiteSpace(findings))
+        {
+            MuxConsole.WriteMuted("Review produced no findings.");
+            return;
+        }
+        MuxConsole.WritePanel("/review - diff findings", findings);
     }
 
     public static async Task ChatAgentAsync(
@@ -227,7 +709,9 @@ public static class SingleAgentOrchestrator
         JsonElement? resumedSession = null,
         string? resumedSessionDir = null,
         bool allowSubAgents = false,
-        bool allowParallelSubAgents = false)
+        bool allowParallelSubAgents = false,
+        MuxSwarm.Utils.Teams.TeamScope? teamScope = null,
+        InteractiveSession? interactiveHandle = null)
     {
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
@@ -238,7 +722,9 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteMuted("Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn.");
         }
 
-        var singleAgentDef = GetCurrSingleAgentDef();
+        // When launched as a team (teamScope != null) the lead drives this loop with the
+        // resolved lead definition; off-team this is exactly today's single-agent def.
+        var singleAgentDef = teamScope?.LeadDef ?? GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
         var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
@@ -281,6 +767,11 @@ public static class SingleAgentOrchestrator
         catch { /* fall through */ }
 
         IList<AITool> allTools = (mcpTools ?? Array.Empty<McpClientTool>()).Cast<AITool>().ToList();
+        // Merge the native in-house tools (Filesystem + shell/REPL) into the PRE-FILTER pool so
+        // the per-agent ToolFilter gates them exactly like MCP tools: an agent gets them only if
+        // it lists "Filesystem"/"Shell" in its swarm.json mcpServers (or a matching toolPattern).
+        foreach (var nativeTool in MuxSwarm.Utils.NativeTools.NativeToolRegistry.BuildPool(App.Config))
+            allTools.Add(nativeTool);
         IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
 
         if (filteredTools.Count == 0)
@@ -294,15 +785,27 @@ public static class SingleAgentOrchestrator
         // Switch the (already-running) live-region driver into this session: in-session
         // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
         MuxConsole.EnableDockedFooter(topLevel: false);
+        // Project the FULL session tool count for the header badge. The live toolset is assembled
+        // further down (var singleAgentTools = [...]) and adds far more than the MCP tools in
+        // filteredTools: 4 always-on local tools, the native REPL/shell tools, and the flag-gated
+        // analyze_image / ask_user / delegation / team / giga tools. Mirror those exact conditions
+        // here so the badge matches what the agent actually receives (was MCP-only -> undercount).
+        bool hasVision = chatClientFactory != null && !string.IsNullOrEmpty(App.SwarmConfig?.VisionAgent?.Model);
+        int projectedToolCount =
+            4                                                   // listSkills, readSkill, sleep, mux_refresh
+            + (hasVision ? 1 : 0)                               // analyze_image
+            + filteredTools.Count                               // filtered MCP tools
+            + ((shouldPlan || systemPromptOverride != null) ? 1 : 0) // ask_user
+            + (allowSubAgents ? 1 : 0)                          // delegate_to_agent_lite
+            + (allowParallelSubAgents ? 1 : 0)                  // delegate_parallel
+            + (teamScope?.Tools.Count ?? 0)                     // team lead tools
+            + ((App.GigaMode && teamScope is null) ? MuxSwarm.Utils.Teams.GigaMode.ToolCount : 0); // giga tools
         // G2: TUI session header card (no-op outside TUI render mode).
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",
             resolvedModelId,
             App.ActiveProvider?.Name ?? "",
-            filteredTools.Count);
-        // Seed the live "/tools" scrollable palette (the expandable view behind the
-        // session-header tool badge) with the agent's filtered tool catalog.
-        MuxConsole.SetTuiToolsCatalog(filteredTools.Select(t => (t.Name, t.Description ?? "")).ToList());
+            projectedToolCount);
         // The classic renderer separates the header from the transcript with a rule; the TUI
         // header card already provides that separation, so skip the extra rule there.
         if (!MuxConsole.IsTui) MuxConsole.WriteRule();
@@ -315,13 +818,35 @@ public static class SingleAgentOrchestrator
         }
         else
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            // First-turn parity: route the very first prompt through the same session-agnostic
+            // meta dispatch the in-session loop uses, so /background, /daemon, /kanban, and the
+            // slash-anywhere REPL hand-off work on turn one instead of being sent to the agent
+            // as a goal. Loop until a real goal (or quit) arrives.
+            initialGoal = "";
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
 
-            if (!MuxConsole.TuiActive)
-                MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-            initialGoal = MuxConsole.ReadInput(cancellationToken) ?? "";
+                if (!MuxConsole.TuiActive)
+                    MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
+                string firstInput = MuxConsole.ReadInput(cancellationToken) ?? "";
 
-            cancellationToken.ThrowIfCancellationRequested();
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (IsQuitCommand(firstInput))
+                {
+                    MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
+                    return;
+                }
+
+                var firstDisp = await MetaCommandDispatch.TryHandleAsync(
+                    firstInput, chatClientFactory, Models, cancellationToken);
+                if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
+                if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
+
+                initialGoal = firstInput;
+                break;
+            }
         }
 
         if (IsQuitCommand(initialGoal))
@@ -351,18 +876,17 @@ public static class SingleAgentOrchestrator
 
         var preamble = PreambleBuilder.Build(
             singleAgentDef.Name,
-            App.Config.IsUsingDockerForExec,
             continuous,
             shouldPlan,
             App.UltraMode);
 
-        systemPrompt = preamble + "\n\n" + systemPrompt;
+        systemPrompt = preamble + "\r\n\r\n" + systemPrompt;
 
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
             {
                 var skills = SkillLoader.GetSkillMetadata(singleAgentDef?.Name);
-                return string.Join("\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
+                return string.Join("\r\n", skills.Select(s => $"- {s.Name}: {s.Description}"));
             },
             name: "list_skills",
             description: "List all available skills with their descriptions. Call this first to discover what skills are available before calling read_skill."
@@ -379,8 +903,8 @@ public static class SingleAgentOrchestrator
                     return content;
 
                 var available = SkillLoader.GetSkillMetadata(singleAgentDef?.Name);
-                var listing = string.Join("\n", available.Select(s => $"- {s.Name}: {s.Description}"));
-                return $"Skill '{skillName}' not found. Here are the currently available skills — call read_skill again with a valid name:\n{listing}";
+                var listing = string.Join("\r\n", available.Select(s => $"- {s.Name}: {s.Description}"));
+                return $"Skill '{skillName}' not found. Here are the currently available skills — call read_skill again with a valid name:\r\n{listing}";
             },
             name: "read_skill",
             description: "Read the full instructions for a skill by name. Call list_skills first to discover available skills. " +
@@ -427,8 +951,13 @@ public static class SingleAgentOrchestrator
 
 
             int attempts = 0;
+            // Children must observe the PER-TURN cancel token too: Esc cancels the lead's turnCts
+            // (registered on StdinCancelMonitor), not this captured app/session token. Linking them
+            // means pressing Esc tears the sub-agent down instead of wedging the lead on its await.
+            using var delLinked = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
-                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, cancellationToken, prodMode: false, cleanSession: true);
+                specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, delLinked.Token, prodMode: false, cleanSession: true);
 
             bool succeeded = status == "success";
             attempts += 1;
@@ -440,23 +969,35 @@ public static class SingleAgentOrchestrator
             }
 
             string compacted = "";
+            MuxSwarm.Utils.DelegationStore.Retained? retained = null;
             await MuxConsole.WithSpinnerAsync($"Compacting {agentName} result", async () =>
             {
-                compacted = await ResultCompactor.CompactAsync(
+                // Resolve a compaction client for sub-agent result summarization. The swarm-only
+                // static MultiAgentOrchestrator.CompactionClient is NULL in a single-agent session
+                // (MultiAgentOrchestrator.RunAsync never ran), which previously forced extractive-
+                // only compaction here regardless of subAgentSummaryMode. Prefer the lazily-resolved
+                // compaction-agent client (same one /compact uses), then the swarm static, and fall
+                // back to the active session model so auto/llm modes actually summarize.
+                var subCompactionClient = ResolveCompactionClient()
+                    ?? MultiAgentOrchestrator.CompactionClient
+                    ?? client;
+                (compacted, retained) = await DelegationStore.TierResultAsync(
+                    DelegationStore.CurrentScope,
+                    agentName,
                     rawResult,
-                    completionStatus: status,
-                    completionSummary: summary,
-                    completionArtifacts: artifacts,
-                    charBudget: ExecutionLimits.Current.ProgressEntryBudget,
-                    chatClient: MultiAgentOrchestrator.CompactionClient,
-                    chatOptions: compactChatOpts);
+                    status,
+                    summary,
+                    artifacts,
+                    subCompactionClient,
+                    compactChatOpts);
             });
 
-            delegationResults.Add(new MultiAgentOrchestrator.DelegationResult(agentName, compacted, status, summary, artifacts));
+            delegationResults.Add(new MultiAgentOrchestrator.DelegationResult(agentName, compacted, status, summary, artifacts,
+                retained?.Handle, retained?.Path, retained?.RawLen ?? 0));
 
             if (!succeeded && attempts >= ExecutionLimits.Current.MaxSubTaskRetries)
             {
-                compacted += $"\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
+                compacted += $"\r\n[RETRY_EXHAUSTED] {agentName} failed {ExecutionLimits.Current.MaxSubTaskRetries} attempts. " +
                              "Consider a different approach or agent, or surface this to the user.";
             }
 
@@ -533,32 +1074,93 @@ public static class SingleAgentOrchestrator
             name: "delegate_to_agent_lite",
             description: "Delegate a sub-task to an agent by name. " +
                          "Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. " +
-                         "Cannot delegate to the Orchestrator. Note: Synchronous Version - Tip: Execute once with random string if no agent names are known to return err output with available agents"
+                         "Cannot delegate to the Orchestrator. Note: Synchronous Version. " +
+                         Common.DelegableAgentNames()
         );
 
         var delegateParallelTool = AIFunctionFactory.Create(
             method: async (
                 [Description("A list of agent assignments to run simultaneously")]
-                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments
+                IEnumerable<ParallelSwarmOrchestrator.ParallelTaskRequest> assignments,
+                [Description("When true, fire the tasks into the BACKGROUND and return their job ids " +
+                    "IMMEDIATELY (non-blocking) so you keep working; poll/collect later with check_delegations. " +
+                    "Default false blocks until the whole batch finishes and returns all results.")]
+                bool background = false
             ) =>
             {
                 if (chatClientFactory == null)
                     return "[Error] Cannot create chat client for agent, chat client is null";
 
                 var specialists = MultiAgentOrchestrator.Specialists;
-                var assignmentList = assignments.ToList();
+                var assignmentList = assignments?.ToList() ?? new();
+                if (assignmentList.Count == 0)
+                    return "[delegate_parallel] No assignments given. Provide a list of {AgentName, Task}.";
+
+                // Non-blocking path: fire each task into the background via DetachedRunner and return
+                // job ids at once so the lead keeps working. Collect with check_delegations.
+                if (background)
+                {
+                    var launched = new List<string>();
+                    var failed = new List<string>();
+                    foreach (var req in assignmentList)
+                    {
+                        var job = await DetachedRunner.LaunchAsync(
+                            req.AgentName, req.Task, chatClientFactory, Models,
+                            StdinCancelMonitor.Instance?.ActiveTurnToken ?? cancellationToken);
+                        if (job is null) failed.Add(req.AgentName);
+                        else launched.Add($"{job.Id} <- {req.AgentName}");
+                    }
+
+                    var bg = new StringBuilder();
+                    bg.AppendLine($"[delegate_parallel · background] Launched {launched.Count} background job(s); they run while you continue.");
+                    foreach (var l in launched) bg.AppendLine($"  {l}");
+                    if (failed.Count > 0)
+                        bg.AppendLine($"  Could not launch: {string.Join(", ", failed)} (unknown agent?)");
+                    bg.AppendLine("Keep working. Call check_delegations (optionally with these ids) to poll status and collect results.");
+                    return bg.ToString();
+                }
+
                 MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
+
+                // Link the captured app/session token with the live PER-TURN token so Esc (which
+                // cancels turnCts) unwinds the whole parallel batch. Otherwise the lead blocks on
+                // Task.WhenAll while the children run on an un-cancelled token -> input deadlock
+                // that only a restart clears.
+                using var batchLinked = CancellationTokenSource.CreateLinkedTokenSource(
+                    cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
+                var batchCt = batchLinked.Token;
 
                 var taskBatch = assignmentList.Select(async req =>
                 {
-                    await semaphore.WaitAsync(cancellationToken);
+                    await semaphore.WaitAsync(batchCt);
                     try
                     {
+                        // Resolve a compaction client for the parallel workers. The local
+                        // compactionClient is only populated lazily by ResolveCompactionClient()
+                        // (via /compact); a parallel delegation before any /compact would otherwise
+                        // pass null -> extractive-only regardless of subAgentSummaryMode. Resolve +
+                        // fall back to the active session model so auto/llm modes summarize.
+                        var batchCompactionClient = ResolveCompactionClient()
+                            ?? MultiAgentOrchestrator.CompactionClient
+                            ?? client;
                         return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
                             req.AgentName, req.Task, singleAgentDef.Name,
                             specialists, pDelegationResults, retryRegistry,
-                            chatClientFactory, Models, compactionClient, compactionChatOptions,
-                            maxIterations, false, ct: cancellationToken, cleanSession: true);
+                            chatClientFactory, Models, batchCompactionClient, compactionChatOptions,
+                            maxIterations, false, ct: batchCt, cleanSession: true);
+                    }
+                    catch (OperationCanceledException) when (batchCt.IsCancellationRequested)
+                    {
+                        // A real turn cancellation (Esc / kill-switch) must propagate so Task.WhenAll
+                        // unwinds the whole batch - not be swallowed as a per-agent result.
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // A single agent throwing (rate-limit, provider/network error, etc.) must NOT
+                        // discard every sibling result. Turn the throw into this agent's error string
+                        // so Task.WhenAll still returns and the batch keeps all other agents' output.
+                        return $"[ERROR {req.AgentName}] {ex.Message}";
                     }
                     finally
                     {
@@ -576,7 +1178,47 @@ public static class SingleAgentOrchestrator
             name: "delegate_parallel",
             description: "Executes multiple sub-tasks simultaneously. Use this for independent tasks like " +
                          "researching different topics or auditing multiple files. Each assignment specifies " +
-                         "an AgentName and a Task string. Tip: Execute once with random string if no agent names are known to return err output with available agents"
+                         "an AgentName and a Task string. Blocks until all finish and returns their results. " +
+                         "Pass background=true to instead launch them in the background and return job ids at once " +
+                         "(poll with check_delegations) when you have other work to do meanwhile. " +
+                         Common.DelegableAgentNames()
+        );
+
+        // Poll + collect background delegations launched via delegate_parallel(background:true) (and /background jobs).
+        var checkDelegationsTool = AIFunctionFactory.Create(
+            method: (
+                [Description("Optional job id (e.g. bg3) to check just one; omit to list ALL background jobs.")]
+                string? jobId
+            ) =>
+            {
+                var jobs = DetachedRunner.Jobs();
+                if (!string.IsNullOrWhiteSpace(jobId))
+                    jobs = jobs.Where(j => j.Id.Equals(jobId.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (jobs.Count == 0)
+                    return string.IsNullOrWhiteSpace(jobId)
+                        ? "[check_delegations] No background jobs. Launch some with delegate_parallel(background:true)."
+                        : $"[check_delegations] No background job with id '{jobId}'.";
+
+                var sb = new System.Text.StringBuilder();
+                int running = jobs.Count(j => j.Status == DetachedStatus.Running);
+                sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
+                foreach (var j in jobs)
+                {
+                    sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
+                    if (j.Status != DetachedStatus.Running && !string.IsNullOrWhiteSpace(j.Result))
+                    {
+                        var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
+                        sb.AppendLine($"  result:\n{r}");
+                    }
+                }
+                if (running > 0) sb.AppendLine("Some jobs are still running; call check_delegations again later to collect them.");
+                return sb.ToString();
+            },
+            name: "check_delegations",
+            description: "Poll the status of background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
+                         "Pass a job id to check one, or omit to list all. Returns each job's status and, for finished jobs, " +
+                         "its full result so you can collect work you fired earlier without blocking."
         );
 
         var singleAgentTools = (IList<AITool>)
@@ -602,11 +1244,62 @@ public static class SingleAgentOrchestrator
                 (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
         }
 
+        // Size-tiered context passing: whenever this lead can spawn sub-agents (sequential, parallel,
+        // or a team), grant read_delegation so it can surgically pull the FULL raw output of any
+        // delegation whose result was spilled to disk and returned as a pointer/handle. Covers
+        // /sub, /psub, /ultra, /giga, and team-lead; swarm/pswarm get it via the orchestrator lists.
+        if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
+            singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
+
+        // Non-blocking delegation: when this lead can spawn sub-agents, also grant check_delegations
+        // (delegate_parallel(background:true) fires work into the background + returns at once;
+        // check_delegations polls/collects). Optional alongside the blocking tools. Same gate as
+        // read_delegation.
+        if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
+        {
+            singleAgentTools.Add(checkDelegationsTool);
+        }
+
+        // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and
+        // build the member specialist registry so member dispatch (ExecuteParallelWorker) can
+        // resolve them. Members surface live in the Agent View via the existing capture path.
+        // Null teamScope leaves the tool list and registry exactly as the off-team path built them.
+        if (teamScope is not null)
+        {
+            // M4: pass the team's per-member extra-tool factory so each MEMBER specialist is built
+            // with its own identity-bound send_message/read_inbox (null = no team mailbox).
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList(),
+                teamScope.MemberToolFactory);
+            foreach (var t in teamScope.Tools) singleAgentTools.Add(t);
+            // Append the concise teams-coordination guide ONLY while leading a team. Off-team this
+            // block is skipped, so the single-agent system prompt is byte-identical to before.
+            systemPrompt += teamScope.LeadPreamble();
+        }
+
+        // v0.12.0 M6 Giga mode: grant the live single agent dynamic-orchestration tools (spawn_team,
+        // run_team, write/run/list workflows) + a capability-reference preamble. Members run through
+        // the shared ExecuteParallelWorker path, so specialists must be built. Off-giga (the default)
+        // this block is skipped entirely -> byte-identical single-agent prompt + toolset.
+        if (App.GigaMode && teamScope is null)
+        {
+            await MultiAgentOrchestrator.BuildSpecialists(Models, modelId => App.CreateChatClient(modelId),
+                (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
+            foreach (var t in MuxSwarm.Utils.Teams.GigaMode.BuildTools(
+                modelId => App.CreateChatClient(modelId), Models, cancellationToken))
+                singleAgentTools.Add(t);
+            systemPrompt += MuxSwarm.Utils.Teams.GigaMode.Preamble();
+        }
+
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,
             Tools = [.. singleAgentTools!]
         };
+
+        // Re-seed the live "/tools" palette with the FULLY-assembled toolset (the early seed only
+        // had the MCP tools). Now the expandable badge view lists exactly what the agent holds.
+        MuxConsole.SetTuiToolsCatalog(singleAgentTools.Select(t => (t.Name, t.Description ?? "")).ToList());
 
         // G11: static context-overhead breakdown for the footer. On a FRESH session the context
         // is dominated by the system prompt + the serialized tool/MCP schemas (names, descriptions,
@@ -629,6 +1322,7 @@ public static class SingleAgentOrchestrator
             uint sysTok = (uint)Math.Ceiling(sysChars / 2.5);
             uint toolTok = (uint)Math.Ceiling(toolChars / 2.5);
             MuxConsole.SetTuiTokenBreakdown(sysTok, toolTok);
+            CostLedger.SetStatic(resolvedModelId, sysTok, toolTok);
         }
 
         // Merge modelOpts from swarm.json if present
@@ -682,6 +1376,12 @@ public static class SingleAgentOrchestrator
         // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
         MuxConsole.SetTuiSessionId(sessionTimestamp);
 
+        // Size-tiered delegation retention scope: a single-agent session that spawns sub-agents
+        // (/sub, /psub, /ultra, /giga, team-lead) keys its spilled raw + cumulative lead-cap counter
+        // off this session id. MAO.RunAsync never runs here, so set it on the single-agent path.
+        DelegationStore.SetScope(sessionTimestamp);
+        DelegationStore.ResetScope(sessionTimestamp);
+
         var session = resumedSession.HasValue
             ? await agent.DeserializeSessionAsync(resumedSession.Value)
             : await agent.CreateSessionAsync();
@@ -693,8 +1393,21 @@ public static class SingleAgentOrchestrator
         if (resumedSession.HasValue)
             MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
 
+        // Deep memory (reflectionAgent.mode == "deep"): expose this session's history to the
+        // background gatherer and start its activity-gated loop. Inert in standard mode; interactive
+        // only (the gatherer makes its own LLM calls, never in serve/acp/stdio - gated by caller).
+        if (!MuxConsole.StdioMode && App.ServePort <= 0)
+        {
+            // Fresh lead session: clear the per-session injected-id tracking so the first turn's
+            // full block + later deltas are computed cleanly for this session.
+            MuxSwarm.Utils.Memory.ReflectionInjector.ResetSession();
+            MuxSwarm.Utils.Memory.ReflectionGatherer.HistoryProvider =
+                () => conversationHistory.ToList();
+            MuxSwarm.Utils.Memory.ReflectionGatherer.Start(chatClientFactory, cancellationToken);
+        }
+
         _pendingCompaction = false;
-        async Task<bool> TryCompactAsync()
+        async Task<bool> TryCompactAsync(string? instruction = null)
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -717,7 +1430,7 @@ public static class SingleAgentOrchestrator
             await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
             {
                 compactedMsg = await ResultCompactor.CompactConversationAsync(
-                    conversationHistory, cc, chatOptions: compactionChatOptions);
+                    conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
 
                 session = await agent.CreateSessionAsync();
                 conversationHistory.Clear();
@@ -730,6 +1443,7 @@ public static class SingleAgentOrchestrator
 
             compactSw.Stop();
             OtelMetrics.CompactionRuns.Add(1);
+            CostLedger.RecordCompaction(resolvedModelId);
             OtelMetrics.CompactionDuration.Record(compactSw.ElapsedMilliseconds);
             if (beforeTokens > 0)
                 OtelMetrics.CompactionRatio.Record((double)_sessionTokens / beforeTokens);
@@ -819,27 +1533,41 @@ public static class SingleAgentOrchestrator
                 + $"{conversationHistory.Count} message(s) - {_cachedTokens:N0} cached.");
         }
 
-        // G11: live token estimate during a streaming turn. The provider only reports the
-        // authoritative token count AFTER the turn completes, so the docked meter would otherwise
-        // sit frozen while a long response streams. We tick a throttled estimate = the last known
-        // session total + (chars streamed this turn / ~2.5), giving the user a live-growing meter
-        // that snaps to the real count when usage details arrive. Reset at the start of each turn.
+        // G11 / v0.12: live token estimate during a streaming turn. The provider reports the
+        // AUTHORITATIVE token count only via UsageContent frames, so between those frames the
+        // docked meter would otherwise sit frozen. We tick a throttled estimate that extrapolates
+        // FORWARD from the last ground-truth checkpoint: est = _sessionTokens (last authoritative
+        // total) + (output chars streamed SINCE that checkpoint / ~2.5).
+        //
+        // Reconciliation model (matches Codex/Cline): every UsageContent frame snaps _sessionTokens
+        // /_cachedTokens to truth AND resets _liveTurnChars to 0 (see ReconcileLiveBaseline), so the
+        // estimate only ever bridges the small gap since the last checkpoint -- never the whole turn.
+        // This eliminates the old "drops on turn end" artifact, which came from (a) counting tool-call
+        // arg + tool-result CHARS as live tokens (they are already folded into the provider's
+        // InputTokenCount on the next iteration -- double-counting) and (b) a cached-offset that
+        // shifted mid-turn. We now tick ONLY on streamed answer + reasoning text (output the model is
+        // actively generating that is not yet in any usage frame). The meter still inherits the REAL
+        // post-cache drop from the provider numbers -- that is honest, not an estimate error, so we do
+        // NOT clamp it monotonically (no mature harness does; it would hide the true caching effect).
         long _liveTurnChars = 0;
         DateTime _lastLivePush = DateTime.MinValue;
         void ResetLiveTokenEstimate() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
+        // Snap the live-estimate baseline to authoritative usage: zero the per-checkpoint char
+        // accumulator so the next estimate extrapolates forward from the just-arrived ground truth.
+        void ReconcileLiveBaseline() { _liveTurnChars = 0; _lastLivePush = DateTime.MinValue; }
         void TickLiveTokens(int addedChars)
         {
             if (!MuxConsole.TuiActive) return;
             _liveTurnChars += Math.Max(0, addedChars);
-            // Throttle to ~10 Hz so we don\u0027t repaint the whole region on every micro-chunk.
+            // Throttle to ~20 Hz: responsive live motion without repainting the region on every
+            // micro-chunk.
             var now = DateTime.UtcNow;
-            if ((now - _lastLivePush).TotalMilliseconds < 100) return;
+            if ((now - _lastLivePush).TotalMilliseconds < 50) return;
             _lastLivePush = now;
             uint threshold = (uint)(autoCompactTokenThreshold ?? 80_000);
-            uint est = _sessionTokens + (uint)Math.Ceiling(_liveTurnChars / 2.5);
-            uint displayEst = est > _cachedTokens ? est - _cachedTokens : est;
+            uint displayEst = LiveTokenMeter.Estimate(_sessionTokens, _liveTurnChars, _cachedTokens);
             MuxConsole.RenderTuiStatusBar(displayEst, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
 
         // G7: live context-meter + mode-badge status bar (TUI render mode only; no-op otherwise).
@@ -851,7 +1579,7 @@ public static class SingleAgentOrchestrator
             // truer picture of "live" context growth rather than a misleading static base.
             uint displayTokens = _sessionTokens > _cachedTokens ? _sessionTokens - _cachedTokens : _sessionTokens;
             MuxConsole.RenderTuiStatusBar(displayTokens, threshold,
-                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode);
+                App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
 
         // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
@@ -937,6 +1665,14 @@ public static class SingleAgentOrchestrator
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
+            // Deep memory: this turn's goal is the relevance query for injection, and a new turn is
+            // activity the background gatherer should reflect on. No-ops in standard mode. The actual
+            // mid-turn delta injection is handled by MidTurnReflectionClient (wrapped around the lead
+            // client INSIDE the function-invocation loop), so freshly-gathered reflections reach the
+            // model on every model<->tool round-trip - not just at this turn boundary.
+            MuxSwarm.Utils.Memory.ReflectionInjector.CurrentQuery = currentGoal;
+            MuxSwarm.Utils.Memory.ReflectionGatherer.Touch();
+
             int stuckCount = 0;
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -944,7 +1680,8 @@ public static class SingleAgentOrchestrator
         // without cancelling - so the user can read full output while the agent keeps working.
         using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
             onExpand: () => MuxConsole.TuiExpandLatestInline(),
-            onView: () => MuxConsole.TuiEnterViewMode());
+            onView: () => MuxConsole.TuiEnterViewMode(),
+            onAgents: () => MuxConsole.TuiEnterAgentView());
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
@@ -1068,8 +1805,12 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
-                                    // Keep the live token meter moving during tool calls (args contribute to context).
-                                    TickLiveTokens((functionCall.Name?.Length ?? 0) + (functionCall.Arguments?.ToString()?.Length ?? 0));
+                                    CostLedger.RecordToolCall(resolvedModelId);
+                                    // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
+                                    // the provider's InputTokenCount on the next iteration's UsageContent frame, so
+                                    // counting their chars here double-counts and inflates the estimate (the old
+                                    // "drops on turn end" artifact). The authoritative usage frame moves the meter
+                                    // (see ReconcileLiveBaseline); the thinking indicator shows tool work in progress.
 
                                     HookWorker.Enqueue(new HookEvent
                                     {
@@ -1101,8 +1842,9 @@ public static class SingleAgentOrchestrator
                                 else if (content is FunctionResultContent functionResult)
                                 {
                                     var resultText = functionResult.Result?.ToString();
-                                    // Tool results add to context - advance the live meter so it does not freeze during tool work.
-                                    TickLiveTokens(resultText?.Length ?? 0);
+                                    // NOTE: do NOT tick the live meter on tool-result text -- like tool-call args it is
+                                    // folded into the provider's InputTokenCount on the next iteration, so char-ticking
+                                    // here double-counts. The authoritative UsageContent frame moves the meter.
                                     Activity.Current?.SetTag("success", true);
                                     if (resultText != null)
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
@@ -1130,11 +1872,28 @@ public static class SingleAgentOrchestrator
                                 else if (content is UsageContent usageContent)
                                 {
                                     var details = usageContent.Details;
-                                    _sessionTokens = (uint)(details.TotalTokenCount ?? 0);
-                                    _cachedTokens = (uint)(details.CachedInputTokenCount ?? 0);
+                                    // Authoritative checkpoint: snap to the provider's real counts. A multi-iteration
+                                    // tool turn emits one of these PER sub-call, so this is the ground truth the live
+                                    // estimate extrapolates forward from. Only overwrite when the provider actually
+                                    // reported a total (some intermediate frames carry only partial fields).
+                                    if (details.TotalTokenCount is long total && total > 0)
+                                        _sessionTokens = (uint)total;
+                                    _cachedTokens = (uint)(details.CachedInputTokenCount ?? _cachedTokens);
+                                    // Track cumulative input/output for the /cost gauge (authoritative running totals).
+                                    if (details.InputTokenCount is long inTok && inTok > 0) _cumInputTokens = inTok;
+                                    if (details.OutputTokenCount is long outTok && outTok > 0) _cumOutputTokens = outTok;
+                                    // Reset the per-checkpoint char accumulator so the next live tick bridges only the
+                                    // gap SINCE this checkpoint -- not the whole turn (kills the "drops on turn end"
+                                    // artifact), and repaint the meter immediately with the real number.
+                                    ReconcileLiveBaseline();
+                                    RenderStatusBar();
                                     OtelMetrics.RecordTokens(
                                         singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
                                         );
+                                    CostLedger.RecordUsage(resolvedModelId,
+                                        details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
+                                        details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
+                                        details.TotalTokenCount ?? 0);
                                 }
                             }
                         }
@@ -1220,7 +1979,7 @@ public static class SingleAgentOrchestrator
                 string partial = responseText.ToString();
                 string interruptedAssistant = string.IsNullOrWhiteSpace(partial)
                     ? "[no response — interrupted before agent replied]"
-                    : partial + "\n\n[interrupted by user]";
+                    : partial + "\r\n\r\n[interrupted by user]";
 
                 // The framework does NOT commit a cancelled run's messages to the session,
                 // so neither the user goal nor the partial response would survive
@@ -1234,7 +1993,7 @@ public static class SingleAgentOrchestrator
 
                 // conversationHistory feeds compaction; keep the partial there too.
                 if (!string.IsNullOrWhiteSpace(partial))
-                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\n\n[interrupted by user]"));
+                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\r\n\r\n[interrupted by user]"));
 
                 MuxConsole.WriteLine();
                 MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
@@ -1331,9 +2090,73 @@ public static class SingleAgentOrchestrator
             while (true)
             {
                 string metaCmd = nextInput!.Trim();
-                if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase))
+                // !<command>: run a shell command, show its output, and inject "[ran: <cmd>]\n<output>"
+                // as the next user turn so the model sees the result. Intercepted before slash dispatch.
+                if (metaCmd.StartsWith("!") && metaCmd.Length > 1)
                 {
-                    await TryCompactAsync();
+                    string shellCmd = metaCmd[1..].Trim();
+                    if (shellCmd.Length == 0) { MuxConsole.WriteMuted("Usage: !<command>"); }
+                    else
+                    {
+                        ShellCapture.Result r = await ShellCapture.RunAsync(
+                            shellCmd, PlatformContext.WorkspaceRoot, 60, 60_000, cancellationToken);
+                        string output = r.Combined;
+                        if (string.IsNullOrWhiteSpace(output)) output = "(no output)";
+                        MuxConsole.WritePanel($"! {shellCmd}", output);
+                        currentGoal = $"[ran: {shellCmd}]\n{output}";
+                        retryGoalSet = true;
+                        break;
+                    }
+                }
+                else if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/compact ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var cParts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    var cInstruction = cParts.Length > 1 ? cParts[1].Trim() : null;
+                    await TryCompactAsync(cInstruction);
+                }
+                else if (metaCmd.Equals("/handoff", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/handoff ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleHandoffAsync(metaCmd, client, conversationHistory, compactionChatOptions);
+                }
+                else if (metaCmd.Equals("/heal", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/heal ", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/reflect", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/reflect ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleHealAsync(metaCmd, client, conversationHistory,
+                        resolvedModelId, chatClientFactory, compactionChatOptions, cancellationToken);
+                }
+                else if (metaCmd.Equals("/fix", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/fix ", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleFixAsync(metaCmd, client, compactionChatOptions, cancellationToken);
+                }
+                else if (metaCmd.Equals("/diff", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleDiffAsync(cancellationToken);
+                }
+                else if (metaCmd.Equals("/doctor", StringComparison.OrdinalIgnoreCase))
+                {
+                    HandleDoctor();
+                }
+                else if (metaCmd.Equals("/cost", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/cost ", StringComparison.OrdinalIgnoreCase))
+                {
+                    var costArg = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (costArg.Length > 1 && costArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                        HandleCostBreakdown(resolvedModelId);
+                    else
+                        HandleCost(resolvedModelId);
+                }
+                else if (metaCmd.Equals("/init", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleInitAsync(client, compactionChatOptions, cancellationToken);
+                }
+                else if (metaCmd.Equals("/review", StringComparison.OrdinalIgnoreCase))
+                {
+                    await HandleReviewAsync(client, compactionChatOptions, cancellationToken);
                 }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {
@@ -1341,15 +2164,24 @@ public static class SingleAgentOrchestrator
                     conversationHistory.Clear();
                     _sessionTokens = 0;
                     _cachedTokens = 0;
+                    _cumInputTokens = 0;
+                    _cumOutputTokens = 0;
                     _pendingCompaction = false;
                     _pendingReseed = false;
+                    CostLedger.ResetSession();
                     ServeMode.EmitEvent(new { type = "session_wiped" });
                     MuxConsole.WriteSuccess("Session context wiped. Starting fresh.");
                 }
                 else if (metaCmd.Equals("/tokens", StringComparison.OrdinalIgnoreCase)
-                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase))
+                      || metaCmd.StartsWith("/tokens ", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.Equals("/context", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/context ", StringComparison.OrdinalIgnoreCase))
                 {
-                    PrintTokenUsage();
+                    var tokArg = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (tokArg.Length > 1 && tokArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                        HandleCostBreakdown(resolvedModelId);
+                    else
+                        PrintTokenUsage();
                 }
                 else if (metaCmd == "/" || metaCmd == "/?")
                 {
@@ -1391,6 +2223,55 @@ public static class SingleAgentOrchestrator
                 {
                     await HandleTagAsync(metaCmd, sessionTimestamp, session, agent,
                         resolvedModelId, chatClientFactory, cancellationToken);
+                }
+                else if (metaCmd.Equals("/kanban", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/kanban ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Editable team board for the active taskboard team; a no-op hint off-team.
+                    MuxSwarm.Utils.Teams.KanbanCommand.Run(metaCmd);
+                }
+                else if (metaCmd.Equals("/background", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/bg", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/background ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/bg ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Launch/list/cancel background agent jobs (watchable via the \\ Agent View).
+                    await DetachedRunner.RunCommand(metaCmd, chatClientFactory, Models, cancellationToken);
+                }
+                else if (metaCmd.Equals("/daemon", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/da", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/daemon ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/da ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
+                    MuxSwarm.State.DaemonCommand.Run(metaCmd);
+                }
+                else if (metaCmd.Equals("/detach", StringComparison.OrdinalIgnoreCase))
+                {
+                    // v0.12.0 live-session detach: park THIS interactive session in the background
+                    // and return to the top-level menu, re-attachable via /attach <id> or the \
+                    // picker. The async frame stays alive across the await, preserving the whole
+                    // session closure (agent, in-memory history, tokens) - no disk round-trip. Only
+                    // valid at the idle prompt (we are between turns here by construction). When no
+                    // handle was supplied (e.g. a daemon-fired or non-detachable launch) it is a
+                    // clear no-op so /detach is never silently swallowed.
+                    if (interactiveHandle is null)
+                    {
+                        MuxConsole.WriteMuted("This session cannot be detached. Use /qc to exit.");
+                    }
+                    else
+                    {
+                        // Persist so the parked session is also resumable from disk as a safety net.
+                        try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
+                        catch { /* best-effort; the live frame is preserved regardless */ }
+                        interactiveHandle.Tokens = _sessionTokens;
+                        MuxConsole.WriteSuccess($"Detached session {interactiveHandle.Id} ({interactiveHandle.Label}). Re-attach with /attach {interactiveHandle.Id} or \\.");
+                        // Release the session-scoped TUI hooks so the menu's footer is clean while
+                        // parked; they are re-asserted on resume below.
+                        MuxConsole.SetTuiSessionId(null);
+                        // Park: hand the console back to the menu and block (async) until /attach.
+                        await interactiveHandle.ParkAndAwaitAttachAsync(cancellationToken);
+                        // --- resumed ---
+                        MuxConsole.SetTuiSessionId(sessionTimestamp);
+                        RenderStatusBar();
+                        MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
+                    }
                 }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
                 {

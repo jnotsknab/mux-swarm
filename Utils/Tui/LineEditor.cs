@@ -237,6 +237,18 @@ internal sealed class LineEditor
     }
 
     /// <summary>Replace the entire buffer (used to accept a slash/skill/session completion).</summary>
+    /// <summary>Insert a literal text run at the cursor (used by bracketed paste). Embedded
+    /// newlines are kept as \n so a multi-line paste becomes a multi-line compose buffer; the
+    /// cursor advances to the end of the inserted text. Any history-recall state is cleared.</summary>
+    public void InsertText(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        string norm = text.Replace("\r\n", "\n").Replace("\r", "\n");
+        _buf.Insert(_cursor, norm);
+        _cursor += norm.Length;
+        _historyActive = false;
+    }
+
     public void SetBuffer(string text, int? cursor = null)
     {
         _buf.Clear();

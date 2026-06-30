@@ -63,6 +63,14 @@ internal static class Ansi
     /// <summary>Re-enable terminal auto-wrap, DECAWM on (CSI ?7h).</summary>
     public const string AutoWrapOn = CSI + "?7h";
 
+    /// <summary>Enable bracketed-paste mode, DECSET 2004 (CSI ?2004h). The terminal then wraps any
+    /// paste in ESC[200~ ... ESC[201~ so the app can buffer a multi-line paste as one literal block
+    /// instead of treating the first embedded newline as a submit. Disabled with <see cref="BracketedPasteOff"/>.</summary>
+    public const string BracketedPasteOn = CSI + "?2004h";
+
+    /// <summary>Disable bracketed-paste mode, DECRST 2004 (CSI ?2004l).</summary>
+    public const string BracketedPasteOff = CSI + "?2004l";
+
     /// <summary>
     /// Erase <paramref name="count"/> lines ending at (and including) the current line,
     /// leaving the cursor at column 1 of the topmost erased line. Mirrors the well-proven
@@ -92,4 +100,17 @@ internal static class Ansi
     public const string Dim = CSI + "2m";
     public const string Italic = CSI + "3m";
     public const string Underline = CSI + "4m";
+
+    /// <summary>
+    /// Begin Synchronized Update (DEC private mode 2026, CSI ?2026h). The terminal buffers
+    /// all output until <see cref="EndSyncOutput"/> and then presents the whole batch in a
+    /// single atomic frame, so the user never sees a half-painted live region. This is the
+    /// standard fix for spinner/timer flicker (used by Ghostty, WezTerm, Windows Terminal,
+    /// kitty, etc.). Terminals that do not support it silently ignore the unknown private
+    /// mode, so wrapping a frame is always safe.
+    /// </summary>
+    public const string BeginSyncOutput = CSI + "?2026h";
+
+    /// <summary>End Synchronized Update (CSI ?2026l): flush the buffered frame atomically.</summary>
+    public const string EndSyncOutput = CSI + "?2026l";
 }

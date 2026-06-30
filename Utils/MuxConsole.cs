@@ -21,6 +21,22 @@ public static partial class MuxConsole
     public static bool StdioMode { get; set; } = false;
 
     /// <summary>
+    /// True while an ACP (--acp) adapter session owns stdout. ACP and stdio are mutually
+    /// exclusive transports: when AcpActive is set, structured events are routed to
+    /// <see cref="AcpSink"/> instead of being written as NDJSON to stdout (which is reserved
+    /// for ACP JSON-RPC). Off the --acp path this is always false and every emit path is
+    /// byte-identical to before.
+    /// </summary>
+    public static bool AcpActive { get; set; } = false;
+
+    /// <summary>
+    /// Optional sink that receives structured events (type + fields) INSTEAD of the NDJSON
+    /// stdout writer while an ACP session is active. The ACP adapter installs this to
+    /// translate Mux events into ACP session/update notifications. Null off --acp.
+    /// </summary>
+    public static Action<string, IReadOnlyDictionary<string, object?>>? AcpSink { get; set; }
+
+    /// <summary>
     /// Interactive render layer (v0.11.0). This is orthogonal to <see cref="StdioMode"/>:
     /// stdio/serve always emits NDJSON and short-circuits BEFORE any render-mode branch,
     /// so the machine/web contract is byte-identical regardless of this value.
@@ -141,6 +157,31 @@ public static partial class MuxConsole
 
     private static void EmitJson(string type, object? data = null)
     {
+        // ACP transport owns stdout (pure JSON-RPC), so structured events are diverted to the
+        // ACP sink instead of being written as an NDJSON line. The 'type' field is implicit in
+        // the (type, fields) pair handed to the sink; only the extra fields are forwarded.
+        if (AcpSink is { } sink)
+        {
+            var fields = new Dictionary<string, object?>();
+            if (data is Dictionary<string, object?> sdict)
+            {
+                foreach (var kvp in sdict)
+                    fields[kvp.Key] = kvp.Value;
+            }
+            else if (data is not null)
+            {
+                fields["message"] = data;
+            }
+            sink(type, fields);
+            return;
+        }
+
+        // ACP transport is active but its sink is not yet installed (startup events before
+        // AcpServer.RunAsync wires it up). stdout is reserved for ACP JSON-RPC, so these
+        // pre-session NDJSON frames are dropped rather than written.
+        if (AcpActive)
+            return;
+
         var payload = new Dictionary<string, object?> { ["type"] = type };
         if (data is Dictionary<string, object?> dict)
         {
@@ -163,20 +204,23 @@ public static partial class MuxConsole
         return dict;
     }
 
-    public const string PromptColor = "#E0E0E0";
+    public static string PromptColor => Theme.Active.Prompt;
 
+    // Color roles now resolve from the ACTIVE theme (see Theme.cs) rather than hardcoded consts, so
+    // /theme + the setup theme step recolor all chrome live. The default theme reproduces the exact
+    // pre-theme palette, so unset/default is byte-identical to prior behaviour.
     private static class C
     {
-        public const string Step = "#64B4DC";
-        public const string Success = "#78C88C";
-        public const string Warning = "#D4A054";
-        public const string Error = "#D46C6C";
-        public const string Info = "#909090";
-        public const string Muted = "#787878";
-        public const string Accent = "#64B4DC";
-        public const string Prompt = "#B0B0B0";
-        public const string Banner = "#64B4DC";
-        public const string Agent = "#8FB8D4";
+        public static string Step => Theme.Active.Step;
+        public static string Success => Theme.Active.Success;
+        public static string Warning => Theme.Active.Warning;
+        public static string Error => Theme.Active.Error;
+        public static string Info => Theme.Active.Info;
+        public static string Muted => Theme.Active.Muted;
+        public static string Accent => Theme.Active.Accent;
+        public static string Prompt => Theme.Active.Prompt;
+        public static string Banner => Theme.Active.Banner;
+        public static string Agent => Theme.Active.Agent;
     }
 
     private static void WithConsole(Action write, bool clearIndicator = true)
@@ -257,8 +301,10 @@ public static partial class MuxConsole
         if (choices.Count == 0)
             return "Error: 'select' type requires at least one option in the options parameter.";
 
-        string selected = MuxConsole.Select(question, choices);
-        return $"User selected: {selected}";
+        var c = MuxConsole.SelectChoice(question, choices);
+        if (c.Cancelled) return "User cancelled the prompt without choosing (no option selected).";
+        if (c.Custom) return $"User entered a custom response (outside the offered options): {c.Value}";
+        return $"User selected: {c.Value}";
     }
 
     public static string AskMultiSelect(string question, string? options)
@@ -267,8 +313,181 @@ public static partial class MuxConsole
         if (choices.Count == 0)
             return "Error: 'multi_select' type requires at least one option in the options parameter.";
 
-        var selected = MuxConsole.MultiSelect(question, choices);
-        return $"User selected: {string.Join(", ", selected)}";
+        var c = MuxConsole.MultiSelectChoice(question, choices);
+        if (c.Cancelled) return "User cancelled the prompt without choosing (no option selected).";
+        if (c.Custom) return $"User entered a custom response (outside the offered options): {c.Value}";
+        return $"User selected: {c.Value}";
+    }
+
+    // ── M-F: bailout-aware interactive prompts ───────────────────────────────────
+    // The base Confirm/Select/MultiSelect lock the user into the offered set. These *Choice
+    // variants add two affordances so the user is never trapped: "enter custom" (type a free-text
+    // value outside the option set) and "cancel" (back out entirely, returning a Cancelled result
+    // the caller handles gracefully — no wasted extra model turn). The base methods are unchanged,
+    // so every existing caller keeps its current behaviour; only callers that opt into the *Choice
+    // variants (and the ask_user tool) gain the bailout. NOTE: Spectre's blocking selection prompt
+    // does not expose a raw Esc key hook, so cancellation is delivered via an explicit "cancel"
+    // affordance (labelled with Esc for discoverability) rather than a literal key intercept.
+    public const string CustomAffordanceLabel = "\u270e enter custom\u2026";
+    public const string CancelAffordanceLabel = "\u2717 cancel (Esc)";
+
+    /// <summary>Outcome of a bailout-aware prompt. Exactly one of Cancelled / Custom is true, or
+    /// both false for a normal in-set selection. <see cref="Value"/> holds the chosen option, the
+    /// typed free text (Custom), or empty (Cancelled).</summary>
+    public readonly record struct PromptChoice(bool Cancelled, bool Custom, string Value)
+    {
+        public static PromptChoice Cancel() => new(true, false, string.Empty);
+        public static PromptChoice CustomText(string v) => new(false, true, v);
+        public static PromptChoice Picked(string v) => new(false, false, v);
+    }
+
+    // Shared resolver for the scripted (StdioMode / InputOverride) path: a leading '=' means a
+    // typed custom value (rest of line); "cancel"/"esc"/empty means cancel; a 1-based index picks
+    // a choice; an out-of-range index equal to count+1 maps to the custom affordance (then cancel
+    // if no follow-up text is available).
+    private static PromptChoice ResolveScriptedBailout(string? raw, List<string> list)
+    {
+        var input = (raw ?? string.Empty).Trim();
+        if (input.Length == 0) return PromptChoice.Cancel();
+        if (input.StartsWith('=')) return PromptChoice.CustomText(input[1..].Trim());
+        if (input.Equals("cancel", StringComparison.OrdinalIgnoreCase)
+            || input.Equals("esc", StringComparison.OrdinalIgnoreCase))
+            return PromptChoice.Cancel();
+        if (int.TryParse(input, out int idx) && idx >= 1 && idx <= list.Count)
+            return PromptChoice.Picked(list[idx - 1]);
+        // Anything else is treated as a literal typed custom value.
+        return PromptChoice.CustomText(input);
+    }
+
+    /// <summary>Single-select with custom + cancel bailout. See <see cref="PromptChoice"/>.</summary>
+    public static PromptChoice SelectChoice(string title, IEnumerable<string> choices)
+    {
+        var list = choices.ToList();
+        lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+        TuiSuspend();
+        int _resTop = SafeCursorTop();
+
+        if (StdioMode)
+        {
+            var emit = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+            EmitJson("select_request", D(("prompt", title), ("choices", emit), ("bailout", true)));
+            return ResolveScriptedBailout(InputOverride.ReadLine(), list);
+        }
+        if (InputOverride != Console.In)
+            return ResolveScriptedBailout(InputOverride.ReadLine(), list);
+
+        var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        var sel = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
+                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
+                .AddChoices(withBail));
+        ErasePromptResidue(_resTop);
+
+        if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
+        if (sel == CustomAffordanceLabel)
+        {
+            var typed = Prompt($"{title} (custom)", null);
+            return string.IsNullOrWhiteSpace(typed) ? PromptChoice.Cancel() : PromptChoice.CustomText(typed);
+        }
+        return PromptChoice.Picked(sel);
+    }
+
+    /// <summary>Confirm with cancel bailout: returns yes/no, or Cancelled when the user backs out.</summary>
+    public static PromptChoice ConfirmChoice(string message, bool defaultValue = true)
+    {
+        lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+        TuiSuspend();
+        int _resTop = SafeCursorTop();
+
+        var opts = new List<string> { "Yes", "No" };
+        if (StdioMode)
+        {
+            EmitJson("confirm_request", D(("prompt", message), ("default", defaultValue), ("bailout", true)));
+            var input = (InputOverride.ReadLine() ?? string.Empty).Trim();
+            if (input.Equals("cancel", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("esc", StringComparison.OrdinalIgnoreCase))
+                return PromptChoice.Cancel();
+            if (input.Length == 0) return PromptChoice.Picked(defaultValue ? "yes" : "no");
+            return PromptChoice.Picked(input.StartsWith("y", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
+        }
+        if (InputOverride != Console.In)
+        {
+            var input = (InputOverride.ReadLine() ?? string.Empty).Trim();
+            if (input.Equals("cancel", StringComparison.OrdinalIgnoreCase)
+                || input.Equals("esc", StringComparison.OrdinalIgnoreCase))
+                return PromptChoice.Cancel();
+            if (input.Length == 0) return PromptChoice.Picked(defaultValue ? "yes" : "no");
+            return PromptChoice.Picked(input.StartsWith("y", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
+        }
+
+        var sel = AnsiConsole.Prompt(
+            new SelectionPrompt<string>()
+                .Title($"  [{C.Prompt}]{Esc(message)}[/]")
+                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
+                .AddChoices(new List<string>(opts) { CancelAffordanceLabel }));
+        ErasePromptResidue(_resTop);
+        if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
+        return PromptChoice.Picked(sel.Equals("Yes", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
+    }
+
+    /// <summary>Multi-select with custom + cancel bailout. On a normal pick <see cref="PromptChoice.Value"/>
+    /// is the selected options joined by ", "; Custom carries typed free text; Cancelled when backed out.</summary>
+    public static PromptChoice MultiSelectChoice(string title, IEnumerable<string> choices)
+    {
+        var list = choices.ToList();
+        lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+        TuiSuspend();
+        int _resTop = SafeCursorTop();
+
+        if (StdioMode)
+        {
+            var emit = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+            EmitJson("multiselect_request", D(("prompt", title), ("choices", emit), ("bailout", true)));
+            return ResolveScriptedMulti(InputOverride.ReadLine(), list);
+        }
+        if (InputOverride != Console.In)
+            return ResolveScriptedMulti(InputOverride.ReadLine(), list);
+
+        // Spectre multi-select: add the custom/cancel affordances as selectable rows. If the user
+        // selects cancel, treat the whole prompt as cancelled; if they select custom, follow up with
+        // a free-text line.
+        var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        var picked = AnsiConsole.Prompt(
+            new MultiSelectionPrompt<string>()
+                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
+                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
+                .UseConverter(Esc)
+                .NotRequired()
+                .AddChoices(withBail))
+            .ToList();
+        ErasePromptResidue(_resTop);
+
+        if (picked.Contains(CancelAffordanceLabel) || picked.Count == 0)
+            return PromptChoice.Cancel();
+        if (picked.Contains(CustomAffordanceLabel))
+        {
+            var typed = Prompt($"{title} (custom)", null);
+            return string.IsNullOrWhiteSpace(typed) ? PromptChoice.Cancel() : PromptChoice.CustomText(typed);
+        }
+        return PromptChoice.Picked(string.Join(", ", picked));
+    }
+
+    private static PromptChoice ResolveScriptedMulti(string? raw, List<string> list)
+    {
+        var input = (raw ?? string.Empty).Trim();
+        if (input.Length == 0) return PromptChoice.Cancel();
+        if (input.StartsWith('=')) return PromptChoice.CustomText(input[1..].Trim());
+        if (input.Equals("cancel", StringComparison.OrdinalIgnoreCase)
+            || input.Equals("esc", StringComparison.OrdinalIgnoreCase))
+            return PromptChoice.Cancel();
+        var selected = new List<string>();
+        foreach (var part in input.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            if (int.TryParse(part.Trim(), out int idx) && idx >= 1 && idx <= list.Count)
+                selected.Add(list[idx - 1]);
+        return selected.Count > 0 ? PromptChoice.Picked(string.Join(", ", selected)) : PromptChoice.Cancel();
     }
 
     public static List<string> ParseOptions(string? raw)
@@ -704,13 +923,20 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode)
+            {
                 // agent key is added only when non-null so single-agent stream frames are
                 // byte-identical; parallel callers pass the specialist name so the web app
                 // can demultiplex concurrent sub-agent streams. (Dictionary entries are not
                 // covered by WhenWritingNull, so the key must be omitted explicitly.)
-                EmitJson("stream", agentName is null
+                // The reasoning flag is attached ONLY under the ACP adapter so it can split
+                // agent_message_chunk vs agent_thought_chunk; off --acp the NDJSON contract is
+                // unchanged (AcpActive is always false there).
+                var streamFields = agentName is null
                     ? D(("text", text))
-                    : D(("text", text), ("agent", agentName)));
+                    : D(("text", text), ("agent", agentName));
+                if (AcpActive && muted) streamFields["reasoning"] = true;
+                EmitJson("stream", streamFields);
+            }
             else if (ViaDriver)
                 // Live-region TUI: feed the chunk to the driver, which commits complete
                 // lines into scrollback and shows the partial tail live above the footer. The
@@ -865,6 +1091,23 @@ public static partial class MuxConsole
             if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
         });
+    }
+
+    /// <summary>
+    /// Structured signal for the size-tiered delegation engine: which posture a sub-agent result
+    /// took (inline | summary | pointer | pointer-stub | summary-fallback). Surfaced to the web app
+    /// / stdio via the JSON event stream; no-op visual side effect (the muted text line is written
+    /// separately by the caller).
+    /// </summary>
+    public static void EmitDelegationCompacted(string agent, int rawLen, string posture, string? handle)
+    {
+        // Structured event for the web app / stdio JSON stream ONLY. EmitJson writes a raw NDJSON
+        // line to stdout (or the ACP sink); in interactive TUI/console mode that line would leak
+        // into the rendered transcript (the "{\"type\":\"delegation_compacted\",...}" artifact).
+        // Gate it like every other EmitJson caller: emit in stdio/serve or ACP transport, never in
+        // the interactive console. The muted human-readable line is written separately by the caller.
+        if (!StdioMode && AcpSink is null && !AcpActive) return;
+        EmitJson("delegation_compacted", D(("agent", agent), ("rawLen", rawLen), ("posture", posture), ("handle", handle)));
     }
 
     public static void WriteMuted(string message)
@@ -1342,6 +1585,12 @@ public static partial class MuxConsole
             Summary = summary,
             Timestamp = DateTimeOffset.UtcNow
         });
+
+        // Deep-memory mid-turn activity: a streamed tool result is real progress, so mark the
+        // gatherer dirty. Its timer-gated loop (reflectionAgent.pollIntervalSeconds) then reflects
+        // on the next tick instead of waiting for the next USER turn - so a long autonomous turn
+        // (many tool calls) is captured as it happens. No-op in standard mode; never fires when idle.
+        MuxSwarm.Utils.Memory.ReflectionGatherer.Touch();
     }
 
     public static void WriteToolResult(string agent, string tool, string fullResult, bool swarm = false)

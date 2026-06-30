@@ -21,6 +21,33 @@ public static class HookWorker
     private static Task? _loopTask;
     private static List<HookConfig> _hooks = [];
 
+    private static bool _enabled = true;
+
+    /// <summary>Session enable gate (/hooks on|off). When false, events are still enqueued but the
+    /// process loop drops them without running any command. Default true so configured hooks run.
+    /// Flipping to true after the worker has started will lazily start any persistent hook processes
+    /// that were skipped because the session booted disabled.</summary>
+    public static bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            bool wasOff = !_enabled;
+            _enabled = value;
+            // Re-enabling after a disabled boot: start persistent processes that never came up.
+            if (value && wasOff && _cts is not null && _persistentProcesses.IsEmpty)
+            {
+                try { StartPersistentHooks(); } catch { /* best-effort */ }
+            }
+        }
+    }
+
+    /// <summary>The count of currently-loaded hook configs (for /hooks status).</summary>
+    public static int Count => _hooks.Count;
+
+    /// <summary>Snapshot of the loaded hooks for status display.</summary>
+    public static IReadOnlyList<HookConfig> Loaded => _hooks;
+
     /// <summary>
     /// Long-lived processes for persistent hooks. Keyed by hook ID.
     /// These receive events as NDJSON lines on stdin for the entire session.
@@ -48,14 +75,19 @@ public static class HookWorker
             {
                 if (!MuxConsole.Confirm("Proceed with hooks enabled?", defaultValue: false))
                 {
-                    _hooks = [];
-                    MuxConsole.WriteInfo("Hooks disabled for this session.");
+                    // Mute hook EXECUTION for the session but KEEP the configs loaded, so /hooks shows
+                    // the real count and /hooks on can re-enable them without a restart. (Previously
+                    // this wiped _hooks, which made the count read 0 after a decline.)
+                    Enabled = false;
+                    MuxConsole.WriteInfo("Hooks disabled for this session - re-enable with /hooks on.");
                 }
             }
         }
 
         _cts = new CancellationTokenSource();
-        StartPersistentHooks();
+        // Only spin up persistent hook processes when execution is enabled; otherwise they start
+        // lazily when the user runs /hooks on (the process loop also gates on Enabled).
+        if (Enabled) StartPersistentHooks();
         _loopTask = Task.Run(() => HookProcessLoopAsync(_cts.Token));
     }
 
@@ -132,6 +164,8 @@ public static class HookWorker
         {
             await foreach (var hookEvent in Channel.Reader.ReadAllAsync(ct))
             {
+                // /hooks off: drain the channel but run nothing (session-level mute).
+                if (!Enabled) continue;
                 var matched = _hooks.Where(h => Matches(h, hookEvent)).ToList();
                 if (matched.Count == 0) continue;
 

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 
 namespace MuxSwarm.Utils.Tui;
 
@@ -28,13 +28,29 @@ internal sealed class TuiDriver
     // Static per-session overhead (system prompt + serialized tool schemas), shown as a
     // breakdown in the footer so a fresh session\u0027s baseline context is explained.
     private uint _sysTokens, _toolTokens;
-    private bool _plan, _ultra, _psub, _sub;
+    private bool _plan, _ultra, _psub, _sub, _giga;
     private string? _effort;   // reasoning-effort chip (low/med/high), null = hidden
     private string? _sessionId; // active session id badge, null = hidden
 
     // streaming state - partial (un-newlined) tail shown live above the footer
     private readonly StringBuilder _streamTail = new();
     private bool _streaming;
+    // True until the FIRST answer line of the current streamed assistant block is committed, so a
+    // single grey lead dot (Claude-Code style) is stamped once per OUTPUT BLOCK - not per line and
+    // not per turn. Set in BeginStream, cleared when the first non-reasoning line commits.
+    private bool _streamBlockDotPending;
+    // Left margin for streamed agent prose/reasoning so every line aligns under the lead dot's TEXT.
+    // The output dot is rendered "  *" (dot at col 2, matching the turn-header marker and tool-call
+    // dot), so its text begins at col 4. The first line of a block uses the dot prefix; later lines
+    // use this 4-space indent so the whole block reads as one column under "* <agent>".
+    private const string StreamIndent = "    ";
+    // Stream repaint coalescing: model tokens arrive many-per-second and a full live-frame rebuild
+    // per token (BuildLiveFrame re-runs the markdown renderer over the whole growing tail) is what
+    // makes non-ACP streaming look chunky. We mark the live tail dirty per chunk but only actually
+    // repaint on a ~30fps budget; completed-line commits + EndStream still flush immediately, so no
+    // content is ever lost - only the intra-frame live-tail preview is throttled.
+    private long _lastStreamPaintTicks;
+    private const long StreamPaintIntervalTicks = TimeSpan.TicksPerMillisecond * 33;
     // True when the current stream tail is reasoning content (rendered grey+italic to distinguish
     // it from the final answer). Flushed/reset on a type switch so reasoning and answer never blend.
     private bool _streamReasoning;
@@ -68,6 +84,65 @@ internal sealed class TuiDriver
     private IReadOnlyList<(string Agent, string Status, string Tint)> _subAgents = System.Array.Empty<(string, string, string)>();
     private int _subAgentFrame;
 
+    // v0.12.0 M1 - inline Agent View dashboard. The backslash key foregrounds a keyboard-
+    // navigable session list over the running sub-agents (the existing _subAgents snapshot);
+    // Enter attaches the selected agent's buffered stream through the same sub-agent expand
+    // machinery used by Ctrl+E. Rendered INSIDE the live region (BuildLiveFrame) so scrollback
+    // is preserved - never an alt-screen takeover. Bypassed entirely when not open, so the
+    // off-dashboard path is byte-identical to today's frame.
+    private readonly AgentView _agentView = new();
+    private volatile bool _agentViewActive;
+    // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
+    // this agent (toggling its panel) instead of snapping back to the latest-registered
+    // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
+    // focus yet (Ctrl+E falls back to the most-recent running sub-agent).
+    private volatile string? _foregroundAgent;
+
+    // v0.12.0 M2 - team TaskBoard strip (Ctrl+T). A decoupled provider supplies a point-in-time
+    // board snapshot (tally + flattened rows) so the driver never references State/Teams directly.
+    // Null provider or null snapshot => no board => the strip never renders (off-team byte-identical).
+    private volatile bool _taskBoardVisible;
+    // Scroll offset into the (possibly long) task list while the Ctrl+T strip is open. Up/Down at
+    // the idle prompt (empty buffer) adjust it; reset to 0 whenever the strip is toggled.
+    private int _taskBoardOffset;
+    // Rows shown in the strip viewport - kept in sync with TaskBoardStrip's maxRows so the driver
+    // clamps the offset against the same window the component renders.
+    private const int TaskBoardWindow = 5;
+    public bool TaskBoardVisible => _taskBoardVisible;
+    public Func<(int Total, int Done, int InProgress, int Blocked, int Failed,
+        IReadOnlyList<(string Id, string Status, string? Owner, string Subject, int Artifacts)> Rows)?>? TaskBoardProvider { get; set; }
+
+    // M4 Mailbox: per-agent message-log provider for the Agent View 'm' key. Given an agent name,
+    // returns pre-formatted markup rows of that agent's inbox history (oldest-first), or empty.
+    // Null when no team mailbox is active (the 'm' key is then a no-op).
+    public Func<string, IReadOnlyList<string>>? MessageLogProvider { get; set; }
+
+    // Opens the inline Agent View dashboard from the IDLE prompt (the backslash key). MuxConsole
+    // wires this to TuiEnterAgentView(), which builds the running-agent snapshot + body provider
+    // from the live capture registry. Null or returns false => no agents running => backslash falls
+    // through to the editor as a literal char. Mirrors the mid-turn EscapeKeyListener onAgents path.
+    public Func<bool>? AgentViewOpener { get; set; }
+
+    /// <summary>
+    /// Optional callback to expand/collapse the live sub-agent panel at the idle prompt, mirroring
+    /// the mid-turn EscapeKeyListener Ctrl+E path (MuxConsole.TuiExpandLatestInline). When set and
+    /// sub-agents are running, the prompt's Ctrl+E targets the live panel (toggle open/closed)
+    /// instead of the transcript NAV overlay, so a /background or /swarm panel can be closed from
+    /// the prompt. Returns true if it opened a panel. Set by the console wiring alongside
+    /// AgentViewOpener; null at the top-level menu.
+    /// </summary>
+    public Func<bool>? OnSubAgentExpand { get; set; }
+
+    /// <summary>
+    /// Optional idle-prompt picker for DETACHED interactive sessions (v0.12.0 /detach). When the
+    /// backslash key is pressed at the prompt and no sub-agents are running to foreground, this is
+    /// invoked; if it returns a non-null command string (e.g. "/attach sess2") the ReadLine loop
+    /// returns that line so it routes through the normal /attach dispatch. Returns null when the
+    /// user cancels or there is nothing to attach (then backslash inserts literally). Set by the
+    /// console wiring; null at construction.
+    /// </summary>
+    public Func<string?>? AttachPicker { get; set; }
+
     // Mid-turn EXPAND slot (generic). Any expandable block - a running sub-agent's buffered
     // transcript OR a finished large tool result - can be toggled open with Ctrl+E into a single
     // bounded panel rendered INSIDE the repaintable live region (see BuildLiveFrame), never
@@ -90,6 +165,13 @@ internal sealed class TuiDriver
     // result lands. Flushed as its own committed line if any other content commits first.
     private (string Tool, string? Args)? _pendingTool;
 
+    // Most-recent RESOLVED tool result, HELD in the live region so its completion dot can pulse
+    // SLOWLY (a "settling" beat, ~3x slower than the in-flight dot). It is flushed down to static
+    // scrollback the instant any other content commits (next tool call / stream / line), so only
+    // ONE completion dot ever pulses at a time, just above the footer. Stores everything needed to
+    // re-emit the merged line + retain its expandable block on flush. Null = nothing settling.
+    private (string Tool, string? Args, string Result, bool Error, bool Expandable)? _settling;
+
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
     // (total session age, shown by the session timer); _loopStart is set when an agentic
     // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
@@ -111,6 +193,26 @@ internal sealed class TuiDriver
     /// (docked-below separator). 0 = tight. Owned by the caller (console.delegationSpacing).</summary>
     private int _blockGap = 1;
     public void SetBlockGap(int lines) => _blockGap = Math.Max(0, lines);
+
+    /// <summary>Shade the user input/compose field on a band (console.inputHighlight).</summary>
+    private bool _inputHighlight = true;
+    public void SetInputHighlight(bool on) => _inputHighlight = on;
+
+    /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).</summary>
+    private bool _cardMarkdown = true;
+    public void SetCardMarkdown(bool on) => _cardMarkdown = on;
+
+    /// <summary>Capture a multi-line paste as one literal block (console.bracketedPaste, DECSET 2004)
+    /// instead of submitting on the first embedded newline.</summary>
+    private bool _bracketedPaste = true;
+    public void SetBracketedPaste(bool on)
+    {
+        _bracketedPaste = on;
+        try { _term.Write(on ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff); _term.Flush(); } catch { /* ignore */ }
+    }
+    // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
+    // stashed here and replayed through the normal edit path so nothing is dropped.
+    private readonly Queue<ConsoleKeyInfo> _ungetq = new();
 
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
@@ -212,13 +314,13 @@ internal sealed class TuiDriver
     /// Both are filtered views of <see cref="TuiCommands.All"/> (the single canonical list
     /// kept in sync with App.cs's command switch + Help.cs), so no command is ever missing
     /// from the preview while a different one works.</summary>
-    private (string Cmd, string Desc)[] _paletteEntries = TuiCommands.Session;
+    private (string Cmd, string Desc)[] _paletteEntries = TuiCommands.SessionUnified;
 
     /// <summary>Loaded skills catalog for the live "/skill" autocomplete preview.</summary>
     private IReadOnlyList<(string Name, string Desc)> _skills = Array.Empty<(string, string)>();
 
     /// <summary>Switch the as-you-type palette between session and top-level command sets.</summary>
-    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.Repl : TuiCommands.Session;
+    public void SetPaletteScope(bool topLevel) => _paletteEntries = topLevel ? TuiCommands.ReplUnified : TuiCommands.SessionUnified;
 
     /// <summary>Set the skills catalog backing the live "/skill" autocomplete preview.</summary>
     public void SetSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)
@@ -271,9 +373,9 @@ internal sealed class TuiDriver
     public int Height => Math.Max(10, _term.Height);
 
     /// <summary>Update the context meter / mode badges and repaint the live region.</summary>
-    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0)
+    public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0, bool giga = false)
     {
-        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached;
+        _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached; _giga = giga;
         Repaint();
     }
 
@@ -334,6 +436,7 @@ internal sealed class TuiDriver
     {
         if (markupLines.Count == 0) { Repaint(); return; }
         FlushTableBuffer();
+        FlushSettlingResult();
         FlushPendingToolCall();
         _thinkingText = null;
         // The retained transcript keeps any expandable tool-result entries armed for Ctrl+E /
@@ -369,6 +472,7 @@ internal sealed class TuiDriver
     /// </summary>
     public void BeginToolCall(string tool, string? args)
     {
+        FlushSettlingResult();
         FlushPendingToolCall();
         _pendingTool = (tool, args);
         _thinkingText = null;
@@ -385,27 +489,15 @@ internal sealed class TuiDriver
         var (tool, args) = _pendingTool ?? ("", null);
         _pendingTool = null;
         _thinkingText = null;
-        // "Large" results (informative-line count above the configured threshold) become
-        // Ctrl+E-expandable: the merged line advertises the affordance and we retain the full
-        // text in memory so Ctrl+E can re-commit it as a full panel below.
         int infoLines = (resultText ?? "").Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
         bool expandable = _collapseToolLines > 0 && infoLines > _collapseToolLines;
-        string toolName = string.IsNullOrEmpty(tool) ? "tool" : tool;
-        var merged = Lane(TuiComponents.ToolCallResultMerged(tool, args, resultText, error, expandable));
-        if (expandable && merged.Count > 0)
-        {
-            // Retain the collapsed line WITH its full-panel data so the NAV cursor can toggle
-            // it open/closed in place; commit only the collapsed line to live scrollback.
-            RetainExpandable(merged[0], toolName, resultText ?? "", error);
-            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
-            TrimTranscript();
-            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
-        }
-        else
-        {
-            CommitMirrored(merged);
-        }
-        _pendingGap = true;
+        // Flush any PRIOR settling result to static scrollback, then HOLD this newest one in the
+        // live region so its completion dot pulses slowly until the next event supersedes it. This
+        // is the only way the most-recent completed dot can animate (committed scrollback can't be
+        // repainted). The held line still retains its expandable block on flush (see FlushSettling).
+        FlushSettlingResult();
+        _settling = (tool, args, resultText ?? "", error, expandable);
+        Repaint();
     }
 
     /// <summary>
@@ -423,6 +515,7 @@ internal sealed class TuiDriver
     /// </summary>
     public bool EnterViewMode()
     {
+        FlushSettlingResult();
         if (_navActive || _transcript.Count == 0) return false;
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
@@ -434,6 +527,8 @@ internal sealed class TuiDriver
 
     public bool ExpandLastBlock()
     {
+        // Flush any still-settling result into the transcript so it is openable in NAV.
+        FlushSettlingResult();
         // Find the most-recent expandable transcript entry and open NAV positioned on it,
         // pre-expanded. Expansion is a reversible in-overlay toggle (not a one-way commit),
         // so the user can collapse it again or scroll to other blocks.
@@ -457,6 +552,9 @@ internal sealed class TuiDriver
     /// </summary>
     public bool ExpandLatestInline()
     {
+        // A just-resolved result may still be HELD in the settling slot (pulsing) and not yet in
+        // the transcript - flush it first so its expandable block exists to open.
+        FlushSettlingResult();
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
             if (_transcript[i].Expandable is not null) { idx = i; break; }
@@ -529,12 +627,127 @@ internal sealed class TuiDriver
         if (_expandKind == ExpandKind.SubAgent) ClearExpanded();
     }
 
+    /// <summary>If a sub-agent panel is currently open, collapse it and return true; else return
+    /// false. Lets Ctrl+E act as a true toggle - close whatever is open - instead of recomputing a
+    /// (possibly different) target agent and opening THAT, which read as "collapse changed the
+    /// content instead of closing" when focus had drifted. Caller holds the console lock.</summary>
+    public bool CollapseOpenSubAgentPanel()
+    {
+        if (_expandKind != ExpandKind.SubAgent) return false;
+        ClearExpanded();
+        return true;
+    }
+
     /// <summary>True if <paramref name="agent"/> is the sub-agent currently expanded in the live
     /// region. Lets the completion path keep a user-opened panel open through finish (instead of
     /// snapping it collapsed) while still committing the expandable collapsed line. Caller holds
     /// the console lock.</summary>
     public bool IsSubAgentExpanded(string agent) =>
         _expandKind == ExpandKind.SubAgent && string.Equals(_expandKey, $"sub:{agent}", StringComparison.Ordinal);
+
+    /// <summary>The sub-agent most recently foregrounded through the backslash dashboard, or
+    /// null when none has been chosen this turn. Lets the Ctrl+E quick-open prefer the user's
+    /// selected focus over the latest-registered capture. Caller holds the console lock.</summary>
+    public string? ForegroundAgent => _foregroundAgent;
+
+    /// <summary>Clear the sticky foreground focus (e.g. when its capture finishes). Caller
+    /// holds the console lock.</summary>
+    public void ClearForegroundAgent(string agent)
+    {
+        if (string.Equals(_foregroundAgent, agent, StringComparison.Ordinal)) _foregroundAgent = null;
+    }
+
+    /// <summary>
+    /// Foreground the inline Agent View dashboard (v0.12.0 M1, the backslash key). Seeds the
+    /// session list from the current live sub-agent snapshot and runs a small key loop ON THE
+    /// CALLING THREAD (the mid-turn EscapeKeyListener thread, exactly like the Ctrl+G view
+    /// overlay) so there is never a second concurrent key reader. Up/Down move the selection,
+    /// Enter foregrounds the selected agent's buffered stream via <paramref name="bodyProvider"/>
+    /// + the existing sub-agent expand machinery, Esc/backslash/q close. Rendered inline through
+    /// the live region (BuildLiveFrame) - scrollback preserved, no alt-screen takeover. The caller
+    /// holds the console lock for the whole session (so concurrent commits defer), and the
+    /// snapshot is supplied by the caller because the driver does not own the capture buffers.
+    /// No-op (returns false) when there are no running agents or NAV already owns the screen.
+    /// </summary>
+    public bool EnterAgentView(
+        IReadOnlyList<(string Agent, string Status, string Tint)> snapshot,
+        Func<string, string?> bodyProvider)
+    {
+        if (_navActive || _agentViewActive) return false;
+        if (snapshot.Count == 0) return false;
+
+        _agentView.SetRows(snapshot, DateTime.UtcNow);
+        _agentView.Open();
+        _agentViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                try { key = Console.ReadKey(intercept: true); }
+                catch (InvalidOperationException) { break; }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
+
+                // m: audit the selected agent's mailbox (M4). Commits its message-log rows to the
+                // transcript so cross-agent chatter is visible on demand (off by default - nothing
+                // shows until the user presses m). No-op when no team mailbox is active.
+                if ((key.Key == ConsoleKey.M || key.KeyChar == 'm') && MessageLogProvider is { } mlog)
+                {
+                    string? sel = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (sel is not null)
+                    {
+                        var rows = mlog(sel);
+                        _agentViewActive = false;
+                        _agentView.Close();
+                        if (rows.Count == 0)
+                            Commit(new[] { $"[{TuiComponents.Dim}]\u00b7 no messages for {sel}[/]" });
+                        else
+                            Commit(rows);
+                        Repaint();
+                        return true;
+                    }
+                    continue;
+                }
+
+                // Esc / backslash / q: close the dashboard and return to the foregrounded stream.
+                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)
+                    break;
+
+                // Enter: foreground (attach) the selected agent's buffered transcript. Reuses the
+                // proven ToggleSubAgentExpanded bounded-panel path so the attached stream renders
+                // in-region and keeps growing live; closing the dashboard hands the screen back.
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    string? agent = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (agent is not null)
+                    {
+                        string body = bodyProvider(agent) ?? "";
+                        _agentViewActive = false;
+                        _agentView.Close();
+                        // Stick Ctrl+E to this agent from now on (issue #1).
+                        _foregroundAgent = agent;
+                        if (body.Length > 0 && !IsSubAgentExpanded(agent))
+                            ToggleSubAgentExpanded(agent, body);
+                        Repaint();
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            _agentViewActive = false;
+            _agentView.Close();
+            Repaint();
+        }
+        return true;
+    }
 
     /// <summary>
     /// Flush a pending tool call as its own committed line (used when the result will render
@@ -549,9 +762,29 @@ internal sealed class TuiDriver
         _pendingGap = true;
     }
 
+    /// <summary>Flush the held "settling" tool result down to static scrollback (dot frozen) and
+    /// retain its expandable block. No-op when nothing is settling. Called from every commit
+    /// chokepoint so the next event supersedes the pulse. Caller holds the console lock.</summary>
+    public void FlushSettlingResult()
+    {
+        if (_settling is not ( {} s)) return;
+        _settling = null;
+        string toolName = string.IsNullOrEmpty(s.Tool) ? "tool" : s.Tool;
+        var merged = Lane(TuiComponents.ToolCallResultMerged(s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1));
+        if (s.Expandable && merged.Count > 0)
+        {
+            RetainExpandable(merged[0], toolName, s.Result, s.Error);
+            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
+            TrimTranscript();
+            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
+        }
+        else CommitMirrored(merged);
+        _pendingGap = true;
+    }
+
     // --- streaming -----------------------------------------------------------
 
-    public void BeginStream() { FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; Repaint(); }
+    public void BeginStream() { FlushSettlingResult(); FlushPendingToolCall(); FlushTableBuffer(); if (_inFence) FlushCodeBuffer(); _streaming = true; _thinkingText = null; _streamTail.Clear(); _streamReasoning = false; _streamBlockDotPending = true; _lastStreamPaintTicks = 0; Repaint(); }
 
     /// <summary>
     /// Feed a chunk of streamed assistant text. Complete lines (split on '\n') are committed
@@ -562,16 +795,26 @@ internal sealed class TuiDriver
     {
         if (string.IsNullOrEmpty(text)) return;
         // Switching between reasoning and answer text: flush whatever partial tail we have under
-        // the OLD style first, so the two never share a rendered line.
+        // the OLD style first, so the two never share a rendered line. A switch must paint
+        // immediately (bypass the stream throttle) so the boundary is shown without delay.
+        bool forcePaint = false;
         if (reasoning != _streamReasoning && _streamTail.Length > 0)
         {
             var pending = _streamTail.ToString();
             _streamTail.Clear();
             CommitStreamLine(pending);
+            forcePaint = true;
         }
         _streamReasoning = reasoning;
         _streamTail.Append(text);
-        FlushCompleteStreamLines();
+        bool committed = FlushCompleteStreamLines();
+        // A completed line repainted via CommitMirrored already; only the leftover live tail needs
+        // a frame. Coalesce those tail-only repaints to a ~30fps budget so a burst of tokens does
+        // not trigger a full live-frame rebuild each. A type switch (forcePaint) and EndStream are
+        // unthrottled so no boundary or final token is ever left unpainted.
+        long now = DateTime.UtcNow.Ticks;
+        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks) return;
+        _lastStreamPaintTicks = now;
         Repaint();
     }
 
@@ -597,6 +840,43 @@ internal sealed class TuiDriver
     /// drives the shared spinner. An empty list clears the panel. Repaints only when the snapshot
     /// actually changed, so the ticker does not thrash the region when nothing moved.
     /// </summary>
+    /// <summary>Toggle the team TaskBoard strip (Ctrl+T). No-op visual when no board is active.</summary>
+    public bool ToggleTaskBoard()
+    {
+        _taskBoardVisible = !_taskBoardVisible;
+        _taskBoardOffset = 0;
+        return _taskBoardVisible;
+    }
+
+    /// <summary>Toggle the TaskBoard strip and repaint IN PLACE (Ctrl+T). The strip changes the
+    /// live frame height, so this drives a normal diff/erase+repaint via <see cref="Repaint"/>
+    /// (the same path the mid-turn Ctrl+E expand uses) rather than a full ClearScreen redraw -
+    /// a ClearScreen would re-anchor the frame at the top of the viewport and strand the footer
+    /// in scrollback as streaming resumed (the buffer-artifact bug). Safe from the listener
+    /// thread: the caller holds the console lock, exactly like every other repaint.</summary>
+    public void ToggleTaskBoardRepaint()
+    {
+        _taskBoardVisible = !_taskBoardVisible;
+        _taskBoardOffset = 0;
+        Repaint();
+    }
+
+    /// <summary>Scroll the open TaskBoard strip by <paramref name="delta"/> rows (Up/Down at the
+    /// idle prompt). Clamped to [0, rows-window]; a no-op when the strip is closed or there is no
+    /// board. Returns true if it consumed the key (so the caller skips history nav).</summary>
+    public bool ScrollTaskBoard(int delta)
+    {
+        if (!_taskBoardVisible) return false;
+        if (TaskBoardProvider?.Invoke() is not { } bd) return false;
+        int maxOffset = Math.Max(0, bd.Rows.Count - TaskBoardWindow);
+        if (maxOffset == 0) return false;   // nothing to scroll - let the key fall through
+        int next = Math.Clamp(_taskBoardOffset + delta, 0, maxOffset);
+        if (next == _taskBoardOffset) return true;  // consumed (at an edge) but no repaint needed
+        _taskBoardOffset = next;
+        Repaint();
+        return true;
+    }
+
     public void SetSubAgentActivity(IReadOnlyList<(string Agent, string Status, string Tint)> agents, int frame)
     {
         bool changed = frame != _subAgentFrame || agents.Count != _subAgents.Count;
@@ -607,6 +887,11 @@ internal sealed class TuiDriver
         if (!changed) return;
         _subAgents = agents;
         _subAgentFrame = frame;
+        // Driven by the ~100ms BACKGROUND ticker thread (under ConsoleLock via
+        // PushSubAgentActivity). Repaint() now serializes on that same lock, so painting live is
+        // safe even while the idle-prompt ReadLine loop is active (_inInput) - the spinner/activity
+        // strip animates at the prompt instead of freezing. (g12.25 deferred this paint to dodge a
+        // torn-frame race; the real fix was locking the idle-prompt repaints - see Repaint().)
         Repaint();
     }
 
@@ -622,10 +907,12 @@ internal sealed class TuiDriver
         if (_inFence) FlushCodeBuffer();
         // Any table rows buffered up to the very end of the turn are rendered now.
         FlushTableBuffer();
-        if (!hadTail) Repaint();
+        // Always repaint at end-of-stream: the per-chunk live-tail repaint is throttled, so the
+        // final partial frame may be stale; this guarantees the last tokens are on screen.
+        Repaint();
     }
 
-    private void FlushCompleteStreamLines()
+    private bool FlushCompleteStreamLines()
     {
         string s = _streamTail.ToString();
         int nl;
@@ -640,7 +927,9 @@ internal sealed class TuiDriver
             _streamTail.Clear();
             _streamTail.Append(s);
             foreach (var raw in commit) CommitStreamLine(raw);
+            return true;
         }
+        return false;
     }
 
     /// <summary>
@@ -683,10 +972,33 @@ internal sealed class TuiDriver
         // run through the markdown renderer (reasoning is free-form thought, not formatted output).
         if (_streamReasoning)
         {
-            CommitMirrored(Lane(new[] { $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]" }));
+            // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
+            // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
+            string r = string.IsNullOrWhiteSpace(raw)
+                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+            CommitMirrored(Lane(new[] { r }));
             return;
         }
-        CommitMirrored(Lane(new[] { TuiMarkdown.ToMarkup(raw) }));
+        string built = TuiMarkdown.ToMarkup(raw);
+        // Align every answer line to the col-2 text margin (matching the turn header and the dot's
+        // text), so continuation lines sit under the message instead of falling back to col 0. The
+        // FIRST non-blank line of the block carries the grey lead dot IN PLACE OF the indent (the
+        // dot sits at col 0, its text at col 2 - same margin); later lines get a plain 2-col indent.
+        // Claude-Code style: one quiet marker per block, never on reasoning, blanks, code, or tables.
+        if (!string.IsNullOrWhiteSpace(raw))
+        {
+            if (_streamBlockDotPending)
+            {
+                _streamBlockDotPending = false;
+                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
+            }
+            else
+            {
+                built = StreamIndent + built;
+            }
+        }
+        CommitMirrored(Lane(new[] { built }));
     }
 
     /// <summary>Emit the one-line separator owed after a tool block, if any.</summary>
@@ -742,9 +1054,24 @@ internal sealed class TuiDriver
         var lines = new List<string>();
 
         if (_streaming && _streamTail.Length > 0)
-            lines.Add(_streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(_streamTail.ToString())}[/]"
-                : TuiMarkdown.ToMarkup(_streamTail.ToString()));
+        {
+            // Live partial-tail preview must use the SAME col-2 margin the committed line will get,
+            // so the text does not jump left->right when the line finalizes. First non-blank answer
+            // line of the block shows the lead dot (its text at col 2); reasoning + later lines get
+            // the plain 2-col indent; blanks stay bare.
+            string t = _streamTail.ToString();
+            string previewBody = _streamReasoning
+                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                : TuiMarkdown.ToMarkup(t);
+            string preview;
+            if (string.IsNullOrWhiteSpace(t))
+                preview = previewBody;
+            else if (!_streamReasoning && _streamBlockDotPending)
+                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+            else
+                preview = StreamIndent + previewBody;
+            lines.Add(preview);
+        }
 
         // Mid-turn EXPANDED sub-agent: a bounded, tail-anchored panel rendered IN the live region
         // (toggled by Ctrl+E, never committed to scrollback). Bounded to a slice of the viewport so
@@ -773,20 +1100,52 @@ internal sealed class TuiDriver
             }
             else
                 lines.AddRange(TuiComponents.BoundedLivePanel(
-                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError));
+                    _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError,
+                    markdown: _expandKind == ExpandKind.SubAgent));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
         // while one or more collapsed sub-agents run, show one animated line each (no flicker).
-        if (_subAgents.Count > 0)
+        // When the backslash dashboard is foregrounded it becomes the SOLE session list, so the
+        // compact strip is suppressed to avoid duplicate per-agent rows (issue #2).
+        if (_agentViewActive)
+        {
+            // dashboard owns the agent list this frame; no compact strip / thinking line.
+        }
+        else if (_subAgents.Count > 0)
             lines.AddRange(TuiComponents.SubAgentActivity(_subAgents, _subAgentFrame));
-        else if (!_streaming && !string.IsNullOrEmpty(_thinkingText))
-            lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // A pending (unresolved) tool call is shown live with a running glyph until its
         // result lands and the two merge into a single committed line.
         if (!_streaming && _pendingTool is { } pt)
-            lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args)));
+            lines.AddRange(Lane(TuiComponents.ToolCall(pt.Tool, pt.Args, _thinkFrame)));
+
+        // Most-recent RESOLVED tool result held live so its completion dot pulses SLOWLY (~1/3 the
+        // in-flight cadence). Flushed to static scrollback the instant anything else commits.
+        if (!_streaming && _settling is { } sr)
+            lines.AddRange(Lane(TuiComponents.ToolCallResultMerged(
+                sr.Tool, sr.Args, sr.Result, sr.Error, sr.Expandable, _thinkFrame / 3)));
+
+        // The italic "thinking" indicator renders BELOW the live dot line(s) - the dot is the
+        // primary action, the spinner+status is the running tail beneath it (rendering it above the
+        // dot looked off when both animate). Only when no sub-agent strip owns the line.
+        if (!_agentViewActive && _subAgents.Count == 0 && !_streaming && !string.IsNullOrEmpty(_thinkingText))
+            lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
+
+        // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
+        // dashboard renders inline just above the rule/footer. The always-on activity strip above
+        // still shows, so the dashboard is an expansion of it rather than a replacement. Off (the
+        // default) this adds nothing, keeping the frame byte-identical to today's.
+        if (_agentViewActive)
+            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
+
+        // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
+        // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
+        // adds nothing, keeping the frame identical to today.
+        if (_taskBoardVisible && TaskBoardProvider?.Invoke() is { } bd)
+            lines.AddRange(TuiComponents.TaskBoardStrip(
+                bd.Total, bd.Done, bd.InProgress, bd.Blocked, bd.Failed, bd.Rows,
+                maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
@@ -794,7 +1153,8 @@ internal sealed class TuiDriver
             modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
             sysTokens: _sysTokens, toolTokens: _toolTokens,
             sessionElapsed: DateTime.UtcNow - _sessionStart,
-            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null));
+            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null,
+            giga: _giga));
 
         if (_inInput)
         {
@@ -808,7 +1168,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width, highlight: _inputHighlight));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -830,7 +1190,13 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown) return;
         if (_navActive) return;   // NAV overlay owns the screen; defer paint until it exits
-        _region.SetLive(BuildLiveFrame(Width));
+        // Serialize against the ~100ms sub-agent ticker thread (which paints through
+        // MuxConsole.ConsoleLock via PushSubAgentActivity). The idle-prompt ReadLine loop runs
+        // UNLOCKED (TuiReadLine holds no lock so blocking input never starves the ticker), so its
+        // Repaint() previously raced the ticker's SetLive and stranded duplicate footers. The lock
+        // is reentrant, so the many callers already under ConsoleLock are unaffected.
+        lock (MuxConsole.ConsoleLock)
+            _region.SetLive(BuildLiveFrame(Width));
     }
 
     // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
@@ -869,6 +1235,82 @@ internal sealed class TuiDriver
         _region.ForceRepaint();
     }
 
+    // --- bracketed paste -----------------------------------------------------
+
+    private static readonly char[] _pasteOpenTail = { '[', '2', '0', '0', '~' };
+    private static readonly char[] _pasteCloseTail = { '[', '2', '0', '1', '~' };
+
+    // Called right after an ESC was read. Probe the next queued chars for the "[200~" opener tail.
+    // On a full match the chars are consumed (returns true). On any mismatch the probed keys are
+    // pushed to the unget queue (replayed as normal input) and the ESC keeps its normal meaning.
+    private bool TryConsumePasteOpen() => MatchTail(_pasteOpenTail);
+
+    private bool MatchTail(char[] tail)
+    {
+        var probed = new List<ConsoleKeyInfo>(tail.Length);
+        for (int i = 0; i < tail.Length; i++)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (TryReadKeyNonBlocking(out k)) { }
+            else { foreach (var p in probed) _ungetq.Enqueue(p); return false; }
+            probed.Add(k);
+            if (k.KeyChar != tail[i]) { foreach (var p in probed) _ungetq.Enqueue(p); return false; }
+        }
+        return true;
+    }
+
+    private static bool TryReadKeyNonBlocking(out ConsoleKeyInfo key)
+    {
+        try
+        {
+            if (Console.KeyAvailable) { key = Console.ReadKey(intercept: true); return true; }
+        }
+        catch { /* not a real console */ }
+        key = default;
+        return false;
+    }
+
+    private string DrainBracketedPaste()
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (!TryReadKeyNonBlocking(out k))
+            {
+                System.Threading.Thread.Sleep(2);   // settle wait for the rest of a large paste
+                if (!TryReadKeyNonBlocking(out k)) break;
+            }
+            if (k.KeyChar == '\u001b' && MatchTail(_pasteCloseTail)) break;   // ESC[201~ terminator
+            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
+            if (k.KeyChar != '\0') sb.Append(k.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
+    // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
+    // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
+    // ends. Enters become literal newlines; printables append; control keys are dropped. A short
+    // settle wait bridges the tiny gap between chunks of a large paste still streaming in.
+    private string DrainBurstPaste()
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            ConsoleKeyInfo k;
+            if (!TryReadKeyNonBlocking(out k))
+            {
+                System.Threading.Thread.Sleep(2);   // bridge inter-chunk gap of a large paste
+                if (!TryReadKeyNonBlocking(out k)) break;
+            }
+            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
+            if (k.KeyChar != '\0' && !char.IsControl(k.KeyChar)) sb.Append(k.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -895,13 +1337,51 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException)
+                if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else
                 {
-                    // stdin not a real console (shouldn't happen in TUI) - fall back.
-                    _inInput = false;
-                    _region.Clear();
-                    return Console.ReadLine();
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException)
+                    {
+                        // stdin not a real console (shouldn't happen in TUI) - fall back.
+                        _inInput = false;
+                        _region.Clear();
+                        return Console.ReadLine();
+                    }
+                }
+
+                // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
+                // ESC[201~. On a confirmed opener we drain the body (newlines kept literal) until
+                // the closer and insert it all at once, so a multi-line paste no longer submits on
+                // its first newline. A bare Esc (no paste body) falls through to the editor unchanged.
+                if (_bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
+                {
+                    string pasted = DrainBracketedPaste();
+                    if (pasted.Length > 0)
+                    {
+                        _editor.InsertText(pasted);
+                        _paletteSel = -1;
+                        if (!KeyQueued() && _ungetq.Count == 0) Repaint();
+                    }
+                    continue;
+                }
+
+                // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
+                // read and more input is ALREADY buffered, it is the interior of a fast burst - a
+                // paste, not a human keystroke (a person cannot have the next key queued in the same
+                // instant). Treat it as a literal newline and absorb the rest of the burst into the
+                // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
+                // active when bracketedPaste is enabled and the editor is in plain Insert mode.
+                if (_bracketedPaste && key.Key == ConsoleKey.Enter
+                    && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
+                    && _editor.Mode == EditorMode.Insert && !_editor.IsSearching
+                    && _ungetq.Count == 0 && KeyQueued())
+                {
+                    string burst = DrainBurstPaste();
+                    _editor.InsertText("\n" + burst);
+                    _paletteSel = -1;
+                    if (!KeyQueued()) Repaint();
+                    continue;
                 }
 
                 // Reverse-incremental history search (Ctrl+R, readline/bash style). While active it
@@ -965,16 +1445,40 @@ internal sealed class TuiDriver
                     }
                 }
 
-                // Ctrl+E at the prompt: open the NAV overlay on the most-recent large tool
-                // result, pre-expanded. Inside NAV the cursor can toggle it closed again or
-                // move to other blocks (reversible). Falls through to the editor's emacs
-                // Ctrl+E (end-of-line) when there is no expandable result.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.E
-                    && _transcript.Any(e => e.Expandable is not null))
+                // Up/Down while the Ctrl+T TaskBoard strip is open AND the input buffer is empty:
+                // scroll the board's windowed task list instead of browsing command history, so a
+                // long board's lower tasks become reachable. Only consumes the key when the strip
+                // actually scrolled (more rows than the window); otherwise falls through to normal
+                // history nav. Closed board / non-empty buffer => arrows behave exactly as before.
+                if (_taskBoardVisible && _editor.IsEmpty
+                    && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt | ConsoleModifiers.Shift)) == 0)
                 {
-                    ExpandLastBlock();
-                    Repaint();
-                    continue;
+                    if (key.Key == ConsoleKey.UpArrow && ScrollTaskBoard(-1)) continue;
+                    if (key.Key == ConsoleKey.DownArrow && ScrollTaskBoard(+1)) continue;
+                    if (key.Key == ConsoleKey.PageUp && ScrollTaskBoard(-TaskBoardWindow)) continue;
+                    if (key.Key == ConsoleKey.PageDown && ScrollTaskBoard(+TaskBoardWindow)) continue;
+                }
+
+                // Ctrl+E at the prompt: when sub-agents are live (e.g. a /background or /swarm
+                // panel), target THAT live panel - expand/collapse it in place like the mid-turn
+                // EscapeKeyListener path - so the running panel can be closed from the prompt
+                // instead of falling into the transcript NAV overlay. Otherwise open the NAV overlay
+                // on the most-recent large tool result, pre-expanded (reversible). Falls through to
+                // the editor's emacs Ctrl+E (end-of-line) when neither applies.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.E)
+                {
+                    if (_subAgents.Count > 0 && OnSubAgentExpand is { } expandSub)
+                    {
+                        expandSub();
+                        Repaint();
+                        continue;
+                    }
+                    if (_transcript.Any(e => e.Expandable is not null))
+                    {
+                        ExpandLastBlock();
+                        Repaint();
+                        continue;
+                    }
                 }
 
                 // Ctrl+G at the prompt: open the transcript / expand view unconditionally - a
@@ -994,6 +1498,33 @@ internal sealed class TuiDriver
                 {
                     ForceRedraw();
                     continue;
+                }
+
+                // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual
+                // when no team board is active. Does not cancel or submit.
+                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.T)
+                {
+                    ToggleTaskBoard();
+                    Repaint();
+                    continue;
+                }
+
+                // Backslash at the prompt opens the Agent View dashboard - but ONLY when it is the
+                // FIRST char (empty buffer), so the user can still type a literal '\\' mid-line.
+                // No-op fall-through (insert the char) when no agents are running or the opener is
+                // unset, so the key is never silently swallowed. Mirrors the mid-turn '\\' path.
+                if (key.KeyChar == '\\' && _editor.IsEmpty && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0)
+                {
+                    if (AgentViewOpener is { } open && open()) { Repaint(); continue; }
+                    // No live sub-agents to foreground: offer the detached-session picker. If it
+                    // yields an /attach command, submit it as the line so the menu's /attach
+                    // dispatch re-enters that parked session.
+                    if (AttachPicker is { } pick && pick() is { } attachCmd)
+                    {
+                        _inInput = false;
+                        return attachCmd;
+                    }
+                    // else: fall through and insert '\\' as a normal character.
                 }
 
                 var sig = _editor.Feed(key);
@@ -1220,7 +1751,7 @@ internal sealed class TuiDriver
                 {
                     var panel = ent.DiffKind
                         ? TuiComponents.Diff(x.Tool, x.Text, Width)
-                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true);
+                        : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, Width, expanded: true, markdown: _cardMarkdown);
                     foreach (var l in panel) { disp.Add(l); owner.Add(e); }
                 }
                 else
@@ -1439,7 +1970,7 @@ internal sealed class TuiDriver
     /// Clear the live region and hand the terminal back cleanly (cursor shown, no residue).
     /// Called before any blocking external prompt, mode switch, or exit. Idempotent.
     /// </summary>
-    public void Suspend() { FlushPendingToolCall(); _region.Clear(); }
+    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); _region.Clear(); }
 
     /// <summary>
     /// Full teardown for process exit / mode switch: clear the live region, show the cursor.
@@ -1449,6 +1980,7 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown) return;
         _shuttingDown = true;
+        try { if (_bracketedPaste) { _term.Write(Ansi.BracketedPasteOff); _term.Flush(); } } catch { /* ignore */ }
         try { _region.Clear(); } catch { /* ignore */ }
     }
 }

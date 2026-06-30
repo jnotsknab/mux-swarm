@@ -34,11 +34,25 @@ public static class McpServerDefaults
             Enabled = true
         });
 
+        // Filesystem + Shell are now NATIVE in-process toolsets (NativeToolRegistry), not spawned
+        // MCP servers. They stay listed in mcpServers so the existing two-gate model is unchanged
+        // (config Enabled = global on/off; swarm.json per-agent mcpServers = who gets them), but the
+        // command/args carry the native-runtime-tools no-op marker so init binds them in-process
+        // instead of launching a subprocess. Shown to the user as native; never spawns npx.
         AddIfMissing("Filesystem", new McpServerConfig
         {
             Type = "stdio",
-            Command = "npx",
-            Args = new[] { "-y", "@modelcontextprotocol/server-filesystem" },
+            Command = "native-runtime-tools",
+            Args = new[] { "native-runtime-tools" },
+            Env = new Dictionary<string, string?>(),
+            Enabled = true
+        });
+
+        AddIfMissing("Shell", new McpServerConfig
+        {
+            Type = "stdio",
+            Command = "native-runtime-tools",
+            Args = new[] { "native-runtime-tools" },
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });
@@ -76,14 +90,9 @@ public static class McpServerDefaults
         });
 
 
-        AddIfMissing("ReplShellMcp", new McpServerConfig
-        {
-            Type = "stdio",
-            Command = "uvx",
-            Args = new[] { "mcp-async-repl" },
-            Env = new Dictionary<string, string?>(),
-            Enabled = true
-        });
+        // NOTE: the former "ReplShellMcp" (uvx mcp-async-repl) default is intentionally NOT seeded.
+        // Its REPL/shell behavior is now provided natively + session-scoped by ReplShellTools, so a
+        // shared MCP worker is no longer needed (and would double-register the same tool names).
 
         //web browser / automation (optional)
         AddIfMissing("Playwright", new McpServerConfig
@@ -111,7 +120,6 @@ public static class McpServerDefaults
         if (!string.IsNullOrEmpty(npx))
         {
             PatchIfMatches(config, "Memory", "npx", npx);
-            PatchIfMatches(config, "Filesystem", "npx", npx);
             if (!PlatformContext.IsWindows) PatchIfMatches(config, "Shell", "npx", npx);
             PatchIfMatches(config, "BraveSearchMCP", "npx", npx);
         }

@@ -178,6 +178,52 @@ public class TuiCoreTests
     }
 
     [Fact]
+    public void WrapMarkupLine_HangIndents_ContinuationRowsOfIndentedLine()
+    {
+        // A committed agent-prose line that is visually indented (2 leading spaces) and longer than
+        // the width must wrap so that the CONTINUATION rows re-apply the indent - otherwise long
+        // lines soft-wrap back to column 0 and break the aligned output column (the off-indentation
+        // bug). Every wrapped row's first non-ANSI char should be a space (the hang indent).
+        int cols = 24;
+        string longBody = "alpha beta gamma delta epsilon zeta eta theta";
+        var rows = LiveRegion.WrapMarkupLine("  " + longBody, cols);
+        Assert.True(rows.Count >= 2, "the line should wrap into multiple rows at this width");
+        foreach (var r in rows)
+        {
+            // Strip any leading ANSI SGR (ESC[...m) then assert the visible text starts with 2 spaces.
+            string visible = System.Text.RegularExpressions.Regex.Replace(r, "\u001b\\[[0-9;]*m", "");
+            Assert.StartsWith("  ", visible);
+            // CRITICAL: hang(2) + text must NOT exceed cols, else the terminal soft-wraps the overflow
+            // back to col 0 (the residual flush-left wrap bug). Every row must fit within the width.
+            Assert.True(TuiMarkup.Width(visible) <= cols,
+                $"row exceeds width {cols}: '{visible}' (w={TuiMarkup.Width(visible)})");
+        }
+    }
+
+    [Fact]
+    public void WrapMarkupLine_HangIndents_ContinuationRowsUnderLeadDot()
+    {
+        // A streamed answer's first line is rendered "  *  text" (dot at col 2 => text at col 4). When
+        // it wraps, the continuation rows must align under that col-4 text (4-space hang indent), not
+        // fall back to col 0.
+        int cols = 24;
+        string dotLine = "  [grey]\u25cf[/] alpha beta gamma delta epsilon zeta eta";
+        var rows = LiveRegion.WrapMarkupLine(dotLine, cols);
+        Assert.True(rows.Count >= 2);
+        // Row 0 begins with the dot; later rows begin with the 4-space hang indent.
+        for (int i = 0; i < rows.Count; i++)
+        {
+            string visible = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;]*m", "");
+            // No row may exceed the width (dot row included) - overflow would reflow to col 0.
+            Assert.True(TuiMarkup.Width(visible) <= cols,
+                $"row {i} exceeds width {cols}: '{visible}' (w={TuiMarkup.Width(visible)})");
+            if (i == 0) continue;
+            Assert.StartsWith("    ", visible);   // 4-space hang (dot col 2 => text col 4)
+            Assert.DoesNotContain("\u25cf", visible); // dot only on the first row
+        }
+    }
+
+    [Fact]
     public void LiveRegion_Clear_ErasesAndShowsCursor()
     {
         var term = new FakeTerminal();
@@ -339,6 +385,52 @@ public class TuiCoreTests
         Assert.Equal(1, lr.PaintedRows);
     }
 
+    // --- Synchronized Output (flicker fix) -----------------------------------
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_WrapsFrameInSynchronizedOutput()
+    {
+        // The in-place spinner/timer tick path must batch its writes in BSU/ESU so the
+        // terminal presents one atomic frame (no half-painted row flicker).
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta", "gamma" });
+        term.Clear();
+        lr.SetLive(new List<string> { "alpha", "BETA", "gamma" }); // diff path
+        var outp = term.Output;
+        Assert.Contains(Ansi.BeginSyncOutput, outp);
+        Assert.Contains(Ansi.EndSyncOutput, outp);
+        // BSU must come before ESU.
+        Assert.True(outp.IndexOf(Ansi.BeginSyncOutput, StringComparison.Ordinal)
+                  < outp.IndexOf(Ansi.EndSyncOutput, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LiveRegion_DiffRepaint_NoChange_EmitsNoSyncMarkers()
+    {
+        // A no-op tick must stay byte-empty - no BSU/ESU, no paint, no flicker.
+        var term = new FakeTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Clear();
+        lr.SetLive(new List<string> { "one", "two" }); // identical => no paint
+        Assert.Equal("", term.Output);
+    }
+
+    [Fact]
+    public void LiveRegion_ForceRepaint_WrapsInSynchronizedOutput()
+    {
+        var term = new FakeTerminal { Width = 40 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "alpha", "beta" });
+        term.Clear();
+        lr.ForceRepaint();
+        var outp = term.Output;
+        Assert.Contains(Ansi.BeginSyncOutput, outp);
+        Assert.Contains(Ansi.EndSyncOutput, outp);
+        Assert.Contains(Ansi.ClearScreen, outp);
+    }
+
     // --- resize invalidation (the resize-artifact fix) -----------------------
 
     [Fact]
@@ -447,5 +539,57 @@ public class TuiCoreTests
         lr.ForceRepaint();
         Assert.Contains(Ansi.ClearScreen, term.Output);
         Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
+    }
+    // --- emoji / wide-grapheme display width (table border alignment) -----------------------
+
+    [Fact]
+    public void Width_EmojiAndSymbols_AreDoubleWidth()
+    {
+        // The posture-report emoji set: red/yellow/green circles + check mark all render width 2.
+        Assert.Equal(2, TuiMarkup.Width("\U0001F534")); // red circle
+        Assert.Equal(2, TuiMarkup.Width("\U0001F7E1")); // yellow circle
+        Assert.Equal(2, TuiMarkup.Width("\U0001F7E2")); // green circle
+        Assert.Equal(2, TuiMarkup.Width("\u2705"));      // white heavy check mark (was mis-sized as 1)
+        Assert.Equal(2, TuiMarkup.Width("\u26A0\uFE0F")); // warning sign + VS16 (emoji presentation)
+    }
+
+    [Fact]
+    public void Width_AsciiAndCjk_Unchanged()
+    {
+        Assert.Equal(5, TuiMarkup.Width("hello"));
+        Assert.Equal(2, TuiMarkup.Width("\u4E2D"));      // CJK char = width 2
+        Assert.Equal(0, TuiMarkup.Width(""));
+    }
+
+    [Fact]
+    public void Table_WithEmojiCells_InnerSeparatorAligns()
+    {
+        // Emoji cells must be measured as width 2 so the INNER column separator lines up across rows.
+        // (Trailing spaces on the final cell are trimmed, so we check the inner separator position by
+        // display width, not raw line length.) Pre-fix, the check-mark (U+2705) was sized as 1 so the
+        // first column was a cell short and the inner border drifted.
+        var rows = new List<string>
+        {
+            "Vector | Status",
+            "Privileged | \u2705 Closed",
+            "Root remap | \U0001F7E1 Standard",
+            "Docker socket | \u2705 Closed",
+        };
+        var outp = TuiTable.Render(rows, width: 60);
+        // Every non-blank rendered row (borders + data) must have the SAME display width, so the right
+        // border lines up. The check-mark (U+2705) rows have fewer CHARS but equal DISPLAY width because
+        // the emoji is now measured as 2. Pre-fix those rows were one column short and the border drifted.
+        int? rowW = null;
+        int contentRows = 0;
+        foreach (var line in outp)
+        {
+            string plain = TuiMarkup.Plain(line);
+            if (plain.Trim().Length == 0) continue;     // skip the leading/trailing blank lines
+            int w = TuiMarkup.Width(plain);
+            if (rowW is null) rowW = w;
+            else Assert.Equal(rowW, w);
+            contentRows++;
+        }
+        Assert.True(contentRows >= 6);                  // top border + header + sep + 3 data + bottom
     }
 }
