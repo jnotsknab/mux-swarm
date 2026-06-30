@@ -177,7 +177,10 @@ public class SandboxBackendTests
     public void Kata_RejectsAllowlist_OnNonKvmHost()
     {
         // An allowlist is only meaningful once the backend resolves; on a host that can't run kata the
-        // OS/KVM gate fires first, but EITHER way a kata config on this (Windows) test host never validates.
-        Assert.NotNull(SandboxBackend.Validate(Cfg("kata", allow: new() { "pypi.org" })));
+        // OS/KVM gate fires first and a kata config never validates. On a host that CAN run kata
+        // (Linux + /dev/kvm, e.g. a nested-virt CI runner) the allowlist is legitimately valid on the
+        // OCI-family kata backend, so only assert rejection where the microVM gate actually fires.
+        if (OperatingSystem.IsWindows() || !System.IO.File.Exists("/dev/kvm"))
+            Assert.NotNull(SandboxBackend.Validate(Cfg("kata", allow: new() { "pypi.org" })));
     }
 }
