@@ -9,9 +9,10 @@
 /// </summary>
 internal static class TuiComponents
 {
-    // Palette: foreground accent/semantic roles resolve from the ACTIVE theme (Theme.cs) so /theme
-    // recolors the live footer/badges/panels; structural shades (Dim/Border/backgrounds/badge tints/
-    // gutter/lane colors below) stay fixed UI semantics. Default theme reproduces the prior palette.
+    // Palette: foreground accent/semantic roles AND the background shades (card/input/diff fills)
+    // resolve from the ACTIVE theme (Theme.cs) so /theme fully recolors the live footer/badges/panels
+    // and the docked band. Remaining structural fg (Dim/Border/badge tints/gutter/lane colors below)
+    // stay fixed UI semantics. Default theme reproduces the prior palette + shades exactly.
     public static string Accent  => Theme.Active.Accent;
     public static string Agent   => Theme.Active.Agent;
     public static string Ok      => Theme.Active.Success;
@@ -31,13 +32,13 @@ internal static class TuiComponents
     // Dim blue fill for the cached portion of the context meter (vs the bright live portion).
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
-    // solid block distinct from the airy prose on the terminal's base background.
-    public const string CardBg  = "#1C2530";
-    public const string InputBg = "#12161C";   // very faint shade behind the compose field (subtle)
+    // solid block distinct from the airy prose on the terminal's base background. Themed (v0.12.1).
+    public static string CardBg  => Theme.Active.CardBg;
+    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
-    public const string DiffAddBg = "#16261C";
-    public const string DiffDelBg = "#2A1A1C";
-    public const string DiffHunkBg = "#16202C";
+    public static string DiffAddBg => Theme.Active.DiffAddBg;
+    public static string DiffDelBg => Theme.Active.DiffDelBg;
+    public static string DiffHunkBg => Theme.Active.DiffHunkBg;
     public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
@@ -324,7 +325,9 @@ internal static class TuiComponents
         if (lines.Length == 0) return new();
         // Prefer the most informative line: shell/REPL dispatches lead with bookkeeping ("Job ID:"
         // GUID or "Status:"), so surface the line that shows WHAT actually ran instead (Claude-Code
-        // style) - "Command:" for async shell jobs, "Code:" for the Python REPL.
+        // style) - "Command:" for async shell jobs. (The Python REPL no longer emits a "Code:" line;
+        // the code is shown to the user in the expanded card, so the collapsed line falls back to the
+        // Status line - the legacy "Code:" match is kept only for any older buffered output.)
         int pick = Array.FindIndex(lines, l =>
         {
             var t = l.TrimStart();

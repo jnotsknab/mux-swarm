@@ -515,6 +515,88 @@ internal static class CliProxyManager
         return proc.ExitCode == 0;
     }
 
+    /// <summary>
+    /// Force a cold restart of the detached sidecar: stop whatever is listening on our port, then spawn a
+    /// fresh instance. Unlike relying on CLIProxyAPI's in-process fsnotify auth-watcher (which is known to
+    /// occasionally miss a credential rewrite - upstream #1508/#2556, leaving the server serving a stale or
+    /// dropped token), a cold start re-reads the auth-dir from scratch. This is the automated form of the
+    /// manual "kill the proxy process and let Mux re-spawn it" recovery. Bounded + best-effort; never throws.
+    /// Uses RunGate (a SemaphoreSlim) rather than a lock so it is safe to hold across the spawn/health awaits.
+    /// </summary>
+    public static async Task<bool> RecycleAsync(CancellationToken ct = default)
+    {
+        await EnsureBinaryAsync(ct).ConfigureAwait(false);
+        EnsureKeysLoaded();
+        await RunGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            StopInternal();   // kills the listener on our port + clears _runningPort
+
+            int port = PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
+            Directory.CreateDirectory(AuthDir);
+            await File.WriteAllTextAsync(ConfigPath, BuildConfigYaml(port, _apiKey!, _mgmtKey!, AuthDir), ct)
+                .ConfigureAwait(false);
+
+            SpawnDetached(port);
+            _runningPort = port;
+
+            bool healthy = await WaitForHealthyAsync(TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
+            if (!healthy) { _runningPort = 0; return false; }
+            return true;
+        }
+        catch { return false; }
+        finally { RunGate.Release(); }
+    }
+
+    /// <summary>
+    /// After a login writes a fresh credential, confirm the sidecar is actually serving it. The reliable
+    /// signal is not "did the fsnotify watcher fire" (that timing is racy - upstream #1508/#2556) but "a
+    /// freshly-spawned sidecar is healthy", which guarantees it cold-read the auth-dir on startup. So:
+    ///   1. A brief FAST-PATH check skips a needless restart in the benign case (e.g. logging into a second
+    ///      provider while the first still works and the running sidecar hot-loaded the new token).
+    ///   2. Otherwise force one <see cref="RecycleAsync"/> - which spawns a fresh process and waits for it to
+    ///      become port-healthy - and only THEN poll readiness, against that known-good spawn, with a
+    ///      generous window (a cold start loads auth files + may refresh tokens slightly AFTER the port goes
+    ///      healthy, so the post-spawn poll must not be tight).
+    /// Returns true once the provider is ready (or if readiness cannot be determined - never blocks the user
+    /// on a false negative). Bounded: at most a single recycle. Never throws.
+    /// </summary>
+    public static async Task<bool> VerifyProviderReadyAfterLoginAsync(
+        string provider, CancellationToken ct = default)
+    {
+        // 1. Fast path: brief check so we DON'T restart a sidecar that already loaded the credential.
+        if (await PollProviderReadyAsync(provider, attempts: 4, delayMs: 500, ct).ConfigureAwait(false))
+            return true;
+
+        // 2. Cold-recycle so the sidecar re-reads the auth-dir from a fresh spawn. RecycleAsync internally
+        //    waits (up to 20s) for the new process to become port-healthy, so the poll below runs AFTER the
+        //    process has spawned and is serving - the point at which a readiness check is actually meaningful.
+        MuxConsole.WriteMuted("[cliproxy] New credential not live yet; refreshing the sidecar to pick it up...");
+        if (!await RecycleAsync(ct).ConfigureAwait(false)) return false;
+
+        // 3. Generous post-spawn window: auth-file load / token refresh can lag the port becoming healthy.
+        return await PollProviderReadyAsync(provider, attempts: 20, delayMs: 500, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Polls <see cref="IsProviderReadyAsync"/> up to <paramref name="attempts"/> times (with
+    /// <paramref name="delayMs"/> between). Returns true as soon as the provider reports ready. A management
+    /// API hiccup (throw) is treated as "cannot determine" and returns true so a false negative never blocks
+    /// the user. Best-effort; never throws.
+    /// </summary>
+    private static async Task<bool> PollProviderReadyAsync(
+        string provider, int attempts, int delayMs, CancellationToken ct)
+    {
+        for (int i = 0; i < attempts; i++)
+        {
+            try { if (await IsProviderReadyAsync(provider, ct).ConfigureAwait(false)) return true; }
+            catch { return true; /* cannot verify - do NOT punish the user with a false negative */ }
+            if (i < attempts - 1)
+                try { await Task.Delay(delayMs, ct).ConfigureAwait(false); } catch { return true; }
+        }
+        return false;
+    }
+
     /// <summary>The pinned proxy version this build expects (mirrors <see cref="CliProxyAssets.Version"/>).</summary>
     public static string PinnedVersion => CliProxyAssets.Version;
 

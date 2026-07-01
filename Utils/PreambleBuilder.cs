@@ -309,7 +309,15 @@ public static class PreambleBuilder
         // only read path.
         var reflectionBlock = MuxSwarm.Utils.Memory.ReflectionInjector.BuildBlock(agentName, isLead);
         if (!string.IsNullOrEmpty(reflectionBlock))
-            preamble += "\n\n" + reflectionBlock;
+        {
+            // Anti-dump guardrail: the reflection vectors live in a dedicated ChromaDB collection
+            // (mux_reflections) that is technically reachable via the agents' generic chroma query
+            // tools. The curated, budgeted set is ALREADY injected above; a bulk query of that
+            // collection would just flood context with uncurated entries. Tell the agent not to.
+            preamble += "\n\n" + reflectionBlock +
+                "\nThe above is the curated, budget-limited set selected for this context. Do NOT " +
+                "bulk-query the 'mux_reflections' collection - the relevant reflections are already here.";
+        }
 
         return preamble;
     }

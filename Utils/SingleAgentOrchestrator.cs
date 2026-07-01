@@ -938,8 +938,12 @@ public static class SingleAgentOrchestrator
                 return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
             }
 
-            if (agentName == callerName)
-                return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
+            // The Orchestrator may not delegate to itself (it IS the coordinator). A specialist
+            // agent, however, is just a persona (prompt + memory + tools) - nothing caps it to a
+            // single concurrent instance, so it MAY fan out to its own kind (each self-delegation
+            // spawns an isolated cleanSession sub-agent, depth-bounded by maxSubAgentIterations).
+            if (agentName == callerName && callerName.Equals("Orchestrator", System.StringComparison.OrdinalIgnoreCase))
+                return $"[ERROR] The Orchestrator cannot delegate to itself.";
 
 
             using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");

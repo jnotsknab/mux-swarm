@@ -1083,6 +1083,17 @@ public static class CliCmdUtils
                 return;
             }
 
+            // Harden against a stale sidecar: the fresh credential is written to the auth-dir, but the
+            // running server's watcher can occasionally miss the reload (upstream #1508/#2556), leaving it
+            // serving a stale/dropped token - the exact "had to kill the proxy" failure. Confirm the provider
+            // actually went ready (short watcher grace window), and if not, auto-recycle the sidecar once so
+            // it cold-reads the new auth file. This removes the manual kill-and-restart step.
+            bool live = await MuxSwarm.Utils.Proxy.CliProxyManager
+                .VerifyProviderReadyAfterLoginAsync(providerId, cts.Token);
+            if (!live)
+                MuxConsole.WriteWarning(
+                    $"Logged in, but '{providerId}' is not reporting ready yet. If requests fail, try /proxy update or /login {providerId} again.");
+
             // First successful cliproxy login registers the single local provider entry; subsequent logins
             // just join the proxy's dynamic router (no new entry needed - it routes by model id).
             bool added = RegisterCliProxyProvider(cfgPath);
@@ -1184,9 +1195,11 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /proxy [status|update] - manage the local CLIProxyAPI sidecar. `status` (default) reports the pinned
-    /// version, running state + endpoint, and per-provider auth readiness. `update` re-downloads + verifies
-    /// the pinned binary and restarts the sidecar if it was running.
+    /// /proxy [status|update|restart] - manage the local CLIProxyAPI sidecar. `status` (default) reports the
+    /// pinned version, running state + endpoint, and per-provider auth readiness. `update` re-downloads +
+    /// verifies the pinned binary and restarts the sidecar if it was running. `restart` (alias `recycle`)
+    /// cold-restarts the sidecar so it re-reads the auth-dir - recovery when a fresh credential was not
+    /// hot-reloaded.
     /// </summary>
     public static async Task HandleProxyAsync(string userInput)
     {
@@ -1201,6 +1214,18 @@ public static class CliCmdUtils
                 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
                 await MuxSwarm.Utils.Proxy.CliProxyManager.UpdateAsync(cts.Token);
                 MuxConsole.WriteSuccess($"CLIProxyAPI is now at v{MuxSwarm.Utils.Proxy.CliProxyManager.PinnedVersion}.");
+                return;
+            }
+
+            if (sub is "restart" or "recycle")
+            {
+                // Cold-restart the sidecar so it re-reads the auth-dir from scratch - the frictionless form of
+                // the manual "kill the proxy process" recovery when a credential rewrite was not hot-reloaded.
+                MuxConsole.WriteInfo("Recycling the CLIProxyAPI sidecar (cold auth reload)...");
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.RecycleAsync(cts.Token);
+                if (ok) MuxConsole.WriteSuccess($"Sidecar restarted -> {MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint}.");
+                else MuxConsole.WriteWarning("Sidecar did not become healthy after restart. Try /proxy update.");
                 return;
             }
 
@@ -1472,7 +1497,10 @@ public static class CliCmdUtils
                 $"[{t.Warning}]\u2588\u2588[/]" +
                 $"[{t.Error}]\u2588\u2588[/]" +
                 $"[{t.Info}]\u2588\u2588[/]" +
-                $"[{t.Muted}]\u2588\u2588[/]";
+                $"[{t.Muted}]\u2588\u2588[/]" +
+                // Background shades preview: card fill (with accent text) + the compose-band shade,
+                // so /theme shows how the docked footer + expanded cards will look under each preset.
+                $"  [{t.Accent} on {t.CardBg}] card [/][{t.Muted} on {t.InputBg}] input [/]";
             MuxConsole.WriteMarkup($"  {mark} {swatch}  [{t.Prompt}]{t.Name}[/]",
                 stdioFallback: $"  {mark} {t.Name}");
         }
@@ -1487,5 +1515,8 @@ public static class CliCmdUtils
         MuxConsole.WriteMarkup($"  [{t.MdHeading}]# heading[/]   [{t.MdCode}]`code`[/]   "
             + $"[{t.MdLink}]link[/]   [{t.MdQuote}]> quote[/]", stdioFallback: null);
         MuxConsole.WriteMarkup($"  [{t.Agent}]CodeAgent[/] [{t.Prompt}]ready.[/]", stdioFallback: null);
+        // Background shades: the expanded-card fill and the compose-field band (the docked footer look).
+        MuxConsole.WriteMarkup($"  [{t.Accent} on {t.CardBg}] \u2502 expanded card body [/]   "
+            + $"[{t.Muted} on {t.InputBg}] \u2502 input band [/]", stdioFallback: null);
     }
 }

@@ -18,12 +18,14 @@ public sealed class MidTurnReflectionClient : DelegatingChatClient
     public MidTurnReflectionClient(IChatClient inner, string agentName) : base(inner)
         => _agentName = agentName;
 
-    private List<ChatMessage> WithDelta(IEnumerable<ChatMessage> messages)
+    private async Task<List<ChatMessage>> WithDeltaAsync(IEnumerable<ChatMessage> messages, CancellationToken ct)
     {
         var list = messages as List<ChatMessage> ?? messages.ToList();
         try
         {
-            var delta = ReflectionInjector.BuildDelta(_agentName, isLead: true);
+            // Hybrid semantic+lexical delta. Runs at the tool-call cadence (seconds), so the Chroma
+            // query - which overlaps the model's own reasoning/tool time - adds no felt latency.
+            var delta = await ReflectionInjector.BuildDeltaAsync(_agentName, isLead: true, ct);
             if (!string.IsNullOrEmpty(delta))
             {
                 // New list so we never mutate the caller's collection; prepend as a system note.
@@ -39,11 +41,16 @@ public sealed class MidTurnReflectionClient : DelegatingChatClient
         return list;
     }
 
-    public override Task<ChatResponse> GetResponseAsync(
+    public override async Task<ChatResponse> GetResponseAsync(
         IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        => base.GetResponseAsync(WithDelta(messages), options, cancellationToken);
+        => await base.GetResponseAsync(await WithDeltaAsync(messages, cancellationToken), options, cancellationToken);
 
-    public override IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-        IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
-        => base.GetStreamingResponseAsync(WithDelta(messages), options, cancellationToken);
+    public override async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        var withDelta = await WithDeltaAsync(messages, cancellationToken);
+        await foreach (var update in base.GetStreamingResponseAsync(withDelta, options, cancellationToken))
+            yield return update;
+    }
 }

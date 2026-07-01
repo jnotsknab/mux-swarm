@@ -228,8 +228,10 @@ public static class MultiAgentOrchestrator
                 return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
             }
 
-            if (agentName == callerName)
-                return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
+            // The Orchestrator may not delegate to itself; a specialist persona may fan out to
+            // its own kind (isolated sub-agent per call, depth-bounded by retry/iteration limits).
+            if (agentName == callerName && callerName.Equals("Orchestrator", System.StringComparison.OrdinalIgnoreCase))
+                return $"[ERROR] The Orchestrator cannot delegate to itself.";
 
             string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
             retryRegistry.TryGetValue(retryKey, out var retryState);

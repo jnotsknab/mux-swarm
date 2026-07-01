@@ -77,4 +77,52 @@ public class ThemeTests
         Assert.Equal("default", Theme.Mono.Accent);
         Assert.Equal("default", Theme.Mono.Prompt);
     }
+
+    [Fact]
+    public void Default_ReproducesOriginalBackgroundShades()
+    {
+        // The Default preset omits the bg args, so the record defaults must equal the exact
+        // pre-theme hardcoded shades (byte-identical unthemed behaviour).
+        Assert.Equal("#1C2530", Theme.Default.CardBg);
+        Assert.Equal("#12161C", Theme.Default.InputBg);
+        Assert.Equal("#16261C", Theme.Default.DiffAddBg);
+        Assert.Equal("#2A1A1C", Theme.Default.DiffDelBg);
+        Assert.Equal("#16202C", Theme.Default.DiffHunkBg);
+        Assert.Equal("#1E1E1E", Theme.Default.CodeBg);
+        Assert.Equal("#2A2A2A", Theme.Default.InlineCodeBg);
+    }
+
+    [Fact]
+    public void BackgroundShades_ResolveFromActiveTheme()
+    {
+        var prev = Theme.Active;
+        try
+        {
+            Assert.True(Theme.Apply("dracula"));
+            Assert.Equal(Theme.Dracula.CardBg, TuiComponents.CardBg);
+            Assert.Equal(Theme.Dracula.InputBg, TuiComponents.InputBg);
+            Assert.Equal(Theme.Dracula.DiffAddBg, TuiComponents.DiffAddBg);
+            Assert.Equal(Theme.Dracula.DiffDelBg, TuiComponents.DiffDelBg);
+            Assert.Equal(Theme.Dracula.DiffHunkBg, TuiComponents.DiffHunkBg);
+        }
+        finally { Theme.Set(prev); }
+    }
+
+    [Fact]
+    public void Light_UsesLightBackgroundShades()
+    {
+        // The light preset must carry LIGHT card/input shades (the bug: a dark card under a light
+        // theme). Assert they differ from the dark default shades and are near-white.
+        Assert.NotEqual(Theme.Default.CardBg, Theme.Light.CardBg);
+        Assert.Equal("#EAEEF2", Theme.Light.CardBg);
+        Assert.Equal("#F2F4F7", Theme.Light.InputBg);
+    }
+
+    [Fact]
+    public void Mono_BackgroundsInheritTerminal()
+    {
+        Assert.Equal("default", Theme.Mono.CardBg);
+        Assert.Equal("default", Theme.Mono.InputBg);
+        Assert.Equal("default", Theme.Mono.CodeBg);
+    }
 }
