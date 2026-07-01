@@ -1472,7 +1472,10 @@ public static class CliCmdUtils
                 $"[{t.Warning}]\u2588\u2588[/]" +
                 $"[{t.Error}]\u2588\u2588[/]" +
                 $"[{t.Info}]\u2588\u2588[/]" +
-                $"[{t.Muted}]\u2588\u2588[/]";
+                $"[{t.Muted}]\u2588\u2588[/]" +
+                // Background shades preview: card fill (with accent text) + the compose-band shade,
+                // so /theme shows how the docked footer + expanded cards will look under each preset.
+                $"  [{t.Accent} on {t.CardBg}] card [/][{t.Muted} on {t.InputBg}] input [/]";
             MuxConsole.WriteMarkup($"  {mark} {swatch}  [{t.Prompt}]{t.Name}[/]",
                 stdioFallback: $"  {mark} {t.Name}");
         }
@@ -1487,5 +1490,8 @@ public static class CliCmdUtils
         MuxConsole.WriteMarkup($"  [{t.MdHeading}]# heading[/]   [{t.MdCode}]`code`[/]   "
             + $"[{t.MdLink}]link[/]   [{t.MdQuote}]> quote[/]", stdioFallback: null);
         MuxConsole.WriteMarkup($"  [{t.Agent}]CodeAgent[/] [{t.Prompt}]ready.[/]", stdioFallback: null);
+        // Background shades: the expanded-card fill and the compose-field band (the docked footer look).
+        MuxConsole.WriteMarkup($"  [{t.Accent} on {t.CardBg}] \u2502 expanded card body [/]   "
+            + $"[{t.Muted} on {t.InputBg}] \u2502 input band [/]", stdioFallback: null);
     }
 }
