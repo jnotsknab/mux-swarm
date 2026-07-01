@@ -151,7 +151,7 @@ html, body,
   text-transform: uppercase; opacity: .65; margin: 0 0 .25rem 0;
   padding-bottom: .15rem; border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
 }
-.stream-block[data-agent] { border-left: 2px solid var(--accent, #6aa3ff); padding-left: .6rem; margin-top: .5rem; }
+.stream-block[data-agent] { border-left: none; padding-left: 0; margin-top: .5rem; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
@@ -853,6 +853,106 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 .delegation .deleg-arrow { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
 .delegation .to { color: var(--accent); font-weight: 600; }
 .delegation .task { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); width: 100%; padding-left: 18px; margin-top: 2px; }
+
+/* ── Sub-agent delegation roster ──
+   One persistent, collapsible group per user turn; one row per delegated
+   sub-agent. Streams / thinking / completion fold into the owning row so
+   many concurrent agents stay legible instead of spawning a wall of cards. */
+.sub-roster {
+  margin: 10px 0 14px;
+  border: 1px solid var(--border, rgba(255,255,255,.10));
+  border-radius: 10px;
+  background: var(--bg-card, rgba(24,24,27,.5));
+  overflow: hidden;
+}
+.sub-roster-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
+}
+.sub-roster.sr-collapsed .sub-roster-head { border-bottom-color: transparent; }
+.sub-roster-head:hover { background: rgba(255,255,255,.03); }
+.sub-roster .sr-chev { display:inline-flex; color: var(--muted); transition: transform .15s ease; }
+.sub-roster.sr-collapsed .sr-chev { transform: rotate(-90deg); }
+.sub-roster .sr-title { font-weight: 600; letter-spacing: .03em; text-transform: uppercase; font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--muted); }
+.sub-roster .sr-count {
+  min-width: 18px; text-align: center; font-size: calc(10.5px * var(--ui-font-scale,1));
+  color: var(--text); background: var(--bg-input, rgba(255,255,255,.06));
+  border-radius: 9px; padding: 0 6px; line-height: 1.6;
+}
+.sub-roster .sr-spacer { flex: 1 1 auto; }
+.sub-roster .sr-active { font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--amber, #f59e0b); }
+.sub-roster.sr-all-done .sr-active { color: var(--green, #10b981); }
+.sub-roster-body { display: flex; flex-direction: column; }
+.sub-roster.sr-collapsed .sub-roster-body { display: none; }
+
+/* individual agent row */
+.sub-row { border-bottom: 1px solid var(--border, rgba(255,255,255,.05)); }
+.sub-row:last-child { border-bottom: none; }
+.sub-row-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px 7px 14px; cursor: pointer; user-select: none;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.sub-row-head:hover { background: rgba(255,255,255,.025); }
+.sub-row .sub-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted, #71717a); }
+.sub-row .sub-dot.pending { background: var(--muted, #71717a); }
+.sub-row .sub-dot.running { background: var(--amber, #f59e0b); box-shadow: 0 0 0 0 rgba(245,158,11,.5); animation: subPulse 1.4s ease-out infinite; }
+.sub-row .sub-dot.done { background: var(--green, #10b981); }
+@keyframes subPulse { 0% { box-shadow: 0 0 0 0 rgba(245,158,11,.45);} 70% { box-shadow: 0 0 0 5px rgba(245,158,11,0);} 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0);} }
+.sub-row .sub-name { font-weight: 600; color: var(--agent, #a78bfa); white-space: nowrap; }
+.sub-row .sub-status { font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--muted); white-space: nowrap; }
+.sub-row .sub-row-spacer { flex: 1 1 auto; min-width: 8px; }
+.sub-row .sub-preview {
+  color: var(--muted); font-size: calc(11px * var(--ui-font-scale,1));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 46%; opacity: .8;
+}
+.sub-row .sub-preview code { background: rgba(100,180,220,.10); border-radius: 3px; padding: 0 3px; color: var(--accent,#64b4dc); }
+.sub-row .sub-chev { display:inline-flex; color: var(--muted); flex: 0 0 auto; transition: transform .15s ease; }
+.sub-row.sr-open .sub-chev { transform: rotate(180deg); }
+.sub-row-body {
+  display: none; padding: 4px 14px 12px 30px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1)); line-height: 1.55;
+  border-top: 1px dashed var(--border, rgba(255,255,255,.06));
+  max-height: 460px; overflow-y: auto;
+}
+.sub-row.sr-open .sub-row-body { display: block; }
+.sub-row.sr-open .sub-preview { visibility: hidden; }
+.sub-row-body pre { background: var(--bg-input); padding: 8px 10px; border-radius: 6px; overflow-x: auto; }
+.sub-row-body code { font-family: var(--font-mono); }
+.sub-row .sub-summary-btn {
+  display: none; align-items: center; gap: 4px; flex: 0 0 auto;
+  font-size: calc(10px * var(--ui-font-scale,1)); font-weight: 600;
+  letter-spacing: .03em; text-transform: uppercase;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 9px;
+  padding: 1px 8px; cursor: pointer; opacity: .5;
+  transition: color .15s ease, border-color .15s ease, opacity .15s ease, background .15s ease;
+}
+.sub-row .sub-summary-btn.ready { display: inline-flex; opacity: 1; color: var(--green, #10b981); border-color: var(--green, #10b981); }
+.sub-row .sub-summary-btn.ready:hover { background: rgba(16,185,129,.12); }
+.sub-row .sub-summary-btn .ck { display:inline-flex; }
+/* completion summary panel pinned at the top of the expanded body */
+.sub-row-summary {
+  display: none; margin: 2px 0 10px; padding: 8px 10px;
+  border-left: 3px solid var(--green, #10b981); border-radius: 6px;
+  background: rgba(16,185,129,.06);
+  font-size: calc(12.5px * var(--ui-font-scale,1)); line-height: 1.5;
+}
+.sub-row-summary.show { display: block; }
+.sub-row-summary .srs-label { font-size: calc(9.5px * var(--ui-font-scale,1)); font-weight:600; letter-spacing:.05em; text-transform:uppercase; color: var(--green,#10b981); opacity:.8; margin-bottom:3px; }
+/* interleaved tool-activity lines inside the row stream */
+.sub-row-body .sub-act {
+  display: flex; align-items: baseline; gap: 6px; margin: 3px 0;
+  font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale,1));
+  color: var(--muted); opacity: .9;
+}
+.sub-row-body .sub-act .sa-icon { color: var(--accent, #64b4dc); flex: 0 0 auto; }
+.sub-row-body .sub-act .sa-tool { color: var(--accent, #64b4dc); }
+.sub-row-body .sub-act .sa-sum { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-row-body .sub-stream { margin: 4px 0; }
 
 .task-complete {
   color: var(--green);
@@ -2464,6 +2564,15 @@ const icons = {
   const _agentStreams = new Map(); // agent -> { el, text }
   let currentStreamEl = null;      // last-touched stream el (thinking-bar anchor)
   let currentStreamText = '';
+
+  // ── Sub-agent delegation roster ──
+  // Agents named as a delegation TARGET route here instead of the main column.
+  // One persistent group per user turn; one keyed row per agent (never re-spawned),
+  // so N stream/think cycles fold into ONE row instead of N stray cards.
+  const _subAgents = new Set();      // names known to be delegated sub-agents this turn
+  const _subRows = new Map();        // agentName -> { row, head, body, statusEl, previewEl, dot, text }
+  let _subRoster = null;             // { el, headCountEl, activeEl, bodyEl } active group container
+  function isSubAgent(name){ return !!name && _subAgents.has(String(name)); }
   let reconnectDelay = 1000;
   let sidebarOpen = false;
   let currentTab = 'sandbox';
@@ -2998,6 +3107,7 @@ const icons = {
       case 'debug':   appendText(ev.message, 'event-debug'); break;
 
       case 'user_input': {
+        try { resetSubRoster(); } catch (_) {}
         const txt = ev.text || '';
         // One-shot suppression set: auto /qc, plus commands the user triggered
         // via the session-switch warning card (already shown in the card).
@@ -3085,6 +3195,10 @@ const icons = {
 
       case 'agent_turn_start':
         removeThinkingBar();
+        // A sub-agent's turn must not stamp a lead 'agent-turn' badge in the
+        // main column, finalize the lead stream, or flip global busy off/on;
+        // its lifecycle lives entirely in the roster row.
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'working'); break; }
         finalizeStream(ev.agent);
         breakToolGroup();
         setBusy(true);
@@ -3094,6 +3208,8 @@ const icons = {
 
       case 'agent_turn_end':
         removeThinkingBar();
+        // Sub-agent turn end resolves its row; it never touches lead stream/busy.
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'done', 'done'); break; }
         finalizeStream(ev.agent);
         breakToolGroup();
         setBusy(false);
@@ -3108,21 +3224,14 @@ const icons = {
         removeThinkingBar();
         breakToolGroup();
         const skey = String(ev.agent || '');
+        // Sub-agent output folds into its persistent roster row (one row per
+        // agent, appended in place) rather than spawning a new stream card per
+        // stream/stop cycle. Lead/main output keeps the normal transcript block.
+        if (isSubAgent(skey)) { appendSubStream(skey, ev.text || ''); break; }
         let st = _agentStreams.get(skey);
         if (!st) {
           st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
-          if (skey) {
-            st.el.dataset.agent = skey;
-            // Label concurrent sub-agent streams so parallel output is legible.
-            const hdr = document.createElement('div');
-            hdr.className = 'stream-agent-label';
-            hdr.textContent = skey;
-            st.el.appendChild(hdr);
-            st.body = document.createElement('div');
-            st.body.className = 'stream-body';
-            st.el.appendChild(st.body);
-          }
           output.appendChild(st.el);
           _agentStreams.set(skey, st);
         }
@@ -3137,12 +3246,14 @@ const icons = {
 
       case 'stream_end':
         removeThinkingBar();
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'thinking'); break; }
         finalizeStream(ev.agent);
         setBusy(false);
         break;
 
       case 'thinking_start':
         setBusy(true);
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'thinking'); break; }
         appendThinkingBar(ev.agent || '', '');
         break;
 
@@ -3176,23 +3287,46 @@ const icons = {
         break;
 
       case 'tool_call':
+        if (isSubAgent(ev.agent)) {
+          const r = setSubStatus(ev.agent, 'running', 'working');
+          const tn = friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input);
+          const tmp = document.createElement('span'); tmp.innerHTML = tn;
+          r.previewEl.textContent = (tmp.textContent || '').trim();
+          appendSubActivity(ev.agent, tn, '');
+          break;
+        }
         removeThinkingBar();
         addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span>`);
         break;
 
       case 'tool_result':
       case 'function_result':
-        // Some runtime paths emit only tool_result (no tool_call event).
-        // Synthesize the call row so grouping/expansion still works.
-        if (ev.tool && (!_lastToolCallRow || !_lastToolCallRow.isConnected || _lastToolCallRow._resultSeen)) {
-          removeThinkingBar();
-          addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span>`);
-        }
-        if (_lastToolCallRow) _lastToolCallRow._resultSeen = true;
-        // Display summary in main chat
-        if (ev.summary) {
-          const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
-          addToolResultRow(trunc);
+        // Sub-agent tool activity updates its roster row and skips the main-column
+        // call/summary rows, but still falls through to the shared Live Diffs panel.
+        if (isSubAgent(ev.agent)) {
+          const r = setSubStatus(ev.agent, 'running', 'working');
+          if (ev.summary) {
+            r.previewEl.textContent = subPreview(ev.summary);
+            // annotate the most recent activity line with a short result summary
+            const acts = r.actsEl && r.actsEl.lastElementChild;
+            if (acts && !acts.querySelector('.sa-sum')) {
+              const t = document.createElement('span'); t.className = 'sa-sum'; t.textContent = subPreview(ev.summary);
+              acts.appendChild(t);
+            }
+          }
+        } else {
+          // Some runtime paths emit only tool_result (no tool_call event).
+          // Synthesize the call row so grouping/expansion still works.
+          if (ev.tool && (!_lastToolCallRow || !_lastToolCallRow.isConnected || _lastToolCallRow._resultSeen)) {
+            removeThinkingBar();
+            addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span>`);
+          }
+          if (_lastToolCallRow) _lastToolCallRow._resultSeen = true;
+          // Display summary in main chat
+          if (ev.summary) {
+            const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
+            addToolResultRow(trunc);
+          }
         }
         
         // Render detailed diff/result in the Live Diffs panel (clean, scannable cards)
@@ -3363,9 +3497,20 @@ const icons = {
         }
         break;
 
-      case 'delegation':
-        appendHTML(`<div class="delegation"><span class="deleg-icon" style="display:flex;align-items:center;margin-top:1px">${icons.arrowUpRight}</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task)}</span>` : ''}</div>`);
+      case 'delegation': {
+        // Register the target as a sub-agent and create/refresh its roster row
+        // instead of stamping a standalone full-width delegation card.
+        const to = String(ev.to || '').trim();
+        if (to) {
+          _subAgents.add(to);
+          const r = ensureSubRow(to);
+          r.dot.className = 'sub-dot pending';
+          r.statusEl.textContent = 'delegated';
+          if (ev.task) r.previewEl.textContent = subPreview(ev.task);
+          scrollToBottom();
+        }
         break;
+      }
 
       // Batch6: /wipe cleared the live session context. Mirror Claude /clear by
       // clearing the transcript view (reuses the screen-clear with undo toast).
@@ -3378,6 +3523,32 @@ const icons = {
 
       case 'task_complete': {
         const summary = ev.summary ? String(ev.summary).trim() : '';
+        // The shared signal_task_complete tool emits its rich summary under the
+        // literal agent 'Task' (not the specialist). While a sub-agent roster is
+        // live, that summary belongs to a delegated agent: attach it to a still-
+        // pending row, else queue it (FIFO) for the next specialist 'sub-task'
+        // marker. We suppress the standalone 'Task' card in that case — its content
+        // now surfaces behind the owning row's summary button. When NO roster is
+        // active it is a genuine orchestrator-goal completion and renders normally.
+        // While a sub-agent roster is live, the specialist's own task_complete event
+        // now carries the real summary (engine sets it), so the redundant literal-'Task'
+        // completion card is suppressed — its content surfaces behind the owning row's
+        // summary button instead. When NO roster is active it is a genuine orchestrator-
+        // goal completion and renders as a normal card.
+        if (String(ev.agent || '') === 'Task' && _subRoster) { break; }
+        // Sub-agent completion resolves its roster row (final text + done dot)
+        // instead of appending a separate task-complete card to the transcript.
+        if (isSubAgent(ev.agent)) {
+          // Completion marks the row done and un-greys its summary button — it must
+          // NEVER overwrite the accumulated stream body. The engine emits the real
+          // completion summary on this specialist event.
+          const r = setSubStatus(ev.agent, 'done', 'completed');
+          const clean = stripSentinels(summary);
+          // Engine sends the real summary here; a bare legacy 'sub-task' is ignored
+          // (the row keeps its streamed body and the button simply marks completion).
+          if (clean && !/^sub[-\s]?task$/i.test(clean)) setSubSummary(ev.agent, clean);
+          break;
+        }
         // Suppress trivial/boilerplate task_complete cards that add no info (e.g. delegated sub-task completions).
         if (!summary || /^sub[-\s]?task$/i.test(summary)) { break; }
         const isLong = summary.length > 220 || summary.indexOf('\n') !== -1;
@@ -3597,6 +3768,160 @@ const icons = {
         }
       }
     });
+  }
+
+  // ─────────────── Sub-agent roster engine ───────────────
+  function ensureSubRoster() {
+    if (_subRoster && _subRoster.el.isConnected) return _subRoster;
+    const el = document.createElement('div');
+    el.className = 'sub-roster';
+    el.innerHTML =
+      '<div class="sub-roster-head">' +
+        '<span class="sr-chev">' + icons.chevronDown + '</span>' +
+        '<span class="sr-title">Sub-agents</span>' +
+        '<span class="sr-count">0</span>' +
+        '<span class="sr-spacer"></span>' +
+        '<span class="sr-active"></span>' +
+      '</div>' +
+      '<div class="sub-roster-body"></div>';
+    const head = el.querySelector('.sub-roster-head');
+    head.addEventListener('click', () => el.classList.toggle('sr-collapsed'));
+    output.appendChild(el);
+    _subRoster = { el, headCountEl: el.querySelector('.sr-count'),
+                   activeEl: el.querySelector('.sr-active'),
+                   bodyEl: el.querySelector('.sub-roster-body') };
+    return _subRoster;
+  }
+  function ensureSubRow(name) {
+    const key = String(name || '');
+    let r = _subRows.get(key);
+    if (r && r.row.isConnected) return r;
+    const roster = ensureSubRoster();
+    const row = document.createElement('div');
+    row.className = 'sub-row';
+    row.innerHTML =
+      '<div class="sub-row-head">' +
+        '<span class="sub-dot pending"></span>' +
+        '<span class="sub-name"></span>' +
+        '<span class="sub-status">delegated</span>' +
+        '<span class="sub-row-spacer"></span>' +
+        '<span class="sub-preview"></span>' +
+        '<button type="button" class="sub-summary-btn" title="Show completion summary">' +
+          '<span class="ck">' + icons.check + '</span>summary' +
+        '</button>' +
+        '<span class="sub-chev">' + icons.chevronDown + '</span>' +
+      '</div>' +
+      '<div class="sub-row-body">' +
+        '<div class="sub-row-summary"><div class="srs-label">Completion summary</div><div class="srs-text"></div></div>' +
+        '<div class="sub-stream"></div>' +
+        '<div class="sub-acts"></div>' +
+      '</div>';
+    row.querySelector('.sub-name').textContent = key;
+    const head = row.querySelector('.sub-row-head');
+    head.addEventListener('click', (e) => {
+      if (e.target.closest('a, input, textarea, select')) return;
+      // The summary button opens the row AND reveals the summary panel; other
+      // clicks on the head just toggle the row open/closed.
+      if (e.target.closest('.sub-summary-btn')) {
+        row.classList.add('sr-open');
+        const panel = row.querySelector('.sub-row-summary');
+        if (panel) { panel.classList.toggle('show'); if (panel.classList.contains('show')) panel.scrollIntoView({block:'nearest'}); }
+        return;
+      }
+      row.classList.toggle('sr-open');
+    });
+    roster.bodyEl.appendChild(row);
+    r = { row, head,
+          body: row.querySelector('.sub-row-body'),
+          streamEl: row.querySelector('.sub-stream'),
+          actsEl: row.querySelector('.sub-acts'),
+          summaryPanel: row.querySelector('.sub-row-summary'),
+          summaryTextEl: row.querySelector('.srs-text'),
+          summaryBtn: row.querySelector('.sub-summary-btn'),
+          statusEl: row.querySelector('.sub-status'),
+          previewEl: row.querySelector('.sub-preview'),
+          dot: row.querySelector('.sub-dot'), text: '', summary: '' };
+    _subRows.set(key, r);
+    updateSubRosterCount();
+    return r;
+  }
+  function updateSubRosterCount() {
+    if (!_subRoster) return;
+    const total = _subRows.size;
+    let running = 0, done = 0;
+    _subRows.forEach(r => {
+      if (r.dot.classList.contains('running')) running++;
+      else if (r.dot.classList.contains('done')) done++;
+    });
+    _subRoster.headCountEl.textContent = String(total);
+    if (running > 0) {
+      _subRoster.el.classList.remove('sr-all-done');
+      _subRoster.activeEl.textContent = running + ' running';
+    } else if (done >= total && total > 0) {
+      _subRoster.el.classList.add('sr-all-done');
+      _subRoster.activeEl.textContent = 'all done';
+    } else {
+      _subRoster.el.classList.remove('sr-all-done');
+      _subRoster.activeEl.textContent = done + '/' + total + ' done';
+    }
+  }
+  function setSubStatus(name, state, label) {
+    const r = ensureSubRow(name);
+    r.dot.className = 'sub-dot ' + state;
+    if (label !== undefined && label !== null) r.statusEl.textContent = label;
+    updateSubRosterCount();
+    return r;
+  }
+  function stripSentinels(s) {
+    // Backend delegation sentinels (e.g. AGENT_DEMO_DONE) can fuse into the
+    // stream with no delimiter; drop bare ALL-CAPS _DONE-style tokens.
+    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '').trimEnd();
+  }
+  function subPreview(text) {
+    const flat = String(text || '').replace(/`{1,3}[^`]*`{1,3}/g, m => m.replace(/`/g,''))
+      .replace(/[#>*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    return flat.length > 140 ? flat.slice(-140) : flat;
+  }
+  function appendSubStream(name, chunk) {
+    const r = ensureSubRow(name);
+    r.dot.className = 'sub-dot running';
+    r.statusEl.textContent = 'streaming';
+    r.text = stripSentinels(r.text + (chunk || ''));
+    r.streamEl.innerHTML = renderMarkdown(r.text);
+    r.previewEl.textContent = subPreview(r.text);
+    updateSubRosterCount();
+    scrollToBottom();
+  }
+  // Append a compact tool-activity line into the row body so the expanded row
+  // shows the stream + tool-call graph interleaved (chronological, scrollable).
+  function appendSubActivity(name, toolHtml, summary) {
+    const r = ensureSubRow(name);
+    const line = document.createElement('div');
+    line.className = 'sub-act';
+    let inner = '<span class="sa-icon">' + icons.zap + '</span>' +
+                '<span class="sa-tool">' + (toolHtml || '') + '</span>';
+    if (summary) { const t = document.createElement('span'); t.textContent = subPreview(summary); inner += '<span class="sa-sum">' + t.innerHTML + '</span>'; }
+    line.innerHTML = inner;
+    r.actsEl.appendChild(line);
+    scrollToBottom();
+  }
+  function setSubSummary(name, text) {
+    const r = ensureSubRow(name);
+    const clean = stripSentinels(text);
+    if (!clean) return;
+    r.summary = clean;
+    if (r.summaryTextEl) r.summaryTextEl.innerHTML = renderMarkdown(clean);
+    if (r.summaryBtn) r.summaryBtn.classList.add('ready');
+    // If nothing streamed (some sub-agents only signal completion), show the
+    // summary as the row preview so the collapsed row still reads meaningfully.
+    if (!r.text) r.previewEl.textContent = subPreview(clean);
+  }
+  function resetSubRoster() {
+    // Called at each user turn so a new delegation batch starts a fresh group;
+    // prior groups stay in the transcript as history.
+    _subAgents.clear();
+    _subRows.clear();
+    _subRoster = null;
   }
 
   function finalizeStream(agent) {
