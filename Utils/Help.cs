@@ -63,7 +63,7 @@ public struct Help
         "  /provider       View or switch the active LLM provider",
         "  /login          Log in to a subscription provider (claude|codex|kimi|...) via the local CLIProxyAPI sidecar",
         "  /ping           Test the CLIProxyAPI sidecar + show per-provider login readiness",
-        "  /proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update",
+        "  /proxy          Manage the CLIProxyAPI sidecar: /proxy status | update | restart",
         "  /workspace      Show or set the @-file workspace root: /workspace <path> (re-indexes the @ picker)",
         "  /limits         Display current execution limits for orchestration and agents",
         "  /tools          List available MCP tools across enabled servers",
