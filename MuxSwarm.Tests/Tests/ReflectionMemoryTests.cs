@@ -134,6 +134,47 @@ public class ReflectionMemoryTests
                   > ReflectionInjector.Score(lo, "build dotnet", now));
     }
 
+    // ---- Hybrid semantic ranking (g12.x) --------------------------------------------------
+
+    [Fact]
+    public void Injector_Score_SemanticMap_BoostsMatchedReflection()
+    {
+        var now = DateTimeOffset.UtcNow;
+        // Two reflections with identical importance/recency and ZERO lexical overlap with the query.
+        var a = new Reflection { Id = "aaa", Content = "compilation error in the build", Importance = 0.5, Timestamp = now };
+        var b = new Reflection { Id = "bbb", Content = "unrelated note about lunch", Importance = 0.5, Timestamp = now };
+        // Semantic oracle says 'a' is highly similar, 'b' is not.
+        var semantic = new Dictionary<string, double> { ["aaa"] = 0.9, ["bbb"] = 0.05 };
+
+        double sa = ReflectionInjector.Score(a, "why does the build keep failing", now, semantic);
+        double sb = ReflectionInjector.Score(b, "why does the build keep failing", now, semantic);
+        Assert.True(sa > sb, $"semantic-matched reflection should outrank ({sa} vs {sb})");
+    }
+
+    [Fact]
+    public void Injector_Score_SemanticNull_IsPureLexical()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var r = new Reflection { Id = "x", Content = "dotnet build project", Importance = 0.5, Timestamp = now };
+        // With no semantic map, the score equals the lexical relevance path (unchanged behavior).
+        double withNull = ReflectionInjector.Score(r, "dotnet build", now, null);
+        double legacy = ReflectionInjector.Score(r, "dotnet build", now);
+        Assert.Equal(legacy, withNull, 6);
+        Assert.True(withNull > 0.0);
+    }
+
+    [Fact]
+    public void Injector_Score_LexicalStillCountsWhenOutsideTopK()
+    {
+        var now = DateTimeOffset.UtcNow;
+        // Semantic ran (non-null map) but this id is NOT in it (outside topK). Exact-identifier
+        // lexical overlap must still contribute so rare-token queries never regress to zero.
+        var r = new Reflection { Id = "notInMap", Content = "fixed PR #59 merge conflict g12.92", Importance = 0.5, Timestamp = now };
+        var semantic = new Dictionary<string, double> { ["someoneElse"] = 0.8 };
+        double s = ReflectionInjector.Score(r, "g12.92 merge conflict", now, semantic);
+        Assert.True(s > 0.0, "lexical signal must survive when a reflection is outside the semantic topK");
+    }
+
     // ---- SelfHeal SKILL proposal ----------------------------------------------------------
 
     [Fact]
@@ -298,7 +339,8 @@ public class ReflectionMemoryTests
     public void ReflectionConfig_NewTunables_HaveSaneDefaults()
     {
         var r = new ReflectionConfig();
-        Assert.Equal(1000, r.MaxReflections);
+        Assert.Equal(30000, r.MaxReflections);
+        Assert.Equal(4000, r.InjectQueryTimeoutMs);
         Assert.Equal(30, r.HistoryWindow);
         Assert.Equal(2, r.MaxDigsPerTick);
         Assert.Equal(4000, r.DigMaxFilesScanned);

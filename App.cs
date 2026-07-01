@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.12.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.92-daemonux";
+    public static readonly string DebugTag = "g12.93-semanticmem";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
