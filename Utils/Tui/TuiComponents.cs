@@ -325,7 +325,9 @@ internal static class TuiComponents
         if (lines.Length == 0) return new();
         // Prefer the most informative line: shell/REPL dispatches lead with bookkeeping ("Job ID:"
         // GUID or "Status:"), so surface the line that shows WHAT actually ran instead (Claude-Code
-        // style) - "Command:" for async shell jobs, "Code:" for the Python REPL.
+        // style) - "Command:" for async shell jobs. (The Python REPL no longer emits a "Code:" line;
+        // the code is shown to the user in the expanded card, so the collapsed line falls back to the
+        // Status line - the legacy "Code:" match is kept only for any older buffered output.)
         int pick = Array.FindIndex(lines, l =>
         {
             var t = l.TrimStart();
