@@ -13,9 +13,9 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.12.0";
+    public static readonly string Version = "0.12.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.87-replpreview";
+    public static readonly string DebugTag = "g12.88-tuiartifacts";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -981,7 +981,12 @@ public class App
                     break;
 
                 case "/clear":
-                    Console.Clear();
+                    // In TUI mode a raw Console.Clear() wipes the terminal out from under the
+                    // live region, desyncing its frame model and stranding ghost rows. Route
+                    // through the driver's managed clear+repaint (the Ctrl+L path); fall back to
+                    // a raw clear only in classic/stdio where there is no live region.
+                    if (MuxConsole.IsTui) MuxConsole.TuiForceRedraw();
+                    else Console.Clear();
                     break;
 
                 case "/status":

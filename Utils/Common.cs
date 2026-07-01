@@ -370,9 +370,7 @@ public static class Common
     {
         if (string.IsNullOrWhiteSpace(path))
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[WARNING] Prompt path was empty/null.");
-            Console.ResetColor();
+            MuxConsole.WriteWarning("Prompt path was empty/null.");
             return "You are a helpful AI assistant. (Prompt path missing.)";
         }
 
@@ -793,9 +791,7 @@ public static class Common
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[ERROR] Failed to save config: {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteError($"Failed to save config: {ex.Message}");
             throw;
         }
     }

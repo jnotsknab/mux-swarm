@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using MuxSwarm.State;
+using MuxSwarm.Utils;
 
 namespace MuxSwarm.State;
 
@@ -36,20 +37,16 @@ public static class ContinuousStateManager
 
             if (state != null)
             {
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"[CONTINUOUS] Resumed state for goal '{goalId}' " +
-                                  $"— iteration {state.Iteration}, " +
-                                  $"last completed {state.LastCompletedAt:yyyy-MM-dd HH:mm:ss}");
-                Console.ResetColor();
+                MuxConsole.WriteInfo($"[CONTINUOUS] Resumed state for goal '{goalId}' " +
+                                     $"— iteration {state.Iteration}, " +
+                                     $"last completed {state.LastCompletedAt:yyyy-MM-dd HH:mm:ss}");
             }
 
             return state;
         }
         catch (Exception ex) when (ex is FileNotFoundException or UnauthorizedAccessException)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[CONTINUOUS] Failed to load state for '{goalId}': {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[CONTINUOUS] Failed to load state for '{goalId}': {ex.Message}");
             throw;
         }
     }
@@ -75,9 +72,7 @@ public static class ContinuousStateManager
         }
         catch (Exception ex) when (ex is FileNotFoundException or UnauthorizedAccessException)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[CONTINUOUS] Failed to write state for '{goalId}': {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[CONTINUOUS] Failed to write state for '{goalId}': {ex.Message}");
             throw;
         }
     }
@@ -90,9 +85,7 @@ public static class ContinuousStateManager
         state.Status = "stopped";
         WriteAtomic(goalId, state, sessionDir);
 
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine($"[CONTINUOUS] State for '{goalId}' marked as stopped at iteration {state.Iteration}.");
-        Console.ResetColor();
+        MuxConsole.WriteInfo($"[CONTINUOUS] State for '{goalId}' marked as stopped at iteration {state.Iteration}.");
     }
 
     /// <summary>
@@ -109,9 +102,7 @@ public static class ContinuousStateManager
         }
         catch (Exception ex) when (ex is FileNotFoundException or UnauthorizedAccessException)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[CONTINUOUS] Failed to clear state for '{goalId}': {ex.Message}");
-            Console.ResetColor();
+            MuxConsole.WriteWarning($"[CONTINUOUS] Failed to clear state for '{goalId}': {ex.Message}");
             throw;
         }
     }
