@@ -1000,6 +1000,18 @@ public static partial class MuxConsole
         bool err = LooksLikeError(text);
         int width = TuiActive ? _driver!.Width : AnsiConsole.Profile.Width;
 
+        // repl_shell_exec: build a DISPLAY-ONLY expand body that shows the exact code the model ran
+        // ABOVE its output. The code comes from the side channel (never sent back to the model). The
+        // collapsed one-liner is unchanged; opening the card (Ctrl+E / Ctrl+G) reveals code + output,
+        // following the normal expand truncation rules.
+        string? expandBody = null;
+        if (string.Equals(tool, "repl_shell_exec", StringComparison.Ordinal)
+            && MuxSwarm.Utils.NativeTools.ReplShellTools.TakeLastReplCode() is { Length: > 0 } code)
+        {
+            string codeBlock = code.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
+            expandBody = $"Code:\n{codeBlock}\n\n\u2500\u2500\u2500 output \u2500\u2500\u2500\n{text}";
+        }
+
         if (ViaDriver)
         {
             lock (ConsoleLock)
@@ -1010,8 +1022,8 @@ public static partial class MuxConsole
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
                 if (IsDiffTool(tool) && LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
-                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err); }
-                else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000)); }
+                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody); }
+                else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, expandBody ?? text, err, width, swarm ? 500 : 2000)); }
             }
             return;
         }

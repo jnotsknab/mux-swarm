@@ -170,7 +170,7 @@ internal sealed class TuiDriver
     // scrollback the instant any other content commits (next tool call / stream / line), so only
     // ONE completion dot ever pulses at a time, just above the footer. Stores everything needed to
     // re-emit the merged line + retain its expandable block on flush. Null = nothing settling.
-    private (string Tool, string? Args, string Result, bool Error, bool Expandable)? _settling;
+    private (string Tool, string? Args, string Result, bool Error, bool Expandable, string? ExpandBody)? _settling;
 
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
     // (total session age, shown by the session timer); _loopStart is set when an agentic
@@ -484,19 +484,22 @@ internal sealed class TuiDriver
     /// No-op fallback: if there is no pending call, commits the merged line as-is so the
     /// result is never lost.
     /// </summary>
-    public void ResolveMergedToolResult(string resultText, bool error = false)
+    public void ResolveMergedToolResult(string resultText, bool error = false, string? expandBody = null)
     {
         var (tool, args) = _pendingTool ?? ("", null);
         _pendingTool = null;
         _thinkingText = null;
         int infoLines = (resultText ?? "").Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
-        bool expandable = _collapseToolLines > 0 && infoLines > _collapseToolLines;
+        // An expandBody override (e.g. repl_shell_exec code shown above its output) makes the result
+        // expandable even when the visible result is short, so the user can always open the card to
+        // read the exact code that ran. The collapsed one-liner stays lean either way.
+        bool expandable = (_collapseToolLines > 0 && infoLines > _collapseToolLines) || expandBody is not null;
         // Flush any PRIOR settling result to static scrollback, then HOLD this newest one in the
         // live region so its completion dot pulses slowly until the next event supersedes it. This
         // is the only way the most-recent completed dot can animate (committed scrollback can't be
         // repainted). The held line still retains its expandable block on flush (see FlushSettling).
         FlushSettlingResult();
-        _settling = (tool, args, resultText ?? "", error, expandable);
+        _settling = (tool, args, resultText ?? "", error, expandable, expandBody);
         Repaint();
     }
 
@@ -773,7 +776,7 @@ internal sealed class TuiDriver
         var merged = Lane(TuiComponents.ToolCallResultMerged(s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1));
         if (s.Expandable && merged.Count > 0)
         {
-            RetainExpandable(merged[0], toolName, s.Result, s.Error);
+            RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
             for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
             TrimTranscript();
             if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));

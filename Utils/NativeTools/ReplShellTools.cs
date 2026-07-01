@@ -91,6 +91,22 @@ for line in sys.stdin:
     private static readonly AsyncLocal<string?> _scope = new();
     private static readonly ConcurrentDictionary<string, ReplSession> _sessions = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// DISPLAY-ONLY side channel: the full source the model just submitted to repl_shell_exec, stashed
+    /// PER SESSION SCOPE so the TUI tool-result card can show the exact code that ran ABOVE the output.
+    /// Keyed by <see cref="CurrentKey"/> (not an AsyncLocal value - those flow DOWN the call tree, so a
+    /// value set inside the tool lambda would not be visible to the orchestrator/renderer that awaits
+    /// it). The renderer runs under the SAME BeginScope as the tool call, so CurrentKey resolves the
+    /// same. It is NEVER folded into the string returned to the model (echoing generated code back only
+    /// burns tokens). Consumed + cleared by the renderer via <see cref="TakeLastReplCode"/>.
+    /// </summary>
+    private static readonly ConcurrentDictionary<string, string> _lastReplCode = new(StringComparer.Ordinal);
+
+    /// <summary>Read + clear the full code from the most recent repl_shell_exec on the CURRENT session
+    /// scope (display side channel). Returns null when there is nothing pending. Idempotent.</summary>
+    public static string? TakeLastReplCode()
+        => _lastReplCode.TryRemove(CurrentKey, out var c) ? c : null;
+
     private static string CurrentKey => _scope.Value ?? "__primary__";
 
     /// <summary>
@@ -118,8 +134,18 @@ for line in sys.stdin:
             if (_done) return;
             _done = true;
             _scope.Value = _prev;
+            _lastReplCode.TryRemove(_key, out _);   // drop any un-drawn display code for this scope
             if (_sessions.TryRemove(_key, out var s)) s.Dispose();
         }
+    }
+
+    /// <summary>Run python, but first stash the full submitted source in the display-only side
+    /// channel so the TUI card can echo it to the USER above the output. The model still receives
+    /// only the lean status+preview result string from ExecutePythonAsync (no code echo).</summary>
+    private static async Task<string> RunPythonWithDisplayCode(string code, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(code)) _lastReplCode[CurrentKey] = code;
+        return await Session().ExecutePythonAsync(code, ct);
     }
 
     // ----- tool construction -------------------------------------------------------------
@@ -139,7 +165,7 @@ for line in sys.stdin:
                     CancellationToken cancellationToken = default) =>
                     NativeShellSecurity.Gate(code, "Run python") is { } _deny
                         ? _deny
-                        : await Session().ExecutePythonAsync(code, cancellationToken),
+                        : await RunPythonWithDisplayCode(code, cancellationToken),
                 name: "repl_shell_exec",
                 description: "Execute Python code in a persistent background worker. Variables persist between executions. " +
                              "Safe from hanging the server. If the code takes longer than 2 seconds, it returns a running status. " +

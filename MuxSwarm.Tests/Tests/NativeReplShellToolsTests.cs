@@ -102,4 +102,28 @@ public class NativeReplShellToolsTests
         if (Norm(replExe).Contains(".venv"))
             Assert.Contains(".venv", Norm(shellOut));
     }
+
+    [Fact]
+    public async Task ReplExec_StashesFullCode_ForDisplayOnly_NotInModelResult()
+    {
+        using var _ = ReplShellTools.BeginScope("t_" + System.Guid.NewGuid().ToString("N")[..8]);
+        // Drain any stale side-channel value first.
+        ReplShellTools.TakeLastReplCode();
+
+        const string code = "a = 1\nb = 2\nc = a + b\nprint(\"sum\", c)";
+        var result = await Call("repl_shell_exec", new { code });
+
+        // Model-facing result carries the output + only a ONE-LINE code preview, not the full source
+        // (the middle lines must not be echoed back to the model).
+        Assert.Contains("sum 3", result);
+        Assert.DoesNotContain("b = 2", result);
+        Assert.DoesNotContain("c = a + b", result);
+
+        // Display side channel holds the FULL code exactly once, then clears (idempotent).
+        var shown = ReplShellTools.TakeLastReplCode();
+        Assert.NotNull(shown);
+        Assert.Contains("b = 2", shown!);
+        Assert.Contains("c = a + b", shown!);
+        Assert.Null(ReplShellTools.TakeLastReplCode());   // consumed
+    }
 }
