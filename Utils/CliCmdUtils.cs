@@ -179,6 +179,71 @@ public static class CliCmdUtils
             : "Standard single-line input restored.");
     }
 
+    /// <summary>
+    /// /voice [auto|off|on] - local speech-to-text dictation into the compose field (whisper.cpp,
+    /// downloaded in the background on first use). TUI renderer only in v1: stdio/serve has the
+    /// web app's browser mic, and the classic line renderer has no live compose buffer to inject
+    /// into. Bare /voice toggles manual mode; "auto" submits on ~1.8s silence; saying exactly
+    /// "send" submits in manual mode. Hard defaults, no config block.
+    /// </summary>
+    public static void HandleVoice(string input)
+    {
+        var arg = input.Length > "/voice".Length ? input.Substring("/voice".Length).Trim().ToLowerInvariant() : "";
+
+        if (arg == "off")
+        {
+            MuxConsole.WriteInfo(Voice.VoiceSession.Stop());
+            return;
+        }
+
+        // /voice vol [1-10]: mic sensitivity tune. Bare "vol" shows the current level; a number
+        // sets it (takes effect immediately, works while voice is live). 1 = least sensitive
+        // (noisy room), 10 = most sensitive (quiet/far speech). Runtime-only, not persisted.
+        if (arg == "vol" || arg.StartsWith("vol "))
+        {
+            var volArg = arg.Length > 3 ? arg.Substring(3).Trim() : "";
+            if (volArg.Length == 0)
+            {
+                MuxConsole.WriteInfo($"Mic sensitivity: {Voice.VoiceSession.Sensitivity}/10 (higher = picks up quieter speech). Set with /voice vol <1-10>.");
+                return;
+            }
+            if (!int.TryParse(volArg, out int lvl) || lvl < 1 || lvl > 10)
+            {
+                MuxConsole.WriteMuted("Usage: /voice vol <1-10>  - 1 = least sensitive (noisy room), 10 = most sensitive (quiet room).");
+                return;
+            }
+            Voice.VoiceSession.Sensitivity = lvl;
+            MuxConsole.WriteSuccess($"Mic sensitivity set to {lvl}/10{(Voice.VoiceSession.IsActive ? " (live)" : "")}.");
+            return;
+        }
+
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteWarning(MuxConsole.StdioMode
+                ? "/voice is a TUI feature - the web app has its own mic button (voice toggle in the composer)."
+                : "/voice needs the live TUI renderer (/tui). The classic renderer has no live compose field.");
+            return;
+        }
+
+        bool auto = arg == "auto";
+        if (arg is not ("" or "auto" or "on"))
+        {
+            MuxConsole.WriteMuted("Usage: /voice [auto|off|vol <1-10>]  - bare = manual (say 'send' or press Enter), auto = submit on silence, vol = mic sensitivity.");
+            return;
+        }
+
+        // Bare /voice while already on (same mode) = toggle off, matching /hooks-style ergonomics.
+        if (Voice.VoiceSession.IsActive && !auto && !Voice.VoiceSession.AutoMode && arg != "on")
+        {
+            MuxConsole.WriteInfo(Voice.VoiceSession.Stop());
+            return;
+        }
+
+        MuxConsole.WriteInfo(Voice.VoiceSession.Start(auto));
+        if (!Voice.WhisperAssets.IsProvisioned)
+            MuxConsole.WriteMuted("First use downloads whisper.cpp + a ~57MB speech model to Runtime/whisper/.");
+    }
+
     public static bool HandleToggleSingleModeSubAgents(bool current, bool parallel = false)
     {
         current = !current;

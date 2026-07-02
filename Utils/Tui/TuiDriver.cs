@@ -214,6 +214,23 @@ internal sealed class TuiDriver
     // stashed here and replayed through the normal edit path so nothing is dropped.
     private readonly Queue<ConsoleKeyInfo> _ungetq = new();
 
+    // --- /voice: transcripts + submit requests from the voice worker thread. Drained by the
+    // input thread inside ReadLine's poll loop (active only while voice is on), so the line
+    // editor is NEVER mutated cross-thread. The poll tick doubles as the animation clock for
+    // the compose-field voice indicator (pulsing dot replaces the prompt caret).
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _voiceInject = new();
+    private volatile bool _voiceSubmit;
+    private volatile bool _voiceDirty;
+
+    /// <summary>Queue transcript text for insertion into the compose buffer (thread-safe).</summary>
+    public void VoiceInject(string text) { if (!string.IsNullOrEmpty(text)) { _voiceInject.Enqueue(text); _voiceDirty = true; } }
+
+    /// <summary>Request the current compose buffer be submitted as if Enter was pressed (thread-safe).</summary>
+    public void VoiceSubmit() { _voiceSubmit = true; }
+
+    /// <summary>Request an input-area repaint on the next voice poll tick (thread-safe).</summary>
+    public void VoiceRepaintSoon() { _voiceDirty = true; }
+
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
     // read back), so we mirror them here as ENTRIES. Most entries are a single plain markup
@@ -1341,6 +1358,36 @@ internal sealed class TuiDriver
             {
                 ConsoleKeyInfo key;
                 if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else if (Voice.VoiceSession.IsActive)
+                {
+                    // /voice on: poll instead of blocking so the loop can service transcript
+                    // injects, voice-driven submits, and the indicator animation between keys.
+                    ConsoleKeyInfo? polled = null;
+                    int frame = 0;
+                    while (true)
+                    {
+                        // Drain voice work first so dictation lands even while no key arrives.
+                        bool changed = DrainVoice(out var submitted);
+                        if (submitted is not null) return submitted;
+                        try { if (Console.KeyAvailable) { polled = Console.ReadKey(intercept: true); break; } }
+                        catch (InvalidOperationException)
+                        {
+                            _inInput = false;
+                            _region.Clear();
+                            return Console.ReadLine();
+                        }
+                        // ~10 fps indicator animation while listening/hearing/transcribing.
+                        if (changed || (++frame % 3) == 0) Repaint();
+                        Thread.Sleep(33);
+                        if (!Voice.VoiceSession.IsActive)
+                        {
+                            Repaint();   // voice turned off elsewhere - restore the normal caret
+                            break;
+                        }
+                    }
+                    if (polled is null) continue;
+                    key = polled.Value;
+                }
                 else
                 {
                     try { key = Console.ReadKey(intercept: true); }
@@ -1601,6 +1648,43 @@ internal sealed class TuiDriver
             _inInput = false;
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
+    }
+
+    /// <summary>
+    /// Drain queued voice transcripts into the line editor and honor a pending voice submit.
+    /// MUST run on the input thread (mutates the editor). Returns true when the buffer changed;
+    /// when a submit fires with a non-empty buffer, <paramref name="submitted"/> carries the line
+    /// exactly as the Enter path would return it (echoed + remembered) and ReadLine returns it.
+    /// </summary>
+    private bool DrainVoice(out string? submitted)
+    {
+        submitted = null;
+        bool changed = _voiceDirty;
+        _voiceDirty = false;
+        while (_voiceInject.TryDequeue(out var text))
+        {
+            // Separate from existing content with a space, like the web app's mic append.
+            if (!_editor.IsEmpty && !_editor.Buffer.EndsWith(' ') && !_editor.Buffer.EndsWith('\n'))
+                _editor.InsertText(" ");
+            _editor.InsertText(text);
+            changed = true;
+        }
+        if (_voiceSubmit)
+        {
+            _voiceSubmit = false;
+            string line = _editor.Buffer.Trim();
+            if (line.Length > 0)
+            {
+                _editor.Remember(line);
+                _inInput = false;
+                _pendingGap = false;
+                if (!TuiCommands.OpensInteractivePrompt(line))
+                    CommitMirrored(TuiComponents.UserEcho(line));
+                submitted = line;
+                return true;
+            }
+        }
+        return changed;
     }
 
     /// <summary>True when more console key events are already buffered (fast typing / paste /

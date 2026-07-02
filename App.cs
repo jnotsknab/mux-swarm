@@ -1021,6 +1021,9 @@ public class App
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
                     break;
+                case var vc when vc == "/voice" || vc.StartsWith("/voice "):
+                    CliCmdUtils.HandleVoice(vc);
+                    break;
                 case "/swap":
                     CliCmdUtils.HandleAgentSwap();
                     break;

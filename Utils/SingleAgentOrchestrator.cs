@@ -2253,6 +2253,13 @@ public static class SingleAgentOrchestrator
                     // Editable team board for the active taskboard team; a no-op hint off-team.
                     MuxSwarm.Utils.Teams.KanbanCommand.Run(metaCmd);
                 }
+                else if (metaCmd.Equals("/voice", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/voice ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Voice dictation toggle (whisper.cpp). Session-agnostic app-wide mode; the
+                    // TUI compose caret becomes the live state dot while active.
+                    CliCmdUtils.HandleVoice(metaCmd);
+                }
                 else if (metaCmd.Equals("/background", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/bg", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/background ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/bg ", StringComparison.OrdinalIgnoreCase))
                 {

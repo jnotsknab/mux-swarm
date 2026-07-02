@@ -74,6 +74,7 @@ internal static class TuiCommands
         new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.SessionOnly),
         new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
+        new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
         new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
         new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
@@ -116,6 +117,7 @@ internal static class TuiCommands
         new("/login",        "Log in with Claude / ChatGPT (subscription OAuth)", Scope.ReplOnly),
         new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
+        new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.ReplOnly),
 
         // --- global utilities (App.cs menu) ---
         new("/classic",      "Switch to the classic line renderer", Scope.ReplOnly),
