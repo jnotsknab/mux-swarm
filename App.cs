@@ -218,6 +218,15 @@ public class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
+        // Hooks confirm BEFORE the MCP kickoff: HookWorker.Start shows a blocking
+        // Confirm prompt when hooks are configured (interactive path), and putting it
+        // after the MCP fan-out landed the prompt in the middle of the subprocess spawn
+        // storm - key handling turned sluggish and startup felt slow. On a quiet machine
+        // the prompt is instant; MCP init still overlaps everything after it and is
+        // awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        HookWorker.Start(SwarmConfig?.Hooks ?? []);
+        OtelLogger.Info("Hook Worker Started");
+
         // Kick off MCP server connections in the background so the user is
         // dropped into the interactive prompt immediately. Connection results
         // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.
@@ -227,9 +236,6 @@ public class App
         // background thread too. Calling it directly stalled startup ~700ms before the kickoff
         // returned; this makes time-to-prompt effectively instant.
         McpInitTask = Task.Run(() => InitMcpServersAsync(Config));
-
-        HookWorker.Start(SwarmConfig?.Hooks ?? []);
-        OtelLogger.Info("Hook Worker Started");
         startupSpan?.Dispose();
     }
 
@@ -2007,12 +2013,24 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .ToList();
         int enabledCount = enabledServers.Count;
 
-        // Connect to all enabled servers concurrently; shared collections are
-        // populated sequentially after the gather to avoid races on
-        // McpClients / McpTools. Success is logged only (no console output);
-        // failures are reported to the console inside ConnectMcpServerAsync.
+        // Connect to enabled servers concurrently but THROTTLED: an unbounded
+        // Task.WhenAll over ~14 stdio servers spawns every subprocess at once
+        // (uvx/npx/python package resolution + imports), and that spawn storm
+        // saturates CPU/disk/thread pool right as the TUI paints and any startup
+        // prompt reads keys - the whole app feels sluggish. A gate of 4 keeps the
+        // pipeline full (spawns are mostly I/O-bound waits) while flattening the
+        // instantaneous load spike. Shared collections are still populated
+        // sequentially after the gather to avoid races on McpClients / McpTools.
+        // Success is logged only (no console output); failures are reported to
+        // the console inside ConnectMcpServerAsync.
+        using var connectGate = new SemaphoreSlim(4);
         var results = await Task.WhenAll(
-            enabledServers.Select(kvp => ConnectMcpServerAsync(kvp.Key, kvp.Value, baseDir, config)));
+            enabledServers.Select(async kvp =>
+            {
+                await connectGate.WaitAsync();
+                try { return await ConnectMcpServerAsync(kvp.Key, kvp.Value, baseDir, config); }
+                finally { connectGate.Release(); }
+            }));
 
         int successCount = 0;
         foreach (var result in results)
