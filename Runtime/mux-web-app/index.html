@@ -2261,6 +2261,10 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+  // Frontend build stamp. Compared against /api/health.version on load; a mismatch
+  // means the browser is running a cached shell against a newer backend (interactive
+  // panels like /setmodel would hang), so we force a one-time cache-busting reload.
+  const APP_VERSION = '0.12.1';
   const output = $('output');
   const input = $('input');
   const actionBtn = $('actionBtn');
@@ -4585,6 +4589,20 @@ const icons = {
     } catch (_) {}
     // Authoritative session mode → replaces banner-text scraping.
     try { await refreshSessionMode(); } catch (_) {}
+    // Self-heal stale cached shell: if the backend build differs from the shell we
+    // loaded, a hard refresh is required or interactive panels diverge and hang.
+    // Do it once (sessionStorage guard) so we never loop on a persistent mismatch.
+    try {
+      const r = await fetch(_apiUrl('/api/health'), { headers: { 'Accept': 'application/json' } });
+      if (r.ok) {
+        const h = await r.json();
+        if (h && h.version && h.version !== APP_VERSION && !sessionStorage.getItem('muxReloadedFor_' + h.version)) {
+          sessionStorage.setItem('muxReloadedFor_' + h.version, '1');
+          location.reload();
+          return;
+        }
+      }
+    } catch (_) {}
   }
 
   // Pull authoritative session mode from /api/status. The server pins this
