@@ -39,16 +39,30 @@ public static class ReflectionInjector
     // full reflections locally). Generous so the local rerank has a rich pool.
     private const int SemanticTopK = 50;
 
-    // Reflection ids already surfaced to the lead this session (full block + deltas), so a delta
-    // only ever carries what is genuinely NEW. Reset when a new lead session starts.
+    // DURABLE set: reflection ids injected into the PERSISTED conversation (the turn-boundary
+    // path prepends these into the messages the agent records, so they replay every future turn).
+    // Once here a reflection is permanently in context and is never injected again anywhere.
     private static readonly HashSet<string> _injectedIds = new(StringComparer.Ordinal);
+    // EPHEMERAL set: reflections the MID-TURN wrapper surfaced during the CURRENT turn only. The
+    // wrapper's injection is NOT persisted by the agent thread (verified), so this set merely stops
+    // the wrapper repeating a reflection within one turn. Cleared at each turn boundary (ResetTurn)
+    // so the durable path can then re-inject that same reflection PERMANENTLY - no net duplication:
+    // the ephemeral copy evaporates with the turn and is superseded by the persisted one.
+    private static readonly HashSet<string> _ephemeralIds = new(StringComparer.Ordinal);
     private static readonly object _gate = new();
 
-    /// <summary>Reset per-session state (injected-id tracking + semantic cache) on a fresh lead session.</summary>
+    /// <summary>Reset per-session state (both id sets + semantic cache) on a fresh lead session.</summary>
     public static void ResetSession()
     {
-        lock (_gate) _injectedIds.Clear();
+        lock (_gate) { _injectedIds.Clear(); _ephemeralIds.Clear(); }
         ReflectionSemanticIndex.ResetCache();
+    }
+
+    /// <summary>Clear the per-TURN ephemeral set at a turn boundary, so a reflection the mid-turn
+    /// wrapper surfaced this turn becomes eligible for DURABLE injection next turn. Durable ids persist.</summary>
+    public static void ResetTurn()
+    {
+        lock (_gate) _ephemeralIds.Clear();
     }
 
     // ---- SYNC surface (lexical only): preamble-time, never blocks startup -----------------------
@@ -127,15 +141,52 @@ public static class ReflectionInjector
 
             List<(Reflection r, double score)> scored;
             lock (_gate)
+                // Exclude what is already DURABLE (persisted, will replay anyway) and what this turn's
+                // wrapper already surfaced. Mark only the EPHEMERAL set - the wrapper's copy is not
+                // persisted, so the next turn boundary re-injects it durably.
+                scored = ScoredFor(agentName, isLead, cfg, semantic)
+                    .Where(x => !_injectedIds.Contains(x.r.Id) && !_ephemeralIds.Contains(x.r.Id))
+                    .ToList();
+            if (scored.Count == 0) return string.Empty;
+
+            var picked = new List<Reflection>();
+            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - new (live this turn)]", picked);
+            if (!string.IsNullOrEmpty(block))
+                lock (_gate) foreach (var r in picked) _ephemeralIds.Add(r.Id);
+            return block;
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// DURABLE turn-boundary delta: the block to prepend into the messages the orchestrator hands the
+    /// agent, so it is RECORDED into the conversation thread and replays on every future turn. Only
+    /// reflections not yet made durable this session; marks them in the durable set (and clears them
+    /// from the ephemeral set, since the persisted copy supersedes any mid-turn one). Hybrid semantic
+    /// ranking, token-capped, best-effort. Lead scope only. Returns empty when nothing new is durable.
+    /// </summary>
+    public static async Task<string> BuildDurableDeltaAsync(string agentName, bool isLead, CancellationToken ct = default)
+    {
+        try
+        {
+            var cfg = App.SwarmConfig?.ResolveReflection();
+            if (cfg is null || !cfg.IsDeep || !isLead) return string.Empty;
+            if (!ScopeAllows(cfg, isLead)) return string.Empty;
+
+            var semantic = await ReflectionSemanticIndex.QueryAsync(
+                CurrentQuery, SemanticTopK, cfg.InjectQueryTimeoutMs, ct);
+
+            List<(Reflection r, double score)> scored;
+            lock (_gate)
                 scored = ScoredFor(agentName, isLead, cfg, semantic)
                     .Where(x => !_injectedIds.Contains(x.r.Id))
                     .ToList();
             if (scored.Count == 0) return string.Empty;
 
             var picked = new List<Reflection>();
-            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - new since last turn]", picked);
+            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - persisted context]", picked);
             if (!string.IsNullOrEmpty(block))
-                lock (_gate) foreach (var r in picked) _injectedIds.Add(r.Id);
+                lock (_gate) foreach (var r in picked) { _injectedIds.Add(r.Id); _ephemeralIds.Remove(r.Id); }
             return block;
         }
         catch { return string.Empty; }
