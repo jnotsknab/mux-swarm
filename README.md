@@ -1,4 +1,4 @@
-<a id="readme-top"></a>
+﻿<a id="readme-top"></a>
 
 <div align="center">
 
@@ -263,6 +263,7 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /delimiter      Toggle multi-line input delimiter
 /dbg / /nodbg   Enable / disable tool call output (stdio mode only)
 /setup          Run initial setup / reconfigure
+/update         Update to the latest GitHub release (verifies SHA256; restarts if the binary changed)
 /reloadskills   Refresh skills directory for mid-process changes
 /refresh        Full Mux system refresh: config, MCP servers, and skills
 /shortcuts      Show keyboard shortcuts (alias /keys)
@@ -286,6 +287,7 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 --daemon                   Start daemon mode (file watch, cron, status triggers)
 --register                 Register mux-swarm as an OS service (survives reboots)
 --remove                   Unregister mux-swarm OS service
+--update                   Update to the latest GitHub release (verifies SHA256; restarts if the binary changed)
 --watchdog                 Enable external watchdog (auto-restart on crash)
 --workflow <file>          Run a workflow file (JSON) on launch
 --wf <file>                Alias for --workflow
@@ -461,6 +463,8 @@ Features:
 - Auto-reconnect on mobile with manual reconnect button
 - Accessible on LAN and Tailscale (binds to all interfaces)
 - Voice input via browser speech-to-text for hands-free interaction
+- **Native config editor** (Monaco): edit `Config.json` / `Swarm.json` in-browser with server-side JSON validation, gated by `serve.configExposed` (default off)
+- **One-click self-update** and native server restart from the Settings panel
 - Zero dependencies: single static HTML file, no build step, no npm
 
 The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience or `--register` to persist as an OS service that survives reboots.

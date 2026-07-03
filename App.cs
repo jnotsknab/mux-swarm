@@ -263,8 +263,28 @@ public class App
         // user can boot straight into a mode/agent every run (e.g. "--agent CodeAgent --giga").
         // Real CLI flags come AFTER and therefore win on any single-valued override. Set via
         // /startargs. Machine transports (--stdio/--serve/--acp) ignore startup mode entry.
+        // Capture argv for a possible in-process restart (POST /api/restart, post-update relaunch),
+        // then apply any staged update binary + honor a predecessor-wait handshake from a relaunch.
+        MuxSwarm.State.Relauncher.OriginalArgs = args;
+        MuxSwarm.State.SelfUpdater.ApplyStagedBinaryIfPresent();
+        args = MuxSwarm.State.Relauncher.WaitForPredecessorAndStrip(args);
+        MuxSwarm.State.Relauncher.OriginalArgs = args;
+
         args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
+
+        // --update : do-and-exit self-update from the latest GitHub release.
+        if (parsed.UpdateMode)
+        {
+            var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
+            MuxConsole.WriteInfo(msg);
+            if (staged)
+            {
+                MuxConsole.WriteWarning("Mux-Swarm must restart to finish applying the update. Restarting...");
+                MuxSwarm.State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+            }
+            return 0;
+        }
 
         // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
         // console.renderMode config; default "auto" is capability-aware. No effect on the
@@ -1327,6 +1347,22 @@ public class App
                     break;
                 }
 
+                case "/update":
+                {
+                    // Session-agnostic process-level self-update (Scope.Both): runs identically at the
+                    // menu and in-session. Downloads the latest release, verifies its published SHA256,
+                    // replaces changed shipped files (user configs/sessions/memory preserved), and if the
+                    // binary itself changed, stages it and relaunches to finish the swap.
+                    var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
+                    MuxConsole.WriteInfo(msg);
+                    if (staged)
+                    {
+                        MuxConsole.WriteWarning("Mux-Swarm must restart to finish applying the update. Restarting...");
+                        MuxSwarm.State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+                    }
+                    break;
+                }
+
                 case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ")
                                   || dmnCmd == "/da" || dmnCmd.StartsWith("/da "):
                 {
@@ -1529,7 +1565,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         string AgentName,
         int? ServePort,
         bool DaemonMode,
-        bool AcpMode
+        bool AcpMode,
+        bool UpdateMode
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -1603,6 +1640,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         string? agentName = null;
         bool daemonMode = false;
         bool acpMode = false;
+        bool updateMode = false;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -1841,6 +1879,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 case "--daemon":
                     daemonMode = true;
                     break;
+                case "--update":
+                    updateMode = true;
+                    break;
                 case "--register":
                     ServiceRegistration.Register(args);
                     Environment.Exit(0);
@@ -1873,7 +1914,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             agentName,
             ServePort,
             daemonMode,
-            acpMode
+            acpMode,
+            updateMode
         );
     }
 

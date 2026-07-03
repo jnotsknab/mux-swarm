@@ -47,6 +47,12 @@ public static partial class ServeMode
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
         app.MapPost("/api/hook/{id}", HandleWebhook);
+        app.MapPost("/api/shutdown", HandleShutdown);
+        app.MapPost("/api/restart", HandleRestart);
+        app.MapGet("/api/config-files/{which}", HandleConfigFileGet);
+        app.MapPut("/api/config-files/{which}", HandleConfigFilePut);
+        app.MapGet("/api/update", HandleUpdateCheck);
+        app.MapPost("/api/update", HandleUpdateApply);
     }
 
     // Inbound webhook: POST /api/hook/{id} -> fires the matching daemon "webhook" trigger's goal
@@ -334,6 +340,7 @@ public static partial class ServeMode
             address = cfg.ServeAddress,
             port = App.ServePort,
             editable = cfg.Serve?.Editable == true,
+            configExposed = cfg.Serve?.ConfigExposed == true,
             authRequired = cfg.Serve?.Auth?.Enabled == true,
         };
 
@@ -678,4 +685,155 @@ public static partial class ServeMode
             return Encoding.UTF8.GetString(data, 3, data.Length - 3);
         return Encoding.UTF8.GetString(data);
     }
+
+    // ---- Lifecycle: shutdown / restart (POST) ----
+
+    // L1 -- POST /api/shutdown : graceful process exit. Fire-and-forget after a short delay so the
+    // HTTP response can flush to the caller before the process goes down.
+    private static async Task HandleShutdown(HttpContext context)
+    {
+        await WriteJson(context, 202, new { status = "shutting down" });
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(250);
+            MuxConsole.DisableDockedFooter();
+            State.HookWorker.Stop();
+            ProcessCleanup.Instance.Shutdown();
+            Environment.Exit(0);
+        });
+    }
+
+    // L2 -- POST /api/restart : spawn a successor that waits on this PID, then exit. Replaces the old
+    // flaky "__CANCEL__ -> /qc -> /exit over the WS" dance the web app used for a server restart.
+    private static async Task HandleRestart(HttpContext context)
+    {
+        await WriteJson(context, 202, new { status = "restarting" });
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(250);
+            State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+        });
+    }
+
+    // ---- Native config editor (gated by serve.configExposed) ----
+
+    /// <summary>True when the config-editor endpoints are enabled (serve.configExposed = true).</summary>
+    private static bool ConfigEditingEnabled => App.Config.Serve?.ConfigExposed == true;
+
+    /// <summary>Map the {which} route token to a concrete config file path. null = unknown token.</summary>
+    private static string? ResolveConfigFile(string? which) => (which ?? "").ToLowerInvariant() switch
+    {
+        "config" => PlatformContext.ConfigPath,
+        "swarm" => PlatformContext.SwarmPath,
+        _ => null,
+    };
+
+    // CE1 -- GET /api/config-files/{config|swarm} : raw file contents (for the Monaco editor).
+    private static async Task HandleConfigFileGet(HttpContext context)
+    {
+        if (!ConfigEditingEnabled)
+        {
+            await WriteJson(context, 403, new { error = "Config editing disabled; set serve.configExposed=true" });
+            return;
+        }
+        var which = context.Request.RouteValues["which"]?.ToString();
+        var path = ResolveConfigFile(which);
+        if (path == null)
+        {
+            await WriteJson(context, 404, new { error = "Unknown config file (use 'config' or 'swarm')" });
+            return;
+        }
+        if (!File.Exists(path))
+        {
+            await WriteJson(context, 200, new { which, path, exists = false, content = "" });
+            return;
+        }
+        var bytes = await File.ReadAllBytesAsync(path);
+        await WriteJson(context, 200, new { which, path, exists = true, content = DecodeText(bytes) });
+    }
+
+    // CE2 -- PUT /api/config-files/{config|swarm}  body: { content } : validate JSON, then write.
+    private static async Task HandleConfigFilePut(HttpContext context)
+    {
+        if (!ConfigEditingEnabled)
+        {
+            await WriteJson(context, 403, new { error = "Config editing disabled; set serve.configExposed=true" });
+            return;
+        }
+        var which = context.Request.RouteValues["which"]?.ToString();
+        var path = ResolveConfigFile(which);
+        if (path == null)
+        {
+            await WriteJson(context, 404, new { error = "Unknown config file (use 'config' or 'swarm')" });
+            return;
+        }
+
+        string content;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body);
+            content = doc.RootElement.TryGetProperty("content", out var el) ? el.GetString() ?? "" : "";
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid request body (expected { content })" });
+            return;
+        }
+
+        // Guard: the new content itself must be valid JSON, or we would brick the install on next load.
+        try { using var _ = JsonDocument.Parse(content); }
+        catch (JsonException jx)
+        {
+            await WriteJson(context, 422, new { error = $"Content is not valid JSON: {jx.Message}" });
+            return;
+        }
+
+        try
+        {
+            // Atomic-ish write: temp beside the target, then move over it.
+            var tmp = path + ".tmp";
+            await File.WriteAllTextAsync(tmp, content);
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            await WriteJson(context, 500, new { error = $"Write failed: {ex.Message}" });
+            return;
+        }
+
+        await WriteJson(context, 200, new { which, path, saved = true, note = "Saved. Some changes take effect on restart." });
+    }
+
+    // ---- Self-update (GET check / POST apply) ----
+
+    // U1 -- GET /api/update : read-only availability check.
+    private static async Task HandleUpdateCheck(HttpContext context)
+    {
+        var plan = await State.SelfUpdater.PlanAsync(context.RequestAborted);
+        await WriteJson(context, 200, new
+        {
+            updateAvailable = plan.UpdateAvailable,
+            currentVersion = plan.CurrentVersion,
+            latestTag = plan.LatestTag,
+            asset = plan.AssetName,
+            assetSize = plan.AssetSize,
+            message = plan.Message,
+        });
+    }
+
+    // U2 -- POST /api/update : download + verify + apply; if the binary was staged, relaunch.
+    private static async Task HandleUpdateApply(HttpContext context)
+    {
+        var (staged, msg) = await State.SelfUpdater.RunAsync(null, context.RequestAborted);
+        await WriteJson(context, 200, new { applied = true, restarting = staged, message = msg });
+        if (staged)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+            });
+        }
+    }
+
 }

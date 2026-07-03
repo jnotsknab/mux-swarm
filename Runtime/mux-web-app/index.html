@@ -5067,19 +5067,13 @@ const icons = {
   });
 
   statusBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      if (confirm('Are you sure you want to restart the server?')) {
-        appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
-        sendRaw('__CANCEL__');
-        setTimeout(() => {
-          sendRaw('/qc');
-          setTimeout(() => {
-            sendRaw('/exit');
-          }, 1000);
-        }, 2500);
-      }
-    } else {
-      alert('Cannot restart: Not connected to server.');
+    if (confirm('Are you sure you want to restart the server?')) {
+      appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
+      // Native restart route: spawns a successor that waits for this process to exit, then rebinds
+      // the serve port. Replaces the old flaky "__CANCEL__ -> /qc -> /exit over WS" timing dance.
+      fetch('/api/restart', { method: 'POST' })
+        .then(r => { if (!r.ok && r.status !== 202) throw new Error('HTTP ' + r.status); })
+        .catch(err => { alert('Restart request failed: ' + err.message); });
     }
   });
 
@@ -8085,6 +8079,9 @@ const icons = {
       <button class="mux-settings-btn danger" id="muxSettingsReset">Reset to defaults</button>
       <button class="mux-settings-btn" id="muxSettingsExport">Export</button>
       <button class="mux-settings-btn" id="muxSettingsImport">Import</button>
+      <button class="mux-settings-btn" id="muxEditConfig" style="display:none">Edit Config.json</button>
+      <button class="mux-settings-btn" id="muxEditSwarm" style="display:none">Edit Swarm.json</button>
+      <button class="mux-settings-btn" id="muxUpdateBtn">Check for updates</button>
     </div>
   </div>
 </div>
@@ -8491,7 +8488,17 @@ const icons = {
   }
 
   const backdrop = document.getElementById('muxSettingsBackdrop');
-  function openPanel(){ renderUI(); backdrop.classList.add('open'); }
+  function openPanel(){ renderUI(); backdrop.classList.add('open'); refreshConfigEditButtons(); }
+  // Reveal the Config.json / Swarm.json edit buttons only when serve.configExposed is on.
+  async function refreshConfigEditButtons(){
+    var ec=document.getElementById('muxEditConfig'), es=document.getElementById('muxEditSwarm');
+    if(!ec||!es) return;
+    try{
+      var cfg=await (await fetch('/api/config')).json();
+      var on=!!(cfg.serve&&cfg.serve.configExposed);
+      ec.style.display=on?'':'none'; es.style.display=on?'':'none';
+    }catch(e){ ec.style.display='none'; es.style.display='none'; }
+  }
   function closePanel(){ backdrop.classList.remove('open'); }
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closePanel(); });
   document.getElementById('muxSettingsClose').addEventListener('click', closePanel);
@@ -8521,6 +8528,30 @@ const icons = {
       r.readAsText(file);
     });
     f.click();
+  });
+
+
+  document.getElementById('muxEditConfig').addEventListener('click', () => {
+    closePanel();
+    window.MuxEditor && window.MuxEditor.open('config', 'config', 'Config.json');
+  });
+  document.getElementById('muxEditSwarm').addEventListener('click', () => {
+    closePanel();
+    window.MuxEditor && window.MuxEditor.open('config', 'swarm', 'Swarm.json');
+  });
+  document.getElementById('muxUpdateBtn').addEventListener('click', async () => {
+    var b=document.getElementById('muxUpdateBtn'); var orig=b.textContent;
+    b.disabled=true; b.textContent='Checking\u2026';
+    try{
+      var chk=await (await fetch('/api/update')).json();
+      if(!chk.updateAvailable){ b.textContent=orig; b.disabled=false; alert(chk.message||'Up to date.'); return; }
+      if(!confirm(chk.message+'\n\nDownload and apply now? Mux-Swarm will restart if the binary changed.')){ b.textContent=orig; b.disabled=false; return; }
+      b.textContent='Updating\u2026';
+      var res=await (await fetch('/api/update',{method:'POST'})).json();
+      alert(res.message||'Update finished.');
+      if(res.restarting){ b.textContent='Restarting\u2026'; }
+      else { b.textContent=orig; b.disabled=false; }
+    }catch(e){ alert('Update failed: '+e.message); b.textContent=orig; b.disabled=false; }
   });
 
   function mountGear(){
@@ -11340,18 +11371,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     titleEl.textContent=cur.name; titleEl.title=path;
     ov.classList.add('open');
     cur.editable=false;
+    // 'config' type edits Config.json / Swarm.json via the native config-file endpoints,
+    // gated by serve.configExposed. Everything else reads via /api/read (sandbox writable
+    // when serve.editable).
     try{ var cfg=await (await fetch('/api/config')).json();
-      cur.editable=(type==='sandbox') && !!(cfg.serve&&cfg.serve.editable); }catch(e){}
+      if(type==='config') cur.editable=!!(cfg.serve&&cfg.serve.configExposed);
+      else cur.editable=(type==='sandbox') && !!(cfg.serve&&cfg.serve.editable); }catch(e){}
     saveBtn.style.display=cur.editable?'':'none';
     status('Loading '+cur.name+'\u2026');
     var resp,data;
-    try{ resp=await fetch('/api/read/'+type+'/'+path.split('/').map(encodeURIComponent).join('/'));
+    var readUrl = (type==='config')
+      ? '/api/config-files/'+encodeURIComponent(path)
+      : '/api/read/'+type+'/'+path.split('/').map(encodeURIComponent).join('/');
+    try{ resp=await fetch(readUrl);
       data=await resp.json(); }catch(e){ status('Read failed: '+e.message); return; }
     if(!resp.ok){ status('Error: '+((data&&data.error)||resp.status)); return; }
     ensureMonaco(function(){
-      mountEditor(data.content||'',langFor(cur.name));
+      mountEditor(data.content||'',type==='config'?'json':langFor(cur.name));
       status((cur.editable?'Editable':'Read-only')+(data.truncated?' \u00b7 truncated (large file)':'')
-        +' \u00b7 '+(data.sizeBytes||0)+' bytes');
+        +(type==='config'?'':' \u00b7 '+(data.sizeBytes||0)+' bytes'));
     });
   }
 
@@ -11359,11 +11397,22 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if(!cur.editable||!ed||!cur.dirty) return;
     var content=ed.getValue(); saveBtn.disabled=true; status('Saving\u2026');
     try{
-      var resp=await fetch('/api/save/'+cur.type+'/'+cur.path.split('/').map(encodeURIComponent).join('/'),
-        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
-      var data=await resp.json();
-      if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.sizeBytes||content.length)+' bytes \u00b7 '+new Date().toLocaleTimeString()); }
-      else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      var resp, data;
+      if(cur.type==='config'){
+        // Config-file save: JSON is validated server-side before the write; a parse error
+        // returns 422 and the file is left untouched.
+        resp=await fetch('/api/config-files/'+encodeURIComponent(cur.path),
+          {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
+        data=await resp.json();
+        if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.note||'ok')+' \u00b7 '+new Date().toLocaleTimeString()); }
+        else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      } else {
+        resp=await fetch('/api/save/'+cur.type+'/'+cur.path.split('/').map(encodeURIComponent).join('/'),
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
+        data=await resp.json();
+        if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.sizeBytes||content.length)+' bytes \u00b7 '+new Date().toLocaleTimeString()); }
+        else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      }
     }catch(e){ status('Save failed: '+e.message); saveBtn.disabled=false; }
   }
 

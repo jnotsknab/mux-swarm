@@ -1,4 +1,4 @@
-# Mux-Swarm System Reference
+﻿# Mux-Swarm System Reference
 
 Source repository: https://github.com/jnotsknab/mux-swarm
 
@@ -156,12 +156,14 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 ```json
 "serve": {
   "editable": false,
+  "configExposed": false,
   "auth": { "enabled": false, "token": "", "scheme": "bearer" }
 }
 ```
 
 | Key | Default | Meaning |
 |-----|---------|---------|
+| `configExposed` | `false` | When true, the native config-editor endpoints (`GET`/`PUT /api/config-files/{config\|swarm}`) are enabled, letting the web app read and edit `Config.json` / `Swarm.json` in the browser (Monaco). Server-side validates JSON before writing (a parse error returns 422, file untouched). Independent of `editable`. |
 | `editable` | `false` | When true, IDE write endpoints (`POST /api/save`, `POST /api/fs`) are enabled for the **sandbox** root only. Sessions stay read-only. When false they return `403`. |
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |
@@ -173,6 +175,30 @@ the token (HTTP `Authorization: Bearer <token>`; WS `?token=<token>` query param
 can load its login prompt. Token compare is constant-time, never logged, and never
 returned by `/api/config` (which exposes only a boolean `authRequired`). If enabled
 but no token resolves, auth stays inactive with a warning (never silently locks out).
+
+## Self-Update & Lifecycle
+
+Mux-Swarm can update itself in place from the latest GitHub release, and restart/shut down over the
+HTTP API.
+
+**Update** — `/update` (in-session or at the menu) or the `--update` CLI flag. The updater:
+1. Queries the latest GitHub release and compares its tag against the running version (semver core).
+2. Downloads the platform asset (`mux-swarm-win-x64.zip`, `-linux-x64.tar.gz`, `-osx-{arm64,x64}.tar.gz`).
+3. **Verifies the download against the SHA256 digest GitHub publishes on the asset** — a mismatch aborts.
+4. Extracts and replaces only *shipped* files whose content hash differs. **User-owned paths are never
+   touched**: `Configs/Config.json`, `Configs/Swarm.json`, `Sessions/`, `Teams/`, and the durable
+   `Context/` memory files (`reflections.json`, `MEMORY.md`, `BRAIN.md`).
+5. The running binary can't be overwritten while locked, so a changed exe is staged as `MuxSwarm.new`
+   and swapped on restart (rename current -> `.old`, staged -> live). When the binary changed, Mux
+   relaunches automatically to finish.
+
+Over HTTP: `GET /api/update` (read-only availability check) and `POST /api/update` (download + apply;
+restarts if the binary changed). Both inherit the serve-layer bearer auth when `serve.auth` is on.
+
+**Restart / shutdown** — `POST /api/restart` spawns a successor process that waits for the current one
+to fully exit (via an internal `--relaunch-after <pid>` handshake) before rebinding the serve port,
+then exits — no port-bind race. `POST /api/shutdown` tears down and exits. The web app's restart
+control uses `/api/restart` (replacing an older WS-timing dance).
 
 ## Execution Sandbox
 

@@ -78,6 +78,7 @@ internal static class TuiCommands
         new("/daemon cron",   "Add a cron trigger - bare = interactive builder (plain-English schedule OK)", Scope.Both),
         new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.Both),
         new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.Both),
+        new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
         new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),

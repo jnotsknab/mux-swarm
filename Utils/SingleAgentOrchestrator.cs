@@ -2272,6 +2272,19 @@ public static class SingleAgentOrchestrator
                     // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
                     MuxSwarm.State.DaemonCommand.Run(metaCmd);
                 }
+                else if (metaCmd.Equals("/update", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Process-level self-update (Scope.Both), identical to the menu path: pull the
+                    // latest release, verify its SHA256, replace changed shipped files (user configs/
+                    // sessions/memory preserved), and relaunch if the binary itself changed.
+                    var (staged, umsg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line), cancellationToken);
+                    MuxConsole.WriteInfo(umsg);
+                    if (staged)
+                    {
+                        MuxConsole.WriteWarning("Mux-Swarm must restart to finish applying the update. Restarting...");
+                        MuxSwarm.State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+                    }
+                }
                 else if (metaCmd.Equals("/detach", StringComparison.OrdinalIgnoreCase))
                 {
                     // v0.12.0 live-session detach: park THIS interactive session in the background
