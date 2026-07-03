@@ -584,6 +584,11 @@ public static partial class ServeMode
     private static bool RequiresAuth(HttpContext context)
     {
         var path = context.Request.Path;
+        // Inbound webhook endpoints authenticate per-trigger via HMAC (or the bearer, in-handler),
+        // NOT via the runtime bearer middleware -- an external sender (GitHub/Stripe) can't present
+        // the Mux token. So /api/hook/* is excluded here and does its own auth in HandleWebhook.
+        if (path.StartsWithSegments("/api/hook", StringComparison.OrdinalIgnoreCase))
+            return false;
         return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/ws", StringComparison.OrdinalIgnoreCase);
     }

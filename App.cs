@@ -227,6 +227,9 @@ public class App
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
 
+        // Outbound webhook sinks (Mux -> external). Inert unless swarm.json defines webhooks[].
+        WebhookSink.Start(SwarmConfig?.Webhooks);
+
         // Kick off MCP server connections in the background so the user is
         // dropped into the interactive prompt immediately. Connection results
         // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.

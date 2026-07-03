@@ -58,4 +58,12 @@ public class SwarmConfig
 
     [JsonPropertyName("hooks")]
     public List<HookConfig> Hooks { get; set; } = [];
+
+    /// <summary>
+    /// Outbound webhook sinks (Mux -> external). Each entry POSTs a signed JSON envelope to its URL
+    /// when a structured event whose type is in its allowlist fires. Additive + default-empty: with
+    /// no entries the outbound webhook subsystem is inert.
+    /// </summary>
+    [JsonPropertyName("webhooks")]
+    public List<WebhookConfig> Webhooks { get; set; } = [];
 }

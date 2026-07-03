@@ -20,6 +20,11 @@ public sealed class DaemonRunner : IAsyncDisposable
     private readonly List<Task> _workers = [];
     private readonly ConcurrentDictionary<string, DateTime> _lastFired = new();
     private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new();
+
+    // Inbound webhook triggers: each "webhook" loop registers a queue keyed by trigger id. The serve
+    // route POST /api/hook/{id} enqueues (body, source) here; the loop drains + fires the goal. The
+    // queue exists only while the loop runs, so a POST to a non-webhook / disabled id is rejected.
+    private readonly ConcurrentDictionary<string, (ConcurrentQueue<(string Payload, string Source)> Queue, SemaphoreSlim Signal)> _webhookQueues = new(StringComparer.OrdinalIgnoreCase);
     private ConcurrentDictionary<string, Process> _bridgeProcesses = new();
     private Func<string, IChatClient>? _chatClientFactory;
     private IList<AITool>? _mcpTools;
@@ -97,6 +102,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                 "cron" => RunCronLoop(trigger, ct),
                 "status" => RunStatusLoop(trigger, ct),
                 "bridge" => RunBridgeLoop(trigger, ct),
+                "webhook" => RunWebhookLoop(trigger, ct),
                 _ => LogUnknownTrigger(trigger)
             };
 
@@ -170,6 +176,7 @@ public sealed class DaemonRunner : IAsyncDisposable
         "watch"  => $"{t.Path} -> {t.Mode}:{t.Agent ?? "(default)"}",
         "status" => $"{t.Check} (restart={t.Restart})",
         "bridge" => $"{t.Command}",
+        "webhook"=> $"POST /api/hook/{t.Id} -> {t.Mode}:{t.Agent ?? "(default)"}",
         _        => "",
     };
 
@@ -751,6 +758,98 @@ public sealed class DaemonRunner : IAsyncDisposable
             // run's origin scope already disposed when the try exited).
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
                 MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal execution failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Enqueue an inbound webhook payload for the given trigger id. Called by the serve route
+    /// <c>POST /api/hook/{id}</c> after it has verified the request. Returns false when no active
+    /// <c>webhook</c> loop owns that id (unknown id, wrong type, or disabled) so the route can 404.
+    /// Non-blocking: the payload is queued and the response returns immediately (goals are long runs).
+    /// </summary>
+    public bool EnqueueWebhook(string id, string payload, string source)
+    {
+        if (!_webhookQueues.TryGetValue(id ?? "", out var entry)) return false;
+        entry.Queue.Enqueue((payload, source));
+        try { entry.Signal.Release(); } catch { /* disposed race */ }
+        return true;
+    }
+
+    /// <summary>True when an active webhook loop owns this id (for route validation).</summary>
+    public bool HasWebhook(string id) => _webhookQueues.ContainsKey(id ?? "");
+
+    private async Task RunWebhookLoop(DaemonTrigger trigger, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.Id))
+        {
+            MuxConsole.WriteWarning("[Daemon] webhook trigger missing an id; skipping.");
+            return;
+        }
+
+        var queue = new ConcurrentQueue<(string, string)>();
+        var signal = new SemaphoreSlim(0);
+        _webhookQueues[trigger.Id] = (queue, signal);
+
+        MuxConsole.WriteSuccess(
+            $"[Daemon:{trigger.Id}] Webhook ready: POST /api/hook/{trigger.Id} (cooldown {trigger.EffectiveInterval}s)");
+
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await signal.WaitAsync(ct);
+
+                while (queue.TryDequeue(out var item))
+                {
+                    var (payload, source) = item;
+
+                    var cooldownKey = $"{trigger.Id}:webhook";
+                    if (_lastFired.TryGetValue(cooldownKey, out var lastFire)
+                        && (DateTime.UtcNow - lastFire).TotalSeconds < trigger.EffectiveInterval)
+                    {
+                        MuxConsole.WriteMuted($"[Daemon:{trigger.Id}] Webhook in cooldown; dropping payload.");
+                        continue;
+                    }
+                    _lastFired[cooldownKey] = DateTime.UtcNow;
+
+                    // Untrusted external input: cap the body forwarded into the agent goal.
+                    var limit = trigger.PayloadLimit > 0 ? trigger.PayloadLimit : 8192;
+                    if (payload.Length > limit) payload = payload[..limit];
+
+                    var goal = SubstituteGoalTemplate(
+                        trigger.Goal ?? "Handle webhook: {payload}",
+                        new Dictionary<string, string>
+                        {
+                            ["{payload}"] = payload,
+                            ["{source}"] = source,
+                            ["{timestamp}"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+                            ["{id}"] = trigger.Id
+                        });
+
+                    MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Webhook trigger from {source}.");
+
+                    HookWorker.Enqueue(new HookEvent
+                    {
+                        Event = "daemon_trigger",
+                        Agent = trigger.Agent ?? "Daemon",
+                        Summary = $"webhook:{trigger.Id}",
+                        Text = goal,
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+
+                    await FireGoal(trigger, goal, ct);
+                }
+            }
+        }
+        catch (OperationCanceledException) { /* shutdown */ }
+        catch (Exception ex)
+        {
+            MuxConsole.WriteError($"[Daemon:{trigger.Id}] Webhook loop error: {ex.Message}");
+        }
+        finally
+        {
+            _webhookQueues.TryRemove(trigger.Id, out _);
+            signal.Dispose();
         }
     }
 

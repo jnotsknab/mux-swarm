@@ -189,6 +189,17 @@ public static partial class MuxConsole
 
     private static void EmitJson(string type, object? data = null)
     {
+        // Outbound webhook fan-out taps the emit chokepoint so every structured event can reach an
+        // external sink independent of the console transport (serve/stdio/acp/tui). No-op + zero
+        // allocation when no outbound sinks are configured (WebhookSink.IsActive == false).
+        if (WebhookSink.IsActive)
+        {
+            IReadOnlyDictionary<string, object?>? whFields =
+                data as Dictionary<string, object?>
+                ?? (data is not null ? new Dictionary<string, object?> { ["message"] = data } : null);
+            WebhookSink.Notify(type, whFields);
+        }
+
         // ACP transport owns stdout (pure JSON-RPC), so structured events are diverted to the
         // ACP sink instead of being written as an NDJSON line. The 'type' field is implicit in
         // the (type, fields) pair handed to the sink; only the extra fields are forwarded.
@@ -1155,6 +1166,19 @@ public static partial class MuxConsole
         // the interactive console. The muted human-readable line is written separately by the caller.
         if (!StdioMode && AcpSink is null && !AcpActive) return;
         EmitJson("delegation_compacted", D(("agent", agent), ("rawLen", rawLen), ("posture", posture), ("handle", handle)));
+    }
+
+    /// <summary>
+    /// Surface a fired lifecycle hook as a structured <c>hook_fired</c> event on the JSON stream
+    /// (serve NDJSON / ACP) and to outbound webhook sinks. Prior to this, HookWorker emitted nothing
+    /// structured - hook dispatch was invisible to /ws listeners and outbound sinks. Additive.
+    /// Emitted whenever a transport or an outbound sink can consume it; otherwise a no-op (no console
+    /// artifact in interactive TUI mode).
+    /// </summary>
+    public static void EmitHookFired(string hookId, string eventType, string? agent, string? tool)
+    {
+        if (!StdioMode && AcpSink is null && !AcpActive && !WebhookSink.IsActive) return;
+        EmitJson("hook_fired", D(("hookId", hookId), ("event", eventType), ("agent", agent), ("tool", tool)));
     }
 
     public static void WriteMuted(string message)

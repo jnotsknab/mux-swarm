@@ -46,6 +46,82 @@ public static partial class ServeMode
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
+        app.MapPost("/api/hook/{id}", HandleWebhook);
+    }
+
+    // Inbound webhook: POST /api/hook/{id} -> fires the matching daemon "webhook" trigger's goal
+    // with the request body templated in as {payload}. Auth is per-trigger (HMAC secret) rather than
+    // the runtime bearer -- see RequiresAuth, which excludes /api/hook so external senders reach here.
+    private static async Task HandleWebhook(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        var runner = App.DaemonRunner;
+        if (runner is null || !runner.HasWebhook(id))
+        {
+            await WriteJson(context, 404, new { error = "No such webhook trigger" });
+            return;
+        }
+
+        // Read the raw body once (needed verbatim for HMAC verification + templating).
+        string body;
+        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
+            body = await reader.ReadToEndAsync();
+
+        var trigger = App.Config.Daemon?.Triggers
+            .FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals(t.Type, "webhook", StringComparison.OrdinalIgnoreCase));
+
+        // Auth: prefer per-trigger HMAC. If a secret is configured, a valid X-Hub-Signature-256 is
+        // mandatory. With no secret, fall back to the runtime bearer gate when global auth is on;
+        // when auth is off and no secret is set, the endpoint is open (documented, opt-in surface).
+        var secret = trigger?.Secret;
+        if (!string.IsNullOrEmpty(secret))
+        {
+            var sig = context.Request.Headers["X-Hub-Signature-256"].ToString();
+            if (!VerifyHmacSignature(body, secret, sig))
+            {
+                await WriteJson(context, 401, new { error = "Invalid signature" });
+                return;
+            }
+        }
+        else if (_authEnabled && !IsAuthorized(context))
+        {
+            context.Response.Headers.Append("WWW-Authenticate", "Bearer");
+            await WriteJson(context, 401, new { error = "Unauthorized" });
+            return;
+        }
+
+        var source = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        if (!runner.EnqueueWebhook(id, body, source))
+        {
+            await WriteJson(context, 404, new { error = "No such webhook trigger" });
+            return;
+        }
+
+        await WriteJson(context, 202, new { accepted = true, id });
+    }
+
+    /// <summary>
+    /// Constant-time verify of a GitHub-style <c>X-Hub-Signature-256: sha256=&lt;hex&gt;</c> header
+    /// against an HMAC-SHA256 of the raw body under the shared secret.
+    /// </summary>
+    private static bool VerifyHmacSignature(string body, string secret, string header)
+    {
+        if (string.IsNullOrEmpty(header)) return false;
+        const string prefix = "sha256=";
+        if (!header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
+
+        var presentedHex = header[prefix.Length..].Trim();
+        byte[] presented;
+        try { presented = Convert.FromHexString(presentedHex); }
+        catch (FormatException) { return false; }
+
+        var key = Encoding.UTF8.GetBytes(secret);
+        var data = Encoding.UTF8.GetBytes(body);
+        var expected = System.Security.Cryptography.HMACSHA256.HashData(key, data);
+
+        return presented.Length == expected.Length
+            && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(presented, expected);
     }
 
     // A1 -- GET /api/health
