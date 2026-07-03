@@ -8969,7 +8969,19 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-dl-spacer { flex: 1 1 auto; }
 .mng-dl-chev { color: var(--muted); transition: transform .15s ease; }
 .mng-dl-row.dl-collapsed .mng-dl-chev { transform: rotate(-90deg); }
-.mng-dl-body { max-height: 260px; overflow-y: auto; padding: 6px 10px; border-top: 1px solid var(--border, rgba(255,255,255,.06)); font-family: var(--font-mono, monospace); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.mng-dl-body { max-height: 260px; overflow-y: auto; padding: 6px 10px; border-top: 1px solid var(--border, rgba(255,255,255,.06)); font-size: calc(12px * var(--ui-font-scale,1)); line-height: 1.55; word-break: break-word; color: var(--text); }
+.mng-dl-body::-webkit-scrollbar { width: 4px; }
+.mng-dl-body::-webkit-scrollbar-track { background: transparent; }
+.mng-dl-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-dl-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+.mng-daemon-lane-body::-webkit-scrollbar { width: 4px; }
+.mng-daemon-lane-body::-webkit-scrollbar-track { background: transparent; }
+.mng-daemon-lane-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+/* daemon line: rendered markdown blocks shed default margins for density */
+.mng-dl-line { margin: 2px 0; }
+.mng-dl-line p { margin: 2px 0; }
+.mng-dl-line pre { margin: 4px 0; padding: 6px 8px; background: var(--bg-input, rgba(255,255,255,.05)); border-radius: 6px; overflow-x: auto; }
+.mng-dl-line code { font-family: var(--font-mono, monospace); font-size: 11px; }
 .mng-dl-row.dl-collapsed .mng-dl-body { display: none; }
 .mng-dl-line { color: var(--text); }
 .mng-dl-line.dl-tool { color: var(--muted); }
@@ -9182,19 +9194,47 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   vertical-align: 1px;
 }
 .mng-bridge-chat {
-  /* Fill the remaining vertical space inside the bridge section so the
-     output scrolls in place — matching the main chat output behaviour. */
   flex: 1 1 auto;
   min-height: 56px;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
   font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; color: var(--text);
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column;
 }
-.mng-bridge-chat:empty {
+/* Per-instance docked tabs */
+.mng-bch-tabs { display: none; flex: 0 0 auto; gap: 4px; padding: 6px 6px 0; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.mng-bch-tabs::-webkit-scrollbar { height: 3px; }
+.mng-bch-tabs::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.3); border-radius: 3px; }
+.mng-bch-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); cursor: pointer; font-size: calc(11px * var(--ui-font-scale,1)); white-space: nowrap; }
+.mng-bch-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.mng-bch-tab.active { color: var(--text); background: var(--bg-card, rgba(255,255,255,.06)); font-weight: 600; }
+.mng-bch-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(161,161,170,0.4); flex: 0 0 auto; }
+.mng-bch-tab-dot.checking { background: var(--amber, #f59e0b); }
+.mng-bch-tab-dot.online { background: var(--green, #10b981); }
+.mng-bch-tab-dot.offline { background: var(--red, #ef4444); }
+.mng-bch-panes { flex: 1 1 auto; position: relative; overflow: hidden; }
+.mng-bch-pane { position: absolute; inset: 0; display: none; overflow-y: auto; padding: 8px 10px; flex-direction: column; gap: 6px; }
+.mng-bch-pane.active { display: flex; }
+.mng-bch-pane::-webkit-scrollbar { width: 4px; }
+.mng-bch-pane::-webkit-scrollbar-track { background: transparent; }
+.mng-bch-pane::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-bch-pane:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+/* Bridge tool-call cluster (mirrors main viewport) */
+.mng-bch-toolgroup { margin: 2px 0; }
+.mng-bch-tg-head { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; color: var(--muted); font-size: calc(11.5px * var(--ui-font-scale,1)); padding: 2px 0; }
+.mng-bch-tg-head:hover .mng-bch-tg-label { color: var(--text); }
+.mng-bch-tg-chev { display: inline-flex; transition: transform .15s ease; opacity: .6; }
+.mng-bch-toolgroup:not(.open) .mng-bch-tg-chev { transform: rotate(-90deg); }
+.mng-bch-tg-label { font-weight: 600; flex: 0 0 auto; }
+.mng-bch-tg-latest { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+.mng-bch-toolgroup.open .mng-bch-tg-latest { display: none; }
+.mng-bch-tg-body { display: none; padding-left: 16px; flex-direction: column; gap: 2px; }
+.mng-bch-toolgroup.open .mng-bch-tg-body { display: flex; }
+.mng-bch-tool-row { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(11px * var(--ui-font-scale,1)); }
+.mng-bch-turn-time { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale,1)); margin-left: 6px; }
+.mng-bch-panes:empty {
   /* Show an empty placeholder so users see a real chat surface even
      before any messages arrive — keeps layout stable. */
   display: flex;
@@ -9204,7 +9244,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   opacity: 0.55;
   font-style: italic;
 }
-.mng-bridge-chat:empty::before {
+.mng-bch-panes:empty::before {
   content: 'No messages yet — type below to bridge.';
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
@@ -9445,7 +9485,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
             </div>
             <div class="mng-bridge-peers-list" id="mngBridgePeersList"></div>
           </div>
-          <div class="mng-bridge-chat" id="mngBridgeChat" aria-live="polite"></div>
+          <div class="mng-bridge-chat" id="mngBridgeChat" aria-live="polite">
+            <div class="mng-bch-tabs" id="mngBchTabs" role="tablist"></div>
+            <div class="mng-bch-panes" id="mngBchPanes"></div>
+          </div>
           <div class="mng-bridge-composer">
             <textarea class="mng-input mng-bridge-msg" id="mngBridgeMsg" rows="3" placeholder="Message or /command to send via the mux WS protocol..."></textarea>
             <div class="mng-row mng-bridge-actions">
@@ -10011,6 +10054,64 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // Multiple in-flight sockets, keyed by peer id, so the user can fan out
     // a single message to several linked nodes at once.
     const activeBridgeWS = new Map();
+
+    // ── Per-instance docked tabs ──
+    // Each bridged peer gets its OWN tab + scroll pane instead of interleaving
+    // every instance's stream into one shared feed. BchPanes owns the tab strip
+    // (#mngBchTabs) and the pane container (#mngBchPanes); render helpers target
+    // a specific peer's pane so concurrent instance streams never mix.
+    const BchPanes = (function(){
+      const tabsEl  = () => document.getElementById('mngBchTabs');
+      const panesEl = () => document.getElementById('mngBchPanes');
+      const panes = new Map();   // peerId -> { tab, pane, label }
+      let activeId = null;
+      function activate(id){
+        activeId = id;
+        for (const [pid, p] of panes) {
+          const on = pid === id;
+          p.pane.classList.toggle('active', on);
+          p.tab.classList.toggle('active', on);
+        }
+      }
+      function ensure(peer){
+        const id = peer.id || peer.url || 'peer';
+        let p = panes.get(id);
+        if (p && p.pane.isConnected) return p;
+        const label = peer.label || peer.url || 'Node';
+        const tab = document.createElement('button');
+        tab.className = 'mng-bch-tab';
+        tab.type = 'button';
+        tab.innerHTML = '<span class="mng-bch-tab-dot"></span><span class="mng-bch-tab-label"></span>';
+        tab.querySelector('.mng-bch-tab-label').textContent = label;
+        tab.addEventListener('click', () => activate(id));
+        const pane = document.createElement('div');
+        pane.className = 'mng-bch-pane';
+        (tabsEl()  || {}).appendChild && tabsEl().appendChild(tab);
+        (panesEl() || {}).appendChild && panesEl().appendChild(pane);
+        p = { tab, pane, label };
+        panes.set(id, p);
+        // Only one peer -> hide the tab strip (no need to switch).
+        syncTabsVisibility();
+        if (activeId === null) activate(id);
+        return p;
+      }
+      function setStatus(id, cls){
+        const p = panes.get(id); if (!p) return;
+        const dot = p.tab.querySelector('.mng-bch-tab-dot');
+        if (dot) dot.className = 'mng-bch-tab-dot' + (cls ? ' ' + cls : '');
+      }
+      function syncTabsVisibility(){
+        const t = tabsEl(); if (!t) return;
+        t.style.display = panes.size > 1 ? 'flex' : 'none';
+      }
+      function clear(){
+        panes.clear(); activeId = null;
+        const t = tabsEl(), pn = panesEl();
+        if (t) t.innerHTML = '';
+        if (pn) pn.innerHTML = '';
+      }
+      return { ensure, activate, setStatus, clear, get activeId(){ return activeId; } };
+    })();
     // Per-peer selection state for the current `currentId`.
     let bridgeSelectedPeers = new Set();
 
@@ -10090,18 +10191,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return target;
     }
     // ── Chat-style rendering helpers (mirror the parent app's trimmed-down) ──
-    function bch_scroll(){ if (bridgeChat) bridgeChat.scrollTop = bridgeChat.scrollHeight; }
-    function bch_sys(text, cls, peerTag){
+    function bch_scroll(pane){ const el = pane || bridgeChat; if (el) el.scrollTop = el.scrollHeight; }
+    function bch_sys(text, cls, peerTag, pane){
+      const host = pane || bridgeChat;
       const r = document.createElement('div');
       r.className = 'mng-bch-sys' + (cls ? ' ' + cls : '');
-      if (peerTag) {
-        const t = document.createElement('span');
-        t.className = 'mng-bch-peer-tag';
-        t.textContent = peerTag;
-        r.appendChild(t);
-      }
       r.appendChild(document.createTextNode(text));
-      bridgeChat.appendChild(r); bch_scroll();
+      host.appendChild(r); bch_scroll(host);
       return r;
     }
     function bch_user(text){
@@ -10111,22 +10207,18 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       bridgeChat.appendChild(r); bch_scroll();
       return r;
     }
-    function bch_turnHeader(agent, peerTag){
+    function bch_turnHeader(agent, peerTag, pane){
+      const host = pane || bridgeChat;
       const r = document.createElement('div');
       r.className = 'mng-bch-turn';
-      if (peerTag) {
-        const pt = document.createElement('span');
-        pt.className = 'mng-bch-peer-tag';
-        pt.textContent = peerTag;
-        r.appendChild(pt);
-      }
       const b = document.createElement('span');
       b.className = 'mng-bch-badge'; b.textContent = agent || 'Agent';
       r.appendChild(b);
       const t = document.createElement('span');
+      t.className = 'mng-bch-turn-time';
       t.textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
       r.appendChild(t);
-      bridgeChat.appendChild(r); bch_scroll();
+      host.appendChild(r); bch_scroll(host);
       return r;
     }
     function bch_renderMd(text){
@@ -10148,19 +10240,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const peers = peerIds.map(pid => Store.getNode(pid)).filter(Boolean);
       if (peers.length === 0) { bch_sys('Selected targets no longer exist.', 'err'); return; }
 
-      // Render the user's outgoing bubble once (with a fan-out hint if applicable).
-      if (peers.length === 1) {
-        bch_user(msg);
-      } else {
-        const wrap = document.createElement('div');
-        wrap.className = 'mng-bch-user';
-        const tag = document.createElement('span');
-        tag.className = 'mng-bch-peer-tag';
-        tag.textContent = '\u2192 ' + peers.length + ' targets';
-        wrap.appendChild(tag);
-        wrap.appendChild(document.createTextNode(msg));
-        bridgeChat.appendChild(wrap); bch_scroll();
-      }
+      // The outgoing message is echoed into each peer's own pane inside
+      // sendToOnePeer (per-instance view), so no shared bubble is rendered here.
       bridgeMsg.value = '';
 
       // Show a brief fan-out header so per-peer events that follow are readable.
@@ -10174,11 +10255,17 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // tell concurrent streams apart.
     function sendToOnePeer(peer, msg, showTag){
       const peerLabel = peer.label || peer.url || 'Node';
-      const tagPrefix = showTag ? peerLabel : '';
+      // Each peer renders into its OWN docked tab/pane (never a shared feed).
+      const _p = BchPanes.ensure(peer);
+      const pane = _p.pane;
+      BchPanes.activate(peer.id || peer.url || 'peer');
+      // Echo the outgoing message into THIS peer's pane.
+      (function(){ const u = document.createElement('div'); u.className = 'mng-bch-user'; u.textContent = msg; pane.appendChild(u); bch_scroll(pane); })();
       const url = bridgeWsURL(peer);
-      if (!url) { bch_sys('Peer has no usable URL.', 'err', tagPrefix); return; }
+      if (!url) { bch_sys('Peer has no usable URL.', 'err', '', pane); return; }
 
-      bch_sys('connecting \u2192 ' + url, '', tagPrefix);
+      BchPanes.setStatus(peer.id || peer.url || 'peer', 'checking');
+      bch_sys('connecting \u2192 ' + url, '', '', pane);
 
       // Per-turn render state (scoped to this peer's socket).
       let ws;
@@ -10196,10 +10283,36 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       let userEchoSeen  = false;
 
       try { ws = new WebSocket(url); } catch (e) {
-        bch_sys('WebSocket failed: ' + (e && e.message || e), 'err', tagPrefix);
+        bch_sys('WebSocket failed: ' + (e && e.message || e), 'err', '', pane);
         return;
       }
       activeBridgeWS.set(peer.id, ws);
+
+      // Per-peer tool-call cluster: consecutive calls fold into one collapsed,
+      // expandable group mirroring the main viewport (auto-collapses at 3+).
+      let toolGroup = null;
+      const breakBchToolGroup = () => { toolGroup = null; };
+      const ensureBchToolGroup = () => {
+        if (toolGroup && toolGroup.el.isConnected) return toolGroup;
+        const el = document.createElement('div');
+        el.className = 'mng-bch-toolgroup open';
+        el.innerHTML =
+          '<div class="mng-bch-tg-head">' +
+            '<span class="mng-bch-tg-chev">\u25be</span>' +
+            '<span class="mng-bch-tg-label"></span>' +
+            '<span class="mng-bch-tg-latest"></span>' +
+          '</div>' +
+          '<div class="mng-bch-tg-body"></div>';
+        el.querySelector('.mng-bch-tg-head').addEventListener('click', () => {
+          toolGroup.userToggled = true; el.classList.toggle('open');
+        });
+        pane.appendChild(el); bch_scroll(pane);
+        toolGroup = { el, body: el.querySelector('.mng-bch-tg-body'),
+                      label: el.querySelector('.mng-bch-tg-label'),
+                      latest: el.querySelector('.mng-bch-tg-latest'),
+                      count: 0, userToggled: false };
+        return toolGroup;
+      };
 
       const finalize = (reason) => {
         if (closed) return;
@@ -10208,69 +10321,70 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         if (safetyTimer){ clearTimeout(safetyTimer); safetyTimer = null; }
         try { ws.close(); } catch(_){}
         activeBridgeWS.delete(peer.id);
-        if (reason) bch_sys(reason, 'ok', tagPrefix);
+        BchPanes.setStatus(peer.id || peer.url || 'peer',
+          reason === 'turn complete' ? 'online' : (reason && /error|fail/i.test(reason) ? 'offline' : ''));
+        if (reason) bch_sys(reason, 'ok', '', pane);
       };
 
       const beginTurn = (agent) => {
-        if (!turnHeader) turnHeader = bch_turnHeader(agent || peerLabel, tagPrefix);
+        if (!turnHeader) turnHeader = bch_turnHeader(agent || peerLabel, '', pane);
         streamEl = null; streamText = '';
       };
       const appendStream = (chunk) => {
         if (!chunk) return;
+        breakBchToolGroup();
         if (!streamEl) {
           streamEl = document.createElement('div');
           streamEl.className = 'mng-bch-stream';
-          bridgeChat.appendChild(streamEl);
+          pane.appendChild(streamEl);
         }
         streamText += chunk;
         streamEl.innerHTML = bch_renderMd(streamText);
-        bch_scroll();
+        bch_scroll(pane);
       };
       const finalizeStream = () => { streamEl = null; streamText = ''; };
       const setThinking = (agent, statusText) => {
         if (!thinkEl) {
           thinkEl = document.createElement('div');
           thinkEl.className = 'mng-bch-thinking';
-          bridgeChat.appendChild(thinkEl);
+          pane.appendChild(thinkEl);
         }
-        const who = agent || (showTag ? peerLabel : '');
-        thinkEl.textContent = (who ? '[' + who + '] ' : '') + (statusText || 'thinking\u2026');
-        bch_scroll();
+        thinkEl.textContent = statusText || 'thinking\u2026';
+        bch_scroll(pane);
       };
       const clearThinking = () => { if (thinkEl) { thinkEl.remove(); thinkEl = null; } };
       const renderToolCall = (ev) => {
         clearThinking();
-        const r = document.createElement('div');
-        r.className = 'mng-bch-tool';
-        const name = String(ev.tool || ev.function || ev.name || 'tool').replace(/unknown/ig,'').trim();
-        if (showTag) {
-          const t = document.createElement('span');
-          t.className = 'mng-bch-peer-tag';
-          t.textContent = peerLabel;
-          r.appendChild(t);
-        }
-        r.appendChild(document.createTextNode(name));
-        bridgeChat.appendChild(r); bch_scroll();
+        const g = ensureBchToolGroup();
+        g.count++;
+        const name = String(ev.tool || ev.function || ev.name || 'tool').replace(/unknown/ig,'').trim() || 'tool';
+        const row = document.createElement('div');
+        row.className = 'mng-bch-tool-row';
+        row.textContent = '\u2192 ' + name;
+        g.body.appendChild(row);
+        g.label.textContent = g.count === 1 ? '1 tool call' : (g.count + ' tool calls');
+        g.latest.textContent = '\u00b7 ' + name;
+        if (g.count >= 3 && !g.userToggled) g.el.classList.remove('open');
+        bch_scroll(pane);
       };
       const renderToolResult = (ev) => {
         const summary = ev.summary || ev.result || ev.output || ev.content || ev.text || '';
         if (!summary) return;
+        const g = toolGroup && toolGroup.el.isConnected ? toolGroup : ensureBchToolGroup();
         const r = document.createElement('div');
         r.className = 'mng-bch-tool-result';
         const s = String(summary);
         r.textContent = s.length > 600 ? s.slice(0,600) + '\u2026' : s;
-        bridgeChat.appendChild(r); bch_scroll();
+        g.body.appendChild(r); bch_scroll(pane);
         lastToolResult = ev;
-      };
-
-      ws.addEventListener('open', () => {
-        bch_sys('connected', 'ok', tagPrefix);
+      };      ws.addEventListener('open', () => {
+        bch_sys('connected', 'ok', '', pane);
         sentAt = Date.now();
         try { ws.send(msg); } catch(_){}
         startTimer = setTimeout(() => {
           if (!forcedAgent) {
             forcedAgent = true;
-            bch_sys('no agent_turn_start in 10s \u2014 sending /agent then re-sending', '', tagPrefix);
+            bch_sys('no agent_turn_start in 10s \u2014 sending /agent then re-sending', '', '', pane);
             try { ws.send('/agent'); } catch(_){}
             setTimeout(() => { try { ws.send(msg); sentAt = Date.now(); } catch(_){} }, 400);
           }
@@ -10344,12 +10458,12 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
             if (!userEchoSeen && m && msg && msg.length >= 3 && m.indexOf(msg) !== -1) {
               userEchoSeen = true;
             }
-            if (turnStarted && m) bch_sys(m, 'ok', tagPrefix);
+            if (turnStarted && m) bch_sys(m, 'ok', '', pane);
             break;
           }
           case 'error': {
             const m = String(data.message || data.error || 'error');
-            if (turnStarted) bch_sys(m, 'err', tagPrefix);
+            if (turnStarted) bch_sys(m, 'err', '', pane);
             break;
           }
           default: break;
@@ -10358,13 +10472,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         safetyTimer = setTimeout(() => finalize('idle timeout'), 5 * 60 * 1000);
       });
 
-      ws.addEventListener('error', () => bch_sys('WebSocket error', 'err', tagPrefix));
+      ws.addEventListener('error', () => bch_sys('WebSocket error', 'err', '', pane));
       ws.addEventListener('close', () => {
         if (!closed) {
           closed = true;
           if (startTimer) clearTimeout(startTimer);
           if (safetyTimer) clearTimeout(safetyTimer);
-          bch_sys('disconnected', '', tagPrefix);
+          bch_sys('disconnected', '', '', pane);
           activeBridgeWS.delete(peer.id);
         }
       });
@@ -10374,7 +10488,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if (bridgeMsg)  bridgeMsg.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); bridgeSendNow(); }
     });
-    if (bridgeClear) bridgeClear.addEventListener('click', () => { bridgeChat.innerHTML = ''; });
+    if (bridgeClear) bridgeClear.addEventListener('click', () => { BchPanes.clear(); });
     if (bridgePeersAll) bridgePeersAll.addEventListener('click', () => {
       if (!currentId) return;
       const peers = bridgePeersFor(currentId);
@@ -10820,13 +10934,40 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       refreshBadge();
       return r;
     }
-    function addLine(r, text, cls){
+    // Lines that are raw CLI/session lifecycle noise, not agent output — filtered
+    // so the lane reads like a clean transcript instead of a terminal dump.
+    function isDaemonNoise(msg){
+      if (!msg) return true;
+      const m = String(msg).trim();
+      if (!m) return true;
+      return (
+        /^Type \/qc to exit/i.test(m) ||
+        /has \d+ tools available/i.test(m) ||
+        /^\[GOAL\]/i.test(m) ||
+        /^\[AGENT SESSION\]/i.test(m) ||
+        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired)/i.test(m) ||
+        /^Total Tokens:/i.test(m) ||
+        /tokens used this goal/i.test(m) ||
+        /^Press \[Esc\]/i.test(m) ||
+        /Press \[Escape\]/i.test(m)
+      );
+    }
+    function addLine(r, text, cls, asMarkdown){
       if (!r || !text) return;
       const line = document.createElement('div');
       line.className = 'mng-dl-line' + (cls ? ' ' + cls : '');
-      line.textContent = text;
+      if (asMarkdown && window.renderMarkdown) line.innerHTML = window.renderMarkdown(String(text));
+      else line.textContent = text;
       r.body.appendChild(line);
       r.body.scrollTop = r.body.scrollHeight;
+    }
+    function markDone(r, status, cls){
+      if (!r || r._finished) return;
+      r._finished = true;
+      r.el.classList.remove('dl-done','dl-error');
+      r.el.classList.add(cls);
+      if (r.statusEl) r.statusEl.textContent = status;
+      if (activeCount > 0) { activeCount--; refreshBadge(); }
     }
     function push(ev){
       if (!ev) return;
@@ -10836,6 +10977,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       show();
       switch (ev.type) {
         case 'agent_turn_start':
+          r._finished = false;
           if (r.statusEl) r.statusEl.textContent = 'running · ' + (ev.agent || '');
           r.el.classList.remove('dl-done','dl-error');
           break;
@@ -10843,35 +10985,36 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           if (!ev.reasoning) { r.text += (ev.text || ''); }
           break;
         case 'stream_end':
-          if (r.text.trim()) { addLine(r, r.text.trim()); r.text = ''; }
+        case 'agent_turn_end':
+          if (r.text.trim()) { addLine(r, r.text.trim(), '', true); r.text = ''; }
           break;
-        case 'tool_call':
-          addLine(r, '\u2192 ' + (ev.tool || 'tool') + (ev.agent ? ' ('+ev.agent+')' : ''), 'dl-tool');
+        case 'tool_call': {
+          const tool = String(ev.tool || 'tool').trim();
+          addLine(r, '\u2192 ' + tool + (ev.agent ? '  \u00b7 ' + ev.agent : ''), 'dl-tool');
           break;
+        }
         case 'tool_result':
-          if (ev.summary) addLine(r, '  ' + ev.summary, 'dl-tool');
+          if (ev.summary) addLine(r, ev.summary, 'dl-tool');
           break;
         case 'task_complete':
-          if (ev.summary) addLine(r, '\u2713 ' + ev.summary);
+          if (ev.summary) addLine(r, ev.summary, '', true);
           break;
-        case 'success':
-          if (ev.message) addLine(r, ev.message);
-          if (/Goal completed/i.test(ev.message || '')) { r.el.classList.add('dl-done'); if (r.statusEl) r.statusEl.textContent = 'done'; if (activeCount>0) { activeCount--; refreshBadge(); } }
+        case 'success': {
+          const m = String(ev.message || '');
+          if (/Goal completed/i.test(m)) { markDone(r, 'done', 'dl-done'); break; }
+          if (!isDaemonNoise(m)) addLine(r, m, '', true);
           break;
+        }
         case 'error':
-          if (ev.message) addLine(r, ev.message, 'dl-err');
-          r.el.classList.add('dl-error'); if (r.statusEl) r.statusEl.textContent = 'error';
+          if (ev.message && !isDaemonNoise(ev.message)) addLine(r, ev.message, 'dl-err');
+          markDone(r, 'error', 'dl-error');
           break;
         case 'warning': case 'info': case 'debug':
-          if (ev.message) addLine(r, ev.message, ev.type === 'debug' ? 'dl-tool' : '');
-          break;
-        case 'agent_turn_end':
-          if (r.text.trim()) { addLine(r, r.text.trim()); r.text = ''; }
+          if (ev.message && !isDaemonNoise(ev.message)) addLine(r, ev.message, ev.type === 'debug' ? 'dl-tool' : '');
           break;
         default: break;
       }
-    }
-    function clearFinished(){
+    }    function clearFinished(){
       for (const [lane, r] of Array.from(rows.entries())) {
         if (r.el.classList.contains('dl-done') || r.el.classList.contains('dl-error')) {
           try { r.el.remove(); } catch(_){}

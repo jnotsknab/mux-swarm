@@ -681,8 +681,12 @@ public sealed class DaemonRunner : IAsyncDisposable
             // Tag every NDJSON frame this daemon goal emits (across all modes + their
             // orchestrator child tasks, via AsyncLocal flow) with origin=daemon + a lane,
             // so the web app routes the run to a Node-Graph daemon lane instead of the
-            // main viewport. TUI collapse is handled separately by BeginDaemonCapture below.
+            // main viewport. The scope spans the whole run INCLUDING the terminal
+            // "Goal completed."/failure line, so the web-app lane can flip its status
+            // to done/error (an untagged completion frame never reaches the lane).
+            // TUI collapse is handled separately by BeginDaemonCapture below.
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+            {
             switch (trigger.Mode.ToLowerInvariant())
             {
                 case "swarm":
@@ -738,11 +742,15 @@ public sealed class DaemonRunner : IAsyncDisposable
             }
 
             MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Goal completed.");
+            }
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal execution failed: {ex.Message}");
+            // Re-tag the failure line so the web-app daemon lane flips to error (the
+            // run's origin scope already disposed when the try exited).
+            using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+                MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal execution failed: {ex.Message}");
         }
     }
 
