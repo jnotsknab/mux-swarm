@@ -2591,6 +2591,7 @@ const icons = {
   // One persistent group per user turn; one keyed row per agent (never re-spawned),
   // so N stream/think cycles fold into ONE row instead of N stray cards.
   const _subAgents = new Set();      // names known to be delegated sub-agents this turn
+  const _daemonToasted = new Set();  // daemon lanes we've toasted 'running' for (dedupe per run)
   const _subRows = new Map();        // agentName -> { row, head, body, statusEl, previewEl, dot, text }
   let _subRoster = null;             // { el, headCountEl, activeEl, bodyEl } active group container
   function isSubAgent(name){ return !!name && _subAgents.has(String(name)); }
@@ -3103,6 +3104,26 @@ const icons = {
     // the Node Graph's daemon lane and stop. Absent tag => normal handling.
     try {
       if (ev && ev.origin === 'daemon' && window.MuxDaemonLane) {
+        // Non-invasive: surface a toast when a daemon goal STARTS (once per lane
+        // per run) instead of yanking the user into the daemon tab. The lane fills
+        // in the background; the ⚙ Daemon badge count reflects active runs.
+        try {
+          if (ev.type === 'agent_turn_start') {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            if (!_daemonToasted.has(lane)) {
+              _daemonToasted.add(lane);
+              if (typeof showToast === 'function')
+                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''));
+            }
+          } else if (ev.type === 'success' && /Goal completed/i.test(ev.message || '')) {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            _daemonToasted.delete(lane);
+            if (typeof showToast === 'function') showToast('Daemon done: ' + lane);
+          } else if (ev.type === 'error') {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            _daemonToasted.delete(lane);
+          }
+        } catch (_) {}
         window.MuxDaemonLane.push(ev);
         return;
       }
@@ -3136,7 +3157,9 @@ const icons = {
         break;
 
       case 'rule':
-        routePill(pillFromHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`));
+        // Separator/divider rules are visual noise in the web app (they dupe and,
+        // when folded into a status cluster, render as blank divider rows + an
+        // empty '·' preview). Stripped entirely — suppressed like splash/banner.
         break;
 
       case 'success': routePill(pillFromText(ev.message, 'event-success')); break;
@@ -3754,13 +3777,18 @@ const icons = {
   }
   // Route a status pill through the cluster. `node` is a ready DOM element.
   function appendPill(node) {
+    // Skip pills with no visible text (e.g. empty rules) — they add blank rows and
+    // inflate the cluster count without conveying anything.
+    if (!(node.textContent || '').trim() && !node.querySelector('img,svg,.mux-token-badge')) return;
     if (!pillGroupingEnabled()) { output.appendChild(node); decorateCollapsibles(node); scrollToBottom(); return; }
     const g = ensurePillGroup();
     g.count++;
     g.body.appendChild(node);
     decorateCollapsibles(node);
     g.label.textContent = g.count === 1 ? '1 status update' : (g.count + ' status updates');
-    g.latest.textContent = '\u00b7 ' + (node.textContent || '').trim().slice(0, 80);
+    // Only show a preview when the pill actually has text (blank nodes -> no bare '·').
+    const _prev = (node.textContent || '').trim();
+    g.latest.textContent = _prev ? ('\u00b7 ' + _prev.slice(0, 80)) : '';
     const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
     const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
     if (!autoOff && g.count >= Math.max(limit, 3) && !g.userToggled) g.el.classList.remove('open');
@@ -10935,7 +10963,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       badge.textContent = String(activeCount || n);
       badge.hidden = n === 0;
     }
-    function show(){ const { lane } = els(); if (lane) lane.hidden = false; try { openPanel(); } catch(_){} }
+    function show(){ const { lane } = els(); if (lane) lane.hidden = false; }  // reveal lane content; never force-opens the panel (non-invasive)
     function ensureRow(lane, label){
       let r = rows.get(lane);
       if (r && r.el.isConnected) return r;
