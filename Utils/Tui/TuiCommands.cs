@@ -26,6 +26,11 @@ internal static class TuiCommands
         ReplOnly,
         /// <summary>Handled only by the in-session meta-loop.</summary>
         SessionOnly,
+        /// <summary>Handled in BOTH contexts: the App.cs top-level menu switch AND the in-session
+        /// meta-loop. Used for session-agnostic background-control commands (e.g. /daemon) that act
+        /// on process-level state independent of any live session, so they belong in both palettes
+        /// with no "(ends session)"/"(needs a session)" hint.</summary>
+        Both,
     }
 
     public readonly record struct Entry(string Cmd, string Desc, Scope Scope);
@@ -66,13 +71,13 @@ internal static class TuiCommands
         new("/background",        "Run an agent on a goal in the background, watchable via \\ (alias /bg) (/background <agent> <goal>)", Scope.SessionOnly),
         new("/background jobs",   "List background agent jobs", Scope.SessionOnly),
         new("/background cancel", "Cancel a running background job (/background cancel <id>)", Scope.SessionOnly),
-        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.SessionOnly),
-        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.SessionOnly),
-        new("/daemon off",    "Stop the daemon", Scope.SessionOnly),
-        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.SessionOnly),
-        new("/daemon cron",   "Add a cron trigger - bare = interactive builder (plain-English schedule OK)", Scope.SessionOnly),
-        new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.SessionOnly),
-        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
+        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.Both),
+        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.Both),
+        new("/daemon off",    "Stop the daemon", Scope.Both),
+        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.Both),
+        new("/daemon cron",   "Add a cron trigger - bare = interactive builder (plain-English schedule OK)", Scope.Both),
+        new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.Both),
+        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
         new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
@@ -190,7 +195,7 @@ internal static class TuiCommands
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)
-            if (e.Scope == Scope.SessionOnly && e.Cmd == c) return true;
+            if ((e.Scope == Scope.SessionOnly || e.Scope == Scope.Both) && e.Cmd == c) return true;
         return false;
     }
 
@@ -199,7 +204,7 @@ internal static class TuiCommands
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)
-            if (e.Scope == Scope.ReplOnly && e.Cmd == c) return true;
+            if ((e.Scope == Scope.ReplOnly || e.Scope == Scope.Both) && e.Cmd == c) return true;
         return false;
     }
 
@@ -207,8 +212,10 @@ internal static class TuiCommands
     {
         var list = new List<(string, string)>();
         var seen = new HashSet<string>();
+        // Scope.Both belongs in BOTH base palettes, so a command handled in both contexts
+        // (e.g. /daemon) is listed at the menu and in-session with no consequence hint.
         foreach (var e in All)
-            if (e.Scope == scope && seen.Add(e.Cmd))
+            if ((e.Scope == scope || e.Scope == Scope.Both) && seen.Add(e.Cmd))
                 list.Add((e.Cmd, e.Desc));
         return list.ToArray();
     }

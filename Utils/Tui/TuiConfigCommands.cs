@@ -940,17 +940,41 @@ internal static class TuiConfigCommands
     }
 
     /// <summary>
-    /// Guided /createhook wizard: choose/author a hook script (new via a helper agent, or point at
-    /// an existing script/command), pick the trigger event(s) + optional agent/tool filter + mode,
-    /// and persist an additive HookConfig to swarm.json hooks[]. <paramref name="spawnScriptHelper"/>
-    /// (when provided) is invoked to draft a brand-new hook script interactively.
+    /// Guided /createhook entry point. Branches on the KIND of background integration being created:
+    /// a lifecycle <b>hook</b> (shell out on an event), an <b>outbound webhook</b> (Mux POSTs a
+    /// signed JSON envelope to an external URL on matching events -> swarm.json webhooks[]), or an
+    /// <b>inbound webhook</b> (an external POST to /api/hook/{id} fires an agent goal -> a webhook
+    /// daemon trigger in config.json). Each path persists additively. <paramref name="spawnScriptHelper"/>
+    /// (when provided) drafts a new hook script for the hook path.
     /// </summary>
     public static Result RunCreateHookWizard(string[] parts, System.Action<string, string>? spawnScriptHelper)
+    {
+        // Optional inline id argument is passed through to whichever builder is chosen.
+        string? idArg = parts.Length >= 2 ? parts[1].Trim() : null;
+
+        var kind = MuxConsole.Select("What do you want to create?", new List<string>
+        {
+            "Hook - run a script/command when an internal event fires",
+            "Outbound webhook - POST to an external URL on matching events (Mux -> world)",
+            "Inbound webhook - let an external POST fire an agent goal (world -> Mux)",
+        });
+
+        if (kind.StartsWith("Outbound")) return RunOutboundWebhookWizard(idArg);
+        if (kind.StartsWith("Inbound"))  return RunInboundWebhookWizard(idArg);
+        return RunHookWizard(idArg, spawnScriptHelper);
+    }
+
+    /// <summary>
+    /// Guided hook builder: choose/author a hook script (new via a helper agent, or point at an
+    /// existing script/command), pick the trigger event(s) + optional agent/tool filter + mode, and
+    /// persist an additive HookConfig to swarm.json hooks[].
+    /// </summary>
+    private static Result RunHookWizard(string? idArg, System.Action<string, string>? spawnScriptHelper)
     {
         var swarm = LoadSwarmOrNew();
 
         // Hook id.
-        string id = parts.Length >= 2 ? parts[1].Trim()
+        string id = !string.IsNullOrWhiteSpace(idArg) ? idArg!.Trim()
             : MuxConsole.Prompt("Hook id (single word, e.g. notify-on-complete)").Trim();
         if (string.IsNullOrWhiteSpace(id)) return Bad("A hook id is required.");
         if (id.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || id.Contains(' '))
@@ -1059,6 +1083,159 @@ internal static class TuiConfigCommands
         catch (System.Exception ex)
         {
             return Bad($"Failed to create hook: {ex.Message}");
+        }
+    }
+
+    // ---- webhook events (outbound allowlist choices) ---------------------------------------
+    // Coarse, useful outbound events first (one POST per occurrence), then finer ones. These are the
+    // EmitJson stream types the outbound sink filters on; the hook lifecycle names (turn_end,
+    // text_chunk, thinking_chunk) are also accepted at runtime via WebhookSink's alias map, but the
+    // picker offers the canonical stream names to keep the mental model of "one webhook per event".
+    private static readonly string[] WebhookEvents =
+    {
+        "task_complete", "error", "hook_fired", "agent_turn_end", "agent_turn_start",
+        "delegation", "tool_call", "tool_result", "warning", "success", "stream",
+    };
+
+    /// <summary>
+    /// Guided OUTBOUND webhook builder: Mux POSTs a JSON envelope to an external URL whenever a
+    /// matching event fires. Persists an additive entry to swarm.json webhooks[]. Signing (HMAC
+    /// X-Hub-Signature-256) is optional; static headers optional.
+    /// </summary>
+    private static Result RunOutboundWebhookWizard(string? idArg)
+    {
+        var swarm = LoadSwarmOrNew();
+
+        string url = MuxConsole.Prompt("Target URL to POST to (e.g. a Slack/Discord/webhook.site URL)").Trim();
+        if (string.IsNullOrWhiteSpace(url) ||
+            !(url.StartsWith("http://", System.StringComparison.OrdinalIgnoreCase) ||
+              url.StartsWith("https://", System.StringComparison.OrdinalIgnoreCase)))
+            return Bad("A valid http(s) URL is required.");
+
+        // Event allowlist (multi-select). "*" subscribes to everything.
+        var evChoices = new List<string>(WebhookEvents) { "* (ALL events - high volume)" };
+        var picked = MuxConsole.MultiSelect("Fire this webhook on which events?", evChoices);
+        var events = new List<string>();
+        foreach (var p in picked)
+            events.Add(p.StartsWith("* ") ? "*" : p);
+        if (events.Count == 0) return Bad("Pick at least one event (or * for all).");
+
+        // Optional HMAC secret so the receiver can verify the POST came from Mux.
+        string? secret = null;
+        if (MuxConsole.Confirm("Sign requests with an HMAC secret (X-Hub-Signature-256)?", false))
+        {
+            var s = MuxConsole.Prompt("Shared secret (the receiver verifies with the same value)").Trim();
+            secret = string.IsNullOrWhiteSpace(s) ? null : s;
+        }
+
+        // Optional static headers.
+        Dictionary<string, string>? headers = null;
+        if (MuxConsole.Confirm("Add a static header (e.g. an auth token)?", false))
+        {
+            headers = new Dictionary<string, string>();
+            while (true)
+            {
+                var hk = MuxConsole.Prompt("Header name (blank to finish)").Trim();
+                if (string.IsNullOrWhiteSpace(hk)) break;
+                var hv = MuxConsole.Prompt($"Value for {hk}").Trim();
+                headers[hk] = hv;
+                if (!MuxConsole.Confirm("Add another header?", false)) break;
+            }
+            if (headers.Count == 0) headers = null;
+        }
+
+        try
+        {
+            swarm.Webhooks.Add(new WebhookConfig
+            {
+                Url = url,
+                Events = events,
+                Secret = secret,
+                Headers = headers,
+            });
+            SaveSwarm(swarm);
+            return Ok(
+                $"Created outbound webhook -> {url}\n" +
+                $"  events: {string.Join(", ", events)}\n" +
+                $"  signed: {(secret is not null ? "yes (HMAC)" : "no")}" +
+                $"{(headers is not null ? $"  headers: {headers.Count}" : "")}\n" +
+                "Restart (or /refresh) to arm it. It stays inert until Mux is running with events flowing.");
+        }
+        catch (System.Exception ex)
+        {
+            return Bad($"Failed to create outbound webhook: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Guided INBOUND webhook builder: an external HTTP POST to <c>/api/hook/{id}</c> fires an agent
+    /// goal, with the request body available as <c>{payload}</c>. Persists an additive <c>webhook</c>
+    /// daemon trigger to config.json. Requires serve mode + the daemon to be running to receive.
+    /// </summary>
+    private static Result RunInboundWebhookWizard(string? idArg)
+    {
+        Cfg.Daemon ??= new DaemonConfig();
+
+        string id = !string.IsNullOrWhiteSpace(idArg) ? idArg!.Trim()
+            : MuxConsole.Prompt("Webhook id (becomes the route /api/hook/<id>, single word)").Trim();
+        if (string.IsNullOrWhiteSpace(id)) return Bad("A webhook id is required.");
+        if (id.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0 || id.Contains(' '))
+            return Bad($"Invalid id '{id}'. Use a single file-system-safe word.");
+        if (Cfg.Daemon.Triggers.Exists(t => string.Equals(t.Id, id, System.StringComparison.OrdinalIgnoreCase)))
+            return Bad($"A daemon trigger with id '{id}' already exists in config.json.");
+
+        string goal = MuxConsole.Prompt("Goal to run when it fires (use {payload} for the POST body)",
+            "Handle webhook: {payload}").Trim();
+        if (string.IsNullOrWhiteSpace(goal)) goal = "Handle webhook: {payload}";
+
+        // Mode + optional agent.
+        string mode = MuxConsole.Select("Run mode", new List<string> { "agent", "swarm", "pswarm" });
+        string? agent = null;
+        if (mode == "agent")
+        {
+            var a = MuxConsole.Prompt("Agent name (blank = default single agent)").Trim();
+            agent = string.IsNullOrWhiteSpace(a) ? null : a;
+        }
+
+        // HMAC secret (strongly recommended for anything internet-facing).
+        string? secret = null;
+        if (MuxConsole.Confirm("Require an HMAC signature (X-Hub-Signature-256)? Recommended for public URLs.", true))
+        {
+            var s = MuxConsole.Prompt("Shared secret (paste the same value into the sender, e.g. GitHub)").Trim();
+            secret = string.IsNullOrWhiteSpace(s) ? null : s;
+            if (secret is null)
+                MuxConsole.WriteWarning("No secret set - the endpoint will be open unless serve auth is enabled.");
+        }
+
+        int payloadLimit = 8192;
+        var pl = MuxConsole.Prompt("Max payload bytes forwarded into the goal", "8192").Trim();
+        if (!int.TryParse(pl, out payloadLimit) || payloadLimit <= 0) payloadLimit = 8192;
+
+        try
+        {
+            Cfg.Daemon.Triggers.Add(new DaemonTrigger
+            {
+                Id = id,
+                Type = "webhook",
+                Goal = goal,
+                Mode = mode,
+                Agent = agent,
+                Secret = secret,
+                PayloadLimit = payloadLimit,
+            });
+            PersistAppConfig();
+            return Ok(
+                $"Created inbound webhook trigger '{id}'.\n" +
+                $"  route:  POST /api/hook/{id}\n" +
+                $"  goal:   {goal}\n" +
+                $"  mode:   {mode}{(agent is not null ? $" ({agent})" : "")}\n" +
+                $"  signed: {(secret is not null ? "yes (HMAC required)" : "no - open unless serve auth is on")}\n" +
+                "Needs the daemon + serve running to receive. Start with: /daemon on  (and --serve). " +
+                "Register the SAME secret in the sender (e.g. GitHub webhook settings).");
+        }
+        catch (System.Exception ex)
+        {
+            return Bad($"Failed to create inbound webhook: {ex.Message}");
         }
     }
 

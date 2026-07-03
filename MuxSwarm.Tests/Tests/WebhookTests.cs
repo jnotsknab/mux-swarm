@@ -91,4 +91,33 @@ public class WebhookTests
     {
         Assert.Equal(8192, new DaemonTrigger().PayloadLimit);
     }
+
+    // --- alias map: outbound events[] accepts the lifecycle/hook names users already know ---
+
+    [Theory]
+    [InlineData("text_chunk", "stream", true)]           // lifecycle name -> render-stream alias
+    [InlineData("thinking_chunk", "thinking_start", true)]
+    [InlineData("thinking_chunk", "thinking_update", true)]
+    [InlineData("thinking_chunk", "thinking_end", true)]
+    [InlineData("turn_end", "agent_turn_end", true)]     // the trap: hook name -> emit name
+    [InlineData("task_complete", "task_complete", true)] // exact twin, no alias needed
+    [InlineData("error", "error", true)]
+    [InlineData("turn_end", "agent_turn_start", false)]  // must NOT match a different moment
+    [InlineData("text_chunk", "tool_call", false)]
+    public void AllowlistMatches_ResolvesLifecycleAliases(string allowEntry, string emittedType, bool expected)
+    {
+        Assert.Equal(expected, WebhookSink.AllowlistMatches(new[] { allowEntry }, emittedType));
+    }
+
+    [Fact]
+    public void AllowlistMatches_Wildcard_MatchesAnything()
+    {
+        Assert.True(WebhookSink.AllowlistMatches(new[] { "*" }, "anything_at_all"));
+    }
+
+    [Fact]
+    public void AllowlistMatches_NoMatch_ReturnsFalse()
+    {
+        Assert.False(WebhookSink.AllowlistMatches(new[] { "task_complete", "error" }, "stream"));
+    }
 }

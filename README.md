@@ -43,7 +43,7 @@
 - [About](#about)
 - [Key Capabilities](#key-capabilities)
 - [Protocols & Standards](#protocols--standards)
-- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [Parallel Mode](#parallel-mode) · [Workflow Engine](#workflow-engine) · [Event Hooks](#event-hooks) · [Web UI](#web-ui---serve) · [Daemon Mode](#daemon-mode---daemon) · [OS Service Registration](#os-service-registration---register----remove) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
+- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [Parallel Mode](#parallel-mode) · [Workflow Engine](#workflow-engine) · [Event Hooks & Webhooks](#event-hooks) · [Web UI](#web-ui---serve) · [Daemon Mode](#daemon-mode---daemon) · [OS Service Registration](#os-service-registration---register----remove) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
 - [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Provider-Specific Parameters](#provider-specific-parameters-additionalparams) · [Execution Limits](#execution-limits-executionlimits) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
 - [Architecture](#architecture) — [Orchestration Lifecycle](#orchestration-lifecycle) · [Memory Architecture](#layered-memory-architecture)
 - [Security & Safety](#security--safety)
@@ -204,7 +204,7 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /kanban         Editable task board driving member self-claim (todo/blocked/in-progress/done)
 /giga           Toggle Giga mode - grant the agent spawn_team / run_workflow superpowers
 /background     (/bg) Run an agent on a goal as a fire-and-forget background job
-/daemon         (/da) Runtime trigger control: cron/watch/on/off/jobs/cancel
+/daemon         (/da) Runtime trigger control: on/off/jobs/cron/watch/cancel (menu or in-session)
 ```
 
 **Subscription & proxy**
@@ -247,6 +247,8 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /setmodel       Change the model for any agent, orchestrator, or compaction agent
 /swap           Swap the active agent for single-agent mode
 /newagent       Guided wizard to create a swarm agent (name, MCP servers, model, prompt)
+/createhook     Guided wizard: scaffold a hook, an outbound webhook, or an inbound webhook
+/hooks          Hooks status / toggle / create (/hooks on|off|create)
 /editagent      Edit a swarm agent (model, description, MCP servers, delegation)
 /delagent       Remove a swarm agent from swarm.json (and optionally its prompt file)
 /addcontext     Configure what context each agent is injected with
@@ -255,7 +257,7 @@ Type `/help` at any time for the full reference, or `/` in the live TUI for a fu
 /limits         Display current execution limits for orchestration and agents
 /tools          List available MCP tools across enabled servers
 /skills         List available local skills
-/memory         View the knowledge graph
+/memory         Toggle deep memory (standard|deep) + status; /deep alias
 /status         View current system status: provider, models, tools, skills, and sessions
 /dockerexec     Toggle Docker execution mode
 /delimiter      Toggle multi-line input delimiter
@@ -408,7 +410,33 @@ Pattern matching supports filtering by `event` type, `agent` name, and `tool` na
 | `task_complete` | Agent signals task done | All orchestrators |
 | `delegation` | Orchestrator delegates to specialist | Multi + Parallel |
 
-On startup, if hooks are configured, the runtime prompts for confirmation before enabling them. Hooks are suppressed in `--stdio` mode to avoid interfering with structured output.
+On startup, if hooks are configured, the runtime prompts for confirmation before enabling them. Hooks are suppressed in `--stdio` mode to avoid interfering with structured output. Scaffold a hook interactively with `/createhook`; toggle with `/hooks on|off`.
+
+> The table above lists the common events. `thinking_chunk` (streamed reasoning), `runtime_ready`, and the `daemon_*` events are also available. See **[Hooks, Webhooks & the Daemon](docs/hooks.md)** for the full event vocabulary.
+
+#### Webhooks (HTTP in / out)
+
+Beyond running local commands, hooks extend to HTTP webhooks in both directions:
+
+- **Outbound** (`swarm.json` `webhooks[]`) — Mux POSTs a signed JSON envelope to an external URL when
+  matching events fire (Slack/Discord pings, CI chaining, observability sinks). HMAC-signed
+  (`X-Hub-Signature-256`), fire-and-forget with retry, inert until configured.
+- **Inbound** (`config.json` `daemon.triggers[]`, type `webhook`) — an external `POST /api/hook/{id}`
+  (GitHub, Stripe, an alert) fires an agent goal with the request body as `{payload}`. HMAC-verified,
+  returns `202` immediately.
+
+```json
+// swarm.json — outbound
+{ "webhooks": [ { "url": "https://hooks.slack.com/...", "events": ["task_complete", "error"], "secret": "..." } ] }
+```
+```json
+// config.json — inbound (daemon trigger)
+{ "id": "ghpr", "type": "webhook", "goal": "Review this PR: {payload}", "mode": "agent", "secret": "..." }
+```
+
+Scaffold either with `/createhook` (it branches: hook | outbound webhook | inbound webhook). Full
+details, the event allowlist, hook-name aliases, and the HMAC trust model are in
+**[docs/hooks.md](docs/hooks.md)**.
 
 ### Web UI (`--serve`)
 
@@ -445,7 +473,7 @@ mux-swarm --serve --daemon --watchdog   # temporary always on stack
 mux-swarm --serve --daemon --watchdog --register # system level always on stack
 ```
 
-Four trigger types:
+Five trigger types:
 
 **Watch** -- monitors a file path pattern via `FileSystemWatcher`. Fires a goal when matching files are created or modified, with per-file cooldown debounce.
 
@@ -454,6 +482,8 @@ Four trigger types:
 **Status** -- health checks that monitor resources without firing goals. Supports `http://` (HEAD request), `process:name` (process lookup), and `tcp:host:port` (connect check). Optionally restarts failed resources via registered handlers.
 
 **Bridge** -- spawns and supervises a long-lived child process. The runtime tracks the process directly, restarting it on exit if `restart` is enabled. No health check needed. Designed for messaging bridges (Telegram, Discord) but works for any persistent sidecar process.
+
+**Webhook** -- exposes `POST /api/hook/{id}` (serve mode) so an external HTTP POST fires a goal, with the request body available as `{payload}`. HMAC-verified (`X-Hub-Signature-256`) and rate-limited by cooldown. See **[docs/hooks.md](docs/hooks.md)** for the inbound-webhook trust model.
 ```json
 {
   "daemon": {
@@ -514,7 +544,7 @@ Community and first-party bridges for additional platforms (Slack, Matrix, Whats
 
 Both bridges support text messaging and audio transcription via local Whisper. FFmpeg is resolved automatically via the `static-ffmpeg` package (cross-platform). Bridge dependencies are managed by the `pyproject.toml` in `Runtime/`.
 
-Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`.
+Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. Control the daemon at runtime with `/daemon` (usable from the top-level menu and in-session). For hooks, webhooks, and the daemon in one place, see **[Hooks, Webhooks & the Daemon](docs/hooks.md)**.
 
 ### OS Service Registration (`--register` / `--remove`)
 

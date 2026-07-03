@@ -1327,6 +1327,19 @@ public class App
                     break;
                 }
 
+                case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ")
+                                  || dmnCmd == "/da" || dmnCmd.StartsWith("/da "):
+                {
+                    // /daemon is session-AGNOSTIC: it controls process-level background triggers
+                    // (DaemonRunner) that do not depend on any live session, so it runs at the menu
+                    // exactly as it does in-session (via MetaCommandDispatch). EnsureRunner lazily
+                    // starts the daemon and needs MCP tools; the background MCP init may not have
+                    // landed yet at the menu, so make sure it's ready first (idempotent + cheap).
+                    await EnsureMcpReadyAsync();
+                    MuxSwarm.State.DaemonCommand.Run(userInput);
+                    break;
+                }
+
                 default:
                     if (userInput.StartsWith("/"))
                     {

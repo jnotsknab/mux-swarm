@@ -33,6 +33,42 @@ public static class WebhookSink
     /// <summary>Max delivery attempts per event (1 initial + retries).</summary>
     private const int MaxAttempts = 3;
 
+    /// <summary>
+    /// Alias map so an outbound sink's <c>events[]</c> allowlist can use the SAME lifecycle event
+    /// names as <c>hooks[]</c> (the names users already know), even though outbound webhooks tap the
+    /// EmitJson render stream, which names some events differently. Key = lifecycle/hook name the
+    /// user might write; value = the set of EmitJson stream types that represent the same moment.
+    /// Exact-name twins (tool_call, tool_result, task_complete, delegation, agent_turn_start,
+    /// error, hook_fired, ...) need no entry -- they match directly. Only genuine name mismatches
+    /// live here. Verified against source: text_chunk is emitted as "stream"; a single
+    /// "thinking_chunk" lifecycle beat maps to the thinking_start/update/end render triad; and
+    /// "turn_end" (lifecycle) corresponds to "agent_turn_end" (render).
+    /// </summary>
+    private static readonly Dictionary<string, string[]> EventAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["text_chunk"]     = ["stream"],
+        ["thinking_chunk"] = ["thinking_start", "thinking_update", "thinking_end"],
+        ["turn_end"]       = ["agent_turn_end"],
+    };
+
+    /// <summary>
+    /// True when a sink's allowlist entry matches an emitted stream <paramref name="type"/>, either
+    /// directly (same name) or via <see cref="EventAliases"/> (the user wrote the lifecycle/hook
+    /// name and it resolves to this render-stream type).
+    /// </summary>
+    internal static bool AllowlistMatches(IEnumerable<string> allow, string type)
+    {
+        foreach (var entry in allow)
+        {
+            if (entry == "*") return true;
+            if (string.Equals(entry, type, StringComparison.OrdinalIgnoreCase)) return true;
+            if (EventAliases.TryGetValue(entry, out var mapped)
+                && mapped.Any(m => string.Equals(m, type, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
+    }
+
     /// <summary>True when at least one sink with a URL and a non-empty allowlist is configured.</summary>
     public static bool IsActive { get; private set; }
 
@@ -63,11 +99,8 @@ public static class WebhookSink
         List<WebhookConfig>? matched = null;
         foreach (var sink in _sinks)
         {
-            if (sink.Events.Contains("*") ||
-                sink.Events.Any(e => string.Equals(e, type, StringComparison.OrdinalIgnoreCase)))
-            {
+            if (AllowlistMatches(sink.Events, type))
                 (matched ??= []).Add(sink);
-            }
         }
         if (matched is null) return;
 
