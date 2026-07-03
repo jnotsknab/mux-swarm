@@ -3132,24 +3132,24 @@ const icons = {
         break; // suppressed
 
       case 'step':
-        appendPill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
+        routePill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
         break;
 
       case 'rule':
-        appendPill(pillFromHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`));
+        routePill(pillFromHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`));
         break;
 
-      case 'success': appendPill(pillFromText(ev.message, 'event-success')); break;
+      case 'success': routePill(pillFromText(ev.message, 'event-success')); break;
       case 'warning':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendPill(pillFromText(ev.message, 'event-warning'));
+        routePill(pillFromText(ev.message, 'event-warning'));
         break;
-      case 'error':   appendPill(pillFromText(ev.message, 'event-error')); break;
+      case 'error':   routePill(pillFromText(ev.message, 'event-error')); break;
       case 'info':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendPill(pillFromText(ev.message, 'event-info'));
+        routePill(pillFromText(ev.message, 'event-info'));
         break;
-      case 'debug':   appendPill(pillFromText(ev.message, 'event-debug')); break;
+      case 'debug':   routePill(pillFromText(ev.message, 'event-debug')); break;
 
       case 'user_input': {
         try { resetSubRoster(); } catch (_) {}
@@ -3655,7 +3655,7 @@ const icons = {
         break;
       }
 
-      case 'task_start': appendPill(pillFromHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
+      case 'task_start': routePill(pillFromHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
       case 'task_done': {
         // Suppress redundant task_done row when a recently-rendered .task-complete card
         // already covers the same agent. Scan back through the last few siblings since
@@ -3678,14 +3678,14 @@ const icons = {
           }
         }
         if (suppressed) break;
-        appendPill(pillFromHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
+        routePill(pillFromHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
         break;
       }
 
       default:
         if (ev.message) {
           if (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user')) break;
-          appendPill(pillFromText(ev.message, 'event-info'));
+          routePill(pillFromText(ev.message, 'event-info'));
         }
         break;
     }
@@ -3725,6 +3725,32 @@ const icons = {
     output.appendChild(el);
     _pillGroup = g;
     return g;
+  }
+  // Some status pills carry at-a-glance signal that must stay visible without a
+  // click (token/context usage, turn-completion readiness, compaction results,
+  // session-saved). These render STANDALONE; only genuinely noisy status lines
+  // (retries, daemon next-fire, MCP notices, step/rule banners, generic info)
+  // fold into the collapsed cluster.
+  function isImportantPill(text) {
+    const t = String(text || '');
+    return (
+      /Total\s+Tokens?|tokens?\s+in\s+context|Cached\s+Tokens?/i.test(t) ||
+      /Context:\s*[\d,]+\s*\/\s*[\d,]+\s*tokens/i.test(t) ||
+      /Ready for next input/i.test(t) ||
+      /Compacted:/i.test(t) ||
+      /tokens remain/i.test(t)
+    );
+  }
+  // Route a status pill: standalone when important, else into the cluster.
+  function routePill(node) {
+    if (isImportantPill(node.textContent || '')) {
+      breakPillGroup();
+      output.appendChild(node);
+      decorateCollapsibles(node);
+      scrollToBottom();
+      return;
+    }
+    appendPill(node);
   }
   // Route a status pill through the cluster. `node` is a ready DOM element.
   function appendPill(node) {
