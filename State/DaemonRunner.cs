@@ -678,6 +678,11 @@ public sealed class DaemonRunner : IAsyncDisposable
 
         try
         {
+            // Tag every NDJSON frame this daemon goal emits (across all modes + their
+            // orchestrator child tasks, via AsyncLocal flow) with origin=daemon + a lane,
+            // so the web app routes the run to a Node-Graph daemon lane instead of the
+            // main viewport. TUI collapse is handled separately by BeginDaemonCapture below.
+            using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
             switch (trigger.Mode.ToLowerInvariant())
             {
                 case "swarm":

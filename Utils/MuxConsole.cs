@@ -155,6 +155,38 @@ public static partial class MuxConsole
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
+    // Serve/stdio origin tag for the NDJSON stream. Independent of the TUI-bound SubAgentCapture
+    // (which no-ops under StdioMode), this AsyncLocal flows into orchestrator child tasks so every
+    // frame a daemon-fired goal emits -- stream, tool_call, success/error -- carries an origin+lane
+    // tag. The web app routes origin=="daemon" frames to a dedicated Node-Graph lane instead of the
+    // main viewport. Additive: absent tag => byte-identical legacy frames, unknown-field-ignored by
+    // older clients.
+    private readonly struct ServeOrigin
+    {
+        public readonly string Origin;
+        public readonly string Lane;
+        public ServeOrigin(string origin, string lane) { Origin = origin; Lane = lane; }
+    }
+    private static readonly AsyncLocal<ServeOrigin?> _serveOrigin = new();
+
+    /// <summary>Tag every EmitJson frame on the calling async flow (and its child tasks) with an
+    /// origin + lane for the serve/stdio NDJSON stream. Returns a scope that clears the tag on
+    /// dispose. Used by the daemon runner so background goal output can be routed out of the main
+    /// viewport client-side.</summary>
+    public static IDisposable BeginServeOrigin(string origin, string lane)
+    {
+        var prev = _serveOrigin.Value;
+        _serveOrigin.Value = new ServeOrigin(origin, lane);
+        return new ServeOriginScope(prev);
+    }
+    private sealed class ServeOriginScope : IDisposable
+    {
+        private readonly ServeOrigin? _prev;
+        private bool _done;
+        public ServeOriginScope(ServeOrigin? prev) { _prev = prev; }
+        public void Dispose() { if (_done) return; _done = true; _serveOrigin.Value = _prev; }
+    }
+
     private static void EmitJson(string type, object? data = null)
     {
         // ACP transport owns stdout (pure JSON-RPC), so structured events are diverted to the
@@ -171,6 +203,11 @@ public static partial class MuxConsole
             else if (data is not null)
             {
                 fields["message"] = data;
+            }
+            if (_serveOrigin.Value is { } so0)
+            {
+                fields["origin"] = so0.Origin;
+                fields["lane"] = so0.Lane;
             }
             sink(type, fields);
             return;
@@ -193,6 +230,11 @@ public static partial class MuxConsole
             payload["message"] = data;
         }
 
+        if (_serveOrigin.Value is { } so1)
+        {
+            payload["origin"] = so1.Origin;
+            payload["lane"] = so1.Lane;
+        }
         Console.WriteLine(JsonSerializer.Serialize(payload, _jsonOpts));
     }
 
@@ -934,7 +976,12 @@ public static partial class MuxConsole
                 var streamFields = agentName is null
                     ? D(("text", text))
                     : D(("text", text), ("agent", agentName));
-                if (AcpActive && muted) streamFields["reasoning"] = true;
+                // Mark reasoning (muted) chunks on the NDJSON/WS stream frame so the web app
+                // can keep tool-call groups intact across think->call->think bursts (only
+                // answer prose breaks a group). ACP already relied on this to split
+                // message vs thought chunks; broadening to all stdio is additive
+                // (absent => legacy; unknown-field-ignored by older web clients).
+                if (muted) streamFields["reasoning"] = true;
                 EmitJson("stream", streamFields);
             }
             else if (ViaDriver)

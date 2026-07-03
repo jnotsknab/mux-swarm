@@ -810,6 +810,23 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 .tool-group.open .tg-latest { display: none; }
 .tool-group-body { display: none; padding-left: 18px; }
 .tool-group.open .tool-group-body { display: block; }
+/* Status-pill cluster (coalesced success/warning/error/info/debug/step/rule/task rows) */
+.event-group { margin: 4px 0; }
+body.hide-all-pills .event-group { display: none !important; }
+.event-group-header {
+  display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+  padding: 3px 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); min-width: 0;
+}
+.event-group-header:hover .eg-label { color: var(--text); }
+.event-group-header .eg-chev { display: inline-flex; align-items: center; flex-shrink: 0; transition: transform 0.15s ease; opacity: 0.6; }
+.event-group:not(.open) .eg-chev { transform: rotate(-90deg); }
+.event-group-header .eg-label { font-weight: 600; flex-shrink: 0; }
+.event-group-header .eg-latest { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; opacity: 0.8; }
+.event-group.open .eg-latest { display: none; }
+.event-group-body { display: none; padding-left: 18px; }
+.event-group.open .event-group-body { display: block; }
+/* Inside a cluster, individual event rows shed their outer margin for density */
+.event-group-body .event { margin: 1px 0; }
 /* Expandable call rows: click to reveal a trimmed result/diff preview */
 .tool-call.expandable { cursor: pointer; }
 .tool-call.expandable:hover { color: var(--text); }
@@ -2578,6 +2595,8 @@ const icons = {
   let _subRoster = null;             // { el, headCountEl, activeEl, bodyEl } active group container
   function isSubAgent(name){ return !!name && _subAgents.has(String(name)); }
   let reconnectDelay = 1000;
+  let _reconnectTimer = null;   // handle for the scheduled onclose reconnect, so a manual/
+                                // visibility reconnect can cancel it (else two live sockets race)
   let sidebarOpen = false;
   let currentTab = 'sandbox';
   try { window.currentTab = currentTab; } catch(_) {}
@@ -2638,6 +2657,11 @@ const icons = {
 
   // ─── WebSocket ───
   function connect() {
+    // Cancel any reconnect scheduled by a prior onclose so we never end up with two
+    // overlapping sockets both appending to the same DOM (the classic node-graph flakiness).
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    // Guard: if a socket is already OPEN or CONNECTING, don't spawn a second one.
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     // Allow the Node Graph to override the WS target (used to navigate between Mux-Swarm runtimes).
     let _wsHost = location.host;
@@ -2684,7 +2708,8 @@ const icons = {
 
       setBusy(false);
       if (pingInterval) clearInterval(pingInterval);
-      setTimeout(connect, reconnectDelay);
+      if (_reconnectTimer) clearTimeout(_reconnectTimer);
+      _reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
     ws.onerror = () => {
@@ -2829,6 +2854,10 @@ const icons = {
   // text or turn boundary breaks the group so ordering stays faithful.
   let _toolGroup = null;
   function breakToolGroup() { _toolGroup = null; }
+  // Break the status-pill run at the SAME ordering boundaries as tool groups
+  // (turn start/end, prose stream, tool activity) so a pill cluster never
+  // swallows content that came after it. Defined after breakPillGroup below;
+  // referenced lazily so hoisting order is irrelevant.
   function ensureToolGroup() {
     if (_toolGroup && _toolGroup.el.isConnected) return _toolGroup;
     const el = document.createElement('div');
@@ -2859,6 +2888,7 @@ const icons = {
     return !document.body.classList.contains('tool-grouping-off');
   }
   function addToolCallRow(html) {
+    try { breakPillGroup(); } catch(_){}
     const row = document.createElement('div');
     row.className = 'tool-call';
     row.innerHTML = html;
@@ -3066,6 +3096,17 @@ const icons = {
 
   // ─── Event dispatcher ───
   function handleEvent(ev) {
+    // ─── Daemon-origin routing ───
+    // Background daemon-fired goals are tagged origin:'daemon' by the backend
+    // (MuxConsole.BeginServeOrigin). They must NOT interleave into the main
+    // transcript or flip the composer busy state — route every such frame into
+    // the Node Graph's daemon lane and stop. Absent tag => normal handling.
+    try {
+      if (ev && ev.origin === 'daemon' && window.MuxDaemonLane) {
+        window.MuxDaemonLane.push(ev);
+        return;
+      }
+    } catch (_) {}
     // ─── Agent-session mode transitions ───
     // The session banners ('Type /qc to exit' / 'Exited from Chat interface') are
     // used only as a CUE to re-sync from the authoritative /api/status endpoint —
@@ -3091,27 +3132,28 @@ const icons = {
         break; // suppressed
 
       case 'step':
-        appendHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`);
+        appendPill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
         break;
 
       case 'rule':
-        appendHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`);
+        appendPill(pillFromHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`));
         break;
 
-      case 'success': appendText(ev.message, 'event-success'); break;
-      case 'warning': 
+      case 'success': appendPill(pillFromText(ev.message, 'event-success')); break;
+      case 'warning':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendText(ev.message, 'event-warning'); 
+        appendPill(pillFromText(ev.message, 'event-warning'));
         break;
-      case 'error':   appendText(ev.message, 'event-error'); break;
-      case 'info':    
+      case 'error':   appendPill(pillFromText(ev.message, 'event-error')); break;
+      case 'info':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendText(ev.message, 'event-info'); 
+        appendPill(pillFromText(ev.message, 'event-info'));
         break;
-      case 'debug':   appendText(ev.message, 'event-debug'); break;
+      case 'debug':   appendPill(pillFromText(ev.message, 'event-debug')); break;
 
       case 'user_input': {
         try { resetSubRoster(); } catch (_) {}
+        try { breakPillGroup(); } catch (_) {}
         const txt = ev.text || '';
         // One-shot suppression set: auto /qc, plus commands the user triggered
         // via the session-switch warning card (already shown in the card).
@@ -3204,7 +3246,7 @@ const icons = {
         // its lifecycle lives entirely in the roster row.
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'working'); break; }
         finalizeStream(ev.agent);
-        breakToolGroup();
+        breakToolGroup(); try { breakPillGroup(); } catch(_){}
         setBusy(true);
         const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
@@ -3215,7 +3257,7 @@ const icons = {
         // Sub-agent turn end resolves its row; it never touches lead stream/busy.
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'done', 'done'); break; }
         finalizeStream(ev.agent);
-        breakToolGroup();
+        breakToolGroup(); try { breakPillGroup(); } catch(_){}
         setBusy(false);
         // Safety net: if a /compact placeholder is still showing when the turn
         // ends (compaction always wraps inside a turn), the real event matcher
@@ -3226,7 +3268,12 @@ const icons = {
       case 'stream': {
         setBusy(true);
         removeThinkingBar();
-        breakToolGroup();
+        // Only answer prose breaks a tool-call group. Reasoning (muted) chunks
+        // interleaved in a think->call->think burst must NOT break the group, or
+        // one logical burst shatters into a stack of count-1 collapsed groups
+        // (the 'pill wall'). Backend stamps reasoning:true on muted stream frames;
+        // absent => treat as prose (legacy-safe).
+        if (!ev.reasoning) { breakToolGroup(); try { breakPillGroup(); } catch(_){} }
         const skey = String(ev.agent || '');
         // Sub-agent output folds into its persistent roster row (one row per
         // agent, appended in place) rather than spawning a new stream card per
@@ -3608,7 +3655,7 @@ const icons = {
         break;
       }
 
-      case 'task_start': appendHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`); break;
+      case 'task_start': appendPill(pillFromHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
       case 'task_done': {
         // Suppress redundant task_done row when a recently-rendered .task-complete card
         // already covers the same agent. Scan back through the last few siblings since
@@ -3631,18 +3678,78 @@ const icons = {
           }
         }
         if (suppressed) break;
-        appendHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`);
+        appendPill(pillFromHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
         break;
       }
 
       default:
         if (ev.message) {
           if (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user')) break;
-          appendText(ev.message, 'event-info');
+          appendPill(pillFromText(ev.message, 'event-info'));
         }
         break;
     }
     scrollToBottom();
+  }
+
+  // ─── Status-pill coalescing ───
+  // The 9 status event types (success/warning/error/info/debug/step/rule/
+  // task_start/task_done) each used to stamp one standalone row, walling the
+  // transcript on chatty turns (retries, MCP notices, step banners). Fold a RUN
+  // of consecutive status pills into one quiet expandable cluster; any non-status
+  // content (stream, card, user input, tool group) breaks the run so ordering
+  // stays faithful. Disabled when the user hid pills or turned grouping off.
+  let _pillGroup = null;
+  function breakPillGroup() { _pillGroup = null; }
+  function pillGroupingEnabled() {
+    return !document.body.classList.contains('tool-grouping-off');
+  }
+  function ensurePillGroup() {
+    if (_pillGroup && _pillGroup.el.isConnected) return _pillGroup;
+    const el = document.createElement('div');
+    el.className = 'event-group open';
+    el.innerHTML =
+      '<div class="event-group-header">' +
+        '<span class="eg-chev">' + icons.chevronDown + '</span>' +
+        '<span class="eg-label"></span>' +
+        '<span class="eg-latest"></span>' +
+      '</div>' +
+      '<div class="event-group-body"></div>';
+    const g = { el, body: el.querySelector('.event-group-body'),
+                label: el.querySelector('.eg-label'),
+                latest: el.querySelector('.eg-latest'),
+                count: 0, userToggled: false };
+    el.querySelector('.event-group-header').addEventListener('click', () => {
+      g.userToggled = true; el.classList.toggle('open');
+    });
+    output.appendChild(el);
+    _pillGroup = g;
+    return g;
+  }
+  // Route a status pill through the cluster. `node` is a ready DOM element.
+  function appendPill(node) {
+    if (!pillGroupingEnabled()) { output.appendChild(node); decorateCollapsibles(node); scrollToBottom(); return; }
+    const g = ensurePillGroup();
+    g.count++;
+    g.body.appendChild(node);
+    decorateCollapsibles(node);
+    g.label.textContent = g.count === 1 ? '1 status update' : (g.count + ' status updates');
+    g.latest.textContent = '\u00b7 ' + (node.textContent || '').trim().slice(0, 80);
+    const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
+    const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
+    if (!autoOff && g.count >= Math.max(limit, 3) && !g.userToggled) g.el.classList.remove('open');
+    scrollToBottom();
+  }
+  function pillFromText(text, cls) {
+    const el = document.createElement('div');
+    el.className = 'event ' + (cls || '');
+    el.textContent = text || '';
+    return el;
+  }
+  function pillFromHTML(html) {
+    const w = document.createElement('div');
+    w.innerHTML = html;
+    return w.firstElementChild || w;
   }
 
   // ─── Rendering helpers ───
@@ -3790,6 +3897,8 @@ const icons = {
       '<div class="sub-roster-body"></div>';
     const head = el.querySelector('.sub-roster-head');
     head.addEventListener('click', () => el.classList.toggle('sr-collapsed'));
+    // Optional default-collapsed (settings: rosterCollapsed -> body class).
+    if (document.body.classList.contains('sub-roster-collapsed-default')) el.classList.add('sr-collapsed');
     output.appendChild(el);
     _subRoster = { el, headCountEl: el.querySelector('.sr-count'),
                    activeEl: el.querySelector('.sr-active'),
@@ -6222,6 +6331,7 @@ const icons = {
     
     // Reset backoff delay and reconnect immediately
     if (pingInterval) clearInterval(pingInterval);
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     reconnectDelay = 1000;
     connect();
   }
@@ -7540,14 +7650,17 @@ const icons = {
   body.hide-tokens .mux-token-badge { display: none !important; }
   body.hide-saved-banner .mux-save-banner { display: none !important; }
   body.hide-task-complete-pills .task-complete { display: none !important; }
-  body.hide-delegation-pills .delegation { display: none !important; }
+  /* The old standalone .delegation card no longer exists; sub-agent delegations now
+     render in the roster. Point this toggle at the live roster so it does something. */
+  body.hide-sub-roster .sub-roster { display: none !important; }
   body.hide-task-status-pills .event.no-default-icon { display: none !important; }
   body.hide-all-pills .mux-token-badge,
   body.hide-all-pills .mux-save-banner,
   body.hide-all-pills .mux-compact-row,
   body.hide-all-pills .task-complete,
   body.hide-all-pills .delegation,
-  body.hide-all-pills .event.no-default-icon { display: none !important; }
+  body.hide-all-pills .event.no-default-icon,
+  body.hide-all-pills .sub-roster { display: none !important; }
   body.hide-timestamps .msg-time { display: none !important; }
   body.hide-agent-badge .agent-badge { display: none !important; }
   body.hide-char-counter .char-counter { display: none !important; }
@@ -7945,7 +8058,8 @@ const icons = {
     hideAllPills: false,
     hideCompactingPills: true,
     hideTaskCompletePills: false,
-    hideDelegationPills: false,
+    hideSubRoster: false,
+    rosterCollapsed: false,
     hideTaskStatusPills: false,
     toolGrouping: true,
     hideToolCalls: false,
@@ -8025,7 +8139,8 @@ const icons = {
     b.classList.toggle('hide-compacting-pills', !!state.hideCompactingPills);
     b.classList.toggle('hide-all-pills',         !!state.hideAllPills);
     b.classList.toggle('hide-task-complete-pills', !!state.hideTaskCompletePills);
-    b.classList.toggle('hide-delegation-pills',  !!state.hideDelegationPills);
+    b.classList.toggle('hide-sub-roster',        !!state.hideSubRoster);
+    b.classList.toggle('sub-roster-collapsed-default', !!state.rosterCollapsed);
     b.classList.toggle('hide-task-status-pills', !!state.hideTaskStatusPills);
     b.classList.toggle('tool-grouping-off',       !state.toolGrouping);
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
@@ -8257,13 +8372,15 @@ const icons = {
     ]);
     section('Pills & Cards', [
       toggleRow('hideAllPills', 'Hide all pills & status cards',
-        'Master switch: hide every pill/status card (tokens, saved, compacting, completions, delegations, status rows).'),
+        'Master switch: hide every pill/status card (tokens, saved, compacting, completions, status rows, and the sub-agent roster).'),
       toggleRow('hideCompactingPills',   'Hide compacting pills',
         'Suppress the "Compacting / Compacted <Agent>" status pills.'),
       toggleRow('hideTaskCompletePills', 'Hide task-complete cards',
-        'Suppress the rich "<Agent> completed" cards with summaries.'),
-      toggleRow('hideDelegationPills',   'Hide delegation cards',
-        'Suppress "<Agent> delegated to <Agent>" cards.'),
+        'Suppress the rich "<Agent> completed" cards (orchestrator/lead completions; sub-agent completions fold into the roster).'),
+      toggleRow('hideSubRoster',         'Hide sub-agent roster',
+        'Suppress the grouped sub-agent activity roster (delegated agents\' streams/tools).'),
+      toggleRow('rosterCollapsed',       'Collapse sub-agent roster by default',
+        'New sub-agent rosters start collapsed (click to expand). Off: start expanded.'),
       toggleRow('hideTaskStatusPills',   'Hide task status rows',
         'Suppress generic task_start/task_done status rows (hourglass/check inline events).'),
       toggleRow('toolGrouping', 'Group tool calls',
@@ -8806,6 +8923,57 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     var(--bg);
 }
 .mng-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+/* Per-instance embedded view (iframe over the canvas) */
+.mng-instance-view {
+  position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column;
+  background: var(--bg, #0b0b0e);
+}
+.mng-instance-view[hidden] { display: none; }
+.mng-instance-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+  background: var(--bg-card, rgba(24,24,27,.7)); flex: 0 0 auto;
+}
+.mng-instance-label { font-weight: 600; font-size: 12px; color: var(--text); }
+.mng-instance-url { font-size: 11px; color: var(--muted); font-family: var(--font-mono, monospace); }
+.mng-instance-spacer { flex: 1 1 auto; }
+.mng-instance-frame { flex: 1 1 auto; width: 100%; height: 100%; border: 0; background: var(--bg); }
+/* Daemon activity lane */
+.mng-daemon-btn { position: relative; }
+.mng-daemon-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px;
+  padding: 0 4px; margin-left: 3px; border-radius: 8px; font-size: 10px; line-height: 1;
+  background: var(--amber, #f59e0b); color: #1a1a1a; font-weight: 700;
+}
+.mng-daemon-badge[hidden] { display: none; }
+.mng-daemon-lane {
+  position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column;
+  background: var(--bg, #0b0b0e);
+}
+.mng-daemon-lane[hidden] { display: none; }
+.mng-daemon-lane-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10)); background: var(--bg-card, rgba(24,24,27,.7));
+}
+.mng-daemon-lane-title { font-weight: 600; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
+.mng-daemon-lane-spacer { flex: 1 1 auto; }
+.mng-daemon-lane-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.mng-dl-row { border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5)); overflow: hidden; }
+.mng-dl-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; user-select: none; font-size: 12px; }
+.mng-dl-head:hover { background: rgba(255,255,255,.03); }
+.mng-dl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber, #f59e0b); flex: 0 0 auto; }
+.mng-dl-row.dl-done .mng-dl-dot { background: var(--green, #10b981); }
+.mng-dl-row.dl-error .mng-dl-dot { background: var(--red, #ef4444); }
+.mng-dl-label { font-weight: 600; color: var(--text); }
+.mng-dl-status { color: var(--muted); font-size: 11px; }
+.mng-dl-spacer { flex: 1 1 auto; }
+.mng-dl-chev { color: var(--muted); transition: transform .15s ease; }
+.mng-dl-row.dl-collapsed .mng-dl-chev { transform: rotate(-90deg); }
+.mng-dl-body { max-height: 260px; overflow-y: auto; padding: 6px 10px; border-top: 1px solid var(--border, rgba(255,255,255,.06)); font-family: var(--font-mono, monospace); font-size: 11px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; color: var(--text); }
+.mng-dl-row.dl-collapsed .mng-dl-body { display: none; }
+.mng-dl-line { color: var(--text); }
+.mng-dl-line.dl-tool { color: var(--muted); }
+.mng-dl-line.dl-err { color: var(--red, #ef4444); }
 .mng-canvas.panning { cursor: grabbing; }
 .mng-canvas .mng-node-card { cursor: pointer; transition: filter 0.15s; }
 .mng-canvas .mng-node-card:hover { filter: brightness(1.15); }
@@ -9194,6 +9362,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     <button class="mng-btn" id="mngBtnAdd" title="Add a node">+ Add</button>
     <button class="mng-btn" id="mngBtnLayout" title="Auto-layout">Layout</button>
     <button class="mng-btn" id="mngBtnCenter" title="Center view">Center</button>
+    <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Daemon activity">⚙ Daemon <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
     <button class="mng-btn" id="mngBtnMax" title="Maximize">⛶</button>
     <button class="mng-btn" id="mngBtnClose" title="Close">×</button>
   </div>
@@ -9214,6 +9383,33 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         No nodes yet. Click <strong>+ Add</strong> to register a Mux-Swarm runtime
         (e.g. <code>localhost:6724</code>). The first node becomes the <em>main</em> node.
       </div>
+      <!-- Per-instance full-fidelity view: embeds the target runtime's own web UI. Each
+           connected instance already serves this same app, so an iframe gives a true,
+           isolated main view per endpoint with zero added API surface. -->
+      <!-- Daemon activity lane: collapsed per-trigger rows for background daemon
+           goals, kept out of the main viewport. Populated via window.MuxDaemonLane
+           from origin:'daemon' WS frames. -->
+      <div class="mng-daemon-lane" id="mngDaemonLane" hidden>
+        <div class="mng-daemon-lane-bar">
+          <span class="mng-daemon-lane-title">Daemon Activity</span>
+          <span class="mng-daemon-lane-spacer"></span>
+          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes">Clear</button>
+          <button class="mng-btn" id="mngDaemonClose" title="Hide">×</button>
+        </div>
+        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody"></div>
+      </div>
+      <div class="mng-instance-view" id="mngInstanceView" hidden>
+        <div class="mng-instance-bar">
+          <button class="mng-btn" id="mngViewBack" title="Back to topology">← Topology</button>
+          <span class="mng-instance-label" id="mngInstanceLabel">—</span>
+          <span class="mng-instance-url" id="mngInstanceUrl"></span>
+          <span class="mng-instance-spacer"></span>
+          <button class="mng-btn" id="mngViewReload" title="Reload this view">⟳</button>
+          <button class="mng-btn" id="mngViewPop" title="Open in a new tab">⇱</button>
+        </div>
+        <iframe class="mng-instance-frame" id="mngInstanceFrame" title="Instance view
+                sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"></iframe>
+      </div>
     </div>
     <div class="mng-side-resizer" id="mngSideResizer" title="Drag to resize"></div>
     <button class="mng-side-toggle" id="mngSideToggle" title="Collapse side panel" aria-label="Toggle side panel"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
@@ -9224,7 +9420,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           <input class="mng-input" id="mngNodeLabel" placeholder="Label" />
           <input class="mng-input" id="mngNodeUrl"   placeholder="host:port (e.g. localhost:6724)" />
           <div class="mng-row">
-            <button class="mng-btn primary" id="mngBtnNavigate" title="Navigate the parent UI to this runtime">Navigate</button>
+            <button class="mng-btn primary" id="mngBtnView" title="Open this runtime's full UI as an embedded view">View</button>
+            <button class="mng-btn" id="mngBtnNavigate" title="Open this runtime's UI in a new tab">Navigate</button>
             <button class="mng-btn" id="mngBtnMain" title="Make this the main node">Main</button>
           </div>
           <div class="mng-row">
@@ -9406,6 +9603,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       nodes, edges, getNode, getMain, getActive, getView,
       addNode, updateNode, deleteNode, setMain, setActive, setView,
       addEdge, deleteEdge,
+      // Cross-tab sync: reassign the private state from disk then notify.
+      reload(){ state = load(); emit(); },
     };
   })();
 
@@ -10297,13 +10496,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   function openPanel(){
     panel.classList.add('open'); savePanelState(); Canvas.render();
+    try { Pool.start(); } catch(_){}  // resume liveness probes only while visible
     // Re-center after the panel is visible & laid out. The initial center()
     // at startup may have no-op'd because the panel was hidden; centering here
     // guarantees the graph is framed correctly every time it's opened, so the
     // user never has to click the center button manually after a refresh.
     requestAnimationFrame(() => Canvas.center());
   }
-  function closePanel(){ panel.classList.remove('open'); savePanelState(); }
+  function closePanel(){ panel.classList.remove('open'); savePanelState(); try { Pool.stop(); } catch(_){} }
 
   // Public open() also routes here.
   document.getElementById('mngBtnClose').addEventListener('click', closePanel);
@@ -10483,7 +10683,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     const me = Store.nodes().find(n => n.url === nowHost());
     if (me) Store.setActive(me.id);
   }
-  Pool.start();
+  // Only probe while the panel is actually open at boot; openPanel() (re)starts it.
+  if (panel.classList.contains('open')) Pool.start();
   setTimeout(() => Canvas.center(), 0);
 
   // ────────────────────────────────────────────────────────────────────────
@@ -10512,12 +10713,194 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   // ────────────────────────────────────────────────────────────────────────
   // Public API consumed by the existing WS connect() hook.
   // ────────────────────────────────────────────────────────────────────────
+  // ── Per-instance embedded view ─────────────────────────────────────────
+  // Resolve a node's host into a normalized http(s):// base URL (shared by
+  // navigateTo + the embedded iframe view).
+  function resolveHttpUrl(n){
+    let target = String((n && n.url) || '').trim();
+    if (!target) return null;
+    const parentSecure = location.protocol === 'https:';
+    if (/^wss:\/\//i.test(target))       target = target.replace(/^wss:\/\//i, 'https://');
+    else if (/^ws:\/\//i.test(target))   target = target.replace(/^ws:\/\//i, 'http://');
+    else if (!/^https?:\/\//i.test(target)) target = (parentSecure ? 'https://' : 'http://') + target;
+    target = target.replace(/\/ws\/?$/, '/');
+    if (!/\/$/.test(target)) target += '/';
+    return target;
+  }
+  const _iview = {
+    root:  () => document.getElementById('mngInstanceView'),
+    frame: () => document.getElementById('mngInstanceFrame'),
+    label: () => document.getElementById('mngInstanceLabel'),
+    url:   () => document.getElementById('mngInstanceUrl'),
+    current: null,
+  };
+  function openInstanceView(id){
+    const n = Store.getNode(id); if (!n || !n.url) return;
+    const href = resolveHttpUrl(n); if (!href) return;
+    let u; try { u = new URL(href); } catch(_) { return; }
+    // Mixed-content: an https parent cannot embed an http child (browser blocks it).
+    if (location.protocol === 'https:' && u.protocol === 'http:') {
+      try { alert('This page is HTTPS but ' + u.host + ' is http:// — the browser will block an embedded view.\nUse Navigate to open it in a new tab instead.'); } catch(_){}
+      return;
+    }
+    Store.setActive(id);
+    const root = _iview.root(), frame = _iview.frame();
+    if (!root || !frame) return;
+    _iview.current = id;
+    if (_iview.label()) _iview.label().textContent = n.label || u.host;
+    if (_iview.url())   _iview.url().textContent = u.host;
+    // Only reassign src when the target changes, so re-opening the same node keeps its session.
+    if (frame.getAttribute('data-src') !== u.toString()) {
+      frame.setAttribute('data-src', u.toString());
+      frame.src = u.toString();
+    }
+    root.hidden = false;
+  }
+  function closeInstanceView(){
+    const root = _iview.root(); if (root) root.hidden = true;
+    _iview.current = null;
+  }
+  (function wireInstanceView(){
+    const back = document.getElementById('mngViewBack');
+    const rl   = document.getElementById('mngViewReload');
+    const pop  = document.getElementById('mngViewPop');
+    const vb   = document.getElementById('mngBtnView');
+    if (back) back.addEventListener('click', closeInstanceView);
+    if (rl)   rl.addEventListener('click', () => { const f=_iview.frame(); if (f && f.src) f.src = f.src; });
+    if (pop)  pop.addEventListener('click', () => { const f=_iview.frame(); if (f && f.src) { try { window.open(f.src, '_blank', 'noopener,noreferrer'); } catch(_){} } });
+    if (vb)   vb.addEventListener('click', () => {
+      const a = Store.getActive();
+      const sel = (typeof Canvas !== 'undefined' && Canvas.getSelectedId && Canvas.getSelectedId()) || (a && a.id);
+      if (sel) openInstanceView(sel);
+    });
+  })();
+
+  // ── Daemon activity lane ───────────────────────────────────────────────
+  // Consumes origin:'daemon' WS frames forwarded from the main app's handleEvent
+  // and folds each daemon goal (keyed by its 'lane', e.g. 'daemon:cron-foo') into
+  // one collapsed, expandable row — never touching the main viewport or busy state.
+  const MuxDaemonLane = (function(){
+    const rows = new Map();   // lane -> { el, body, statusEl, dotWrap, text }
+    let activeCount = 0;
+    function els(){
+      return {
+        lane:  document.getElementById('mngDaemonLane'),
+        body:  document.getElementById('mngDaemonLaneBody'),
+        badge: document.getElementById('mngDaemonBadge'),
+      };
+    }
+    function refreshBadge(){
+      const { badge } = els(); if (!badge) return;
+      const n = rows.size;
+      badge.textContent = String(activeCount || n);
+      badge.hidden = n === 0;
+    }
+    function show(){ const { lane } = els(); if (lane) lane.hidden = false; try { openPanel(); } catch(_){} }
+    function ensureRow(lane, label){
+      let r = rows.get(lane);
+      if (r && r.el.isConnected) return r;
+      const { body } = els(); if (!body) return null;
+      const el = document.createElement('div');
+      el.className = 'mng-dl-row dl-collapsed';
+      el.innerHTML =
+        '<div class="mng-dl-head">' +
+          '<span class="mng-dl-dot"></span>' +
+          '<span class="mng-dl-label"></span>' +
+          '<span class="mng-dl-status"></span>' +
+          '<span class="mng-dl-spacer"></span>' +
+          '<span class="mng-dl-chev">\u25be</span>' +
+        '</div>' +
+        '<div class="mng-dl-body"></div>';
+      el.querySelector('.mng-dl-head').addEventListener('click', () => el.classList.toggle('dl-collapsed'));
+      el.querySelector('.mng-dl-label').textContent = label || lane;
+      body.appendChild(el);
+      r = { el, body: el.querySelector('.mng-dl-body'), statusEl: el.querySelector('.mng-dl-status'), text: '' };
+      rows.set(lane, r);
+      activeCount++;
+      refreshBadge();
+      return r;
+    }
+    function addLine(r, text, cls){
+      if (!r || !text) return;
+      const line = document.createElement('div');
+      line.className = 'mng-dl-line' + (cls ? ' ' + cls : '');
+      line.textContent = text;
+      r.body.appendChild(line);
+      r.body.scrollTop = r.body.scrollHeight;
+    }
+    function push(ev){
+      if (!ev) return;
+      const lane = String(ev.lane || 'daemon');
+      const label = lane.replace(/^daemon:/, '');
+      const r = ensureRow(lane, label); if (!r) return;
+      show();
+      switch (ev.type) {
+        case 'agent_turn_start':
+          if (r.statusEl) r.statusEl.textContent = 'running · ' + (ev.agent || '');
+          r.el.classList.remove('dl-done','dl-error');
+          break;
+        case 'stream':
+          if (!ev.reasoning) { r.text += (ev.text || ''); }
+          break;
+        case 'stream_end':
+          if (r.text.trim()) { addLine(r, r.text.trim()); r.text = ''; }
+          break;
+        case 'tool_call':
+          addLine(r, '\u2192 ' + (ev.tool || 'tool') + (ev.agent ? ' ('+ev.agent+')' : ''), 'dl-tool');
+          break;
+        case 'tool_result':
+          if (ev.summary) addLine(r, '  ' + ev.summary, 'dl-tool');
+          break;
+        case 'task_complete':
+          if (ev.summary) addLine(r, '\u2713 ' + ev.summary);
+          break;
+        case 'success':
+          if (ev.message) addLine(r, ev.message);
+          if (/Goal completed/i.test(ev.message || '')) { r.el.classList.add('dl-done'); if (r.statusEl) r.statusEl.textContent = 'done'; if (activeCount>0) { activeCount--; refreshBadge(); } }
+          break;
+        case 'error':
+          if (ev.message) addLine(r, ev.message, 'dl-err');
+          r.el.classList.add('dl-error'); if (r.statusEl) r.statusEl.textContent = 'error';
+          break;
+        case 'warning': case 'info': case 'debug':
+          if (ev.message) addLine(r, ev.message, ev.type === 'debug' ? 'dl-tool' : '');
+          break;
+        case 'agent_turn_end':
+          if (r.text.trim()) { addLine(r, r.text.trim()); r.text = ''; }
+          break;
+        default: break;
+      }
+    }
+    function clearFinished(){
+      for (const [lane, r] of Array.from(rows.entries())) {
+        if (r.el.classList.contains('dl-done') || r.el.classList.contains('dl-error')) {
+          try { r.el.remove(); } catch(_){}
+          rows.delete(lane);
+        }
+      }
+      refreshBadge();
+    }
+    function hide(){ const { lane } = els(); if (lane) lane.hidden = true; }
+    (function wire(){
+      const btn = document.getElementById('mngBtnDaemon');
+      const cl  = document.getElementById('mngDaemonClear');
+      const cx  = document.getElementById('mngDaemonClose');
+      if (btn) btn.addEventListener('click', () => { const { lane } = els(); if (!lane) return; if (lane.hidden) show(); else hide(); });
+      if (cl)  cl.addEventListener('click', clearFinished);
+      if (cx)  cx.addEventListener('click', hide);
+    })();
+    return { push, clearFinished, show, hide };
+  })();
+  window.MuxDaemonLane = MuxDaemonLane;
+
   window.MuxNodeGraph = {
     open: openPanel,
     close: closePanel,
     addNode: (url, label) => Store.addNode({ url, label: label || url }),
     listNodes: () => Store.nodes().slice(),
     setMain: (id) => Store.setMain(id),
+    openView: openInstanceView,
+    closeView: closeInstanceView,
     // Used by the parent WebSocket connect() to choose its target.
     getActiveTarget(){
       const a = Store.getActive();
@@ -10530,7 +10913,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // sidebar pill accurate even on reconnects we didn't initiate.
     notifyConnect(host){
       try {
-        const match = Store.nodes().find(n => n.url === host);
+        // Loose host match: normalizeUrl strips scheme/'/ws'/trailing slash, and we
+        // fold localhost<->127.0.0.1 + case so 'localhost:6723' and '127.0.0.1:6723'
+        // resolve to the same node (exact === desync'd the active pill before).
+        const norm = (u) => normalizeUrl(u).toLowerCase()
+          .replace(/^127\.0\.0\.1(?=[:\/]|$)/, 'localhost')
+          .replace(/^\[::1\](?=[:\/]|$)/, 'localhost');
+        const want = norm(host);
+        const match = Store.nodes().find(n => norm(n.url) === want);
         if (match) {
           Store.setActive(match.id);
         }
@@ -10588,7 +10978,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   // Re-render when localStorage changes from another tab/window
   window.addEventListener('storage', (e) => {
-    if (e.key === LS_KEY) { Store.load && Store.load(); Canvas.render(); Sidebar.renderList(); Sidebar.renderActivePill(); }
+    if (e.key === LS_KEY) { Store.reload ? Store.reload() : (Store.load && Store.load()); Canvas.render(); Sidebar.renderList(); Sidebar.renderActivePill(); }
   });
 
 })();
