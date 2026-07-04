@@ -3221,7 +3221,11 @@ const icons = {
     // resetSubRoster wipes the roster on user_input) so the existing isSubAgent() routing sends them to
     // their own card. Absent tag => unchanged behavior.
     try {
-      if (ev && ev.origin === 'subagent' && ev.agent) {
+      // Register the real agent, but NOT the reserved 'Task' pseudo-agent: signal_task_complete
+      // emits its completion frame under the literal agent 'Task' (a marker, not a specialist), and
+      // it fires INSIDE the background origin scope — registering it would spawn a bogus 'Task' roster
+      // row. The lead's own frames (no origin tag) are excluded by the origin check.
+      if (ev && ev.origin === 'subagent' && ev.agent && ev.agent !== 'Task') {
         if (!_subAgents.has(ev.agent)) { _subAgents.add(ev.agent); ensureSubRow(ev.agent); }
       }
     } catch (_) {}
@@ -3701,7 +3705,10 @@ const icons = {
         // completion card is suppressed — its content surfaces behind the owning row's
         // summary button instead. When NO roster is active it is a genuine orchestrator-
         // goal completion and renders as a normal card.
-        if (String(ev.agent || '') === 'Task' && _subRoster) { break; }
+        // Suppress the literal-'Task' completion marker whenever it belongs to a delegation —
+        // either a live foreground roster OR a background job (origin:'subagent'). Its content
+        // surfaces via the owning agent's own task_complete/summary, never a standalone card.
+        if (String(ev.agent || '') === 'Task' && (_subRoster || ev.origin === 'subagent')) { break; }
         // Sub-agent completion resolves its roster row (final text + done dot)
         // instead of appending a separate task-complete card to the transcript.
         if (isSubAgent(ev.agent)) {
