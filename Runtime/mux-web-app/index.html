@@ -851,6 +851,15 @@ body.hide-all-pills .event-group { display: none !important; }
 .tool-detail .td-hunk { color: var(--accent); opacity: 0.8; }
 .tool-detail .td-err  { color: var(--red); opacity: 0.85; }
 .tool-detail .td-more { opacity: 0.55; font-style: italic; }
+  /* ─── Nested tool cards (sub-agent cards + daemon lane) ───
+     Restrained differentiation from the main-viewport tool cards: a thin left rail in the
+     agent/muted tone + slight inset, so they read as a CHILD of the flow without new visual noise.
+     Reuses the same expand/collapse + diff coloring as the main cards. */
+  .nested-tc { position: relative; margin-left: 2px; padding-left: 9px; border-left: 2px solid var(--agent, #a78bfa); opacity: .92; }
+  .nested-tc.tool-call { font-size: calc(11px * var(--ui-font-scale, 1)); }
+  .nested-tc.tool-call.expandable:hover { opacity: 1; }
+  .tool-detail.nested-td { margin-left: 11px; border-left: 1px dashed var(--border, rgba(255,255,255,.10)); }
+  .mng-dl-body .nested-tc { border-left-color: var(--amber, #f59e0b); }
 
 /* ── Delegation / Task ── */
 .delegation { 
@@ -2980,6 +2989,82 @@ const icons = {
     });
   }
 
+  // ─── Shared: build the expandable, diff-colored detail HTML from a raw tool result ───
+  // Extracted from attachToolDetail so the sub-agent cards and the daemon lane can render the SAME
+  // rich detail as the main viewport (not just a truncated preview). Pure: raw -> {html, empty}.
+  function renderToolDetailHTML(rawResult) {
+    let text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+    try {
+      const parsed = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+      if (parsed && Array.isArray(parsed.content)) {
+        const tb = parsed.content.filter(c => c.type === 'text').map(c => c.text);
+        if (tb.length > 0) text = tb.join('\n');
+      } else if (parsed && typeof parsed.content === 'string') text = parsed.content;
+      else if (parsed && typeof parsed.result === 'string') text = parsed.result;
+    } catch (_) { /* not JSON */ }
+    if (!text || !text.trim()) return { html: '', empty: true };
+    const CAP = 100000;
+    let capped = 0;
+    if (text.length > CAP) { capped = text.length - CAP; text = text.slice(0, CAP); }
+    const lines = text.split('\n');
+    const isDiff = lines.some(l => l.startsWith('@@ ')) ||
+      (lines.some(l => /^---\s+\S/.test(l) && !/^---\s+(STDOUT|STDERR)\s*---/.test(l)) &&
+       lines.some(l => /^\+\+\+\s+\S/.test(l)));
+    let html = lines.map(l => {
+      const e = esc(l);
+      if (isDiff && /^\+(?!\+\+)/.test(l)) return '<span class="td-add">' + e + '</span>';
+      if (isDiff && /^-(?!--)/.test(l))      return '<span class="td-del">' + e + '</span>';
+      if (isDiff && l.startsWith('@@'))      return '<span class="td-hunk">' + e + '</span>';
+      if (/^(--- STDERR ---|Error|error:)/.test(l)) return '<span class="td-err">' + e + '</span>';
+      return '<span>' + e + '</span>';
+    }).join('\n');
+    if (capped > 0) html += '\n<span class="td-more">\u2026 output truncated (' + capped + ' more chars)</span>';
+    return { html, empty: false };
+  }
+
+  // Build an expandable tool card (call row + collapsible detail) inside an ARBITRARY container,
+  // styled as a NESTED card (see .nested-tc CSS) so it reads as a child of the main flow. Returns
+  // an object with attachDetail(raw) + setResult(summary) so a later tool_result can fill it in.
+  function buildNestedToolCard(container, toolHtml) {
+    const row = document.createElement('div');
+    row.className = 'tool-call nested-tc';
+    row.innerHTML = '<span class="tool">' + (toolHtml || '') + '</span>';
+    container.appendChild(row);
+    let detailEl = null;
+    return {
+      row,
+      setResult(summaryText) {
+        if (!summaryText) return;
+        const res = document.createElement('div');
+        res.className = 'tool-result nested-tc';
+        res.textContent = summaryText;
+        row.insertAdjacentElement('afterend', res);
+      },
+      attachDetail(rawResult) {
+        if (row._hasDetail) return;
+        const { html, empty } = renderToolDetailHTML(rawResult);
+        if (empty) return;
+        detailEl = document.createElement('div');
+        detailEl.className = 'tool-detail nested-td';
+        detailEl.innerHTML = html;
+        let anchor = row;
+        if (row.nextElementSibling && row.nextElementSibling.classList.contains('tool-result')) anchor = row.nextElementSibling;
+        anchor.insertAdjacentElement('afterend', detailEl);
+        row._hasDetail = true;
+        row.classList.add('expandable');
+        const chev = document.createElement('span');
+        chev.className = 'tc-chev';
+        chev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>';
+        row.insertBefore(chev, row.firstChild);
+        row.addEventListener('click', () => {
+          const open = detailEl.style.display !== 'block';
+          detailEl.style.display = open ? 'block' : 'none';
+          row.classList.toggle('open', open);
+        });
+      }
+    };
+  }
+
   // ─── Thinking bar ───
   function appendThinkingBar(agentName, status) {
     removeThinkingBar();
@@ -3126,6 +3211,18 @@ const icons = {
         } catch (_) {}
         window.MuxDaemonLane.push(ev);
         return;
+      }
+    } catch (_) {}
+    // ─── Background sub-agent routing ───
+    // Background delegations (delegate_parallel background:true, /background) are tagged
+    // origin:'subagent' by the backend (DetachedRunner.BeginServeOrigin). Unlike foreground
+    // delegations they never emit a 'delegation' event, so _subAgents was never populated and their
+    // frames leaked into the main viewport. Register the agent on every tagged frame (self-heals after
+    // resetSubRoster wipes the roster on user_input) so the existing isSubAgent() routing sends them to
+    // their own card. Absent tag => unchanged behavior.
+    try {
+      if (ev && ev.origin === 'subagent' && ev.agent) {
+        if (!_subAgents.has(ev.agent)) { _subAgents.add(ev.agent); ensureSubRow(ev.agent); }
       }
     } catch (_) {}
     // ─── Agent-session mode transitions ───
@@ -3366,7 +3463,7 @@ const icons = {
           const tn = friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input);
           const tmp = document.createElement('span'); tmp.innerHTML = tn;
           r.previewEl.textContent = (tmp.textContent || '').trim();
-          appendSubActivity(ev.agent, tn, '');
+          subToolCall(ev.agent, tn);   // expandable nested card (a following tool_result fills it)
           break;
         }
         removeThinkingBar();
@@ -3379,15 +3476,10 @@ const icons = {
         // call/summary rows, but still falls through to the shared Live Diffs panel.
         if (isSubAgent(ev.agent)) {
           const r = setSubStatus(ev.agent, 'running', 'working');
-          if (ev.summary) {
-            r.previewEl.textContent = subPreview(ev.summary);
-            // annotate the most recent activity line with a short result summary
-            const acts = r.actsEl && r.actsEl.lastElementChild;
-            if (acts && !acts.querySelector('.sa-sum')) {
-              const t = document.createElement('span'); t.className = 'sa-sum'; t.textContent = subPreview(ev.summary);
-              acts.appendChild(t);
-            }
-          }
+          if (ev.summary) r.previewEl.textContent = subPreview(ev.summary);
+          // Fill the nested card's expandable detail with the full result (parity with main viewport).
+          const subRaw = ev.result || ev.output || ev.content || ev.text;
+          subToolResult(ev.agent, subRaw, ev.summary);
         } else {
           // Some runtime paths emit only tool_result (no tool_call event).
           // Synthesize the call row so grouping/expansion still works.
@@ -4072,6 +4164,28 @@ const icons = {
     r.actsEl.appendChild(line);
     scrollToBottom();
   }
+  // Rich sub-agent flow: an expandable nested tool card in the sub-row body (parity with the main
+  // viewport). Opens a card on tool_call; a following tool_result fills its detail + summary.
+  function subToolCall(name, toolHtml) {
+    const r = ensureSubRow(name);
+    r._lastCard = buildNestedToolCard(r.actsEl, toolHtml);
+    scrollToBottom();
+    return r._lastCard;
+  }
+  function subToolResult(name, rawResult, summary) {
+    const r = ensureSubRow(name);
+    if (r._lastCard) {
+      if (summary) r._lastCard.setResult(subPreview(summary));
+      r._lastCard.attachDetail(rawResult);
+      r._lastCard = null;
+    } else {
+      // Result with no preceding call (sub-agents emit tool_result, not tool_call) -> synthesize one.
+      const card = buildNestedToolCard(r.actsEl, '<span class="tool">tool result</span>');
+      if (summary) card.setResult(subPreview(summary));
+      card.attachDetail(rawResult);
+    }
+    scrollToBottom();
+  }
   function setSubSummary(name, text) {
     const r = ensureSubRow(name);
     const clean = stripSentinels(text);
@@ -4308,7 +4422,7 @@ const icons = {
     return result.join('');
   }
   // Expose for use by other <script> blocks (e.g. live preview panel).
-  try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; } catch(_) {}
+  try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; window.buildNestedToolCard = buildNestedToolCard; window.renderToolDetailHTML = renderToolDetailHTML; } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -11075,12 +11189,29 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           break;
         case 'tool_call': {
           const tool = String(ev.tool || 'tool').trim();
-          addLine(r, '\u2192 ' + tool + (ev.agent ? '  \u00b7 ' + ev.agent : ''), 'dl-tool');
+          const label = tool + (ev.agent ? '  \u00b7 ' + ev.agent : '');
+          if (window.buildNestedToolCard) {
+            r._lastCard = window.buildNestedToolCard(r.body, '<span class="tool">' + label + '</span>');
+          } else {
+            addLine(r, '\u2192 ' + label, 'dl-tool');
+          }
           break;
         }
-        case 'tool_result':
-          if (ev.summary) addLine(r, ev.summary, 'dl-tool');
+        case 'tool_result': {
+          const raw = ev.result || ev.output || ev.content || ev.text;
+          if (r._lastCard) {
+            if (ev.summary) r._lastCard.setResult(ev.summary);
+            r._lastCard.attachDetail(raw || ev.summary || '');
+            r._lastCard = null;
+          } else if (window.buildNestedToolCard && (raw || ev.summary)) {
+            const card = window.buildNestedToolCard(r.body, '<span class="tool">tool result</span>');
+            if (ev.summary) card.setResult(ev.summary);
+            card.attachDetail(raw || ev.summary || '');
+          } else if (ev.summary) {
+            addLine(r, ev.summary, 'dl-tool');
+          }
           break;
+        }
         case 'task_complete':
           if (ev.summary) addLine(r, ev.summary, '', true);
           break;
