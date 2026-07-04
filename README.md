@@ -893,6 +893,16 @@ Prompt files define the **behavioral contract** for each role — how an agent r
 
 Skills are reusable operational modules agents discover and load at runtime via `list_skills` and `read_skill`. They keep core prompts lean while giving agents access to structured instructions when needed. Prompts define the **role**; skills provide the **task-specific playbooks**.
 
+**Installing skills** — `/installskill` pulls [Agent Skills](https://agentskills.io) (the `SKILL.md`-per-directory format) from public GitHub sources and normalizes them to mux conventions:
+
+- `/installskill` (bare) — list installable skills across the curated registry (Anthropic, obra/superpowers, dotnet, Vercel Labs, tech-leads-club, ComposioHQ, OpenAI).
+- `/installskill <name>` — install by name from the curated sources (first trusted match wins).
+- `/installskill <owner>/<repo>` — install from a repo's skills (or list if it has several).
+- `/installskill <owner>/<repo>/<path/to/skill>` or a full `https://github.com/.../tree/<branch>/<path>` URL — install a specific skill.
+- Add `overwrite` to replace an existing install.
+
+The installer fetches the whole skill directory (including `scripts/`, `references/`, `assets/`), then non-destructively stamps mux provenance into the `SKILL.md` frontmatter `metadata`. **Skills are untrusted third-party content loaded into the agent's context and may ship scripts — `/installskill` shows a prompt-injection/supply-chain warning and asks you to confirm before installing. Audit the installed `SKILL.md` + any scripts before relying on a skill.**
+
 ---
 
 <a id="architecture"></a>

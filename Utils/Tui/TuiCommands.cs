@@ -143,7 +143,7 @@ internal static class TuiCommands
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
-        new("/installskill", "Install a skill by name (openai/skills, VoltAgent) or a GitHub repo URL", Scope.ReplOnly),
+        new("/installskill", "Install an agent skill: by name (anthropics/obra/dotnet/...), owner/repo, owner/repo/path, or a GitHub URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
         new("/clear",        "Clear the screen", Scope.ReplOnly),

@@ -776,31 +776,52 @@ public static class CliCmdUtils
             if (names.Count == 0)
             {
                 MuxConsole.WriteWarning("Could not reach the curated skill sources (check your network).");
-                MuxConsole.WriteMuted("Usage: /installskill <name> | /installskill <github-tree-url> [overwrite]");
+                MuxConsole.WriteMuted("Usage: /installskill <name> | <owner/repo> | <owner/repo/path/to/skill> | <github-tree-url> [overwrite]");
                 return;
             }
             MuxConsole.WritePanel("Installable skills (curated)",
                 string.Join("\n", names.Select(n => "- " + n))
-                + "\n\nInstall with: /installskill <name>  (add 'overwrite' to replace an existing one)");
+                + "\n\nSources: " + string.Join("; ", SkillInstaller.SourceLabels())
+                + "\n\nInstall with: /installskill <name>  (or owner/repo, owner/repo/path/to/skill, a GitHub tree URL; add 'overwrite' to replace).");
             return;
         }
 
         string target = rest[0];
+
+        // Prompt-injection / supply-chain warning. A skill is untrusted third-party content that gets
+        // loaded into the model's context (and may ship scripts). Make the user consciously accept it.
+        MuxConsole.WriteWarning("\u26a0  Skills are third-party content loaded into the agent's context and may include scripts.");
+        MuxConsole.WriteMuted("   A malicious skill can attempt prompt injection or run code. Only install from sources you trust,");
+        MuxConsole.WriteMuted("   and AUDIT the installed SKILL.md + any scripts/ externally before relying on it (e.g. a security");
+        MuxConsole.WriteMuted("   scanner or a manual read). Curated/official sources are safer but not a guarantee.");
+        if (!MuxConsole.Confirm($"Install skill '{target}' now?", defaultValue: false))
+        {
+            MuxConsole.WriteMuted("Skill install cancelled.");
+            return;
+        }
+
         string result = "";
-        bool isUrl = target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                  || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
         await MuxConsole.WithSpinnerAsync($"Installing skill '{target}'", async () =>
         {
-            result = isUrl
-                ? await SkillInstaller.InstallFromUrlAsync(target, overwrite)
+            result = LooksLikeExplicitTarget(target)
+                ? await SkillInstaller.InstallFromTargetAsync(target, overwrite)
                 : await SkillInstaller.InstallByNameAsync(target, overwrite);
         });
 
         if (result.StartsWith("Installed ", StringComparison.Ordinal))
+        {
             MuxConsole.WriteSuccess(result);
+            MuxConsole.WriteMuted("Reminder: review the installed SKILL.md + scripts/ before trusting this skill.");
+        }
         else
             MuxConsole.WriteWarning(result);
     }
+
+    // A bare token with no slash and no scheme is a curated NAME; anything with a "/" or URL scheme is
+    // an explicit owner/repo, owner/repo/path, or GitHub URL target.
+    private static bool LooksLikeExplicitTarget(string t) =>
+        t.Contains('/') || t.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                        || t.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     public static async Task ReloadMcpServersAsync(
         Func<AppConfig, Task<bool>> initMcpServers,
