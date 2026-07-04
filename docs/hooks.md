@@ -1,4 +1,4 @@
-# Hooks, Webhooks & the Daemon — Background & Event Integration
+# Hooks, Webhooks & the Daemon: Background & Event Integration
 
 Mux-Swarm has four related mechanisms for reacting to events and running work outside the
 interactive loop. They share plumbing but serve different purposes:
@@ -38,16 +38,16 @@ The hook process receives the full event as **one JSON line on stdin** (camelCas
 `agent`, `tool`, `text`, `args`, `summary`, `goalId`, `timestamp`).
 
 **Dispatch modes**
-- `async` — fire and continue immediately (default).
-- `blocking` — wait for the process to exit, up to `timeoutSeconds` (default 30).
-- `persistent: true` — one long-lived process fed NDJSON events on stdin for the whole session
+- `async` - fire and continue immediately (default).
+- `blocking` - wait for the process to exit, up to `timeoutSeconds` (default 30).
+- `persistent: true` - one long-lived process fed NDJSON events on stdin for the whole session
   (ideal for stateful consumers: TTS, live dashboards).
 
-**Matching** — filter by `event` (required), plus optional `agent` and `tool`.
+**Matching** - filter by `event` (required), plus optional `agent` and `tool`.
 
 Hooks execute arbitrary commands with your user permissions, so on startup the runtime prompts for
 confirmation before enabling them. Toggle live with `/hooks on|off`; scaffold one with
-`/createhook`. Hooks fire in **all** transports (TUI, serve, stdio) — they are independent of the
+`/createhook`. Hooks fire in **all** transports (TUI, serve, stdio) - they are independent of the
 console output mode.
 
 ### Lifecycle events (what `hooks[].when.event` can match)
@@ -76,7 +76,7 @@ console output mode.
 ## 2. Outbound Webhooks (Mux → external)
 
 An outbound webhook makes Mux **POST a signed JSON envelope to an external URL** whenever a matching
-event fires — Slack/Discord pings, CI chaining, observability sinks, cross-instance fan-out — with no
+event fires - Slack/Discord pings, CI chaining, observability sinks, cross-instance fan-out - with no
 per-platform integration code. Configure in `swarm.json` under `webhooks[]`.
 
 ```json
@@ -109,9 +109,9 @@ Scaffold one with `/createhook` → *Outbound webhook*.
 ### Which events can I subscribe to?
 
 Outbound webhooks tap the **render/stream** event bus. You may use the same **lifecycle names as
-hooks** (they are aliased — see below) or the stream names directly. Practical guidance: subscribe to
+hooks** (they are aliased - see below) or the stream names directly. Practical guidance: subscribe to
 **coarse** events (`task_complete`, `error`, `agent_turn_end`, `hook_fired`, `delegation`), not
-`stream` — `stream` fires per token and will flood a chat receiver.
+`stream` - `stream` fires per token and will flood a chat receiver.
 
 **Stream event names (canonical):**
 
@@ -121,7 +121,7 @@ hooks** (they are aliased — see below) or the stream names directly. Practical
 `hook_fired`, plus UI frames (`banner`, `panel`, `table`, `body`, `markup`, `prompt`, request prompts).
 
 > **`hook_fired`** is the bridge between the two buses: whenever a lifecycle hook matches, Mux also
-> emits a `hook_fired` event — so you can drive an outbound webhook off hook activity.
+> emits a `hook_fired` event - so you can drive an outbound webhook off hook activity.
 
 ### Hook-name aliases (so you don't have to learn a second vocabulary)
 
@@ -183,13 +183,13 @@ running to receive.
 
 1. A sender (GitHub, Stripe, an alert, another Mux) POSTs to `POST /api/hook/{id}`.
 2. Mux verifies the HMAC signature (when a `secret` is set), truncates the body to `payloadLimit`,
-   and **immediately returns `202 Accepted`** — it does not wait for the agent (goals are long runs).
+   and **immediately returns `202 Accepted`** - it does not wait for the agent (goals are long runs).
 3. The payload is queued; a background loop drains it under `cooldown` and fires the goal with
    `{payload}` templated in.
 
 **Response contract:** `202` accepted · `401` bad/missing signature · `404` unknown or non-webhook id.
 
-### Trust — HMAC signatures
+### Trust - HMAC signatures
 
 Your inbound URL is on the public internet, so Mux must verify a POST really came from your sender and
 wasn't tampered with. Both sides hold a shared **secret**; the sender computes
@@ -202,7 +202,7 @@ work against Mux out of the box.
 
 ### Auth interaction
 
-The `/api/hook/*` route is deliberately **excluded from the serve bearer-token gate** (`serve.auth`) —
+The `/api/hook/*` route is deliberately **excluded from the serve bearer-token gate** (`serve.auth`)  - 
 an external sender can't hold your Mux token; it authenticates with HMAC instead. Every other `/api`
 route and `/ws` remain token-gated. When a webhook trigger has no `secret` and serve auth is on, the
 route falls back to requiring the bearer token.
@@ -215,7 +215,7 @@ Scaffold one with `/createhook` → *Inbound webhook*.
 
 The daemon runs background trigger loops that fire goals autonomously, alongside the interactive loop
 and web UI. Configure under `config.json` `daemon`. Control it at runtime with `/daemon`
-(usable from the top-level menu **and** in-session — it is session-agnostic):
+(usable from the top-level menu **and** in-session - it is session-agnostic):
 
 ```
 /daemon             status (triggers + detached jobs)
@@ -228,11 +228,11 @@ and web UI. Configure under `config.json` `daemon`. Control it at runtime with `
 
 **Trigger types**
 
-- **watch** — `FileSystemWatcher` on a path/glob; fires on create/modify with per-file cooldown.
-- **cron** — 5-field cron (`min hour day month weekday`); supports `*`, `*/N`, `N-M`, `N,M`.
-- **status** — health checks (`http://` HEAD, `process:name`, `tcp:host:port`); optional restart.
-- **bridge** — supervises a long-lived child process (Telegram/Discord/Signal bridges).
-- **webhook** — inbound HTTP trigger (see §3).
+- **watch** - `FileSystemWatcher` on a path/glob; fires on create/modify with per-file cooldown.
+- **cron** - 5-field cron (`min hour day month weekday`); supports `*`, `*/N`, `N-M`, `N,M`.
+- **status** - health checks (`http://` HEAD, `process:name`, `tcp:host:port`); optional restart.
+- **bridge** - supervises a long-lived child process (Telegram/Discord/Signal bridges).
+- **webhook** - inbound HTTP trigger (see §3).
 
 Goal templates support `{file}`, `{filename}`, `{timestamp}`, `{id}` (watch/cron) and
 `{payload}`, `{source}` (webhook). Each trigger runs as an independent task; the daemon emits the
@@ -251,3 +251,6 @@ hook events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `d
 
 Scaffold any of the first three with **`/createhook`** (it branches by type). Manage the daemon with
 **`/daemon`** and hooks with **`/hooks`**.
+
+---
+[Back to docs index](README.md) | [Main README](../README.md)

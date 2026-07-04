@@ -5,26 +5,25 @@
 <img alt="mux-swarm" src="docs/assets/logo.svg" width="120">
 
 <h1>Mux-Swarm</h1>
-<p>A CLI-native agentic OS for multi-agent orchestration, parallel execution, deterministic workflows, and tool-native AI operations. Process management, crash recovery, scoped isolation, layered memory, and a skills runtime. Define your config. Launch your swarm. The ceiling is yours.</p>
+<p><b>An operating system for your agents.</b></p>
+<p>A self-contained, single-binary multi-agent runtime and harness: specialist agents, native tools, sandboxed execution, deep memory, a web UI, and a scheduling daemon. You bring a model; Mux-Swarm brings the rest. One static binary, nothing to install. Cross-platform: Windows, Linux, and macOS.</p>
 
 [![Build](https://img.shields.io/badge/CI-Depot-blue)](https://depot.dev)
 [![.NET](https://img.shields.io/badge/.NET-net10.0-purple)](#)
-[![OS](https://img.shields.io/badge/OS-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
+[![Cross-platform](https://img.shields.io/badge/cross--platform-Windows%20%7C%20Linux%20%7C%20macOS-informational)](#)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue)](#license)
 
-<a href="#quick-start"><strong>Quick Start »</strong></a>
+<a href="#quickstart"><strong>Quickstart »</strong></a>
 &nbsp;·&nbsp;
-<a href="#usage">Usage</a>
+<a href="docs/README.md">Docs</a>
+&nbsp;·&nbsp;
+<a href="docs/cli.md">Commands</a>
+&nbsp;·&nbsp;
+<a href="docs/configuration.md">Configuration</a>
 &nbsp;·&nbsp;
 <a href="docs/examples.md">Examples</a>
 &nbsp;·&nbsp;
-<a href="#configuration">Configuration</a>
-&nbsp;·&nbsp;
-<a href="#architecture">Architecture</a>
-&nbsp;·&nbsp;
-<a href="#security--safety">Security</a>
-&nbsp;·&nbsp;
-<a href="#roadmap">Roadmap</a>
+<a href="docs/architecture.md">Architecture</a>
 
 </div>
 
@@ -35,1019 +34,91 @@
 ## Demo
 
 [https://github.com/user-attachments/assets/3c40809c-93d9-4b8b-b090-736546a6461f](https://github.com/user-attachments/assets/3e817e6b-d339-4016-a386-23b9bfe4b72d)
-> **See more in action:** Check out the [Examples & Demos](docs/examples.md) page for video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
+> **See more in action:** the [Examples and Demos](docs/examples.md) page has video walkthroughs of parallel swarm execution, autonomous runs, and real-world use cases.
 
-## Table of Contents
+## Highlights
 
-- [Quick Start](#quick-start)
-- [About](#about)
-- [Key Capabilities](#key-capabilities)
-- [Protocols & Standards](#protocols--standards)
-- [Usage](#usage) — [Interactive Commands](#interactive-commands) · [Goal-Driven Execution](#goal-driven-execution) · [Continuous Mode](#continuous-mode) · [Parallel Mode](#parallel-mode) · [Workflow Engine](#workflow-engine) · [Event Hooks & Webhooks](#event-hooks) · [Web UI](#web-ui---serve) · [Daemon Mode](#daemon-mode---daemon) · [OS Service Registration](#os-service-registration---register----remove) · [CLI Flags](#cli-flags) · [Scoped Instances](#scoped-instances) · [User Identity](#user-identity-userinfo)
-- [Configuration](#configuration) — [`config.json`](#configjson--infrastructure) · [`swarm.json`](#swarmjson--topology--roles) · [Model Tuning](#model-tuning-modelopts) · [Provider-Specific Parameters](#provider-specific-parameters-additionalparams) · [Execution Limits](#execution-limits-executionlimits) · [Prompts](#prompts-promptsagentsmd) · [Skills](#skills-skills)
-- [Architecture](#architecture) — [Orchestration Lifecycle](#orchestration-lifecycle) · [Memory Architecture](#layered-memory-architecture)
-- [Security & Safety](#security--safety)
-- [Roadmap](#roadmap)
-- [Contributing](#contributing)
-- [License](#license)
+**Not just a coding tool.** Mux-Swarm operates your computer the way you would: research, refactor, run pipelines, watch files, hit APIs, drive your editor, and talk to other machines. Anything you can do on your machine, an agent can do here, and with a little configuration, much more.
 
----
+- **An OS for agents, in one binary.** TUI, web server, scheduling daemon, native tools, and sandbox drivers ship in a single static binary. Built in C#. No Python, no `node_modules`, no venv, nothing to install.
+- **Agents that operate the real machine.** Native in-process REPL, shell, and file tools with per-sub-agent scope isolation, no MCP subprocess forked per call.
+- **Agents in every gear.** One agent interactively, on-demand delegation with `/ultra`, persistent `/giga` teams with a shared task board, or a [`/swarm`](docs/cli.md) for batch and whole-codebase work.
+- **Pick your blast radius.** A pluggable sandbox runs commands bare, in [Docker or Podman, or behind gVisor and Kata microVMs](docs/sandbox.md), switchable per session with `/sandbox` and a deny-by-default network allowlist.
+- **Memory that compounds.** [Layered memory](docs/memory.md) (behavioral, factual, knowledge graph, vector) plus an opt-in deep-reflection mode that distills each session and injects it back, mid-turn and across runs.
+- **Sign in with the subscriptions you already have.** A bundled proxy signs into Claude, Codex, Kimi, xAI, or Antigravity with `/login`, no API keys in config. Any OpenAI-compatible provider works too.
+- **Runs while you sleep.** A built-in [daemon](docs/hooks.md) fires whole multi-agent pipelines on cron, file-watch, status, or webhook triggers, with OS service registration for always-on hosts.
+- **A web UI from the same binary.** [`--serve`](docs/serve-api.md) gives live agent streams, a node graph, and session management behind your own auth, plus an HTTP and WebSocket API to [drive it from anything](docs/automation.md).
+- **MCP-native, in your editor too.** Attach any [MCP](https://modelcontextprotocol.io/) server to any agent, extend with a hot-reloadable [skills system](docs/configuration.md), and connect from Zed over [ACP](docs/acp.md).
+## Quickstart
 
-## Quick Start
+**Prerequisites:** an OpenAI-compatible LLM provider (or subscription sign-in via `/login`), [Node/npx](https://nodejs.org/) for Node-based [MCP](https://modelcontextprotocol.io/) servers, and [uv/uvx](https://docs.astral.sh/uv/) for Python-based MCP servers. See the [Install guide](docs/install.md) for the full matrix and caveats.
 
-### Prerequisites
-
-- An LLM provider API key (any [OpenAI-compatible](https://platform.openai.com/docs/api-reference) endpoint), preferably set as an environment variable
-- **Node / npm** (`npx`) for Node-based [MCP](https://modelcontextprotocol.io/) servers
-- **uvx / uv** for Python-based MCP servers
-
-These are not hard requirements. During setup you can opt out of automatic installation, but you are responsible for ensuring that any MCP servers referenced in your `swarm.json` have their dependencies available on your system.
-
-- **BRAVE_API_KEY** environment variable for the [Brave Search MCP](https://brave.com/search/api/) server, which is the default web search provider. Brave Search is recommended as it includes AI-generated summaries alongside results. It can be disabled in `swarm.json` and the swarm will fall back to the Fetch MCP server, though this is not recommended for optimal research quality.
-- **Note: Mux-Swarm utilizes the ChromaDB MCP server in its default config which has a known issue with Python version 3.14.** It is recommended that uv / uvx is configured to utilize a separate Python version e.g. 3.12
-
-### Install via Script (Recommended)
-
-**Linux / macOS:**
-
+**Install (Linux / macOS):**
 ```bash
 curl -fsSL https://www.muxswarm.dev/install.sh | bash
 ```
 
-**Windows (PowerShell):**
-
+**Install (Windows, PowerShell):**
 ```powershell
 irm https://www.muxswarm.dev/install.ps1 | iex
 ```
 
-The installer downloads the latest release, installs the runtime locally, and adds `mux-swarm` to your PATH.
-
-### Build From Source
-
-Requires [Git](https://git-scm.com/) and [.NET SDK](https://dotnet.microsoft.com/download) compatible with net10.0.
+**First run:**
 ```bash
-git clone https://github.com/jnotsknab/mux-swarm.git
-cd mux-swarm
-dotnet build
+mux-swarm                 # interactive TUI
+mux-swarm --serve         # embedded web UI at http://localhost:6723
+mux-swarm --goal "Summarize the shareholder data in my sandbox and save a report"
 ```
 
-**Run from source:**
-```bash
-dotnet run --project MuxSwarm.csproj
-```
-
-### First Run
-> **New to Mux-Swarm?** See the [Setup Guide](docs/setup-guide.md) for a full walkthrough of first-time configuration with `/setup`, video examples, and tips for getting your first swarm running.
-```bash
-# Interactive
-mux-swarm
-
-# Web UI (recommended for interactive use across devices)
-mux-swarm --serve
-
-# Web UI + daemon + always-on
-mux-swarm --serve --daemon --register
-
-# Single goal
-mux-swarm --goal "Create a detailed report from the shareholder data in your sandbox and save it under an allowed path"
-
-# Continuous autonomous loop
-mux-swarm --continuous --goal "Monitor recent AI related news daily and keep a rolling report of public sentiment based on company in the sandbox" --goal-id web-loop --min-delay 43200
-
-# Parallel batch dispatch
-mux-swarm --parallel --goal "Research these five companies and produce individual summaries"
-```
-See [Usage](#usage) for the full command reference and [CLI Flags](#cli-flags) for all options.
-
-## First Run (Web UI)
-
-For the best interactive experience, launch with the embedded web UI:
-```bash
-mux-swarm --serve
-```
-
-Open `http://localhost:6723` in your browser. The welcome card shows available commands. Type `/agent` to start a single-agent session, or `/swarm` for multi-agent orchestration. All slash commands work identically to the CLI.
-
-For always-on deployments with messaging bridges:
-```bash
-mux-swarm --serve --daemon
-```
----
+On first launch the `/setup` wizard walks you through configuration. The easiest path is subscription sign-in with `/login`. New here? Follow the [Getting Started tutorial](docs/getting-started.md).
 
 ## About
 
-**mux-swarm** is a configurable agentic operating system that runs alongside your OS, not an agentic chat interface, but a configurable execution environment for AI agents with process management, crash recovery, multi-tenant isolation, layered memory, and a workflow engine.
+**Mux-Swarm** is a configurable agentic operating system that runs alongside your OS. It is not an agentic chat interface, it is an execution environment for AI agents, with process management, crash recovery, multi-tenant isolation, layered memory, and a workflow engine.
 
-Out of the box it ships with a general-purpose swarm of specialized agents (research, coding, analysis, automation, system operations) coordinated through an orchestrator that delegates work, manages results, and executes multi-step objectives. The real versatility comes with the [**configuration-driven architecture**](#configuration): define custom swarms, agent roles, [prompts](#prompts-promptsagentsmd), MCP servers, [skills](#skills-skills), and execution policies entirely through config files. Swap providers, redesign agent topologies, or adapt the runtime for anything from personal workflows to enterprise pipelines — all without modifying code.
+Out of the box it ships a general-purpose swarm of specialized agents (research, coding, analysis, automation, system operations) coordinated by an orchestrator that delegates work, manages results, and executes multi-step objectives. The real versatility comes from the [configuration-driven architecture](docs/configuration.md): define custom swarms, agent roles, prompts, MCP servers, skills, and execution policies entirely through config files. Swap providers, redesign topologies, or adapt the runtime for anything from personal workflows to enterprise pipelines, all without modifying code.
 
-The runtime is **MCP-native** ([Model Context Protocol](https://modelcontextprotocol.io/)) for tool integration, supports any OpenAI-compatible LLM provider, and includes a modular **skills system** that lets agents load structured instructions dynamically at runtime. Together, MCP tools and skills form the operational surface of the swarm — keeping workflows transparent, auditable, and extensible.
+## Documentation
 
----
+Full documentation lives in [`docs/`](docs/README.md).
 
-## Key Capabilities
+**Get started**
+- [Install](docs/install.md) - install script, build from source, prerequisites, service registration
+- [Getting Started](docs/getting-started.md) - a short first-run tutorial
+- [Setup Guide](docs/setup-guide.md) - full first-time configuration and messaging bridges
+- [Examples](docs/examples.md) - mode-by-mode demos
 
-**[Orchestration](#orchestration-lifecycle)** — Multi-agent coordination with explicit role boundaries across single-agent and swarm modes, parallel swarm execution for concurrent batch dispatch, config-driven model routing per role, and continuous autonomous execution with configurable loop timing. The **single-agent loop is itself a full execution surface**: ephemeral sub-agent delegation (`/subagents`, `/parasubagents`), deep-reasoning **`/ultra`** mode (plan + maximum reasoning + heavy delegation), and **Giga mode** (`/giga`) that lets one agent spin up named teams and deterministic workflows on the fly. **Named [teams](#interactive-commands)** (`/teams`, `/createteam`) add a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and a file-backed inter-agent mailbox. Live sessions can be parked with `/detach` and resumed with `/attach`, or run as fire-and-forget `/background` jobs. On-demand session **`/handoff`** docs and **`/heal`** self-review round out long-running work.
+**Reference**
+- [CLI and Commands](docs/cli.md) - every CLI flag and slash command
+- [Configuration](docs/configuration.md) - full `config.json` and `swarm.json` schema
+- [Serve and API](docs/serve-api.md) - web UI, HTTP `/api`, and `/ws` protocol
 
-**[Execution](#usage)** — CLI-native runtime for scripts and pipelines, scoped instance isolation via config overrides, machine-readable `--stdio` mode, and filesystem allowlist enforcement with scoped tool access. **Native in-process Filesystem and Shell/REPL tools** (no external MCP subprocess) with per-session scoping, plus a **pluggable execution sandbox** (`/sandbox`) spanning Docker, Podman, gVisor, and Kata microVMs with an optional network allowlist. Designed to embed cleanly into larger systems, from personal automation scripts to multi-user web applications and enterprise pipelines.
+**Guides and concepts**
+- [Workflows](docs/workflows.md) - deterministic workflow files
+- [Hooks, Webhooks, and Daemon](docs/hooks.md) - lifecycle hooks and automation triggers
+- [Sandbox and Security](docs/sandbox.md) - execution backends and production posture
+- [ACP](docs/acp.md) - Zed editor integration
+- [Architecture](docs/architecture.md) - orchestration lifecycle and design invariants
+- [Memory](docs/memory.md) - layered and deep-memory systems
 
-**[Extensibility](#configuration)** — MCP-native tool integration with strict-mode validation, modular [skills system](#skills-skills) for dynamic operational playbooks, any OpenAI-compatible LLM provider with multi-provider runtime swapping, per-agent [model tuning](#model-tuning-modelopts), and cross-platform support (Windows, Linux, macOS). **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity via a bundled, auto-managed CLIProxyAPI sidecar — no API keys to paste. Editor integration through the **Zed Agent Client Protocol** (`--acp`).
+## Architecture at a glance
 
-**[Safety](#security--safety)** — Least-privilege role design through per-agent MCP scoping, **configurable security postures** for the native Filesystem (`standard`/`secure`/`lax`/`none`) and Shell/REPL (`off`/`prompt`/`allowlist`) tools, bounded retries and iteration limits, deterministic completion signaling via `signal_task_complete`, artifact-first workflows with session-based provenance, and environment-variable-based secret handling.
+An orchestrator receives a goal, delegates scoped subtasks to specialized agents, collects results, and drives multi-step objectives to completion. Agents interact with the world through MCP tools, native Filesystem and Shell/REPL tools, and dynamically loaded skills. State persists across restarts through serializable sessions and a layered memory system. For the full picture, see [Architecture](docs/architecture.md) and [Memory](docs/memory.md).
 
----
+## Protocols and standards
 
-## Protocols & Standards
-
-| Protocol | Description | Integration |
-|----------|-------------|-------------|
-| **[OpenAI Compatible API](https://platform.openai.com/docs/api-reference)** | Industry-standard chat completions and responses API. Any endpoint exposing `/v1/chat/completions` or `/v1/responses` works without code changes. | Multi-provider support with runtime swapping. Tested with OpenRouter, Ollama, LiteLLM, vLLM, LocalAI, and direct OpenAI/Google/xAI endpoints. |
-| **[MCP (Model Context Protocol)](https://modelcontextprotocol.io/)** | Standardized protocol for AI agents to interact with external tools and services. Enables dynamic tool discovery and scoped execution. | Native dual-transport support (stdio + HTTP/SSE). Per-agent MCP server scoping via `swarm.json`. Strict-mode validation for production deployments. |
-| **[Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions)** | Unified .NET abstraction layer for AI services. Provider-agnostic `IChatClient` interface with streaming, tool invocation, and options propagation. | Core abstraction layer. All LLM interactions route through `IChatClient` with `ChatOptions` for per-agent model tuning. |
-| **[Microsoft.Agents.AI](https://github.com/microsoft/Agents-for-net)** | Agent framework providing session management, chat history, streaming orchestration, and serializable session state. | Agent lifecycle management. Session serialize/restore for `/resume`. `ChatClientAgentOptions` for wiring model parameters and tools. |
-| **[Agent Skills (SKILL.md)](https://docs.anthropic.com/en/docs/claude-code/skills)** | Markdown-based format for defining modular, reusable agent capabilities. Agents discover and load skills at runtime without code changes. | Built-in skills system with `list_skills` / `read_skill` tools. Per-agent skill scoping via `skillPatterns`. Hot-reload via `/reloadskills`. |
-| **Session Serialization** | Full round-trip session state persistence via `SerializeSession` / `DeserializeSessionAsync`. Enables session portability and resume across restarts. | `/resume` command for single-agent session restore. Automatic session persistence with configurable intervals. |
-
----
-
-## Built With
-
-[.NET 10](https://dotnet.microsoft.com/) · C# 14 · [Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions) · [Microsoft.Agents.AI](https://github.com/microsoft/Agents-for-net) · [OpenAI .NET SDK](https://github.com/openai/openai-dotnet) · [Model Context Protocol](https://modelcontextprotocol.io/) · [Spectre.Console](https://spectreconsole.net/)
-
----
-
-## Usage
-
-### Interactive Commands
-
-Type `/help` at any time for the full reference, or `/` in the live TUI for a fuzzy command palette.
-
-**Modes**
-```
-/swarm          Launch multi-agent orchestrated swarm loop
-/pswarm         Launch parallel swarm - concurrent batch dispatch for independent tasks
-/agent          Launch interactive single-agent loop
-/stateless      Stateless single-agent loop, ideal for one-off tasks
-/subagents      (/sub)  Enable ephemeral sub-agent delegation inside a single-agent loop
-/parasubagents  (/psub) Enable parallel ephemeral sub-agent delegation
-/subagentview   (/sav)  Toggle collapsed/expanded delegated sub-agent output
-/workflow       Run a deterministic workflow from a JSON file
-/resume         Resume a previous single-agent session (shows #tags)
-/onboard        Create or update your operator profile (BRAIN.md + MEMORY.md)
-/detach         Park the live session in the background; resume later with /attach
-/attach         Re-attach a detached session (or pick from the backslash menu)
-```
-
-**Teams & coordination**
-```
-/teams          List and launch named teams from swarm.json
-/createteam     Guided wizard to define a team (lead, members, coordination, parallelism)
-/kanban         Editable task board driving member self-claim (todo/blocked/in-progress/done)
-/giga           Toggle Giga mode - grant the agent spawn_team / run_workflow superpowers
-/background     (/bg) Run an agent on a goal as a fire-and-forget background job
-/daemon         (/da) Runtime trigger control: on/off/jobs/cron/watch/cancel (menu or in-session)
-```
-
-**Subscription & proxy**
-```
-/login          Sign in to a subscription provider (Claude/Codex/Kimi/xAI/Antigravity) via browser
-/ping           Check provider connectivity through the local sidecar
-/proxy          Manage the bundled CLIProxyAPI sidecar: status | update
-/sandbox        View or switch the execution sandbox backend (host/docker/podman/gvisor/kata/...)
-```
-
-**Execution & reasoning**
-```
-/plan           Toggle plan mode - agents present a plan and ask for approval before executing
-/ultra          Toggle deep-reasoning mode (plan + maximum reasoning budget + heavy delegation)
-/continuous     Toggle continued autonomous execution on and off (/cont shorthand)
-/showreasoning  Show or hide streamed reasoning text: full|summary (shown) or none (hidden)
-/classic        Switch to the classic line-by-line renderer (opt out of the live TUI)
-/tui            Switch to the live full-screen TUI renderer
-/verbose        Toggle TUI tool output between compact (collapsed) and full panels
-```
-
-**Session**
-```
-/compact [steer] Compact current session context (single-agent loops only); optional steering text guides the summary
-/handoff [text]  Write a cold-resume handoff doc via the active model (sandbox/reports by default; or pass a .md path)
-/heal [deep]     Review the session for lessons; propose BRAIN.md/MEMORY.md write-backs to approve (alias /reflect)
-/tag <text>     Tag the live session with free-form text for easy resume/search (optional MEMORY.md stub)
-/sessions       List all saved sessions with type and agent count
-/report [<id>]  Generate full session audit report(s); pass an id to audit one session
-/clear          Clear terminal
-/qm or /qc      Stop the current session
-/exit           Exit the runtime
-```
-
-**Configuration**
-```
-/config         Show ALL configuration settings - every key is /set-editable
-/set <key> <v>  Edit any config.json or swarm.json key by dotted path (bare /set opens a picker)
-/model          View current model assignments
-/setmodel       Change the model for any agent, orchestrator, or compaction agent
-/swap           Swap the active agent for single-agent mode
-/newagent       Guided wizard to create a swarm agent (name, MCP servers, model, prompt)
-/createhook     Guided wizard: scaffold a hook, an outbound webhook, or an inbound webhook
-/hooks          Hooks status / toggle / create (/hooks on|off|create)
-/editagent      Edit a swarm agent (model, description, MCP servers, delegation)
-/delagent       Remove a swarm agent from swarm.json (and optionally its prompt file)
-/addcontext     Configure what context each agent is injected with
-/maxp           Max agents running in parallel (default 4)
-/provider       View or switch the active LLM provider
-/limits         Display current execution limits for orchestration and agents
-/tools          List available MCP tools across enabled servers
-/skills         List available local skills
-/memory         Toggle deep memory (standard|deep) + status; /deep alias
-/status         View current system status: provider, models, tools, skills, and sessions
-/dockerexec     Toggle Docker execution mode
-/delimiter      Toggle multi-line input delimiter
-/dbg / /nodbg   Enable / disable tool call output (stdio mode only)
-/setup          Run initial setup / reconfigure
-/update         Update to the latest GitHub release (verifies SHA256; restarts if the binary changed)
-/reloadskills   Refresh skills directory for mid-process changes
-/refresh        Full Mux system refresh: config, MCP servers, and skills
-/shortcuts      Show keyboard shortcuts (alias /keys)
-```
-
-### CLI Flags
-```
---goal <text|file>         Goal input (text or file path)
---agent <name>             Run in single-agent mode with the specified agent
---plan                     Enable plan mode, agents confirm before executing (orchestrator and single agent only)
---provider <name>          Set the active LLM provider on launch (e.g. --provider ollama)
---continuous               Enable continuous autonomous mode
---goal-id <id>             Persistent goal/session identifier
---parallel                 Use parallel swarm (concurrent batch dispatch) instead of sequential
---max-parallelism <n>      Max concurrent agent tasks in parallel mode (default 4)
---min-delay <secs>         Minimum delay between loops (default 300)
---persist-interval <secs>  Persist session state interval
---session-retention <n>    Retain last N session runs (default 10)
---stdio                    Machine-readable output (no ANSI)
---serve [port]             Start embedded web UI (default 6723)
---daemon                   Start daemon mode (file watch, cron, status triggers)
---register                 Register mux-swarm as an OS service (survives reboots)
---remove                   Unregister mux-swarm OS service
---update                   Update to the latest GitHub release (verifies SHA256; restarts if the binary changed)
---watchdog                 Enable external watchdog (auto-restart on crash)
---workflow <file>          Run a workflow file (JSON) on launch
---wf <file>                Alias for --workflow
---delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)
---model <id>               Override the single-agent model
---mcp-strict [true|false]  Require all integrations to connect
---docker-exec [true|false] Route execution through Docker
---report [session-id]      Generate audit report(s) and exit
---cfg <path>               Override config.json path for scoped instances
---swarmcfg <path>          Override swarm.json path for scoped instances
---clear                    Clear terminal before continuing
---help, -h                 Show help
-```
-
-### Goal-Driven Execution
-```bash
-mux-swarm "<goal>"
-mux-swarm <goal.txt>
-mux-swarm --goal "<goal>"
-mux-swarm --goal <goal.txt>
-```
-
-### Single-Agent via CLI
-```bash
-mux-swarm --agent CodeAgent --goal "<goal>"
-mux-swarm --agent WebAgent --goal task.txt --continuous --goal-id overnight --min-delay 600
-```
-
-### Continuous Mode
-```bash
-mux-swarm --continuous --goal "<goal>" --goal-id my-run
-mux-swarm --continuous --goal task.txt --goal-id overnight --min-delay 600
-```
-
-### Parallel Mode
-```bash
-mux-swarm --parallel --goal "<goal>"
-mux-swarm --parallel --continuous --goal "<goal>" --goal-id batch-run
-mux-swarm --parallel --max-parallelism 6 --goal task.txt
-```
-
-Parallel mode decomposes a goal into independent subtasks and dispatches them concurrently across agents. Use `--max-parallelism` to cap the number of simultaneous agent tasks (default 4). Combines with `--continuous` for recurring parallel batch runs.
-
-
-### Workflow Engine
-
-Define deterministic, replayable execution pipelines as JSON files. A workflow is a sequence of commands piped through the runtime, exactly as a human would type them, but reproducible and shareable.
-```json
-{
-  "name": "Research and Report",
-  "steps": [
-    "/agent",
-    "Search for the latest developments in quantum computing and summarize your findings",
-    "/qc",
-    "/swarm",
-    "Take the research from the previous agent session and produce a formatted report",
-    "/qm",
-    "/pswarm",
-    "Cross-reference the report against three independent sources for accuracy",
-    "/qm"
-  ]
-}
-```
-```bash
-# Run from CLI
-mux-swarm --workflow ./workflows/research-pipeline.json
-
-# Run mid-session
-> /workflow ./workflows/research-pipeline.json
-```
-
-A single workflow file can transition between agent mode, swarm mode, and parallel swarm mode, chain REPL operations with persistent state, and orchestrate multi-step pipelines across different execution models. The runtime handles all state transitions, tool loading, and cleanup. When the workflow completes, control returns to the keyboard.
-
-No DAG engine, no state machine, no YAML DSL. A workflow is a list of strings piped to the runtime. The architecture does the rest.
-
-### Event Hooks
-
-Hooks execute external commands in response to runtime lifecycle events. Configure them in `swarm.json` alongside your agent definitions. Each hook fires when its `when` clause matches an emitted event.
-```json
-{
-  "hooks": [
-    {
-      "id": "notify-slack",
-      "mode": "async",
-      "command": "python scripts/notify.py",
-      "when": { "event": "task_complete" }
-    },
-    {
-      "id": "voice-out",
-      "mode": "async",
-      "persistent": true,
-      "command": "python scripts/tts_voice.py",
-      "when": { "event": "text_chunk" }
-    },
-    {
-      "id": "log-tool-calls",
-      "mode": "blocking",
-      "command": "bash scripts/audit.sh",
-      "timeoutSeconds": 10,
-      "when": { "event": "tool_call", "agent": "CodeAgent" }
-    }
-  ]
-}
-```
-
-Hooks receive the full event payload as JSON on stdin. Two dispatch modes: `async` fires and continues immediately, `blocking` waits for the process to exit (with configurable timeout). **Persistent hooks** (`"persistent": true`) start a long-lived process that receives events as NDJSON lines on stdin for the entire session, ideal for stateful consumers like TTS pipelines or live dashboards.
-
-Pattern matching supports filtering by `event` type, `agent` name, and `tool` name. All fields in `when` except `event` are optional.
-
-**Supported events (10):**
-
-| Event | Description | Fires in |
-|-------|-------------|----------|
-| `session_start` | Mode entered (agent, stateless, swarm, pswarm) | All orchestrators |
-| `session_end` | Session exited (complete, interrupted) | All orchestrators |
-| `user_input` | Goal or message received | All orchestrators |
-| `text_chunk` | Streaming token from agent response | All orchestrators |
-| `turn_end` | Agent turn completed | All orchestrators |
-| `agent_turn_start` | Agent begins a turn | All orchestrators |
-| `tool_call` | Tool invocation | All orchestrators |
-| `tool_result` | Tool execution result | All orchestrators |
-| `task_complete` | Agent signals task done | All orchestrators |
-| `delegation` | Orchestrator delegates to specialist | Multi + Parallel |
-
-On startup, if hooks are configured, the runtime prompts for confirmation before enabling them. Hooks are suppressed in `--stdio` mode to avoid interfering with structured output. Scaffold a hook interactively with `/createhook`; toggle with `/hooks on|off`.
-
-> The table above lists the common events. `thinking_chunk` (streamed reasoning), `runtime_ready`, and the `daemon_*` events are also available. See **[Hooks, Webhooks & the Daemon](docs/hooks.md)** for the full event vocabulary.
-
-#### Webhooks (HTTP in / out)
-
-Beyond running local commands, hooks extend to HTTP webhooks in both directions:
-
-- **Outbound** (`swarm.json` `webhooks[]`) — Mux POSTs a signed JSON envelope to an external URL when
-  matching events fire (Slack/Discord pings, CI chaining, observability sinks). HMAC-signed
-  (`X-Hub-Signature-256`), fire-and-forget with retry, inert until configured.
-- **Inbound** (`config.json` `daemon.triggers[]`, type `webhook`) — an external `POST /api/hook/{id}`
-  (GitHub, Stripe, an alert) fires an agent goal with the request body as `{payload}`. HMAC-verified,
-  returns `202` immediately.
-
-```json
-// swarm.json — outbound
-{ "webhooks": [ { "url": "https://hooks.slack.com/...", "events": ["task_complete", "error"], "secret": "..." } ] }
-```
-```json
-// config.json — inbound (daemon trigger)
-{ "id": "ghpr", "type": "webhook", "goal": "Review this PR: {payload}", "mode": "agent", "secret": "..." }
-```
-
-Scaffold either with `/createhook` (it branches: hook | outbound webhook | inbound webhook). Full
-details, the event allowlist, hook-name aliases, and the HMAC trust model are in
-**[docs/hooks.md](docs/hooks.md)**.
-
-### Web UI (`--serve`)
-
-The `--serve` flag starts an embedded web interface alongside the normal agent runtime. MuxSwarm initializes as usual (config, providers, MCP servers, skills), then starts a Kestrel HTTP server that bridges the browser to the agent loop over a WebSocket.
-```bash
-mux-swarm --serve           # default port 6723
-mux-swarm --serve 8080      # custom port
-```
-
-The browser connects via WebSocket and receives the same NDJSON event stream that `--stdio` emits. User input flows back through the socket to the agent's input loop. No proxy, no subprocess, no second process. The web UI is a single `index.html` served from `Runtime/mux-web-app/`.
-
-Features:
-- Streaming agent responses with markdown rendering
-- Interactive plan mode prompts (confirm, select, text, multi-select)
-- Live Diffs panel with syntax-highlighted tool results in real time
-- Theme engine with presets (Zinc, Light, Ocean, Matrix) and custom color pickers
-- File browser sidebar for sandbox and session directories
-- File upload via drag-drop, file picker, or clipboard paste (Ctrl+V)
-- Tool call activity with friendly action descriptions
-- Loading skeleton, animated toasts, hover timestamps, character counter
-- Cancel active agent turns via Stop button or Escape key
-- Auto-reconnect on mobile with manual reconnect button
-- Accessible on LAN and Tailscale (binds to all interfaces)
-- Voice input via browser speech-to-text for hands-free interaction
-- **Native config editor** (Monaco): edit `Config.json` / `Swarm.json` in-browser with server-side JSON validation, gated by `serve.configExposed` (default off)
-- **One-click self-update** and native server restart from the Settings panel
-- Zero dependencies: single static HTML file, no build step, no npm
-
-The terminal continues to show the splash screen and MCP initialization progress while the browser receives only agent interaction events. Combine with `--watchdog` for process-level resilience or `--register` to persist as an OS service that survives reboots.
-### Daemon Mode (`--daemon`)
-
-The `--daemon` flag starts background trigger loops that fire goals into the runtime autonomously. Configure triggers in the `daemon` block of `config.json`. The daemon runs alongside the interactive loop and web UI, it does not block user interaction.
-```bash
-mux-swarm --serve --daemon              # web UI + daemon triggers
-mux-swarm --serve --daemon --watchdog   # temporary always on stack
-mux-swarm --serve --daemon --watchdog --register # system level always on stack
-```
-
-Five trigger types:
-
-**Watch** -- monitors a file path pattern via `FileSystemWatcher`. Fires a goal when matching files are created or modified, with per-file cooldown debounce.
-
-**Cron** -- standard 5-field cron expressions (`minute hour day month weekday`). Supports `*`, `*/N`, `N-M`, and `N,M,O`. Sleeps until next occurrence.
-
-**Status** -- health checks that monitor resources without firing goals. Supports `http://` (HEAD request), `process:name` (process lookup), and `tcp:host:port` (connect check). Optionally restarts failed resources via registered handlers.
-
-**Bridge** -- spawns and supervises a long-lived child process. The runtime tracks the process directly, restarting it on exit if `restart` is enabled. No health check needed. Designed for messaging bridges (Telegram, Discord) but works for any persistent sidecar process.
-
-**Webhook** -- exposes `POST /api/hook/{id}` (serve mode) so an external HTTP POST fires a goal, with the request body available as `{payload}`. HMAC-verified (`X-Hub-Signature-256`) and rate-limited by cooldown. See **[docs/hooks.md](docs/hooks.md)** for the inbound-webhook trust model.
-```json
-{
-  "daemon": {
-    "enabled": true,
-    "triggers": [
-      {
-        "id": "inbox-watcher",
-        "type": "watch",
-        "path": "/path/to/inbox/*.txt",
-        "goal": "Read and process this file: {file}",
-        "mode": "agent",
-        "cooldown": 60
-      },
-      {
-        "id": "daily-report",
-        "type": "cron",
-        "schedule": "0 9 * * 1-5",
-        "goal": "Generate the daily status report and save to the sandbox",
-        "mode": "swarm"
-      },
-      {
-        "id": "serve-alive",
-        "type": "status",
-        "check": "http://localhost:6723",
-        "restart": true,
-        "interval": 30,
-        "failThreshold": 3
-      },
-      {
-        "id": "telegram-bridge",
-        "type": "bridge",
-        "command": "uv",
-        "args": "run Runtime/discord_bridge.py",
-        "env": {
-          "WHISPER_MODEL": "base"
-        },
-        "restart": true,
-        "interval": 10
-      }
-    ]
-  }
-}
-```
-
-Goal templates support `{file}`, `{filename}`, `{timestamp}`, and `{id}` substitution. Each trigger specifies a `mode` (`agent`, `swarm`, or `pswarm`) to control which orchestrator handles the goal. All triggers run as independent tasks -- a slow swarm goal does not block status checks or other triggers.
-
-Bridge triggers accept `command`, `args`, and an optional `env` block. The runtime auto-injects `MUX_WS_URL` with the correct serve port if not explicitly set. Bot tokens and other secrets should be set as environment variables in your shell, not in config. The `interval` field controls the restart delay in seconds if the process exits.
-
-Mux-Swarm ships with three bridges under `Runtime/`:
-
-| Bridge | Script | Token Env Var | Additional Env |
-|--------|--------|---------------|----------------|
-| Telegram | `telegram_bridge.py` | `TELEGRAM_BOT_TOKEN` | `WHISPER_MODEL`, `ALLOWED_CHAT_IDS` |
-| Discord | `discord_bridge.py` | `DISCORD_BOT_TOKEN` | `WHISPER_MODEL`, `DISCORD_CHANNEL_ID` |
-| Signal | `signal_bridge.py` | `SIGNAL_NUMBER` | `SIGNAL_API_URL`, `WHISPER_MODEL`, `ALLOWED_NUMBERS` |
-
-Community and first-party bridges for additional platforms (Slack, Matrix, WhatsApp) are planned. The bridge pattern is generic: any script that reads `MUX_WS_URL` and connects to the runtime WebSocket can serve as a bridge. See the bundled Telegram, Signal and Discord scripts as reference implementations.
-
-Both bridges support text messaging and audio transcription via local Whisper. FFmpeg is resolved automatically via the `static-ffmpeg` package (cross-platform). Bridge dependencies are managed by the `pyproject.toml` in `Runtime/`.
-
-Daemon emits hook events: `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. Control the daemon at runtime with `/daemon` (usable from the top-level menu and in-session). For hooks, webhooks, and the daemon in one place, see **[Hooks, Webhooks & the Daemon](docs/hooks.md)**.
-
-### OS Service Registration (`--register` / `--remove`)
-
-Register mux-swarm as a system service that starts automatically on boot. One command, no manual file editing.
-```bash
-# Register (run elevated on Windows)
-mux-swarm --register --serve --daemon --watchdog
-
-# Remove
-mux-swarm --remove
-```
-
-The `--register` flag is stripped from the service definition — only runtime flags (`--serve`, `--daemon`, `--watchdog`) are forwarded. The binary path and working directory are resolved automatically from the install location (not from shell aliases).
-
-| Platform | Mechanism | Details |
-|----------|-----------|---------|
-| **Windows** | Task Scheduler (XML) | Boot trigger with 30s delay, `RestartOnFailure` (60s interval, 999 retries), runs before user login, `WorkingDirectory` set |
-| **Linux** | systemd user service | `Restart=always`, `RestartSec=10`, `enable-linger` for headless boot (starts before login) |
-| **macOS** | launchd LaunchAgent | `RunAtLoad`, `KeepAlive`, logs to `~/.local/share/Mux-Swarm/Logs/` |
-
-Combined with `--watchdog` (process-level restart) and daemon status triggers (subsystem-level restart), this creates a three-layer resilience stack: the OS ensures the process starts, the watchdog ensures it stays running, and the daemon ensures internal subsystems are healthy.
-
-### Scoped Instances
-
-The `--cfg` and `--swarmcfg` flags allow fully isolated runtime instances from a single installation. Each instance resolves its own provider, MCP servers, filesystem boundaries, storage paths, and user identity from its config files.
-```bash
-# User-scoped instances
-mux-swarm --cfg /path/to/alice/Config.json --swarmcfg /path/to/alice/Swarm.json
-mux-swarm --cfg /path/to/bob/Config.json --swarmcfg /path/to/bob/Swarm.json
-
-# Environment-scoped instances
-mux-swarm --cfg /etc/mux/production/Config.json --swarmcfg /etc/mux/production/Swarm.json
-
-```
-
-This enables multi-user deployments, per-environment configurations, and integration into larger systems where each consumer needs an isolated agent runtime.
-
-### User Identity (`userInfo`)
-
-An optional `userInfo` block in `config.json` injects user context into every agent's preamble. Agents receive the user's name, role, and any freeform context — adapting behavior without prompt changes.
-
-All fields except `name` are optional. The `info` field is freeform and can carry preferences, domain context, or behavioral directives (e.g. `"Strict compliance mode. All outputs must reference internal policy docs."`).
-
----
-
-## Configuration
-
-mux-swarm separates configuration into two files:
-
-- [**`Configs/config.json`**](#configjson--infrastructure) — Infrastructure & runtime environment (providers, MCP servers, filesystem boundaries, Docker posture)
-- [**`Configs/swarm.json`**](#swarmjson--topology--roles) — Swarm topology & agent behavior (roles, model routing, model tuning, delegation permissions, tool scope)
-
-This separation lets you swap providers without redesigning the swarm, or redesign the swarm without changing infrastructure wiring.
-
-### `config.json` — Infrastructure
-
-Defines which external integrations are available, where the runtime can read/write, and which provider endpoints to use. Supports multiple providers with runtime swapping via `/provider` or `--provider`.
-
-```json
-{
-  "mcpServers": {
-    "Filesystem": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
-      "enabled": true
-    },
-    "Memory": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-memory"],
-      "env": { "MEMORY_FILE_PATH": "/path/to/sandbox/memory.jsonl" },
-      "enabled": true
-    }
-  },
-  "llmProviders": [
-    {
-      "name": "openrouter",
-      "enabled": true,
-      "apiKeyEnvVar": "OPENROUTER_API_KEY",
-      "endpoint": "https://openrouter.ai/api/v1"
-    },
-    {
-      "name": "ollama",
-      "enabled": true,
-      "endpoint": "http://localhost:11434/v1"
-    }
-  ],
-  "filesystem": {
-    "allowedPaths": ["/path/to/project"],
-    "sandboxPath": "/path/to/project",
-    "chromaDbPath": "/path/to/project/chroma-db",
-    "knowledgeGraphPath": "/path/to/project/memory.jsonl"
-  },
-  "userInfo": {
-    "name": "Micky",
-    "role": "admin",
-    "timezone": "America/New_York",
-    "locale": "en-US",
-    "info": "Prefers concise responses. Primary stack is .NET/C#."
-  }
-}
-```
-> **Enterprise Storage:** `allowedPaths` works with any storage that presents as a filesystem path — Azure Blob Storage ([BlobFuse](https://github.com/Azure/azure-storage-fuse)), AWS S3 ([Mountpoint](https://github.com/awslabs/mountpoint-s3), [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)), Google Cloud Storage ([GCS FUSE](https://cloud.google.com/storage/docs/cloud-storage-fuse/overview)), SMB/CIFS shares, and NFS mounts. Mount your cloud or network storage, add the mount path to `allowedPaths`, and agents read/write to it like any local directory. No code changes required.
-
-#### Filesystem & Shell Security (`filesystem.securityMode`, `shell`)
-
-The native in-process Filesystem and Shell/REPL tools enforce configurable security postures independent of any MCP server.
-
-```json
-"filesystem": { "securityMode": "standard" },
-"shell": { "securityMode": "off", "allowedCommands": [] }
-```
-
-| Key | Values | Description |
-|-----|--------|-------------|
-| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
-| `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` disables shell tools; `prompt` confirms each command; `allowlist` permits only `allowedCommands`. |
-| `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
-
-#### Execution Sandbox (`sandbox`)
-
-Optionally run native shell + REPL execution inside a per-session sandbox. See [`/sandbox`](#interactive-commands) to hot-swap at runtime.
-
-```json
-"sandbox": { "backend": "host", "image": "python:3.12-slim", "network": false, "allowedDomains": [] }
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `backend` | `host` | `host` (no sandbox), `docker`, `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap`/`firejail`/`sandbox-exec`, or `custom`. |
-| `image` | `python:3.12-slim` | Container image for OCI backends. |
-| `network` | `false` | Allow network egress. With a non-empty `allowedDomains`, a deny-by-default CONNECT allowlist is enforced. |
-| `allowedDomains` | `[]` | Domains the sandbox may reach (OCI backends only). |
-| `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
-
-#### Context File Caps (`contextLimits`)
-
-Optional hard char-caps on the long-lived `BRAIN.md` / `MEMORY.md` memory files, with an opt-in background prune.
-
-```json
-"contextLimits": { "memoryMdCharLimit": 0, "memoryMdCapMode": "off", "prunePulseSeconds": 0 }
-```
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `brainMdCharLimit` / `memoryMdCharLimit` | `0` | Char cap per file (`0` = uncapped). |
-| `brainMdCapMode` / `memoryMdCapMode` | `off` | `off`, `warn` (warn when over cap), or `force` (LLM-rewrite under the cap, backing up first). |
-| `prunePulseSeconds` | `0` | When `> 0` and a file is in `force` mode, a background pulse re-checks every N seconds (first tick +30s) and rewrites only when over cap. `0` disables. |
-
-### Telemetry (`telemetry`)
-
-Optional OpenTelemetry configuration for exporting traces, logs, and metrics. All agent sessions, turns, tool calls, delegations, and orchestrator iterations emit OTEL spans. Structured logs attach as span events. Token counters, turn durations, and compaction metrics export as OTEL metrics.
-```json
-"telemetry": {
-  "enabled": true,
-  "endpoint": "http://localhost:4317",
-  "protocol": "grpc",
-  "serviceName": "mux-swarm",
-  "verbosity": "standard",
-  "headers": {}
-}
-```
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `enabled` | `false` | Enable OTLP export. No overhead when disabled. |
-| `endpoint` | -- | OTLP receiver (Jaeger, OTEL Collector, Tempo, Datadog agent). |
-| `protocol` | `grpc` | `grpc` or `http/protobuf`. |
-| `serviceName` | `mux-swarm` | Service name in traces. Useful for multi-instance deployments. |
-| `verbosity` | `standard` | `minimal` (spans only), `standard` (spans + model tags), `verbose` (spans + full message content). |
-| `headers` | -- | Auth headers for hosted backends (e.g. `{"Authorization": "Basic ..."}`) |
-
-Resource attributes are set automatically: `host.name`, `os.type`, `service.version`, `service.instance.id`. The instance ID includes the serve port when running with `--serve`.
-
-**Quick start with Jaeger:**
-```bash
-docker run -d --name jaeger -p 4317:4317 -p 16686:16686 jaegertracing/jaeger:latest
-```
-
-Add the telemetry block to `config.json`, launch mux-swarm, run a session, then open `http://localhost:16686` to see the trace tree.
-
-### `swarm.json` — Topology & Roles
-
-Defines which agents exist, what they specialize in, which models and MCP servers each role can access, who can delegate, and optional per-agent model tuning via [`modelOpts`](#model-tuning-modelopts).
-
-```json
-{ 
-  "executionLimits": {
-    "progressEntryBudget": 1000,
-    "crossAgentContextBudget": 2000,
-    "progressLogTotalBudget": 4500,
-    "maxOrchestratorIterations": 15,
-    "maxSubAgentIterations": 8,
-    "maxSubTaskRetries": 4,
-    "maxStuckCount": 3,
-    "compactionCharBudget": 6000,
-    "subAgentSummaryMode": "auto"
-  },
-  "compactionAgent": {
-    "model": "google/gemini-3-flash-preview",
-    "autoCompactTokenThreshold": 80000,
-    "modelOpts": {
-      "temperature": 0.2,
-      "topP": 0.85,
-      "maxOutputTokens": 4096
-    }
-  },
-  "singleAgent": {
-    "name": "MuxAgent",
-    "promptPath": "Prompts/Agents/chat_prompt.md",
-    "model": "google/gemini-3.1-pro-preview",
-    "modelOpts": {
-      "temperature": 0.6,
-      "topP": 0.95,
-      "maxOutputTokens": 16384
-    },
-    "mcpServers": ["Filesystem", "Memory", "BraveSearchMCP"],
-    "toolPatterns": []
-  },
-  "orchestrator": {
-    "promptPath": "Prompts/Agents/orchestrator.md",
-    "model": "google/gemini-3.1-pro-preview",
-    "modelOpts": {
-      "temperature": 0.3,
-      "topP": 0.9,
-      "maxOutputTokens": 4096
-    },
-    "toolPatterns": ["Filesystem_list_directory", "Filesystem_read_file"]
-  },
-  "agents": [
-    {
-      "name": "WebAgent",
-      "description": "Web browsing, research, and internet tasks.",
-      "promptPath": "Prompts/Agents/web_agent.md",
-      "model": "google/gemini-3.1-pro-preview",
-      "mcpServers": ["BraveSearchMCP", "Fetch", "Filesystem"],
-      "canDelegate": true
-    },
-    {
-      "name": "CodeAgent",
-      "description": "Code generation, editing, and debugging.",
-      "promptPath": "Prompts/Agents/code_agent.md",
-      "model": "google/gemini-3.1-pro-preview",
-      "modelOpts": {
-        "temperature": 0.4,
-        "maxOutputTokens": 8192
-      },
-      "mcpServers": ["Filesystem", "BraveSearchMCP", "ReplShellMCP"],
-      "canDelegate": true
-    }
-  ]
-}
-```
-
-### Model Tuning (`modelOpts`)
-
-Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `modelOpts` block for per-agent model parameter tuning. All fields are optional — omitted values use provider defaults.
-
-```json
-"modelOpts": {
-  "temperature": 0.7,
-  "topP": 0.9,
-  "topK": 40,
-  "maxOutputTokens": 4096,
-  "frequencyPenalty": 0.0,
-  "presencePenalty": 0.0,
-  "seed": 42
-}
-```
-
-| Parameter | Type | Range | Description |
-|-----------|------|-------|-------------|
-| `temperature` | float | 0.0–2.0 | Controls output randomness. Lower = more deterministic, higher = more creative. |
-| `topP` | float | 0.0–1.0 | Nucleus sampling — considers tokens within this cumulative probability mass. |
-| `topK` | int | 1+ | Considers only the top K most probable tokens. Not all providers support this. |
-| `maxOutputTokens` | int | 1+ | Hard ceiling on response length. |
-| `frequencyPenalty` | float | -2.0–2.0 | Penalizes tokens proportionally to how often they appear. Reduces repetition. |
-| `presencePenalty` | float | -2.0–2.0 | Penalizes any token that has appeared at all. Encourages topic diversity. |
-| `seed` | long | — | Attempts deterministic output for identical inputs. Provider support varies. |
-
-
-### Reasoning Options
-
-Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `reasoning` block for controlling model reasoning behavior. Both fields are optional.
-```json
-"reasoning": {
-  "effort": "high",
-  "output": "full"
-}
-```
-
-| Parameter | Values | Description |
-|-----------|--------|-------------|
-| effort | `none`, `low`, `medium`, `high`, `extra_high` | Controls how much computational effort the model puts into reasoning before responding. |
-| output | `none`, `summary`, `full` | Controls whether reasoning traces are included in the response. |
-
-**Tuning guidelines:**
-- **Orchestrators:** Low temperature (0.2–0.4), medium reasoning effort, no reasoning output. Consistent planning without trace bloat.
-- **Code based agents:** Moderate temperature (0.3–0.5), high reasoning effort, full output. Complex tasks benefit from deep visible reasoning.
-- **Research/general agents:** Higher temperature (0.5–0.7), medium reasoning effort. Varied responses with moderate thinking.
-- **Memory/utility agents:** Low temperature, low or no reasoning. CRUD operations where thinking adds latency without value.
-- **Compaction agents:** Low temperature (0.1–0.3), no reasoning. Faithful summarization, not problem-solving.
-
-### Provider-Specific Parameters (additionalParams)
-
-For parameters not covered by the standard `modelOpts` fields or the `reasoning` block, use `additionalParams` to pass arbitrary key-value pairs directly to the provider via `ChatOptions.AdditionalProperties`. This is a pass-through — the runtime does not validate these values.
-```json
-"modelOpts": {
-  "temperature": 0.3,
-  "maxOutputTokens": 4096,
-  "additionalParams": {
-    "top_a": 0.08
-  }
-}
-```
-
-Use this for provider-specific features not covered by the standard fields (e.g. `top_a`, `min_p`, `repetition_penalty`).
-
-### Execution Limits (`executionLimits`)
-
-Optional tuning for orchestration budgets, iteration caps, and retry behavior. All fields are serialized with sensible defaults on first run. Adjust as needed. Raise limits for complex goals on capable models, lower for cost-sensitive deployments. Inspect active values at runtime with `/limits`.
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `progressEntryBudget` | 1000 | Max chars per compacted agent result returned to the orchestrator. |
-| `crossAgentContextBudget` | 2000 | Max chars of prior agent context injected into a new sub-agent's task. |
-| `progressLogTotalBudget` | 4500 | Max total chars of progress history sent in orchestrator continuation prompts. Oldest entries trimmed first. |
-| `maxOrchestratorIterations` | 15 | Planning/delegation cycles before the orchestrator gives up. Overridden to unlimited in continuous mode. |
-| `maxSubAgentIterations` | 8 | Tool-call loops per sub-agent delegation before forced completion. |
-| `maxSubTaskRetries` | 4 | Retry attempts per failed sub-task with progressive recovery hints. |
-| `maxStuckCount` | 3 | Consecutive empty responses before aborting. |
-| `compactionCharBudget` | 6000 | Target char budget for the LLM session-compaction summary (`/compact`, auto-compaction). |
-| `maxToolIterationsPerTurn` | 1000 | Max model→tool round-trips within a single turn before the tool loop stops. `<= 0` = unlimited. |
-| `maxAutoContinuesPerTurn` | 3 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
-| `subAgentSummaryMode` | `auto` | How an over-budget sub-agent result is compacted before returning to the lead: `auto`/`llm` run the compaction model and append signal-scored extracted references; `extractive` skips the LLM entirely (no extra cost). |
-### Prompts: `Prompts/Agents/*.md`
-
-Prompt files define the **behavioral contract** for each role — how an agent reasons, what it owns, which workflows it follows, and what constraints it respects. This is the main place to tune agent behavior without changing the runtime. See [Architecture](#architecture) for how prompts fit into the control plane model.
-
-### Skills: `skills/*`
-
-Skills are reusable operational modules agents discover and load at runtime via `list_skills` and `read_skill`. They keep core prompts lean while giving agents access to structured instructions when needed. Prompts define the **role**; skills provide the **task-specific playbooks**.
-
-**Installing skills** — `/installskill` pulls [Agent Skills](https://agentskills.io) (the `SKILL.md`-per-directory format) from public GitHub sources and normalizes them to mux conventions:
-
-- `/installskill` (bare) — list installable skills across the curated registry (Anthropic, obra/superpowers, dotnet, Vercel Labs, tech-leads-club, ComposioHQ, OpenAI).
-- `/installskill <name>` — install by name from the curated sources (first trusted match wins).
-- `/installskill <owner>/<repo>` — install from a repo's skills (or list if it has several).
-- `/installskill <owner>/<repo>/<path/to/skill>` or a full `https://github.com/.../tree/<branch>/<path>` URL — install a specific skill.
-- Add `overwrite` to replace an existing install.
-
-The installer fetches the whole skill directory (including `scripts/`, `references/`, `assets/`), then non-destructively stamps mux provenance into the `SKILL.md` frontmatter `metadata`. **Skills are untrusted third-party content loaded into the agent's context and may ship scripts — `/installskill` shows a prompt-injection/supply-chain warning and asks you to confirm before installing. Audit the installed `SKILL.md` + any scripts before relying on a skill.**
-
----
-
-<a id="architecture"></a>
-
-## Architecture
-
-mux-swarm separates [configuration](#configuration) and execution into control planes and a runtime plane:
-
-**Control Plane A — [`config.json`](#configjson--infrastructure)**: Infrastructure & runtime boundaries. Provider config, MCP integrations, filesystem access, Docker posture.
-
-**Control Plane B — [`swarm.json`](#swarmjson--topology--roles)**: Swarm topology & capability routing. Agent roles, model routing, model tuning, delegation permissions, tool scope.
-
-**Control Plane C — [`Prompts/Agents`](#prompts-promptsagentsmd)**: Agent behavior contracts. Structured prompts defining reasoning, workflows, and interaction rules.
-
-**Runtime — `mux-swarm` CLI**: Manages orchestration, agent sessions, delegation, tool invocation, loop controls, and goal execution lifecycle.
-
-```mermaid
-graph TD
-    subgraph Control Planes
-        Config["config.json<br/><small>Providers · MCP Servers · Filesystem · Daemon Triggers</small>"]
-        Swarm["swarm.json<br/><small>Roles · Models · ModelOpts · Delegation · Hooks</small>"]
-        Prompts["Prompts/Agents<br/><small>Behavior Contracts · Workflows · Constraints</small>"]
-    end
-
-    Config --> Runtime
-    Swarm --> Runtime
-    Prompts --> Runtime
-
-    subgraph MuxSwarmRuntime["Mux-Swarm Runtime"]
-        Runtime["mux-swarm OS"] --> Engine["Execution Engine"]
-        Runtime --> Daemon["Daemon<br/><small>Watch · Cron · Status</small>"]
-        Runtime --> Serve["Web UI<br/><small>--serve · WebSocket</small>"]
-        Runtime --> Watchdog["Watchdog<br/><small>Process Guard</small>"]
-        Runtime --> Hooks["Hook Worker<br/><small>Persistent · Async · Blocking</small>"]
-    end
-
-    Engine --> SingleAgent["Single Agent<br/><small>/agent · /stateless</small>"]
-    Engine --> Orchestrator["Swarm Orchestrator<br/><small>/swarm · /pswarm</small>"]
-    Daemon -->|fires goals| Engine
-    Serve -->|user input| Engine
-
-    subgraph AgentExecution["Agent Execution"]
-        Orchestrator --> WebAgent
-        Orchestrator --> CodeAgent
-        Orchestrator --> MemoryAgent
-        SingleAgent --> MuxAgent["MuxAgent"]
-    end
-
-    subgraph ToolLayer["Tool Layer"]
-        WebAgent --> MCP1["BraveSearch · Fetch"]
-        CodeAgent --> MCP2["Native FS · Shell/REPL"]
-        MemoryAgent --> MCP3["ChromaDB · Memory"]
-        MuxAgent --> MCP4["All Scoped Tools"]
-    end
-
-    MCP3 -.->|persist| Knowledge[(Memory Layers)]
-    Orchestrator -.->|compact| Orchestrator
-
-    WebAgent -->|lifecycle events| Hooks
-    CodeAgent -->|lifecycle events| Hooks
-    MemoryAgent -->|lifecycle events| Hooks
-    MuxAgent -->|lifecycle events| Hooks
-    Hooks -->|TTS · Logging · Notifications| External["External Systems"]
-```
-
-### Orchestration Lifecycle
-
-When a goal is executed, the swarm follows a structured lifecycle:
-
-1. **Analyze** the goal and determine strategy
-2. **Delegate** to specialist agents by role and capability
-3. **Execute** with bounded loop controls
-4. **Evaluate and compact** results before orchestrator handoff
-5. **Persist** durable knowledge through the [memory system](#layered-memory-architecture)
-6. **Close** with explicit completion signaling (success, failure, or partial)
-
-### Layered Memory Architecture
-
-Instead of forcing every agent to carry large historical context, the runtime distributes knowledge across specialized memory layers with a dedicated Memory Agent managing retrieval and persistence.
-
-**In-Context Working Memory** — Results from delegated agents are compressed and reinjected into orchestrator context, keeping token usage bounded during multi-step coordination.
-
-**Semantic Memory (Vector Retrieval)** — A vector-based layer enables semantic search over prior knowledge, allowing agents to recall relevant context without loading full histories.
-
-**Structured Knowledge Memory (Graph)** — A knowledge graph stores entities, relationships, and structured facts for deterministic queries where relationships matter over embedding similarity.
-
-**Filesystem Artifact Layer** — Agents exchange artifacts, intermediate outputs, and analysis results through files — turning the filesystem into a lightweight message bus that mitigates hallucinations, reduces token burn, and prevents context drift.
-
----
-
-## Security & Safety
-
-mux-swarm is designed around scoped execution, explicit boundaries, and inspectable outputs.
-
-**Core characteristics**: filesystem allowlist enforcement, least-privilege per-agent [MCP scoping](#swarmjson--topology--roles), prompt- and config-level role separation, deterministic completion signaling, session-based provenance and artifact trails, configurable Docker-based execution, environment-variable-based secret handling, hook execution gating, and daemon trigger isolation.
-
-### Recommended Production Stance
-
-- Use `--cfg` and `--swarmcfg` to isolate per-user or per-environment instances
-- Keep `--mcp-strict` enabled (enabled by default) so startup fails if required integrations are unavailable
-- Keep filesystem allowed paths minimal and purpose-specific
-- Route execution-heavy tasks through Docker when possible
-- Scope MCP servers narrowly by role
-- Use environment variables for all credentials
-- Prefer file-path-based deliverables so outputs remain inspectable
-- Use `/report` or `--report` to review session artifacts regularly
-- Review hook commands before confirming on startup -- hooks run with your user permissions
-- Scope daemon watch paths narrowly; avoid watching broad directories like home or root
-- Use `--register` from an elevated terminal only when you've validated your daemon and hook config
-- Pair `--daemon` with status checks (`failThreshold` > 1) to avoid restart loops on transient failures
-- Use the three-layer resilience stack (`--register` + `--watchdog` + status triggers) for production always-on deployments rather than relying on any single layer
-- For maximum isolation, run mux-swarm itself inside a Docker container with only the necessary volumes mounted -- this constrains all agent execution, hook commands, and daemon triggers to the container's filesystem and network boundaries regardless of configuration
----
+Mux-Swarm is MCP-native and provider-agnostic. It speaks the [OpenAI-compatible API](https://platform.openai.com/docs/api-reference), the [Model Context Protocol](https://modelcontextprotocol.io/), the [Zed Agent Client Protocol](docs/acp.md), and the [Agent Skills (SKILL.md)](https://docs.anthropic.com/en/docs/claude-code/skills) format. It is built on [.NET 10](https://dotnet.microsoft.com/), [Microsoft.Extensions.AI](https://learn.microsoft.com/en-us/dotnet/ai/ai-extensions), and [Microsoft.Agents.AI](https://github.com/microsoft/Agents-for-net).
 
 ## Roadmap
 
-### Up Next
+**Up next:** additional platform bridges (Slack, Matrix, Signal), expanded OpenTelemetry coverage.
 
-- Additional platform bridges (Slack, Matrix, Signal, etc.)
-- Expanded OTEL coverage: memory read/write tracking, hook dispatch spans, workflow step spans, WS lifecycle in ServeMode
-### Shipped
-
-- **v0.12.0 — Teams, Subscription Sign-In, Native Tools & Sandboxing**: Named multi-agent **teams** (`/teams`, `/createteam`) with a dependency-gated TaskBoard, an editable `/kanban`, peer self-claim, and a file-backed inter-agent **mailbox**; **Giga mode** (`/giga`) grants a single agent on-the-fly team and workflow orchestration. **Subscription sign-in** (`/login`) for Claude, Codex, Kimi, xAI, and Antigravity through a bundled, auto-downloaded CLIProxyAPI sidecar that outlives the process and is reused across runs — no API keys to paste; `/ping` and `/proxy status|update` for diagnostics. **Native in-process Filesystem and Shell/REPL tools** (replacing external MCP subprocesses) with per-session isolation and cross-platform **security postures** (filesystem `standard`/`secure`/`lax`/`none`; shell `off`/`prompt`/`allowlist`). **Pluggable execution sandbox** (`/sandbox`) across Docker, Podman, nerdctl, gVisor, and **Kata microVMs**, with a deny-by-default network allowlist. Editor integration via the **Zed Agent Client Protocol** (`--acp`). Live-session `/detach` + `/attach`, `/background` jobs, and runtime `/daemon` trigger control. Intelligent setup that probes the provider's model list for sensible defaults. Plus a major live-TUI polish pass (smooth streaming, aligned output, flicker-free rendering via Synchronized Output).
-- **v0.11.0 — Live TUI, Session Tags & Full Agent CRUD**: New live full-screen TUI renderer (default on capable terminals; `/classic` opts out) with a fuzzy slash-command palette, in-place active-turn rendering, collapsible tool/sub-agent output, and a vim-style transcript navigation/copy mode. Session tagging via `/tag` (sidecar `.muxtag`, surfaced and fuzzy-matched in resume) with an optional one-shot MEMORY.md stub. Full swarm-agent CRUD from the REPL — `/newagent`, `/editagent`, `/delagent` — plus universal config editing: `/set <key> <value>` now reaches every scalar leaf of `config.json` and `swarm.json` by dotted path, and `/config` lists them all. `/showreasoning` gates streamed reasoning text (full/summary shown, none hidden) as a client-side display control. Per-file BRAIN.md / MEMORY.md character caps (off/warn/force). `/ultra` deep-reasoning mode and a `sub` footer badge for active delegation.
-- **v0.9.0 -- Enterprise Observability & Chat App Bridge Access**: OpenTelemetry tracing with native OTEL spans for agent sessions, turns, tool calls, orchestrator iterations, and delegations. Structured logs as span events with severity levels. Metrics counters and histograms for tokens, sessions, compaction, stuck counts, and tool call duration. Configurable telemetry block (endpoint, protocol, verbosity, headers) with OTLP export to Jaeger, Tempo, Datadog, or any compatible backend. Daemon bridge triggers for persistent sidecar process supervision with auto-restart and PID tracking. Bundled Telegram and Discord bridges with Whisper voice transcription, WebSocket auto-reconnect, and chat authorization.
-- **v0.8.2 -- Runtime Refresh & Web UI**: `mux_refresh` tool for agents to hot-reload skills, MCP servers, and configs mid-session. ServeMode broadcasts `user_input` events to all WebSocket clients. `runtime_ready` hook event. Docker sandbox skill rewritten to use `docker cp`. `/refresh` command upgraded to reload all config files.
-- **v0.8.0 — Daemon Mode & OS Service Registration**: Background trigger loops via `--daemon` with file watch (FileSystemWatcher + cooldown), cron (zero-dependency 5-field parser), and status checks (HTTP, process, TCP) with auto-restart. OS service registration via `--register`/`--remove` for Windows (Task Scheduler XML), Linux (systemd + linger), and macOS (launchd). Full hook lifecycle with 10 events across all orchestrators. `additionalParams` pass-through for provider-specific model options.
-- **v0.7.0 — Event Hooks & Web UI**: Shell command execution triggered at lifecycle points via `swarm.json` hooks config. Async, blocking, and persistent dispatch modes with pattern matching on event type, agent, and tool. Embedded web UI via `--serve [port]` with Kestrel, WebSocket NDJSON bridge, file browser, upload/download, and mobile support. WebSocket-based cancellation via `StdinCancelMonitor.FireCancel()`.
-- **v0.6.1 — Workflow Engine**: Declarative JSON workflow files for deterministic, replayable execution pipelines via `--workflow` and `/workflow`. Scripts the entire runtime across agent, swarm, and parallel swarm modes from a single file.
-- **v0.6.0 — Token Tracking & Execution Limits**: Accurate provider-reported token tracking across all orchestration modes. Configurable `executionLimits` block in swarm.json for tuning orchestration budgets, iteration caps, and retry policies. `/limits` command for runtime inspection.
-- **v0.5.0 — Parallel Swarm Execution**: Concurrent batch dispatch via `/pswarm` and `--parallel`. Decomposes goals into independent subtasks and executes them across agents simultaneously with configurable parallelism.
-- **v0.5.0 — Stdin Cancellation (stdio mode)**: Out-of-band `__CANCEL__` signal for graceful turn cancellation in piped/stdio integrations.
-
-### Community
-
-Community-contributed swarm templates, skill libraries, and reference configurations. Documentation improvements driven by real-world usage.
-
----
+Recent releases include teams and subscription sign-in, native tools and pluggable sandboxing, the live TUI, the workflow engine, daemon mode, and event hooks. See the [changelog](RELEASE_NOTES_v0.12.0.md) for details.
 
 ## Contributing
 
-Contributions are welcome. Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, or open an issue to discuss.
-
----
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, or open an issue to discuss.
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+Licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.

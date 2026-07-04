@@ -157,7 +157,8 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 "serve": {
   "editable": false,
   "configExposed": false,
-  "auth": { "enabled": false, "token": "", "scheme": "bearer" }
+  "auth": { "enabled": false, "token": "", "scheme": "bearer" },
+  "editor": { "autoFetch": true, "version": "" }
 }
 ```
 
@@ -168,6 +169,8 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |
 | `auth.scheme` | `"bearer"` | Auth scheme. |
+| `editor.autoFetch` | `true` | When true, the Monaco editor assets are fetched on first web-UI load. |
+| `editor.version` | `""` | Pin a specific Monaco editor version (empty = bundled default). |
 
 When `auth.enabled` is true, **all** `/api/*` requests and the `/ws` upgrade require
 the token (HTTP `Authorization: Bearer <token>`; WS `?token=<token>` query param or
@@ -181,10 +184,10 @@ but no token resolves, auth stays inactive with a warning (never silently locks 
 Mux-Swarm can update itself in place from the latest GitHub release, and restart/shut down over the
 HTTP API.
 
-**Update** — `/update` (in-session or at the menu) or the `--update` CLI flag. The updater:
+**Update** - `/update` (in-session or at the menu) or the `--update` CLI flag. The updater:
 1. Queries the latest GitHub release and compares its tag against the running version (semver core).
 2. Downloads the platform asset (`mux-swarm-win-x64.zip`, `-linux-x64.tar.gz`, `-osx-{arm64,x64}.tar.gz`).
-3. **Verifies the download against the SHA256 digest GitHub publishes on the asset** — a mismatch aborts.
+3. **Verifies the download against the SHA256 digest GitHub publishes on the asset** - a mismatch aborts.
 4. Extracts and replaces only *shipped* files whose content hash differs. **User-owned paths are never
    touched**: `Configs/Config.json`, `Configs/Swarm.json`, `Sessions/`, `Teams/`, and the durable
    `Context/` memory files (`reflections.json`, `MEMORY.md`, `BRAIN.md`).
@@ -195,9 +198,9 @@ HTTP API.
 Over HTTP: `GET /api/update` (read-only availability check) and `POST /api/update` (download + apply;
 restarts if the binary changed). Both inherit the serve-layer bearer auth when `serve.auth` is on.
 
-**Restart / shutdown** — `POST /api/restart` spawns a successor process that waits for the current one
+**Restart / shutdown** - `POST /api/restart` spawns a successor process that waits for the current one
 to fully exit (via an internal `--relaunch-after <pid>` handshake) before rebinding the serve port,
-then exits — no port-bind race. `POST /api/shutdown` tears down and exits. The web app's restart
+then exits - no port-bind race. `POST /api/shutdown` tears down and exits. The web app's restart
 control uses `/api/restart` (replacing an older WS-timing dance).
 
 ## Execution Sandbox
@@ -277,7 +280,7 @@ Every trigger shares these base fields:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `id` | string | `""` | Unique identifier for this trigger |
-| `type` | string | `""` | One of: `watch`, `cron`, `status`, `bridge` |
+| `type` | string | `""` | One of: `watch`, `cron`, `status`, `interval`, `bridge`, `webhook` |
 | `mode` | string | `"agent"` | Orchestration mode for goal execution: `agent`, `swarm`, or `pswarm` |
 | `agent` | string? | null | Optional agent name override for single-agent mode goals |
 | `interval` | uint | 30 | Seconds between polls (status), restart delay (bridge), or debounce (watch) |
@@ -285,8 +288,14 @@ Every trigger shares these base fields:
 | `restart` | bool | false | Whether to restart on failure (status) or on exit (bridge) |
 | `goal` | string? | null | Goal text for watch/cron triggers. Supports template variables |
 | `failThreshold` | int | 3 | Consecutive status check failures before alerting (0 = alert every failure) |
+| `secret` | string? | null | (webhook) HMAC-SHA256 shared secret. When set, `POST /api/hook/{id}` requires a valid `X-Hub-Signature-256` header |
+| `payloadLimit` | int | (default) | (webhook) Max inbound request body size in bytes |
 
 Effective interval logic: if `cooldown > 0`, use cooldown; otherwise use `interval`.
+
+A `webhook` trigger is exposed at `POST /api/hook/{id}` (excluded from the serve bearer middleware; it
+authenticates per-trigger via HMAC `secret` or, if none is set, the serve bearer token). External systems
+POST a payload to start a run. See the Event Hooks section for inbound/outbound webhook detail.
 
 ### watch
 
@@ -486,7 +495,9 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "delegationRetentionDays": 30,
   "activityTimeoutSeconds": 3600,
   "maxToolIterationsPerTurn": 1000,
-  "maxAutoContinuesPerTurn": 3
+  "maxAutoContinuesPerTurn": 3,
+  "taskClaimTtlSeconds": 900,
+  "maxTaskAttempts": 3
 }
 ```
 
@@ -504,6 +515,8 @@ Any key may be omitted; missing keys inherit the built-in default shown above.
 - `activityTimeoutSeconds` - deadman's-switch window for a single streaming response (reset on every chunk) and the OpenAI client HTTP NetworkTimeout. NOT an idle-between-turns timeout. Default 3600 (1h) so long tool-running turns and slow providers are tolerated.
 - `maxToolIterationsPerTurn` - max model->tool round-trips per turn before the invocation middleware stops looping (<= 0 = unlimited).
 - `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
+- `taskClaimTtlSeconds` - team TaskBoard claim time-to-live: a claimed task with no heartbeat past this window is reclaimed by the stale-reaper. Default 900.
+- `maxTaskAttempts` - bounded retry ceiling for a team task before the circuit-breaker marks it Failed. Default 3.
 
 
 ### compactionAgent
@@ -668,7 +681,6 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --register                 Register as OS service
 --remove                   Unregister OS service
 --watchdog                 Enable external watchdog
---workflow <file>          Run workflow file
 --delimiter <str>          Multi-line input delimiter
 --model <id>               Override single-agent model
 --mcp-strict [true|false]  Require all MCP servers
@@ -682,10 +694,16 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --sub / --subagents        Enable sub-agent delegation in the single-agent loop
 --psub / --parasubagents   Enable parallel sub-agent delegation in the single-agent loop
 --giga                     Giga mode (agent can spawn teams + author/run workflows)
+--ultra / --ultraplan      Interactive deep-reasoning mode (plan + max reasoning + heavy delegation)
 --verbose                  Verbose MCP/init logging
 --report [session-id]      Generate report(s) and exit
 --cfg <path>               Override config.json path
 --swarmcfg <path>          Override swarm.json path
+--workspace / --ws <path>  Set the @-file workspace root
+--workflow / --wf <file>   Run workflow file
+--classic / --tui          Force classic line renderer or live TUI
+--prod                     Prod mode (orchestrator [[MARKER]] output)
+--update                   Self-update from the latest GitHub release, then exit
 --clear                    Clear terminal
 --help, -h                 Show help
 ```
@@ -712,8 +730,8 @@ Flags can be combined. Common stacks:
 /stateless      Stateless single-agent (no session persistence)
 /sub, /psub     Enable sub-agent / parallel sub-agent delegation in the single-agent loop
 /plan           Toggle plan mode (agent presents a plan + asks approval before executing)
-/ultra          Toggle deep-reasoning mode (plan + max reasoning budget + heavy delegation)
-/giga           Toggle giga mode (ultra + agent can spawn teams and author/run workflows)
+/ultra          Interactive deep-reasoning inside the single-agent loop (plan + max reasoning + heavy delegation)
+/giga           Interactive giga mode (ultra + agent can spawn teams and author/run workflows on the fly)
 /continuous     Toggle autonomous execution (/cont shorthand)
 /workflow <f>   Run a deterministic, replayable workflow file
 ```
@@ -747,6 +765,8 @@ Flags can be combined. Common stacks:
 /wipe           Clear the session history
 /tag <text>     Tag the live session for easy resume/search
 /detach         Park the live session to the background (re-enter with /attach)
+/voice          Local speech-to-text dictation into the compose field (/voice [auto|off|vol <1-10>])
+/hide <agent>   Hide a live sub-agent from the viewport (/unhide restores it)
 /qc, /qm        Exit the active session
 ```
 
@@ -768,7 +788,7 @@ Flags can be combined. Common stacks:
 /provider       View or switch the active LLM provider
 /login [prov]   Log in to a subscription provider (claude|codex|kimi|...) via the CLIProxyAPI sidecar
 /ping [prov]    Test the CLIProxyAPI sidecar + show per-provider login readiness
-/proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update
+/proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update | /proxy restart
 /config         Show ALL config settings (every key is /set-able)
 /set <key> <v>  Edit any config key (e.g. /set ultra.thinkingBudget 20000)
 /showreasoning  full | summary (shown, grey italic) | none (hidden); persists to config
@@ -789,10 +809,14 @@ Flags can be combined. Common stacks:
 /memory         Deep-memory status / toggle (/memory [deep|standard|show])
 /deep           Toggle deep memory on/off (/deep [off])
 /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
+/createhook     Guided wizard to scaffold a hook, outbound webhook, or inbound webhook trigger
+/hooks          Manage event hooks (/hooks on|off|create)
+/daemon         Runtime daemon control (/daemon on|off|jobs|cron|watch|cancel; cron/watch bare = interactive builder)
+/update         Self-update from the latest GitHub release (hash-verified; restarts if the binary changed)
 /status         System status overview (provider, models, tools, skills, sessions)
 /setup          Run initial setup / reconfigure
 /reloadskills   Refresh the skills directory
-/installskill   Install a skill by name (openai/skills, VoltAgent) or from a GitHub repo URL
+/installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills)
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /verbose, /sav  Toggle full-vs-collapsed tool output / sub-agent output
@@ -924,9 +948,11 @@ tasks then run only when the lead assigns them.
 ## Deep Memory (reflectionAgent)
 
 A background "deep memory" subsystem (off by default). When enabled, a background **gatherer**
-distills durable reflections from the live session into `Context/Reflections/` (one JSON per
-reflection) and an **injector** selects a small, scored, budget-capped block to push into agent
-preambles -- so working agents never spend a turn querying memory.
+distills durable reflections from the live session into a single auto-pruned `Context/reflections.json`
+(atomic temp + rename, dedup by content) and an **injector** selects a small, scored, budget-capped
+block to push into agent context, so working agents never spend a turn querying memory. Injection is
+two-tier: an EPHEMERAL mid-turn delta (reaches the model right after a tool result, within the turn)
+plus a DURABLE cross-turn block the orchestrator persists into the thread so it replays every future turn.
 
 Enable/inspect with `/memory` (or `/deep`):
 
@@ -953,7 +979,7 @@ Swarm.json block (all keys optional; absent = inert standard mode):
   "pollIntervalSeconds": 90,   // background cadence; NO LLM call on a tick with no activity
   "relevanceFloor": 0.35,      // min score to inject (anti-noise)
   "scope": "lead",             // "lead" (lead/orchestrator only) | "all" (also sub-agents)
-  "maxReflections": 1000,      // single-file store prune cap (oldest evicted)
+  "maxReflections": 30000,     // single-file store prune cap (oldest evicted; 1000 fallback if unset)
   "historyWindow": 30,         // recent messages the Pass-1 distill observes
   "maxDigsPerTick": 2,         // Pass-2 read-only digs chased per gatherer tick
   "digMaxFilesScanned": 4000,  // Pass-2 grep file scan cap
@@ -964,8 +990,9 @@ Swarm.json block (all keys optional; absent = inert standard mode):
 
 A bare top-level `"memoryMode": "deep"` is also accepted and overrides the nested `mode`.
 
-**Store tiers (filesystem-first, graceful degrade):** `Context/Reflections/` is always the primary,
-durable store. The ChromaDB + Memory (knowledge-graph) MCP servers are OPTIONAL accelerators -- when
+**Store tiers (filesystem-first, graceful degrade):** the single `Context/reflections.json` is always
+the primary, durable store (a legacy `Context/Reflections/` directory is auto-migrated then removed on
+first load). The ChromaDB + Memory (knowledge-graph) MCP servers are OPTIONAL accelerators, and when
 connected the gatherer mirrors reflections into them for semantic recall. When they are absent or
 failing, deep mode STAYS ACTIVE and the injector degrades silently to lexical + recency + importance
 scoring over the filesystem reflections (no warning, no drop to standard).
@@ -979,7 +1006,7 @@ themselves and to flag any reflection that conflicts with what they observe.
 `/heal` / `/reflect` can additionally propose a new `SKILL` (alongside BRAIN/MEMORY write-backs):
 accepting one scaffolds a `SKILL.md` under the skills dir and hot-reloads the skill manifest.
 
-## Cost breakdown — `/cost all` / `/tokens all`
+## Cost breakdown - `/cost all` / `/tokens all`
 
 `/cost` and `/tokens` are unchanged (session usage, footer-mirrored). Adding the `all` arg renders a
 per-model matrixed breakdown sourced from an in-process ledger (the OTEL counters are write-only):
@@ -989,17 +1016,17 @@ per-model matrixed breakdown sourced from an in-process ledger (the OTEL counter
 /tokens all     Alias of /cost all
 ```
 
-Each model shows two columns — **session** (current, cleared on `/wipe`) and **rolling** (process-
-lifetime, survives `/wipe`) — plus tool-call and compaction counts and a proportional split bar.
+Each model shows two columns - **session** (current, cleared on `/wipe`) and **rolling** (process-
+lifetime, survives `/wipe`) - plus tool-call and compaction counts and a proportional split bar.
 Real `$` comes from `ModelPricing.cs` (list-price estimate, input+output) for priced models;
 subscription/cliproxy providers render tokens-only (flat-rate, no `$`). System-prompt and tool-schema
 rows are the one-time static estimates already shown in the footer breakdown.
 
-## Task auto-decomposition — `task_decompose` + `/taskgraph`
+## Task auto-decomposition - `task_decompose` + `/taskgraph`
 
 `task_decompose(goal)` is a lead/giga tool (and an opt-in background dispatcher) that turns a high-
-level goal into a ready `blockedBy` task graph on the active board via ONE light-model call —
-subtasks + dependency edges + suggested assignees — instead of hand-authoring many `task_create`
+level goal into a ready `blockedBy` task graph on the active board via ONE light-model call -
+subtasks + dependency edges + suggested assignees - instead of hand-authoring many `task_create`
 calls. The model returns a strict JSON array; tasks are created in topological order with local
 indices mapped to real board ids, cycles are rejected, and unknown assignees fall back to null.
 
@@ -1029,21 +1056,21 @@ Swarm.json block (all keys optional; absent = off):
 The `ask_user` tool and the underlying choice prompts no longer trap the user into the offered
 options. Each choice prompt carries two bailout affordances:
 
-- **Cancel** — back out entirely; the tool returns a "cancelled" result the model handles gracefully
+- **Cancel** - back out entirely; the tool returns a "cancelled" result the model handles gracefully
   (no forced choice, no wasted extra turn).
-- **Enter custom** — type a free-text value outside the option set; returned as a custom response.
+- **Enter custom** - type a free-text value outside the option set; returned as a custom response.
 
 Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `ConfirmChoice` /
 `MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are
 unchanged, so existing callers keep their behaviour. (Spectre's blocking picker exposes no raw Esc
 hook, so cancellation is delivered via an explicit "cancel" affordance labelled with Esc.)
 
-## TUI color themes — `/theme` + setup step
+## TUI color themes - `/theme` + setup step
 
 The interactive TUI palette (banner/accent, success/warning/error, info/muted, prompt text, the
 agent-name color, and rendered-markdown heading/code/link/quote colors) is theme-driven, not
 hardcoded. Built-in presets: `default` (original palette), `dark`, `light`, `mono` (no-color /
-accessibility — inherits the terminal foreground), `solarized`, `dracula`, `gruvbox`.
+accessibility - inherits the terminal foreground), `solarized`, `dracula`, `gruvbox`.
 
 ```
 /theme            List presets with live color swatches + the active marker

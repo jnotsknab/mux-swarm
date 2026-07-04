@@ -1,12 +1,12 @@
 ---
 name: mux-guide
-description: Authoritative user guide + reference map for Mux-Swarm itself (v0.12.0). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
+description: Authoritative user guide + reference map for Mux-Swarm itself (v0.12.1). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
 ---
 
-# Mux-Swarm Guide (v0.12.0)
+# Mux-Swarm Guide (v0.12.1)
 
 This skill is the map to Mux-Swarm's own documentation. The full reference is the bundled
-**`DOCS.md`** at `{{paths.context}}/DOCS.md`. DOCS.md is large — DO NOT read it whole. Instead,
+**`DOCS.md`** at `{{paths.context}}/DOCS.md`. DOCS.md is large - DO NOT read it whole. Instead,
 look up the ONE relevant section by name (the `## Heading`s below are stable anchors) using a
 ranged read or a grep:
 
@@ -20,7 +20,7 @@ DOCS.md wins (it ships with the build).
 
 ## Current version
 
-- **Mux-Swarm v0.12.0.** If `/status` or the splash reports a different version, trust the runtime
+- **Mux-Swarm v0.12.1.** If `/status` or the splash reports a different version, trust the runtime
   and tell the user this guide may be slightly behind.
 
 ## DOCS.md section map (grep these exact headings)
@@ -59,8 +59,10 @@ agent. Behaviour comes from two files: `config.json` (infrastructure: providers,
 daemon) and `swarm.json` (agents, orchestrator, compaction, teams, executionLimits).
 
 **Modes** (`/swarm` `/pswarm` `/agent` `/stateless` `/sub` `/psub` `/ultra` `/giga` `/teams`).
-Single-agent is the default; `/sub`/`/psub` add (parallel) sub-agent delegation; `/ultra` is
-deep-reasoning; `/giga` lets the agent spawn teams + author workflows.
+Two families: interactive single-agent modes where the user stays in the loop (`/agent` default;
+`/sub`/`/psub` add (parallel) sub-agent delegation; `/ultra` is deep-reasoning; `/giga` adds on-the-fly
+teams + author/run workflows) versus batch swarm modes (`/swarm`, `/pswarm`) for handing off a ready
+plan to implement to completion (multi-step builds, whole-codebase refactors).
 
 **Models & providers.** `/provider` switches the active provider; `/model` and `/setmodel` manage
 per-agent models. Subscription accounts (Claude, Codex, Kimi…) log in via the bundled CLIProxy
@@ -95,7 +97,7 @@ reloads skills; `/setup` reconfigures.
 
 ## When to use this skill
 
-Use it whenever the user asks about Mux-Swarm itself — "how do I…", "what does X do", "why is Y
+Use it whenever the user asks about Mux-Swarm itself - "how do I…", "what does X do", "why is Y
 happening", "where is Z configured". Answer from the relevant DOCS.md section (looked up by the map
 above), keep the answer specific to the user's installed config where possible (check `/status`,
 `/config`, `/limits`), and point them at the exact command or config key to change.

@@ -4,7 +4,10 @@ First-time setup walkthrough for Mux-Swarm.
 
 ## Prerequisites
 
-The only hard requirement is an **LLM provider API key** (any OpenAI-compatible endpoint) set as an environment variable.
+You need a way to reach a model. There are two options, and the setup wizard walks you through picking one:
+
+- **Subscription sign-in (recommended).** Log in to Claude, Codex, Kimi, xAI, or Antigravity with your existing subscription through a browser OAuth flow. No API key to obtain or paste. Mux-Swarm manages a bundled CLIProxyAPI sidecar for you.
+- **Manual API key.** Any OpenAI-compatible endpoint plus an API key (ideally set as an environment variable). Use this for OpenRouter, a local Ollama endpoint, or a self-hosted gateway.
 
 Everything else is config-driven. The default `config.json` ships with MCP servers that rely on **Node / npm** (`npx`) and **uvx / uv**, but these are not hard dependencies, they're just what the bundled MCP servers utilize. Mux-Swarm doesn't care how your MCP servers run. You can swap in any runtime, point to a binary you built yourself, launch a local MCP server you wrote from scratch, or connect to a remote HTTP/SSE endpoint. If it speaks MCP, it works.
 
@@ -41,11 +44,11 @@ mux-swarm
 
 The wizard walks you through seven steps:
 
-### Step 1 — Dependency Check
+### Step 1 - Dependency Check
 
 The wizard checks for tooling used by the default MCP server configuration: `python`, `node`, `npm`, `npx`, `uv`, and `uvx`. If anything is missing, the wizard will offer to install it for you. If you're using the default config, accepting is the easiest path. If you've swapped in your own MCP servers or runtimes, missing defaults here won't affect you, the check is informational.
 
-### Step 2 — File System Access
+### Step 2 - File System Access
 
 Define the paths your agents are allowed to read and write. Provide one or more comma-separated paths, then select which path to use as the agent output sandbox, this is where agents will write files and artifacts.
 
@@ -53,24 +56,40 @@ Define the paths your agents are allowed to read and write. Provide one or more 
 Paths: ~/mux-sandbox
 ```
 
-### Step 3 — Storage Configuration
+### Step 3 - Storage Configuration
 
 Configure where ChromaDB stores persistent vector data (embeddings, indexes) and where the knowledge graph file lives. Press Enter to accept the defaults inside your sandbox.
 
-### Step 4 — Model Endpoint Configuration
+### Step 4 - Model Connection
 
-Enter your OpenAI-compatible API endpoint and the environment variable name holding your API key:
+The wizard asks how you want to connect to a model:
+
+```
+Choose a connection method:
+  Manual - OpenAI-compatible endpoint + API key
+  Subscription login - Claude / Codex / Kimi / ... (browser OAuth, recommended)
+```
+
+**Subscription login (recommended).** Pick your provider (`claude`, `codex`, `kimi`, `xai`, or `antigravity`)
+and your browser opens for OAuth. On success, Mux-Swarm registers a single local `cliproxy` provider that
+points at the sidecar, so you never type an endpoint or key. The sidecar is downloaded on demand and reused
+across runs. Set your agent model id (for example `claude-opus-4-6` or `gpt-5-codex`) in `Swarm.json` or with
+`/model`. Log in to additional providers anytime with `/login`; they all join the same local router.
+
+**Manual endpoint + key.** Enter an OpenAI-compatible endpoint and the environment variable name that holds
+your API key:
 
 ```
 Endpoint: https://openrouter.ai/api/v1
 Env var name: OPENROUTER_API_KEY
 ```
 
-Raw API keys can be pasted directly (not recommended — they're only held in memory for the current session). Leave blank for local endpoints like Ollama.
+Raw API keys can be pasted directly (not recommended, they are only held in memory for the current session).
+Leave blank for local endpoints like Ollama.
 
-### Step 5 — User Profile (Optional)
+### Step 5 - User Profile (Optional)
 
-Tell your agents who you are. This helps agents personalize responses and address you by name. All fields are optional — press Enter to skip any, or type `skip` to skip the entire step.
+Tell your agents who you are. This helps agents personalize responses and address you by name. All fields are optional - press Enter to skip any, or type `skip` to skip the entire step.
 
 ```
 Name: John Doe
@@ -80,11 +99,11 @@ Locale: en-US
 Info: My preferred language of choice for backend is c#
 ```
 
-### Step 6 — MCP API Keys
+### Step 6 - MCP API Keys
 
 The wizard checks that environment variable names are configured for any MCP servers that require API keys (e.g. Brave Search). Press Enter to keep defaults, or provide alternate env var names.
 
-### Step 7 — MCP Server Validation
+### Step 7 - MCP Server Validation
 
 Each enabled MCP server is validated for connectivity. On success you'll see a summary like:
 
@@ -97,7 +116,7 @@ Each enabled MCP server is validated for connectivity. On success you'll see a s
 ✓ Loaded 3 tools from PythonReplMCP
 ```
 
-> **Troubleshooting:** If a server fails to connect and you're running in strict mode (default), Mux-Swarm will exit. You can disable a problematic server by editing `Configs/Config.json` and setting `"enabled": false` on that server, then re-launch. You can also replace any default MCP server with your own — point to a local binary, a custom runtime, or a remote HTTP/SSE endpoint. As long as it implements the MCP protocol, Mux-Swarm will pick it up. Re-run `/setup` at any time to reconfigure.
+> **Troubleshooting:** If a server fails to connect and you're running in strict mode (default), Mux-Swarm will exit. You can disable a problematic server by editing `Configs/Config.json` and setting `"enabled": false` on that server, then re-launch. You can also replace any default MCP server with your own - point to a local binary, a custom runtime, or a remote HTTP/SSE endpoint. As long as it implements the MCP protocol, Mux-Swarm will pick it up. Re-run `/setup` at any time to reconfigure.
 
 ## Verifying Your Setup
 
@@ -116,7 +135,7 @@ For a goal-driven run:
 mux-swarm --goal "List the files in my sandbox and summarize what you find"
 ```
 
-You can also use `/status` for a quick overview of your runtime configuration — active provider, model assignments, tool count, skill count, and session count:
+You can also use `/status` for a quick overview of your runtime configuration - active provider, model assignments, tool count, skill count, and session count:
 
 ```
 ╭─Mux-Swarm Status──────────────────────────────────────────────────╮
@@ -139,12 +158,14 @@ You can also use `/status` for a quick overview of your runtime configuration �
 ## Next Steps
 
 - **Launch the web UI**: `mux-swarm --serve` and open `http://localhost:6723`
+- **Add more providers**: run `/login` anytime to sign in to another subscription provider (they share one local router)
 - **Launch the full multi-agent swarm**: `/swarm`
 - **Try parallel dispatch**: `/pswarm` or `mux-swarm --parallel --goal "<goal>"`
-- Explore [Configuration](../README.md#configuration) to customize providers, agent roles, model routing, and MCP server scoping
+- Explore [Configuration](configuration.md) to customize providers, agent roles, model routing, and MCP server scoping
 - Enable plan mode with `/plan` for interactive approval before agent execution
-- Add custom [Skills](../README.md#skills-skills) to extend agent capabilities
-- Use [Scoped Instances](../README.md#scoped-instances) for multi-user or multi-environment deployments
+- Add custom [Skills](configuration.md) to extend agent capabilities
+- Use [Scoped Instances](serve-api.md) for multi-user or multi-environment deployments
+- See [Getting Started](getting-started.md) for a guided first-run tutorial
 
 ## Messaging Bridges (Optional)
 
@@ -281,7 +302,7 @@ All three bridges support voice messages and audio attachments via local Whisper
 ## Serve Layer: Editor & Auth (Optional)
 
 The web UI (`--serve`) exposes an HTTP/WebSocket API. By default the runtime is
-**zero-auth-by-design** — it expects to sit behind an nginx (or equivalent)
+**zero-auth-by-design** - it expects to sit behind an nginx (or equivalent)
 perimeter. The settings below are opt-in and default to the safe (off) state.
 
 All keys live under a `serve` object in `Config.json`:
@@ -297,9 +318,9 @@ All keys live under a `serve` object in `Config.json`:
 
 ### In-app code editor (`serve.editable`)
 
-- `editable: false` (default) — the web app can **read** sandbox files but write
+- `editable: false` (default) - the web app can **read** sandbox files but write
   endpoints (`POST /api/save`, `POST /api/fs`) return **403**.
-- `editable: true` — enables saving/creating/renaming/deleting files in the
+- `editable: true` - enables saving/creating/renaming/deleting files in the
   **sandbox only**. Session files remain read-only. Right-click a sandbox file in
   the web UI → **Open in editor**.
 
@@ -308,7 +329,7 @@ Writes are confined to the sandbox root and path-traversal is rejected.
 ### App-level auth (`serve.auth`)
 
 Optional bearer-token auth that **complements** (does not replace) your nginx
-perimeter — useful when exposing the UI directly over a trusted network
+perimeter - useful when exposing the UI directly over a trusted network
 (e.g. Tailscale) without a reverse proxy.
 
 | Key | Default | Meaning |
@@ -340,7 +361,7 @@ Notes:
 - Token comparison is constant-time; the token is never logged and is **never**
   returned by `/api/config` (which only exposes a boolean `authRequired`).
 - If `enabled: true` but no token resolves, auth stays **inactive** and a warning
-  is printed — a misconfiguration never silently locks you out.
+  is printed - a misconfiguration never silently locks you out.
 - App auth is a convenience layer; for internet-facing deployments keep the nginx
   perimeter as the primary control.
 
@@ -377,4 +398,4 @@ Control how much detail is exported via the `verbosity` field:
 
 ### Enterprise Backends
 
-The telemetry config works with any OTLP receiver. For metrics (Prometheus, Grafana) alongside traces, add an OTEL Collector between mux-swarm and your backends. No code changes needed, just infrastructure config. See the [README telemetry section](../README.md#telemetry-telemetry) for the full schema.
+The telemetry config works with any OTLP receiver. For metrics (Prometheus, Grafana) alongside traces, add an OTEL Collector between mux-swarm and your backends. No code changes needed, just infrastructure config. See [Configuration](configuration.md) for the full telemetry schema.
