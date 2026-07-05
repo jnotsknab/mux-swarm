@@ -1139,7 +1139,20 @@ public static class CliCmdUtils
     public static async Task HandleLoginAsync(string userInput, string cfgPath)
     {
         var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+        // Optional trailing "headless" / "--headless" / "--no-browser" token selects the remote-friendly
+        // flow (print the auth URL instead of auto-opening a browser). It may appear in any position after
+        // the command so both "/login headless" and "/login claude --headless" work.
+        var flags = parts.Skip(1)
+            .Where(a => a.Equals("headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("--headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("-headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("--no-browser", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("-no-browser", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        bool? headlessArg = flags.Count > 0 ? true : (bool?)null;
+        string? providerId = parts.Skip(1)
+            .FirstOrDefault(a => !a.StartsWith('-') && !a.Equals("headless", StringComparison.OrdinalIgnoreCase))
+            ?.Trim().ToLowerInvariant();
 
         var supported = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
         if (providerId is null)
@@ -1157,12 +1170,42 @@ public static class CliCmdUtils
             return;
         }
 
-        MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
+        // Resolve headless vs headful. If not forced by an arg, offer a choice defaulting to the
+        // environment heuristic (SSH / no display => headless). Headless prints the auth URL to paste
+        // into a browser on another machine - the flow for a remote / cloud VPS host.
+        bool headless;
+        if (headlessArg is bool forced)
+        {
+            headless = forced;
+        }
+        else
+        {
+            bool guessHeadless = MuxSwarm.Utils.Proxy.CliProxyManager.LooksHeadless();
+            var modeChoices = new List<string>
+            {
+                "browser - open a browser on this machine (local desktop)",
+                "headless - print the auth URL to open elsewhere (remote / VPS / SSH)",
+            };
+            // Put the environment-guessed option first so it is the default highlighted choice.
+            if (guessHeadless) modeChoices.Reverse();
+            string modePick = MuxConsole.Select("How do you want to complete the OAuth login?", modeChoices);
+            headless = modePick.StartsWith("headless");
+        }
+
+        if (headless)
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar for a headless login with {providerId}...");
+            MuxConsole.WriteMuted("(No browser will be opened. Copy the auth URL printed below into a browser on any machine, then complete the login; the callback returns here.)");
+        }
+        else
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
+        }
         MuxConsole.WriteMuted("(Subscription OAuth reuses the official client id - same posture as other subscription tools.)");
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token);
+            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token, headless);
             if (!ok)
             {
                 MuxConsole.WriteWarning($"Login for '{providerId}' did not complete.");
