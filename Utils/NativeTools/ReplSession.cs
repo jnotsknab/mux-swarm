@@ -325,6 +325,13 @@ internal sealed class ReplSession : IDisposable
         catch { /* worker exited */ }
         lock (_lock)
         {
+            // Only the reader for the CURRENT worker may mutate session state. When restart_python_worker
+            // (or Dispose) kills this worker and a fresh one is spawned, THIS thread is still blocked in
+            // ReadLine on the dead pipe; its EOF can land AFTER the new worker started a job. Without this
+            // identity guard the stale reader would flip the NEW worker's live "running" job to "dead" and
+            // trip its _doneTcs early (the CI-exposed Python_RunsPersistsAndRestarts flake). If we've been
+            // superseded, do nothing - the current worker owns its own status + TCS.
+            if (!ReferenceEquals(_worker, proc)) return;
             if (_jobStatus is "running" or "waiting_input") _jobStatus = "dead";
             _doneTcs?.TrySetResult(true);
             _varsTcs?.TrySetResult(new List<string>());
