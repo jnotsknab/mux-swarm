@@ -15,7 +15,7 @@ public class App
 {
     public static readonly string Version = "0.12.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
-    public static readonly string DebugTag = "g12.94-proxyauth";
+    public static readonly string DebugTag = "";
     
     private static readonly string BaseDir = PlatformContext.BaseDirectory;
     public static readonly string ConfigPath = PlatformContext.ConfigPath;
@@ -218,6 +218,18 @@ public class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
+        // Hooks confirm BEFORE the MCP kickoff: HookWorker.Start shows a blocking
+        // Confirm prompt when hooks are configured (interactive path), and putting it
+        // after the MCP fan-out landed the prompt in the middle of the subprocess spawn
+        // storm - key handling turned sluggish and startup felt slow. On a quiet machine
+        // the prompt is instant; MCP init still overlaps everything after it and is
+        // awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        HookWorker.Start(SwarmConfig?.Hooks ?? []);
+        OtelLogger.Info("Hook Worker Started");
+
+        // Outbound webhook sinks (Mux -> external). Inert unless swarm.json defines webhooks[].
+        WebhookSink.Start(SwarmConfig?.Webhooks);
+
         // Kick off MCP server connections in the background so the user is
         // dropped into the interactive prompt immediately. Connection results
         // are awaited lazily via EnsureMcpReadyAsync() before the first tool use.
@@ -227,9 +239,6 @@ public class App
         // background thread too. Calling it directly stalled startup ~700ms before the kickoff
         // returned; this makes time-to-prompt effectively instant.
         McpInitTask = Task.Run(() => InitMcpServersAsync(Config));
-
-        HookWorker.Start(SwarmConfig?.Hooks ?? []);
-        OtelLogger.Info("Hook Worker Started");
         startupSpan?.Dispose();
     }
 
@@ -254,8 +263,28 @@ public class App
         // user can boot straight into a mode/agent every run (e.g. "--agent CodeAgent --giga").
         // Real CLI flags come AFTER and therefore win on any single-valued override. Set via
         // /startargs. Machine transports (--stdio/--serve/--acp) ignore startup mode entry.
+        // Capture argv for a possible in-process restart (POST /api/restart, post-update relaunch),
+        // then apply any staged update binary + honor a predecessor-wait handshake from a relaunch.
+        MuxSwarm.State.Relauncher.OriginalArgs = args;
+        MuxSwarm.State.SelfUpdater.ApplyStagedBinaryIfPresent();
+        args = MuxSwarm.State.Relauncher.WaitForPredecessorAndStrip(args);
+        MuxSwarm.State.Relauncher.OriginalArgs = args;
+
         args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
+
+        // --update : do-and-exit self-update from the latest GitHub release.
+        if (parsed.UpdateMode)
+        {
+            var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
+            MuxConsole.WriteInfo(msg);
+            if (staged)
+            {
+                MuxConsole.WriteWarning("Mux-Swarm must restart to finish applying the update. Restarting...");
+                MuxSwarm.State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+            }
+            return 0;
+        }
 
         // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
         // console.renderMode config; default "auto" is capability-aware. No effect on the
@@ -1015,6 +1044,9 @@ public class App
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
                     break;
+                case var vc when vc == "/voice" || vc.StartsWith("/voice "):
+                    CliCmdUtils.HandleVoice(vc);
+                    break;
                 case "/swap":
                     CliCmdUtils.HandleAgentSwap();
                     break;
@@ -1315,6 +1347,35 @@ public class App
                     break;
                 }
 
+                case "/update":
+                {
+                    // Session-agnostic process-level self-update (Scope.Both): runs identically at the
+                    // menu and in-session. Downloads the latest release, verifies its published SHA256,
+                    // replaces changed shipped files (user configs/sessions/memory preserved), and if the
+                    // binary itself changed, stages it and relaunches to finish the swap.
+                    var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
+                    MuxConsole.WriteInfo(msg);
+                    if (staged)
+                    {
+                        MuxConsole.WriteWarning("Mux-Swarm must restart to finish applying the update. Restarting...");
+                        MuxSwarm.State.Relauncher.RestartNow(() => MuxConsole.DisableDockedFooter());
+                    }
+                    break;
+                }
+
+                case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ")
+                                  || dmnCmd == "/da" || dmnCmd.StartsWith("/da "):
+                {
+                    // /daemon is session-AGNOSTIC: it controls process-level background triggers
+                    // (DaemonRunner) that do not depend on any live session, so it runs at the menu
+                    // exactly as it does in-session (via MetaCommandDispatch). EnsureRunner lazily
+                    // starts the daemon and needs MCP tools; the background MCP init may not have
+                    // landed yet at the menu, so make sure it's ready first (idempotent + cheap).
+                    await EnsureMcpReadyAsync();
+                    MuxSwarm.State.DaemonCommand.Run(userInput);
+                    break;
+                }
+
                 default:
                     if (userInput.StartsWith("/"))
                     {
@@ -1504,7 +1565,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         string AgentName,
         int? ServePort,
         bool DaemonMode,
-        bool AcpMode
+        bool AcpMode,
+        bool UpdateMode
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -1578,6 +1640,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         string? agentName = null;
         bool daemonMode = false;
         bool acpMode = false;
+        bool updateMode = false;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -1816,6 +1879,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 case "--daemon":
                     daemonMode = true;
                     break;
+                case "--update":
+                    updateMode = true;
+                    break;
                 case "--register":
                     ServiceRegistration.Register(args);
                     Environment.Exit(0);
@@ -1848,7 +1914,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             agentName,
             ServePort,
             daemonMode,
-            acpMode
+            acpMode,
+            updateMode
         );
     }
 
@@ -2007,12 +2074,24 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .ToList();
         int enabledCount = enabledServers.Count;
 
-        // Connect to all enabled servers concurrently; shared collections are
-        // populated sequentially after the gather to avoid races on
-        // McpClients / McpTools. Success is logged only (no console output);
-        // failures are reported to the console inside ConnectMcpServerAsync.
+        // Connect to enabled servers concurrently but THROTTLED: an unbounded
+        // Task.WhenAll over ~14 stdio servers spawns every subprocess at once
+        // (uvx/npx/python package resolution + imports), and that spawn storm
+        // saturates CPU/disk/thread pool right as the TUI paints and any startup
+        // prompt reads keys - the whole app feels sluggish. A gate of 4 keeps the
+        // pipeline full (spawns are mostly I/O-bound waits) while flattening the
+        // instantaneous load spike. Shared collections are still populated
+        // sequentially after the gather to avoid races on McpClients / McpTools.
+        // Success is logged only (no console output); failures are reported to
+        // the console inside ConnectMcpServerAsync.
+        using var connectGate = new SemaphoreSlim(4);
         var results = await Task.WhenAll(
-            enabledServers.Select(kvp => ConnectMcpServerAsync(kvp.Key, kvp.Value, baseDir, config)));
+            enabledServers.Select(async kvp =>
+            {
+                await connectGate.WaitAsync();
+                try { return await ConnectMcpServerAsync(kvp.Key, kvp.Value, baseDir, config); }
+                finally { connectGate.Release(); }
+            }));
 
         int successCount = 0;
         foreach (var result in results)

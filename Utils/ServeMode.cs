@@ -135,6 +135,23 @@ public static partial class ServeMode
             {
                 FileProvider = new PhysicalFileProvider(wwwroot),
                 RequestPath = "",
+                // The SPA shell (index.html / any .html) must never be cached: after a
+                // build the served HTML changes but the WS/event contract may change with
+                // it, and a stale cached shell diverges from the backend (interactive
+                // panels like /setmodel hang because the old frontend never round-trips
+                // the answer). The MapFallback path already sets no-cache, but a direct
+                // /index.html hit is served here by the static middleware with an ETag
+                // instead -- close that leak. Other assets (Monaco, fonts) keep caching.
+                OnPrepareResponse = ctx =>
+                {
+                    if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var headers = ctx.Context.Response.Headers;
+                        headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                        headers["Pragma"] = "no-cache";
+                        headers["Expires"] = "0";
+                    }
+                },
             });
 
             app.MapFallback(async context =>
@@ -567,6 +584,11 @@ public static partial class ServeMode
     private static bool RequiresAuth(HttpContext context)
     {
         var path = context.Request.Path;
+        // Inbound webhook endpoints authenticate per-trigger via HMAC (or the bearer, in-handler),
+        // NOT via the runtime bearer middleware -- an external sender (GitHub/Stripe) can't present
+        // the Mux token. So /api/hook/* is excluded here and does its own auth in HandleWebhook.
+        if (path.StartsWithSegments("/api/hook", StringComparison.OrdinalIgnoreCase))
+            return false;
         return path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/ws", StringComparison.OrdinalIgnoreCase);
     }

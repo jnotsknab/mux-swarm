@@ -805,6 +805,17 @@ public static partial class MuxConsole
     /// <summary>Read a line through the driver's pinned input box. Caller guards with TuiActive.</summary>
     internal static string? TuiReadLine() => _driver?.ReadLine();
 
+    /// <summary>/voice: queue transcript text for insertion into the live compose buffer.
+    /// Thread-safe; no-op outside the TUI (voice is TUI-path-only in v1).</summary>
+    internal static void InjectComposeText(string text) { if (ViaDriver) _driver!.VoiceInject(text); }
+
+    /// <summary>/voice: request the compose buffer be submitted as if Enter was pressed.
+    /// Thread-safe; no-op outside the TUI or when the buffer is empty.</summary>
+    internal static void SubmitComposeBuffer() { if (ViaDriver) _driver!.VoiceSubmit(); }
+
+    /// <summary>/voice: nudge the input area to repaint on the next poll tick (state dot).</summary>
+    internal static void TuiRepaintSoon() { if (ViaDriver) _driver!.VoiceRepaintSoon(); }
+
     /// <summary>Commit a single markup line into scrollback via the driver (caller guards with ViaDriver).</summary>
     internal static void CommitToDriver(string markupLine) { if (ViaDriver) lock (ConsoleLock) { _driver!.CommitLine(markupLine); } }
 

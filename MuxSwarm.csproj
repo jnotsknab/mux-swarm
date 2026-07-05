@@ -79,6 +79,7 @@
         <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.0" />
         <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.0" />
         <PackageReference Include="ModelContextProtocol" Version="1.2.0" />
+        <PackageReference Include="NAudio.WinMM" Version="2.2.1" />
         <PackageReference Include="OpenAI" Version="2.10.0" />
         <PackageReference Include="OpenTelemetry" Version="1.15.3" />
         <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />

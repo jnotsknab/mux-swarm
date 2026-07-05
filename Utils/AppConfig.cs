@@ -386,6 +386,16 @@ public class ServeConfig
     [JsonPropertyName("editable")]
     public bool Editable { get; set; } = false;
 
+    /// <summary>
+    /// When true, the native config editor endpoints (GET/PUT /api/config-files/{config|swarm})
+    /// are enabled, letting the web app read and write Config.json / Swarm.json. Default false
+    /// keeps config files unreachable over the serve layer. Sibling of <see cref="Editable"/>
+    /// (which gates sandbox file writes); kept separate so config editing can be granted or
+    /// withheld independently of IDE file writes.
+    /// </summary>
+    [JsonPropertyName("configExposed")]
+    public bool ConfigExposed { get; set; } = false;
+
     /// <summary>Optional app-level auth for the serve layer. Default disabled.</summary>
     [JsonPropertyName("auth")]
     public ServeAuthConfig Auth { get; set; } = new();

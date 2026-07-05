@@ -179,6 +179,71 @@ public static class CliCmdUtils
             : "Standard single-line input restored.");
     }
 
+    /// <summary>
+    /// /voice [auto|off|on] - local speech-to-text dictation into the compose field (whisper.cpp,
+    /// downloaded in the background on first use). TUI renderer only in v1: stdio/serve has the
+    /// web app's browser mic, and the classic line renderer has no live compose buffer to inject
+    /// into. Bare /voice toggles manual mode; "auto" submits on ~1.8s silence; saying exactly
+    /// "send" submits in manual mode. Hard defaults, no config block.
+    /// </summary>
+    public static void HandleVoice(string input)
+    {
+        var arg = input.Length > "/voice".Length ? input.Substring("/voice".Length).Trim().ToLowerInvariant() : "";
+
+        if (arg == "off")
+        {
+            MuxConsole.WriteInfo(Voice.VoiceSession.Stop());
+            return;
+        }
+
+        // /voice vol [1-10]: mic sensitivity tune. Bare "vol" shows the current level; a number
+        // sets it (takes effect immediately, works while voice is live). 1 = least sensitive
+        // (noisy room), 10 = most sensitive (quiet/far speech). Runtime-only, not persisted.
+        if (arg == "vol" || arg.StartsWith("vol "))
+        {
+            var volArg = arg.Length > 3 ? arg.Substring(3).Trim() : "";
+            if (volArg.Length == 0)
+            {
+                MuxConsole.WriteInfo($"Mic sensitivity: {Voice.VoiceSession.Sensitivity}/10 (higher = picks up quieter speech). Set with /voice vol <1-10>.");
+                return;
+            }
+            if (!int.TryParse(volArg, out int lvl) || lvl < 1 || lvl > 10)
+            {
+                MuxConsole.WriteMuted("Usage: /voice vol <1-10>  - 1 = least sensitive (noisy room), 10 = most sensitive (quiet room).");
+                return;
+            }
+            Voice.VoiceSession.Sensitivity = lvl;
+            MuxConsole.WriteSuccess($"Mic sensitivity set to {lvl}/10{(Voice.VoiceSession.IsActive ? " (live)" : "")}.");
+            return;
+        }
+
+        if (!MuxConsole.IsTui)
+        {
+            MuxConsole.WriteWarning(MuxConsole.StdioMode
+                ? "/voice is a TUI feature - the web app has its own mic button (voice toggle in the composer)."
+                : "/voice needs the live TUI renderer (/tui). The classic renderer has no live compose field.");
+            return;
+        }
+
+        bool auto = arg == "auto";
+        if (arg is not ("" or "auto" or "on"))
+        {
+            MuxConsole.WriteMuted("Usage: /voice [auto|off|vol <1-10>]  - bare = manual (say 'send' or press Enter), auto = submit on silence, vol = mic sensitivity.");
+            return;
+        }
+
+        // Bare /voice while already on (same mode) = toggle off, matching /hooks-style ergonomics.
+        if (Voice.VoiceSession.IsActive && !auto && !Voice.VoiceSession.AutoMode && arg != "on")
+        {
+            MuxConsole.WriteInfo(Voice.VoiceSession.Stop());
+            return;
+        }
+
+        MuxConsole.WriteInfo(Voice.VoiceSession.Start(auto));
+        if (!Voice.WhisperAssets.IsProvisioned)
+            MuxConsole.WriteMuted("First use downloads whisper.cpp + a ~57MB speech model to Runtime/whisper/.");
+    }
+
     public static bool HandleToggleSingleModeSubAgents(bool current, bool parallel = false)
     {
         current = !current;
@@ -711,31 +776,52 @@ public static class CliCmdUtils
             if (names.Count == 0)
             {
                 MuxConsole.WriteWarning("Could not reach the curated skill sources (check your network).");
-                MuxConsole.WriteMuted("Usage: /installskill <name> | /installskill <github-tree-url> [overwrite]");
+                MuxConsole.WriteMuted("Usage: /installskill <name> | <owner/repo> | <owner/repo/path/to/skill> | <github-tree-url> [overwrite]");
                 return;
             }
             MuxConsole.WritePanel("Installable skills (curated)",
                 string.Join("\n", names.Select(n => "- " + n))
-                + "\n\nInstall with: /installskill <name>  (add 'overwrite' to replace an existing one)");
+                + "\n\nSources: " + string.Join("; ", SkillInstaller.SourceLabels())
+                + "\n\nInstall with: /installskill <name>  (or owner/repo, owner/repo/path/to/skill, a GitHub tree URL; add 'overwrite' to replace).");
             return;
         }
 
         string target = rest[0];
+
+        // Prompt-injection / supply-chain warning. A skill is untrusted third-party content that gets
+        // loaded into the model's context (and may ship scripts). Make the user consciously accept it.
+        MuxConsole.WriteWarning("\u26a0  Skills are third-party content loaded into the agent's context and may include scripts.");
+        MuxConsole.WriteMuted("   A malicious skill can attempt prompt injection or run code. Only install from sources you trust,");
+        MuxConsole.WriteMuted("   and AUDIT the installed SKILL.md + any scripts/ externally before relying on it (e.g. a security");
+        MuxConsole.WriteMuted("   scanner or a manual read). Curated/official sources are safer but not a guarantee.");
+        if (!MuxConsole.Confirm($"Install skill '{target}' now?", defaultValue: false))
+        {
+            MuxConsole.WriteMuted("Skill install cancelled.");
+            return;
+        }
+
         string result = "";
-        bool isUrl = target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
-                  || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
         await MuxConsole.WithSpinnerAsync($"Installing skill '{target}'", async () =>
         {
-            result = isUrl
-                ? await SkillInstaller.InstallFromUrlAsync(target, overwrite)
+            result = LooksLikeExplicitTarget(target)
+                ? await SkillInstaller.InstallFromTargetAsync(target, overwrite)
                 : await SkillInstaller.InstallByNameAsync(target, overwrite);
         });
 
         if (result.StartsWith("Installed ", StringComparison.Ordinal))
+        {
             MuxConsole.WriteSuccess(result);
+            MuxConsole.WriteMuted("Reminder: review the installed SKILL.md + scripts/ before trusting this skill.");
+        }
         else
             MuxConsole.WriteWarning(result);
     }
+
+    // A bare token with no slash and no scheme is a curated NAME; anything with a "/" or URL scheme is
+    // an explicit owner/repo, owner/repo/path, or GitHub URL target.
+    private static bool LooksLikeExplicitTarget(string t) =>
+        t.Contains('/') || t.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                        || t.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
     public static async Task ReloadMcpServersAsync(
         Func<AppConfig, Task<bool>> initMcpServers,
@@ -1053,7 +1139,20 @@ public static class CliCmdUtils
     public static async Task HandleLoginAsync(string userInput, string cfgPath)
     {
         var parts = userInput.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        string? providerId = parts.Length >= 2 ? parts[1].Trim().ToLowerInvariant() : null;
+        // Optional trailing "headless" / "--headless" / "--no-browser" token selects the remote-friendly
+        // flow (print the auth URL instead of auto-opening a browser). It may appear in any position after
+        // the command so both "/login headless" and "/login claude --headless" work.
+        var flags = parts.Skip(1)
+            .Where(a => a.Equals("headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("--headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("-headless", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("--no-browser", StringComparison.OrdinalIgnoreCase)
+                     || a.Equals("-no-browser", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        bool? headlessArg = flags.Count > 0 ? true : (bool?)null;
+        string? providerId = parts.Skip(1)
+            .FirstOrDefault(a => !a.StartsWith('-') && !a.Equals("headless", StringComparison.OrdinalIgnoreCase))
+            ?.Trim().ToLowerInvariant();
 
         var supported = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
         if (providerId is null)
@@ -1071,12 +1170,42 @@ public static class CliCmdUtils
             return;
         }
 
-        MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
+        // Resolve headless vs headful. If not forced by an arg, offer a choice defaulting to the
+        // environment heuristic (SSH / no display => headless). Headless prints the auth URL to paste
+        // into a browser on another machine - the flow for a remote / cloud VPS host.
+        bool headless;
+        if (headlessArg is bool forced)
+        {
+            headless = forced;
+        }
+        else
+        {
+            bool guessHeadless = MuxSwarm.Utils.Proxy.CliProxyManager.LooksHeadless();
+            var modeChoices = new List<string>
+            {
+                "browser - open a browser on this machine (local desktop)",
+                "headless - print the auth URL to open elsewhere (remote / VPS / SSH)",
+            };
+            // Put the environment-guessed option first so it is the default highlighted choice.
+            if (guessHeadless) modeChoices.Reverse();
+            string modePick = MuxConsole.Select("How do you want to complete the OAuth login?", modeChoices);
+            headless = modePick.StartsWith("headless");
+        }
+
+        if (headless)
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar for a headless login with {providerId}...");
+            MuxConsole.WriteMuted("(No browser will be opened. Copy the auth URL printed below into a browser on any machine, then complete the login; the callback returns here.)");
+        }
+        else
+        {
+            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser to log in with {providerId}...");
+        }
         MuxConsole.WriteMuted("(Subscription OAuth reuses the official client id - same posture as other subscription tools.)");
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token);
+            bool ok = await MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(providerId, cts.Token, headless);
             if (!ok)
             {
                 MuxConsole.WriteWarning($"Login for '{providerId}' did not complete.");

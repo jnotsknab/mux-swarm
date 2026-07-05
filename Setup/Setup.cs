@@ -478,7 +478,7 @@ public static class Setup
     {
         var providers = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
         MuxConsole.WriteLine();
-        MuxConsole.WriteBody("Log in to a subscription provider. Your browser will open for OAuth.");
+        MuxConsole.WriteBody("Log in to a subscription provider via OAuth.");
         MuxConsole.WriteMuted("(Reuses the official client id - same posture as other subscription tools.)");
         MuxConsole.WriteLine();
         var providerChoices = providers.ToList();
@@ -490,11 +490,31 @@ public static class Setup
             return false;
         }
 
+        // Pick browser vs headless login. Default follows the environment heuristic (SSH / no display
+        // => headless), so a setup run on a remote / cloud VPS defaults to the URL-print flow.
+        bool guessHeadless = MuxSwarm.Utils.Proxy.CliProxyManager.LooksHeadless();
+        var modeChoices = new System.Collections.Generic.List<string>
+        {
+            "browser - open a browser on this machine (local desktop)",
+            "headless - print the auth URL to open elsewhere (remote / VPS / SSH)",
+        };
+        if (guessHeadless) modeChoices.Reverse();
+        string modePick = MuxConsole.Select("How do you want to complete the OAuth login?", modeChoices);
+        bool headless = modePick.StartsWith("headless");
+
         try
         {
-            MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
+            if (headless)
+            {
+                MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar for a headless login with {pick}...");
+                MuxConsole.WriteMuted("(No browser will be opened. Copy the auth URL printed below into a browser on any machine to complete the login.)");
+            }
+            else
+            {
+                MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
+            }
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token).GetAwaiter().GetResult();
+            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token, headless).GetAwaiter().GetResult();
             if (!ok)
             {
                 MuxConsole.WriteWarning($"Login for '{pick}' did not complete.");

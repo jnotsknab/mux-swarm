@@ -1,4 +1,4 @@
-# ACP — Zed Agent Client Protocol Adapter
+# ACP - Zed Agent Client Protocol Adapter
 
 Mux-Swarm can run as an **ACP agent server** (Zed Industries' Agent Client Protocol) so
 editors like [Zed](https://zed.dev) can drive a Mux single-agent session as an external agent.
@@ -37,7 +37,7 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 
 > **Why pass `--cfg` / `--swarmcfg`?** ACP runs headless with no first-run setup prompt. Point
 > it at an already-configured install so it does not fall into provider onboarding. If those
-> files are missing, Mux writes a default `swarm.json` and prints setup guidance — which would
+> files are missing, Mux writes a default `swarm.json` and prints setup guidance - which would
 > not reach a stdout-pure ACP client.
 
 ## What is implemented
@@ -74,16 +74,16 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 
 ## Architecture (how it works)
 
-The adapter (`Utils/Acp/`) is a thin transport shim over the existing single-agent REPL — it
+The adapter (`Utils/Acp/`) is a thin transport shim over the existing single-agent REPL - it
 does **not** re-implement the turn engine:
 
-- **`AcpProtocol`** — pure, side-effect-free JSON-RPC envelope + ACP update factories and the
+- **`AcpProtocol`** - pure, side-effect-free JSON-RPC envelope + ACP update factories and the
   prompt content-block flattener. Fully unit-tested with no live model.
-- **`AcpInputReader`** — a `TextReader` installed as `MuxConsole.InputOverride` (the same seam
+- **`AcpInputReader`** - a `TextReader` installed as `MuxConsole.InputOverride` (the same seam
   `--serve` uses for its WebSocket input). It feeds prompts to the orchestrator's next-turn
   `ReadInput()`. **Entering that read is the exact turn-completion boundary** at which the
   in-flight `session/prompt` is answered with a `stopReason`.
-- **`AcpServer`** — the stdio JSON-RPC loop + session lifecycle. It captures the orchestrator's
+- **`AcpServer`** - the stdio JSON-RPC loop + session lifecycle. It captures the orchestrator's
   structured event stream via `MuxConsole.AcpSink` and translates each event into a
   `session/update` notification, so stdout carries pure ACP and never the NDJSON wire.
 

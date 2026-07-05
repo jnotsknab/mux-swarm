@@ -80,7 +80,7 @@ public struct Help
         "  /nodbg          Disable tool call output (applies to stdio mode only)",
         "  /setup          Run initial setup / reconfigure",
         "  /reloadskills   Refresh skills directory for any mid process changes",
-        "  /installskill   Install a skill by name (openai/skills, VoltAgent/...) or from a GitHub repo URL",
+        "  /installskill   Install an agent skill by name (anthropics/obra/dotnet/openai/...), owner/repo, owner/repo/path, or GitHub URL",
         "  /refresh        Perform a full Mux system refresh by refreshing config, re-initializing MCP servers and re-loading skills",
         "  /report         Generate full session audit reports, tool calls, delegations, artifacts, and outcomes",
         "  /report <id>    Audit a specific session by timestamp",

@@ -302,6 +302,13 @@ public static class SwarmDefaults
                 mcpServers = singleAgentServers,
                 toolPatterns = Array.Empty<string>()
             },
+            // Default the vision model to the selected agent model so the analyze_image tool
+            // is available out of the box. Modern flagship models are multimodal; if a model
+            // cannot see, the provider errors on the specific call rather than the tool being absent.
+            visionAgent = new
+            {
+                model = models.AgentModel
+            },
             orchestrator = new
             {
                 promptPath = P("od_fast.md"),

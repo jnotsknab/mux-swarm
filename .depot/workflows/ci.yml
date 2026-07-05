@@ -6,10 +6,10 @@
 name: CI/CD
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 permissions:
   contents: write
 env:
