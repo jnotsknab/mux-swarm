@@ -170,7 +170,7 @@ internal sealed class TuiDriver
     // scrollback the instant any other content commits (next tool call / stream / line), so only
     // ONE completion dot ever pulses at a time, just above the footer. Stores everything needed to
     // re-emit the merged line + retain its expandable block on flush. Null = nothing settling.
-    private (string Tool, string? Args, string Result, bool Error, bool Expandable)? _settling;
+    private (string Tool, string? Args, string Result, bool Error, bool Expandable, string? ExpandBody)? _settling;
 
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
     // (total session age, shown by the session timer); _loopStart is set when an agentic
@@ -213,6 +213,23 @@ internal sealed class TuiDriver
     // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
     // stashed here and replayed through the normal edit path so nothing is dropped.
     private readonly Queue<ConsoleKeyInfo> _ungetq = new();
+
+    // --- /voice: transcripts + submit requests from the voice worker thread. Drained by the
+    // input thread inside ReadLine's poll loop (active only while voice is on), so the line
+    // editor is NEVER mutated cross-thread. The poll tick doubles as the animation clock for
+    // the compose-field voice indicator (pulsing dot replaces the prompt caret).
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _voiceInject = new();
+    private volatile bool _voiceSubmit;
+    private volatile bool _voiceDirty;
+
+    /// <summary>Queue transcript text for insertion into the compose buffer (thread-safe).</summary>
+    public void VoiceInject(string text) { if (!string.IsNullOrEmpty(text)) { _voiceInject.Enqueue(text); _voiceDirty = true; } }
+
+    /// <summary>Request the current compose buffer be submitted as if Enter was pressed (thread-safe).</summary>
+    public void VoiceSubmit() { _voiceSubmit = true; }
+
+    /// <summary>Request an input-area repaint on the next voice poll tick (thread-safe).</summary>
+    public void VoiceRepaintSoon() { _voiceDirty = true; }
 
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
@@ -484,19 +501,22 @@ internal sealed class TuiDriver
     /// No-op fallback: if there is no pending call, commits the merged line as-is so the
     /// result is never lost.
     /// </summary>
-    public void ResolveMergedToolResult(string resultText, bool error = false)
+    public void ResolveMergedToolResult(string resultText, bool error = false, string? expandBody = null)
     {
         var (tool, args) = _pendingTool ?? ("", null);
         _pendingTool = null;
         _thinkingText = null;
         int infoLines = (resultText ?? "").Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
-        bool expandable = _collapseToolLines > 0 && infoLines > _collapseToolLines;
+        // An expandBody override (e.g. repl_shell_exec code shown above its output) makes the result
+        // expandable even when the visible result is short, so the user can always open the card to
+        // read the exact code that ran. The collapsed one-liner stays lean either way.
+        bool expandable = (_collapseToolLines > 0 && infoLines > _collapseToolLines) || expandBody is not null;
         // Flush any PRIOR settling result to static scrollback, then HOLD this newest one in the
         // live region so its completion dot pulses slowly until the next event supersedes it. This
         // is the only way the most-recent completed dot can animate (committed scrollback can't be
         // repainted). The held line still retains its expandable block on flush (see FlushSettling).
         FlushSettlingResult();
-        _settling = (tool, args, resultText ?? "", error, expandable);
+        _settling = (tool, args, resultText ?? "", error, expandable, expandBody);
         Repaint();
     }
 
@@ -773,7 +793,7 @@ internal sealed class TuiDriver
         var merged = Lane(TuiComponents.ToolCallResultMerged(s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1));
         if (s.Expandable && merged.Count > 0)
         {
-            RetainExpandable(merged[0], toolName, s.Result, s.Error);
+            RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
             for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
             TrimTranscript();
             if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
@@ -1338,6 +1358,36 @@ internal sealed class TuiDriver
             {
                 ConsoleKeyInfo key;
                 if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else if (Voice.VoiceSession.IsActive)
+                {
+                    // /voice on: poll instead of blocking so the loop can service transcript
+                    // injects, voice-driven submits, and the indicator animation between keys.
+                    ConsoleKeyInfo? polled = null;
+                    int frame = 0;
+                    while (true)
+                    {
+                        // Drain voice work first so dictation lands even while no key arrives.
+                        bool changed = DrainVoice(out var submitted);
+                        if (submitted is not null) return submitted;
+                        try { if (Console.KeyAvailable) { polled = Console.ReadKey(intercept: true); break; } }
+                        catch (InvalidOperationException)
+                        {
+                            _inInput = false;
+                            _region.Clear();
+                            return Console.ReadLine();
+                        }
+                        // ~10 fps indicator animation while listening/hearing/transcribing.
+                        if (changed || (++frame % 3) == 0) Repaint();
+                        Thread.Sleep(33);
+                        if (!Voice.VoiceSession.IsActive)
+                        {
+                            Repaint();   // voice turned off elsewhere - restore the normal caret
+                            break;
+                        }
+                    }
+                    if (polled is null) continue;
+                    key = polled.Value;
+                }
                 else
                 {
                     try { key = Console.ReadKey(intercept: true); }
@@ -1598,6 +1648,43 @@ internal sealed class TuiDriver
             _inInput = false;
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
+    }
+
+    /// <summary>
+    /// Drain queued voice transcripts into the line editor and honor a pending voice submit.
+    /// MUST run on the input thread (mutates the editor). Returns true when the buffer changed;
+    /// when a submit fires with a non-empty buffer, <paramref name="submitted"/> carries the line
+    /// exactly as the Enter path would return it (echoed + remembered) and ReadLine returns it.
+    /// </summary>
+    private bool DrainVoice(out string? submitted)
+    {
+        submitted = null;
+        bool changed = _voiceDirty;
+        _voiceDirty = false;
+        while (_voiceInject.TryDequeue(out var text))
+        {
+            // Separate from existing content with a space, like the web app's mic append.
+            if (!_editor.IsEmpty && !_editor.Buffer.EndsWith(' ') && !_editor.Buffer.EndsWith('\n'))
+                _editor.InsertText(" ");
+            _editor.InsertText(text);
+            changed = true;
+        }
+        if (_voiceSubmit)
+        {
+            _voiceSubmit = false;
+            string line = _editor.Buffer.Trim();
+            if (line.Length > 0)
+            {
+                _editor.Remember(line);
+                _inInput = false;
+                _pendingGap = false;
+                if (!TuiCommands.OpensInteractivePrompt(line))
+                    CommitMirrored(TuiComponents.UserEcho(line));
+                submitted = line;
+                return true;
+            }
+        }
+        return changed;
     }
 
     /// <summary>True when more console key events are already buffered (fast typing / paste /

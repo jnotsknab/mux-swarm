@@ -4,7 +4,7 @@ Real-world examples of Mux-Swarm in action. Each section includes a video walkth
 
 ---
 
-## Parallel Swarm — AI Industry Intelligence Sweep
+## Parallel Swarm - AI Industry Intelligence Sweep
 
 **Mode:** `/pswarm` or `--parallel`
 **Best for:** Large goals that decompose into independent subtasks, research sweeps, batch analysis, documentation sprints, anything where subtasks don't depend on each other.
@@ -20,7 +20,7 @@ https://github.com/user-attachments/assets/23077140-ea45-4741-8fe4-09712e0d40a0
 
 ---
 
-## Multi-Agent Swarm — Coding & System Analysis
+## Multi-Agent Swarm - Coding & System Analysis
 
 **Mode:** `/swarm` or default CLI goal execution
 **Best for:** Multi-step objectives that require coordination between specialists, the orchestrator delegates to the right agent for each phase, compacts results, and drives toward completion.
@@ -36,7 +36,7 @@ https://github.com/user-attachments/assets/b892f5bd-390f-47ae-affb-8dc2db13ed67
 
 ---
 
-## Single Agent — Direct, Iterative, Hands-On
+## Single Agent - Direct, Iterative, Hands-On
 
 **Mode:** `/agent`
 **Best for:** Focused tasks where you want direct back-and-forth with one agent, debugging, exploration, iterative refinement, or when you want full control over the conversation. If you prefer a workflow similar to Claude Code or Cursor, this is your exec mode.
@@ -52,7 +52,7 @@ https://github.com/user-attachments/assets/acf7cdcd-5a3c-47eb-8adb-4520a640d16f
 
 ---
 
-## CLI One-Liner — Fire and Forget
+## CLI One-Liner - Fire and Forget
 
 **Mode:** `mux-swarm --goal "<goal>"`
 **Best for:** Scripting, automation, pipelines, or when you know exactly what you want and don't need an interactive session. Pair with `--agent <name>` to target a specific agent, or let the swarm handle it.
@@ -69,10 +69,14 @@ https://github.com/user-attachments/assets/a8a6dc67-b49a-4230-bcb0-45d60267a01b
 
 ## Choosing the Right Mode
 
+Mux-Swarm has two families of execution: interactive single-agent modes where you stay in the loop (`/agent`, `/ultra`, `/giga`), and batch swarm modes where you hand off a ready plan (`/swarm`, `/pswarm`).
+
 | Mode | Command | When to use it |
 |------|---------|----------------|
-| **Parallel Swarm** | `/pswarm` · `--parallel` | Independent subtasks that can run simultaneously — research, batch jobs, documentation |
-| **Sequential Swarm** | `/swarm` · default | Multi-step goals requiring agent coordination and orchestrator-managed handoffs |
-| **Single Agent** | `/agent` | Direct conversation with one agent — iterative work, debugging, exploration |
-| **CLI Goal** | `--goal` | Automation, scripts, pipelines — fire and forget |
-| **Continuous** | `--continuous` | Long-running autonomous loops — monitoring, recurring reports, scheduled work |
+| **Single Agent** | `/agent` | Direct conversation with one agent: iterative work, debugging, exploration |
+| **Ultra** | `/ultra` | Interactive deep-reasoning inside the single-agent loop: plan + max reasoning + heavy sub-agent delegation |
+| **Giga** | `/giga` | Ultra plus on-the-fly named teams and author/run workflows, still interactive |
+| **Sequential Swarm** | `/swarm` · default | Plan already laid out, time to implement: multi-step builds, whole-codebase refactors |
+| **Parallel Swarm** | `/pswarm` · `--parallel` | Independent subtasks that run simultaneously: research, batch jobs, documentation |
+| **CLI Goal** | `--goal` | Automation, scripts, pipelines: fire and forget |
+| **Continuous** | `--continuous` | Long-running autonomous loops: monitoring, recurring reports, scheduled work |

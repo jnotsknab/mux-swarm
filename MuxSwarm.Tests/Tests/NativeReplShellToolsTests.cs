@@ -102,4 +102,36 @@ public class NativeReplShellToolsTests
         if (Norm(replExe).Contains(".venv"))
             Assert.Contains(".venv", Norm(shellOut));
     }
+
+    [Fact]
+    public async Task ReplExec_ShowsFullCode_ForDisplayOnly_NotInModelResult()
+    {
+        using var _ = ReplShellTools.BeginScope("t_" + System.Guid.NewGuid().ToString("N")[..8]);
+
+        const string code = "a = 1\nb = 2\nc = a + b\nprint(\"sum\", c)";
+        var result = await Call("repl_shell_exec", new { code });
+
+        // Model-facing result carries the output but NOT the code (no "Code:" echo at all now - the
+        // model generated the source, so repeating it is dead-weight tokens).
+        Assert.Contains("sum 3", result);
+        Assert.DoesNotContain("Code:", result);
+        Assert.DoesNotContain("b = 2", result);
+        Assert.DoesNotContain("c = a + b", result);
+
+        // Display side (session-scoped) holds the FULL code for the TUI card - a NON-draining read,
+        // so every python REPL tool card (repl_shell_exec / check_python_status / send_python_input)
+        // can echo the SAME running/last job\u0027s code.
+        var shown = ReplShellTools.CurrentReplCode();
+        Assert.NotNull(shown);
+        Assert.Contains("a = 1", shown!);
+        Assert.Contains("b = 2", shown!);
+        Assert.Contains("c = a + b", shown!);
+        // Non-draining: a second read still returns the same code (the card can render repeatedly).
+        Assert.Equal(shown, ReplShellTools.CurrentReplCode());
+
+        // check_python_status reports the SAME last job, so its card echoes the same code too.
+        var status = await Call("check_python_status", new { });
+        Assert.DoesNotContain("Code:", status);
+        Assert.Contains("c = a + b", ReplShellTools.CurrentReplCode()!);
+    }
 }

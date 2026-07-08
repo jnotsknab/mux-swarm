@@ -62,6 +62,10 @@ internal static class MetaCommandDispatch
                 MuxSwarm.Utils.Teams.KanbanCommand.Run(line);
                 return Result.Handled;
 
+            case "/voice":
+                CliCmdUtils.HandleVoice(line);
+                return Result.Handled;
+
             case "/hide":
             {
                 var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";

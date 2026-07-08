@@ -23,7 +23,7 @@ internal static class TuiMarkdown
     private static string Code => Theme.Active.MdCode;      // inline code
     private static string Bullet => Theme.Active.Muted;     // list bullet
     private static string Link => Theme.Active.MdLink;      // links (underlined)
-    private const string CodeBg = "#1E1E1E";                // fenced code background (fixed)
+    private static string CodeBg => Theme.Active.CodeBg;    // fenced code background (themed)
     private static string DiffAdd => Theme.Active.Success;  // diff added line
     private static string DiffDel => Theme.Active.Error;    // diff removed line
     private static string DiffHunk => Theme.Active.Accent;  // diff hunk header @@
@@ -143,7 +143,7 @@ internal static class TuiMarkdown
 
         // 1) Inline code first (its content must not be further transformed). Emit with
         //    protected sentinel brackets so subsequent escaping leaves the tags intact.
-        s = InlineCode.Replace(s, m => Tag("on #2A2A2A", Code, Escape(m.Groups[1].Value)));
+        s = InlineCode.Replace(s, m => Tag($"on {Theme.Active.InlineCodeBg}", Code, Escape(m.Groups[1].Value)));
 
         // 1b) Links/images [text](url) -> styled label (the URL is dropped in the terminal; an
         //     image ![alt](url) renders its alt text). Emitted with protected tags so the later

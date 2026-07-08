@@ -26,6 +26,11 @@ internal static class TuiCommands
         ReplOnly,
         /// <summary>Handled only by the in-session meta-loop.</summary>
         SessionOnly,
+        /// <summary>Handled in BOTH contexts: the App.cs top-level menu switch AND the in-session
+        /// meta-loop. Used for session-agnostic background-control commands (e.g. /daemon) that act
+        /// on process-level state independent of any live session, so they belong in both palettes
+        /// with no "(ends session)"/"(needs a session)" hint.</summary>
+        Both,
     }
 
     public readonly record struct Entry(string Cmd, string Desc, Scope Scope);
@@ -66,14 +71,16 @@ internal static class TuiCommands
         new("/background",        "Run an agent on a goal in the background, watchable via \\ (alias /bg) (/background <agent> <goal>)", Scope.SessionOnly),
         new("/background jobs",   "List background agent jobs", Scope.SessionOnly),
         new("/background cancel", "Cancel a running background job (/background cancel <id>)", Scope.SessionOnly),
-        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.SessionOnly),
-        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.SessionOnly),
-        new("/daemon off",    "Stop the daemon", Scope.SessionOnly),
-        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.SessionOnly),
-        new("/daemon cron",   "Add a cron trigger at runtime (/daemon cron \"<expr>\" <mode> <goal>)", Scope.SessionOnly),
-        new("/daemon watch",  "Add a file-watch trigger at runtime (/daemon watch <glob> <mode> <goal>)", Scope.SessionOnly),
-        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.SessionOnly),
+        new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.Both),
+        new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.Both),
+        new("/daemon off",    "Stop the daemon", Scope.Both),
+        new("/daemon jobs",   "List daemon triggers + detached jobs", Scope.Both),
+        new("/daemon cron",   "Add a cron trigger - bare = interactive builder (plain-English schedule OK)", Scope.Both),
+        new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.Both),
+        new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.Both),
+        new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
+        new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
         new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
         new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>)", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
@@ -113,9 +120,10 @@ internal static class TuiCommands
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
         new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
         new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
-        new("/login",        "Log in with Claude / ChatGPT (subscription OAuth)", Scope.ReplOnly),
+        new("/login",        "Log in with Claude / ChatGPT (subscription OAuth; add 'headless' for remote/VPS)", Scope.ReplOnly),
         new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
+        new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.ReplOnly),
 
         // --- global utilities (App.cs menu) ---
         new("/classic",      "Switch to the classic line renderer", Scope.ReplOnly),
@@ -135,7 +143,7 @@ internal static class TuiCommands
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
-        new("/installskill", "Install a skill by name (openai/skills, VoltAgent) or a GitHub repo URL", Scope.ReplOnly),
+        new("/installskill", "Install an agent skill: by name (anthropics/obra/dotnet/...), owner/repo, owner/repo/path, or a GitHub URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
         new("/clear",        "Clear the screen", Scope.ReplOnly),
@@ -188,7 +196,7 @@ internal static class TuiCommands
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)
-            if (e.Scope == Scope.SessionOnly && e.Cmd == c) return true;
+            if ((e.Scope == Scope.SessionOnly || e.Scope == Scope.Both) && e.Cmd == c) return true;
         return false;
     }
 
@@ -197,7 +205,7 @@ internal static class TuiCommands
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)
-            if (e.Scope == Scope.ReplOnly && e.Cmd == c) return true;
+            if ((e.Scope == Scope.ReplOnly || e.Scope == Scope.Both) && e.Cmd == c) return true;
         return false;
     }
 
@@ -205,8 +213,10 @@ internal static class TuiCommands
     {
         var list = new List<(string, string)>();
         var seen = new HashSet<string>();
+        // Scope.Both belongs in BOTH base palettes, so a command handled in both contexts
+        // (e.g. /daemon) is listed at the menu and in-session with no consequence hint.
         foreach (var e in All)
-            if (e.Scope == scope && seen.Add(e.Cmd))
+            if ((e.Scope == scope || e.Scope == Scope.Both) && seen.Add(e.Cmd))
                 list.Add((e.Cmd, e.Desc));
         return list.ToArray();
     }

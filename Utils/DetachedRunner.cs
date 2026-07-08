@@ -115,6 +115,12 @@ public static class DetachedRunner
         {
             try
             {
+                // Tag every NDJSON frame this background job emits with a serve origin+lane so the web
+                // app routes them into the job's own sub-agent card instead of interleaving them into
+                // the main viewport (mirrors how DaemonRunner tags its lane via BeginServeOrigin). The
+                // AsyncLocal flows into RunSubAgentAsync's child tasks. Absent under classic TUI (no-op
+                // on the emit path when not serving); byte-identical legacy frames when untagged.
+                using var _originScope = MuxConsole.BeginServeOrigin("subagent", $"sub:{job.Agent}");
                 var (raw, status, _, _) = await MultiAgentOrchestrator.RunSubAgentAsync(
                     specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false);
                 lock (_gate)

@@ -91,6 +91,18 @@ for line in sys.stdin:
     private static readonly AsyncLocal<string?> _scope = new();
     private static readonly ConcurrentDictionary<string, ReplSession> _sessions = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// DISPLAY-ONLY read of the full source of the most recent code submitted to the CURRENT session
+    /// scope. The TUI tool-result card shows this to the USER above the output (every python REPL tool
+    /// - repl_shell_exec, check_python_status, send_python_input - reports the SAME running/last job, so
+    /// all three cards can echo the code). Sourced from the session (which already holds _currentCode),
+    /// so no AsyncLocal is needed (those flow DOWN the call tree and would not reach the renderer). It
+    /// is NEVER folded into the string returned to the model - the model generated the code, so echoing
+    /// it back is pure dead-weight tokens. Returns null/empty when nothing has run in this scope.
+    /// </summary>
+    public static string? CurrentReplCode()
+        => _sessions.TryGetValue(CurrentKey, out var s) && s.CurrentCode is { Length: > 0 } c ? c : null;
+
     private static string CurrentKey => _scope.Value ?? "__primary__";
 
     /// <summary>

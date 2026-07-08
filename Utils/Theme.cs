@@ -28,7 +28,17 @@ public sealed record Theme(
     string MdHeading,
     string MdCode,
     string MdLink,
-    string MdQuote)
+    string MdQuote,
+    // Background shades (v0.12.1): the elevated card/panel fill, the compose-field band, the
+    // diff line bands, and the fenced/inline code fills. Optional with defaults = the original
+    // hardcoded dark shades, so a preset that omits them (and any external caller) is unchanged.
+    string CardBg = "#1C2530",
+    string InputBg = "#12161C",
+    string DiffAddBg = "#16261C",
+    string DiffDelBg = "#2A1A1C",
+    string DiffHunkBg = "#16202C",
+    string CodeBg = "#1E1E1E",
+    string InlineCodeBg = "#2A2A2A")
 {
     // Backing field for Active. Left null at static init so it does NOT depend on the declaration
     // order of the Default property (a "= Default" initializer here would capture Default's value
@@ -55,7 +65,9 @@ public sealed record Theme(
         Step: "#7AC0FF", Success: "#7EE787", Warning: "#E3B341", Error: "#FF7B72",
         Info: "#B0B6BE", Muted: "#8B949E", Accent: "#7AC0FF", Prompt: "#E6EDF3",
         Banner: "#7AC0FF", Agent: "#A5D6FF",
-        MdHeading: "#7AC0FF", MdCode: "#E3B341", MdLink: "#79C0FF", MdQuote: "#8B949E");
+        MdHeading: "#7AC0FF", MdCode: "#E3B341", MdLink: "#79C0FF", MdQuote: "#8B949E",
+        CardBg: "#161B22", InputBg: "#0D1117", DiffAddBg: "#12261C", DiffDelBg: "#2D1213",
+        DiffHunkBg: "#161F2C", CodeBg: "#161B22", InlineCodeBg: "#21262D");
 
     /// <summary>Darker, saturated palette for bright/light terminal backgrounds.</summary>
     public static Theme Light { get; } = new(
@@ -63,7 +75,9 @@ public sealed record Theme(
         Step: "#1A6FB0", Success: "#1E7E34", Warning: "#B8860B", Error: "#C0392B",
         Info: "#555555", Muted: "#777777", Accent: "#1A6FB0", Prompt: "#222222",
         Banner: "#1A6FB0", Agent: "#2C5F8A",
-        MdHeading: "#1A6FB0", MdCode: "#9A6A00", MdLink: "#0A66C2", MdQuote: "#555555");
+        MdHeading: "#1A6FB0", MdCode: "#9A6A00", MdLink: "#0A66C2", MdQuote: "#555555",
+        CardBg: "#EAEEF2", InputBg: "#F2F4F7", DiffAddBg: "#E1F3E4", DiffDelBg: "#FBE4E4",
+        DiffHunkBg: "#E4ECF5", CodeBg: "#ECECEC", InlineCodeBg: "#E2E2E2");
 
     /// <summary>No-color / accessibility theme: everything inherits the terminal foreground
     /// ("default"); structure is conveyed by layout + prefixes, not hue. Only success/warning/error
@@ -73,7 +87,9 @@ public sealed record Theme(
         Step: "default", Success: "default", Warning: "default", Error: "default",
         Info: "default", Muted: "grey", Accent: "default", Prompt: "default",
         Banner: "default", Agent: "default",
-        MdHeading: "default", MdCode: "default", MdLink: "default", MdQuote: "grey");
+        MdHeading: "default", MdCode: "default", MdLink: "default", MdQuote: "grey",
+        CardBg: "default", InputBg: "default", DiffAddBg: "default", DiffDelBg: "default",
+        DiffHunkBg: "default", CodeBg: "default", InlineCodeBg: "default");
 
     /// <summary>Solarized (Ethan Schoonover) accent set.</summary>
     public static Theme Solarized { get; } = new(
@@ -81,7 +97,9 @@ public sealed record Theme(
         Step: "#268BD2", Success: "#859900", Warning: "#B58900", Error: "#DC322F",
         Info: "#93A1A1", Muted: "#657B83", Accent: "#2AA198", Prompt: "#EEE8D5",
         Banner: "#268BD2", Agent: "#6C71C4",
-        MdHeading: "#268BD2", MdCode: "#B58900", MdLink: "#2AA198", MdQuote: "#657B83");
+        MdHeading: "#268BD2", MdCode: "#B58900", MdLink: "#2AA198", MdQuote: "#657B83",
+        CardBg: "#073642", InputBg: "#002B36", DiffAddBg: "#0B3A2E", DiffDelBg: "#3A1E22",
+        DiffHunkBg: "#073642", CodeBg: "#002B36", InlineCodeBg: "#073642");
 
     /// <summary>Dracula palette.</summary>
     public static Theme Dracula { get; } = new(
@@ -89,7 +107,9 @@ public sealed record Theme(
         Step: "#8BE9FD", Success: "#50FA7B", Warning: "#F1FA8C", Error: "#FF5555",
         Info: "#BD93F9", Muted: "#6272A4", Accent: "#BD93F9", Prompt: "#F8F8F2",
         Banner: "#FF79C6", Agent: "#8BE9FD",
-        MdHeading: "#BD93F9", MdCode: "#F1FA8C", MdLink: "#8BE9FD", MdQuote: "#6272A4");
+        MdHeading: "#BD93F9", MdCode: "#F1FA8C", MdLink: "#8BE9FD", MdQuote: "#6272A4",
+        CardBg: "#282A36", InputBg: "#21222C", DiffAddBg: "#1E3A2A", DiffDelBg: "#3A2130",
+        DiffHunkBg: "#2B2E3B", CodeBg: "#21222C", InlineCodeBg: "#343746");
 
     /// <summary>Gruvbox (warm, retro) palette.</summary>
     public static Theme Gruvbox { get; } = new(
@@ -97,7 +117,9 @@ public sealed record Theme(
         Step: "#83A598", Success: "#B8BB26", Warning: "#FABD2F", Error: "#FB4934",
         Info: "#A89984", Muted: "#928374", Accent: "#FE8019", Prompt: "#EBDBB2",
         Banner: "#FE8019", Agent: "#83A598",
-        MdHeading: "#FABD2F", MdCode: "#B8BB26", MdLink: "#83A598", MdQuote: "#928374");
+        MdHeading: "#FABD2F", MdCode: "#B8BB26", MdLink: "#83A598", MdQuote: "#928374",
+        CardBg: "#3C3836", InputBg: "#282828", DiffAddBg: "#323D1F", DiffDelBg: "#442A25",
+        DiffHunkBg: "#33302B", CodeBg: "#282828", InlineCodeBg: "#3C3836");
 
     /// <summary>All built-in presets, in display order (default first).</summary>
     public static readonly IReadOnlyList<Theme> Presets =

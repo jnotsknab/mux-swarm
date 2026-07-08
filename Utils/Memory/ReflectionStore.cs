@@ -201,15 +201,16 @@ public static class ReflectionStore
     }
 
     /// <summary>
-    /// Best-effort mirror of a reflection into the ChromaDB + Memory (KG) MCP servers for semantic
-    /// recall. Silently no-ops when those servers are not connected or any call fails - the
-    /// filesystem copy from <see cref="Append"/> remains authoritative. Never throws.
+    /// Best-effort mirror of a reflection into the dedicated ChromaDB reflection collection for the
+    /// injector's semantic ranking. This is the ONLY store the pipeline writes to; the agents'
+    /// knowledge bases (knowledge graph, user_memory, etc.) are READ-ONLY to this subsystem and are
+    /// owned by the agents themselves. Silently no-ops when Chroma is not connected or any call
+    /// fails - the filesystem copy from <see cref="Append"/> remains authoritative. Never throws.
     /// </summary>
     public static async Task MirrorAsync(Reflection r, CancellationToken ct = default)
     {
         if (r is null || string.IsNullOrWhiteSpace(r.Content)) return;
         await TryChromaUpsertAsync(r, ct);
-        await TryKgUpsertAsync(r, ct);
     }
 
     /// <summary>True when the ChromaDB MCP server is connected (accelerator available).</summary>
@@ -245,27 +246,6 @@ public static class ReflectionStore
                         ["importance"] = r.Importance,
                         ["timestamp"] = r.Timestamp.ToUnixTimeSeconds(),
                         ["provenance"] = r.Provenance,
-                    }
-                }
-            }!, cancellationToken: ct);
-        }
-        catch { /* silent degrade */ }
-    }
-
-    private static async Task TryKgUpsertAsync(Reflection r, CancellationToken ct)
-    {
-        try
-        {
-            if (!App.McpClients.TryGetValue("Memory", out var client)) return;
-            await client.CallToolAsync("create_entities", new Dictionary<string, object?>
-            {
-                ["entities"] = new[]
-                {
-                    new Dictionary<string, object?>
-                    {
-                        ["name"] = $"reflection:{r.Id}",
-                        ["entityType"] = "reflection",
-                        ["observations"] = new[] { r.Content, $"role={r.Role}", $"importance={r.Importance:F2}" }
                     }
                 }
             }!, cancellationToken: ct);

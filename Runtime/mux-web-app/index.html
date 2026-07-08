@@ -115,6 +115,11 @@
   --agent:    #8b5cf6; /* Violet 500 */
   --accent:   #64B4DC; /* Accent Blue */
   --accent-rgb: 100, 180, 220;
+  --green-rgb: 16, 185, 129;
+  --blue-rgb:  59, 130, 246;
+  --amber-rgb: 245, 158, 11;
+  --red-rgb:   239, 68, 68;
+  --agent-rgb: 139, 92, 246;
   --accent-fg: #09090b; /* Zinc 950 */
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
@@ -151,7 +156,7 @@ html, body,
   text-transform: uppercase; opacity: .65; margin: 0 0 .25rem 0;
   padding-bottom: .15rem; border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
 }
-.stream-block[data-agent] { border-left: 2px solid var(--accent, #6aa3ff); padding-left: .6rem; margin-top: .5rem; }
+.stream-block[data-agent] { border-left: none; padding-left: 0; margin-top: .5rem; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
@@ -214,7 +219,7 @@ body[data-theme-preset="tokyonight"] {
 }
 body[data-theme-preset="tokyonight"] .icon-btn svg,
 body[data-theme-preset="tokyonight"] .mux-preview-btn svg {
-  filter: drop-shadow(0 0 4px rgba(125, 207, 255, 0.25));
+  filter: none;
 }
 
 /* Nord: thinner geometric strokes. */
@@ -273,7 +278,6 @@ body[data-theme-preset="latte"] svg { stroke: currentColor; }
 html, body {
   height: 100%;
   background: var(--bg);
-  background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%);
   color: var(--text);
   font-family: var(--font-mono);
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -394,7 +398,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   transition: background-color 0.2s, color 0.2s;
 }
 .header-status:hover {
-  background-color: rgba(100, 180, 220, 0.08);
+  background-color: rgba(var(--accent-rgb), 0.08);
   color: var(--text);
 }
 
@@ -438,7 +442,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   z-index: 101;
 }
 .sidebar-resizer:hover, .sidebar-resizer.dragging {
-  background: rgba(59, 130, 246, 0.2);
+  background: rgba(var(--blue-rgb), 0.2);
 }
 
 /* ── Sidebar ── */
@@ -461,7 +465,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   border-radius: calc(var(--radius) - 2px); padding: 8px 12px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500; cursor: pointer; transition: all 0.2s ease;
 }
-.sidebar-tab:hover { color: var(--text); background: rgba(100, 180, 220, 0.1); }
+.sidebar-tab:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.1); }
 .sidebar-tab.active { background: var(--text); color: var(--bg); font-weight: 600; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
 
 
@@ -470,7 +474,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   color: var(--muted); font-size: calc(14px * var(--ui-font-scale, 1)); cursor: pointer; padding: 4px 8px; line-height: 1;
   position: static; flex-shrink: 0;
 }
-.sidebar-close:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
+.sidebar-close:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.15); border-color: var(--accent); }
 
 .sidebar-content { flex: 1; min-height: 0; overflow-y: auto; padding: 8px; }
 /* When the Live Diffs panel is mounted it owns the full height + its own internal
@@ -487,7 +491,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   display: flex; align-items: center; gap: 6px; padding: 6px 8px;
   border-radius: 3px; cursor: pointer; transition: background 0.1s;
 }
-.file-item:hover { background: rgba(100, 180, 220, 0.08); }
+.file-item:hover { background: rgba(var(--accent-rgb), 0.08); }
 .file-item.dir { color: var(--blue); }
 .file-item.file { color: var(--text); }
 .file-item .icon { font-size: calc(10px * var(--ui-font-scale, 1)); width: 14px; text-align: center; }
@@ -512,7 +516,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .loading { padding: 20px; text-align: center; color: var(--muted); }
 .error-msg { padding: 10px; color: var(--red); font-size: calc(12px * var(--ui-font-scale, 1)); }
 
-.sidebar-content.drag-over { background: rgba(100,180,220,0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
+.sidebar-content.drag-over { background: rgba(var(--accent-rgb),0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
 
 /* ── Output ── */
 .output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
@@ -543,22 +547,20 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 
 .event-success { 
   color: var(--green); 
-  background-color: rgba(16, 185, 129, 0.05);
-  border: 1px solid rgba(16, 185, 129, 0.1);
 }
 
 
 .event-warning { 
   color: var(--amber); 
-  background-color: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.2);
+  background-color: rgba(var(--amber-rgb), 0.1);
+  border: 1px solid rgba(var(--amber-rgb), 0.2);
 }
 
 
 .event-error { 
   color: var(--red); 
-  background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  background-color: rgba(var(--red-rgb), 0.1);
+  border: 1px solid rgba(var(--red-rgb), 0.2);
 }
 
 
@@ -605,7 +607,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   font-weight: 600; 
   margin: 16px 0 8px; 
   padding: 6px 12px; 
-  background-color: rgba(59, 130, 246, 0.1);
+  background-color: rgba(var(--blue-rgb), 0.1);
   border-left: 3px solid var(--blue);
   letter-spacing: 0.02em;
   border-radius: 0 4px 4px 0;
@@ -684,15 +686,15 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
   color: var(--muted); font-style: italic;
   background: rgba(255,255,255,0.02);
 }
-.stream-block a { color: var(--accent, #64b4dc); text-decoration: none; border-bottom: 1px dotted rgba(100,180,220,0.4); }
+.stream-block a { color: var(--accent, #64b4dc); text-decoration: none; border-bottom: 1px dotted rgba(var(--accent-rgb),0.4); }
 .stream-block a:hover { border-bottom-style: solid; }
 .stream-block hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .stream-block code {
   font-family: var(--font-mono) !important;
   font-weight: 500;
   color: var(--accent, #64b4dc);
-  background: rgba(100, 180, 220, 0.10);
-  border: 1px solid rgba(100, 180, 220, 0.18);
+  background: rgba(var(--accent-rgb), 0.10);
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
 }
 .stream-block pre code { color: var(--text); border: 0; background: none; font-weight: 400; }
 .stream-block table { border-collapse: collapse; margin: 0.6em 0; }
@@ -710,7 +712,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .code-block pre code { background: none; border: 0; padding: 0; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.55; color: var(--text); }
 .code-copy-btn { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,0.25); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; cursor: pointer; display: inline-flex; align-items: center; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; z-index: 2; }
 .code-block:hover .code-copy-btn, .code-copy-btn:focus { opacity: 1; }
-.code-copy-btn:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
+.code-copy-btn:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.15); border-color: var(--accent); }
 .code-copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
 
 /* ── Message copy button (user bubbles + agent stream blocks) ── */
@@ -728,7 +730,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .user-msg:hover .msg-copy-btn,
 .stream-block:hover .msg-copy-btn,
 .msg-copy-btn:focus { opacity: 1; }
-.msg-copy-btn:hover { color: var(--text); background: rgba(100, 180, 220, 0.15); border-color: var(--accent); }
+.msg-copy-btn:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.15); border-color: var(--accent); }
 .msg-copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
 .msg-copy-btn svg { width: 12px; height: 12px; }
 
@@ -810,6 +812,23 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 .tool-group.open .tg-latest { display: none; }
 .tool-group-body { display: none; padding-left: 18px; }
 .tool-group.open .tool-group-body { display: block; }
+/* Status-pill cluster (coalesced success/warning/error/info/debug/step/rule/task rows) */
+.event-group { margin: 4px 0; }
+body.hide-all-pills .event-group { display: none !important; }
+.event-group-header {
+  display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none;
+  padding: 3px 0; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); min-width: 0;
+}
+.event-group-header:hover .eg-label { color: var(--text); }
+.event-group-header .eg-chev { display: inline-flex; align-items: center; flex-shrink: 0; transition: transform 0.15s ease; opacity: 0.6; }
+.event-group:not(.open) .eg-chev { transform: rotate(-90deg); }
+.event-group-header .eg-label { font-weight: 600; flex-shrink: 0; }
+.event-group-header .eg-latest { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; opacity: 0.8; }
+.event-group.open .eg-latest { display: none; }
+.event-group-body { display: none; padding-left: 18px; }
+.event-group.open .event-group-body { display: block; }
+/* Inside a cluster, individual event rows shed their outer margin for density */
+.event-group-body .event { margin: 1px 0; }
 /* Expandable call rows: click to reveal a trimmed result/diff preview */
 .tool-call.expandable { cursor: pointer; }
 .tool-call.expandable:hover { color: var(--text); }
@@ -834,6 +853,15 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 .tool-detail .td-hunk { color: var(--accent); opacity: 0.8; }
 .tool-detail .td-err  { color: var(--red); opacity: 0.85; }
 .tool-detail .td-more { opacity: 0.55; font-style: italic; }
+  /* ─── Nested tool cards (sub-agent cards + daemon lane) ───
+     Restrained differentiation from the main-viewport tool cards: a thin left rail in the
+     agent/muted tone + slight inset, so they read as a CHILD of the flow without new visual noise.
+     Reuses the same expand/collapse + diff coloring as the main cards. */
+  .nested-tc { position: relative; margin-left: 2px; padding-left: 9px; border-left: 2px solid var(--agent, #a78bfa); opacity: .92; }
+  .nested-tc.tool-call { font-size: calc(11px * var(--ui-font-scale, 1)); }
+  .nested-tc.tool-call.expandable:hover { opacity: 1; }
+  .tool-detail.nested-td { margin-left: 11px; border-left: 1px dashed var(--border, rgba(255,255,255,.10)); }
+  .mng-dl-body .nested-tc { border-left-color: var(--amber, #f59e0b); }
 
 /* ── Delegation / Task ── */
 .delegation { 
@@ -854,12 +882,112 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 .delegation .to { color: var(--accent); font-weight: 600; }
 .delegation .task { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); width: 100%; padding-left: 18px; margin-top: 2px; }
 
+/* ── Sub-agent delegation roster ──
+   One persistent, collapsible group per user turn; one row per delegated
+   sub-agent. Streams / thinking / completion fold into the owning row so
+   many concurrent agents stay legible instead of spawning a wall of cards. */
+.sub-roster {
+  margin: 10px 0 14px;
+  border: 1px solid var(--border, rgba(255,255,255,.10));
+  border-radius: 10px;
+  background: var(--bg-card, rgba(24,24,27,.5));
+  overflow: hidden;
+}
+.sub-roster-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer; user-select: none;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
+}
+.sub-roster.sr-collapsed .sub-roster-head { border-bottom-color: transparent; }
+.sub-roster-head:hover { background: rgba(255,255,255,.03); }
+.sub-roster .sr-chev { display:inline-flex; color: var(--muted); transition: transform .15s ease; }
+.sub-roster.sr-collapsed .sr-chev { transform: rotate(-90deg); }
+.sub-roster .sr-title { font-weight: 600; letter-spacing: .03em; text-transform: uppercase; font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--muted); }
+.sub-roster .sr-count {
+  min-width: 18px; text-align: center; font-size: calc(10.5px * var(--ui-font-scale,1));
+  color: var(--text); background: var(--bg-input, rgba(255,255,255,.06));
+  border-radius: 9px; padding: 0 6px; line-height: 1.6;
+}
+.sub-roster .sr-spacer { flex: 1 1 auto; }
+.sub-roster .sr-active { font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--amber, #f59e0b); }
+.sub-roster.sr-all-done .sr-active { color: var(--green, #10b981); }
+.sub-roster-body { display: flex; flex-direction: column; }
+.sub-roster.sr-collapsed .sub-roster-body { display: none; }
+
+/* individual agent row */
+.sub-row { border-bottom: 1px solid var(--border, rgba(255,255,255,.05)); }
+.sub-row:last-child { border-bottom: none; }
+.sub-row-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px 7px 14px; cursor: pointer; user-select: none;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.sub-row-head:hover { background: rgba(255,255,255,.025); }
+.sub-row .sub-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted, #71717a); }
+.sub-row .sub-dot.pending { background: var(--muted, #71717a); }
+.sub-row .sub-dot.running { background: var(--amber, #f59e0b); box-shadow: 0 0 0 0 rgba(var(--amber-rgb),.5); animation: subPulse 1.4s ease-out infinite; }
+.sub-row .sub-dot.done { background: var(--green, #10b981); }
+@keyframes subPulse { 0% { box-shadow: 0 0 0 0 rgba(var(--amber-rgb),.45);} 70% { box-shadow: 0 0 0 5px rgba(var(--amber-rgb),0);} 100% { box-shadow: 0 0 0 0 rgba(var(--amber-rgb),0);} }
+.sub-row .sub-name { font-weight: 600; color: var(--agent, #a78bfa); white-space: nowrap; }
+.sub-row .sub-status { font-size: calc(10.5px * var(--ui-font-scale,1)); color: var(--muted); white-space: nowrap; }
+.sub-row .sub-row-spacer { flex: 1 1 auto; min-width: 8px; }
+.sub-row .sub-preview {
+  color: var(--muted); font-size: calc(11px * var(--ui-font-scale,1));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 46%; opacity: .8;
+}
+.sub-row .sub-preview code { background: rgba(var(--accent-rgb),.10); border-radius: 3px; padding: 0 3px; color: var(--accent,#64b4dc); }
+.sub-row .sub-chev { display:inline-flex; color: var(--muted); flex: 0 0 auto; transition: transform .15s ease; }
+.sub-row.sr-open .sub-chev { transform: rotate(180deg); }
+.sub-row-body {
+  display: none; padding: 4px 14px 12px 30px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1)); line-height: 1.55;
+  border-top: 1px dashed var(--border, rgba(255,255,255,.06));
+  max-height: 460px; overflow-y: auto;
+}
+.sub-row.sr-open .sub-row-body { display: block; }
+.sub-row.sr-open .sub-preview { visibility: hidden; }
+.sub-row-body pre { background: var(--bg-input); padding: 8px 10px; border-radius: 6px; overflow-x: auto; }
+.sub-row-body code { font-family: var(--font-mono); }
+.sub-row .sub-summary-btn {
+  display: none; align-items: center; gap: 4px; flex: 0 0 auto;
+  font-size: calc(10px * var(--ui-font-scale,1)); font-weight: 600;
+  letter-spacing: .03em; text-transform: uppercase;
+  color: var(--muted); background: transparent;
+  border: 1px solid var(--border, rgba(255,255,255,.12)); border-radius: 9px;
+  padding: 1px 8px; cursor: pointer; opacity: .5;
+  transition: color .15s ease, border-color .15s ease, opacity .15s ease, background .15s ease;
+}
+.sub-row .sub-summary-btn.ready { display: inline-flex; opacity: 1; color: var(--muted); border-color: var(--border); }
+.sub-row .sub-summary-btn.ready:hover { background: var(--bg-input); }
+.sub-row .sub-summary-btn .ck { display:inline-flex; }
+/* completion summary panel pinned at the top of the expanded body */
+.sub-row-summary {
+  display: none; margin: 2px 0 10px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-card);
+  font-size: calc(12.5px * var(--ui-font-scale,1)); line-height: 1.5;
+}
+.sub-row-summary.show { display: block; }
+.sub-row-summary .srs-label { font-size: calc(9.5px * var(--ui-font-scale,1)); font-weight:600; letter-spacing:.05em; text-transform:uppercase; color: var(--muted); opacity:.8; margin-bottom:3px; }
+/* interleaved tool-activity lines inside the row stream */
+.sub-row-body .sub-act {
+  display: flex; align-items: baseline; gap: 6px; margin: 3px 0;
+  font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale,1));
+  color: var(--muted); opacity: .9;
+}
+.sub-row-body .sub-act .sa-icon { color: var(--accent, #64b4dc); flex: 0 0 auto; }
+.sub-row-body .sub-act .sa-tool { color: var(--accent, #64b4dc); }
+.sub-row-body .sub-act .sa-sum { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-row-body .sub-stream { margin: 4px 0; }
+
 .task-complete {
-  color: var(--green);
+  color: var(--muted);
   font-size: calc(12px * var(--ui-font-scale, 1));
   padding: 8px 12px;
   margin: 6px 0;
-  background-color: rgba(16, 185, 129, 0.05);
+  background-color: transparent;
   border: none;
   border-radius: 10px;
   display: flex;
@@ -900,7 +1028,7 @@ body.hide-tool-calls .tool-detail { display: none !important; }
   right: 0;
   bottom: 0;
   height: 1.4em;
-  background: linear-gradient(to bottom, rgba(8, 28, 22, 0) 0%, rgba(8, 28, 22, 0.95) 100%);
+  background: linear-gradient(to bottom, rgba(9, 9, 11, 0) 0%, var(--bg) 100%);
   pointer-events: none;
 }
 .task-complete.tc-expanded .tc-summary.tc-clamped::after { display: none; }
@@ -1206,7 +1334,7 @@ body.hide-tool-calls .tool-detail { display: none !important; }
   border-radius: 6px; padding: 8px 14px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer; margin: 2px 4px 2px 0; transition: all 0.15s; min-height: 36px;
 }
-.prompt-block button:hover { background: rgba(100, 180, 220, 0.15); color: var(--text); border-color: var(--accent); }
+.prompt-block button:hover { background: rgba(var(--accent-rgb), 0.15); color: var(--text); border-color: var(--accent); }
 .prompt-block button:active { transform: scale(0.96); }
 
 /* ── Welcome card ── */
@@ -1288,8 +1416,8 @@ body.hide-tool-calls .tool-detail { display: none !important; }
 
 /* ── Inline confirm card (session switch warning) ── */
 .mux-confirm-card {
-  background: rgba(245, 158, 11, 0.06);
-  border: 1px solid rgba(245, 158, 11, 0.28);
+  background: rgba(var(--amber-rgb), 0.06);
+  border: 1px solid rgba(var(--amber-rgb), 0.28);
   border-radius: 8px;
   padding: 12px 14px;
   margin: 8px 0;
@@ -1308,7 +1436,7 @@ body.hide-tool-calls .tool-detail { display: none !important; }
   font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 5px;
-  background: rgba(245, 158, 11, 0.18);
+  background: rgba(var(--amber-rgb), 0.18);
   color: var(--amber, #f59e0b);
   font-family: var(--font-mono, ui-monospace, monospace);
   line-height: 1.2;
@@ -1349,13 +1477,13 @@ body.hide-tool-calls .tool-detail { display: none !important; }
   border-color: rgba(255,255,255,0.18);
 }
 .mux-confirm-btn.primary {
-  background: rgba(245, 158, 11, 0.18);
-  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(var(--amber-rgb), 0.18);
+  border-color: rgba(var(--amber-rgb), 0.45);
   color: var(--amber, #f59e0b);
 }
 .mux-confirm-btn.primary:hover:not(:disabled) {
-  background: rgba(245, 158, 11, 0.28);
-  border-color: rgba(245, 158, 11, 0.65);
+  background: rgba(var(--amber-rgb), 0.28);
+  border-color: rgba(var(--amber-rgb), 0.65);
 }
 .mux-confirm-btn:disabled { cursor: default; }
 .mux-confirm-dontask {
@@ -1505,11 +1633,11 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   height: 40px; padding: 0 18px; font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); font-weight: 600;
   cursor: pointer; transition: background 0.15s, transform 0.1s, box-shadow 0.15s; white-space: nowrap;
   display: inline-flex; align-items: center; justify-content: center;
-  box-shadow: 0 1px 0 rgba(255,255,255,0.18) inset, 0 2px 8px rgba(var(--accent-rgb), 0.28);
+  box-shadow: none;
 }
-.send-btn:hover { background: #7BC3E8; }
+.send-btn:hover { background: color-mix(in srgb, var(--accent) 82%, #fff); }
 .send-btn:active { transform: scale(0.96); }
-.send-btn.stop-mode { background: var(--red); box-shadow: 0 2px 8px rgba(220,80,80,0.3); }
+.send-btn.stop-mode { background: var(--red); box-shadow: none; }
 
 .upload-btn {
   background: transparent; color: var(--muted); border: 1px solid var(--border);
@@ -1530,15 +1658,15 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .mic-btn:hover { background: rgba(var(--accent-rgb), 0.12); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .mic-btn:active { transform: scale(0.94); }
 .mic-btn.recording {
-  background: rgba(239, 68, 68, 0.15);
+  background: rgba(var(--red-rgb), 0.15);
   color: var(--red);
   border-color: var(--red);
   animation: pulse-red 1.5s infinite;
 }
 @keyframes pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(var(--red-rgb), 0.4); }
+  70% { box-shadow: 0 0 0 6px rgba(var(--red-rgb), 0); }
+  100% { box-shadow: 0 0 0 0 rgba(var(--red-rgb), 0); }
 }
 
 #fileInput { display: none; }
@@ -1550,25 +1678,23 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .user-msg .bubble { max-width: 100%; overflow-x: auto;
   display: inline-block;
   font-family: var(--font-sans) !important; 
-  background: linear-gradient(135deg, rgba(100, 180, 220, 0.2), rgba(100, 180, 220, 0.08)); 
+  background: rgba(var(--accent-rgb), 0.10);
   padding: 10px 14px;
   border-radius: 16px 16px 4px 16px; 
-  border: 1px solid rgba(100, 180, 220, 0.35);
-  border-right: 3px solid rgba(100, 180, 220, 0.5);
+  border: 1px solid var(--border);
   max-width: 80%; 
   text-align: left; 
   word-break: break-word;
   white-space: pre-wrap;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
   color: var(--text);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 .user-msg .bubble pre { background: var(--bg); font-family: var(--font-mono) !important;
-  background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; white-space: pre; }
+  padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; white-space: pre; }
 .user-msg .bubble pre code { background: none; padding: 0; }
 .user-msg .bubble code { background: var(--bg); font-family: var(--font-mono) !important;
-  background-image: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.1) 0%, transparent 50%); padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+  padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 
 /* ── Mobile ── */
 @media (max-width: 640px) {
@@ -1635,8 +1761,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   display: inline-flex; 
   align-items: center; 
   gap: 6px; 
-  background-color: rgba(59, 130, 246, 0.05);
-  border: 1px solid rgba(59, 130, 246, 0.15);
+  background-color: rgba(var(--blue-rgb), 0.05);
+  border: 1px solid rgba(var(--blue-rgb), 0.15);
   border-radius: 12px;
   color: var(--blue);
 }
@@ -1810,9 +1936,9 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   font-weight: 700;
   letter-spacing: 0.04em;
 }
-.tag-diff  { background: rgba(74,222,128,0.14);  color: #4ade80; }
+.tag-diff  { background: rgba(var(--green-rgb),0.14);  color: var(--green); }
 .tag-json  { background: rgba(139,156,255,0.16); color: var(--accent, #b8a3ff); }
-.tag-shell { background: rgba(245,158,11,0.16);  color: var(--amber, #f59e0b); }
+.tag-shell { background: rgba(var(--amber-rgb),0.16);  color: var(--amber, #f59e0b); }
 .tag-text  { background: rgba(161,161,170,0.16); color: var(--muted); }
 .diff-tool {
   flex: 0 1 auto;
@@ -1833,8 +1959,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
-.ds-add { color: #4ade80; }
-.ds-sub { color: #f87171; }
+.ds-add { color: var(--green); }
+.ds-sub { color: var(--red); }
 .diff-card-spacer { flex: 1 1 auto; }
 .diff-time {
   flex: 0 0 auto;
@@ -1886,10 +2012,10 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .dl { display: flex; gap: 8px; padding: 0 10px; }
 .dl-g { flex: 0 0 auto; width: 0.8em; text-align: center; opacity: 0.7; user-select: none; }
 .dl-t { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
-.dl-add { background: rgba(16,185,129,0.10); color: #86efac; }
-.dl-add .dl-g { color: #4ade80; }
-.dl-sub { background: rgba(239,68,68,0.10); color: #fca5a5; }
-.dl-sub .dl-g { color: #f87171; }
+.dl-add { background: rgba(var(--green-rgb),0.10); color: var(--green); }
+.dl-add .dl-g { color: color-mix(in srgb, var(--green) 75%, #fff); }
+.dl-sub { background: rgba(var(--red-rgb),0.10); color: var(--red); }
+.dl-sub .dl-g { color: color-mix(in srgb, var(--red) 80%, #fff); }
 .dl-ctx { color: var(--text); opacity: 0.85; }
 .dl-hunk { color: var(--blue); opacity: 0.85; padding: 2px 10px; font-style: italic; }
 
@@ -1939,8 +2065,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 /* Legacy fallback styles (kept so any old .diff-container still renders) */
 .diff-container { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; background: var(--bg-card, var(--bg)); border-radius: 8px; border: 1px solid var(--border); margin-bottom: 8px; overflow: hidden; }
 .diff-line { padding: 0 4px; }
-.diff-add { color: #4ade80; }
-.diff-sub { color: #f87171; }
+.diff-add { color: var(--green); }
+.diff-sub { color: var(--red); }
 .json-boolean { color: #fbbf24; }
 
 /* ── Theme Panel ── */
@@ -1977,7 +2103,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); min-height: 36px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; justify-content: flex-start; color: var(--text); cursor: pointer;
   display: flex; align-items: center; gap: 8px; transition: all 0.15s;
 }
-.theme-preset-btn:hover { border-color: var(--accent); background: rgba(100, 180, 220, 0.1); }
+.theme-preset-btn:hover { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.1); }
 .theme-preset-btn.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .preset-color-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(255,255,255,0.2); }
 
@@ -2161,6 +2287,10 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 <script>
 (() => {
   const $ = id => document.getElementById(id);
+  // Frontend build stamp. Compared against /api/health.version on load; a mismatch
+  // means the browser is running a cached shell against a newer backend (interactive
+  // panels like /setmodel would hang), so we force a one-time cache-busting reload.
+  const APP_VERSION = '0.12.1';
   const output = $('output');
   const input = $('input');
   const actionBtn = $('actionBtn');
@@ -2336,16 +2466,16 @@ const icons = {
   
   
   const themes = [
-    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC', '--accent-rgb': '100, 180, 220' } },
-    { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7', '--accent-rgb': '2, 132, 199' } },
-    { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf', '--accent-rgb': '45, 212, 191' } },
-    { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e', '--accent-rgb': '34, 197, 94' } },
-    { id: 'mocha', name: 'Mocha', dot: '#1e1e2e', vars: { '--bg': '#1e1e2e', '--bg-card': 'rgba(49, 50, 68, 0.6)', '--bg-input': 'rgba(69, 71, 90, 0.5)', '--border': 'rgba(88, 91, 112, 0.4)', '--text': '#cdd6f4', '--muted': '#a6adc8', '--blue': '#89b4fa', '--green': '#a6e3a1', '--amber': '#f9e2af', '--red': '#f38ba8', '--agent': '#cba6f7', '--accent': '#cba6f7', '--accent-rgb': '203, 166, 247' } },
-    { id: 'macchiato', name: 'Macchiato', dot: '#24273a', vars: { '--bg': '#24273a', '--bg-card': 'rgba(54, 58, 79, 0.6)', '--bg-input': 'rgba(73, 77, 100, 0.5)', '--border': 'rgba(91, 96, 120, 0.4)', '--text': '#cad3f5', '--muted': '#a5adcb', '--blue': '#8aadf4', '--green': '#a6da95', '--amber': '#eed49f', '--red': '#ed8796', '--agent': '#c6a0f6', '--accent': '#8aadf4', '--accent-rgb': '138, 173, 244' } },
-    { id: 'frappe', name: 'Frappé', dot: '#303446', vars: { '--bg': '#303446', '--bg-card': 'rgba(65, 69, 89, 0.6)', '--bg-input': 'rgba(81, 87, 109, 0.5)', '--border': 'rgba(98, 104, 128, 0.4)', '--text': '#c6d0f5', '--muted': '#a5adce', '--blue': '#8caaee', '--green': '#a6d189', '--amber': '#e5c890', '--red': '#e78284', '--agent': '#ca9ee6', '--accent': '#ef9f76', '--accent-rgb': '239, 159, 118' } },
-    { id: 'latte', name: 'Latte', dot: '#eff1f5', vars: { '--bg': '#eff1f5', '--bg-card': 'rgba(220, 224, 232, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.85)', '--border': 'rgba(172, 176, 190, 0.4)', '--text': '#4c4f69', '--muted': '#6c6f85', '--blue': '#1e66f5', '--green': '#40a02b', '--amber': '#df8e1d', '--red': '#d20f39', '--agent': '#8839ef', '--accent': '#7287fd', '--accent-rgb': '114, 135, 253' } },
-    { id: 'tokyonight', name: 'Tokyo Night', dot: '#1a1b26', vars: { '--bg': '#1a1b26', '--bg-card': 'rgba(36, 40, 59, 0.6)', '--bg-input': 'rgba(52, 59, 88, 0.5)', '--border': 'rgba(86, 95, 137, 0.4)', '--text': '#c0caf5', '--muted': '#9aa5ce', '--blue': '#7aa2f7', '--green': '#9ece6a', '--amber': '#e0af68', '--red': '#f7768e', '--agent': '#bb9af7', '--accent': '#7dcfff', '--accent-rgb': '125, 207, 255' } },
-    { id: 'nord', name: 'Nord', dot: '#2e3440', vars: { '--bg': '#2e3440', '--bg-card': 'rgba(59, 66, 82, 0.6)', '--bg-input': 'rgba(67, 76, 94, 0.5)', '--border': 'rgba(76, 86, 106, 0.4)', '--text': '#eceff4', '--muted': '#d8dee9', '--blue': '#81a1c1', '--green': '#a3be8c', '--amber': '#ebcb8b', '--red': '#bf616a', '--agent': '#b48ead', '--accent': '#88c0d0', '--accent-rgb': '136, 192, 208' } }
+    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC', '--accent-rgb': '100, 180, 220', '--green-rgb': '16, 185, 129', '--blue-rgb': '59, 130, 246', '--amber-rgb': '245, 158, 11', '--red-rgb': '239, 68, 68', '--agent-rgb': '139, 92, 246' } },
+    { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7', '--accent-rgb': '2, 132, 199', '--green-rgb': '5, 150, 105', '--blue-rgb': '37, 99, 235', '--amber-rgb': '217, 119, 6', '--red-rgb': '220, 38, 38', '--agent-rgb': '124, 58, 237' } },
+    { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf', '--accent-rgb': '45, 212, 191', '--green-rgb': '52, 211, 153', '--blue-rgb': '56, 189, 248', '--amber-rgb': '251, 191, 36', '--red-rgb': '248, 113, 113', '--agent-rgb': '167, 139, 250' } },
+    { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e', '--accent-rgb': '34, 197, 94', '--green-rgb': '134, 239, 172', '--blue-rgb': '74, 222, 128', '--amber-rgb': '250, 204, 21', '--red-rgb': '239, 68, 68', '--agent-rgb': '74, 222, 128' } },
+    { id: 'mocha', name: 'Mocha', dot: '#1e1e2e', vars: { '--bg': '#1e1e2e', '--bg-card': 'rgba(49, 50, 68, 0.6)', '--bg-input': 'rgba(69, 71, 90, 0.5)', '--border': 'rgba(88, 91, 112, 0.4)', '--text': '#cdd6f4', '--muted': '#a6adc8', '--blue': '#89b4fa', '--green': '#a6e3a1', '--amber': '#f9e2af', '--red': '#f38ba8', '--agent': '#cba6f7', '--accent': '#cba6f7', '--accent-rgb': '203, 166, 247', '--green-rgb': '166, 227, 161', '--blue-rgb': '137, 180, 250', '--amber-rgb': '249, 226, 175', '--red-rgb': '243, 139, 168', '--agent-rgb': '203, 166, 247' } },
+    { id: 'macchiato', name: 'Macchiato', dot: '#24273a', vars: { '--bg': '#24273a', '--bg-card': 'rgba(54, 58, 79, 0.6)', '--bg-input': 'rgba(73, 77, 100, 0.5)', '--border': 'rgba(91, 96, 120, 0.4)', '--text': '#cad3f5', '--muted': '#a5adcb', '--blue': '#8aadf4', '--green': '#a6da95', '--amber': '#eed49f', '--red': '#ed8796', '--agent': '#c6a0f6', '--accent': '#8aadf4', '--accent-rgb': '138, 173, 244', '--green-rgb': '166, 218, 149', '--blue-rgb': '138, 173, 244', '--amber-rgb': '238, 212, 159', '--red-rgb': '237, 135, 150', '--agent-rgb': '198, 160, 246' } },
+    { id: 'frappe', name: 'Frappé', dot: '#303446', vars: { '--bg': '#303446', '--bg-card': 'rgba(65, 69, 89, 0.6)', '--bg-input': 'rgba(81, 87, 109, 0.5)', '--border': 'rgba(98, 104, 128, 0.4)', '--text': '#c6d0f5', '--muted': '#a5adce', '--blue': '#8caaee', '--green': '#a6d189', '--amber': '#e5c890', '--red': '#e78284', '--agent': '#ca9ee6', '--accent': '#ef9f76', '--accent-rgb': '239, 159, 118', '--green-rgb': '166, 209, 137', '--blue-rgb': '140, 170, 238', '--amber-rgb': '229, 200, 144', '--red-rgb': '231, 130, 132', '--agent-rgb': '202, 158, 230' } },
+    { id: 'latte', name: 'Latte', dot: '#eff1f5', vars: { '--bg': '#eff1f5', '--bg-card': 'rgba(220, 224, 232, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.85)', '--border': 'rgba(172, 176, 190, 0.4)', '--text': '#4c4f69', '--muted': '#6c6f85', '--blue': '#1e66f5', '--green': '#40a02b', '--amber': '#df8e1d', '--red': '#d20f39', '--agent': '#8839ef', '--accent': '#7287fd', '--accent-rgb': '114, 135, 253', '--green-rgb': '64, 160, 43', '--blue-rgb': '30, 102, 245', '--amber-rgb': '223, 142, 29', '--red-rgb': '210, 15, 57', '--agent-rgb': '136, 57, 239' } },
+    { id: 'tokyonight', name: 'Tokyo Night', dot: '#1a1b26', vars: { '--bg': '#1a1b26', '--bg-card': 'rgba(36, 40, 59, 0.6)', '--bg-input': 'rgba(52, 59, 88, 0.5)', '--border': 'rgba(86, 95, 137, 0.4)', '--text': '#c0caf5', '--muted': '#9aa5ce', '--blue': '#7aa2f7', '--green': '#9ece6a', '--amber': '#e0af68', '--red': '#f7768e', '--agent': '#bb9af7', '--accent': '#7dcfff', '--accent-rgb': '125, 207, 255', '--green-rgb': '158, 206, 106', '--blue-rgb': '122, 162, 247', '--amber-rgb': '224, 175, 104', '--red-rgb': '247, 118, 142', '--agent-rgb': '187, 154, 247' } },
+    { id: 'nord', name: 'Nord', dot: '#2e3440', vars: { '--bg': '#2e3440', '--bg-card': 'rgba(59, 66, 82, 0.6)', '--bg-input': 'rgba(67, 76, 94, 0.5)', '--border': 'rgba(76, 86, 106, 0.4)', '--text': '#eceff4', '--muted': '#d8dee9', '--blue': '#81a1c1', '--green': '#a3be8c', '--amber': '#ebcb8b', '--red': '#bf616a', '--agent': '#b48ead', '--accent': '#88c0d0', '--accent-rgb': '136, 192, 208', '--green-rgb': '163, 190, 140', '--blue-rgb': '129, 161, 193', '--amber-rgb': '235, 203, 139', '--red-rgb': '191, 97, 106', '--agent-rgb': '180, 142, 173' } }
   ];
 
   let currentThemeId = 'zinc';
@@ -2464,7 +2594,19 @@ const icons = {
   const _agentStreams = new Map(); // agent -> { el, text }
   let currentStreamEl = null;      // last-touched stream el (thinking-bar anchor)
   let currentStreamText = '';
+
+  // ── Sub-agent delegation roster ──
+  // Agents named as a delegation TARGET route here instead of the main column.
+  // One persistent group per user turn; one keyed row per agent (never re-spawned),
+  // so N stream/think cycles fold into ONE row instead of N stray cards.
+  const _subAgents = new Set();      // names known to be delegated sub-agents this turn
+  const _daemonToasted = new Set();  // daemon lanes we've toasted 'running' for (dedupe per run)
+  const _subRows = new Map();        // agentName -> { row, head, body, statusEl, previewEl, dot, text }
+  let _subRoster = null;             // { el, headCountEl, activeEl, bodyEl } active group container
+  function isSubAgent(name){ return !!name && _subAgents.has(String(name)); }
   let reconnectDelay = 1000;
+  let _reconnectTimer = null;   // handle for the scheduled onclose reconnect, so a manual/
+                                // visibility reconnect can cancel it (else two live sockets race)
   let sidebarOpen = false;
   let currentTab = 'sandbox';
   try { window.currentTab = currentTab; } catch(_) {}
@@ -2525,6 +2667,11 @@ const icons = {
 
   // ─── WebSocket ───
   function connect() {
+    // Cancel any reconnect scheduled by a prior onclose so we never end up with two
+    // overlapping sockets both appending to the same DOM (the classic node-graph flakiness).
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+    // Guard: if a socket is already OPEN or CONNECTING, don't spawn a second one.
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     // Allow the Node Graph to override the WS target (used to navigate between Mux-Swarm runtimes).
     let _wsHost = location.host;
@@ -2571,7 +2718,8 @@ const icons = {
 
       setBusy(false);
       if (pingInterval) clearInterval(pingInterval);
-      setTimeout(connect, reconnectDelay);
+      if (_reconnectTimer) clearTimeout(_reconnectTimer);
+      _reconnectTimer = setTimeout(connect, reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
     ws.onerror = () => {
@@ -2716,6 +2864,10 @@ const icons = {
   // text or turn boundary breaks the group so ordering stays faithful.
   let _toolGroup = null;
   function breakToolGroup() { _toolGroup = null; }
+  // Break the status-pill run at the SAME ordering boundaries as tool groups
+  // (turn start/end, prose stream, tool activity) so a pill cluster never
+  // swallows content that came after it. Defined after breakPillGroup below;
+  // referenced lazily so hoisting order is irrelevant.
   function ensureToolGroup() {
     if (_toolGroup && _toolGroup.el.isConnected) return _toolGroup;
     const el = document.createElement('div');
@@ -2746,6 +2898,7 @@ const icons = {
     return !document.body.classList.contains('tool-grouping-off');
   }
   function addToolCallRow(html) {
+    try { breakPillGroup(); } catch(_){}
     const row = document.createElement('div');
     row.className = 'tool-call';
     row.innerHTML = html;
@@ -2834,6 +2987,82 @@ const icons = {
       detail.style.display = open ? 'block' : 'none';
       row.classList.toggle('open', open);
     });
+  }
+
+  // ─── Shared: build the expandable, diff-colored detail HTML from a raw tool result ───
+  // Extracted from attachToolDetail so the sub-agent cards and the daemon lane can render the SAME
+  // rich detail as the main viewport (not just a truncated preview). Pure: raw -> {html, empty}.
+  function renderToolDetailHTML(rawResult) {
+    let text = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
+    try {
+      const parsed = typeof rawResult === 'string' ? JSON.parse(rawResult) : rawResult;
+      if (parsed && Array.isArray(parsed.content)) {
+        const tb = parsed.content.filter(c => c.type === 'text').map(c => c.text);
+        if (tb.length > 0) text = tb.join('\n');
+      } else if (parsed && typeof parsed.content === 'string') text = parsed.content;
+      else if (parsed && typeof parsed.result === 'string') text = parsed.result;
+    } catch (_) { /* not JSON */ }
+    if (!text || !text.trim()) return { html: '', empty: true };
+    const CAP = 100000;
+    let capped = 0;
+    if (text.length > CAP) { capped = text.length - CAP; text = text.slice(0, CAP); }
+    const lines = text.split('\n');
+    const isDiff = lines.some(l => l.startsWith('@@ ')) ||
+      (lines.some(l => /^---\s+\S/.test(l) && !/^---\s+(STDOUT|STDERR)\s*---/.test(l)) &&
+       lines.some(l => /^\+\+\+\s+\S/.test(l)));
+    let html = lines.map(l => {
+      const e = esc(l);
+      if (isDiff && /^\+(?!\+\+)/.test(l)) return '<span class="td-add">' + e + '</span>';
+      if (isDiff && /^-(?!--)/.test(l))      return '<span class="td-del">' + e + '</span>';
+      if (isDiff && l.startsWith('@@'))      return '<span class="td-hunk">' + e + '</span>';
+      if (/^(--- STDERR ---|Error|error:)/.test(l)) return '<span class="td-err">' + e + '</span>';
+      return '<span>' + e + '</span>';
+    }).join('\n');
+    if (capped > 0) html += '\n<span class="td-more">\u2026 output truncated (' + capped + ' more chars)</span>';
+    return { html, empty: false };
+  }
+
+  // Build an expandable tool card (call row + collapsible detail) inside an ARBITRARY container,
+  // styled as a NESTED card (see .nested-tc CSS) so it reads as a child of the main flow. Returns
+  // an object with attachDetail(raw) + setResult(summary) so a later tool_result can fill it in.
+  function buildNestedToolCard(container, toolHtml) {
+    const row = document.createElement('div');
+    row.className = 'tool-call nested-tc';
+    row.innerHTML = '<span class="tool">' + (toolHtml || '') + '</span>';
+    container.appendChild(row);
+    let detailEl = null;
+    return {
+      row,
+      setResult(summaryText) {
+        if (!summaryText) return;
+        const res = document.createElement('div');
+        res.className = 'tool-result nested-tc';
+        res.textContent = summaryText;
+        row.insertAdjacentElement('afterend', res);
+      },
+      attachDetail(rawResult) {
+        if (row._hasDetail) return;
+        const { html, empty } = renderToolDetailHTML(rawResult);
+        if (empty) return;
+        detailEl = document.createElement('div');
+        detailEl.className = 'tool-detail nested-td';
+        detailEl.innerHTML = html;
+        let anchor = row;
+        if (row.nextElementSibling && row.nextElementSibling.classList.contains('tool-result')) anchor = row.nextElementSibling;
+        anchor.insertAdjacentElement('afterend', detailEl);
+        row._hasDetail = true;
+        row.classList.add('expandable');
+        const chev = document.createElement('span');
+        chev.className = 'tc-chev';
+        chev.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>';
+        row.insertBefore(chev, row.firstChild);
+        row.addEventListener('click', () => {
+          const open = detailEl.style.display !== 'block';
+          detailEl.style.display = open ? 'block' : 'none';
+          row.classList.toggle('open', open);
+        });
+      }
+    };
   }
 
   // ─── Thinking bar ───
@@ -2953,6 +3182,53 @@ const icons = {
 
   // ─── Event dispatcher ───
   function handleEvent(ev) {
+    // ─── Daemon-origin routing ───
+    // Background daemon-fired goals are tagged origin:'daemon' by the backend
+    // (MuxConsole.BeginServeOrigin). They must NOT interleave into the main
+    // transcript or flip the composer busy state — route every such frame into
+    // the Node Graph's daemon lane and stop. Absent tag => normal handling.
+    try {
+      if (ev && ev.origin === 'daemon' && window.MuxDaemonLane) {
+        // Non-invasive: surface a toast when a daemon goal STARTS (once per lane
+        // per run) instead of yanking the user into the daemon tab. The lane fills
+        // in the background; the ⚙ Daemon badge count reflects active runs.
+        try {
+          if (ev.type === 'agent_turn_start') {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            if (!_daemonToasted.has(lane)) {
+              _daemonToasted.add(lane);
+              if (typeof showToast === 'function')
+                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''));
+            }
+          } else if (ev.type === 'success' && /Goal completed/i.test(ev.message || '')) {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            _daemonToasted.delete(lane);
+            if (typeof showToast === 'function') showToast('Daemon done: ' + lane);
+          } else if (ev.type === 'error') {
+            const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
+            _daemonToasted.delete(lane);
+          }
+        } catch (_) {}
+        window.MuxDaemonLane.push(ev);
+        return;
+      }
+    } catch (_) {}
+    // ─── Background sub-agent routing ───
+    // Background delegations (delegate_parallel background:true, /background) are tagged
+    // origin:'subagent' by the backend (DetachedRunner.BeginServeOrigin). Unlike foreground
+    // delegations they never emit a 'delegation' event, so _subAgents was never populated and their
+    // frames leaked into the main viewport. Register the agent on every tagged frame (self-heals after
+    // resetSubRoster wipes the roster on user_input) so the existing isSubAgent() routing sends them to
+    // their own card. Absent tag => unchanged behavior.
+    try {
+      // Register the real agent, but NOT the reserved 'Task' pseudo-agent: signal_task_complete
+      // emits its completion frame under the literal agent 'Task' (a marker, not a specialist), and
+      // it fires INSIDE the background origin scope — registering it would spawn a bogus 'Task' roster
+      // row. The lead's own frames (no origin tag) are excluded by the origin check.
+      if (ev && ev.origin === 'subagent' && ev.agent && ev.agent !== 'Task') {
+        if (!_subAgents.has(ev.agent)) { _subAgents.add(ev.agent); ensureSubRow(ev.agent); }
+      }
+    } catch (_) {}
     // ─── Agent-session mode transitions ───
     // The session banners ('Type /qc to exit' / 'Exited from Chat interface') are
     // used only as a CUE to re-sync from the authoritative /api/status endpoint —
@@ -2978,26 +3254,30 @@ const icons = {
         break; // suppressed
 
       case 'step':
-        appendHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`);
+        routePill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
         break;
 
       case 'rule':
-        appendHTML(`<div class="event event-rule">${ev.label ? esc(ev.label) : ''}</div>`);
+        // Separator/divider rules are visual noise in the web app (they dupe and,
+        // when folded into a status cluster, render as blank divider rows + an
+        // empty '·' preview). Stripped entirely — suppressed like splash/banner.
         break;
 
-      case 'success': appendText(ev.message, 'event-success'); break;
-      case 'warning': 
+      case 'success': routePill(pillFromText(ev.message, 'event-success')); break;
+      case 'warning':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendText(ev.message, 'event-warning'); 
+        routePill(pillFromText(ev.message, 'event-warning'));
         break;
-      case 'error':   appendText(ev.message, 'event-error'); break;
-      case 'info':    
+      case 'error':   routePill(pillFromText(ev.message, 'event-error')); break;
+      case 'info':
         if (ev.message && (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user'))) break;
-        appendText(ev.message, 'event-info'); 
+        routePill(pillFromText(ev.message, 'event-info'));
         break;
-      case 'debug':   appendText(ev.message, 'event-debug'); break;
+      case 'debug':   routePill(pillFromText(ev.message, 'event-debug')); break;
 
       case 'user_input': {
+        try { resetSubRoster(); } catch (_) {}
+        try { breakPillGroup(); } catch (_) {}
         const txt = ev.text || '';
         // One-shot suppression set: auto /qc, plus commands the user triggered
         // via the session-switch warning card (already shown in the card).
@@ -3085,8 +3365,12 @@ const icons = {
 
       case 'agent_turn_start':
         removeThinkingBar();
+        // A sub-agent's turn must not stamp a lead 'agent-turn' badge in the
+        // main column, finalize the lead stream, or flip global busy off/on;
+        // its lifecycle lives entirely in the roster row.
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'working'); break; }
         finalizeStream(ev.agent);
-        breakToolGroup();
+        breakToolGroup(); try { breakPillGroup(); } catch(_){}
         setBusy(true);
         const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
@@ -3094,8 +3378,10 @@ const icons = {
 
       case 'agent_turn_end':
         removeThinkingBar();
+        // Sub-agent turn end resolves its row; it never touches lead stream/busy.
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'done', 'done'); break; }
         finalizeStream(ev.agent);
-        breakToolGroup();
+        breakToolGroup(); try { breakPillGroup(); } catch(_){}
         setBusy(false);
         // Safety net: if a /compact placeholder is still showing when the turn
         // ends (compaction always wraps inside a turn), the real event matcher
@@ -3106,23 +3392,21 @@ const icons = {
       case 'stream': {
         setBusy(true);
         removeThinkingBar();
-        breakToolGroup();
+        // Only answer prose breaks a tool-call group. Reasoning (muted) chunks
+        // interleaved in a think->call->think burst must NOT break the group, or
+        // one logical burst shatters into a stack of count-1 collapsed groups
+        // (the 'pill wall'). Backend stamps reasoning:true on muted stream frames;
+        // absent => treat as prose (legacy-safe).
+        if (!ev.reasoning) { breakToolGroup(); try { breakPillGroup(); } catch(_){} }
         const skey = String(ev.agent || '');
+        // Sub-agent output folds into its persistent roster row (one row per
+        // agent, appended in place) rather than spawning a new stream card per
+        // stream/stop cycle. Lead/main output keeps the normal transcript block.
+        if (isSubAgent(skey)) { appendSubStream(skey, ev.text || ''); break; }
         let st = _agentStreams.get(skey);
         if (!st) {
           st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
-          if (skey) {
-            st.el.dataset.agent = skey;
-            // Label concurrent sub-agent streams so parallel output is legible.
-            const hdr = document.createElement('div');
-            hdr.className = 'stream-agent-label';
-            hdr.textContent = skey;
-            st.el.appendChild(hdr);
-            st.body = document.createElement('div');
-            st.body.className = 'stream-body';
-            st.el.appendChild(st.body);
-          }
           output.appendChild(st.el);
           _agentStreams.set(skey, st);
         }
@@ -3137,12 +3421,14 @@ const icons = {
 
       case 'stream_end':
         removeThinkingBar();
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'thinking'); break; }
         finalizeStream(ev.agent);
         setBusy(false);
         break;
 
       case 'thinking_start':
         setBusy(true);
+        if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'thinking'); break; }
         appendThinkingBar(ev.agent || '', '');
         break;
 
@@ -3176,23 +3462,41 @@ const icons = {
         break;
 
       case 'tool_call':
+        if (isSubAgent(ev.agent)) {
+          const r = setSubStatus(ev.agent, 'running', 'working');
+          const tn = friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input);
+          const tmp = document.createElement('span'); tmp.innerHTML = tn;
+          r.previewEl.textContent = (tmp.textContent || '').trim();
+          subToolCall(ev.agent, tn);   // expandable nested card (a following tool_result fills it)
+          break;
+        }
         removeThinkingBar();
         addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '', ev.arguments || ev.input)}</span>`);
         break;
 
       case 'tool_result':
       case 'function_result':
-        // Some runtime paths emit only tool_result (no tool_call event).
-        // Synthesize the call row so grouping/expansion still works.
-        if (ev.tool && (!_lastToolCallRow || !_lastToolCallRow.isConnected || _lastToolCallRow._resultSeen)) {
-          removeThinkingBar();
-          addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span>`);
-        }
-        if (_lastToolCallRow) _lastToolCallRow._resultSeen = true;
-        // Display summary in main chat
-        if (ev.summary) {
-          const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
-          addToolResultRow(trunc);
+        // Sub-agent tool activity updates its roster row and skips the main-column
+        // call/summary rows, but still falls through to the shared Live Diffs panel.
+        if (isSubAgent(ev.agent)) {
+          const r = setSubStatus(ev.agent, 'running', 'working');
+          if (ev.summary) r.previewEl.textContent = subPreview(ev.summary);
+          // Fill the nested card's expandable detail with the full result (parity with main viewport).
+          const subRaw = ev.result || ev.output || ev.content || ev.text;
+          subToolResult(ev.agent, subRaw, ev.summary);
+        } else {
+          // Some runtime paths emit only tool_result (no tool_call event).
+          // Synthesize the call row so grouping/expansion still works.
+          if (ev.tool && (!_lastToolCallRow || !_lastToolCallRow.isConnected || _lastToolCallRow._resultSeen)) {
+            removeThinkingBar();
+            addToolCallRow(`<span class="tool">${friendlyToolName(ev.tool || '', ev.agent || '')}</span>`);
+          }
+          if (_lastToolCallRow) _lastToolCallRow._resultSeen = true;
+          // Display summary in main chat
+          if (ev.summary) {
+            const trunc = ev.summary.length > 150 ? ev.summary.substring(0, 150) + '...' : ev.summary;
+            addToolResultRow(trunc);
+          }
         }
         
         // Render detailed diff/result in the Live Diffs panel (clean, scannable cards)
@@ -3363,9 +3667,20 @@ const icons = {
         }
         break;
 
-      case 'delegation':
-        appendHTML(`<div class="delegation"><span class="deleg-icon" style="display:flex;align-items:center;margin-top:1px">${icons.arrowUpRight}</span> <span class="from">${esc(ev.from || '')}</span> <span class="deleg-arrow">delegated to</span> <span class="to">${esc(ev.to || '')}</span>${ev.task ? `<span class="task">${esc(ev.task)}</span>` : ''}</div>`);
+      case 'delegation': {
+        // Register the target as a sub-agent and create/refresh its roster row
+        // instead of stamping a standalone full-width delegation card.
+        const to = String(ev.to || '').trim();
+        if (to) {
+          _subAgents.add(to);
+          const r = ensureSubRow(to);
+          r.dot.className = 'sub-dot pending';
+          r.statusEl.textContent = 'delegated';
+          if (ev.task) r.previewEl.textContent = subPreview(ev.task);
+          scrollToBottom();
+        }
         break;
+      }
 
       // Batch6: /wipe cleared the live session context. Mirror Claude /clear by
       // clearing the transcript view (reuses the screen-clear with undo toast).
@@ -3378,6 +3693,35 @@ const icons = {
 
       case 'task_complete': {
         const summary = ev.summary ? String(ev.summary).trim() : '';
+        // The shared signal_task_complete tool emits its rich summary under the
+        // literal agent 'Task' (not the specialist). While a sub-agent roster is
+        // live, that summary belongs to a delegated agent: attach it to a still-
+        // pending row, else queue it (FIFO) for the next specialist 'sub-task'
+        // marker. We suppress the standalone 'Task' card in that case — its content
+        // now surfaces behind the owning row's summary button. When NO roster is
+        // active it is a genuine orchestrator-goal completion and renders normally.
+        // While a sub-agent roster is live, the specialist's own task_complete event
+        // now carries the real summary (engine sets it), so the redundant literal-'Task'
+        // completion card is suppressed — its content surfaces behind the owning row's
+        // summary button instead. When NO roster is active it is a genuine orchestrator-
+        // goal completion and renders as a normal card.
+        // Suppress the literal-'Task' completion marker whenever it belongs to a delegation —
+        // either a live foreground roster OR a background job (origin:'subagent'). Its content
+        // surfaces via the owning agent's own task_complete/summary, never a standalone card.
+        if (String(ev.agent || '') === 'Task' && (_subRoster || ev.origin === 'subagent')) { break; }
+        // Sub-agent completion resolves its roster row (final text + done dot)
+        // instead of appending a separate task-complete card to the transcript.
+        if (isSubAgent(ev.agent)) {
+          // Completion marks the row done and un-greys its summary button — it must
+          // NEVER overwrite the accumulated stream body. The engine emits the real
+          // completion summary on this specialist event.
+          const r = setSubStatus(ev.agent, 'done', 'completed');
+          const clean = stripSentinels(summary);
+          // Engine sends the real summary here; a bare legacy 'sub-task' is ignored
+          // (the row keeps its streamed body and the button simply marks completion).
+          if (clean && !/^sub[-\s]?task$/i.test(clean)) setSubSummary(ev.agent, clean);
+          break;
+        }
         // Suppress trivial/boilerplate task_complete cards that add no info (e.g. delegated sub-task completions).
         if (!summary || /^sub[-\s]?task$/i.test(summary)) { break; }
         const isLong = summary.length > 220 || summary.indexOf('\n') !== -1;
@@ -3433,7 +3777,7 @@ const icons = {
         break;
       }
 
-      case 'task_start': appendHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`); break;
+      case 'task_start': routePill(pillFromHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
       case 'task_done': {
         // Suppress redundant task_done row when a recently-rendered .task-complete card
         // already covers the same agent. Scan back through the last few siblings since
@@ -3456,18 +3800,109 @@ const icons = {
           }
         }
         if (suppressed) break;
-        appendHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`);
+        routePill(pillFromHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
         break;
       }
 
       default:
         if (ev.message) {
           if (ev.message.includes('Cancelled by client') || ev.message.includes('Turn cancelled by user')) break;
-          appendText(ev.message, 'event-info');
+          routePill(pillFromText(ev.message, 'event-info'));
         }
         break;
     }
     scrollToBottom();
+  }
+
+  // ─── Status-pill coalescing ───
+  // The 9 status event types (success/warning/error/info/debug/step/rule/
+  // task_start/task_done) each used to stamp one standalone row, walling the
+  // transcript on chatty turns (retries, MCP notices, step banners). Fold a RUN
+  // of consecutive status pills into one quiet expandable cluster; any non-status
+  // content (stream, card, user input, tool group) breaks the run so ordering
+  // stays faithful. Disabled when the user hid pills or turned grouping off.
+  let _pillGroup = null;
+  function breakPillGroup() { _pillGroup = null; }
+  function pillGroupingEnabled() {
+    return !document.body.classList.contains('tool-grouping-off');
+  }
+  function ensurePillGroup() {
+    if (_pillGroup && _pillGroup.el.isConnected) return _pillGroup;
+    const el = document.createElement('div');
+    el.className = 'event-group open';
+    el.innerHTML =
+      '<div class="event-group-header">' +
+        '<span class="eg-chev">' + icons.chevronDown + '</span>' +
+        '<span class="eg-label"></span>' +
+        '<span class="eg-latest"></span>' +
+      '</div>' +
+      '<div class="event-group-body"></div>';
+    const g = { el, body: el.querySelector('.event-group-body'),
+                label: el.querySelector('.eg-label'),
+                latest: el.querySelector('.eg-latest'),
+                count: 0, userToggled: false };
+    el.querySelector('.event-group-header').addEventListener('click', () => {
+      g.userToggled = true; el.classList.toggle('open');
+    });
+    output.appendChild(el);
+    _pillGroup = g;
+    return g;
+  }
+  // Some status pills carry at-a-glance signal that must stay visible without a
+  // click (token/context usage, turn-completion readiness, compaction results,
+  // session-saved). These render STANDALONE; only genuinely noisy status lines
+  // (retries, daemon next-fire, MCP notices, step/rule banners, generic info)
+  // fold into the collapsed cluster.
+  function isImportantPill(text) {
+    const t = String(text || '');
+    return (
+      /Total\s+Tokens?|tokens?\s+in\s+context|Cached\s+Tokens?/i.test(t) ||
+      /Context:\s*[\d,]+\s*\/\s*[\d,]+\s*tokens/i.test(t) ||
+      /Ready for next input/i.test(t) ||
+      /Compacted:/i.test(t) ||
+      /tokens remain/i.test(t)
+    );
+  }
+  // Route a status pill: standalone when important, else into the cluster.
+  function routePill(node) {
+    if (isImportantPill(node.textContent || '')) {
+      breakPillGroup();
+      output.appendChild(node);
+      decorateCollapsibles(node);
+      scrollToBottom();
+      return;
+    }
+    appendPill(node);
+  }
+  // Route a status pill through the cluster. `node` is a ready DOM element.
+  function appendPill(node) {
+    // Skip pills with no visible text (e.g. empty rules) — they add blank rows and
+    // inflate the cluster count without conveying anything.
+    if (!(node.textContent || '').trim() && !node.querySelector('img,svg,.mux-token-badge')) return;
+    if (!pillGroupingEnabled()) { output.appendChild(node); decorateCollapsibles(node); scrollToBottom(); return; }
+    const g = ensurePillGroup();
+    g.count++;
+    g.body.appendChild(node);
+    decorateCollapsibles(node);
+    g.label.textContent = g.count === 1 ? '1 status update' : (g.count + ' status updates');
+    // Only show a preview when the pill actually has text (blank nodes -> no bare '·').
+    const _prev = (node.textContent || '').trim();
+    g.latest.textContent = _prev ? ('\u00b7 ' + _prev.slice(0, 80)) : '';
+    const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
+    const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
+    if (!autoOff && g.count >= Math.max(limit, 3) && !g.userToggled) g.el.classList.remove('open');
+    scrollToBottom();
+  }
+  function pillFromText(text, cls) {
+    const el = document.createElement('div');
+    el.className = 'event ' + (cls || '');
+    el.textContent = text || '';
+    return el;
+  }
+  function pillFromHTML(html) {
+    const w = document.createElement('div');
+    w.innerHTML = html;
+    return w.firstElementChild || w;
   }
 
   // ─── Rendering helpers ───
@@ -3597,6 +4032,184 @@ const icons = {
         }
       }
     });
+  }
+
+  // ─────────────── Sub-agent roster engine ───────────────
+  function ensureSubRoster() {
+    if (_subRoster && _subRoster.el.isConnected) return _subRoster;
+    const el = document.createElement('div');
+    el.className = 'sub-roster';
+    el.innerHTML =
+      '<div class="sub-roster-head">' +
+        '<span class="sr-chev">' + icons.chevronDown + '</span>' +
+        '<span class="sr-title">Sub-agents</span>' +
+        '<span class="sr-count">0</span>' +
+        '<span class="sr-spacer"></span>' +
+        '<span class="sr-active"></span>' +
+      '</div>' +
+      '<div class="sub-roster-body"></div>';
+    const head = el.querySelector('.sub-roster-head');
+    head.addEventListener('click', () => el.classList.toggle('sr-collapsed'));
+    // Optional default-collapsed (settings: rosterCollapsed -> body class).
+    if (document.body.classList.contains('sub-roster-collapsed-default')) el.classList.add('sr-collapsed');
+    output.appendChild(el);
+    _subRoster = { el, headCountEl: el.querySelector('.sr-count'),
+                   activeEl: el.querySelector('.sr-active'),
+                   bodyEl: el.querySelector('.sub-roster-body') };
+    return _subRoster;
+  }
+  function ensureSubRow(name) {
+    const key = String(name || '');
+    let r = _subRows.get(key);
+    if (r && r.row.isConnected) return r;
+    const roster = ensureSubRoster();
+    const row = document.createElement('div');
+    row.className = 'sub-row';
+    row.innerHTML =
+      '<div class="sub-row-head">' +
+        '<span class="sub-dot pending"></span>' +
+        '<span class="sub-name"></span>' +
+        '<span class="sub-status">delegated</span>' +
+        '<span class="sub-row-spacer"></span>' +
+        '<span class="sub-preview"></span>' +
+        '<button type="button" class="sub-summary-btn" title="Show completion summary">' +
+          '<span class="ck">' + icons.check + '</span>summary' +
+        '</button>' +
+        '<span class="sub-chev">' + icons.chevronDown + '</span>' +
+      '</div>' +
+      '<div class="sub-row-body">' +
+        '<div class="sub-row-summary"><div class="srs-label">Completion summary</div><div class="srs-text"></div></div>' +
+        '<div class="sub-stream"></div>' +
+        '<div class="sub-acts"></div>' +
+      '</div>';
+    row.querySelector('.sub-name').textContent = key;
+    const head = row.querySelector('.sub-row-head');
+    head.addEventListener('click', (e) => {
+      if (e.target.closest('a, input, textarea, select')) return;
+      // The summary button opens the row AND reveals the summary panel; other
+      // clicks on the head just toggle the row open/closed.
+      if (e.target.closest('.sub-summary-btn')) {
+        row.classList.add('sr-open');
+        const panel = row.querySelector('.sub-row-summary');
+        if (panel) { panel.classList.toggle('show'); if (panel.classList.contains('show')) panel.scrollIntoView({block:'nearest'}); }
+        return;
+      }
+      row.classList.toggle('sr-open');
+    });
+    roster.bodyEl.appendChild(row);
+    r = { row, head,
+          body: row.querySelector('.sub-row-body'),
+          streamEl: row.querySelector('.sub-stream'),
+          actsEl: row.querySelector('.sub-acts'),
+          summaryPanel: row.querySelector('.sub-row-summary'),
+          summaryTextEl: row.querySelector('.srs-text'),
+          summaryBtn: row.querySelector('.sub-summary-btn'),
+          statusEl: row.querySelector('.sub-status'),
+          previewEl: row.querySelector('.sub-preview'),
+          dot: row.querySelector('.sub-dot'), text: '', summary: '' };
+    _subRows.set(key, r);
+    updateSubRosterCount();
+    return r;
+  }
+  function updateSubRosterCount() {
+    if (!_subRoster) return;
+    const total = _subRows.size;
+    let running = 0, done = 0;
+    _subRows.forEach(r => {
+      if (r.dot.classList.contains('running')) running++;
+      else if (r.dot.classList.contains('done')) done++;
+    });
+    _subRoster.headCountEl.textContent = String(total);
+    if (running > 0) {
+      _subRoster.el.classList.remove('sr-all-done');
+      _subRoster.activeEl.textContent = running + ' running';
+    } else if (done >= total && total > 0) {
+      _subRoster.el.classList.add('sr-all-done');
+      _subRoster.activeEl.textContent = 'all done';
+    } else {
+      _subRoster.el.classList.remove('sr-all-done');
+      _subRoster.activeEl.textContent = done + '/' + total + ' done';
+    }
+  }
+  function setSubStatus(name, state, label) {
+    const r = ensureSubRow(name);
+    r.dot.className = 'sub-dot ' + state;
+    if (label !== undefined && label !== null) r.statusEl.textContent = label;
+    updateSubRosterCount();
+    return r;
+  }
+  function stripSentinels(s) {
+    // Backend delegation sentinels (e.g. AGENT_DEMO_DONE) can fuse into the
+    // stream with no delimiter; drop bare ALL-CAPS _DONE-style tokens.
+    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '').trimEnd();
+  }
+  function subPreview(text) {
+    const flat = String(text || '').replace(/`{1,3}[^`]*`{1,3}/g, m => m.replace(/`/g,''))
+      .replace(/[#>*_-]/g, ' ').replace(/\s+/g, ' ').trim();
+    return flat.length > 140 ? flat.slice(-140) : flat;
+  }
+  function appendSubStream(name, chunk) {
+    const r = ensureSubRow(name);
+    r.dot.className = 'sub-dot running';
+    r.statusEl.textContent = 'streaming';
+    r.text = stripSentinels(r.text + (chunk || ''));
+    r.streamEl.innerHTML = renderMarkdown(r.text);
+    r.previewEl.textContent = subPreview(r.text);
+    updateSubRosterCount();
+    scrollToBottom();
+  }
+  // Append a compact tool-activity line into the row body so the expanded row
+  // shows the stream + tool-call graph interleaved (chronological, scrollable).
+  function appendSubActivity(name, toolHtml, summary) {
+    const r = ensureSubRow(name);
+    const line = document.createElement('div');
+    line.className = 'sub-act';
+    let inner = '<span class="sa-icon">' + icons.zap + '</span>' +
+                '<span class="sa-tool">' + (toolHtml || '') + '</span>';
+    if (summary) { const t = document.createElement('span'); t.textContent = subPreview(summary); inner += '<span class="sa-sum">' + t.innerHTML + '</span>'; }
+    line.innerHTML = inner;
+    r.actsEl.appendChild(line);
+    scrollToBottom();
+  }
+  // Rich sub-agent flow: an expandable nested tool card in the sub-row body (parity with the main
+  // viewport). Opens a card on tool_call; a following tool_result fills its detail + summary.
+  function subToolCall(name, toolHtml) {
+    const r = ensureSubRow(name);
+    r._lastCard = buildNestedToolCard(r.actsEl, toolHtml);
+    scrollToBottom();
+    return r._lastCard;
+  }
+  function subToolResult(name, rawResult, summary) {
+    const r = ensureSubRow(name);
+    if (r._lastCard) {
+      if (summary) r._lastCard.setResult(subPreview(summary));
+      r._lastCard.attachDetail(rawResult);
+      r._lastCard = null;
+    } else {
+      // Result with no preceding call (sub-agents emit tool_result, not tool_call) -> synthesize one.
+      const card = buildNestedToolCard(r.actsEl, '<span class="tool">tool result</span>');
+      if (summary) card.setResult(subPreview(summary));
+      card.attachDetail(rawResult);
+    }
+    scrollToBottom();
+  }
+  function setSubSummary(name, text) {
+    const r = ensureSubRow(name);
+    const clean = stripSentinels(text);
+    if (!clean) return;
+    r.summary = clean;
+    if (r.summaryTextEl) r.summaryTextEl.innerHTML = renderMarkdown(clean);
+    if (r.summaryBtn) r.summaryBtn.classList.add('ready');
+    // If nothing streamed (some sub-agents only signal completion), show the
+    // summary as the row preview so the collapsed row still reads meaningfully.
+    if (!r.text) r.previewEl.textContent = subPreview(clean);
+  }
+  function resetSubRoster() {
+    // Called at each user turn so a new delegation batch starts a fresh group;
+    // prior groups stay in the transcript as history.
+    _subAgents.clear();
+    _subRows.clear();
+    _subRoster = null;
   }
 
   function finalizeStream(agent) {
@@ -3816,7 +4429,7 @@ const icons = {
     return result.join('');
   }
   // Expose for use by other <script> blocks (e.g. live preview panel).
-  try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; } catch(_) {}
+  try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; window.buildNestedToolCard = buildNestedToolCard; window.renderToolDetailHTML = renderToolDetailHTML; } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -3967,7 +4580,7 @@ const icons = {
       if (multi) {
         btn.addEventListener('click', () => {
           if (selected.has(i + 1)) { selected.delete(i + 1); btn.style.borderColor = ''; btn.style.background = ''; }
-          else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(100,180,220,0.1)'; }
+          else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(var(--accent-rgb),0.1)'; }
         });
       } else {
         btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(choice)}</div></div>`; });
@@ -4260,6 +4873,20 @@ const icons = {
     } catch (_) {}
     // Authoritative session mode → replaces banner-text scraping.
     try { await refreshSessionMode(); } catch (_) {}
+    // Self-heal stale cached shell: if the backend build differs from the shell we
+    // loaded, a hard refresh is required or interactive panels diverge and hang.
+    // Do it once (sessionStorage guard) so we never loop on a persistent mismatch.
+    try {
+      const r = await fetch(_apiUrl('/api/health'), { headers: { 'Accept': 'application/json' } });
+      if (r.ok) {
+        const h = await r.json();
+        if (h && h.version && h.version !== APP_VERSION && !sessionStorage.getItem('muxReloadedFor_' + h.version)) {
+          sessionStorage.setItem('muxReloadedFor_' + h.version, '1');
+          location.reload();
+          return;
+        }
+      }
+    } catch (_) {}
   }
 
   // Pull authoritative session mode from /api/status. The server pins this
@@ -4561,19 +5188,13 @@ const icons = {
   });
 
   statusBtn.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      if (confirm('Are you sure you want to restart the server?')) {
-        appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
-        sendRaw('__CANCEL__');
-        setTimeout(() => {
-          sendRaw('/qc');
-          setTimeout(() => {
-            sendRaw('/exit');
-          }, 1000);
-        }, 2500);
-      }
-    } else {
-      alert('Cannot restart: Not connected to server.');
+    if (confirm('Are you sure you want to restart the server?')) {
+      appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
+      // Native restart route: spawns a successor that waits for this process to exit, then rebinds
+      // the serve port. Replaces the old flaky "__CANCEL__ -> /qc -> /exit over WS" timing dance.
+      fetch('/api/restart', { method: 'POST' })
+        .then(r => { if (!r.ok && r.status !== 202) throw new Error('HTTP ' + r.status); })
+        .catch(err => { alert('Restart request failed: ' + err.message); });
     }
   });
 
@@ -4776,7 +5397,7 @@ const icons = {
   let dragCounter = 0;
   let sidebarDragActive = false;
   const dropOverlay = document.createElement('div');
-  dropOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(100,180,220,0.08);border:2px dashed var(--accent);z-index:999;display:none;align-items:center;justify-content:center;pointer-events:none;';
+  dropOverlay.style.cssText = 'position:fixed;inset:0;background:rgba(var(--accent-rgb),0.08);border:2px dashed var(--accent);z-index:999;display:none;align-items:center;justify-content:center;pointer-events:none;';
   dropOverlay.innerHTML = '<div style="color:var(--accent);font-family:var(--font-mono);font-size:16px;font-weight:600">Drop files to upload</div>';
   document.body.appendChild(dropOverlay);
 
@@ -5060,7 +5681,7 @@ const icons = {
     const css = [
       '.mux-find-bar { padding: 8px 10px; border-bottom: 1px solid var(--border, #27272a); }',
       '.mux-find-bar input { width: 100%; box-sizing: border-box; background: rgba(0,0,0,0.25); color: var(--text); border: 1px solid var(--border, #27272a); border-radius: 6px; padding: 5px 9px; font-size: calc(12px * var(--ui-font-scale, 1)); outline: none; }',
-      '.mux-find-bar input:focus { border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 2px rgba(100,180,220,0.15); }',
+      '.mux-find-bar input:focus { border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 2px rgba(var(--accent-rgb),0.15); }',
       '.mux-find-status { padding: 6px 12px 4px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); text-transform: uppercase; letter-spacing: 0.04em; }',
       '.mux-find-hit .name { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }',
       '.mux-find-path { font-size: calc(9px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); font-family: var(--font-mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }'
@@ -5507,7 +6128,7 @@ const icons = {
       }
       .mux-sess-search:focus {
         border-color: var(--accent, #64b4dc);
-        box-shadow: 0 0 0 2px rgba(100,180,220,0.15);
+        box-shadow: 0 0 0 2px rgba(var(--accent-rgb),0.15);
       }
       .mux-sess-count {
         font-size:calc(10px * var(--ui-font-scale, 1));
@@ -5605,9 +6226,9 @@ const icons = {
         cursor: pointer;
         transition: background 0.12s;
       }
-      .mux-sess-row:hover { background: rgba(100,180,220,0.06); }
+      .mux-sess-row:hover { background: rgba(var(--accent-rgb),0.06); }
       .mux-sess-row.active {
-        background: rgba(100,180,220,0.1);
+        background: rgba(var(--accent-rgb),0.1);
         box-shadow: inset 2px 0 0 var(--accent, #64b4dc);
       }
       .mux-sess-row-title {
@@ -5642,14 +6263,14 @@ const icons = {
         flex: 1 1 auto; min-width: 0;
       }
       .mux-sess-skel { color: var(--muted, #71717a); font-style: italic; opacity: 0.7; }
-      .mux-sess-err { color: #f87171; }
+      .mux-sess-err { color: var(--red); }
 
       /* ── Chips ──────────────────────────────────────────── */
       .mux-sess-chip {
         display: inline-flex; align-items: center;
         font-size: calc(9px * var(--ui-font-scale, 1));
         padding: 1px 6px; border-radius: 5px;
-        background: rgba(100,180,220,0.12);
+        background: rgba(var(--accent-rgb),0.12);
         color: var(--accent, #64b4dc);
         font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
         line-height: 1.4;
@@ -5703,7 +6324,7 @@ const icons = {
         margin-top: 10px;
       }
       .mux-sess-btn {
-        background: rgba(100,180,220,0.1);
+        background: rgba(var(--accent-rgb),0.1);
         color: var(--text);
         border: 1px solid var(--border, #27272a);
         border-radius: 6px;
@@ -5714,7 +6335,7 @@ const icons = {
         white-space: nowrap;
       }
       .mux-sess-btn:hover {
-        background: rgba(100,180,220,0.18);
+        background: rgba(var(--accent-rgb),0.18);
         border-color: var(--accent, #64b4dc);
       }
       .mux-sess-btn.primary {
@@ -5758,7 +6379,7 @@ const icons = {
       }
 
       .mux-sess-role-user {
-        background: rgba(100,180,220,0.045);
+        background: rgba(var(--accent-rgb),0.045);
         border-radius: 8px;
         padding: 8px 12px;
       }
@@ -5879,6 +6500,7 @@ const icons = {
     
     // Reset backoff delay and reconnect immediately
     if (pingInterval) clearInterval(pingInterval);
+    if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     reconnectDelay = 1000;
     connect();
   }
@@ -6984,7 +7606,7 @@ const icons = {
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
-  .mux-toast .mux-toast-btn:hover { background: rgba(100,180,220,0.1); border-color: var(--accent, #64b4dc); }
+  .mux-toast .mux-toast-btn:hover { background: rgba(var(--accent-rgb),0.1); border-color: var(--accent, #64b4dc); }
 </style>
 <!-- ─── Settings Panel (composable, additive) ─── -->
 <style>
@@ -7121,8 +7743,8 @@ const icons = {
     transition: background 0.15s, border-color 0.15s, color 0.15s;
   }
   .mux-settings-btn:hover { background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.15); }
-  .mux-settings-btn.danger { color: #f87171; border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.04); }
-  .mux-settings-btn.danger:hover { background: rgba(248,113,113,0.1); border-color: rgba(248,113,113,0.5); }
+  .mux-settings-btn.danger { color: var(--red); border-color: rgba(var(--red-rgb),0.3); background: rgba(var(--red-rgb),0.04); }
+  .mux-settings-btn.danger:hover { background: rgba(var(--red-rgb),0.1); border-color: rgba(var(--red-rgb),0.5); }
 
   /* ── Slider (native range) restyle, Claude-Code-like ── */
   .mux-row input[type="range"] {
@@ -7157,7 +7779,7 @@ const icons = {
     box-shadow: 0 1px 3px rgba(0,0,0,0.4);
   }
   .mux-row input[type="range"]:focus { outline: none; }
-  .mux-row input[type="range"]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(100,180,220,0.18), 0 1px 3px rgba(0,0,0,0.4); }
+  .mux-row input[type="range"]:focus::-webkit-slider-thumb { box-shadow: 0 0 0 4px rgba(var(--accent-rgb),0.18), 0 1px 3px rgba(0,0,0,0.4); }
   /* Value chip next to slider */
   .mux-row .mux-range-value {
     min-width: 56px; text-align: right;
@@ -7192,19 +7814,31 @@ const icons = {
   .mux-row select:hover,
   .mux-settings select:hover { background-color: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); }
   .mux-row select:focus,
-  .mux-settings select:focus { outline: none; border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 3px rgba(100,180,220,0.15); }
+  .mux-settings select:focus { outline: none; border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 3px rgba(var(--accent-rgb),0.15); }
 
   body.hide-tokens .mux-token-badge { display: none !important; }
   body.hide-saved-banner .mux-save-banner { display: none !important; }
   body.hide-task-complete-pills .task-complete { display: none !important; }
-  body.hide-delegation-pills .delegation { display: none !important; }
+    /* Frosted-glass effects toggle (Settings > Display). Default off = glass ON. */
+    body.no-glass .header,
+    body.no-glass .sidebar,
+    body.no-glass .input-area,
+    body.no-glass .cmd-palette,
+    body.no-glass .theme-panel,
+    body.no-glass .mng-panel { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+    body.no-glass .input-area { background: var(--bg) !important; }
+    body.no-glass .cmd-palette { background: var(--bg-card) !important; }
+  /* The old standalone .delegation card no longer exists; sub-agent delegations now
+     render in the roster. Point this toggle at the live roster so it does something. */
+  body.hide-sub-roster .sub-roster { display: none !important; }
   body.hide-task-status-pills .event.no-default-icon { display: none !important; }
   body.hide-all-pills .mux-token-badge,
   body.hide-all-pills .mux-save-banner,
   body.hide-all-pills .mux-compact-row,
   body.hide-all-pills .task-complete,
   body.hide-all-pills .delegation,
-  body.hide-all-pills .event.no-default-icon { display: none !important; }
+  body.hide-all-pills .event.no-default-icon,
+  body.hide-all-pills .sub-roster { display: none !important; }
   body.hide-timestamps .msg-time { display: none !important; }
   body.hide-agent-badge .agent-badge { display: none !important; }
   body.hide-char-counter .char-counter { display: none !important; }
@@ -7258,18 +7892,18 @@ const icons = {
   .mux-compact-row { color: var(--muted, #9ca0aa); }
   body.hide-compacting-pills .mux-compact-row { display: none !important; }
   .mux-compact-row.mux-compact-done {
-    color: var(--green, #10b981);
-    background: rgba(16, 185, 129, 0.06);
-    border-color: rgba(16, 185, 129, 0.25);
+    color: var(--muted, #9ca0aa);
+    background: transparent;
+    border-color: var(--border);
   }
   .mux-compact-row .mux-compact-icon { display: inline-flex; width: 13px; height: 13px; align-items: center; justify-content: center; }
   .mux-compact-row .mux-compact-label { white-space: nowrap; }
   .mux-compact-row .mux-compact-agent { color: var(--accent, #a78bfa); font-weight: 500; }
 
   .mux-save-banner {
-    color: var(--green, #10b981);
-    background: rgba(16, 185, 129, 0.06);
-    border-color: rgba(16, 185, 129, 0.25);
+    color: var(--muted, #9ca0aa);
+    background: var(--bg-card);
+    border-color: var(--border);
     max-width: 100%;
     overflow: hidden;
   }
@@ -7277,7 +7911,7 @@ const icons = {
     font-size: calc(10px * var(--ui-font-scale, 1));
     letter-spacing: 0.06em;
     text-transform: uppercase;
-    background: rgba(16, 185, 129, 0.12);
+    background: rgba(var(--green-rgb), 0.12);
     color: var(--green, #10b981);
     padding: 1px 6px;
     border-radius: 4px;
@@ -7364,9 +7998,9 @@ const icons = {
     line-height: 1.2;
     opacity: 0.9;
   }
-  .event-success .pill-tag { background: rgba(16,185,129,0.14); color: var(--green, #10b981); }
-  .event-warning .pill-tag { background: rgba(245,158,11,0.16); color: var(--amber, #f59e0b); }
-  .event-error   .pill-tag { background: rgba(239,68,68,0.16);  color: var(--red, #ef4444); }
+  .event-success .pill-tag { background: rgba(var(--green-rgb),0.14); color: var(--green, #10b981); }
+  .event-warning .pill-tag { background: rgba(var(--amber-rgb),0.16); color: var(--amber, #f59e0b); }
+  .event-error   .pill-tag { background: rgba(var(--red-rgb),0.16);  color: var(--red, #ef4444); }
   .event-info    .pill-tag { background: rgba(161,161,170,0.16); color: var(--muted, #a1a1aa); }
   .event-debug   .pill-tag { background: rgba(113,113,122,0.18); color: #a1a1aa; }
 
@@ -7393,7 +8027,7 @@ const icons = {
   /* Add subtle inset tag for token badge when wrapped (handled via JS class .has-tag) */
   .mux-token-badge .pill-tag { background: rgba(161,161,170,0.16); color: var(--muted, #a1a1aa); }
   .mux-compact-row .pill-tag { background: rgba(161,161,170,0.16); color: var(--muted, #a1a1aa); }
-  .mux-compact-row.mux-compact-done .pill-tag { background: rgba(16,185,129,0.14); color: var(--green, #10b981); }
+  .mux-compact-row.mux-compact-done .pill-tag { background: rgba(var(--green-rgb),0.14); color: var(--green, #10b981); }
 
   /* Compacting conversation history: hide the redundant DONE duplicate
      (the "Compacted: X -> Y tokens" summary pill conveys completion). */
@@ -7575,6 +8209,9 @@ const icons = {
       <button class="mux-settings-btn danger" id="muxSettingsReset">Reset to defaults</button>
       <button class="mux-settings-btn" id="muxSettingsExport">Export</button>
       <button class="mux-settings-btn" id="muxSettingsImport">Import</button>
+      <button class="mux-settings-btn" id="muxEditConfig" style="display:none">Edit Config.json</button>
+      <button class="mux-settings-btn" id="muxEditSwarm" style="display:none">Edit Swarm.json</button>
+      <button class="mux-settings-btn" id="muxUpdateBtn">Check for updates</button>
     </div>
   </div>
 </div>
@@ -7602,7 +8239,9 @@ const icons = {
     hideAllPills: false,
     hideCompactingPills: true,
     hideTaskCompletePills: false,
-    hideDelegationPills: false,
+    noGlass: false,
+    hideSubRoster: false,
+    rosterCollapsed: false,
     hideTaskStatusPills: false,
     toolGrouping: true,
     hideToolCalls: false,
@@ -7682,7 +8321,9 @@ const icons = {
     b.classList.toggle('hide-compacting-pills', !!state.hideCompactingPills);
     b.classList.toggle('hide-all-pills',         !!state.hideAllPills);
     b.classList.toggle('hide-task-complete-pills', !!state.hideTaskCompletePills);
-    b.classList.toggle('hide-delegation-pills',  !!state.hideDelegationPills);
+    b.classList.toggle('no-glass', !!state.noGlass);
+    b.classList.toggle('hide-sub-roster',        !!state.hideSubRoster);
+    b.classList.toggle('sub-roster-collapsed-default', !!state.rosterCollapsed);
     b.classList.toggle('hide-task-status-pills', !!state.hideTaskStatusPills);
     b.classList.toggle('tool-grouping-off',       !state.toolGrouping);
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
@@ -7911,16 +8552,20 @@ const icons = {
       sliderRow('collapseThreshold', 'Auto-collapse threshold', 40, 1000, 20,
         'Cards with body text longer than this (in characters) start collapsed.',
         (v) => v + ' chars'),
+      toggleRow('noGlass', 'Flat surfaces (no frosted glass)',
+        'Disable the backdrop-blur glassmorphism on the header, sidebar, composer, palettes and panels for a flatter, cleaner look.'),
     ]);
     section('Pills & Cards', [
       toggleRow('hideAllPills', 'Hide all pills & status cards',
-        'Master switch: hide every pill/status card (tokens, saved, compacting, completions, delegations, status rows).'),
+        'Master switch: hide every pill/status card (tokens, saved, compacting, completions, status rows, and the sub-agent roster).'),
       toggleRow('hideCompactingPills',   'Hide compacting pills',
         'Suppress the "Compacting / Compacted <Agent>" status pills.'),
       toggleRow('hideTaskCompletePills', 'Hide task-complete cards',
-        'Suppress the rich "<Agent> completed" cards with summaries.'),
-      toggleRow('hideDelegationPills',   'Hide delegation cards',
-        'Suppress "<Agent> delegated to <Agent>" cards.'),
+        'Suppress the rich "<Agent> completed" cards (orchestrator/lead completions; sub-agent completions fold into the roster).'),
+      toggleRow('hideSubRoster',         'Hide sub-agent roster',
+        'Suppress the grouped sub-agent activity roster (delegated agents\' streams/tools).'),
+      toggleRow('rosterCollapsed',       'Collapse sub-agent roster by default',
+        'New sub-agent rosters start collapsed (click to expand). Off: start expanded.'),
       toggleRow('hideTaskStatusPills',   'Hide task status rows',
         'Suppress generic task_start/task_done status rows (hourglass/check inline events).'),
       toggleRow('toolGrouping', 'Group tool calls',
@@ -7977,7 +8622,17 @@ const icons = {
   }
 
   const backdrop = document.getElementById('muxSettingsBackdrop');
-  function openPanel(){ renderUI(); backdrop.classList.add('open'); }
+  function openPanel(){ renderUI(); backdrop.classList.add('open'); refreshConfigEditButtons(); }
+  // Reveal the Config.json / Swarm.json edit buttons only when serve.configExposed is on.
+  async function refreshConfigEditButtons(){
+    var ec=document.getElementById('muxEditConfig'), es=document.getElementById('muxEditSwarm');
+    if(!ec||!es) return;
+    try{
+      var cfg=await (await fetch('/api/config')).json();
+      var on=!!(cfg.serve&&cfg.serve.configExposed);
+      ec.style.display=on?'':'none'; es.style.display=on?'':'none';
+    }catch(e){ ec.style.display='none'; es.style.display='none'; }
+  }
   function closePanel(){ backdrop.classList.remove('open'); }
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) closePanel(); });
   document.getElementById('muxSettingsClose').addEventListener('click', closePanel);
@@ -8007,6 +8662,30 @@ const icons = {
       r.readAsText(file);
     });
     f.click();
+  });
+
+
+  document.getElementById('muxEditConfig').addEventListener('click', () => {
+    closePanel();
+    window.MuxEditor && window.MuxEditor.open('config', 'config', 'Config.json');
+  });
+  document.getElementById('muxEditSwarm').addEventListener('click', () => {
+    closePanel();
+    window.MuxEditor && window.MuxEditor.open('config', 'swarm', 'Swarm.json');
+  });
+  document.getElementById('muxUpdateBtn').addEventListener('click', async () => {
+    var b=document.getElementById('muxUpdateBtn'); var orig=b.textContent;
+    b.disabled=true; b.textContent='Checking\u2026';
+    try{
+      var chk=await (await fetch('/api/update')).json();
+      if(!chk.updateAvailable){ b.textContent=orig; b.disabled=false; alert(chk.message||'Up to date.'); return; }
+      if(!confirm(chk.message+'\n\nDownload and apply now? Mux-Swarm will restart if the binary changed.')){ b.textContent=orig; b.disabled=false; return; }
+      b.textContent='Updating\u2026';
+      var res=await (await fetch('/api/update',{method:'POST'})).json();
+      alert(res.message||'Update finished.');
+      if(res.restarting){ b.textContent='Restarting\u2026'; }
+      else { b.textContent=orig; b.disabled=false; }
+    }catch(e){ alert('Update failed: '+e.message); b.textContent=orig; b.disabled=false; }
   });
 
   function mountGear(){
@@ -8451,7 +9130,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-btn.primary { color: var(--accent); border-color: rgba(var(--accent-rgb), 0.45); }
 .mng-btn.primary:hover { background: rgba(var(--accent-rgb), 0.12); }
 .mng-btn.danger { color: var(--red); }
-.mng-btn.danger:hover { color: var(--red); border-color: var(--red); background: rgba(239, 68, 68, 0.08); }
+.mng-btn.danger:hover { color: var(--red); border-color: var(--red); background: rgba(var(--red-rgb), 0.08); }
 .mng-btn svg { width: 12px; height: 12px; }
 
 .mng-body { flex: 1; display: flex; min-height: 0; }
@@ -8463,12 +9142,75 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     var(--bg);
 }
 .mng-canvas { width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
+/* Per-instance embedded view (iframe over the canvas) */
+.mng-instance-view {
+  position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column;
+  background: var(--bg, #0b0b0e);
+}
+.mng-instance-view[hidden] { display: none; }
+.mng-instance-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+  background: var(--bg-card, rgba(24,24,27,.7)); flex: 0 0 auto;
+}
+.mng-instance-label { font-weight: 600; font-size: 12px; color: var(--text); }
+.mng-instance-url { font-size: 11px; color: var(--muted); font-family: var(--font-mono, monospace); }
+.mng-instance-spacer { flex: 1 1 auto; }
+.mng-instance-frame { flex: 1 1 auto; width: 100%; height: 100%; border: 0; background: var(--bg); }
+/* Daemon activity lane */
+.mng-daemon-btn { position: relative; }
+.mng-daemon-badge {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 15px; height: 15px;
+  padding: 0 4px; margin-left: 3px; border-radius: 8px; font-size: 10px; line-height: 1;
+  background: var(--amber, #f59e0b); color: #1a1a1a; font-weight: 700;
+}
+.mng-daemon-badge[hidden] { display: none; }
+.mng-daemon-lane {
+  position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column;
+  background: var(--bg, #0b0b0e);
+}
+.mng-daemon-lane[hidden] { display: none; }
+.mng-daemon-lane-bar {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10)); background: var(--bg-card, rgba(24,24,27,.7));
+}
+.mng-daemon-lane-title { font-weight: 600; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
+.mng-daemon-lane-spacer { flex: 1 1 auto; }
+.mng-daemon-lane-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.mng-dl-row { border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5)); overflow: hidden; }
+.mng-dl-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; user-select: none; font-size: 12px; }
+.mng-dl-head:hover { background: rgba(255,255,255,.03); }
+.mng-dl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber, #f59e0b); flex: 0 0 auto; }
+.mng-dl-row.dl-done .mng-dl-dot { background: var(--green, #10b981); }
+.mng-dl-row.dl-error .mng-dl-dot { background: var(--red, #ef4444); }
+.mng-dl-label { font-weight: 600; color: var(--text); }
+.mng-dl-status { color: var(--muted); font-size: 11px; }
+.mng-dl-spacer { flex: 1 1 auto; }
+.mng-dl-chev { color: var(--muted); transition: transform .15s ease; }
+.mng-dl-row.dl-collapsed .mng-dl-chev { transform: rotate(-90deg); }
+.mng-dl-body { max-height: 260px; overflow-y: auto; padding: 6px 10px; border-top: 1px solid var(--border, rgba(255,255,255,.06)); font-size: calc(12px * var(--ui-font-scale,1)); line-height: 1.55; word-break: break-word; color: var(--text); }
+.mng-dl-body::-webkit-scrollbar { width: 4px; }
+.mng-dl-body::-webkit-scrollbar-track { background: transparent; }
+.mng-dl-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-dl-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+.mng-daemon-lane-body::-webkit-scrollbar { width: 4px; }
+.mng-daemon-lane-body::-webkit-scrollbar-track { background: transparent; }
+.mng-daemon-lane-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+/* daemon line: rendered markdown blocks shed default margins for density */
+.mng-dl-line { margin: 2px 0; }
+.mng-dl-line p { margin: 2px 0; }
+.mng-dl-line pre { margin: 4px 0; padding: 6px 8px; background: var(--bg-input, rgba(255,255,255,.05)); border-radius: 6px; overflow-x: auto; }
+.mng-dl-line code { font-family: var(--font-mono, monospace); font-size: 11px; }
+.mng-dl-row.dl-collapsed .mng-dl-body { display: none; }
+.mng-dl-line { color: var(--text); }
+.mng-dl-line.dl-tool { color: var(--muted); }
+.mng-dl-line.dl-err { color: var(--red, #ef4444); }
 .mng-canvas.panning { cursor: grabbing; }
 .mng-canvas .mng-node-card { cursor: pointer; transition: filter 0.15s; }
 .mng-canvas .mng-node-card:hover { filter: brightness(1.15); }
 .mng-canvas .mng-node-card.selected rect.mng-node-bg { stroke: var(--accent); stroke-width: 2; }
 .mng-canvas .mng-node-card.active rect.mng-node-bg { stroke: var(--green); stroke-width: 2; }
-.mng-canvas .mng-node-card.main rect.mng-node-bg { filter: drop-shadow(0 0 6px rgba(var(--accent-rgb), 0.55)); }
+.mng-canvas .mng-node-card.main rect.mng-node-bg { stroke: var(--accent); stroke-width: 1.5; }
 .mng-canvas rect.mng-node-bg { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; rx: 8; ry: 8; }
 .mng-canvas text.mng-node-label { font-family: var(--font-sans); font-size: calc(12px * var(--ui-font-scale, 1)); fill: var(--text); font-weight: 600; pointer-events: none; }
 .mng-canvas text.mng-node-sub { font-family: var(--font-mono); font-size: calc(10px * var(--ui-font-scale, 1)); fill: var(--muted); pointer-events: none; }
@@ -8671,19 +9413,47 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   vertical-align: 1px;
 }
 .mng-bridge-chat {
-  /* Fill the remaining vertical space inside the bridge section so the
-     output scrolls in place — matching the main chat output behaviour. */
   flex: 1 1 auto;
   min-height: 56px;
-  overflow-y: auto;
+  overflow: hidden;
   background: var(--bg-input);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
   font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; color: var(--text);
-  display: flex; flex-direction: column; gap: 6px;
+  display: flex; flex-direction: column;
 }
-.mng-bridge-chat:empty {
+/* Per-instance docked tabs */
+.mng-bch-tabs { display: none; flex: 0 0 auto; gap: 4px; padding: 6px 6px 0; overflow-x: auto; border-bottom: 1px solid var(--border); }
+.mng-bch-tabs::-webkit-scrollbar { height: 3px; }
+.mng-bch-tabs::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.3); border-radius: 3px; }
+.mng-bch-tab { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: none; border-radius: 6px 6px 0 0; background: transparent; color: var(--muted); cursor: pointer; font-size: calc(11px * var(--ui-font-scale,1)); white-space: nowrap; }
+.mng-bch-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.mng-bch-tab.active { color: var(--text); background: var(--bg-card, rgba(255,255,255,.06)); font-weight: 600; }
+.mng-bch-tab-dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(161,161,170,0.4); flex: 0 0 auto; }
+.mng-bch-tab-dot.checking { background: var(--amber, #f59e0b); }
+.mng-bch-tab-dot.online { background: var(--green, #10b981); }
+.mng-bch-tab-dot.offline { background: var(--red, #ef4444); }
+.mng-bch-panes { flex: 1 1 auto; position: relative; overflow: hidden; }
+.mng-bch-pane { position: absolute; inset: 0; display: none; overflow-y: auto; padding: 8px 10px; flex-direction: column; gap: 6px; }
+.mng-bch-pane.active { display: flex; }
+.mng-bch-pane::-webkit-scrollbar { width: 4px; }
+.mng-bch-pane::-webkit-scrollbar-track { background: transparent; }
+.mng-bch-pane::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-bch-pane:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+/* Bridge tool-call cluster (mirrors main viewport) */
+.mng-bch-toolgroup { margin: 2px 0; }
+.mng-bch-tg-head { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; color: var(--muted); font-size: calc(11.5px * var(--ui-font-scale,1)); padding: 2px 0; }
+.mng-bch-tg-head:hover .mng-bch-tg-label { color: var(--text); }
+.mng-bch-tg-chev { display: inline-flex; transition: transform .15s ease; opacity: .6; }
+.mng-bch-toolgroup:not(.open) .mng-bch-tg-chev { transform: rotate(-90deg); }
+.mng-bch-tg-label { font-weight: 600; flex: 0 0 auto; }
+.mng-bch-tg-latest { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+.mng-bch-toolgroup.open .mng-bch-tg-latest { display: none; }
+.mng-bch-tg-body { display: none; padding-left: 16px; flex-direction: column; gap: 2px; }
+.mng-bch-toolgroup.open .mng-bch-tg-body { display: flex; }
+.mng-bch-tool-row { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(11px * var(--ui-font-scale,1)); }
+.mng-bch-turn-time { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale,1)); margin-left: 6px; }
+.mng-bch-panes:empty {
   /* Show an empty placeholder so users see a real chat surface even
      before any messages arrive — keeps layout stable. */
   display: flex;
@@ -8693,7 +9463,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   opacity: 0.55;
   font-style: italic;
 }
-.mng-bridge-chat:empty::before {
+.mng-bch-panes:empty::before {
   content: 'No messages yet — type below to bridge.';
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
@@ -8851,6 +9621,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     <button class="mng-btn" id="mngBtnAdd" title="Add a node">+ Add</button>
     <button class="mng-btn" id="mngBtnLayout" title="Auto-layout">Layout</button>
     <button class="mng-btn" id="mngBtnCenter" title="Center view">Center</button>
+    <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Daemon activity">⚙ Daemon <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
     <button class="mng-btn" id="mngBtnMax" title="Maximize">⛶</button>
     <button class="mng-btn" id="mngBtnClose" title="Close">×</button>
   </div>
@@ -8871,6 +9642,33 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         No nodes yet. Click <strong>+ Add</strong> to register a Mux-Swarm runtime
         (e.g. <code>localhost:6724</code>). The first node becomes the <em>main</em> node.
       </div>
+      <!-- Per-instance full-fidelity view: embeds the target runtime's own web UI. Each
+           connected instance already serves this same app, so an iframe gives a true,
+           isolated main view per endpoint with zero added API surface. -->
+      <!-- Daemon activity lane: collapsed per-trigger rows for background daemon
+           goals, kept out of the main viewport. Populated via window.MuxDaemonLane
+           from origin:'daemon' WS frames. -->
+      <div class="mng-daemon-lane" id="mngDaemonLane" hidden>
+        <div class="mng-daemon-lane-bar">
+          <span class="mng-daemon-lane-title">Daemon Activity</span>
+          <span class="mng-daemon-lane-spacer"></span>
+          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes">Clear</button>
+          <button class="mng-btn" id="mngDaemonClose" title="Hide">×</button>
+        </div>
+        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody"></div>
+      </div>
+      <div class="mng-instance-view" id="mngInstanceView" hidden>
+        <div class="mng-instance-bar">
+          <button class="mng-btn" id="mngViewBack" title="Back to topology">← Topology</button>
+          <span class="mng-instance-label" id="mngInstanceLabel">—</span>
+          <span class="mng-instance-url" id="mngInstanceUrl"></span>
+          <span class="mng-instance-spacer"></span>
+          <button class="mng-btn" id="mngViewReload" title="Reload this view">⟳</button>
+          <button class="mng-btn" id="mngViewPop" title="Open in a new tab">⇱</button>
+        </div>
+        <iframe class="mng-instance-frame" id="mngInstanceFrame" title="Instance view
+                sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-modals"></iframe>
+      </div>
     </div>
     <div class="mng-side-resizer" id="mngSideResizer" title="Drag to resize"></div>
     <button class="mng-side-toggle" id="mngSideToggle" title="Collapse side panel" aria-label="Toggle side panel"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg></button>
@@ -8881,7 +9679,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           <input class="mng-input" id="mngNodeLabel" placeholder="Label" />
           <input class="mng-input" id="mngNodeUrl"   placeholder="host:port (e.g. localhost:6724)" />
           <div class="mng-row">
-            <button class="mng-btn primary" id="mngBtnNavigate" title="Navigate the parent UI to this runtime">Navigate</button>
+            <button class="mng-btn primary" id="mngBtnView" title="Open this runtime's full UI as an embedded view">View</button>
+            <button class="mng-btn" id="mngBtnNavigate" title="Open this runtime's UI in a new tab">Navigate</button>
             <button class="mng-btn" id="mngBtnMain" title="Make this the main node">Main</button>
           </div>
           <div class="mng-row">
@@ -8905,7 +9704,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
             </div>
             <div class="mng-bridge-peers-list" id="mngBridgePeersList"></div>
           </div>
-          <div class="mng-bridge-chat" id="mngBridgeChat" aria-live="polite"></div>
+          <div class="mng-bridge-chat" id="mngBridgeChat" aria-live="polite">
+            <div class="mng-bch-tabs" id="mngBchTabs" role="tablist"></div>
+            <div class="mng-bch-panes" id="mngBchPanes"></div>
+          </div>
           <div class="mng-bridge-composer">
             <textarea class="mng-input mng-bridge-msg" id="mngBridgeMsg" rows="3" placeholder="Message or /command to send via the mux WS protocol..."></textarea>
             <div class="mng-row mng-bridge-actions">
@@ -9063,6 +9865,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       nodes, edges, getNode, getMain, getActive, getView,
       addNode, updateNode, deleteNode, setMain, setActive, setView,
       addEdge, deleteEdge,
+      // Cross-tab sync: reassign the private state from disk then notify.
+      reload(){ state = load(); emit(); },
     };
   })();
 
@@ -9469,6 +10273,64 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // Multiple in-flight sockets, keyed by peer id, so the user can fan out
     // a single message to several linked nodes at once.
     const activeBridgeWS = new Map();
+
+    // ── Per-instance docked tabs ──
+    // Each bridged peer gets its OWN tab + scroll pane instead of interleaving
+    // every instance's stream into one shared feed. BchPanes owns the tab strip
+    // (#mngBchTabs) and the pane container (#mngBchPanes); render helpers target
+    // a specific peer's pane so concurrent instance streams never mix.
+    const BchPanes = (function(){
+      const tabsEl  = () => document.getElementById('mngBchTabs');
+      const panesEl = () => document.getElementById('mngBchPanes');
+      const panes = new Map();   // peerId -> { tab, pane, label }
+      let activeId = null;
+      function activate(id){
+        activeId = id;
+        for (const [pid, p] of panes) {
+          const on = pid === id;
+          p.pane.classList.toggle('active', on);
+          p.tab.classList.toggle('active', on);
+        }
+      }
+      function ensure(peer){
+        const id = peer.id || peer.url || 'peer';
+        let p = panes.get(id);
+        if (p && p.pane.isConnected) return p;
+        const label = peer.label || peer.url || 'Node';
+        const tab = document.createElement('button');
+        tab.className = 'mng-bch-tab';
+        tab.type = 'button';
+        tab.innerHTML = '<span class="mng-bch-tab-dot"></span><span class="mng-bch-tab-label"></span>';
+        tab.querySelector('.mng-bch-tab-label').textContent = label;
+        tab.addEventListener('click', () => activate(id));
+        const pane = document.createElement('div');
+        pane.className = 'mng-bch-pane';
+        (tabsEl()  || {}).appendChild && tabsEl().appendChild(tab);
+        (panesEl() || {}).appendChild && panesEl().appendChild(pane);
+        p = { tab, pane, label };
+        panes.set(id, p);
+        // Only one peer -> hide the tab strip (no need to switch).
+        syncTabsVisibility();
+        if (activeId === null) activate(id);
+        return p;
+      }
+      function setStatus(id, cls){
+        const p = panes.get(id); if (!p) return;
+        const dot = p.tab.querySelector('.mng-bch-tab-dot');
+        if (dot) dot.className = 'mng-bch-tab-dot' + (cls ? ' ' + cls : '');
+      }
+      function syncTabsVisibility(){
+        const t = tabsEl(); if (!t) return;
+        t.style.display = panes.size > 1 ? 'flex' : 'none';
+      }
+      function clear(){
+        panes.clear(); activeId = null;
+        const t = tabsEl(), pn = panesEl();
+        if (t) t.innerHTML = '';
+        if (pn) pn.innerHTML = '';
+      }
+      return { ensure, activate, setStatus, clear, get activeId(){ return activeId; } };
+    })();
     // Per-peer selection state for the current `currentId`.
     let bridgeSelectedPeers = new Set();
 
@@ -9548,18 +10410,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return target;
     }
     // ── Chat-style rendering helpers (mirror the parent app's trimmed-down) ──
-    function bch_scroll(){ if (bridgeChat) bridgeChat.scrollTop = bridgeChat.scrollHeight; }
-    function bch_sys(text, cls, peerTag){
+    function bch_scroll(pane){ const el = pane || bridgeChat; if (el) el.scrollTop = el.scrollHeight; }
+    function bch_sys(text, cls, peerTag, pane){
+      const host = pane || bridgeChat;
       const r = document.createElement('div');
       r.className = 'mng-bch-sys' + (cls ? ' ' + cls : '');
-      if (peerTag) {
-        const t = document.createElement('span');
-        t.className = 'mng-bch-peer-tag';
-        t.textContent = peerTag;
-        r.appendChild(t);
-      }
       r.appendChild(document.createTextNode(text));
-      bridgeChat.appendChild(r); bch_scroll();
+      host.appendChild(r); bch_scroll(host);
       return r;
     }
     function bch_user(text){
@@ -9569,22 +10426,18 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       bridgeChat.appendChild(r); bch_scroll();
       return r;
     }
-    function bch_turnHeader(agent, peerTag){
+    function bch_turnHeader(agent, peerTag, pane){
+      const host = pane || bridgeChat;
       const r = document.createElement('div');
       r.className = 'mng-bch-turn';
-      if (peerTag) {
-        const pt = document.createElement('span');
-        pt.className = 'mng-bch-peer-tag';
-        pt.textContent = peerTag;
-        r.appendChild(pt);
-      }
       const b = document.createElement('span');
       b.className = 'mng-bch-badge'; b.textContent = agent || 'Agent';
       r.appendChild(b);
       const t = document.createElement('span');
+      t.className = 'mng-bch-turn-time';
       t.textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
       r.appendChild(t);
-      bridgeChat.appendChild(r); bch_scroll();
+      host.appendChild(r); bch_scroll(host);
       return r;
     }
     function bch_renderMd(text){
@@ -9606,19 +10459,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const peers = peerIds.map(pid => Store.getNode(pid)).filter(Boolean);
       if (peers.length === 0) { bch_sys('Selected targets no longer exist.', 'err'); return; }
 
-      // Render the user's outgoing bubble once (with a fan-out hint if applicable).
-      if (peers.length === 1) {
-        bch_user(msg);
-      } else {
-        const wrap = document.createElement('div');
-        wrap.className = 'mng-bch-user';
-        const tag = document.createElement('span');
-        tag.className = 'mng-bch-peer-tag';
-        tag.textContent = '\u2192 ' + peers.length + ' targets';
-        wrap.appendChild(tag);
-        wrap.appendChild(document.createTextNode(msg));
-        bridgeChat.appendChild(wrap); bch_scroll();
-      }
+      // The outgoing message is echoed into each peer's own pane inside
+      // sendToOnePeer (per-instance view), so no shared bubble is rendered here.
       bridgeMsg.value = '';
 
       // Show a brief fan-out header so per-peer events that follow are readable.
@@ -9632,11 +10474,17 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // tell concurrent streams apart.
     function sendToOnePeer(peer, msg, showTag){
       const peerLabel = peer.label || peer.url || 'Node';
-      const tagPrefix = showTag ? peerLabel : '';
+      // Each peer renders into its OWN docked tab/pane (never a shared feed).
+      const _p = BchPanes.ensure(peer);
+      const pane = _p.pane;
+      BchPanes.activate(peer.id || peer.url || 'peer');
+      // Echo the outgoing message into THIS peer's pane.
+      (function(){ const u = document.createElement('div'); u.className = 'mng-bch-user'; u.textContent = msg; pane.appendChild(u); bch_scroll(pane); })();
       const url = bridgeWsURL(peer);
-      if (!url) { bch_sys('Peer has no usable URL.', 'err', tagPrefix); return; }
+      if (!url) { bch_sys('Peer has no usable URL.', 'err', '', pane); return; }
 
-      bch_sys('connecting \u2192 ' + url, '', tagPrefix);
+      BchPanes.setStatus(peer.id || peer.url || 'peer', 'checking');
+      bch_sys('connecting \u2192 ' + url, '', '', pane);
 
       // Per-turn render state (scoped to this peer's socket).
       let ws;
@@ -9654,10 +10502,36 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       let userEchoSeen  = false;
 
       try { ws = new WebSocket(url); } catch (e) {
-        bch_sys('WebSocket failed: ' + (e && e.message || e), 'err', tagPrefix);
+        bch_sys('WebSocket failed: ' + (e && e.message || e), 'err', '', pane);
         return;
       }
       activeBridgeWS.set(peer.id, ws);
+
+      // Per-peer tool-call cluster: consecutive calls fold into one collapsed,
+      // expandable group mirroring the main viewport (auto-collapses at 3+).
+      let toolGroup = null;
+      const breakBchToolGroup = () => { toolGroup = null; };
+      const ensureBchToolGroup = () => {
+        if (toolGroup && toolGroup.el.isConnected) return toolGroup;
+        const el = document.createElement('div');
+        el.className = 'mng-bch-toolgroup open';
+        el.innerHTML =
+          '<div class="mng-bch-tg-head">' +
+            '<span class="mng-bch-tg-chev">\u25be</span>' +
+            '<span class="mng-bch-tg-label"></span>' +
+            '<span class="mng-bch-tg-latest"></span>' +
+          '</div>' +
+          '<div class="mng-bch-tg-body"></div>';
+        el.querySelector('.mng-bch-tg-head').addEventListener('click', () => {
+          toolGroup.userToggled = true; el.classList.toggle('open');
+        });
+        pane.appendChild(el); bch_scroll(pane);
+        toolGroup = { el, body: el.querySelector('.mng-bch-tg-body'),
+                      label: el.querySelector('.mng-bch-tg-label'),
+                      latest: el.querySelector('.mng-bch-tg-latest'),
+                      count: 0, userToggled: false };
+        return toolGroup;
+      };
 
       const finalize = (reason) => {
         if (closed) return;
@@ -9666,69 +10540,70 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         if (safetyTimer){ clearTimeout(safetyTimer); safetyTimer = null; }
         try { ws.close(); } catch(_){}
         activeBridgeWS.delete(peer.id);
-        if (reason) bch_sys(reason, 'ok', tagPrefix);
+        BchPanes.setStatus(peer.id || peer.url || 'peer',
+          reason === 'turn complete' ? 'online' : (reason && /error|fail/i.test(reason) ? 'offline' : ''));
+        if (reason) bch_sys(reason, 'ok', '', pane);
       };
 
       const beginTurn = (agent) => {
-        if (!turnHeader) turnHeader = bch_turnHeader(agent || peerLabel, tagPrefix);
+        if (!turnHeader) turnHeader = bch_turnHeader(agent || peerLabel, '', pane);
         streamEl = null; streamText = '';
       };
       const appendStream = (chunk) => {
         if (!chunk) return;
+        breakBchToolGroup();
         if (!streamEl) {
           streamEl = document.createElement('div');
           streamEl.className = 'mng-bch-stream';
-          bridgeChat.appendChild(streamEl);
+          pane.appendChild(streamEl);
         }
         streamText += chunk;
         streamEl.innerHTML = bch_renderMd(streamText);
-        bch_scroll();
+        bch_scroll(pane);
       };
       const finalizeStream = () => { streamEl = null; streamText = ''; };
       const setThinking = (agent, statusText) => {
         if (!thinkEl) {
           thinkEl = document.createElement('div');
           thinkEl.className = 'mng-bch-thinking';
-          bridgeChat.appendChild(thinkEl);
+          pane.appendChild(thinkEl);
         }
-        const who = agent || (showTag ? peerLabel : '');
-        thinkEl.textContent = (who ? '[' + who + '] ' : '') + (statusText || 'thinking\u2026');
-        bch_scroll();
+        thinkEl.textContent = statusText || 'thinking\u2026';
+        bch_scroll(pane);
       };
       const clearThinking = () => { if (thinkEl) { thinkEl.remove(); thinkEl = null; } };
       const renderToolCall = (ev) => {
         clearThinking();
-        const r = document.createElement('div');
-        r.className = 'mng-bch-tool';
-        const name = String(ev.tool || ev.function || ev.name || 'tool').replace(/unknown/ig,'').trim();
-        if (showTag) {
-          const t = document.createElement('span');
-          t.className = 'mng-bch-peer-tag';
-          t.textContent = peerLabel;
-          r.appendChild(t);
-        }
-        r.appendChild(document.createTextNode(name));
-        bridgeChat.appendChild(r); bch_scroll();
+        const g = ensureBchToolGroup();
+        g.count++;
+        const name = String(ev.tool || ev.function || ev.name || 'tool').replace(/unknown/ig,'').trim() || 'tool';
+        const row = document.createElement('div');
+        row.className = 'mng-bch-tool-row';
+        row.textContent = '\u2192 ' + name;
+        g.body.appendChild(row);
+        g.label.textContent = g.count === 1 ? '1 tool call' : (g.count + ' tool calls');
+        g.latest.textContent = '\u00b7 ' + name;
+        if (g.count >= 3 && !g.userToggled) g.el.classList.remove('open');
+        bch_scroll(pane);
       };
       const renderToolResult = (ev) => {
         const summary = ev.summary || ev.result || ev.output || ev.content || ev.text || '';
         if (!summary) return;
+        const g = toolGroup && toolGroup.el.isConnected ? toolGroup : ensureBchToolGroup();
         const r = document.createElement('div');
         r.className = 'mng-bch-tool-result';
         const s = String(summary);
         r.textContent = s.length > 600 ? s.slice(0,600) + '\u2026' : s;
-        bridgeChat.appendChild(r); bch_scroll();
+        g.body.appendChild(r); bch_scroll(pane);
         lastToolResult = ev;
-      };
-
-      ws.addEventListener('open', () => {
-        bch_sys('connected', 'ok', tagPrefix);
+      };      ws.addEventListener('open', () => {
+        bch_sys('connected', 'ok', '', pane);
         sentAt = Date.now();
         try { ws.send(msg); } catch(_){}
         startTimer = setTimeout(() => {
           if (!forcedAgent) {
             forcedAgent = true;
-            bch_sys('no agent_turn_start in 10s \u2014 sending /agent then re-sending', '', tagPrefix);
+            bch_sys('no agent_turn_start in 10s \u2014 sending /agent then re-sending', '', '', pane);
             try { ws.send('/agent'); } catch(_){}
             setTimeout(() => { try { ws.send(msg); sentAt = Date.now(); } catch(_){} }, 400);
           }
@@ -9802,12 +10677,12 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
             if (!userEchoSeen && m && msg && msg.length >= 3 && m.indexOf(msg) !== -1) {
               userEchoSeen = true;
             }
-            if (turnStarted && m) bch_sys(m, 'ok', tagPrefix);
+            if (turnStarted && m) bch_sys(m, 'ok', '', pane);
             break;
           }
           case 'error': {
             const m = String(data.message || data.error || 'error');
-            if (turnStarted) bch_sys(m, 'err', tagPrefix);
+            if (turnStarted) bch_sys(m, 'err', '', pane);
             break;
           }
           default: break;
@@ -9816,13 +10691,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         safetyTimer = setTimeout(() => finalize('idle timeout'), 5 * 60 * 1000);
       });
 
-      ws.addEventListener('error', () => bch_sys('WebSocket error', 'err', tagPrefix));
+      ws.addEventListener('error', () => bch_sys('WebSocket error', 'err', '', pane));
       ws.addEventListener('close', () => {
         if (!closed) {
           closed = true;
           if (startTimer) clearTimeout(startTimer);
           if (safetyTimer) clearTimeout(safetyTimer);
-          bch_sys('disconnected', '', tagPrefix);
+          bch_sys('disconnected', '', '', pane);
           activeBridgeWS.delete(peer.id);
         }
       });
@@ -9832,7 +10707,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if (bridgeMsg)  bridgeMsg.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); bridgeSendNow(); }
     });
-    if (bridgeClear) bridgeClear.addEventListener('click', () => { bridgeChat.innerHTML = ''; });
+    if (bridgeClear) bridgeClear.addEventListener('click', () => { BchPanes.clear(); });
     if (bridgePeersAll) bridgePeersAll.addEventListener('click', () => {
       if (!currentId) return;
       const peers = bridgePeersFor(currentId);
@@ -9878,7 +10753,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         row.dataset.id = n.id;
         const tags = [];
         if (main && main.id === n.id) tags.push('<span class="mng-li-tag">main</span>');
-        if (active && active.id === n.id) tags.push('<span class="mng-li-tag" style="background:rgba(74,222,128,0.2);color:#4ade80">active</span>');
+        if (active && active.id === n.id) tags.push('<span class="mng-li-tag" style="background:rgba(var(--green-rgb),0.2);color:var(--green)">active</span>');
         row.innerHTML =
           '<span class="mng-li-dot ' + (n.status || 'unknown') + '"></span>' +
           '<span class="mng-li-name" title="' + (n.url || '') + '">' + (n.label || n.url || 'Node') + '</span>' +
@@ -9954,13 +10829,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   function openPanel(){
     panel.classList.add('open'); savePanelState(); Canvas.render();
+    try { Pool.start(); } catch(_){}  // resume liveness probes only while visible
     // Re-center after the panel is visible & laid out. The initial center()
     // at startup may have no-op'd because the panel was hidden; centering here
     // guarantees the graph is framed correctly every time it's opened, so the
     // user never has to click the center button manually after a refresh.
     requestAnimationFrame(() => Canvas.center());
   }
-  function closePanel(){ panel.classList.remove('open'); savePanelState(); }
+  function closePanel(){ panel.classList.remove('open'); savePanelState(); try { Pool.stop(); } catch(_){} }
 
   // Public open() also routes here.
   document.getElementById('mngBtnClose').addEventListener('click', closePanel);
@@ -10140,7 +11016,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     const me = Store.nodes().find(n => n.url === nowHost());
     if (me) Store.setActive(me.id);
   }
-  Pool.start();
+  // Only probe while the panel is actually open at boot; openPanel() (re)starts it.
+  if (panel.classList.contains('open')) Pool.start();
   setTimeout(() => Canvas.center(), 0);
 
   // ────────────────────────────────────────────────────────────────────────
@@ -10169,12 +11046,240 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   // ────────────────────────────────────────────────────────────────────────
   // Public API consumed by the existing WS connect() hook.
   // ────────────────────────────────────────────────────────────────────────
+  // ── Per-instance embedded view ─────────────────────────────────────────
+  // Resolve a node's host into a normalized http(s):// base URL (shared by
+  // navigateTo + the embedded iframe view).
+  function resolveHttpUrl(n){
+    let target = String((n && n.url) || '').trim();
+    if (!target) return null;
+    const parentSecure = location.protocol === 'https:';
+    if (/^wss:\/\//i.test(target))       target = target.replace(/^wss:\/\//i, 'https://');
+    else if (/^ws:\/\//i.test(target))   target = target.replace(/^ws:\/\//i, 'http://');
+    else if (!/^https?:\/\//i.test(target)) target = (parentSecure ? 'https://' : 'http://') + target;
+    target = target.replace(/\/ws\/?$/, '/');
+    if (!/\/$/.test(target)) target += '/';
+    return target;
+  }
+  const _iview = {
+    root:  () => document.getElementById('mngInstanceView'),
+    frame: () => document.getElementById('mngInstanceFrame'),
+    label: () => document.getElementById('mngInstanceLabel'),
+    url:   () => document.getElementById('mngInstanceUrl'),
+    current: null,
+  };
+  function openInstanceView(id){
+    const n = Store.getNode(id); if (!n || !n.url) return;
+    const href = resolveHttpUrl(n); if (!href) return;
+    let u; try { u = new URL(href); } catch(_) { return; }
+    // Mixed-content: an https parent cannot embed an http child (browser blocks it).
+    if (location.protocol === 'https:' && u.protocol === 'http:') {
+      try { alert('This page is HTTPS but ' + u.host + ' is http:// — the browser will block an embedded view.\nUse Navigate to open it in a new tab instead.'); } catch(_){}
+      return;
+    }
+    Store.setActive(id);
+    const root = _iview.root(), frame = _iview.frame();
+    if (!root || !frame) return;
+    _iview.current = id;
+    if (_iview.label()) _iview.label().textContent = n.label || u.host;
+    if (_iview.url())   _iview.url().textContent = u.host;
+    // Only reassign src when the target changes, so re-opening the same node keeps its session.
+    if (frame.getAttribute('data-src') !== u.toString()) {
+      frame.setAttribute('data-src', u.toString());
+      frame.src = u.toString();
+    }
+    root.hidden = false;
+  }
+  function closeInstanceView(){
+    const root = _iview.root(); if (root) root.hidden = true;
+    _iview.current = null;
+  }
+  (function wireInstanceView(){
+    const back = document.getElementById('mngViewBack');
+    const rl   = document.getElementById('mngViewReload');
+    const pop  = document.getElementById('mngViewPop');
+    const vb   = document.getElementById('mngBtnView');
+    if (back) back.addEventListener('click', closeInstanceView);
+    if (rl)   rl.addEventListener('click', () => { const f=_iview.frame(); if (f && f.src) f.src = f.src; });
+    if (pop)  pop.addEventListener('click', () => { const f=_iview.frame(); if (f && f.src) { try { window.open(f.src, '_blank', 'noopener,noreferrer'); } catch(_){} } });
+    if (vb)   vb.addEventListener('click', () => {
+      const a = Store.getActive();
+      const sel = (typeof Canvas !== 'undefined' && Canvas.getSelectedId && Canvas.getSelectedId()) || (a && a.id);
+      if (sel) openInstanceView(sel);
+    });
+  })();
+
+  // ── Daemon activity lane ───────────────────────────────────────────────
+  // Consumes origin:'daemon' WS frames forwarded from the main app's handleEvent
+  // and folds each daemon goal (keyed by its 'lane', e.g. 'daemon:cron-foo') into
+  // one collapsed, expandable row — never touching the main viewport or busy state.
+  const MuxDaemonLane = (function(){
+    const rows = new Map();   // lane -> { el, body, statusEl, dotWrap, text }
+    let activeCount = 0;
+    function els(){
+      return {
+        lane:  document.getElementById('mngDaemonLane'),
+        body:  document.getElementById('mngDaemonLaneBody'),
+        badge: document.getElementById('mngDaemonBadge'),
+      };
+    }
+    function refreshBadge(){
+      const { badge } = els(); if (!badge) return;
+      const n = rows.size;
+      badge.textContent = String(activeCount || n);
+      badge.hidden = n === 0;
+    }
+    function show(){ const { lane } = els(); if (lane) lane.hidden = false; }  // reveal lane content; never force-opens the panel (non-invasive)
+    function ensureRow(lane, label){
+      let r = rows.get(lane);
+      if (r && r.el.isConnected) return r;
+      const { body } = els(); if (!body) return null;
+      const el = document.createElement('div');
+      el.className = 'mng-dl-row dl-collapsed';
+      el.innerHTML =
+        '<div class="mng-dl-head">' +
+          '<span class="mng-dl-dot"></span>' +
+          '<span class="mng-dl-label"></span>' +
+          '<span class="mng-dl-status"></span>' +
+          '<span class="mng-dl-spacer"></span>' +
+          '<span class="mng-dl-chev">\u25be</span>' +
+        '</div>' +
+        '<div class="mng-dl-body"></div>';
+      el.querySelector('.mng-dl-head').addEventListener('click', () => el.classList.toggle('dl-collapsed'));
+      el.querySelector('.mng-dl-label').textContent = label || lane;
+      body.appendChild(el);
+      r = { el, body: el.querySelector('.mng-dl-body'), statusEl: el.querySelector('.mng-dl-status'), text: '' };
+      rows.set(lane, r);
+      activeCount++;
+      refreshBadge();
+      return r;
+    }
+    // Lines that are raw CLI/session lifecycle noise, not agent output — filtered
+    // so the lane reads like a clean transcript instead of a terminal dump.
+    function isDaemonNoise(msg){
+      if (!msg) return true;
+      const m = String(msg).trim();
+      if (!m) return true;
+      return (
+        /^Type \/qc to exit/i.test(m) ||
+        /has \d+ tools available/i.test(m) ||
+        /^\[GOAL\]/i.test(m) ||
+        /^\[AGENT SESSION\]/i.test(m) ||
+        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired)/i.test(m) ||
+        /^Total Tokens:/i.test(m) ||
+        /tokens used this goal/i.test(m) ||
+        /^Press \[Esc\]/i.test(m) ||
+        /Press \[Escape\]/i.test(m)
+      );
+    }
+    function addLine(r, text, cls, asMarkdown){
+      if (!r || !text) return;
+      const line = document.createElement('div');
+      line.className = 'mng-dl-line' + (cls ? ' ' + cls : '');
+      if (asMarkdown && window.renderMarkdown) line.innerHTML = window.renderMarkdown(String(text));
+      else line.textContent = text;
+      r.body.appendChild(line);
+      r.body.scrollTop = r.body.scrollHeight;
+    }
+    function markDone(r, status, cls){
+      if (!r || r._finished) return;
+      r._finished = true;
+      r.el.classList.remove('dl-done','dl-error');
+      r.el.classList.add(cls);
+      if (r.statusEl) r.statusEl.textContent = status;
+      if (activeCount > 0) { activeCount--; refreshBadge(); }
+    }
+    function push(ev){
+      if (!ev) return;
+      const lane = String(ev.lane || 'daemon');
+      const label = lane.replace(/^daemon:/, '');
+      const r = ensureRow(lane, label); if (!r) return;
+      show();
+      switch (ev.type) {
+        case 'agent_turn_start':
+          r._finished = false;
+          if (r.statusEl) r.statusEl.textContent = 'running · ' + (ev.agent || '');
+          r.el.classList.remove('dl-done','dl-error');
+          break;
+        case 'stream':
+          if (!ev.reasoning) { r.text += (ev.text || ''); }
+          break;
+        case 'stream_end':
+        case 'agent_turn_end':
+          if (r.text.trim()) { addLine(r, r.text.trim(), '', true); r.text = ''; }
+          break;
+        case 'tool_call': {
+          const tool = String(ev.tool || 'tool').trim();
+          const label = tool + (ev.agent ? '  \u00b7 ' + ev.agent : '');
+          if (window.buildNestedToolCard) {
+            r._lastCard = window.buildNestedToolCard(r.body, '<span class="tool">' + label + '</span>');
+          } else {
+            addLine(r, '\u2192 ' + label, 'dl-tool');
+          }
+          break;
+        }
+        case 'tool_result': {
+          const raw = ev.result || ev.output || ev.content || ev.text;
+          if (r._lastCard) {
+            if (ev.summary) r._lastCard.setResult(ev.summary);
+            r._lastCard.attachDetail(raw || ev.summary || '');
+            r._lastCard = null;
+          } else if (window.buildNestedToolCard && (raw || ev.summary)) {
+            const card = window.buildNestedToolCard(r.body, '<span class="tool">tool result</span>');
+            if (ev.summary) card.setResult(ev.summary);
+            card.attachDetail(raw || ev.summary || '');
+          } else if (ev.summary) {
+            addLine(r, ev.summary, 'dl-tool');
+          }
+          break;
+        }
+        case 'task_complete':
+          if (ev.summary) addLine(r, ev.summary, '', true);
+          break;
+        case 'success': {
+          const m = String(ev.message || '');
+          if (/Goal completed/i.test(m)) { markDone(r, 'done', 'dl-done'); break; }
+          if (!isDaemonNoise(m)) addLine(r, m, '', true);
+          break;
+        }
+        case 'error':
+          if (ev.message && !isDaemonNoise(ev.message)) addLine(r, ev.message, 'dl-err');
+          markDone(r, 'error', 'dl-error');
+          break;
+        case 'warning': case 'info': case 'debug':
+          if (ev.message && !isDaemonNoise(ev.message)) addLine(r, ev.message, ev.type === 'debug' ? 'dl-tool' : '');
+          break;
+        default: break;
+      }
+    }    function clearFinished(){
+      for (const [lane, r] of Array.from(rows.entries())) {
+        if (r.el.classList.contains('dl-done') || r.el.classList.contains('dl-error')) {
+          try { r.el.remove(); } catch(_){}
+          rows.delete(lane);
+        }
+      }
+      refreshBadge();
+    }
+    function hide(){ const { lane } = els(); if (lane) lane.hidden = true; }
+    (function wire(){
+      const btn = document.getElementById('mngBtnDaemon');
+      const cl  = document.getElementById('mngDaemonClear');
+      const cx  = document.getElementById('mngDaemonClose');
+      if (btn) btn.addEventListener('click', () => { const { lane } = els(); if (!lane) return; if (lane.hidden) show(); else hide(); });
+      if (cl)  cl.addEventListener('click', clearFinished);
+      if (cx)  cx.addEventListener('click', hide);
+    })();
+    return { push, clearFinished, show, hide };
+  })();
+  window.MuxDaemonLane = MuxDaemonLane;
+
   window.MuxNodeGraph = {
     open: openPanel,
     close: closePanel,
     addNode: (url, label) => Store.addNode({ url, label: label || url }),
     listNodes: () => Store.nodes().slice(),
     setMain: (id) => Store.setMain(id),
+    openView: openInstanceView,
+    closeView: closeInstanceView,
     // Used by the parent WebSocket connect() to choose its target.
     getActiveTarget(){
       const a = Store.getActive();
@@ -10187,7 +11292,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // sidebar pill accurate even on reconnects we didn't initiate.
     notifyConnect(host){
       try {
-        const match = Store.nodes().find(n => n.url === host);
+        // Loose host match: normalizeUrl strips scheme/'/ws'/trailing slash, and we
+        // fold localhost<->127.0.0.1 + case so 'localhost:6723' and '127.0.0.1:6723'
+        // resolve to the same node (exact === desync'd the active pill before).
+        const norm = (u) => normalizeUrl(u).toLowerCase()
+          .replace(/^127\.0\.0\.1(?=[:\/]|$)/, 'localhost')
+          .replace(/^\[::1\](?=[:\/]|$)/, 'localhost');
+        const want = norm(host);
+        const match = Store.nodes().find(n => norm(n.url) === want);
         if (match) {
           Store.setActive(match.id);
         }
@@ -10245,7 +11357,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   // Re-render when localStorage changes from another tab/window
   window.addEventListener('storage', (e) => {
-    if (e.key === LS_KEY) { Store.load && Store.load(); Canvas.render(); Sidebar.renderList(); Sidebar.renderActivePill(); }
+    if (e.key === LS_KEY) { Store.reload ? Store.reload() : (Store.load && Store.load()); Canvas.render(); Sidebar.renderList(); Sidebar.renderActivePill(); }
   });
 
 })();
@@ -10410,18 +11522,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     titleEl.textContent=cur.name; titleEl.title=path;
     ov.classList.add('open');
     cur.editable=false;
+    // 'config' type edits Config.json / Swarm.json via the native config-file endpoints,
+    // gated by serve.configExposed. Everything else reads via /api/read (sandbox writable
+    // when serve.editable).
     try{ var cfg=await (await fetch('/api/config')).json();
-      cur.editable=(type==='sandbox') && !!(cfg.serve&&cfg.serve.editable); }catch(e){}
+      if(type==='config') cur.editable=!!(cfg.serve&&cfg.serve.configExposed);
+      else cur.editable=(type==='sandbox') && !!(cfg.serve&&cfg.serve.editable); }catch(e){}
     saveBtn.style.display=cur.editable?'':'none';
     status('Loading '+cur.name+'\u2026');
     var resp,data;
-    try{ resp=await fetch('/api/read/'+type+'/'+path.split('/').map(encodeURIComponent).join('/'));
+    var readUrl = (type==='config')
+      ? '/api/config-files/'+encodeURIComponent(path)
+      : '/api/read/'+type+'/'+path.split('/').map(encodeURIComponent).join('/');
+    try{ resp=await fetch(readUrl);
       data=await resp.json(); }catch(e){ status('Read failed: '+e.message); return; }
     if(!resp.ok){ status('Error: '+((data&&data.error)||resp.status)); return; }
     ensureMonaco(function(){
-      mountEditor(data.content||'',langFor(cur.name));
+      mountEditor(data.content||'',type==='config'?'json':langFor(cur.name));
       status((cur.editable?'Editable':'Read-only')+(data.truncated?' \u00b7 truncated (large file)':'')
-        +' \u00b7 '+(data.sizeBytes||0)+' bytes');
+        +(type==='config'?'':' \u00b7 '+(data.sizeBytes||0)+' bytes'));
     });
   }
 
@@ -10429,11 +11548,22 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if(!cur.editable||!ed||!cur.dirty) return;
     var content=ed.getValue(); saveBtn.disabled=true; status('Saving\u2026');
     try{
-      var resp=await fetch('/api/save/'+cur.type+'/'+cur.path.split('/').map(encodeURIComponent).join('/'),
-        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
-      var data=await resp.json();
-      if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.sizeBytes||content.length)+' bytes \u00b7 '+new Date().toLocaleTimeString()); }
-      else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      var resp, data;
+      if(cur.type==='config'){
+        // Config-file save: JSON is validated server-side before the write; a parse error
+        // returns 422 and the file is left untouched.
+        resp=await fetch('/api/config-files/'+encodeURIComponent(cur.path),
+          {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
+        data=await resp.json();
+        if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.note||'ok')+' \u00b7 '+new Date().toLocaleTimeString()); }
+        else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      } else {
+        resp=await fetch('/api/save/'+cur.type+'/'+cur.path.split('/').map(encodeURIComponent).join('/'),
+          {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:content})});
+        data=await resp.json();
+        if(resp.ok){ setDirty(false); status('Saved \u00b7 '+(data.sizeBytes||content.length)+' bytes \u00b7 '+new Date().toLocaleTimeString()); }
+        else{ status('Save failed: '+(data.error||resp.status)); saveBtn.disabled=false; }
+      }
     }catch(e){ status('Save failed: '+e.message); saveBtn.disabled=false; }
   }
 

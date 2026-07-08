@@ -22,6 +22,47 @@ public static class ParallelSwarmOrchestrator
     private static readonly object _stateLock = new();
     private static bool _sessionDirty;
     private static uint _swarmTokens;
+
+    // ── Sub-agent instance labels ────────────────────────────────────────────────
+    // When the SAME agent is spawned multiple times concurrently (delegate_parallel with
+    // duplicate AgentNames, e.g. CompanionAgent x3), each run must present a DISTINCT identity on
+    // its emitted frames (tool_call/tool_result/stream/turn_end/task_complete/delegation). Otherwise
+    // every duplicate stamps agent="CompanionAgent" and the web app's roster (keyed by agent name)
+    // collapses them into one row AND, when the LEAD shares that name, the lead's own frames get
+    // misrouted into the sub-agent roster. This registry hands out a unique display label per LIVE
+    // instance of a base name ("CompanionAgent", then "CompanionAgent 2", "CompanionAgent 3"...),
+    // mirroring the TUI's NextLane_NoGate, but mode-independent so it drives the serve/web + stdio
+    // emit path too. The label is released when the run ends, so labels are reused across batches.
+    // The FIRST live instance keeps the bare name (byte-identical to prior behaviour for the common
+    // single/unique-delegation case; suffixes only appear on genuine concurrent collision).
+    // Set of currently-LIVE labels (across all base names). We pick against the live SET rather than
+    // a bare count so that if the first "Name" finishes while "Name 2" is still running, a new
+    // instance does NOT re-pick "Name 2" and collide - it takes the lowest free slot instead.
+    private static readonly HashSet<string> _liveInstanceLabels = new(StringComparer.Ordinal);
+
+    /// <summary>Reserve a unique display label for a new live instance of <paramref name="baseName"/>
+    /// among the currently-live labels: first = the bare name, concurrent duplicates get " 2",
+    /// " 3", ... (lowest free slot). Release with <see cref="ReleaseInstanceLabel"/> at run end.</summary>
+    internal static string AcquireInstanceLabel(string baseName)
+    {
+        var name = string.IsNullOrWhiteSpace(baseName) ? "agent" : baseName.Trim();
+        lock (_stateLock)
+        {
+            if (_liveInstanceLabels.Add(name)) return name;
+            for (int n = 2; ; n++)
+            {
+                var cand = $"{name} {n}";
+                if (_liveInstanceLabels.Add(cand)) return cand;
+            }
+        }
+    }
+
+    /// <summary>Release a live-instance label so it is reused by later instances/batches.</summary>
+    internal static void ReleaseInstanceLabel(string label)
+    {
+        if (string.IsNullOrEmpty(label)) return;
+        lock (_stateLock) { _liveInstanceLabels.Remove(label); }
+    }
     private static string _orchestratorModelId = string.Empty;
 
 
@@ -1154,11 +1195,22 @@ public static class ParallelSwarmOrchestrator
             return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
         }
 
-        if (agentName == callerName)
-            return $"[ERROR] Agent '{callerName}' cannot delegate to itself.";
+        // The Orchestrator may not delegate to itself; a specialist persona may fan out to its
+        // own kind (isolated sub-agent per call, depth-bounded by maxSubAgentIterations).
+        if (agentName == callerName && callerName.Equals("Orchestrator", System.StringComparison.OrdinalIgnoreCase))
+            return $"[ERROR] The Orchestrator cannot delegate to itself.";
 
         if (cleanSession)
             specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
+
+        // Unique per-instance display identity for THIS run, so concurrent duplicates of the same
+        // agent (delegate_parallel with repeated AgentNames) are distinguishable on every emitted
+        // frame - the delegation target, the sub-agent's own tool_call/result/stream, and its
+        // task_complete. First live instance keeps the bare name; concurrent collisions get " 2",
+        // " 3", ... Released in finally so labels are recycled across batches.
+        var label = AcquireInstanceLabel(agentName);
+        try
+        {
 
         string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
         RetryState? retryState;
@@ -1177,7 +1229,7 @@ public static class ParallelSwarmOrchestrator
         delegationSpan?.SetTag("parallel", true);
         var delegationSw = Stopwatch.StartNew();
 
-        MuxConsole.WriteDelegation(callerName, agentName, $"[Parallel] {task}");
+        MuxConsole.WriteDelegation(callerName, label, $"[Parallel] {task}");
 
         if (attemptNumber > 1)
             MuxConsole.WriteWarning($"RETRY {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
@@ -1196,7 +1248,7 @@ public static class ParallelSwarmOrchestrator
 
         // Run the sub-agent
         var (rawResult, status, summary, artifacts) = await RunSubAgentAsync(
-            specialist, enrichedTask, maxSubAgentIterations, ct, prodMode: prodMode);
+            specialist, enrichedTask, maxSubAgentIterations, ct, label, prodMode: prodMode);
 
         bool succeeded = status == "success";
 
@@ -1257,6 +1309,12 @@ public static class ParallelSwarmOrchestrator
         return string.IsNullOrWhiteSpace(compacted)
             ? $"[{agentName} completed but returned no output]"
             : compacted;
+
+        }
+        finally
+        {
+            ReleaseInstanceLabel(label);
+        }
     }
 
     //SubAgent Execution (mirrors MultiAgentOrchestrator.RunSubAgentAsync)
@@ -1266,11 +1324,18 @@ public static class ParallelSwarmOrchestrator
         string subTask,
         int maxIterations,
         CancellationToken cancellationToken,
+        string label,
         bool prodMode = false)
     {
+        // `label` is a unique per-instance DISPLAY identity (allocated by the caller) so concurrent
+        // duplicates of the same agent (e.g. CompanionAgent x3) present distinct identities on their
+        // emitted frames. specialist.Def.Name stays the IDENTITY for session/def lookups + the task
+        // preamble; `label` is used everywhere the agent is surfaced to the user / web app.
+
         // Collapse this (concurrent) sub-agent's live output into one expandable transcript line
-        // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix.
-        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+        // when enabled (TUI only). AsyncLocal-scoped so sibling parallel agents never mix. Uses the
+        // instance label so the TUI lane matches the web roster identity.
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(label);
 
         // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
         // Python worker + shell jobs are its own (disposed when the run ends). This is what makes
@@ -1382,8 +1447,8 @@ public static class ParallelSwarmOrchestrator
 
             try
             {
-                MuxConsole.WriteAgentTurnHeader(specialist.Def.Name);
-                thinking = MuxConsole.BeginThinking(specialist.Def.Name);
+                MuxConsole.WriteAgentTurnHeader(label);
+                thinking = MuxConsole.BeginThinking(label);
 
                 using var turnSpan = OtelTracer.GetSource().StartActivity("agent_turn");
                 turnSpan?.SetTag("agent", specialist.Def.Name);
@@ -1401,17 +1466,17 @@ public static class ParallelSwarmOrchestrator
                     {
                         if (!prodMode && !currentlyStreaming)
                         {
-                            MuxConsole.BeginStreaming(specialist.Def.Name);
+                            MuxConsole.BeginStreaming(label);
                             currentlyStreaming = true;
                         }
 
-                        MuxConsole.WriteStream(update.Text, agentName: specialist.Def.Name);
+                        MuxConsole.WriteStream(update.Text, agentName: label);
                         iterResponse.Append(update.Text);
 
                         HookWorker.Enqueue(new HookEvent
                         {
                             Event = "text_chunk",
-                            Agent = specialist.Def.Name,
+                            Agent = label,
                             Text = update.Text,
                             Timestamp = DateTimeOffset.UtcNow
                         });
@@ -1428,16 +1493,16 @@ public static class ParallelSwarmOrchestrator
                             {
                                 thinking?.Dispose();
                                 thinking = null;
-                                MuxConsole.BeginStreaming(specialist.Def.Name);
+                                MuxConsole.BeginStreaming(label);
                                 currentlyStreaming = true;
                             }
 
-                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: specialist.Def.Name);
+                            MuxConsole.WriteStream(reasoningContent.Text, muted: true, agentName: label);
 
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "thinking_chunk",
-                                Agent = specialist.Def.Name,
+                                Agent = label,
                                 Text = reasoningContent.Text,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
@@ -1452,7 +1517,7 @@ public static class ParallelSwarmOrchestrator
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
-                                Agent = specialist.Def.Name,
+                                Agent = label,
                                 Tool = fc.Name,
                                 Timestamp = DateTimeOffset.UtcNow
                             });
@@ -1465,7 +1530,7 @@ public static class ParallelSwarmOrchestrator
                             {
                                 currentlyStreaming = false;
                                 thinking?.Dispose();
-                                thinking = MuxConsole.ResumeThinking(specialist.Def.Name);
+                                thinking = MuxConsole.ResumeThinking(label);
                                 iterToolCalls.Add(fc.Name);
                                 thinking.UpdateStatus(iterToolCalls);
                             }
@@ -1499,7 +1564,7 @@ public static class ParallelSwarmOrchestrator
                             var resultText = fr.Result?.ToString();
 
                             if (resultText != null)
-                                MuxConsole.WriteToolResult(specialist.Def.Name, lastToolName ?? "unknown", resultText, true);
+                                MuxConsole.WriteToolResult(label, lastToolName ?? "unknown", resultText, true);
 
                             Activity.Current?.SetTag("success", true);
                             if (resultText != null)
@@ -1513,7 +1578,7 @@ public static class ParallelSwarmOrchestrator
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_result",
-                                Agent = specialist.Def.Name,
+                                Agent = label,
                                 Summary = fr.Result?.ToString(),
                                 Timestamp = DateTimeOffset.UtcNow
                             });
@@ -1521,7 +1586,7 @@ public static class ParallelSwarmOrchestrator
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
                                 thinking.Dispose();
-                                thinking = MuxConsole.BeginThinking(specialist.Def.Name);
+                                thinking = MuxConsole.BeginThinking(label);
                                 if (iterToolCalls.Count > 0)
                                     thinking.UpdateStatus(iterToolCalls);
                             }
@@ -1545,7 +1610,7 @@ public static class ParallelSwarmOrchestrator
                     Console.Write("[[END_AGENT_TURN]]");
                 else
                 {
-                    if (currentlyStreaming) MuxConsole.EndStreaming(specialist.Def.Name);
+                    if (currentlyStreaming) MuxConsole.EndStreaming(label);
                     MuxConsole.WriteAgentTurnFooter();
                 }
             }
@@ -1553,14 +1618,14 @@ public static class ParallelSwarmOrchestrator
             {
                 if (!prodMode && currentlyStreaming)
                 {
-                    try { MuxConsole.EndStreaming(specialist.Def.Name); } catch { /* ignore */ }
+                    try { MuxConsole.EndStreaming(label); } catch { /* ignore */ }
                 }
                 thinking?.Dispose();
 
                 HookWorker.Enqueue(new HookEvent
                 {
                     Event = "turn_end",
-                    Agent = specialist.Def.Name,
+                    Agent = label,
                     Summary = iterResponse.Length > 500 ? iterResponse.ToString(0, 500) + "..." : iterResponse.ToString(),
                     Timestamp = DateTimeOffset.UtcNow
                 });
@@ -1589,7 +1654,7 @@ public static class ParallelSwarmOrchestrator
 
             if (iterToolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
-                MuxConsole.WriteTaskComplete(specialist.Def.Name, "sub-task");
+                MuxConsole.WriteTaskComplete(label, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary);
                 MuxConsole.WriteRule();
 
                 string raw = fullResponseAccumulator.ToString();

@@ -51,9 +51,17 @@ public class ReflectionConfig
     public string Scope { get; set; } = "lead";
 
     /// <summary>Hard cap on retained reflections in the single-file store; oldest beyond this are
-    /// pruned on append. Default 1000.</summary>
+    /// pruned on append. Default 30000 - Chroma's ANN index + local cosine rerank handle a large
+    /// accumulated corpus fine, so the store can grow well past the old 1000-entry cap.</summary>
     [JsonPropertyName("maxReflections")]
-    public int MaxReflections { get; set; } = 1000;
+    public int MaxReflections { get; set; } = 30000;
+
+    /// <summary>Timeout (ms) for the injector's semantic ChromaDB query on the async mid-turn delta
+    /// path. Generous by default: the query overlaps the seconds-scale gap before the next tool call
+    /// (the injection cadence), so latency is effectively free; on timeout the injector falls back to
+    /// lexical ranking. Default 4000.</summary>
+    [JsonPropertyName("injectQueryTimeoutMs")]
+    public int InjectQueryTimeoutMs { get; set; } = 4000;
 
     /// <summary>How many recent conversation messages the Pass-1 distill call observes. Default 30.</summary>
     [JsonPropertyName("historyWindow")]

@@ -7,7 +7,7 @@ public class DaemonTrigger
     [JsonPropertyName("id")]
     public string Id { get; set; } = "";
 
-    /// <summary>"watch", "cron", or "status"</summary>
+    /// <summary>"watch", "cron", "status", "bridge", or "webhook"</summary>
     [JsonPropertyName("type")]
     public string Type { get; set; } = "";
 
@@ -67,6 +67,22 @@ public class DaemonTrigger
     /// <summary>Max consecutive status check failures before alerting (0 = alert every time).</summary>
     [JsonPropertyName("failThreshold")]
     public int FailThreshold { get; set; } = 3;
+
+    /// <summary>
+    /// HMAC-SHA256 shared secret for <c>webhook</c> triggers. When set, an inbound
+    /// <c>POST /api/hook/{id}</c> must carry a valid <c>X-Hub-Signature-256: sha256=&lt;hex&gt;</c>
+    /// over the raw request body (GitHub-style) or it is rejected 401. This is the webhook's auth;
+    /// unsigned hooks fall back to the runtime bearer gate. Null/empty = no HMAC.
+    /// </summary>
+    [JsonPropertyName("secret")]
+    public string? Secret { get; set; }
+
+    /// <summary>
+    /// Max bytes of the inbound webhook body forwarded into the goal template (prompt-injection
+    /// surface: the body is untrusted). Bodies over the cap are truncated. Default 8 KiB.
+    /// </summary>
+    [JsonPropertyName("payloadLimit")]
+    public int PayloadLimit { get; set; } = 8192;
 
     /// <summary>Effective interval: Cooldown if set, otherwise Interval.</summary>
     [JsonIgnore]

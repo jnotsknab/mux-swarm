@@ -140,4 +140,59 @@ internal sealed class CronExpression
 
         return values;
     }
+
+    /// <summary>
+    /// Render a short human-readable description of a 5-field cron expression, for confirmation
+    /// prompts and status output (e.g. "every 5 minutes", "daily at 09:00", "at 09:30 on weekdays").
+    /// Falls back to echoing the raw expression for shapes it does not special-case. Never throws.
+    /// </summary>
+    public static string Describe(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression)) return "(no schedule)";
+        var p = expression.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (p.Length != 5) return expression.Trim();
+
+        try
+        {
+            string min = p[0], hour = p[1], dom = p[2], mon = p[3], dow = p[4];
+
+            string TimeOfDay()
+                => int.TryParse(hour, out var h) && int.TryParse(min, out var m)
+                    ? $"{h:00}:{m:00}" : $"{hour}:{min}";
+
+            string DowText()
+            {
+                if (dow == "*") return "";
+                var names = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+                if (dow == "1-5") return " on weekdays";
+                if (dow is "0,6" or "6,0") return " on weekends";
+                if (int.TryParse(dow, out var d) && d is >= 0 and <= 6) return $" on {names[d]}";
+                return $" on days-of-week {dow}";
+            }
+
+            var everyMin = System.Text.RegularExpressions.Regex.Match(min, @"^\*/(\d+)$");
+            if (everyMin.Success && hour == "*" && dom == "*" && mon == "*" && dow == "*")
+                return $"every {everyMin.Groups[1].Value} minute(s)";
+
+            var everyHour = System.Text.RegularExpressions.Regex.Match(hour, @"^\*/(\d+)$");
+            if (everyHour.Success && min != "*" && dom == "*" && mon == "*" && dow == "*")
+                return $"every {everyHour.Groups[1].Value} hour(s) at :{(int.TryParse(min, out var mm) ? mm.ToString("00") : min)}";
+
+            if (min == "*" && hour == "*") return "every minute";
+            if (hour == "*" && dom == "*" && mon == "*" && dow == "*")
+                return $"hourly at :{(int.TryParse(min, out var m2) ? m2.ToString("00") : min)}";
+
+            if (min != "*" && hour != "*")
+            {
+                string dowT = DowText();
+                if (dowT.Length > 0) return $"at {TimeOfDay()}{dowT}";
+                if (dom == "*" && mon == "*") return $"daily at {TimeOfDay()}";
+                if (dom != "*" && mon == "*") return $"on day {dom} at {TimeOfDay()}";
+                return $"at {TimeOfDay()} ({expression.Trim()})";
+            }
+
+            return expression.Trim();
+        }
+        catch { return expression.Trim(); }
+    }
 }

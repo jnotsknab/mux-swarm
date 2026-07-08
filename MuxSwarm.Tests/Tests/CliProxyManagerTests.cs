@@ -69,6 +69,18 @@ public class CliProxyManagerTests
     }
 
     [Fact]
+    public async Task VerifyProviderReadyAfterLogin_WhenNotRunning_DoesNotThrow_AndDoesNotHangOrPunish()
+    {
+        // With no sidecar running, IsProviderReadyAsync's underlying mgmt call throws; the verifier must
+        // swallow that ("cannot verify - do not punish the user with a recycle") and return true rather
+        // than propagating. Bounded: must complete promptly without a live network dependency.
+        if (CliProxyManager.IsRunning) return;   // skip if a real sidecar is up in this environment
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        bool ready = await CliProxyManager.VerifyProviderReadyAfterLoginAsync("claude", cts.Token);
+        Assert.True(ready);
+    }
+
+    [Fact]
     public async Task Live_SpawnHealthAuthFiles_RoundTrips()
     {
         // Gated: only runs when explicitly opted-in (downloads the real binary + spawns it).

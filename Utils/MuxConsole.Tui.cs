@@ -805,6 +805,17 @@ public static partial class MuxConsole
     /// <summary>Read a line through the driver's pinned input box. Caller guards with TuiActive.</summary>
     internal static string? TuiReadLine() => _driver?.ReadLine();
 
+    /// <summary>/voice: queue transcript text for insertion into the live compose buffer.
+    /// Thread-safe; no-op outside the TUI (voice is TUI-path-only in v1).</summary>
+    internal static void InjectComposeText(string text) { if (ViaDriver) _driver!.VoiceInject(text); }
+
+    /// <summary>/voice: request the compose buffer be submitted as if Enter was pressed.
+    /// Thread-safe; no-op outside the TUI or when the buffer is empty.</summary>
+    internal static void SubmitComposeBuffer() { if (ViaDriver) _driver!.VoiceSubmit(); }
+
+    /// <summary>/voice: nudge the input area to repaint on the next poll tick (state dot).</summary>
+    internal static void TuiRepaintSoon() { if (ViaDriver) _driver!.VoiceRepaintSoon(); }
+
     /// <summary>Commit a single markup line into scrollback via the driver (caller guards with ViaDriver).</summary>
     internal static void CommitToDriver(string markupLine) { if (ViaDriver) lock (ConsoleLock) { _driver!.CommitLine(markupLine); } }
 
@@ -1000,6 +1011,19 @@ public static partial class MuxConsole
         bool err = LooksLikeError(text);
         int width = TuiActive ? _driver!.Width : AnsiConsole.Profile.Width;
 
+        // Python REPL tools (repl_shell_exec / check_python_status / send_python_input): build a
+        // DISPLAY-ONLY expand body that shows the exact code the model ran ABOVE its output. The code
+        // is read from the session (never sent back to the model - it generated the code). The
+        // collapsed one-liner is unchanged; opening the card (Ctrl+E / Ctrl+G) reveals code + output,
+        // following the normal expand truncation rules.
+        string? expandBody = null;
+        if (IsPythonReplTool(tool)
+            && MuxSwarm.Utils.NativeTools.ReplShellTools.CurrentReplCode() is { Length: > 0 } code)
+        {
+            string codeBlock = code.Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd();
+            expandBody = $"Code:\n{codeBlock}\n\n\u2500\u2500\u2500 output \u2500\u2500\u2500\n{text}";
+        }
+
         if (ViaDriver)
         {
             lock (ConsoleLock)
@@ -1010,8 +1034,8 @@ public static partial class MuxConsole
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
                 if (IsDiffTool(tool) && LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
-                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err); }
-                else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, text, err, width, swarm ? 500 : 2000)); }
+                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody); }
+                else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, expandBody ?? text, err, width, swarm ? 500 : 2000)); }
             }
             return;
         }
@@ -1276,6 +1300,12 @@ public static partial class MuxConsole
     /// text that merely *starts* lines with -/+/@ must never be mistaken for a diff. The tool gate
     /// is the primary guard; <see cref="LooksLikeDiff"/> is a secondary structural confirmation.
     /// </summary>
+    /// <summary>The python REPL tools that all report the SAME running/last job, so their result
+    /// cards can echo the code that ran. Async shell jobs (execute_command_async) carry their own
+    /// "Command:" line and are not included.</summary>
+    private static bool IsPythonReplTool(string? tool)
+        => tool is "repl_shell_exec" or "check_python_status" or "send_python_input";
+
     private static bool IsDiffTool(string? tool)
     {
         if (string.IsNullOrEmpty(tool)) return false;

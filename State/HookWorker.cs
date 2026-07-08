@@ -169,6 +169,11 @@ public static class HookWorker
                 var matched = _hooks.Where(h => Matches(h, hookEvent)).ToList();
                 if (matched.Count == 0) continue;
 
+                // Surface each matched hook on the JSON stream (serve/ACP) + outbound webhook sinks.
+                // No-op in interactive TUI with no sinks configured.
+                foreach (var h in matched)
+                    MuxConsole.EmitHookFired(h.Id, hookEvent.Event, hookEvent.Agent, hookEvent.Tool);
+
                 var payload = JsonSerializer.Serialize(hookEvent, JsonOpts);
 
                 // Persistent hooks: write to running process stdin

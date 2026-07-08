@@ -486,12 +486,41 @@ internal static class CliProxyManager
         };
 
     /// <summary>
-    /// Runs CLIProxyAPI's native browser OAuth login for <paramref name="provider"/>. Ensures the binary +
+    /// Heuristic: does the current process look like it is running on a headless / remote host where
+    /// auto-opening a desktop browser for OAuth would fail (SSH session, cloud VPS, no display server)?
+    /// Windows desktops always report false; on Unix we treat an SSH connection or a missing DISPLAY/
+    /// WAYLAND_DISPLAY as headless. Callers use this only to pick a sensible DEFAULT for the login mode;
+    /// the user can always override. Never throws.
+    /// </summary>
+    public static bool LooksHeadless()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SSH_CONNECTION"))
+                || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SSH_TTY")))
+                return true;
+            // On Linux/macOS a missing display server means no browser can be launched.
+            if (!OperatingSystem.IsWindows())
+            {
+                bool hasDisplay = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))
+                    || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+                if (!hasDisplay) return true;
+            }
+        }
+        catch { /* env probing is best-effort */ }
+        return false;
+    }
+
+    /// <summary>
+    /// Runs CLIProxyAPI's native OAuth login for <paramref name="provider"/>. Ensures the binary +
     /// server are up first (so the config/auth-dir exist and the server can hot-reload the new token), then
-    /// launches `cli-proxy-api -config &lt;cfg&gt; -&lt;provider&gt;-login` which auto-opens the browser. Inherits the
+    /// launches `cli-proxy-api -config &lt;cfg&gt; -&lt;provider&gt;-login`. In the default (headful) mode the
+    /// proxy auto-opens the local browser; when <paramref name="noBrowser"/> is set the `-no-browser` flag is
+    /// passed so it PRINTS the auth URL instead - the flow needed on a headless / remote VPS host, where the
+    /// user opens the URL on another machine and the OAuth callback completes out-of-band. Inherits the
     /// console so the flow is interactive. Returns true on a zero exit code. Throws for an unknown provider.
     /// </summary>
-    public static async Task<bool> LoginAsync(string provider, CancellationToken ct = default)
+    public static async Task<bool> LoginAsync(string provider, CancellationToken ct = default, bool noBrowser = false)
     {
         if (!LoginProviders.TryGetValue(provider, out var flag))
             throw new ArgumentException(
@@ -507,12 +536,152 @@ internal static class CliProxyManager
         };
         psi.ArgumentList.Add("-config");
         psi.ArgumentList.Add(ConfigPath);
-        psi.ArgumentList.Add(flag);   // browser auto-opens (no -no-browser)
+        psi.ArgumentList.Add(flag);
 
-        using var proc = Process.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start the CLIProxyAPI login process.");
-        await proc.WaitForExitAsync(ct).ConfigureAwait(false);
-        return proc.ExitCode == 0;
+        if (!noBrowser)
+        {
+            // Headful (local desktop): the child auto-opens the browser and completes the OAuth via a
+            // loopback callback. It needs no console I/O of its own, so let it inherit ours as before.
+            using var proc = Process.Start(psi)
+                ?? throw new InvalidOperationException("Failed to start the CLIProxyAPI login process.");
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+            return proc.ExitCode == 0;
+        }
+
+        // Headless (remote / VPS / SSH): pass -no-browser so the child PRINTS the auth URL and then
+        // waits on its loopback callback (redirect_uri=http://localhost:<port>/callback) for the user to
+        // complete the login from a browser on another machine (tunnelling that port if needed). The
+        // child performs NO stdin reads in this flow. We must NOT let it inherit the live TUI's raw
+        // console: (a) the ~100ms live-region repaint ticker interleaves with the child's raw stdout and
+        // TRUNCATES the long auth URL (the "code_challenge_meth9" clip), and (b) leftover raw-mode input
+        // bytes (bracketed-paste markers, a stray Enter) reach the child's inherited stdin and abort it
+        // early ("Exiting..."). So instead we REDIRECT the child's stdout/stderr and re-emit each line
+        // through MuxConsole (which commits cleanly above the live footer, URL intact), and hand it a
+        // closed stdin so no stray console bytes can reach it. Verified against the bundled 7.2.44 binary:
+        // with a closed stdin it prints the full URL and waits for the callback.
+        psi.ArgumentList.Add("-no-browser");
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.RedirectStandardInput = true;
+        psi.StandardOutputEncoding = new System.Text.UTF8Encoding(false);
+        psi.StandardErrorEncoding = new System.Text.UTF8Encoding(false);
+
+        using (var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start the CLIProxyAPI login process."))
+        {
+            // Close the child's stdin immediately: the loopback flow reads none, and a closed handle
+            // guarantees no stray raw-console bytes can be delivered to it.
+            try { proc.StandardInput.Close(); } catch { /* best-effort */ }
+
+            void Pump(System.IO.TextReader reader, bool err)
+            {
+                try
+                {
+                    string? line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        // Surface every child line intact through the console sink so the URL + the
+                        // "Waiting for callback..." / success lines render above the live footer.
+                        if (err) MuxConsole.WriteMuted(line);
+                        else MuxConsole.WriteInfo(line);
+                    }
+                }
+                catch { /* stream closed on exit */ }
+            }
+
+            var outPump = new Thread(() => Pump(proc.StandardOutput, err: false)) { IsBackground = true, Name = "CliProxyLogin-stdout" };
+            var errPump = new Thread(() => Pump(proc.StandardError, err: true)) { IsBackground = true, Name = "CliProxyLogin-stderr" };
+            outPump.Start();
+            errPump.Start();
+
+            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+            // Let the pumps drain any final buffered lines before returning.
+            outPump.Join(TimeSpan.FromSeconds(2));
+            errPump.Join(TimeSpan.FromSeconds(2));
+            return proc.ExitCode == 0;
+        }
+    }
+
+    /// <summary>
+    /// Force a cold restart of the detached sidecar: stop whatever is listening on our port, then spawn a
+    /// fresh instance. Unlike relying on CLIProxyAPI's in-process fsnotify auth-watcher (which is known to
+    /// occasionally miss a credential rewrite - upstream #1508/#2556, leaving the server serving a stale or
+    /// dropped token), a cold start re-reads the auth-dir from scratch. This is the automated form of the
+    /// manual "kill the proxy process and let Mux re-spawn it" recovery. Bounded + best-effort; never throws.
+    /// Uses RunGate (a SemaphoreSlim) rather than a lock so it is safe to hold across the spawn/health awaits.
+    /// </summary>
+    public static async Task<bool> RecycleAsync(CancellationToken ct = default)
+    {
+        await EnsureBinaryAsync(ct).ConfigureAwait(false);
+        EnsureKeysLoaded();
+        await RunGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            StopInternal();   // kills the listener on our port + clears _runningPort
+
+            int port = PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
+            Directory.CreateDirectory(AuthDir);
+            await File.WriteAllTextAsync(ConfigPath, BuildConfigYaml(port, _apiKey!, _mgmtKey!, AuthDir), ct)
+                .ConfigureAwait(false);
+
+            SpawnDetached(port);
+            _runningPort = port;
+
+            bool healthy = await WaitForHealthyAsync(TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
+            if (!healthy) { _runningPort = 0; return false; }
+            return true;
+        }
+        catch { return false; }
+        finally { RunGate.Release(); }
+    }
+
+    /// <summary>
+    /// After a login writes a fresh credential, confirm the sidecar is actually serving it. The reliable
+    /// signal is not "did the fsnotify watcher fire" (that timing is racy - upstream #1508/#2556) but "a
+    /// freshly-spawned sidecar is healthy", which guarantees it cold-read the auth-dir on startup. So:
+    ///   1. A brief FAST-PATH check skips a needless restart in the benign case (e.g. logging into a second
+    ///      provider while the first still works and the running sidecar hot-loaded the new token).
+    ///   2. Otherwise force one <see cref="RecycleAsync"/> - which spawns a fresh process and waits for it to
+    ///      become port-healthy - and only THEN poll readiness, against that known-good spawn, with a
+    ///      generous window (a cold start loads auth files + may refresh tokens slightly AFTER the port goes
+    ///      healthy, so the post-spawn poll must not be tight).
+    /// Returns true once the provider is ready (or if readiness cannot be determined - never blocks the user
+    /// on a false negative). Bounded: at most a single recycle. Never throws.
+    /// </summary>
+    public static async Task<bool> VerifyProviderReadyAfterLoginAsync(
+        string provider, CancellationToken ct = default)
+    {
+        // 1. Fast path: brief check so we DON'T restart a sidecar that already loaded the credential.
+        if (await PollProviderReadyAsync(provider, attempts: 4, delayMs: 500, ct).ConfigureAwait(false))
+            return true;
+
+        // 2. Cold-recycle so the sidecar re-reads the auth-dir from a fresh spawn. RecycleAsync internally
+        //    waits (up to 20s) for the new process to become port-healthy, so the poll below runs AFTER the
+        //    process has spawned and is serving - the point at which a readiness check is actually meaningful.
+        MuxConsole.WriteMuted("[cliproxy] New credential not live yet; refreshing the sidecar to pick it up...");
+        if (!await RecycleAsync(ct).ConfigureAwait(false)) return false;
+
+        // 3. Generous post-spawn window: auth-file load / token refresh can lag the port becoming healthy.
+        return await PollProviderReadyAsync(provider, attempts: 20, delayMs: 500, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Polls <see cref="IsProviderReadyAsync"/> up to <paramref name="attempts"/> times (with
+    /// <paramref name="delayMs"/> between). Returns true as soon as the provider reports ready. A management
+    /// API hiccup (throw) is treated as "cannot determine" and returns true so a false negative never blocks
+    /// the user. Best-effort; never throws.
+    /// </summary>
+    private static async Task<bool> PollProviderReadyAsync(
+        string provider, int attempts, int delayMs, CancellationToken ct)
+    {
+        for (int i = 0; i < attempts; i++)
+        {
+            try { if (await IsProviderReadyAsync(provider, ct).ConfigureAwait(false)) return true; }
+            catch { return true; /* cannot verify - do NOT punish the user with a false negative */ }
+            if (i < attempts - 1)
+                try { await Task.Delay(delayMs, ct).ConfigureAwait(false); } catch { return true; }
+        }
+        return false;
     }
 
     /// <summary>The pinned proxy version this build expects (mirrors <see cref="CliProxyAssets.Version"/>).</summary>

@@ -5,18 +5,24 @@ namespace MuxSwarm.Utils.Memory;
 /// <summary>
 /// Selects a small, budgeted block of reflections to inject into an agent when deep mode is on.
 /// Working agents NEVER query memory themselves - this is the only read path. Scoring is
-/// recency * importance * relevance; entries below relevanceFloor are dropped; the assembled block
+/// relevance * importance * recency; entries below relevanceFloor are dropped; the assembled block
 /// is hard-capped by injectTokenBudget (truncated, never overflowed).
 ///
-/// Two surfaces:
-///   * <see cref="BuildBlock"/> - the FULL relevant set, baked into a preamble at session/build time
-///     (lead session start, and every sub-agent WrapTask).
-///   * <see cref="BuildDelta"/> - only reflections NOT yet injected this session, surfaced as a light
-///     per-turn system note so a long-lived lead session picks up freshly-gathered memory MID-SESSION
-///     (the preamble is built once, so without this new memory would never reach an open session).
+/// RELEVANCE is HYBRID: a semantic cosine term (from the dedicated ChromaDB reflection collection,
+/// via <see cref="ReflectionSemanticIndex"/>) blended with a lexical token-overlap term. Semantic
+/// recovers paraphrase/concept matches the lexical matcher misses ("build fails" ~ "compilation
+/// error"); lexical preserves exact rare-identifier precision (g12.92, PR #59, a filename) that
+/// dense embeddings blur. When Chroma is unavailable/times out, relevance falls back to lexical
+/// only - deep mode never breaks.
 ///
-/// Relevance uses lexical token-overlap over the store; both surfaces obey injectTokenBudget. Best-
-/// effort; never throws.
+/// Two surfaces x two cadences:
+///   * <see cref="BuildBlock"/> (sync, lexical) - baked into a preamble at session/sub-agent start.
+///     Instant, never blocks startup; the first mid-turn delta upgrades the injection to semantic.
+///   * <see cref="BuildDeltaAsync"/> (async, semantic) - only reflections NOT yet injected this
+///     session, ranked semantically, surfaced as a per-round-trip system note so a long-lived lead
+///     session picks up freshly-gathered memory MID-SESSION at the (seconds-scale) tool-call cadence.
+///
+/// Both surfaces obey injectTokenBudget. Best-effort; never throws.
 /// </summary>
 public static class ReflectionInjector
 {
@@ -24,21 +30,48 @@ public static class ReflectionInjector
     /// just before a preamble is built. Null/empty = recency+importance only.</summary>
     public static string? CurrentQuery { get; set; }
 
-    // Reflection ids already surfaced to the lead this session (full block + deltas), so a delta
-    // only ever carries what is genuinely NEW. Reset when a new lead session starts.
+    // Blend weights: relevance = SemanticWeight*cosine + LexicalWeight*lexical. Lexical is retained
+    // (not zeroed) so exact-identifier queries never regress when semantic is weak/unavailable.
+    private const double SemanticWeight = 0.65;
+    private const double LexicalWeight = 0.35;
+
+    // How many candidates the semantic oracle ranks (it only knows ids+distances; we map back to
+    // full reflections locally). Generous so the local rerank has a rich pool.
+    private const int SemanticTopK = 50;
+
+    // DURABLE set: reflection ids injected into the PERSISTED conversation (the turn-boundary
+    // path prepends these into the messages the agent records, so they replay every future turn).
+    // Once here a reflection is permanently in context and is never injected again anywhere.
     private static readonly HashSet<string> _injectedIds = new(StringComparer.Ordinal);
+    // EPHEMERAL set: reflections the MID-TURN wrapper surfaced during the CURRENT turn only. The
+    // wrapper's injection is NOT persisted by the agent thread (verified), so this set merely stops
+    // the wrapper repeating a reflection within one turn. Cleared at each turn boundary (ResetTurn)
+    // so the durable path can then re-inject that same reflection PERMANENTLY - no net duplication:
+    // the ephemeral copy evaporates with the turn and is superseded by the persisted one.
+    private static readonly HashSet<string> _ephemeralIds = new(StringComparer.Ordinal);
     private static readonly object _gate = new();
 
-    /// <summary>Reset the per-session injected-id tracking (call when a fresh lead session starts).</summary>
+    /// <summary>Reset per-session state (both id sets + semantic cache) on a fresh lead session.</summary>
     public static void ResetSession()
     {
-        lock (_gate) _injectedIds.Clear();
+        lock (_gate) { _injectedIds.Clear(); _ephemeralIds.Clear(); }
+        ReflectionSemanticIndex.ResetCache();
     }
+
+    /// <summary>Clear the per-TURN ephemeral set at a turn boundary, so a reflection the mid-turn
+    /// wrapper surfaced this turn becomes eligible for DURABLE injection next turn. Durable ids persist.</summary>
+    public static void ResetTurn()
+    {
+        lock (_gate) _ephemeralIds.Clear();
+    }
+
+    // ---- SYNC surface (lexical only): preamble-time, never blocks startup -----------------------
 
     /// <summary>
     /// Build the FULL reflection block for <paramref name="agentName"/> (preamble-time injection),
-    /// or empty when deep mode is off, scope excludes this agent, or nothing clears the floor. Marks
-    /// everything it includes as injected so a subsequent <see cref="BuildDelta"/> won't repeat it.
+    /// LEXICAL-only so it is instant and never blocks session start. Empty when deep mode is off,
+    /// scope excludes this agent, or nothing clears the floor. Marks everything it includes as
+    /// injected so a subsequent delta won't repeat it. The first mid-turn delta upgrades to semantic.
     /// </summary>
     public static string BuildBlock(string agentName, bool isLead)
     {
@@ -48,7 +81,7 @@ public static class ReflectionInjector
             if (cfg is null || !cfg.IsDeep) return string.Empty;
             if (!ScopeAllows(cfg, isLead)) return string.Empty;
 
-            var scored = ScoredFor(agentName, isLead, cfg);
+            var scored = ScoredFor(agentName, isLead, cfg, null);
             if (scored.Count == 0) return string.Empty;
 
             var picked = new List<Reflection>();
@@ -61,13 +94,7 @@ public static class ReflectionInjector
         catch { return string.Empty; }
     }
 
-    /// <summary>
-    /// Build a DELTA block: only reflections not yet injected to the lead this session, scored +
-    /// token-capped exactly like the full block. Returns empty when there is nothing new. Intended
-    /// to be prepended as a transient system note on the next turn of a long-lived lead session, so
-    /// mid-session gathered memory reaches the agent at a useful point without rebuilding the
-    /// preamble. Marks what it returns as injected. Lead/orchestrator scope only.
-    /// </summary>
+    /// <summary>Sync lexical delta (kept for callers/tests that cannot await). Prefer <see cref="BuildDeltaAsync"/>.</summary>
     public static string BuildDelta(string agentName, bool isLead)
     {
         try
@@ -78,16 +105,88 @@ public static class ReflectionInjector
 
             List<(Reflection r, double score)> scored;
             lock (_gate)
-                scored = ScoredFor(agentName, isLead, cfg)
+                scored = ScoredFor(agentName, isLead, cfg, null)
                     .Where(x => !_injectedIds.Contains(x.r.Id))
                     .ToList();
             if (scored.Count == 0) return string.Empty;
 
             var picked = new List<Reflection>();
-            string block = Assemble(scored, cfg.InjectTokenBudget,
-                "[DEEP MEMORY - new since last turn]", picked);
+            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - new since last turn]", picked);
             if (!string.IsNullOrEmpty(block))
                 lock (_gate) foreach (var r in picked) _injectedIds.Add(r.Id);
+            return block;
+        }
+        catch { return string.Empty; }
+    }
+
+    // ---- ASYNC surface (hybrid semantic): mid-turn delta at tool-call cadence -------------------
+
+    /// <summary>
+    /// Build a DELTA block ranked with HYBRID semantic+lexical relevance: only reflections not yet
+    /// injected to the lead this session, scored + token-capped. Empty when nothing is new. Queries
+    /// the ChromaDB reflection collection (generous timeout - the query overlaps the seconds-scale
+    /// gap before the next tool call, so latency is effectively free) and falls back to lexical when
+    /// Chroma is unavailable. Marks what it returns as injected. Lead/orchestrator scope only.
+    /// </summary>
+    public static async Task<string> BuildDeltaAsync(string agentName, bool isLead, CancellationToken ct = default)
+    {
+        try
+        {
+            var cfg = App.SwarmConfig?.ResolveReflection();
+            if (cfg is null || !cfg.IsDeep || !isLead) return string.Empty;
+            if (!ScopeAllows(cfg, isLead)) return string.Empty;
+
+            var semantic = await ReflectionSemanticIndex.QueryAsync(
+                CurrentQuery, SemanticTopK, cfg.InjectQueryTimeoutMs, ct);
+
+            List<(Reflection r, double score)> scored;
+            lock (_gate)
+                // Exclude what is already DURABLE (persisted, will replay anyway) and what this turn's
+                // wrapper already surfaced. Mark only the EPHEMERAL set - the wrapper's copy is not
+                // persisted, so the next turn boundary re-injects it durably.
+                scored = ScoredFor(agentName, isLead, cfg, semantic)
+                    .Where(x => !_injectedIds.Contains(x.r.Id) && !_ephemeralIds.Contains(x.r.Id))
+                    .ToList();
+            if (scored.Count == 0) return string.Empty;
+
+            var picked = new List<Reflection>();
+            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - new (live this turn)]", picked);
+            if (!string.IsNullOrEmpty(block))
+                lock (_gate) foreach (var r in picked) _ephemeralIds.Add(r.Id);
+            return block;
+        }
+        catch { return string.Empty; }
+    }
+
+    /// <summary>
+    /// DURABLE turn-boundary delta: the block to prepend into the messages the orchestrator hands the
+    /// agent, so it is RECORDED into the conversation thread and replays on every future turn. Only
+    /// reflections not yet made durable this session; marks them in the durable set (and clears them
+    /// from the ephemeral set, since the persisted copy supersedes any mid-turn one). Hybrid semantic
+    /// ranking, token-capped, best-effort. Lead scope only. Returns empty when nothing new is durable.
+    /// </summary>
+    public static async Task<string> BuildDurableDeltaAsync(string agentName, bool isLead, CancellationToken ct = default)
+    {
+        try
+        {
+            var cfg = App.SwarmConfig?.ResolveReflection();
+            if (cfg is null || !cfg.IsDeep || !isLead) return string.Empty;
+            if (!ScopeAllows(cfg, isLead)) return string.Empty;
+
+            var semantic = await ReflectionSemanticIndex.QueryAsync(
+                CurrentQuery, SemanticTopK, cfg.InjectQueryTimeoutMs, ct);
+
+            List<(Reflection r, double score)> scored;
+            lock (_gate)
+                scored = ScoredFor(agentName, isLead, cfg, semantic)
+                    .Where(x => !_injectedIds.Contains(x.r.Id))
+                    .ToList();
+            if (scored.Count == 0) return string.Empty;
+
+            var picked = new List<Reflection>();
+            string block = Assemble(scored, cfg.InjectTokenBudget, "[DEEP MEMORY - persisted context]", picked);
+            if (!string.IsNullOrEmpty(block))
+                lock (_gate) foreach (var r in picked) { _injectedIds.Add(r.Id); _ephemeralIds.Remove(r.Id); }
             return block;
         }
         catch { return string.Empty; }
@@ -99,8 +198,11 @@ public static class ReflectionInjector
         return scopeAll || isLead;
     }
 
-    /// <summary>The role-filtered, floor-passing, score-ordered candidates for an agent.</summary>
-    private static List<(Reflection r, double score)> ScoredFor(string agentName, bool isLead, ReflectionConfig cfg)
+    /// <summary>The role-filtered, floor-passing, score-ordered candidates for an agent. When
+    /// <paramref name="semantic"/> is non-null, relevance blends its cosine with lexical overlap;
+    /// when null (sync path / Chroma down) relevance is lexical-only.</summary>
+    private static List<(Reflection r, double score)> ScoredFor(
+        string agentName, bool isLead, ReflectionConfig cfg, IReadOnlyDictionary<string, double>? semantic)
     {
         var all = ReflectionStore.LoadAll();
         if (all.Count == 0) return new();
@@ -114,20 +216,38 @@ public static class ReflectionInjector
         var query = CurrentQuery ?? string.Empty;
         var now = DateTimeOffset.UtcNow;
         return candidates
-            .Select(r => (r, score: Score(r, query, now)))
+            .Select(r => (r, score: Score(r, query, now, semantic)))
             .Where(x => x.score >= cfg.RelevanceFloor)
             .OrderByDescending(x => x.score)
             .ToList();
     }
 
     /// <summary>
-    /// Composite score = relevance * (0.5 + 0.5*importance) * recencyDecay. Relevance is lexical
-    /// token-overlap with the query in [0,1]; when the query is empty it defaults to 1 so recency +
-    /// importance still rank entries.
+    /// Composite score = relevance * (0.5 + 0.5*importance) * recencyDecay. RELEVANCE is hybrid when
+    /// a semantic map is supplied (SemanticWeight*cosine + LexicalWeight*lexical), else lexical-only;
+    /// when the query is empty it defaults to 1 so recency + importance still rank entries.
     /// </summary>
-    public static double Score(Reflection r, string query, DateTimeOffset now)
+    public static double Score(Reflection r, string query, DateTimeOffset now,
+        IReadOnlyDictionary<string, double>? semantic = null)
     {
-        double relevance = string.IsNullOrWhiteSpace(query) ? 1.0 : LexicalOverlap(query, r.Content);
+        double relevance;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            relevance = 1.0;
+        }
+        else
+        {
+            double lexical = LexicalOverlap(query, r.Content);
+            if (semantic is not null && semantic.TryGetValue(r.Id, out var cos))
+                relevance = SemanticWeight * cos + LexicalWeight * lexical;
+            else if (semantic is not null)
+                // Semantic ran but this reflection was outside topK: it is not among the nearest, so
+                // its semantic contribution is ~0; keep only the (down-weighted) lexical signal.
+                relevance = LexicalWeight * lexical;
+            else
+                relevance = lexical;
+        }
+
         double importanceWeight = 0.5 + 0.5 * Math.Clamp(r.Importance, 0, 1);
         double ageDays = Math.Max(0, (now - r.Timestamp).TotalDays);
         double recency = Math.Exp(-ageDays / 14.0);   // ~2-week half-life-ish decay
@@ -171,13 +291,10 @@ public static class ReflectionInjector
         int used = sb.Length;
         foreach (var (r, _) in ordered)
         {
-            // Render the reflection whole (may be multi-line); only the TOTAL block is capped.
             var body = r.Content.Replace("\r\n", "\n").TrimEnd();
             var entry = "- " + body.Replace("\n", "\n  ");
             if (used + entry.Length + 2 > charBudget)
             {
-                // If nothing has been added yet, include this one (truncated) so the block is never
-                // empty just because the top reflection is long; otherwise stop at the budget.
                 if (picked.Count == 0)
                 {
                     int room = Math.Max(0, charBudget - used - 16);
