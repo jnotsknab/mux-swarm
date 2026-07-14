@@ -115,4 +115,77 @@ public class ReasoningEffortFallbackClientTests
         Assert.Single(inner.Seen);
         Assert.Equal(ReasoningEffort.Medium, inner.Seen[0]);
     }
+
+    // Inner that throws a caller-supplied exception on the ExtraHigh attempt, else succeeds at High.
+    private sealed class ThrowingInner : IChatClient
+    {
+        private readonly Func<Exception> _onTop;
+        public List<ReasoningEffort?> Seen { get; } = new();
+        public ThrowingInner(Func<Exception> onTop) => _onTop = onTop;
+
+        public Task<ChatResponse> GetResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null, CancellationToken cancellationToken = default)
+        {
+            var eff = options?.Reasoning?.Effort;
+            Seen.Add(eff);
+            if (eff == ReasoningEffort.ExtraHigh) throw _onTop();
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "ok")));
+        }
+
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+            IEnumerable<ChatMessage> messages, ChatOptions? options = null,
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            var eff = options?.Reasoning?.Effort;
+            Seen.Add(eff);
+            if (eff == ReasoningEffort.ExtraHigh) throw _onTop();
+            await Task.Yield();
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "ok");
+        }
+
+        public object? GetService(Type serviceType, object? serviceKey = null) => null;
+        public void Dispose() { }
+    }
+
+    [Fact]
+    public async Task Generic400_WithoutReasoningWording_TriggersFallback()
+    {
+        // OpenRouter-style: a 400 that does NOT name the reasoning field should still fall back.
+        var inner = new ThrowingInner(() =>
+            new System.Net.Http.HttpRequestException("invalid value for parameter",
+                null, System.Net.HttpStatusCode.BadRequest));
+        var client = new ReasoningEffortFallbackClient(inner, "openrouter/some-model-x");
+
+        var resp = await client.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") }, TopTier());
+
+        Assert.Equal(2, inner.Seen.Count);
+        Assert.Equal(ReasoningEffort.ExtraHigh, inner.Seen[0]);
+        Assert.Equal(ReasoningEffort.High, inner.Seen[1]);
+        Assert.Equal("ok", resp.Text);
+    }
+
+    [Fact]
+    public async Task Non400_ClientError_DoesNotTriggerFallback()
+    {
+        // A 401/5xx is a real failure, not a tier problem - it must propagate, not silently retry.
+        var inner = new ThrowingInner(() =>
+            new System.Net.Http.HttpRequestException("unauthorized",
+                null, System.Net.HttpStatusCode.Unauthorized));
+        var client = new ReasoningEffortFallbackClient(inner, "openrouter/other-model-y");
+
+        await Assert.ThrowsAsync<System.Net.Http.HttpRequestException>(() =>
+            client.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") }, TopTier()));
+        Assert.Single(inner.Seen);
+    }
+
+    [Fact]
+    public async Task Cancellation_DoesNotTriggerFallback()
+    {
+        var inner = new ThrowingInner(() => new OperationCanceledException());
+        var client = new ReasoningEffortFallbackClient(inner, "openrouter/model-cancel-z");
+
+        await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            client.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") }, TopTier()));
+        Assert.Single(inner.Seen);
+    }
 }

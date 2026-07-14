@@ -7,8 +7,9 @@ namespace MuxSwarm.Utils;
 /// Delegating chat client that lets the HIGHEST reasoning tier (<see cref="ReasoningEffort.ExtraHigh"/>)
 /// be requested safely against ANY endpoint. ExtraHigh serializes to the wire value "xhigh" via the
 /// Microsoft.Extensions.AI.OpenAI adapter, which some OpenAI-compatible endpoints (notably the CLIProxy
-/// Claude path) reject with a 400. Rather than gate the user out of /ultra, /giga, or a Shift+Tab cycle
-/// to the top tier, this client attempts ExtraHigh and, if the endpoint rejects the reasoning value,
+/// Claude path, and OpenRouter models whose upstream does not accept xhigh) reject with a 400. Rather than
+/// gate the user out of /ultra, /giga, or a Shift+Tab cycle to the top tier, this client attempts ExtraHigh
+/// and, if the endpoint rejects it (a reasoning-named 400 OR any generic 400 on that top-tier request),
 /// transparently retries the SAME request one tier lower (<see cref="ReasoningEffort.High"/>) and latches
 /// that downgrade per model id so subsequent round-trips skip the doomed attempt. Models known up front to
 /// reject the top tier (Claude, which has no reasoning_effort param) are downgraded PROACTIVELY by model id,
@@ -66,24 +67,53 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
         return clone;
     }
 
-    // A reasoning-tier rejection is a provider 400 that names the reasoning/effort field. Match
-    // defensively on message content (the OpenAI SDK surfaces it as ClientResultException/HttpRequestException
-    // with the provider body) rather than a specific exception type, since the wire error shape varies.
-    private static bool IsReasoningRejection(Exception ex)
+    // Decide whether a failure on the FIRST top-tier attempt should fall back to High. Because we only
+    // reach the catch having sent ExtraHigh, a client-side 400 on THAT request is overwhelmingly the
+    // unsupported reasoning value - even when the provider (e.g. OpenRouter) does not name the field. We
+    // therefore trigger on a reasoning-named error OR a generic HTTP 400, but NOT on cancellation (user
+    // Esc), auth (401/403), rate-limit (429), or server (5xx) errors - those are real failures where a
+    // retry at High would only mask the problem, so they propagate.
+    private static bool ShouldFallBack(Exception ex)
     {
+        // Cancellation is the user aborting the turn, never a tier problem.
+        if (ex is OperationCanceledException)
+            return false;
+
         for (Exception? e = ex; e is not null; e = e.InnerException)
         {
+            if (e is OperationCanceledException)
+                return false;
+
             var m = e.Message;
-            if (string.IsNullOrEmpty(m)) continue;
-            bool mentionsReasoning =
-                m.Contains("xhigh", StringComparison.OrdinalIgnoreCase) ||
-                m.Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase) ||
-                m.Contains("reasoning effort", StringComparison.OrdinalIgnoreCase) ||
-                m.Contains("reasoning.effort", StringComparison.OrdinalIgnoreCase);
-            if (mentionsReasoning)
+            if (!string.IsNullOrEmpty(m))
+            {
+                bool mentionsReasoning =
+                    m.Contains("xhigh", StringComparison.OrdinalIgnoreCase) ||
+                    m.Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase) ||
+                    m.Contains("reasoning effort", StringComparison.OrdinalIgnoreCase) ||
+                    m.Contains("reasoning.effort", StringComparison.OrdinalIgnoreCase);
+                if (mentionsReasoning)
+                    return true;
+            }
+
+            // Broadened trigger: a 400 Bad Request on the top-tier request, regardless of wording.
+            if (GetHttpStatus(e) == 400)
                 return true;
         }
         return false;
+    }
+
+    // Extract an HTTP status from the provider exception shape without a hard dependency on the OpenAI/
+    // System.ClientModel types: HttpRequestException carries StatusCode directly; System.ClientModel
+    // ClientResultException (what the OpenAI SDK throws) exposes an int Status property, read reflectively.
+    private static int? GetHttpStatus(Exception e)
+    {
+        if (e is System.Net.Http.HttpRequestException hre && hre.StatusCode is { } sc)
+            return (int)sc;
+        var statusProp = e.GetType().GetProperty("Status", typeof(int));
+        if (statusProp is not null && statusProp.GetValue(e) is int s)
+            return s;
+        return null;
     }
 
     private void MarkDowngraded()
@@ -100,7 +130,7 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
         {
             return await base.GetResponseAsync(messages, send, cancellationToken);
         }
-        catch (Exception ex) when (attemptingTop && IsReasoningRejection(ex))
+        catch (Exception ex) when (attemptingTop && ShouldFallBack(ex))
         {
             MarkDowngraded();
             return await base.GetResponseAsync(messages, Downgrade(options!), cancellationToken);
@@ -125,7 +155,7 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
             {
                 haveFirst = await e.MoveNextAsync();
             }
-            catch (Exception ex) when (attemptingTop && IsReasoningRejection(ex))
+            catch (Exception ex) when (attemptingTop && ShouldFallBack(ex))
             {
                 MarkDowngraded();
                 if (e is not null) await e.DisposeAsync();
