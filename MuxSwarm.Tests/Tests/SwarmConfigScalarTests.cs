@@ -34,6 +34,21 @@ public class SwarmConfigScalarTests
     }
 
     [Fact]
+    public void MidTurnCompaction_DefaultsFalse_And_RoundTrips()
+    {
+        Assert.False(new ExecutionLimits().MidTurnCompaction);
+
+        var swarm = new SwarmConfig();
+        swarm.ExecutionLimits.MidTurnCompaction = true;
+
+        var json = JsonSerializer.Serialize(swarm, Opts);
+        var back = JsonSerializer.Deserialize<SwarmConfig>(json, Opts)!;
+
+        Assert.True(back.ExecutionLimits.MidTurnCompaction);
+        Assert.Contains("midTurnCompaction", json);
+    }
+
+    [Fact]
     public void AgentCrud_AddEditRemove_RoundTrips()
     {
         var swarm = new SwarmConfig();

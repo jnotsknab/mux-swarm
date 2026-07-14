@@ -1764,6 +1764,13 @@ public static class SingleAgentOrchestrator
                         int autoContinues = 0;
                         int maxAutoContinues = ExecutionLimits.Current.MaxAutoContinuesPerTurn;
                         Microsoft.Extensions.AI.ChatFinishReason? lastFinishReason;
+                        // Mid-turn compaction (executionLimits.midTurnCompaction): tripped the moment an
+                        // authoritative UsageContent frame reports the running token total has crossed the
+                        // threshold, then serviced after the stream unwinds (a session swap mid-enumeration
+                        // is unsafe). _disabled latches on for the rest of the turn if a compaction fails to
+                        // get back under the threshold, so a summary that stays large cannot re-trip forever.
+                        bool midTurnCompactPending = false;
+                        bool midTurnCompactDisabled = false;
                         do
                         {
                         lastFinishReason = null;
@@ -1917,8 +1924,68 @@ public static class SingleAgentOrchestrator
                                         details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
                                         details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
                                         details.TotalTokenCount ?? 0);
+
+                                    // Mid-turn compaction: this UsageContent frame is the authoritative token
+                                    // checkpoint, so it is the earliest safe point to notice the session has grown
+                                    // past the threshold WITHIN a turn. Flag it and stop consuming the stream; the
+                                    // actual compaction (which swaps the session) runs once the enumeration unwinds.
+                                    if (ExecutionLimits.Current.MidTurnCompaction
+                                        && !midTurnCompactDisabled
+                                        && autoCompactTokenThreshold is int mtcThreshold
+                                        && _sessionTokens > mtcThreshold)
+                                    {
+                                        midTurnCompactPending = true;
+                                        break;
+                                    }
                                 }
                             }
+                        }
+
+                        // Mid-turn compaction service point: the stream was stopped because the token
+                        // threshold was crossed mid-turn. Compact now (TryCompactAsync summarizes the
+                        // conversation, creates a FRESH session, and resets conversationHistory to the
+                        // summary), then wipe the live message list clean and reseed only the compacted
+                        // summary so the turn resumes on the shrunk context. The system prompt lives on
+                        // the agent (not in `messages`), so it survives untouched. If the summary is
+                        // still over threshold, latch mid-turn compaction off for the rest of the turn.
+                        if (midTurnCompactPending)
+                        {
+                            midTurnCompactPending = false;
+
+                            // Preserve any text streamed before the checkpoint so the summary sees it.
+                            string mtcPartial = responseText.ToString();
+                            if (!string.IsNullOrWhiteSpace(mtcPartial))
+                                conversationHistory.Add(new ChatMessage(ChatRole.Assistant, mtcPartial));
+                            responseText.Clear();
+
+                            MuxConsole.WriteInfo($"Context crossed limit mid-turn (~{_sessionTokens:N0} tokens). Auto-compacting...");
+                            bool mtcOk = await TryCompactAsync();
+
+                            if (mtcOk)
+                            {
+                                // TryCompactAsync set _pendingCompaction and reset conversationHistory to
+                                // [summary, "Context restored..."]. Rebuild the turn payload from scratch on
+                                // the fresh session: the two reseed messages plus a nudge to continue.
+                                _pendingCompaction = false;
+                                messages.Clear();
+                                messages.Add(conversationHistory[0]);
+                                messages.Add(conversationHistory[1]);
+                                messages.Add(new ChatMessage(ChatRole.User, "continue"));
+
+                                // If the fresh summary still exceeds the threshold, do not let it re-trip every
+                                // frame - run the rest of this turn without mid-turn compaction.
+                                if (autoCompactTokenThreshold is int mtcAfter && _sessionTokens > mtcAfter)
+                                {
+                                    midTurnCompactDisabled = true;
+                                    MuxConsole.WriteWarning("Compacted context still over threshold; mid-turn compaction paused for this turn.");
+                                }
+
+                                continue;
+                            }
+
+                            // Compaction unavailable (no compaction model): disable for the turn so we do
+                            // not spin, and fall through to finish the turn normally.
+                            midTurnCompactDisabled = true;
                         }
 
                         // If the stream ended because the output cap was hit (length) and we still
