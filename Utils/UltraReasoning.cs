@@ -11,12 +11,12 @@ namespace MuxSwarm.Utils;
 public static class UltraReasoning
 {
     /// <summary>
-    /// Escalates reasoning on <paramref name="opts"/> to the maximum the active provider accepts:
-    /// a provider-native numeric thinking budget (sidesteps the effort-enum xhigh/E2 path) AND an
-    /// effort tier. The effort tier is set to <see cref="ReasoningEffort.High"/> rather than
-    /// ExtraHigh until E2 lands, since extra_high serializes to xhigh and is rejected on the
-    /// CLIProxy/Claude path; the numeric budget carries the real escalation on budget-capable
-    /// providers.
+    /// Escalates reasoning on <paramref name="opts"/> to the maximum available: a provider-native
+    /// numeric thinking budget (honored by budget-capable providers e.g. Anthropic thinking.budget_tokens)
+    /// AND the top effort tier <see cref="ReasoningEffort.ExtraHigh"/>. ExtraHigh serializes to the wire
+    /// value "xhigh", which some endpoints (CLIProxy/Claude path) reject; that no longer gates the mode,
+    /// because <see cref="ReasoningEffortFallbackClient"/> (wired inside CreateChatClient) transparently
+    /// retries at High on rejection. Endpoints that accept ExtraHigh get it.
     /// </summary>
     public static void Apply(ChatOptions opts)
     {
@@ -35,11 +35,11 @@ public static class UltraReasoning
             };
         }
 
-        // Effort tier — set to High (capped below ExtraHigh until E2 lands so the
-        // extra_high -> xhigh serialization is not rejected on the CLIProxy/Claude path).
+        // Effort tier — request the top tier (ExtraHigh). ReasoningEffortFallbackClient degrades
+        // to High per-model if the endpoint rejects the "xhigh" wire value, so this never fails a run.
         opts.Reasoning = new ReasoningOptions
         {
-            Effort = ReasoningEffort.High,
+            Effort = ReasoningEffort.ExtraHigh,
             Output = opts.Reasoning?.Output
         };
     }

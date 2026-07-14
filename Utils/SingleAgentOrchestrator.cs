@@ -1588,10 +1588,12 @@ public static class SingleAgentOrchestrator
 
         // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
         // the already-built agentChatOptions.Reasoning in place so the next turn uses it,
-        // exactly like /ultra's escalation but user-cyclable. Order: low -> med -> high -> low.
+        // exactly like /ultra's escalation but user-cyclable. Order: low -> med -> high -> xhigh -> low.
         // The same underlying state backs the typed /effort command and the Shift+Tab key, so
-        // they stay consistent. The footer chip reflects the current tier.
-        string[] effortTiers = { "low", "med", "high" };
+        // they stay consistent. The footer chip reflects the current tier. "xhigh" (ExtraHigh) is the
+        // top tier the reasoning API exposes; ReasoningEffortFallbackClient degrades it to high per-model
+        // if the endpoint rejects the wire value, so cycling to it never fails a turn.
+        string[] effortTiers = { "low", "med", "high", "xhigh" };
         int effortIdx = -1;   // -1 = unset (inherit config/model default), no chip shown
         string ApplyEffortTier(string tier)
         {
@@ -1600,6 +1602,7 @@ public static class SingleAgentOrchestrator
                 "low"  => Microsoft.Extensions.AI.ReasoningEffort.Low,
                 "med"  => Microsoft.Extensions.AI.ReasoningEffort.Medium,
                 "high" => Microsoft.Extensions.AI.ReasoningEffort.High,
+                "xhigh" => Microsoft.Extensions.AI.ReasoningEffort.ExtraHigh,
                 _      => Microsoft.Extensions.AI.ReasoningEffort.Medium
             };
             agentChatOptions.Reasoning = new Microsoft.Extensions.AI.ReasoningOptions
@@ -1619,11 +1622,11 @@ public static class SingleAgentOrchestrator
         void SetEffortByName(string name)
         {
             var n = name.Trim().ToLowerInvariant();
-            n = n switch { "medium" => "med", "m" => "med", "l" => "low", "h" => "high", _ => n };
+            n = n switch { "medium" => "med", "m" => "med", "l" => "low", "h" => "high", "extrahigh" => "xhigh", "extra_high" => "xhigh", "xh" => "xhigh", "max" => "xhigh", _ => n };
             int idx = Array.IndexOf(effortTiers, n);
             if (idx < 0)
             {
-                MuxConsole.WriteWarning($"Unknown effort '{name}'. Use low, med, or high.");
+                MuxConsole.WriteWarning($"Unknown effort '{name}'. Use low, med, high, or xhigh.");
                 return;
             }
             effortIdx = idx;
@@ -1640,7 +1643,8 @@ public static class SingleAgentOrchestrator
             string? seedTier =
                 seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Low    ? "low"  :
                 seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Medium ? "med"  :
-                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.High   ? "high" : null;
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.High   ? "high" :
+                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.ExtraHigh ? "xhigh" : null;
             if (seedTier is not null)
             {
                 effortIdx = Array.IndexOf(effortTiers, seedTier);
