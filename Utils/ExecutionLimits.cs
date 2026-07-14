@@ -112,4 +112,16 @@ public class ExecutionLimits
     [JsonPropertyName("maxTaskAttempts")]
     public int MaxTaskAttempts { get; set; } = 3;
 
+    /// <summary>
+    /// When true, a single-agent turn is auto-compacted MID-TURN as soon as an authoritative
+    /// UsageContent checkpoint reports the running session token total has crossed the
+    /// compaction threshold - rather than waiting for the next user input. TryCompactAsync
+    /// summarizes the conversation, spins up a fresh session from the summary, and the current
+    /// turn continues on the compacted context (the live message list is wiped down to the
+    /// reseeded summary; the system prompt lives on the agent and is unaffected). Enabled by
+    /// default; set false to restore the legacy behavior of only compacting between turns.
+    /// </summary>
+    [JsonPropertyName("midTurnCompaction")]
+    public bool MidTurnCompaction { get; set; } = true;
+
 }

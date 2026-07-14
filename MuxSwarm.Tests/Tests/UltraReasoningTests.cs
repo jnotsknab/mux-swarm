@@ -56,7 +56,7 @@ public class UltraReasoningTests
     }
 
     [Fact]
-    public void Apply_RaisesEffortTierToHigh()
+    public void Apply_RaisesEffortTierToExtraHigh()
     {
         App.Config = new AppConfig();
         var opts = new ChatOptions();
@@ -64,7 +64,7 @@ public class UltraReasoningTests
         UltraReasoning.Apply(opts);
 
         Assert.NotNull(opts.Reasoning);
-        Assert.Equal(ReasoningEffort.High, opts.Reasoning!.Effort);
+        Assert.Equal(ReasoningEffort.ExtraHigh, opts.Reasoning!.Effort);
     }
 
     [Fact]
@@ -88,6 +88,6 @@ public class UltraReasoningTests
         UltraReasoning.Apply(opts);
 
         Assert.True(opts.AdditionalProperties is null || !opts.AdditionalProperties.ContainsKey("thinking"));
-        Assert.Equal(ReasoningEffort.High, opts.Reasoning!.Effort);
+        Assert.Equal(ReasoningEffort.ExtraHigh, opts.Reasoning!.Effort);
     }
 }

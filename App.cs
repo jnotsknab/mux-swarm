@@ -2414,6 +2414,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .AsBuilder()
             .UseFunctionInvocation(configure: c =>
                 c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
+            // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
+            // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
+            // instead of failing the turn. No-op unless ExtraHigh was actually requested.
+            .Use(inner => new MuxSwarm.Utils.ReasoningEffortFallbackClient(inner, modelId))
             .Build();
 
         // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every
