@@ -289,6 +289,13 @@ public static class SwarmDefaults
 
         var swarm = new
         {
+            // Auto-compaction runs mid-turn (not just between turns) once the session
+            // crosses the compaction threshold. Set midTurnCompaction=false to restore
+            // the legacy compact-on-next-input-only behavior.
+            executionLimits = new
+            {
+                midTurnCompaction = true
+            },
             compactionAgent = new
             {
                 model = models.CompactionModel,

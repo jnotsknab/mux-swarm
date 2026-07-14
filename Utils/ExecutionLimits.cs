@@ -118,10 +118,10 @@ public class ExecutionLimits
     /// compaction threshold - rather than waiting for the next user input. TryCompactAsync
     /// summarizes the conversation, spins up a fresh session from the summary, and the current
     /// turn continues on the compacted context (the live message list is wiped down to the
-    /// reseeded summary; the system prompt lives on the agent and is unaffected). Default false
-    /// preserves the legacy behavior of only compacting between turns.
+    /// reseeded summary; the system prompt lives on the agent and is unaffected). Enabled by
+    /// default; set false to restore the legacy behavior of only compacting between turns.
     /// </summary>
     [JsonPropertyName("midTurnCompaction")]
-    public bool MidTurnCompaction { get; set; } = false;
+    public bool MidTurnCompaction { get; set; } = true;
 
 }

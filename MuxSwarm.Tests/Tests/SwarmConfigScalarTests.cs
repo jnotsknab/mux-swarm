@@ -34,17 +34,17 @@ public class SwarmConfigScalarTests
     }
 
     [Fact]
-    public void MidTurnCompaction_DefaultsFalse_And_RoundTrips()
+    public void MidTurnCompaction_DefaultsTrue_And_RoundTrips()
     {
-        Assert.False(new ExecutionLimits().MidTurnCompaction);
+        Assert.True(new ExecutionLimits().MidTurnCompaction);
 
         var swarm = new SwarmConfig();
-        swarm.ExecutionLimits.MidTurnCompaction = true;
+        swarm.ExecutionLimits.MidTurnCompaction = false;
 
         var json = JsonSerializer.Serialize(swarm, Opts);
         var back = JsonSerializer.Deserialize<SwarmConfig>(json, Opts)!;
 
-        Assert.True(back.ExecutionLimits.MidTurnCompaction);
+        Assert.False(back.ExecutionLimits.MidTurnCompaction);
         Assert.Contains("midTurnCompaction", json);
     }
 
