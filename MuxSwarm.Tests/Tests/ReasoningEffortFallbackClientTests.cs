@@ -89,6 +89,21 @@ public class ReasoningEffortFallbackClientTests
     }
 
     [Fact]
+    public async Task Claude_IsDowngradedProactively_NoDoomedAttempt()
+    {
+        // Claude has no reasoning_effort param, so xhigh is always wasted. The client should send
+        // High on the FIRST call without ever attempting ExtraHigh (no burned 400 round-trip).
+        var inner = new FakeInner(rejectExtraHigh: true);
+        var client = new ReasoningEffortFallbackClient(inner, "claude-opus-4-8");
+
+        var resp = await client.GetResponseAsync(new[] { new ChatMessage(ChatRole.User, "hi") }, TopTier());
+
+        Assert.Single(inner.Seen);
+        Assert.Equal(ReasoningEffort.High, inner.Seen[0]);
+        Assert.Equal("ok", resp.Text);
+    }
+
+    [Fact]
     public async Task NonTopTier_IsUntouched()
     {
         var inner = new FakeInner(rejectExtraHigh: true);

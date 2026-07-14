@@ -10,9 +10,10 @@ namespace MuxSwarm.Utils;
 /// Claude path) reject with a 400. Rather than gate the user out of /ultra, /giga, or a Shift+Tab cycle
 /// to the top tier, this client attempts ExtraHigh and, if the endpoint rejects the reasoning value,
 /// transparently retries the SAME request one tier lower (<see cref="ReasoningEffort.High"/>) and latches
-/// that downgrade per model id so subsequent round-trips skip the doomed attempt. Endpoints that accept
-/// ExtraHigh are unaffected. It sits INSIDE the function-invocation middleware, so a downgrade retries a
-/// single model call, never the whole turn.
+/// that downgrade per model id so subsequent round-trips skip the doomed attempt. Models known up front to
+/// reject the top tier (Claude, which has no reasoning_effort param) are downgraded PROACTIVELY by model id,
+/// skipping even the first doomed attempt. Endpoints that accept ExtraHigh are unaffected. It sits INSIDE the
+/// function-invocation middleware, so a downgrade retries a single model call, never the whole turn.
 /// </summary>
 public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
 {
@@ -28,6 +29,17 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
     public static bool IsDowngraded(string modelId) =>
         !string.IsNullOrEmpty(modelId) && _downgraded.ContainsKey(modelId);
 
+    /// <summary>
+    /// Proactive model-id detection: models KNOWN not to accept the "xhigh" wire value, so the top
+    /// tier is downgraded to High up front instead of burning one guaranteed-400 round-trip. Claude
+    /// has no native reasoning_effort param (its escalation rides thinking.budget_tokens, injected by
+    /// UltraReasoning for ultra/giga), so xhigh is always wasted there. OpenAI xhigh support is a
+    /// moving target (gpt-5.1-codex-max and later), so those are still ATTEMPTED and the reactive
+    /// catch below backstops any that reject.
+    /// </summary>
+    private static bool KnownToRejectTopTier(string modelId) =>
+        modelId.Contains("claude", StringComparison.OrdinalIgnoreCase);
+
     // Only rewrite when the caller actually asked for the top tier. Returns the options to send now
     // plus whether a top-tier attempt is in flight (so a rejection can trigger the one-shot retry).
     private (ChatOptions? opts, bool attemptingTop) Prepare(ChatOptions? options)
@@ -35,8 +47,9 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
         if (options?.Reasoning?.Effort != ReasoningEffort.ExtraHigh)
             return (options, false);
 
-        // Already known-bad for this model: send High up front, no attempt.
-        if (_downgraded.ContainsKey(_modelId))
+        // Send High up front (no attempt) when either the reactive latch fired for this model
+        // OR proactive model-id detection knows the endpoint rejects the top tier (e.g. Claude).
+        if (_downgraded.ContainsKey(_modelId) || KnownToRejectTopTier(_modelId))
             return (Downgrade(options), false);
 
         return (options, true);
