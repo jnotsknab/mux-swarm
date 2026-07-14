@@ -1933,12 +1933,11 @@ public static class SingleAgentOrchestrator
                                     // checkpoint, so it is the earliest safe point to notice the session has grown
                                     // past the threshold WITHIN a turn. Flag it and stop consuming the stream; the
                                     // actual compaction (which swaps the session) runs once the enumeration unwinds.
-                                    // Skip when the model already signaled a real stop: the turn is
-                                    // ending anyway, so let it commit and compact before the NEXT goal
-                                    // (the top-of-loop check) instead of forcing a wasteful continue.
+                                    // Fires regardless of finish reason: the authoritative token total only lands
+                                    // on the terminal frame (which often carries Stop), so gating on !Stop would
+                                    // defer every peak-at-end crossing to the next turn and defeat mid-turn compaction.
                                     if (ExecutionLimits.Current.MidTurnCompaction
                                         && !midTurnCompactDisabled
-                                        && lastFinishReason != Microsoft.Extensions.AI.ChatFinishReason.Stop
                                         && autoCompactTokenThreshold is int mtcThreshold
                                         && _sessionTokens > mtcThreshold)
                                     {
