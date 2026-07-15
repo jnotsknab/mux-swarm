@@ -139,8 +139,8 @@ public sealed class ProcessCleanup : IDisposable
 
         // NOTE: do NOT early-return when pids.Count == 0. MCP servers are not Track()ed
         // (only HookWorker processes are), so the tracked-PID list is usually empty even
-        // when MCP subprocesses are alive. The MCP client disposal + own-tree kill below must
-        // still run; the Windows Job Object is the authoritative backstop on handle close.
+        // when MCP subprocesses are alive. MCP client disposal must still run; the Windows
+        // Job Object is the authoritative backstop on handle close.
 
         // Phase 1: Graceful termination
         foreach (var pid in pids)
@@ -204,9 +204,6 @@ public sealed class ProcessCleanup : IDisposable
                 Debug.WriteLine($"[CLEANUP] Force kill failed for PID {pid}: {ex.Message}");
             }
         }
-
-        // Kill the entire process tree from our own PID
-        KillOwnProcessTree();
     }
 
     /// <summary>
@@ -340,56 +337,6 @@ public sealed class ProcessCleanup : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CloseHandle(IntPtr hObject);
 
-
-    /// <summary>
-    /// Last resort: attempts to kill any remaining child processes of the current process.
-    /// Uses platform-specific commands since .NET doesn't expose parent-child relationships easily.
-    /// </summary>
-    private static void KillOwnProcessTree()
-    {
-        try
-        {
-            int myPid = Environment.ProcessId;
-
-            if (PlatformContext.IsWindows)
-            {
-                // wmic/taskkill can kill child tree
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = $"/F /T /PID {myPid}",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                // Don't wait — this kills us too
-                Process.Start(psi);
-            }
-            else
-            {
-                // Kill process group on Unix
-                // Negative PID = kill process group
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "kill",
-                    Arguments = $"-TERM -{myPid}",
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true
-                };
-
-                using var proc = Process.Start(psi);
-                proc?.WaitForExit(2000);
-            }
-        }
-        catch
-        {
-            // Best effort — we're shutting down
-        }
-    }
 
     public void Dispose()
     {
