@@ -41,6 +41,23 @@ internal sealed class ReplSession : IDisposable
     private string _inputPrompt = "";
     private TaskCompletionSource<bool>? _doneTcs;
     private TaskCompletionSource<List<string>>? _varsTcs;
+
+    // ---- python progress-wait state (additive; drives wait_python_progress). Rotating broadcast TCS
+    // bumped in ReadLoop on every stream/input_request/done + on job start, all under _lock. Same
+    // capture-under-lock-before-await + swap-under-lock discipline as ShellJob (lost-wakeup safe). ----
+    private long _pyVersion;
+    private DateTime _pyStartedUtc = DateTime.UtcNow;
+    private DateTime _pyLastOutputUtc = DateTime.UtcNow;
+    private TaskCompletionSource<bool> _pyChangeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private void SignalPy_NoLock(bool output)
+    {
+        _pyVersion++;
+        if (output) _pyLastOutputUtc = DateTime.UtcNow;
+        var prev = _pyChangeTcs;
+        _pyChangeTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        prev.TrySetResult(true);
+    }
     private bool _venvReady;
 
     // ---- shell jobs ----
@@ -113,6 +130,9 @@ internal sealed class ReplSession : IDisposable
             _out.Clear();
             _err.Clear();
             _inputPrompt = "";
+            _pyStartedUtc = DateTime.UtcNow;
+            _pyLastOutputUtc = DateTime.UtcNow;
+            SignalPy_NoLock(output: false);
             _doneTcs = done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
@@ -165,6 +185,89 @@ internal sealed class ReplSession : IDisposable
             return RenderResult(prefix: null);
         }
     }
+
+    /// <summary>Event-driven progress wait for the persistent Python worker: blocks up to waitSeconds but
+    /// returns early on new output, a state transition (including waiting_input), completion, or worker death.
+    /// Emits only the delta since the caller's cursors. The legacy CheckPythonStatus full-snapshot is untouched.</summary>
+    public async Task<string> WaitPythonProgressAsync(
+        int waitSeconds, int stdoutCursor, int stderrCursor, int maxChars, CancellationToken ct)
+    {
+        lock (_lock) { if (_worker is null) return "Status: idle (no Python worker started yet)."; }
+        int wait = Clamp(waitSeconds, 1, 120);
+        int cap = Clamp(maxChars, 512, 60000);
+        int so = Math.Max(0, stdoutCursor), se = Math.Max(0, stderrCursor);
+        while (true)
+        {
+            Task changed;
+            lock (_lock)
+            {
+                bool terminal = _jobStatus is "completed" or "error" or "dead" or "waiting_input";
+                bool behind = so < _out.Length || se < _err.Length;
+                if (terminal || behind) return RenderPyProgress(so, se, cap);
+                changed = _pyChangeTcs.Task; // capture UNDER lock before await
+            }
+            var timeout = Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            var done = await Task.WhenAny(changed, timeout).ConfigureAwait(false);
+            if (done == timeout)
+            {
+                ct.ThrowIfCancellationRequested();
+                lock (_lock) return RenderPyProgress(so, se, cap); // Changed=false
+            }
+            // woke on a bump: re-check under lock
+        }
+    }
+
+    /// <summary>Caller holds _lock. Renders a delta-only python progress frame from the given cursors.</summary>
+    private string RenderPyProgress(int stdoutCursor, int stderrCursor, int maxChars)
+    {
+        int totalOut = _out.Length, totalErr = _err.Length;
+        int so = Math.Clamp(stdoutCursor, 0, totalOut);
+        int se = Math.Clamp(stderrCursor, 0, totalErr);
+        string outDelta = so < totalOut ? _out.ToString(so, totalOut - so) : "";
+        string errDelta = se < totalErr ? _err.ToString(se, totalErr - se) : "";
+        bool truncated = false; int dropped = 0;
+        int combined = outDelta.Length + errDelta.Length;
+        if (combined > maxChars)
+        {
+            truncated = true;
+            int over = combined - maxChars;
+            int cutOut = Math.Min(over, outDelta.Length);
+            outDelta = outDelta.Substring(cutOut); dropped += cutOut; over -= cutOut;
+            if (over > 0) { int cutErr = Math.Min(over, errDelta.Length); errDelta = errDelta.Substring(cutErr); dropped += cutErr; }
+        }
+        int nextOut = totalOut;
+        int nextErr = totalErr;
+        bool terminal = _jobStatus is "completed" or "error" or "dead";
+        bool changed = outDelta.Length > 0 || errDelta.Length > 0 || terminal || _jobStatus == "waiting_input";
+        int elapsed = (int)Math.Max(0, (DateTime.UtcNow - _pyStartedUtc).TotalSeconds);
+        int idle = (int)Math.Max(0, (DateTime.UtcNow - _pyLastOutputUtc).TotalSeconds);
+
+        var sb = new StringBuilder();
+        sb.Append("Status: ").Append(_jobStatus).Append('\n');
+        sb.Append("Changed: ").Append(changed ? "true" : "false").Append('\n');
+        sb.Append("Elapsed: ").Append(elapsed).Append("s   Idle: ").Append(idle).Append("s\n");
+        if (_jobStatus == "waiting_input") sb.Append("Prompt: ").Append(_inputPrompt).Append('\n');
+        sb.Append("StdoutCursor: ").Append(nextOut - outDelta.Length).Append(" -> ").Append(nextOut).Append("   (total ").Append(totalOut).Append(")\n");
+        sb.Append("StderrCursor: ").Append(nextErr - errDelta.Length).Append(" -> ").Append(nextErr).Append("   (total ").Append(totalErr).Append(")\n");
+        sb.Append("Truncated: ").Append(truncated ? "true" : "false").Append("   Dropped: ").Append(dropped).Append('\n');
+        sb.Append("SuggestedPollSeconds: ").Append(SuggestedPoll(_jobStatus, changed, idle));
+        if (outDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(outDelta);
+        if (errDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(errDelta);
+        return sb.ToString();
+    }
+
+    /// <summary>Deterministic next-poll hint (seconds). Terminal/waiting_input = 0; fresh output = 1;
+    /// else scales with idle time so a quiet long job backs off.</summary>
+    private static int SuggestedPoll(string status, bool changed, int idleSeconds)
+    {
+        if (status is "completed" or "failed" or "error" or "dead" or "waiting_input") return 0;
+        if (changed) return 1;
+        if (idleSeconds < 10) return 3;
+        if (idleSeconds < 60) return Math.Min(10, 5 + idleSeconds / 12);
+        return Math.Min(30, 15 + idleSeconds / 30);
+    }
+
+    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
     public async Task<string> ListVariablesAsync(CancellationToken ct)
     {
@@ -301,11 +404,13 @@ internal sealed class ReplSession : IDisposable
                             string data = msg.TryGetProperty("data", out var dEl) && dEl.ValueKind == JsonValueKind.String ? dEl.GetString()! : "";
                             bool isErr = msg.TryGetProperty("stream", out var sEl) && sEl.GetString() == "stderr";
                             (isErr ? _err : _out).Append(data);
+                            SignalPy_NoLock(output: true);
                             break;
                         case "done":
                             bool ok = msg.TryGetProperty("status", out var stEl) && stEl.GetString() == "ok";
                             _jobStatus = ok ? "completed" : "error";
                             if (!ok && msg.TryGetProperty("error", out var eEl) && eEl.ValueKind == JsonValueKind.String) _err.Append(eEl.GetString());
+                            SignalPy_NoLock(output: false);
                             _doneTcs?.TrySetResult(true);
                             break;
                         case "vars":
@@ -317,6 +422,7 @@ internal sealed class ReplSession : IDisposable
                         case "input_request":
                             _jobStatus = "waiting_input";
                             _inputPrompt = msg.TryGetProperty("prompt", out var pEl) && pEl.ValueKind == JsonValueKind.String ? pEl.GetString()! : "";
+                            SignalPy_NoLock(output: false);
                             break;
                     }
                 }
@@ -333,6 +439,7 @@ internal sealed class ReplSession : IDisposable
             // superseded, do nothing - the current worker owns its own status + TCS.
             if (!ReferenceEquals(_worker, proc)) return;
             if (_jobStatus is "running" or "waiting_input") _jobStatus = "dead";
+            SignalPy_NoLock(output: false);
             _doneTcs?.TrySetResult(true);
             _varsTcs?.TrySetResult(new List<string>());
         }
@@ -353,6 +460,7 @@ internal sealed class ReplSession : IDisposable
         _jobStatus = "idle";
         _currentJobId = null;
         _inputPrompt = "";
+        SignalPy_NoLock(output: false);
         _doneTcs?.TrySetResult(true);
         _varsTcs?.TrySetResult(new List<string>());
     }
@@ -427,6 +535,43 @@ internal sealed class ReplSession : IDisposable
     {
         if (!_shellJobs.TryGetValue(jobId, out var job)) return $"No such job: {jobId}";
         return job.Render();
+    }
+
+    /// <summary>Event-driven progress wait for a background shell job: blocks up to waitSeconds but returns
+    /// early on new output / terminal status, emitting only the delta since the caller's cursors. The legacy
+    /// CheckJobStatus full-snapshot path is untouched.</summary>
+    public async Task<string> WaitJobProgressAsync(
+        string jobId, int waitSeconds, int stdoutCursor, int stderrCursor, int maxChars, CancellationToken ct)
+    {
+        if (!_shellJobs.TryGetValue(jobId, out var job)) return $"No such job: {jobId}";
+        var p = await job.WaitProgressAsync(
+            Math.Max(0, stdoutCursor), Math.Max(0, stderrCursor),
+            Clamp(maxChars, 512, 60000), Clamp(waitSeconds, 1, 120), ct);
+        return RenderShellProgress(jobId, p);
+    }
+
+    private static string RenderShellProgress(string jobId, ShellJob.ShellProgress p)
+    {
+        bool terminal = p.Status is "completed" or "failed";
+        bool changed = p.StdoutDelta.Length > 0 || p.StderrDelta.Length > 0 || terminal;
+        var sb = new StringBuilder();
+        sb.Append("Job ID: ").Append(jobId).Append('\n');
+        sb.Append("Status: ").Append(p.Status);
+        if (p.ExitCode is { } ec) sb.Append(" (exit ").Append(ec).Append(')');
+        sb.Append('\n');
+        sb.Append("Changed: ").Append(changed ? "true" : "false").Append('\n');
+        sb.Append("Elapsed: ").Append(p.ElapsedSeconds).Append("s   Idle: ").Append(p.IdleSeconds).Append("s\n");
+        sb.Append("ProcessExited: ").Append(p.ProcessExited ? "true" : "false")
+          .Append("   OutputDrained: ").Append(p.OutputDrained ? "true" : "false").Append('\n');
+        sb.Append("StdoutCursor: ").Append(p.NextStdoutCursor - p.StdoutDelta.Length).Append(" -> ").Append(p.NextStdoutCursor)
+          .Append("   (total ").Append(p.TotalStdout).Append(")\n");
+        sb.Append("StderrCursor: ").Append(p.NextStderrCursor - p.StderrDelta.Length).Append(" -> ").Append(p.NextStderrCursor)
+          .Append("   (total ").Append(p.TotalStderr).Append(")\n");
+        sb.Append("Truncated: ").Append(p.Truncated ? "true" : "false").Append("   Dropped: ").Append(p.Dropped).Append('\n');
+        sb.Append("SuggestedPollSeconds: ").Append(SuggestedPoll(p.Status, changed, p.IdleSeconds));
+        if (p.StdoutDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(p.StdoutDelta);
+        if (p.StderrDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(p.StderrDelta);
+        return sb.ToString();
     }
 
     public string SendShellInput(string jobId, string text)

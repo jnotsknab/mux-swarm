@@ -175,6 +175,7 @@ public static class LocalAiFunctions
                 ) =>
             {
                 if (seconds <= 0) return "Slept for 0 seconds.";
+                var startedUtc = DateTime.UtcNow;
                 try
                 {
                     await Task.Delay(TimeSpan.FromSeconds(seconds), cancellationToken);
@@ -182,12 +183,16 @@ public static class LocalAiFunctions
                 }
                 catch (OperationCanceledException)
                 {
-                    // Turn cancelled mid-sleep: report it cleanly rather than throwing a raw error.
-                    return $"Sleep of {seconds}s interrupted (cancelled).";
+                    // Turn cancelled mid-sleep: report actual elapsed so the model's time budgeting stays honest.
+                    int elapsed = (int)Math.Max(0, (DateTime.UtcNow - startedUtc).TotalSeconds);
+                    return $"Sleep interrupted after {elapsed}s of {seconds}s requested (cancelled).";
                 }
             },
             name: "system_sleep",
-            description: "Pause execution for N minutes without consuming tokens. Use between polling cycles, while waiting for long-running processes, or for scheduled intervals."
+            description: "Pause execution for N seconds without consuming tokens. Use for scheduled intervals or fixed backoff. " +
+                         "When waiting on a background shell job or the Python worker, PREFER wait_job_progress / wait_python_progress " +
+                         "(or check_job_status / check_python_status): they block until real progress and return only new output, " +
+                         "which is strictly better than sleeping blindly."
         );
 
         MuxRefreshTool = AIFunctionFactory.Create(
