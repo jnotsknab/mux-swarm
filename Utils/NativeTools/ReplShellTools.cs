@@ -175,10 +175,10 @@ for line in sys.stdin:
 
             AIFunctionFactory.Create(
                 method: async (
-                    [Description("Max seconds to block waiting for a change (clamped 1-120). Returns EARLY on output, completion, or an input() prompt.")] int wait_seconds = 15,
+                    [Description("Max seconds to block waiting for a change. Returns EARLY on output, completion, or an input() prompt.")] int wait_seconds = 15,
                     [Description("Stdout read position. OMIT to auto-continue from where this tool last left off (the normal case); pass an explicit index only to re-read from a known position.")] int stdout_cursor = -1,
                     [Description("Stderr read position. OMIT to auto-continue from where this tool last left off; pass an explicit index only to re-read.")] int stderr_cursor = -1,
-                    [Description("Cap on combined returned delta chars (clamped 512-60000); the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
+                    [Description("Cap on combined returned delta chars; the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
                     CancellationToken cancellationToken = default) =>
                     await Session().WaitPythonProgressAsync(wait_seconds, stdout_cursor, stderr_cursor, max_chars, cancellationToken),
                 name: "wait_python_progress",
@@ -221,10 +221,10 @@ for line in sys.stdin:
             AIFunctionFactory.Create(
                 method: async (
                     [Description("The Job ID returned by execute_command_async / install_package_async.")] string job_id,
-                    [Description("Max seconds to block waiting for a change (clamped 1-120). Returns EARLY on new output or a terminal state.")] int wait_seconds = 15,
+                    [Description("Max seconds to block waiting for a change. Returns EARLY on new output or a terminal state.")] int wait_seconds = 15,
                     [Description("Stdout read position. OMIT to auto-continue from where this tool last left off for this job (the normal case); pass an explicit index only to re-read from a known position.")] int stdout_cursor = -1,
                     [Description("Stderr read position. OMIT to auto-continue from where this tool last left off; pass an explicit index only to re-read.")] int stderr_cursor = -1,
-                    [Description("Cap on combined returned delta chars (clamped 512-60000); the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
+                    [Description("Cap on combined returned delta chars; the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
                     CancellationToken cancellationToken = default) =>
                     await Session().WaitJobProgressAsync(job_id, wait_seconds, stdout_cursor, stderr_cursor, max_chars, cancellationToken),
                 name: "wait_job_progress",
