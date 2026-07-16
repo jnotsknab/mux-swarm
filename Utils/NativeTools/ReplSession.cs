@@ -199,8 +199,6 @@ internal sealed class ReplSession : IDisposable
         int waitSeconds, int stdoutCursor, int stderrCursor, int maxChars, CancellationToken ct)
     {
         lock (_lock) { if (_worker is null) return "Status: idle (no Python worker started yet)."; }
-        int wait = Clamp(waitSeconds, 1, 120);
-        int cap = Clamp(maxChars, 512, 60000);
         // Negative = auto-resume from the last delivered python cursor (agent supplied nothing).
         bool autoOut = stdoutCursor < 0, autoErr = stderrCursor < 0;
         while (true)
@@ -212,10 +210,10 @@ internal sealed class ReplSession : IDisposable
                 int se = autoErr ? _pyLastDeliveredErr : stderrCursor;
                 bool terminal = _jobStatus is "completed" or "error" or "dead" or "waiting_input";
                 bool behind = so < _out.Length || se < _err.Length;
-                if (terminal || behind) return RenderPyProgressAndRemember(so, se, cap);
+                if (terminal || behind) return RenderPyProgressAndRemember(so, se, maxChars);
                 changed = _pyChangeTcs.Task; // capture UNDER lock before await
             }
-            var timeout = Task.Delay(TimeSpan.FromSeconds(wait), ct);
+            var timeout = Task.Delay(TimeSpan.FromSeconds(waitSeconds), ct);
             var done = await Task.WhenAny(changed, timeout).ConfigureAwait(false);
             if (done == timeout)
             {
@@ -224,7 +222,7 @@ internal sealed class ReplSession : IDisposable
                 {
                     int so = autoOut ? _pyLastDeliveredOut : stdoutCursor;
                     int se = autoErr ? _pyLastDeliveredErr : stderrCursor;
-                    return RenderPyProgressAndRemember(so, se, cap); // Changed=false
+                    return RenderPyProgressAndRemember(so, se, maxChars); // Changed=false
                 }
             }
             // woke on a bump: re-check under lock
@@ -292,7 +290,6 @@ internal sealed class ReplSession : IDisposable
         return Math.Min(30, 15 + idleSeconds / 30);
     }
 
-    private static int Clamp(int v, int lo, int hi) => v < lo ? lo : (v > hi ? hi : v);
 
     public async Task<string> ListVariablesAsync(CancellationToken ct)
     {
@@ -573,7 +570,7 @@ internal sealed class ReplSession : IDisposable
         // delivered cursor. Only a >=0 value is a real explicit position.
         var p = await job.WaitProgressAsync(
             stdoutCursor < 0 ? -1 : stdoutCursor, stderrCursor < 0 ? -1 : stderrCursor,
-            Clamp(maxChars, 512, 60000), Clamp(waitSeconds, 1, 120), ct);
+            maxChars, waitSeconds, ct);
         return RenderShellProgress(jobId, p);
     }
 
