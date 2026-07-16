@@ -39,6 +39,8 @@ public class NativeReplShellToolsTests
         Assert.Contains("execute_command_async", names);
         Assert.Contains("check_job_status", names);
         Assert.Contains("install_package_async", names);
+        Assert.Contains("wait_job_progress", names);
+        Assert.Contains("wait_python_progress", names);
     }
 
     [Fact]

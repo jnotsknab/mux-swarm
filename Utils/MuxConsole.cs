@@ -570,6 +570,13 @@ public static partial class MuxConsole
 
             AnsiConsole.WriteLine();
 
+            // One random curated line per launch (quote / fact / tip / nudge / tagline). Both the
+            // narrow-panel and wide two-column layouts render the SAME pick, computed once here.
+            var (splashLabel, splashText) = SplashMessages.Pick();
+            string splashLine = string.IsNullOrEmpty(splashLabel)
+                ? $"[{C.Prompt}]{Esc(splashText)}[/]"
+                : $"[{C.Prompt}]{Esc(splashText)}[/]  [{C.Muted}]{Esc(splashLabel)}[/]";
+
             if (AnsiConsole.Profile.Width < 56)
             {
                 AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}")
@@ -618,7 +625,7 @@ public static partial class MuxConsole
 
                 sb.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 sb.AppendLine();
-                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  {splashLine}");
                 sb.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]");
 
                 var panel = new Panel(sb.ToString())
@@ -672,7 +679,7 @@ public static partial class MuxConsole
 
                 left.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
                 left.AppendLine();
-                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  [{C.Prompt}]CLI-native agentic swarm OS[/]");
+                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  {splashLine}");
                 left.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]");
 
                 var right = new StringBuilder();
