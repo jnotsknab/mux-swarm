@@ -213,21 +213,23 @@ public static class PreambleBuilder
             ";
 
         preamble += @"
-        ## Sleep Tool
-        You have access to system_sleep(seconds) which pauses execution without consuming tokens or timing out.
+        ## Waiting & Sleep (pick the right primitive)
+        The rule: if you hold a HANDLE to the thing you are waiting on, wait ON that handle; only use
+        system_sleep when there is nothing to wait on.
 
-        Use it when:
-        - Waiting for a long-running script, build, or training process to complete
-        - Polling for a condition at intervals — sleep between checks rather than retrying immediately
-        - Any task where the next step depends on time passing or an external process finishing
+        - Waiting on a background shell job (a job id from execute_command_async / install_package_async)?
+          Use wait_job_progress(job_id). Waiting on the persistent Python worker (repl_shell_exec)? Use
+          wait_python_progress. These BLOCK until real progress, completion, or an input() prompt, then
+          return only the NEW output since you last read. They are event-driven, so they wake the instant
+          the job finishes instead of sleeping past it, and they never re-dump output you already saw.
+          Just call them again with the same job_id (no cursor needed) to continue. Do NOT drive these
+          with system_sleep + a status poll: that wastes the wall and can miss the finish.
 
-        Pattern:
-        1. Start the process
-        2. Call system_sleep(seconds: N)
-        3. Check if complete — if not, sleep again
-        4. Proceed when ready
-
-        Prefer sleep over rapid retries. A sleeping agent costs nothing.
+        - system_sleep(seconds) is for the handle-LESS wait: fixed backoff between retries of an external
+          API, waiting on something you did NOT start via execute_command_async (a detached service
+          booting, a file expected from an out-of-band process, network/DNS settle), or a deliberate
+          scheduled interval. It pauses without consuming tokens or timing out. When you genuinely have
+          nothing to wait on, prefer one sleep over rapid retry loops. A sleeping agent costs nothing.
 
         ## File Reads & Context Hygiene (rule of thumb)
         Filesystem read tools load a file's FULL contents into context. For large files, logs, or any
