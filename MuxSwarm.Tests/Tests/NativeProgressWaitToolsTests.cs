@@ -196,6 +196,85 @@ public class NativeProgressWaitToolsTests
         Assert.Contains("Status: waiting_input", r);
     }
 
+    [Fact]
+    public async Task WaitJob_AutoCursor_OmittedCursorAdvancesWithoutRepeating()
+    {
+        using var _ = ReplShellTools.BeginScope("ac_" + Guid.NewGuid().ToString("N")[..8]);
+        string cmd = OperatingSystem.IsWindows()
+            ? "echo FIRST && ping -n 3 127.0.0.1 > NUL && echo SECOND"
+            : "echo FIRST; sleep 2; echo SECOND";
+        var start = await Call("execute_command_async", new { command = cmd });
+        string id = JobId(start);
+
+        // First bare call (no cursor) should see FIRST.
+        var r1 = await Call("wait_job_progress", new { job_id = id, wait_seconds = 15 });
+        Assert.Contains("FIRST", r1);
+
+        // Second bare call (still no cursor) must AUTO-RESUME: it must NOT repeat FIRST, and
+        // eventually surfaces SECOND / terminal. Drain a few times.
+        string acc = "";
+        for (int i = 0; i < 10; i++)
+        {
+            var rn = await Call("wait_job_progress", new { job_id = id, wait_seconds = 10 });
+            acc += "\n" + rn;
+            if (rn.Contains("Status: completed") || rn.Contains("Status: failed")) break;
+        }
+        Assert.Contains("SECOND", acc);
+        // The delta sections of the resume calls must not re-emit FIRST.
+        foreach (var frame in acc.Split("Job ID:"))
+        {
+            if (frame.Contains("--- STDOUT (new) ---"))
+            {
+                var body = frame.Split("--- STDOUT (new) ---")[1];
+                Assert.DoesNotContain("FIRST", body);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task WaitJob_ExplicitCursorZero_StillReReadsFromStart()
+    {
+        using var _ = ReplShellTools.BeginScope("ac_" + Guid.NewGuid().ToString("N")[..8]);
+        string cmd = OperatingSystem.IsWindows() ? "echo REPLAYME" : "echo REPLAYME";
+        var start = await Call("execute_command_async", new { command = cmd });
+        string id = JobId(start);
+
+        // consume with auto-cursor
+        string acc = "";
+        for (int i = 0; i < 10; i++)
+        {
+            var rn = await Call("wait_job_progress", new { job_id = id, wait_seconds = 5 });
+            acc += rn;
+            if (rn.Contains("Status: completed")) break;
+        }
+        Assert.Contains("REPLAYME", acc);
+
+        // explicit cursor 0 must re-read from the beginning even after auto-cursor advanced.
+        var replay = await Call("wait_job_progress", new { job_id = id, wait_seconds = 5, stdout_cursor = 0 });
+        Assert.Contains("REPLAYME", replay);
+    }
+
+    [Fact]
+    public async Task WaitPython_AutoCursor_ResumesAcrossCalls()
+    {
+        using var _ = ReplShellTools.BeginScope("acp_" + Guid.NewGuid().ToString("N")[..8]);
+        await Call("repl_shell_exec", new { code = "import time,sys\nprint('AA', flush=True)\ntime.sleep(3)\nprint('BB', flush=True)" });
+        var r1 = await Call("wait_python_progress", new { wait_seconds = 15 });
+        Assert.Contains("AA", r1);
+        string acc = "";
+        for (int i = 0; i < 12; i++)
+        {
+            var rn = await Call("wait_python_progress", new { wait_seconds = 10 });
+            acc += "\n" + rn;
+            if (rn.Contains("Status: completed")) break;
+        }
+        Assert.Contains("BB", acc);
+        // resume frames must not repeat AA in their delta bodies
+        foreach (var frame in acc.Split("Status:"))
+            if (frame.Contains("--- STDOUT (new) ---"))
+                Assert.DoesNotContain("AA", frame.Split("--- STDOUT (new) ---")[1]);
+    }
+
     // ---- helper ----
 
     private static int ExtractNextStdout(string frame)

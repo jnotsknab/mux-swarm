@@ -49,6 +49,10 @@ internal sealed class ReplSession : IDisposable
     private DateTime _pyStartedUtc = DateTime.UtcNow;
     private DateTime _pyLastOutputUtc = DateTime.UtcNow;
     private TaskCompletionSource<bool> _pyChangeTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Last python stdout/stderr cursor delivered via wait_python_progress; -1 sentinel auto-resumes.
+    // Reset to 0 on each new job start (ExecutePythonAsync clears _out/_err).
+    private int _pyLastDeliveredOut;
+    private int _pyLastDeliveredErr;
 
     private void SignalPy_NoLock(bool output)
     {
@@ -132,6 +136,8 @@ internal sealed class ReplSession : IDisposable
             _inputPrompt = "";
             _pyStartedUtc = DateTime.UtcNow;
             _pyLastOutputUtc = DateTime.UtcNow;
+            _pyLastDeliveredOut = 0;
+            _pyLastDeliveredErr = 0;
             SignalPy_NoLock(output: false);
             _doneTcs = done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
@@ -195,15 +201,18 @@ internal sealed class ReplSession : IDisposable
         lock (_lock) { if (_worker is null) return "Status: idle (no Python worker started yet)."; }
         int wait = Clamp(waitSeconds, 1, 120);
         int cap = Clamp(maxChars, 512, 60000);
-        int so = Math.Max(0, stdoutCursor), se = Math.Max(0, stderrCursor);
+        // Negative = auto-resume from the last delivered python cursor (agent supplied nothing).
+        bool autoOut = stdoutCursor < 0, autoErr = stderrCursor < 0;
         while (true)
         {
             Task changed;
             lock (_lock)
             {
+                int so = autoOut ? _pyLastDeliveredOut : stdoutCursor;
+                int se = autoErr ? _pyLastDeliveredErr : stderrCursor;
                 bool terminal = _jobStatus is "completed" or "error" or "dead" or "waiting_input";
                 bool behind = so < _out.Length || se < _err.Length;
-                if (terminal || behind) return RenderPyProgress(so, se, cap);
+                if (terminal || behind) return RenderPyProgressAndRemember(so, se, cap);
                 changed = _pyChangeTcs.Task; // capture UNDER lock before await
             }
             var timeout = Task.Delay(TimeSpan.FromSeconds(wait), ct);
@@ -211,10 +220,26 @@ internal sealed class ReplSession : IDisposable
             if (done == timeout)
             {
                 ct.ThrowIfCancellationRequested();
-                lock (_lock) return RenderPyProgress(so, se, cap); // Changed=false
+                lock (_lock)
+                {
+                    int so = autoOut ? _pyLastDeliveredOut : stdoutCursor;
+                    int se = autoErr ? _pyLastDeliveredErr : stderrCursor;
+                    return RenderPyProgressAndRemember(so, se, cap); // Changed=false
+                }
             }
             // woke on a bump: re-check under lock
         }
+    }
+
+    /// <summary>Caller holds _lock. Renders the python delta then remembers the advanced cursors so a
+    /// subsequent sentinel(-1) call auto-continues. Parses the next cursors back from the rendered frame.</summary>
+    private string RenderPyProgressAndRemember(int stdoutCursor, int stderrCursor, int maxChars)
+    {
+        // RenderPyProgress consumes each stream through its current end, so the next auto-resume
+        // cursor is simply the stream length at this instant.
+        _pyLastDeliveredOut = _out.Length;
+        _pyLastDeliveredErr = _err.Length;
+        return RenderPyProgress(stdoutCursor, stderrCursor, maxChars);
     }
 
     /// <summary>Caller holds _lock. Renders a delta-only python progress frame from the given cursors.</summary>
@@ -544,8 +569,10 @@ internal sealed class ReplSession : IDisposable
         string jobId, int waitSeconds, int stdoutCursor, int stderrCursor, int maxChars, CancellationToken ct)
     {
         if (!_shellJobs.TryGetValue(jobId, out var job)) return $"No such job: {jobId}";
+        // Pass negatives through as the auto-resume sentinel; ShellJob resolves them to the last
+        // delivered cursor. Only a >=0 value is a real explicit position.
         var p = await job.WaitProgressAsync(
-            Math.Max(0, stdoutCursor), Math.Max(0, stderrCursor),
+            stdoutCursor < 0 ? -1 : stdoutCursor, stderrCursor < 0 ? -1 : stderrCursor,
             Clamp(maxChars, 512, 60000), Clamp(waitSeconds, 1, 120), ct);
         return RenderShellProgress(jobId, p);
     }

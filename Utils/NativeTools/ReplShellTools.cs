@@ -176,16 +176,17 @@ for line in sys.stdin:
             AIFunctionFactory.Create(
                 method: async (
                     [Description("Max seconds to block waiting for a change (clamped 1-120). Returns EARLY on output, completion, or an input() prompt.")] int wait_seconds = 15,
-                    [Description("Character index into accumulated stdout you have already seen; only stdout at/after it is returned. Pass the previous StdoutCursor.")] int stdout_cursor = 0,
-                    [Description("Character index into accumulated stderr you have already seen; only stderr at/after it is returned. Pass the previous StderrCursor.")] int stderr_cursor = 0,
+                    [Description("Stdout read position. OMIT to auto-continue from where this tool last left off (the normal case); pass an explicit index only to re-read from a known position.")] int stdout_cursor = -1,
+                    [Description("Stderr read position. OMIT to auto-continue from where this tool last left off; pass an explicit index only to re-read.")] int stderr_cursor = -1,
                     [Description("Cap on combined returned delta chars (clamped 512-60000); the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
                     CancellationToken cancellationToken = default) =>
                     await Session().WaitPythonProgressAsync(wait_seconds, stdout_cursor, stderr_cursor, max_chars, cancellationToken),
                 name: "wait_python_progress",
                 description: "Wait for the persistent Python worker (repl_shell_exec) to make progress, finish, or request input, " +
-                             "then return only NEW stdout/stderr since your cursors plus status. Blocks up to wait_seconds but " +
-                             "returns immediately on output, completion, or an input() prompt. Prefer this over system_sleep + " +
-                             "check_python_status while a long repl_shell_exec job runs. check_python_status still works for a full snapshot."),
+                             "then return only NEW stdout/stderr since you last read, plus status. Blocks up to wait_seconds but " +
+                             "returns immediately on output, completion, or an input() prompt. Just call it repeatedly with no cursor: " +
+                             "it auto-continues from where it last left off (pass an explicit cursor only to re-read). Prefer this over " +
+                             "system_sleep + check_python_status while a long repl_shell_exec job runs. check_python_status still returns the full snapshot."),
 
             AIFunctionFactory.Create(
                 method: async (CancellationToken cancellationToken = default) =>
@@ -221,17 +222,18 @@ for line in sys.stdin:
                 method: async (
                     [Description("The Job ID returned by execute_command_async / install_package_async.")] string job_id,
                     [Description("Max seconds to block waiting for a change (clamped 1-120). Returns EARLY on new output or a terminal state.")] int wait_seconds = 15,
-                    [Description("Character index into accumulated stdout you have already seen; only stdout at/after it is returned. Pass the previous StdoutCursor.")] int stdout_cursor = 0,
-                    [Description("Character index into accumulated stderr you have already seen; only stderr at/after it is returned. Pass the previous StderrCursor.")] int stderr_cursor = 0,
+                    [Description("Stdout read position. OMIT to auto-continue from where this tool last left off for this job (the normal case); pass an explicit index only to re-read from a known position.")] int stdout_cursor = -1,
+                    [Description("Stderr read position. OMIT to auto-continue from where this tool last left off; pass an explicit index only to re-read.")] int stderr_cursor = -1,
                     [Description("Cap on combined returned delta chars (clamped 512-60000); the tail is kept and Dropped reports omitted chars.")] int max_chars = 12000,
                     CancellationToken cancellationToken = default) =>
                     await Session().WaitJobProgressAsync(job_id, wait_seconds, stdout_cursor, stderr_cursor, max_chars, cancellationToken),
                 name: "wait_job_progress",
                 description: "Wait for a background shell job to make progress or finish, then return only the NEW stdout/stderr " +
-                             "since your cursors plus status. Blocks up to wait_seconds but returns immediately when output arrives " +
-                             "or the job ends, so it is strictly better than system_sleep + check_job_status for long jobs. Pass the " +
-                             "StdoutCursor/StderrCursor values from the previous call to avoid re-reading old output. Use the " +
-                             "SuggestedPollSeconds hint for your next call. check_job_status still works for a full snapshot."),
+                             "since you last read, plus status. Blocks up to wait_seconds but returns immediately when output arrives " +
+                             "or the job ends, so it is strictly better than system_sleep + check_job_status for long jobs. Just call it " +
+                             "repeatedly with only job_id: it auto-continues from where it last left off, so you never re-read old output " +
+                             "(pass an explicit stdout_cursor/stderr_cursor only to re-read from a known position). Use the " +
+                             "SuggestedPollSeconds hint for your next call. check_job_status still returns the full accumulated snapshot."),
 
             AIFunctionFactory.Create(
                 method: (

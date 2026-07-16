@@ -28,6 +28,11 @@ internal sealed class ShellJob
     private bool _stdoutEof;
     private bool _stderrEof;
     private bool _processExited;
+    // Last stdout/stderr cursor this job already DELIVERED via a progress-wait call. A wait call
+    // passing the -1 sentinel (agent supplied nothing) auto-resumes from here, so repeated bare
+    // wait_job_progress(job_id) calls yield clean non-overlapping deltas with zero cursor threading.
+    private int _lastDeliveredOut;
+    private int _lastDeliveredErr;
     // Rotating completion source: a waiter captures .Task UNDER _lock (before any await); any writer
     // swaps + completes it UNDER _lock. Captured-before-await + swap-under-lock = lost-wakeup safe, and
     // it broadcasts to ALL waiters (unlike SemaphoreSlim, which wakes only one). Never await under _lock.
@@ -207,10 +212,14 @@ internal sealed class ShellJob
             Task changed;
             lock (_lock)
             {
+                // Sentinel -1 = auto-resume from the last cursor this job delivered (agent passed
+                // nothing). A non-negative value is honored verbatim so an explicit re-read still works.
+                int so = stdoutCursor < 0 ? _lastDeliveredOut : stdoutCursor;
+                int se = stderrCursor < 0 ? _lastDeliveredErr : stderrCursor;
                 bool terminal = _status is "completed" or "failed";
-                bool behind = stdoutCursor < _out.Length || stderrCursor < _err.Length;
+                bool behind = so < _out.Length || se < _err.Length;
                 if (terminal || behind)
-                    return Snapshot_NoLock(stdoutCursor, stderrCursor, maxChars);
+                    return SnapshotAndRemember_NoLock(so, se, maxChars);
                 changed = _changeTcs.Task; // capture UNDER lock before awaiting (no lost wakeup)
             }
             var timeout = Task.Delay(TimeSpan.FromSeconds(waitSeconds), ct);
@@ -218,10 +227,25 @@ internal sealed class ShellJob
             if (done == timeout)
             {
                 ct.ThrowIfCancellationRequested(); // cancellation ends the wait, not the process
-                lock (_lock) return Snapshot_NoLock(stdoutCursor, stderrCursor, maxChars); // Changed=false path
+                lock (_lock)
+                {
+                    int so = stdoutCursor < 0 ? _lastDeliveredOut : stdoutCursor;
+                    int se = stderrCursor < 0 ? _lastDeliveredErr : stderrCursor;
+                    return SnapshotAndRemember_NoLock(so, se, maxChars); // Changed=false path
+                }
             }
             // woke on a bump: re-check under lock (may be a status-only bump with no new bytes)
         }
+    }
+
+    /// <summary>Build a snapshot from the resolved cursors, then remember the NEW next-cursors so a
+    /// subsequent sentinel(-1) call auto-continues from here. Caller holds _lock.</summary>
+    private ShellProgress SnapshotAndRemember_NoLock(int stdoutCursor, int stderrCursor, int maxChars)
+    {
+        var snap = Snapshot_NoLock(stdoutCursor, stderrCursor, maxChars);
+        _lastDeliveredOut = snap.NextStdoutCursor;
+        _lastDeliveredErr = snap.NextStderrCursor;
+        return snap;
     }
 
     private ShellProgress Snapshot_NoLock(int stdoutCursor, int stderrCursor, int maxChars)
