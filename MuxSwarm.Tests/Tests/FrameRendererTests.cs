@@ -245,4 +245,80 @@ public class FrameRendererTests
         d.Resume();                  // second resume: nothing to do
         Assert.Equal("", t.Output);
     }
+
+    // --- torn SGR mouse reports ------------------------------------------------
+
+    [Fact]
+    public void MouseSgrParser_ReassemblesPrefixStrippedWheelReport()
+    {
+        var parser = new MouseSgrParser();
+        (int Button, int X, int Y, bool Release)? parsed = null;
+
+        foreach (char ch in "<65;80;11M")
+        {
+            Assert.True(parser.Feed(ch, allowStart: true, out var current));
+            parsed = current ?? parsed;
+        }
+
+        Assert.Equal((65, 80, 11, false), parsed);
+        Assert.False(parser.InProgress);
+    }
+
+    [Fact]
+    public void MouseSgrParser_ReassemblesFullyPrefixedReportAcrossCharacters()
+    {
+        var parser = new MouseSgrParser();
+        (int Button, int X, int Y, bool Release)? parsed = null;
+
+        foreach (char ch in "\u001b[<64;5;7M")
+        {
+            Assert.True(parser.Feed(ch, allowStart: true, out var current));
+            parsed = current ?? parsed;
+        }
+
+        Assert.Equal((64, 5, 7, false), parsed);
+    }
+
+    [Fact]
+    public void MouseSgrParser_ResynchronizesWhenANewPrefixInterruptsATornOne()
+    {
+        var parser = new MouseSgrParser();
+        (int Button, int X, int Y, bool Release)? parsed = null;
+
+        foreach (char ch in "<6<65;80;11M")
+        {
+            Assert.True(parser.Feed(ch, allowStart: true, out var current));
+            parsed = current ?? parsed;
+        }
+
+        Assert.Equal((65, 80, 11, false), parsed);
+    }
+
+    [Fact]
+    public void MouseSgrParser_ReplaysLegitimateKeyAfterTornFragment()
+    {
+        var parser = new MouseSgrParser();
+        Assert.True(parser.Feed('<', allowStart: true, out _));
+        Assert.True(parser.Feed('6', allowStart: true, out _));
+        Assert.False(parser.Feed('x', allowStart: true, out var parsed));
+        Assert.Null(parsed);
+        Assert.False(parser.InProgress);
+    }
+
+    [Fact]
+    public void MouseSgrParser_DoesNotConsumeOrdinaryAngleBracketWithoutActiveSequence()
+    {
+        var parser = new MouseSgrParser();
+        Assert.False(parser.Feed('>', allowStart: false, out var parsed));
+        Assert.Null(parsed);
+    }
+
+    [Theory]
+    [InlineData('<')]
+    [InlineData('>')]
+    [InlineData('7')]
+    [InlineData(';')]
+    [InlineData('M')]
+    public void MouseSgrParser_FragmentAlphabet_CoversOrphanStragglers(char ch)
+        => Assert.True(MouseSgrParser.IsFragmentChar(ch));
 }

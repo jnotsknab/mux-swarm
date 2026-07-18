@@ -277,7 +277,7 @@ internal static class TuiCommands
     /// <summary>
     /// Canonical keyboard-shortcut catalog. Single source of truth for the /shortcuts command,
     /// the Help.cs reference block, and the /api/commands web endpoint, so the three never drift.
-    /// Verified against the live handlers: LineEditor.Feed (prompt editing + vim), TuiDriver.ReadLine
+    /// Verified against the live handlers: LineEditor.Feed (modeless prompt editing), TuiDriver.ReadLine
     /// (prompt-level Ctrl+E / Ctrl+G), EscapeKeyListener (mid-turn Esc / Ctrl+E / Ctrl+G), and the
     /// EnterNavMode overlay loop (view navigation).
     /// </summary>
@@ -296,7 +296,7 @@ internal static class TuiCommands
         new("Ctrl+K",      "Delete to end of line", "prompt"),
         new("Ctrl+W",      "Delete the previous word", "prompt"),
         new("Ctrl+C",      "Cancel the current input line", "prompt"),
-        new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
+        new("Esc",         "Cancel the current input line", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
         new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
         new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),

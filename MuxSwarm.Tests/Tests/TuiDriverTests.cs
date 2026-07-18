@@ -1177,10 +1177,8 @@ public class TuiDriverTests
     [Fact]
     public void LineEditor_BareAt_ThenEsc_AtFilterDoesNotThrow()
     {
-        // Regression: typing a bare "@" then pressing Esc moves the editor into vim-Normal mode,
-        // which clamps the cursor from column 1 back onto the '@' at column 0. AtFilter then
-        // computed _buf.ToString(1, _cursor-1) = ToString(1, -1) and threw "length must be
-        // non-negative", crashing the app. AtFilter must now return "" safely.
+        // Regression coverage: a bare "@" remains safe to inspect even after Esc cancels the
+        // modeless input line. AtFilter must return "" and never throw on boundary cursor values.
         var ed = new LineEditor();
         ed.Feed(new ConsoleKeyInfo('@', ConsoleKey.NoName, false, false, false));
         ed.Feed(new ConsoleKeyInfo('\x1b', ConsoleKey.Escape, false, false, false));

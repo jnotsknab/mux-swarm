@@ -4,9 +4,8 @@ using MuxSwarm.Utils.Tui;
 namespace MuxSwarm.Tests.Tests;
 
 /// <summary>
-/// Headless coverage for the g11.5 TUI features: the session-header tool badge + expandable
-/// "/tools" palette, the Ctrl+E large-result expand affordance, and the vim modal navigation
-/// layer (Insert/Normal motions + transcript NAV signal). Pure/headless - no real console.
+/// Headless coverage for TUI input, tools-preview, rendering, and expansion features.
+/// Pure/headless - no real console.
 /// </summary>
 public class TuiVimFeatureTests
 {
@@ -97,27 +96,22 @@ public class TuiVimFeatureTests
         Assert.Contains("ctrl+e expand", line);
     }
 
-    // --- vim modal layer -----------------------------------------------------
+    // --- modeless input editor ------------------------------------------------
 
     [Fact]
-    public void Editor_DefaultsToInsertMode()
-        => Assert.Equal(EditorMode.Insert, new LineEditor().Mode);
-
-    [Fact]
-    public void Esc_OnNonEmpty_EntersNormalMode()
+    public void Escape_CancelsWithOrWithoutText()
     {
-        var ed = WithText("hello");
-        var sig = ed.Feed(K(ConsoleKey.Escape));
-        Assert.Equal(LineEditSignal.ModeChanged, sig);
-        Assert.Equal(EditorMode.Normal, ed.Mode);
+        Assert.Equal(LineEditSignal.Cancel, new LineEditor().Feed(K(ConsoleKey.Escape)));
+        Assert.Equal(LineEditSignal.Cancel, WithText("hello").Feed(K(ConsoleKey.Escape)));
     }
 
     [Fact]
-    public void Esc_OnEmpty_EntersNavView()
+    public void PrintableAngleBrackets_AlwaysInsertLiterally()
     {
         var ed = new LineEditor();
-        // Empty buffer + Esc opens the transcript NAV (view) overlay; quitting is Ctrl+C.
-        Assert.Equal(LineEditSignal.NavEnter, ed.Feed(K(ConsoleKey.Escape)));
+        Assert.Equal(LineEditSignal.Continue, ed.Feed(Ch('<')));
+        Assert.Equal(LineEditSignal.Continue, ed.Feed(Ch('>')));
+        Assert.Equal("<>", ed.Buffer);
     }
 
     [Fact]
@@ -128,147 +122,11 @@ public class TuiVimFeatureTests
     }
 
     [Fact]
-    public void Esc_InNormalMode_EntersNavView()
+    public void InputRow_HasNoModalBadge()
     {
-        var ed = WithText("hi");
-        ed.Feed(K(ConsoleKey.Escape));   // -> Normal
-        Assert.Equal(EditorMode.Normal, ed.Mode);
-        Assert.Equal(LineEditSignal.NavEnter, ed.Feed(K(ConsoleKey.Escape)));   // -> NAV
-    }
-
-    [Fact]
-    public void Normal_I_ReturnsToInsert()
-    {
-        var ed = WithText("hi");
-        ed.Feed(K(ConsoleKey.Escape));
-        var sig = ed.Feed(K(ConsoleKey.I));
-        Assert.Equal(LineEditSignal.ModeChanged, sig);
-        Assert.Equal(EditorMode.Insert, ed.Mode);
-    }
-
-    [Fact]
-    public void Normal_NormalKeysDoNotInsertLiterals()
-    {
-        var ed = WithText("hi");
-        ed.Feed(K(ConsoleKey.Escape));
-        ed.Feed(K(ConsoleKey.J));   // should NOT type 'j'
-        Assert.Equal("hi", ed.Buffer);
-    }
-
-    [Fact]
-    public void Normal_Dollar_And_Zero_MoveCursorEnds()
-    {
-        var ed = WithText("hello");
-        ed.Feed(K(ConsoleKey.Escape));
-        ed.Feed(Ch('0'));
-        Assert.Equal(0, ed.Cursor);
-        ed.Feed(Ch('$'));
-        Assert.Equal(4, ed.Cursor);   // rests on last char in Normal
-    }
-
-    [Fact]
-    public void Normal_X_DeletesCharUnderCursor()
-    {
-        var ed = WithText("abc");
-        ed.Feed(K(ConsoleKey.Escape));   // cursor clamps to 2 ('c')
-        ed.Feed(Ch('0'));                // back to start
-        ed.Feed(K(ConsoleKey.X));        // delete 'a'
-        Assert.Equal("bc", ed.Buffer);
-    }
-
-    [Fact]
-    public void Normal_DD_DeletesWholeLine()
-    {
-        var ed = WithText("delete me");
-        ed.Feed(K(ConsoleKey.Escape));
-        ed.Feed(K(ConsoleKey.D));
-        ed.Feed(K(ConsoleKey.D));
-        Assert.Equal("", ed.Buffer);
-    }
-
-    [Fact]
-    public void Normal_CapC_ChangesToEnd_EntersInsert()
-    {
-        var ed = WithText("keepXXXX");
-        ed.Feed(K(ConsoleKey.Escape));
-        ed.Feed(Ch('0'));
-        // move right 4 to land after "keep"
-        for (int i = 0; i < 4; i++) ed.Feed(K(ConsoleKey.L));
-        ed.Feed(K(ConsoleKey.C, shift: true));   // C = change to end
-        Assert.Equal("keep", ed.Buffer);
-        Assert.Equal(EditorMode.Insert, ed.Mode);
-    }
-
-    [Fact]
-    public void Normal_CtrlD_SignalsNavEnter()
-    {
-        var ed = WithText("anything");
-        ed.Feed(K(ConsoleKey.Escape));
-        var sig = ed.Feed(K(ConsoleKey.D, ctrl: true));
-        Assert.Equal(LineEditSignal.NavEnter, sig);
-    }
-
-    [Fact]
-    public void Reset_ReturnsToInsertMode()
-    {
-        var ed = WithText("x");
-        ed.Feed(K(ConsoleKey.Escape));
-        Assert.Equal(EditorMode.Normal, ed.Mode);
-        ed.Reset();
-        Assert.Equal(EditorMode.Insert, ed.Mode);
-    }
-
-    [Fact]
-    public void InputRow_NormalMode_ShowsBadge()
-    {
-        var row = TuiComponents.InputRowWithCursor("hi", 0, EditorMode.Normal);
-        Assert.Contains("NORMAL", row);
-    }
-
-    [Fact]
-    public void InputRow_InsertMode_NoBadge()
-    {
-        var row = TuiComponents.InputRowWithCursor("hi", 0, EditorMode.Insert);
+        var row = TuiComponents.InputRowWithCursor("hi", 0);
         Assert.DoesNotContain("NORMAL", row);
-    }
-
-    [Fact]
-    public void Normal_HL_MoveSingleChar_NoLargeJumps()
-    {
-        var ed = WithText("abcde");
-        ed.Feed(K(ConsoleKey.Escape));   // Normal; cursor clamps to last char (4)
-        ed.Feed(Ch('0'));                // start
-        Assert.Equal(0, ed.Cursor);
-        ed.Feed(K(ConsoleKey.L));
-        Assert.Equal(1, ed.Cursor);      // single-char right
-        ed.Feed(K(ConsoleKey.L));
-        Assert.Equal(2, ed.Cursor);
-        ed.Feed(K(ConsoleKey.H));
-        Assert.Equal(1, ed.Cursor);      // single-char left
-    }
-
-    [Fact]
-    public void Normal_L_ClampsAtLastChar()
-    {
-        var ed = WithText("ab");
-        ed.Feed(K(ConsoleKey.Escape));
-        ed.Feed(Ch('0'));
-        ed.Feed(K(ConsoleKey.L));
-        ed.Feed(K(ConsoleKey.L));        // try to go past end
-        Assert.Equal(1, ed.Cursor);      // clamped to last char index
-    }
-
-    [Fact]
-    public void Normal_JK_DoNotYankHistory()
-    {
-        var ed = WithText("current");
-        ed.Remember("older command");    // history exists
-        ed.SetBuffer("current");
-        ed.Feed(K(ConsoleKey.Escape));   // Normal
-        ed.Feed(K(ConsoleKey.K));        // bare k must NOT load "older command"
-        Assert.Equal("current", ed.Buffer);
-        ed.Feed(K(ConsoleKey.J));
-        Assert.Equal("current", ed.Buffer);
+        Assert.StartsWith("  \u203a", TuiMarkup.Plain(row));
     }
 
     [Fact]
@@ -476,7 +334,7 @@ public class TuiVimFeatureTests
     [Fact]
     public void InputRows_Multiline_SplitsAndPlacesCursor()
     {
-        var rows = TuiComponents.InputRowsWithCursor("line one\nline two", 13, EditorMode.Insert);
+        var rows = TuiComponents.InputRowsWithCursor("line one\nline two", 13);
         Assert.Equal(2, rows.Count);
         Assert.Contains("line one", TuiMarkup.Plain(rows[0]));
         Assert.Contains("line two", TuiMarkup.Plain(rows[1]));
@@ -485,7 +343,7 @@ public class TuiVimFeatureTests
     [Fact]
     public void InputRows_SingleLine_IsOneRow()
     {
-        var rows = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert);
+        var rows = TuiComponents.InputRowsWithCursor("hello", 5);
         Assert.Single(rows);
         Assert.Contains("hello", TuiMarkup.Plain(rows[0]));
     }
@@ -496,7 +354,7 @@ public class TuiVimFeatureTests
         // A single logical line longer than the content width wraps to multiple visual rows; the
         // wrapped (continuation) rows carry the dim gutter and the joined plain text is preserved.
         var text = new string('x', 200);
-        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert, width: 40);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, width: 40);
         Assert.True(rows.Count > 1);
         // All 200 input chars survive across the wrapped rows (gutter/prompt glyphs aside).
         int xCount = rows.Sum(r => TuiMarkup.Plain(r).Count(c => c == 'x'));
@@ -512,7 +370,7 @@ public class TuiVimFeatureTests
     {
         // width=0 (default) keeps the legacy single-row behaviour for a long line (no wrapping).
         var text = new string('y', 120);
-        var rows = TuiComponents.InputRowsWithCursor(text, text.Length, EditorMode.Insert);
+        var rows = TuiComponents.InputRowsWithCursor(text, text.Length);
         Assert.Single(rows);
     }
 
@@ -625,7 +483,7 @@ public class TuiVimFeatureTests
         Assert.Equal("first line\nsecond line\nthird", ed.Buffer);
         Assert.Equal(ed.Buffer.Length, ed.Cursor);
         // Renders as three input rows (not a truncated single line).
-        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert);
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor);
         Assert.Equal(3, rows.Count);
     }
 
@@ -641,9 +499,9 @@ public class TuiVimFeatureTests
     public void InputRows_Highlight_ShadesEveryRow()
     {
         // highlight=false (default) is unchanged; highlight=true wraps each row in the InputBg band.
-        var plain = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: false);
+        var plain = TuiComponents.InputRowsWithCursor("hello", 5, width: 40, highlight: false);
         Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
-        var shaded = TuiComponents.InputRowsWithCursor("hello", 5, EditorMode.Insert, width: 40, highlight: true);
+        var shaded = TuiComponents.InputRowsWithCursor("hello", 5, width: 40, highlight: true);
         Assert.All(shaded, r => Assert.Contains(TuiComponents.InputBg, r));
         // Highlighting must not change the visible text.
         Assert.Contains("hello", TuiMarkup.Plain(shaded[0]));
@@ -681,14 +539,14 @@ public class TuiVimFeatureTests
         // Option B (g12.04 follow-up): each shaded row carries a thin accent left-rail glyph and a
         // FAINT shade that fills the full field width (the earlier text-width-clipped band looked
         // broken). The faint colour keeps a full-width fill from reading as a heavy strip.
-        var rows = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: true);
+        var rows = TuiComponents.InputRowsWithCursor("hi", 2, width: 120, highlight: true);
         var first = rows[0];
         Assert.Contains("\u2502", TuiMarkup.Plain(first));        // left rail present
         Assert.Contains(TuiComponents.InputBg, first);            // faint shade present
         // The field row fills the configured width (rail + shaded body span the whole row).
         Assert.Equal(120, TuiMarkup.MarkupWidth(first));
         // highlight=false stays unshaded.
-        var plain = TuiComponents.InputRowsWithCursor("hi", 2, EditorMode.Insert, width: 120, highlight: false);
+        var plain = TuiComponents.InputRowsWithCursor("hi", 2, width: 120, highlight: false);
         Assert.DoesNotContain(TuiComponents.InputBg, string.Join("\n", plain));
     }
 
@@ -732,11 +590,11 @@ public class TuiVimFeatureTests
         // gutter/indent from the prior multi-line compose.
         var ed = new LineEditor();
         ed.InsertText("alpha\nbeta\ngamma");
-        Assert.Equal(3, TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80).Count);
+        Assert.Equal(3, TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, width: 80).Count);
         ed.Reset();
         Assert.Equal(0, ed.Cursor);
         Assert.Equal("", ed.Buffer);
-        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, EditorMode.Insert, width: 80);
+        var rows = TuiComponents.InputRowsWithCursor(ed.Buffer, ed.Cursor, width: 80);
         Assert.Single(rows);
         // The single empty row begins at the prompt lead (two spaces + prompt glyph), not a deeper
         // continuation indent. Plain text starts with the prompt chevron after the 2-space lead.
