@@ -1219,7 +1219,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, width, highlight: _inputHighlight));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width, highlight: _inputHighlight));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -1463,10 +1463,12 @@ internal sealed class TuiDriver
     private bool _mouseOn;
     private bool _win32Mouse;   // Win32 input-record path active (Windows console hosts)
     private bool _draggingThumb;
-    // Streaming fallback for Unix/SSH input stacks that split or strip arbitrary parts of the
-    // SGR mouse prefix. Once a real wheel event is seen, torn follow-up fragments are fed through
-    // this state machine instead of relying only on a short wall-clock gate.
-    private readonly MouseSgrParser _mouseFragments = new();
+    // Tick (Environment.TickCount64) of the last successfully-parsed mouse event. Drives the
+    // scroll-gate: for a short window after mouse activity, characters from the mouse-report
+    // alphabet that FAIL to parse as a report are swallowed instead of typed - fragments of
+    // burst-delivered reports (split arbitrarily by the .NET Unix driver) can otherwise leak
+    // into the editor as "<64;80;11M" garbage. Real typing is unaffected outside the window,
+    // and inside it only report-alphabet chars are gated.
     private long _lastMouseTick = long.MinValue;
     private const int MouseGateMs = 250;
 
@@ -1561,7 +1563,6 @@ internal sealed class TuiDriver
         int b = ev.Button & ~0x1C;   // strip modifier bits (shift/meta/ctrl)
         if (b == WheelUp || b == WheelDown)
         {
-            _mouseFragments.Reset();
             // Coalesce the burst: a fast wheel emits dozens of reports; parsing + repainting each
             // one lets later fragments queue mid-parse (the leak source) and wastes presents.
             // Drain every immediately-queued report into ONE net scroll delta, then repaint once.
@@ -1797,7 +1798,6 @@ internal sealed class TuiDriver
     public string? ReadLine()
     {
         _editor.Reset();
-        _mouseFragments.Reset();
         _paletteSel = -1;
         _inInput = true;
         // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
@@ -1916,37 +1916,23 @@ internal sealed class TuiDriver
                         continue;
                     }
 
-                    // Residual-fragment parser: after a real mouse event, keep assembling any
-                    // torn follow-up report across read-loop iterations. This catches the bottom-of-
-                    // viewport case where repeated wheel-down events do not repaint and the .NET
-                    // Unix driver leaves only isolated prefix/final characters (commonly '<' / '>').
-                    // The opener is accepted only during the short post-mouse window. Every
-                    // fragment extends that rolling window; an incomplete sequence expires with it,
-                    // so the first real keystroke after scrolling is never eaten by stale parser state.
-                    // Normal '<' / '>' typing outside an active mouse burst remains literal.
-                    bool gateOpen = Environment.TickCount64 - _lastMouseTick <= MouseGateMs;
-                    if (_mouseFragments.InProgress && !gateOpen) _mouseFragments.Reset();
-                    bool printableFragment = key.KeyChar != '\0' && !char.IsControl(key.KeyChar);
-                    if (gateOpen && printableFragment)
+                    // Scroll-gate: during an active mouse burst (within MouseGateMs of the last
+                    // parsed event) swallow characters from the report alphabet that FAILED to
+                    // parse as a report - they are fragments of a split/torn report (the .NET Unix
+                    // driver can hand them over at arbitrary boundaries) and would otherwise be
+                    // typed into the editor as "<64;80;11M" garbage. Outside the window, or for
+                    // any char not in the report alphabet, typing is completely unaffected - so a
+                    // user can still type '<', digits, ';', 'M'/'m' normally; they are only gated
+                    // in the fraction of a second surrounding real mouse activity.
+                    if (Environment.TickCount64 - _lastMouseTick <= MouseGateMs)
                     {
-                        if (_mouseFragments.Feed(key.KeyChar, gateOpen, out var fragmentEvent))
+                        char ch = key.KeyChar;
+                        bool reportAlphabet = ch == '\u001b' || ch == '[' || ch == '<' || ch == ';'
+                            || ch == 'M' || ch == 'm' || (ch >= '0' && ch <= '9');
+                        if (reportAlphabet)
                         {
-                            _lastMouseTick = Environment.TickCount64;
-                            if (fragmentEvent is { } parsed)
-                            {
-                                var recovered = new MouseEvent(parsed.Button, parsed.X, parsed.Y, parsed.Release);
-                                if (HandleMouseEvent(recovered)) Repaint();
-                            }
-                            continue;
-                        }
-
-                        // The input driver can also drop the discriminator entirely, leaving only
-                        // orphan body/final bytes. Swallow that narrow alphabet while the gate is
-                        // active; notably this includes the reported '<' / '>' stragglers.
-                        if (gateOpen && MouseSgrParser.IsFragmentChar(key.KeyChar))
-                        {
-                            _lastMouseTick = Environment.TickCount64;
-                            continue;
+                            _lastMouseTick = Environment.TickCount64;   // fragment seen: extend the gate
+                            continue;                                   // swallow, never type it
                         }
                     }
                 }
@@ -1972,10 +1958,10 @@ internal sealed class TuiDriver
                 // paste, not a human keystroke (a person cannot have the next key queued in the same
                 // instant). Treat it as a literal newline and absorb the rest of the burst into the
                 // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
-                // active when bracketedPaste is enabled and reverse-search is not owning the editor.
+                // active when bracketedPaste is enabled and the editor is in plain Insert mode.
                 if (_bracketedPaste && key.Key == ConsoleKey.Enter
                     && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
-                    && !_editor.IsSearching
+                    && _editor.Mode == EditorMode.Insert && !_editor.IsSearching
                     && _ungetq.Count == 0 && KeyQueued())
                 {
                     string burst = DrainBurstPaste();
@@ -2082,8 +2068,9 @@ internal sealed class TuiDriver
                     }
                 }
 
-                // Ctrl+G at the prompt: open the transcript / expand view unconditionally.
-                // Opens NAV focused on the latest expandable block if one exists,
+                // Ctrl+G at the prompt: open the transcript / expand view unconditionally - a
+                // secondary affordance to Esc-on-empty for users whose terminal binds Esc to
+                // cancel-the-turn. Opens NAV focused on the latest expandable block if one exists,
                 // else the plain transcript overlay. Never cancels.
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.G)
                 {
@@ -2201,6 +2188,17 @@ internal sealed class TuiDriver
                         _paletteSel = -1;
                         Repaint();
                         break;
+                    case LineEditSignal.ModeChanged:
+                        // Vim Insert<->Normal toggle: repaint so the mode badge/prompt updates.
+                        _paletteSel = -1;
+                        Repaint();
+                        break;
+                    case LineEditSignal.NavEnter:
+                        // Normal-mode scroll chord: browse the retained transcript in a NAV
+                        // overlay, then resume input where we left off.
+                        EnterNavMode();
+                        Repaint();
+                        break;
                     case LineEditSignal.Continue:
                         // Coalesce repaints: when more keys are already queued (fast typing,
                         // held key, or a paste), skip the repaint and let the next iteration
@@ -2218,7 +2216,6 @@ internal sealed class TuiDriver
         finally
         {
             _inInput = false;
-            _mouseFragments.Reset();
             if (_mouseOn) { try { _term.Write(Ansi.MouseOff); _term.Flush(); } catch { /* ignore */ } _mouseOn = false; }
             if (_win32Mouse) { Win32ConsoleInput.DisableMouse(); _win32Mouse = false; }
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
@@ -2375,16 +2372,25 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
-    /// Enter the transcript-NAV overlay: a scrollable viewport over the retained transcript with
-    /// a movable cursor. j/k (+ arrows) move through entries; Ctrl+D/U and Ctrl+F/B page; g/G jump
-    /// to the ends; Ctrl+E or Enter toggles an expandable result; q/Esc/i exits. Commits retain into
-    /// the model but defer physical writes while <see cref="_navActive"/> owns the screen, so this is
-    /// safe both from the idle prompt and from the mid-turn Ctrl+G path.
+    /// Enter the vim transcript-NAV overlay: a scrollable viewport over the retained transcript
+    /// rendered in the live region. Runs its own key loop (j/k + arrows, Ctrl+D/U half-page,
+    /// Ctrl+F/B + PgUp/PgDn full-page, g/G + Home/End to ends, q/Esc/i to exit). NAV is only
+    /// ever entered from the idle input prompt (agent not streaming), so there is no concurrent
+    /// writer to the screen and no render race. On exit the editor returns to Insert mode and
+    /// the normal input frame repaints.
+    /// </summary>
+    /// <summary>
+    /// Enter the vim transcript-NAV overlay: a scrollable viewport over the retained transcript
+    /// with a MOVABLE CURSOR. j/k (+ arrows) move the cursor through entries (view scrolls to
+    /// follow); the focused entry is highlighted. When the cursor sits on an expandable tool
+    /// result, Ctrl+E or Enter toggles its full panel open/closed in place (reversible). Other
+    /// keys: Ctrl+D/U half-page, Ctrl+F/B + PgUp/PgDn full-page, g/G + Home/End to ends,
+    /// q/Esc/i to exit. NAV is only entered from the idle prompt, so there is no render race.
     /// </summary>
     /// <param name="focusEntry">Entry index to place the cursor on at entry (-1 = last).</param>
     private void EnterNavMode(int focusEntry = -1)
     {
-        if (_transcript.Count == 0) return;
+        if (_transcript.Count == 0) { _editor.SetMode(EditorMode.Insert); return; }
 
         // Mark the overlay active so the (possibly concurrent, mid-turn) streaming/commit path
         // defers its physical writes while NAV owns the screen. Cleared in the finally below.
@@ -2607,8 +2613,10 @@ internal sealed class TuiDriver
 
             // Remember where the cursor was (as an entry index) so the next NAV open restores it.
             _navSavedEntry = owner[Math.Clamp(model.Row, 0, owner.Count - 1)];
-            // Leaving NAV: collapse all entries again so live scrollback stays compact.
+            // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
+            // Insert mode at the live input prompt.
             foreach (var e in _transcript) e.Expanded = false;
+            _editor.SetMode(EditorMode.Insert);
         }
         finally
         {

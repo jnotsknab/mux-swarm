@@ -761,7 +761,15 @@ internal static class TuiComponents
     /// cell at the edit position (Claude-Code style) to show where typing lands.
     /// </summary>
     public static string InputRowWithCursor(string buffer, int cursor)
-        => string.Join("\n", InputRowsWithCursor(buffer, cursor));
+        => InputRowWithCursor(buffer, cursor, EditorMode.Insert);
+
+    /// <summary>
+    /// Input row with a synthetic block cursor and a vim-mode prompt marker. Normal mode swaps
+    /// the cyan "\u203a" prompt for a distinct "-- NORMAL --" badge + bold block prompt so the
+    /// active mode is unmistakable; Insert mode is unchanged from the modeless renderer.
+    /// </summary>
+    public static string InputRowWithCursor(string buffer, int cursor, EditorMode mode)
+        => string.Join("\n", InputRowsWithCursor(buffer, cursor, mode));
 
     /// <summary>
     /// Render the input/compose area as one or more markup lines. A buffer containing embedded
@@ -769,7 +777,7 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width = 0, bool highlight = false)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0, bool highlight = false)
     {
         const string cur = "#E0E0E0";
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
@@ -794,7 +802,9 @@ internal static class TuiComponents
             }
             return outp;
         }
-        string prompt = VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
+        string prompt = mode == EditorMode.Normal
+            ? $"[{Warn}]\u25c6[/] [black on {Warn}] NORMAL [/]"
+            : VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
         string contGutter = $"[{Dim}]\u2502[/]";
         string promptLead = $"  {prompt} ";
@@ -807,7 +817,9 @@ internal static class TuiComponents
         if (string.IsNullOrEmpty(buffer))
             return Shade(new List<string>
             {
-                $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                mode == EditorMode.Normal
+                    ? $"{promptLead}[black on {cur}] [/]"
+                    : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             });
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
