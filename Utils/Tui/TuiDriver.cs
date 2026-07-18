@@ -1374,10 +1374,13 @@ internal sealed class TuiDriver
 
         // Scrollbar rail (herdr-style): while the user is paged back, paint a thumb in the RESERVED
         // last column over the transcript region so there is a visible, native-feeling indicator of
-        // where the viewport sits in retained history. Pinned to the live tail (offset 0) the rail
-        // is left empty - zero visual change in the steady state.
-        if (_frameScroll > 0 && transcriptRoom > 1 && totalRows > transcriptRoom)
-            OverlayScrollbar(rows, transcriptRoom, totalRows);
+        // where the viewport sits in retained history. The rail region is tracked so that when the
+        // viewport returns to the live tail every previously-railed row is re-emitted WITHOUT the
+        // rail cell (rows are padded to a fixed width in both states, so the frame diff always sees
+        // the changed cell and repaints it - no stale thumb blocks left behind).
+        bool railed = _frameScroll > 0 && transcriptRoom > 1 && totalRows > transcriptRoom;
+        NormalizeRailColumn(rows, transcriptRoom, railed, totalRows);
+        _scrollbarVisible = railed;
         return rows;
     }
 
@@ -1398,28 +1401,51 @@ internal sealed class TuiDriver
         return LiveRegion.WrapMarkupLine(ent.Collapsed, wrapW);
     }
 
-    /// <summary>Overlay a minimal scrollbar into the reserved last column of the transcript region:
-    /// a dim track with a proportional inverted thumb whose position mirrors the scroll offset
-    /// (top = oldest retained row, bottom = live tail). Painted only while paged back.</summary>
-    private void OverlayScrollbar(List<string> rows, int transcriptRoom, int totalRows)
+    // True while the last-presented frame painted the scrollbar rail. Tracked so the rail state
+    // change itself (rail -> no rail) always produces textually-different rows for the frame diff.
+    private bool _scrollbarVisible;
+
+    /// <summary>
+    /// Normalize every transcript row's reserved last column: pad ALL rows to exactly
+    /// <see cref="Width"/> visible cells, then append either the rail cell (dim track / inverted
+    /// proportional thumb) when <paramref name="railed"/>, or a plain space when not. Emitting a
+    /// FIXED-WIDTH final cell in BOTH states is what kills the stale-thumb artifact: a row that had
+    /// a thumb cell last present and no rail this present differs textually, so the frame diff
+    /// re-emits it and the terminal overwrites the old block. Cursor-anchored MoveTo(row,1) writes
+    /// with EraseLine guarantee the whole row (including the rail column) is repainted.
+    /// </summary>
+    private void NormalizeRailColumn(List<string> rows, int transcriptRoom, bool railed, int totalRows)
     {
-        int trackLen = transcriptRoom;
-        int thumbLen = Math.Max(1, (int)Math.Round((double)transcriptRoom * transcriptRoom / totalRows));
-        int maxScroll = Math.Max(1, totalRows - transcriptRoom);
-        // Fraction scrolled back: 0 = live tail (thumb at bottom), 1 = oldest (thumb at top).
-        double frac = Math.Min(1.0, (double)_frameScroll / maxScroll);
-        int thumbTop = (int)Math.Round((1.0 - frac) * (trackLen - thumbLen));
-        int padTop = Math.Max(0, transcriptRoom - Math.Min(totalRows, transcriptRoom));
-        for (int i = 0; i < trackLen && i < rows.Count; i++)
+        int trackLen = Math.Min(transcriptRoom, rows.Count);
+        int thumbLen = 0, thumbTop = -1;
+        if (railed)
         {
-            bool thumb = i >= thumbTop && i < thumbTop + thumbLen;
-            // Position the glyph in the reserved column: pad the row's visible width up to Width,
-            // then append the rail cell. Rows are pre-wrapped to <= Width so no overflow.
+            thumbLen = Math.Max(1, (int)Math.Round((double)transcriptRoom * transcriptRoom / Math.Max(1, totalRows)));
+            int maxScroll = Math.Max(1, totalRows - transcriptRoom);
+            // Fraction scrolled back: 0 = live tail (thumb at bottom), 1 = oldest (thumb at top).
+            double frac = Math.Min(1.0, (double)_frameScroll / maxScroll);
+            thumbTop = (int)Math.Round((1.0 - frac) * (trackLen - thumbLen));
+        }
+        for (int i = 0; i < trackLen; i++)
+        {
+            // Pad to EXACTLY Width visible cells so the rail cell always lands in the same column
+            // regardless of row content (stripping SGR via the shared plain-width helper).
             string plain = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;?]*[A-Za-z]", "");
             int visW = TuiMarkup.Width(plain);
-            int pad = Math.Max(0, Width - visW);
-            rows[i] = rows[i] + new string(' ', pad)
-                + (thumb ? Ansi.Invert + " " + Ansi.Reset : "[2m│[0m");
+            int pad = Width - visW;
+            if (pad > 0) rows[i] += new string(' ', pad);
+            else if (pad < 0) continue;   // over-wide row (wide-rune estimate off): skip the rail, never overflow
+            if (railed)
+            {
+                bool thumb = i >= thumbTop && i < thumbTop + thumbLen;
+                rows[i] += thumb ? Ansi.Invert + " " + Ansi.Reset : "[2m│[0m";
+            }
+            else if (_scrollbarVisible)
+            {
+                // Rail just disappeared: emit an explicit trailing space so the row text DIFFERS
+                // from its railed predecessor and the diff overwrites the old rail/thumb cell.
+                rows[i] += " ";
+            }
         }
     }
 
@@ -1428,6 +1454,102 @@ internal sealed class TuiDriver
     // the offset (the user is reading history) until they page back to 0 or press End/Esc. Clamped
     // in ComposeFrameRows to the oldest retained row.
     private int _frameScroll;
+
+    // --- mouse (frame engine, prompt-scoped) --------------------------------
+    // Mouse reporting is enabled only inside ReadLine (see Ansi.MouseOn) and parsed from the SGR
+    // encoding: ESC [ < b ; x ; y (M|m). Wheel = viewport scroll; press/drag on the scrollbar rail
+    // column = absolute thumb drag. All other mouse events are swallowed (never leak ESC noise
+    // into the editor).
+    private bool _mouseOn;
+    private bool _draggingThumb;
+
+    private readonly record struct MouseEvent(int Button, int X, int Y, bool Release);
+
+    /// <summary>Parse an SGR mouse report after the leading ESC was consumed. Expects the queued
+    /// chars "[<b;x;yM" (or 'm' release). On mismatch, replays probed keys to the unget queue and
+    /// returns null so the ESC keeps its normal meaning.</summary>
+    private MouseEvent? TryConsumeMouseEvent()
+    {
+        var probed = new List<ConsoleKeyInfo>(16);
+        bool Grab(out ConsoleKeyInfo k)
+        {
+            if (_ungetq.Count > 0) { k = _ungetq.Dequeue(); probed.Add(k); return true; }
+            if (TryReadKeyNonBlocking(out k)) { probed.Add(k); return true; }
+            return false;
+        }
+        void Replay() { foreach (var p in probed) _ungetq.Enqueue(p); }
+
+        if (!Grab(out var c) || c.KeyChar != '[') { Replay(); return null; }
+        if (!Grab(out c) || c.KeyChar != '<') { Replay(); return null; }
+        int[] nums = new int[3]; int ni = 0; char final = '\0';
+        var digits = new System.Text.StringBuilder();
+        while (true)
+        {
+            if (!Grab(out c)) { Replay(); return null; }
+            if (c.KeyChar >= '0' && c.KeyChar <= '9') { digits.Append(c.KeyChar); continue; }
+            if (c.KeyChar == ';' || c.KeyChar == 'M' || c.KeyChar == 'm')
+            {
+                if (ni >= 3 || digits.Length == 0 || !int.TryParse(digits.ToString(), out nums[ni])) { Replay(); return null; }
+                ni++; digits.Clear();
+                if (c.KeyChar != ';') { final = c.KeyChar; break; }
+                continue;
+            }
+            Replay(); return null;   // malformed
+        }
+        if (ni != 3) { Replay(); return null; }
+        return new MouseEvent(nums[0], nums[1], nums[2], final == 'm');
+    }
+
+    /// <summary>Handle a parsed mouse event at the prompt. Returns true when the event changed the
+    /// viewport (caller repaints). Wheel up/down = 3-row scroll; left press/drag on the reserved
+    /// rail column = absolute drag (map row -> scroll offset); release ends the drag.</summary>
+    private bool HandleMouseEvent(MouseEvent ev)
+    {
+        const int WheelUp = 64, WheelDown = 65;
+        int b = ev.Button & ~0x1C;   // strip modifier bits (shift/meta/ctrl)
+        if (b == WheelUp)  return FrameScrollBy(3);
+        if (b == WheelDown) return FrameScrollBy(-3);
+
+        // Rail interactions: the rail lives in the reserved last physical column (Width + 1,
+        // 1-based). Terminal rows are 1-based; the transcript region spans the rows above the live
+        // band. A press on the rail jumps the thumb; a drag follows it; release ends the drag.
+        int railCol = Width + 1;
+        bool leftPress = b == 0 && !ev.Release;
+        bool leftRelease = b == 0 && ev.Release;
+        bool dragMove = (ev.Button & 32) != 0 && (ev.Button & 3) == 0;   // motion with left held
+
+        if (leftRelease) { _draggingThumb = false; return false; }
+        if ((leftPress && ev.X >= railCol) || (_draggingThumb && dragMove))
+        {
+            _draggingThumb = true;
+            return DragThumbTo(ev.Y);
+        }
+        return false;
+    }
+
+    /// <summary>Map an absolute terminal row (1-based) on the rail to a scroll offset and apply it:
+    /// top of the transcript region = oldest retained row, bottom = live tail. Uses the same
+    /// geometry as the rail painter so the thumb lands under the pointer.</summary>
+    private bool DragThumbTo(int termRow)
+    {
+        int h = Math.Max(1, _term.Height);
+        var liveRows = new List<string>();
+        foreach (var ml in BuildLiveFrame(Width))
+            liveRows.AddRange(LiveRegion.WrapMarkupLine(ml, Width));
+        int transcriptRoom = Math.Max(1, h - Math.Min(liveRows.Count, h));
+        // Total retained physical rows (bounded walk, newest-first, same as ComposeFrameRows).
+        int total = 0;
+        for (int e = _transcript.Count - 1; e >= 0 && total < transcriptRoom * 50; e--)
+            total += RenderEntryRows(_transcript[e], Width).Count;
+        int maxScroll = Math.Max(0, total - transcriptRoom);
+        if (maxScroll == 0) return false;
+        // Row 1 = top of transcript region = fully scrolled back; bottom = live tail.
+        double frac = 1.0 - Math.Clamp((double)(termRow - 1) / Math.Max(1, transcriptRoom - 1), 0.0, 1.0);
+        int target = (int)Math.Round(frac * maxScroll);
+        if (target == _frameScroll) return false;
+        _frameScroll = target;
+        return true;
+    }
 
     /// <summary>Frame engine: scroll the viewport by <paramref name="rows"/> physical rows
     /// (positive = back in history). Returns true when the offset changed (caller repaints).</summary>
@@ -1611,6 +1733,11 @@ internal sealed class TuiDriver
         try
         {
             try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            // Frame engine: enable mouse reporting (click+drag, SGR coords) for the duration of the
+            // prompt read loop - wheel scrolls the retained-transcript viewport and the scrollbar
+            // rail is click/drag-targetable. Scoped here (not process-wide) so agent-turn streaming
+            // never races the mouse parser, and torn down in finally.
+            if (_engineFrame) { try { _term.Write(Ansi.MouseOn); _term.Flush(); _mouseOn = true; } catch { /* ignore */ } }
             Repaint();
 
             while (true)
@@ -1657,6 +1784,15 @@ internal sealed class TuiDriver
                         HandBack();
                         return Console.ReadLine();
                     }
+                }
+
+                // Mouse reports (frame engine): ESC [ < b;x;y M|m arrives as raw chars. Parse and
+                // dispatch BEFORE bracketed paste so the '<' discriminator cleanly separates the two
+                // ESC-[ flows; a non-mouse ESC falls through with all probed keys replayed.
+                if (_mouseOn && key.KeyChar == '\u001b' && TryConsumeMouseEvent() is { } mev)
+                {
+                    if (HandleMouseEvent(mev)) Repaint();
+                    continue;
                 }
 
                 // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
@@ -1938,6 +2074,7 @@ internal sealed class TuiDriver
         finally
         {
             _inInput = false;
+            if (_mouseOn) { try { _term.Write(Ansi.MouseOff); _term.Flush(); } catch { /* ignore */ } _mouseOn = false; }
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
     }
