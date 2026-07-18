@@ -1461,6 +1461,7 @@ internal sealed class TuiDriver
     // column = absolute thumb drag. All other mouse events are swallowed (never leak ESC noise
     // into the editor).
     private bool _mouseOn;
+    private bool _win32Mouse;   // Win32 input-record path active (Windows console hosts)
     private bool _draggingThumb;
 
     private readonly record struct MouseEvent(int Button, int X, int Y, bool Release);
@@ -1474,6 +1475,15 @@ internal sealed class TuiDriver
         bool Grab(out ConsoleKeyInfo k)
         {
             if (_ungetq.Count > 0) { k = _ungetq.Dequeue(); probed.Add(k); return true; }
+            // The report's tail bytes may not all have landed in the input buffer yet (SSH/WSL
+            // latency): wait briefly per char instead of aborting instantly - a human cannot type
+            // the next key within 8ms, so this never confuses a real Esc keypress, but it makes
+            // burst-delivered mouse reports parse reliably.
+            for (int spin = 0; spin < 8; spin++)
+            {
+                if (TryReadKeyNonBlocking(out k)) { probed.Add(k); return true; }
+                Thread.Sleep(1);
+            }
             if (TryReadKeyNonBlocking(out k)) { probed.Add(k); return true; }
             return false;
         }
@@ -1511,9 +1521,11 @@ internal sealed class TuiDriver
         if (b == WheelDown) return FrameScrollBy(-3);
 
         // Rail interactions: the rail lives in the reserved last physical column (Width + 1,
-        // 1-based). Terminal rows are 1-based; the transcript region spans the rows above the live
-        // band. A press on the rail jumps the thumb; a drag follows it; release ends the drag.
-        int railCol = Width + 1;
+        // 1-based). The press hit-zone is the last TWO columns - a 1-cell rail is a hard pointer
+        // target and terminals differ by one in how they report the final column. Once dragging,
+        // motion anywhere on screen tracks the thumb (standard scrollbar behavior: vertical
+        // position is what matters, the pointer may drift off the rail). Release ends the drag.
+        int railCol = Width;   // accept Width and Width+1 (1-based)
         bool leftPress = b == 0 && !ev.Release;
         bool leftRelease = b == 0 && ev.Release;
         bool dragMove = (ev.Button & 32) != 0 && (ev.Button & 3) == 0;   // motion with left held
@@ -1737,7 +1749,18 @@ internal sealed class TuiDriver
             // prompt read loop - wheel scrolls the retained-transcript viewport and the scrollbar
             // rail is click/drag-targetable. Scoped here (not process-wide) so agent-turn streaming
             // never races the mouse parser, and torn down in finally.
-            if (_engineFrame) { try { _term.Write(Ansi.MouseOn); _term.Flush(); _mouseOn = true; } catch { /* ignore */ } }
+            //
+            // Two delivery paths, chosen by host:
+            //  - Windows console (ConPTY/conhost): VT reports are translated into MOUSE_EVENT input
+            //    records that Console.ReadKey silently DISCARDS - so mouse must be read via the
+            //    Win32ConsoleInput shim (ReadConsoleInputW + ENABLE_MOUSE_INPUT + QuickEdit off).
+            //  - Unix terminals (incl. the Linux build under WSL): raw SGR escapes arrive on stdin
+            //    and TryConsumeMouseEvent parses them.
+            if (_engineFrame)
+            {
+                try { _term.Write(Ansi.MouseOn); _term.Flush(); _mouseOn = true; } catch { /* ignore */ }
+                _win32Mouse = Win32ConsoleInput.EnableMouse();
+            }
             Repaint();
 
             while (true)
@@ -1773,6 +1796,30 @@ internal sealed class TuiDriver
                     }
                     if (polled is null) continue;
                     key = polled.Value;
+                }
+                else if (_win32Mouse)
+                {
+                    // Windows console host with mouse records active: a blocking Console.ReadKey
+                    // would DISCARD mouse events while waiting, so poll the Win32 input queue -
+                    // mouse events dispatch immediately, key events flow into the editor exactly
+                    // as before. 10ms idle sleep keeps the poll negligible (same cadence as the
+                    // voice loop).
+                    ConsoleKeyInfo? gotKey = null;
+                    while (true)
+                    {
+                        if (Win32ConsoleInput.TryReadEvent(out var wev))
+                        {
+                            if (wev.HasKey) { gotKey = wev.Key; break; }
+                            if (wev.IsMouse)
+                            {
+                                var mev2 = new MouseEvent(wev.Button, wev.X, wev.Y, wev.Release);
+                                if (HandleMouseEvent(mev2)) Repaint();
+                            }
+                            continue;   // consumed a no-op record (focus/resize/key-up)
+                        }
+                        Thread.Sleep(10);
+                    }
+                    key = gotKey.Value;
                 }
                 else
                 {
@@ -2075,6 +2122,7 @@ internal sealed class TuiDriver
         {
             _inInput = false;
             if (_mouseOn) { try { _term.Write(Ansi.MouseOff); _term.Flush(); } catch { /* ignore */ } _mouseOn = false; }
+            if (_win32Mouse) { Win32ConsoleInput.DisableMouse(); _win32Mouse = false; }
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
     }
