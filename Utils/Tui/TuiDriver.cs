@@ -410,7 +410,11 @@ internal sealed class TuiDriver
     /// left, presents deferred). Always false in inline mode. Test hook.</summary>
     public bool Suspended => _engineFrame && _suspended;
 
-    public int Width => Math.Max(20, _term.Width);
+    // Frame mode lays out at (cols - 1): the last column is RESERVED - components never touch it,
+    // so a full-width rule/panel row can never soft-wrap when re-wrapped in ComposeFrameRows (the
+    // stranded "-" fragment / split-card bug), and the reserved column doubles as the scrollbar
+    // rail while paging. Inline mode keeps the true terminal width - byte-identical to before.
+    public int Width => _engineFrame ? Math.Max(20, _term.Width - 1) : Math.Max(20, _term.Width);
 
     /// <summary>Visible terminal height (rows), floored so panel-bounding math stays sane on
     /// tiny/again-unavailable terminals.</summary>
@@ -1291,7 +1295,11 @@ internal sealed class TuiDriver
     /// <summary>Present one full-frame viewport (frame engine only). Deferred while suspended.</summary>
     private void PresentFrame()
     {
-        if (_suspended) return;
+        // Hard gate: NOTHING may re-enter the alternate screen while a blocking prompt owns the
+        // primary buffer (suspended) or during teardown. The ticker/resize timers race prompt
+        // windows, and a single stray present paints the alt screen over a half-drawn Spectre
+        // list (the "cut-off prompt" artifact).
+        if (_suspended || _shuttingDown) return;
         _frame.Present(ComposeFrameRows());
     }
 
@@ -1322,30 +1330,34 @@ internal sealed class TuiDriver
     private List<string> ComposeFrameRows()
     {
         int h = Math.Max(1, _term.Height);
-        int cols = Math.Max(1, _term.Width);
-        // Wrap to width-1 and never touch the last column (matches the NAV painter) so a full-width
-        // row can never trip the terminal's bottom-right auto-scroll even with auto-wrap toggled.
-        int wrapW = Math.Max(1, cols - 1);
+        // Layout and wrap BOTH use the driver's Width, which in frame mode is already (cols - 1)
+        // with the last physical column reserved. Using one width for component layout AND the wrap
+        // pass is what keeps full-width rules/panels to exactly one physical row each (the earlier
+        // layout-at-cols/wrap-at-cols-1 mismatch split every full-width row and stranded "-"
+        // fragments at the left margin).
+        int wrapW = Width;
 
-        // Live band (bottom): built at the floored Width (component layout), wrapped at the real
-        // width - exactly what the inline region does before painting.
+        // Live band (bottom): built and wrapped at the same width.
         var liveRows = new List<string>();
-        foreach (var ml in BuildLiveFrame(Width))
+        foreach (var ml in BuildLiveFrame(wrapW))
             liveRows.AddRange(LiveRegion.WrapMarkupLine(ml, wrapW));
         if (liveRows.Count > h)
             liveRows = liveRows.GetRange(liveRows.Count - h, h);  // keep the freshest tail on screen
 
         int transcriptRoom = h - liveRows.Count;
         var transcriptRows = new List<string>();
-        int maxScroll = 0;
+        int totalRows = 0;
         if (transcriptRoom > 0)
         {
             // Render retained entries bottom-up until we have enough rows to satisfy the visible
             // window PLUS the requested scroll offset, then slide the window up by the offset.
+            // Expanded entries render their FULL panel (the same expansion NAV shows) so an open
+            // card is a coherent box, not just its collapsed one-liner.
             int want = transcriptRoom + Math.Max(0, _frameScroll);
             for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
-                transcriptRows.InsertRange(0, LiveRegion.WrapMarkupLine(_transcript[e].Collapsed, wrapW));
-            maxScroll = Math.Max(0, transcriptRows.Count - transcriptRoom);
+                transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
+            totalRows = transcriptRows.Count;
+            int maxScroll = Math.Max(0, totalRows - transcriptRoom);
             if (_frameScroll > maxScroll) _frameScroll = maxScroll;   // clamp at oldest retained row
             int skipTail = Math.Max(0, _frameScroll);
             int end = transcriptRows.Count - skipTail;
@@ -1359,7 +1371,56 @@ internal sealed class TuiDriver
         rows.AddRange(liveRows);
         if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
         while (rows.Count < h) rows.Add("");
+
+        // Scrollbar rail (herdr-style): while the user is paged back, paint a thumb in the RESERVED
+        // last column over the transcript region so there is a visible, native-feeling indicator of
+        // where the viewport sits in retained history. Pinned to the live tail (offset 0) the rail
+        // is left empty - zero visual change in the steady state.
+        if (_frameScroll > 0 && transcriptRoom > 1 && totalRows > transcriptRoom)
+            OverlayScrollbar(rows, transcriptRoom, totalRows);
         return rows;
+    }
+
+    /// <summary>Render one retained entry to physical rows at <paramref name="wrapW"/>: expanded
+    /// entries get their full panel (diff or tool-result card - the same rendering NAV uses),
+    /// collapsed entries their one-line summary, wrapped.</summary>
+    private List<string> RenderEntryRows(Entry ent, int wrapW)
+    {
+        if (ent.Expandable is { } x && ent.Expanded)
+        {
+            var panel = ent.DiffKind
+                ? TuiComponents.Diff(x.Tool, x.Text, wrapW)
+                : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, wrapW, expanded: true, markdown: _cardMarkdown);
+            var outRows = new List<string>();
+            foreach (var l in panel) outRows.AddRange(LiveRegion.WrapMarkupLine(l, wrapW));
+            return outRows;
+        }
+        return LiveRegion.WrapMarkupLine(ent.Collapsed, wrapW);
+    }
+
+    /// <summary>Overlay a minimal scrollbar into the reserved last column of the transcript region:
+    /// a dim track with a proportional inverted thumb whose position mirrors the scroll offset
+    /// (top = oldest retained row, bottom = live tail). Painted only while paged back.</summary>
+    private void OverlayScrollbar(List<string> rows, int transcriptRoom, int totalRows)
+    {
+        int trackLen = transcriptRoom;
+        int thumbLen = Math.Max(1, (int)Math.Round((double)transcriptRoom * transcriptRoom / totalRows));
+        int maxScroll = Math.Max(1, totalRows - transcriptRoom);
+        // Fraction scrolled back: 0 = live tail (thumb at bottom), 1 = oldest (thumb at top).
+        double frac = Math.Min(1.0, (double)_frameScroll / maxScroll);
+        int thumbTop = (int)Math.Round((1.0 - frac) * (trackLen - thumbLen));
+        int padTop = Math.Max(0, transcriptRoom - Math.Min(totalRows, transcriptRoom));
+        for (int i = 0; i < trackLen && i < rows.Count; i++)
+        {
+            bool thumb = i >= thumbTop && i < thumbTop + thumbLen;
+            // Position the glyph in the reserved column: pad the row's visible width up to Width,
+            // then append the rail cell. Rows are pre-wrapped to <= Width so no overflow.
+            string plain = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;?]*[A-Za-z]", "");
+            int visW = TuiMarkup.Width(plain);
+            int pad = Math.Max(0, Width - visW);
+            rows[i] = rows[i] + new string(' ', pad)
+                + (thumb ? Ansi.Invert + " " + Ansi.Reset : "[2m│[0m");
+        }
     }
 
     // Frame-engine viewport scroll offset, in physical rows above the live tail (0 = pinned to the
@@ -1428,6 +1489,7 @@ internal sealed class TuiDriver
     public void PollResize()
     {
         if (_shuttingDown || _navActive) return;
+        if (_engineFrame && _suspended) return;   // a blocking prompt owns the terminal; defer
         int w = _term.Width, h = _term.Height;
         if (w == _lastSeenWidth && h == _lastSeenHeight) return;
         bool first = _lastSeenWidth < 0;
@@ -1747,15 +1809,36 @@ internal sealed class TuiDriver
                     continue;
                 }
 
-                // Frame engine only: PgUp/PgDn page a REAL viewport over the retained transcript -
-                // the frame engine's replacement for the native scrollback the alt screen forfeits.
-                // PgUp scrolls back, PgDn scrolls forward; paging past the newest row pins back to
-                // the live tail. Inline mode ignores these (native scrollback already works there).
-                if (_engineFrame && (key.Key == ConsoleKey.PageUp || key.Key == ConsoleKey.PageDown))
+                // Frame engine only: page a REAL viewport over the retained transcript - the frame
+                // engine's replacement for the native scrollback the alt screen forfeits. Binds
+                // MIRROR the standard NAV pager so muscle memory carries over: Ctrl+U/Ctrl+D =
+                // half page, Ctrl+B/Ctrl+F = full page, PgUp/PgDn = full page (fallback), and
+                // Esc/End snap back to the live tail while paged. A dim scrollbar rail appears in
+                // the reserved last column while scrolled back. Inline mode ignores all of these
+                // (native scrollback already works there). Ctrl+U keeps its kill-to-start editing
+                // role whenever the input buffer is non-empty - paging only owns it on an empty
+                // buffer, same as the Esc-opens-NAV convention.
+                if (_engineFrame)
                 {
-                    int page = Math.Max(1, Height - 2);
-                    if (FrameScrollBy(key.Key == ConsoleKey.PageUp ? page : -page)) Repaint();
-                    continue;
+                    bool ctrlMod = (key.Modifiers & ConsoleModifiers.Control) != 0;
+                    int full = Math.Max(1, Height - 2);
+                    int half = Math.Max(1, full / 2);
+                    int delta = 0;
+                    if (key.Key == ConsoleKey.PageUp || (ctrlMod && key.Key == ConsoleKey.B)) delta = full;
+                    else if (key.Key == ConsoleKey.PageDown || (ctrlMod && key.Key == ConsoleKey.F)) delta = -full;
+                    else if (ctrlMod && key.Key == ConsoleKey.U && _editor.Buffer.Length == 0) delta = half;
+                    else if (ctrlMod && key.Key == ConsoleKey.D && _editor.Buffer.Length == 0) delta = -half;
+                    else if (_frameScroll > 0 && (key.Key == ConsoleKey.End || key.Key == ConsoleKey.Escape))
+                    {
+                        _frameScroll = 0;
+                        Repaint();
+                        continue;
+                    }
+                    if (delta != 0)
+                    {
+                        if (FrameScrollBy(delta)) Repaint();
+                        continue;
+                    }
                 }
 
                 // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual

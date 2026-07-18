@@ -58,6 +58,11 @@ public static partial class MuxConsole
     /// </summary>
     public static bool FrameEngineEnabled { get; set; }
 
+    /// <summary>Compact splash (markup lines) captured at startup for the frame engine to commit
+    /// into the driver transcript on activation - the alt screen hides the primary-buffer splash,
+    /// so the frame shows this retained copy instead. Null outside frame mode. Consumed once.</summary>
+    internal static List<string>? FrameSplashLines { get; set; }
+
     /// <summary>
     /// Informative-line threshold above which a collapsed tool result is Ctrl+E-expandable in
     /// the live TUI. Set from console.collapseToolLines; pushed to the driver on activation.
@@ -529,6 +534,13 @@ public static partial class MuxConsole
                 if (_driver is null)
                 {
                     _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
+                    // Frame mode: seed the transcript with the retained splash so the first frame
+                    // opens on the banner (the primary-buffer splash is hidden by the alt screen).
+                    if (FrameEngineEnabled && FrameSplashLines is { Count: > 0 } fsl)
+                    {
+                        _driver.Commit(fsl);
+                        FrameSplashLines = null;
+                    }
                     _tuiActive = true;
                     // Idle-prompt backslash opens the Agent View dashboard (same entry as the
                     // mid-turn EscapeKeyListener path). Returns false when no agents are running,

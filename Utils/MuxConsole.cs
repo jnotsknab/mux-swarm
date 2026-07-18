@@ -576,6 +576,20 @@ public static partial class MuxConsole
             // One random curated line per launch (quote / fact / tip / nudge / tagline). Both the
             // narrow-panel and wide two-column layouts render the SAME pick, computed once here.
             var (splashLabel, splashText) = SplashMessages.Pick();
+
+            // Frame engine: the alternate screen will cover everything written to the primary
+            // buffer, so ALSO retain a compact splash for the TUI driver to commit into its
+            // transcript on activation - the frame then opens showing the banner instead of a
+            // bare void (the "no splash in frame mode" bug).
+            if (FrameEngineEnabled)
+                FrameSplashLines = new List<string>
+                {
+                    $"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}",
+                    string.IsNullOrEmpty(splashLabel)
+                        ? $"[{C.Prompt}]{Esc(splashText)}[/]"
+                        : $"[{C.Prompt}]{Esc(splashText)}[/]  [{C.Muted}]{Esc(splashLabel)}[/]",
+                    "",
+                };
             string splashLine = string.IsNullOrEmpty(splashLabel)
                 ? $"[{C.Prompt}]{Esc(splashText)}[/]"
                 : $"[{C.Prompt}]{Esc(splashText)}[/]  [{C.Muted}]{Esc(splashLabel)}[/]";
