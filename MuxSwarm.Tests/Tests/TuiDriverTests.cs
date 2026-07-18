@@ -760,6 +760,28 @@ public class TuiDriverTests
         Assert.Contains(new string('x', 29), term.Output);
     }
 
+    [Fact]
+    public void PollResize_Reflow_RendersAnsiNotLiteralMarkup()
+    {
+        // Regression: the reflow window must render markup -> ANSI (via LiveRegion.WrapMarkupLine),
+        // NOT emit raw "[#RRGGBB]" / "[/]" markup tokens as literal text (which also bloated every
+        // row's width and broke the layout). Commit a styled line, resize, and assert the reflow
+        // output contains the visible text but none of the literal markup tags.
+        var term = new FakeTerminal { Width = 80, Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: false, ultra: false, psub: false);
+        d.PollResize();
+        d.CommitLine("[#8BE9FD]hello styled world[/]");
+        term.Clear();
+
+        term.Width = 40;
+        d.PollResize();
+
+        Assert.Contains("hello styled world", term.Output);
+        Assert.DoesNotContain("[#8BE9FD]", term.Output);   // no literal opening tag
+        Assert.DoesNotContain("[/]", term.Output);         // no literal closing tag
+    }
+
     // --- meter semantics (dual-color total/threshold) -----------------------
 
     [Fact]

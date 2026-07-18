@@ -1235,8 +1235,12 @@ internal sealed class TuiDriver
         var rows = new List<string>();
         // Walk entries newest-first, wrapping each at the current width, until we have a viewport's
         // worth of physical rows; then keep the freshest `room` rows. Bounded work: we stop early.
+        // Use LiveRegion.WrapMarkupLine (markup -> wrapped ANSI rows) - the SAME renderer the live
+        // band uses - so the reflowed transcript is real ANSI, not literal "[#RRGGBB]" markup tokens.
+        // (TuiMarkup.WrapMarkup returns MARKUP slices for NAV, which re-parses them; writing those
+        // straight to the terminal printed the raw tags and bloated every row's width.)
         for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
-            rows.InsertRange(0, TuiMarkup.WrapMarkup(_transcript[e].Collapsed, wrapW));
+            rows.InsertRange(0, LiveRegion.WrapMarkupLine(_transcript[e].Collapsed, wrapW));
         if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
         return rows;
     }
