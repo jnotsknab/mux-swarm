@@ -540,6 +540,73 @@ public class TuiCoreTests
         Assert.Contains(Ansi.ClearScreen, term.Output);
         Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
     }
+
+    // --- v0.12.4 inline-hardening: single-write + atomic synchronized transactions -----------
+
+    /// <summary>A fake terminal that counts Write/Flush calls, to assert each repaint transaction
+    /// is emitted as ONE Write + ONE Flush (buffered, not per-escape auto-flushed).</summary>
+    private sealed class CountingTerminal : ITuiTerminal
+    {
+        private readonly StringBuilder _sb = new();
+        public int Width { get; set; } = 40;
+        public int Height { get; set; } = 20;
+        public int Writes { get; private set; }
+        public int Flushes { get; private set; }
+        public void Write(string s) { Writes++; _sb.Append(s); }
+        public void Flush() { Flushes++; }
+        public string Output => _sb.ToString();
+        public void Reset() { _sb.Clear(); Writes = 0; Flushes = 0; }
+    }
+
+
+    [Fact]
+    public void LiveRegion_SetLive_FullRepaint_IsSingleWriteAndFlush()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Reset();
+
+        // Row-count change forces the full erase+repaint path.
+        lr.SetLive(new List<string> { "a", "b", "c" });
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+    }
+
+    [Fact]
+    public void LiveRegion_CommitAbove_IsSingleAtomicSynchronizedWrite()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "footer" });
+        term.Reset();
+
+        lr.CommitAbove(new List<string> { "permanent line" }, new List<string> { "footer2" });
+
+        // One buffered Write + one Flush for the whole erase->commit->repaint transaction.
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+        // Exactly one balanced synchronized-output envelope wraps the transaction, so a slow
+        // WSL/SSH path can never present the erased-but-not-repainted intermediate frame.
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.BeginSyncOutput));
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.EndSyncOutput));
+        Assert.Contains("permanent line", term.Output);
+        Assert.Contains("footer2", term.Output);
+    }
+
+    [Fact]
+    public void LiveRegion_SetLive_NoChange_EmitsNoRepaintWrite()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "stable" });
+        term.Reset();
+
+        lr.SetLive(new List<string> { "stable" });   // identical frame
+        // No visible repaint: at most a flush, and no erase/paint bytes.
+        Assert.DoesNotContain(Ansi.EraseLine, term.Output);
+        Assert.DoesNotContain(Ansi.EraseDown, term.Output);
+    }
     // --- emoji / wide-grapheme display width (table border alignment) -----------------------
 
     [Fact]

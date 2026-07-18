@@ -823,7 +823,11 @@ public static partial class MuxConsole
     internal static void CommitLinesToDriver(IReadOnlyList<string> markupLines) { if (ViaDriver) lock (ConsoleLock) { _driver!.Commit(markupLines); } }
 
     /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
-    internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
+    // Suspend the live view before a blocking external prompt / mode switch / exit. Serialized
+    // through ConsoleLock so it cannot race the ~100ms resize/sub-agent ticker painting concurrently
+    // (the driver's stated invariant is that its public methods run under the lock). The lock is
+    // reentrant, so callers already holding it are unaffected.
+    internal static void TuiSuspend() { if (ViaDriver) lock (ConsoleLock) { _driver!.Suspend(); } }
 
     /// <summary>
     /// Expand the latest large tool result INLINE (full panel above the footer) without entering
