@@ -136,6 +136,70 @@ public class FrameRendererTests
         Assert.Equal("", t.Output);
     }
 
+    // --- fixed passive frame-scroll indicator -------------------------------
+
+    [Theory]
+    [InlineData(1, 100, 20, 18)]
+    [InlineData(50, 100, 20, 9)]
+    [InlineData(100, 100, 20, 0)]
+    public void FrameScrollIndicator_TopMovesButSizeStaysFixed(int scroll, int maxScroll, int trackRows, int expectedTop)
+    {
+        var placement = TuiDriver.FrameScrollIndicatorPlacement(scroll, maxScroll, trackRows);
+        Assert.Equal(expectedTop, placement.Top);
+        Assert.Equal(2, placement.Length);
+    }
+
+    [Fact]
+    public void FrameScrollIndicator_TooShortTrack_UsesSingleCell()
+    {
+        var placement = TuiDriver.FrameScrollIndicatorPlacement(1, 2, 1);
+        Assert.Equal(0, placement.Top);
+        Assert.Equal(1, placement.Length);
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_KeyboardScrollShowsFixedIndicatorAndReturningTailClearsIt()
+    {
+        var t = new FakeTerminal { Width = 40, Height = 10 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        for (int i = 0; i < 40; i++) d.CommitLine($"line {i:D2}");
+
+        Assert.True(d.FrameScrollBy(10_000));
+        var scrolled = d.ComposeFrameRows();
+
+        string marker = Ansi.Invert + " " + Ansi.Reset;
+        Assert.Equal(2, scrolled.Count(r => r.EndsWith(marker, StringComparison.Ordinal)));
+
+        Assert.True(d.FrameScrollBy(-10_000));
+        var tail = d.ComposeFrameRows();
+        Assert.DoesNotContain(tail, r => r.EndsWith(marker, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_KeyboardScrollAtOldestBoundaryIsNoOp()
+    {
+        var t = new FakeTerminal { Width = 40, Height = 10 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        for (int i = 0; i < 40; i++) d.CommitLine($"line {i:D2}");
+
+        Assert.True(d.FrameScrollBy(10_000));
+        Assert.False(d.FrameScrollBy(10_000));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_DoesNotEmitMouseReportingModes()
+    {
+        var t = new FakeTerminal();
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 0, false, false, false);
+
+        Assert.DoesNotContain("\u001b[?1000h", t.Output);
+        Assert.DoesNotContain("\u001b[?1002h", t.Output);
+        Assert.DoesNotContain("\u001b[?1006h", t.Output);
+    }
+
     // --- driver under the frame engine ---------------------------------------
 
     [Fact]

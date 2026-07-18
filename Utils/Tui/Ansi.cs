@@ -52,14 +52,6 @@ internal static class Ansi
     /// <summary>Position the cursor at 1-based (row, col) (CSI row;col H).</summary>
     public static string MoveTo(int row, int col) => $"{CSI}{Math.Max(1, row)};{Math.Max(1, col)}H";
 
-    /// <summary>Enable mouse reporting: click (1000) + drag (1002) + SGR extended coords (1006).
-    /// Frame engine only, scoped to the prompt read loop so streamed output never races the
-    /// parser. SGR encoding is used because it is unambiguous and supports large terminals.</summary>
-    public const string MouseOn = CSI + "?1000h" + CSI + "?1002h" + CSI + "?1006h";
-
-    /// <summary>Disable mouse reporting (reverse order of <see cref="MouseOn"/>).</summary>
-    public const string MouseOff = CSI + "?1006l" + CSI + "?1002l" + CSI + "?1000l";
-
     /// <summary>Reverse-video / invert SGR (CSI 7m) - used to paint the NAV selection highlight.</summary>
     public const string Invert = CSI + "7m";
 
