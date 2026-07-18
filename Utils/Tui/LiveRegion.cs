@@ -390,6 +390,67 @@ internal sealed class LiveRegion
     }
 
     /// <summary>
+    /// v0.12.4 Option A - REFLOW repaint for a terminal RESIZE. Old committed rows already frozen in
+    /// native scrollback cannot be reflowed by any terminal (they are immutable cell data, not a
+    /// logical document - see Zellij/Codex/Claude-Code prior art). What we CAN reflow is the visible
+    /// content: the caller re-wraps a viewport-bounded window of the RETAINED logical transcript
+    /// (<paramref name="reflowRows"/>, already rendered to physical rows at the CURRENT width) plus
+    /// the live band (<paramref name="liveMarkup"/>). We clear the screen and repaint that whole
+    /// window as one bottom-anchored, atomic frame. Because the erase is a full ClearScreen (not a
+    /// cursor-up relative to a stale <c>_paintedRows</c>), nothing is stranded, and because the rows
+    /// were re-wrapped from the logical model at the new width, the on-screen text reflows cleanly
+    /// instead of keeping its old hard-wrap geometry. Content the user had already scrolled far past
+    /// stays in immutable native scrollback (unavoidable, and what every inline chat TUI does).
+    ///
+    /// The frame is bottom-anchored: if the reflowed window is shorter than the viewport it is
+    /// padded with leading blank rows so the footer/input stay docked at the bottom (fixes the
+    /// "huge gap + top-anchored footer" artifact of the old ForceRepaint, which painted only the
+    /// live band at the very top after a ClearScreen).
+    /// </summary>
+    public void ReflowRepaint(IReadOnlyList<string> reflowRows, IReadOnlyList<string> liveMarkup)
+    {
+        _live = liveMarkup is List<string> ll ? new List<string>(ll) : liveMarkup.ToList();
+        // Reset all cached geometry - after a reflow none of it describes the screen any more.
+        _paintedRows = 0;
+        _lastRows = new List<string>();
+        _rowCache.Clear();
+        _rowCacheWidth = -1;
+        _autoWrapDisabled = false;
+
+        int rows = Math.Max(1, Rows);
+        var live = ClampRows(RenderPhysicalRows(_live));
+        // The live band is always kept; the transcript window fills whatever viewport space is left
+        // above it (minus one headroom row for the trailing newline, matching ClampRows).
+        int transcriptRoom = Math.Max(0, rows - 1 - live.Count);
+        var window = new List<string>(reflowRows);
+        if (window.Count > transcriptRoom)
+            window = window.GetRange(window.Count - transcriptRoom, transcriptRoom); // keep the freshest
+
+        var frame = new List<string>(rows);
+        // Bottom-anchor: pad the top so the footer/input dock at the bottom instead of floating up.
+        for (int i = window.Count + live.Count; i < rows - 1; i++) frame.Add("");
+        frame.AddRange(window);
+        frame.AddRange(live);
+
+        var sb = new StringBuilder(1024);
+        HideCursorInto(sb);
+        sb.Append(Ansi.BeginSyncOutput).Append(Ansi.ClearScreen).Append(Ansi.Home);
+        sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them again
+        for (int i = 0; i < frame.Count; i++)
+        {
+            sb.Append(Ansi.EraseLine);
+            sb.Append(frame[i]);
+            sb.Append('\n');
+        }
+        _paintedRows = frame.Count;
+        _lastRows = frame;
+        _lastWidth = Cols;
+        sb.Append(Ansi.EndSyncOutput);
+        _term.Write(sb.ToString());
+        _term.Flush();
+    }
+
+    /// <summary>
     /// Commit permanent transcript lines into native scrollback ABOVE the live region:
     /// erase the live region, write the committed lines (which scroll naturally), then
     /// repaint the live region beneath them. This is how streamed/finished output becomes

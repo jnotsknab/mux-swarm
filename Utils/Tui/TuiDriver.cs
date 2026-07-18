@@ -1219,6 +1219,36 @@ internal sealed class TuiDriver
             _region.SetLive(BuildLiveFrame(Width));
     }
 
+    /// <summary>
+    /// v0.12.4 Option A - build the viewport-bounded window of RECENT transcript, re-wrapped at the
+    /// CURRENT terminal width, that a resize repaint reflows. This is the reflow: <c>_transcript</c>
+    /// holds the logical markup lines (width-independent); <see cref="TuiMarkup.WrapMarkup"/> re-wraps
+    /// each at the live width, so a narrow-&gt;wide (or wide-&gt;narrow) drag re-lays-out the on-screen
+    /// text instead of preserving its old hard-wrap geometry. Only the last viewport-worth of entries
+    /// is wrapped (older history stays in immutable native scrollback, which no terminal can reflow),
+    /// so the work is bounded regardless of transcript length.
+    /// </summary>
+    private List<string> BuildReflowWindow()
+    {
+        int wrapW = Math.Max(1, Width - 1);   // never render into the last column (no soft-wrap)
+        int room = Math.Max(1, Height);       // at most a viewport of transcript rows is ever visible
+        var rows = new List<string>();
+        // Walk entries newest-first, wrapping each at the current width, until we have a viewport's
+        // worth of physical rows; then keep the freshest `room` rows. Bounded work: we stop early.
+        for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
+            rows.InsertRange(0, TuiMarkup.WrapMarkup(_transcript[e].Collapsed, wrapW));
+        if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
+        return rows;
+    }
+
+    /// <summary>Reflow repaint for a resize / manual redraw: re-wrap the recent transcript window at
+    /// the new width and repaint it plus the live band as one bottom-anchored atomic frame.</summary>
+    private void ReflowNow()
+    {
+        lock (MuxConsole.ConsoleLock)
+            _region.ReflowRepaint(BuildReflowWindow(), BuildLiveFrame(Width));
+    }
+
     // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
     private int _lastSeenWidth = -1;
     private int _lastSeenHeight = -1;
@@ -1239,7 +1269,10 @@ internal sealed class TuiDriver
         _lastSeenWidth = w;
         _lastSeenHeight = h;
         if (first) return;        // just record the baseline on the first tick; nothing to redraw
-        _region.ForceRepaint();
+        // v0.12.4 Option A: reflow the visible transcript window at the new width instead of a plain
+        // live-band repaint. Re-wrapping from the retained logical model is what makes on-screen text
+        // re-lay-out on a drag-resize rather than stranding old hard-wrapped rows.
+        ReflowNow();
     }
 
     /// <summary>
@@ -1252,7 +1285,7 @@ internal sealed class TuiDriver
         // Re-sync the size baseline so the poll does not immediately re-fire after a manual redraw.
         _lastSeenWidth = _term.Width;
         _lastSeenHeight = _term.Height;
-        _region.ForceRepaint();
+        ReflowNow();
     }
 
     // --- bracketed paste -----------------------------------------------------

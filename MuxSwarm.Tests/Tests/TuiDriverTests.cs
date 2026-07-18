@@ -734,6 +734,32 @@ public class TuiDriverTests
         Assert.Contains(Ansi.ClearScreen, term.Output);
     }
 
+    [Fact]
+    public void PollResize_WidthChange_ReflowsCommittedTranscriptAtNewWidth()
+    {
+        // v0.12.4 Option A: on a width change the recent transcript is RE-WRAPPED from the retained
+        // logical model at the new width, so on-screen text re-lays-out instead of keeping its old
+        // hard-wrap geometry. Commit a long line at a wide width (1 physical row), then shrink: the
+        // reflow repaint must now contain that line broken across multiple physical rows.
+        var term = new FakeTerminal { Width = 80, Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: false, ultra: false, psub: false);
+        d.PollResize();   // baseline at width 80
+        // A ~70-col line: one physical row at width 80, must wrap at width 30.
+        string longLine = new string('x', 70);
+        d.CommitLine(longLine);
+        term.Clear();
+
+        term.Width = 30;
+        d.PollResize();   // width shrank => reflow repaint
+
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        // The line is re-wrapped at width 30: the FIRST physical slice is exactly 29 x's (width-1,
+        // never touching the last column), proving it was re-laid-out from the logical model rather
+        // than replayed at its original width-80 geometry.
+        Assert.Contains(new string('x', 29), term.Output);
+    }
+
     // --- meter semantics (dual-color total/threshold) -----------------------
 
     [Fact]

@@ -607,6 +607,56 @@ public class TuiCoreTests
         Assert.DoesNotContain(Ansi.EraseLine, term.Output);
         Assert.DoesNotContain(Ansi.EraseDown, term.Output);
     }
+
+    // --- v0.12.4 Option A: resize reflow of the recent transcript window --------------------
+
+    [Fact]
+    public void LiveRegion_ReflowRepaint_ClearsAndBottomAnchorsWindowPlusLive()
+    {
+        var term = new CountingTerminal { Width = 40, Height = 10 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "footer" });
+        term.Reset();
+
+        var window = new List<string> { "history one", "history two" };
+        var live = new List<string> { "rule", "footer", "> input" };
+        lr.ReflowRepaint(window, live);
+
+        // Full clear (resize repaint is a clean full redraw, never a stale cursor-up erase).
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        // One atomic synchronized envelope, one Write + Flush.
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.BeginSyncOutput));
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.EndSyncOutput));
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+        // Both the reflowed transcript window and the live band are present.
+        Assert.Contains("history one", term.Output);
+        Assert.Contains("history two", term.Output);
+        Assert.Contains("> input", term.Output);
+        // Bottom-anchored: window(2) + live(3) = 5 rows, viewport headroom = Height-1 = 9, so 4
+        // leading blank rows pad the top and the footer/input dock at the bottom.
+        Assert.Equal(9, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_ReflowRepaint_BoundsWindowToViewport()
+    {
+        var term = new CountingTerminal { Width = 40, Height = 6 };
+        var lr = new LiveRegion(term);
+        term.Reset();
+
+        // 20 history rows but only a 6-row viewport: the window must be clamped so the erase/paint
+        // never exceeds the viewport (the cursor-saturation stranding bug).
+        var window = Enumerable.Range(0, 20).Select(i => "line" + i).ToList();
+        var live = new List<string> { "footer" };
+        lr.ReflowRepaint(window, live);
+
+        // PaintedRows can never exceed the viewport-1 clamp used across the region.
+        Assert.True(lr.PaintedRows <= term.Height);
+        // The freshest history survives; the oldest is dropped (bounded window).
+        Assert.Contains("line19", term.Output);
+        Assert.DoesNotContain("line0\n", term.Output);
+    }
     // --- emoji / wide-grapheme display width (table border alignment) -----------------------
 
     [Fact]
