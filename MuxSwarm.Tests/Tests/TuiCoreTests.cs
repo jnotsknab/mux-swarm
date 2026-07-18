@@ -657,6 +657,34 @@ public class TuiCoreTests
         Assert.Contains("line19", term.Output);
         Assert.DoesNotContain("line0\n", term.Output);
     }
+    [Fact]
+    public void DIAG_StreamTailThenCommit_EraseGeometryIsExact()
+    {
+        // Reproduce the tail->commit cycle that the WSL screenshots show duplicating: paint a live
+        // frame with a streaming tail + footer, then commit that tail as a permanent line and
+        // repaint the footer. Assert the emitted stream erases EXACTLY the previously painted rows
+        // (no under-erase that would strand the old tail above the committed copy).
+        var term = new CountingTerminal { Width = 40, Height = 20 };
+        var lr = new LiveRegion(term);
+
+        // Frame 1: streaming tail "partial answer" + a rule + footer (3 rows).
+        lr.SetLive(new List<string> { "partial answer", "----", "footer" });
+        int painted1 = lr.PaintedRows;
+        term.Reset();
+
+        // Commit the finished line above, refreshing the live band to just rule+footer.
+        lr.CommitAbove(new List<string> { "partial answer" }, new List<string> { "----", "footer" });
+        string o = term.Output;
+
+        // Must move up over exactly the 3 rows painted in frame 1 before writing the committed line.
+        Assert.Contains(Ansi.CursorUp(painted1), o);
+        Assert.Contains(Ansi.EraseDown, o);
+        // Exactly one committed copy of the line in the stream (not two).
+        Assert.Equal(1, CountOccurrences(o, "partial answer"));
+        // New live band is 2 rows.
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
     // --- emoji / wide-grapheme display width (table border alignment) -----------------------
 
     [Fact]

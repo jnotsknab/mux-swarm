@@ -20,6 +20,14 @@ internal interface ITuiTerminal
 /// </summary>
 internal sealed class ConsoleTuiTerminal : ITuiTerminal
 {
+    // Opt-in raw-output capture for diagnosing render artifacts (esp. WSL/ConPTY). When the env var
+    // MUX_TUI_CAPTURE names a writable path, EVERY string written to the terminal is also appended
+    // there verbatim (escape sequences included), so the exact byte stream can be replayed/inspected
+    // offline. Unset (the default) => null => zero overhead and byte-identical behaviour.
+    private static readonly string? CapturePath =
+        Environment.GetEnvironmentVariable("MUX_TUI_CAPTURE") is { Length: > 0 } p ? p : null;
+    private readonly object _capLock = new();
+
     public int Width
     {
         get { try { return Math.Max(1, Console.BufferWidth); } catch { return 80; } }
@@ -28,8 +36,19 @@ internal sealed class ConsoleTuiTerminal : ITuiTerminal
     {
         get { try { return Math.Max(1, Console.WindowHeight); } catch { return 24; } }
     }
-    public void Write(string s) => Console.Out.Write(s);
+    public void Write(string s)
+    {
+        Console.Out.Write(s);
+        if (CapturePath is not null) Capture(s);
+    }
     public void Flush() { try { Console.Out.Flush(); } catch { /* ignore */ } }
+
+    private void Capture(string s)
+    {
+        // Best-effort; a capture failure must never disturb rendering.
+        try { lock (_capLock) System.IO.File.AppendAllText(CapturePath!, s); }
+        catch { /* ignore */ }
+    }
 }
 
 /// <summary>
