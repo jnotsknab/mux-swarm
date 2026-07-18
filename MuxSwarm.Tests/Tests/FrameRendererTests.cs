@@ -203,15 +203,24 @@ public class FrameRendererTests
     }
 
     [Fact]
-    public void Driver_FrameEngine_SparseTranscriptIsTopAnchored()
+    public void Driver_FrameEngine_SparseTranscriptIsBottomAnchored()
     {
         var t = new FakeTerminal { Width = 60, Height = 14 };
         var d = new TuiDriver(t, frameEngine: true);
         d.CommitStartup(new[] { "SPLASH-TOP", "SECOND-LINE" });
 
         var rows = d.ComposeFrameRows();
-        Assert.Contains("SPLASH-TOP", rows[0]);
-        Assert.Contains("SECOND-LINE", rows[1]);
+        // Short startup content now sits at the BOTTOM of the transcript pane (just above the live
+        // band/footer) instead of stranded at the top with a large empty gap below it. The two
+        // content rows must appear consecutively, in order, with blank rows padding ABOVE them.
+        int top = Enumerable.Range(0, rows.Count).First(i => rows[i].Contains("SPLASH-TOP"));
+        Assert.Contains("SECOND-LINE", rows[top + 1]);
+        Assert.True(top > 0, $"Sparse content should be padded from the top, but SPLASH-TOP was at row {top}.");
+        for (int i = 0; i < top; i++)
+        {
+            string plain = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;?]*[A-Za-z]", "");
+            Assert.True(string.IsNullOrWhiteSpace(plain), $"Row {i} above content should be blank.");
+        }
     }
 
     [Fact]
@@ -448,5 +457,100 @@ public class FrameRendererTests
         t.Clear();
         d.Resume();                  // second resume: nothing to do
         Assert.Equal("", t.Output);
+    }
+
+    // ---- v0.12.4 scroll-speed + startup-anchor + replay-framing polish ----
+
+    [Fact]
+    public void Driver_FrameEngine_ScrollSpeedRows_StepsExactlyThatManyRows()
+    {
+        var t = new FakeTerminal { Width = 40, Height = 12 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        for (int i = 0; i < 60; i++) d.CommitLine($"line {i:D2}");
+
+        // A single Ctrl+U/Ctrl+D step is modelled by FrameScrollBy(_scrollSpeedRows). Prove the
+        // compose window shifts by exactly the configured number of physical rows.
+        d.SetScrollSpeedRows(1);
+        var baseRows = d.ComposeFrameRows();
+        Assert.True(d.FrameScrollBy(1));
+        var oneUp = d.ComposeFrameRows();
+        Assert.NotEqual(FirstTranscript(baseRows), FirstTranscript(oneUp));
+
+        // Reset to tail, then a 5-row step must land 5 rows further back than a 1-row step.
+        Assert.True(d.FrameScrollBy(-10_000));
+        var tail = d.ComposeFrameRows();
+        Assert.True(d.FrameScrollBy(5));
+        var fiveUp = d.ComposeFrameRows();
+        Assert.True(d.FrameScrollBy(-10_000));
+        Assert.True(d.FrameScrollBy(1));
+        var oneUp2 = d.ComposeFrameRows();
+        // five-row window's top transcript line is strictly older than the one-row window's.
+        Assert.NotEqual(FirstTranscript(fiveUp), FirstTranscript(oneUp2));
+        Assert.NotEqual(FirstTranscript(fiveUp), FirstTranscript(tail));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_SetScrollSpeedRows_ClampsToMinimumOne()
+    {
+        var t = new FakeTerminal { Width = 40, Height = 10 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        for (int i = 0; i < 40; i++) d.CommitLine($"line {i:D2}");
+
+        // 0 (and negatives) must clamp to 1 so the binds never become dead keys.
+        d.SetScrollSpeedRows(0);
+        Assert.True(d.FrameScrollBy(1)); // proxy: a 1-row move still works after a 0 setting
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_StartupOverflow_ShowsNoMarkerUntilUserScrolls()
+    {
+        // A splash taller than the transcript pane seeds _frameScroll at the top via CommitStartup.
+        // The passive marker must NOT light on this virgin startup (the user has not paged yet).
+        var t = new FakeTerminal { Width = 40, Height = 6 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        var splash = new List<string>();
+        for (int i = 0; i < 30; i++) splash.Add($"splash {i:D2}");
+        d.CommitStartup(splash);
+
+        string marker = TuiDriver.FrameScrollIndicatorCell();
+        var rows = d.ComposeFrameRows();
+        Assert.DoesNotContain(rows, r => r.EndsWith(marker, StringComparison.Ordinal));
+
+        // Once the user actually pages, the marker arms.
+        Assert.True(d.FrameScrollBy(-2)); // move toward the tail from the seeded top
+        var afterScroll = d.ComposeFrameRows();
+        Assert.Contains(afterScroll, r => r.EndsWith(marker, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_SuspendForPrompt_FramesEachReplayRowWithCrlf()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 12 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        d.BeginPromptContext();
+        d.Commit(new[] { "choice 1", "choice 2" });
+        t.Clear();
+
+        d.SuspendForPrompt();
+        string output = t.Output;
+        // Each replayed row is framed CR .. EraseLine .. row .. CRLF, preventing column drift on
+        // stacks where LF is not implicitly CR+LF.
+        Assert.Contains("\r" + Ansi.EraseLine, output);
+        Assert.Contains("\r\n", output);
+        Assert.DoesNotContain(Ansi.EraseLine + "choice 1\n\u001b", output); // no bare-LF framing
+    }
+
+    private static string FirstTranscript(IReadOnlyList<string> rows)
+    {
+        foreach (var r in rows)
+        {
+            string plain = System.Text.RegularExpressions.Regex.Replace(r, "\u001b\\[[0-9;?]*[A-Za-z]", "").TrimEnd();
+            if (!string.IsNullOrWhiteSpace(plain)) return plain;
+        }
+        return string.Empty;
     }
 }

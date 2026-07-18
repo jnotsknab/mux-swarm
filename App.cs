@@ -296,6 +296,7 @@ public class App
         MuxConsole.FrameEngineEnabled = string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
+        MuxConsole.ScrollSpeedRows = Config.Console.ScrollSpeedRows;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
         MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
         MuxConsole.InputHighlight = Config.Console.InputHighlight;

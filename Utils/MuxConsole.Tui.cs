@@ -76,6 +76,12 @@ public static partial class MuxConsole
     /// from config at startup and pushed to the driver on activation + live via /set.</summary>
     public static int DelegationSpacing { get; set; } = 1;
 
+    /// <summary>Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame-mode viewport at the
+    /// idle prompt (console.scrollSpeedRows). PgUp/PgDn and Ctrl+B/Ctrl+F always page a full
+    /// viewport. Default 1. Seeded from config at startup and pushed to the driver on activation
+    /// + live via /set. Ignored outside the frame render engine.</summary>
+    public static int ScrollSpeedRows { get; set; } = 1;
+
     /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
     /// on activation + live via /set. Ignored outside the live TUI.</summary>
     public static bool InputHighlight { get; set; } = true;
@@ -585,6 +591,7 @@ public static partial class MuxConsole
                 catch { /* files optional */ }
                 _driver.SetCollapseThreshold(CollapseToolLines);
                 _driver.SetBlockGap(DelegationSpacing);
+                _driver.SetScrollSpeedRows(ScrollSpeedRows);
                 _driver.SetInputHighlight(InputHighlight);
                 _driver.SetCardMarkdown(CardMarkdown);
                 _driver.SetBracketedPaste(BracketedPaste);
@@ -778,6 +785,13 @@ public static partial class MuxConsole
         DelegationSpacing = Math.Max(0, lines);
         if (!ViaDriver) return;
         lock (ConsoleLock) { _driver!.SetBlockGap(DelegationSpacing); }
+    }
+
+    public static void SetTuiScrollSpeedRows(int rows)
+    {
+        ScrollSpeedRows = Math.Max(1, rows);
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetScrollSpeedRows(ScrollSpeedRows); }
     }
 
     /// <summary>True when the driver should handle this render (active and on the TUI path).</summary>

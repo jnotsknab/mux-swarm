@@ -292,6 +292,16 @@ public class ConsoleConfig
     public int DelegationSpacing { get; set; } = 1;
 
     /// <summary>
+    /// Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame-mode viewport at the idle
+    /// prompt. PgUp/PgDn and Ctrl+B/Ctrl+F always page a full viewport regardless of this value.
+    /// 1 = one row per step (default). Additive and non-invasive: absent in older configs
+    /// (defaults to 1); clamped to a minimum of 1. Adjusted live with
+    /// <c>/set scrollSpeedRows &lt;n&gt;</c>. Ignored outside the frame render engine.
+    /// </summary>
+    [JsonPropertyName("scrollSpeedRows")]
+    public int ScrollSpeedRows { get; set; } = 1;
+
+    /// <summary>
     /// When true (default), a delegated sub-agent's live output (streamed text, reasoning,
     /// and tool results) is collapsed into a single expandable transcript line instead of
     /// flowing inline, the way Claude Code collapses a launched Task. The sub-agent's thinking

@@ -194,6 +194,11 @@ internal sealed class TuiDriver
     private int _blockGap = 1;
     public void SetBlockGap(int lines) => _blockGap = Math.Max(0, lines);
 
+    /// <summary>Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame viewport at the idle
+    /// prompt (console.scrollSpeedRows). PgUp/PgDn and Ctrl+B/Ctrl+F stay full-page. Min 1.</summary>
+    private int _scrollSpeedRows = 1;
+    public void SetScrollSpeedRows(int rows) => _scrollSpeedRows = Math.Max(1, rows);
+
     /// <summary>Shade the user input/compose field on a band (console.inputHighlight).</summary>
     private bool _inputHighlight = true;
     public void SetInputHighlight(bool on) => _inputHighlight = on;
@@ -1451,19 +1456,13 @@ internal sealed class TuiDriver
         }
 
         var rows = new List<string>(h);
-        if (_frameScroll == 0 && totalRows <= transcriptRoom)
-        {
-            // Sparse startup/menu content belongs at the TOP of the transcript pane. The footer and
-            // input remain bottom-pinned because the unused rows are inserted between transcript
-            // and live band. Once history fills the pane this naturally becomes tail-anchored.
-            rows.AddRange(transcriptRows);
-            for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
-        }
-        else
-        {
-            for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
-            rows.AddRange(transcriptRows);
-        }
+        // Anchor transcript content to the BOTTOM of the pane (directly above the live band), so
+        // short startup/early-session content sits just over the input box instead of being stranded
+        // at the top with a large empty gap below it. Unused rows are inserted ABOVE the transcript;
+        // the footer/input stay bottom-pinned. Once history fills the pane this is naturally
+        // tail-anchored, and a scrolled-back window (_frameScroll > 0) already carries its own slice.
+        for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
+        rows.AddRange(transcriptRows);
         rows.AddRange(liveRows);
         if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
         while (rows.Count < h) rows.Add("");
@@ -1515,7 +1514,7 @@ internal sealed class TuiDriver
     {
         int trackRows = Math.Min(transcriptRoom, rows.Count);
         int maxScroll = Math.Max(0, totalRows - transcriptRoom);
-        bool visible = _frameScroll > 0 && maxScroll > 0 && trackRows > 0;
+        bool visible = _userScrolled && _frameScroll > 0 && maxScroll > 0 && trackRows > 0;
         var placement = FrameScrollIndicatorPlacement(_frameScroll, maxScroll, trackRows);
 
         for (int i = 0; i < trackRows; i++)
@@ -1536,6 +1535,12 @@ internal sealed class TuiDriver
     // in ComposeFrameRows to the oldest retained row.
     private int _frameScroll;
 
+    // True once the user has actively paged the frame viewport (Ctrl+U/D, PgUp/Dn, Ctrl+B/F) this
+    // session. Gates the passive scroll marker and the Esc/End snap-to-tail so a seeded startup
+    // offset (a tall splash opened at its top) never lights the marker or swallows the first Esc.
+    // Reset when the viewport returns to the live tail (snap or submit).
+    private bool _userScrolled;
+
     /// <summary>Frame engine: scroll the viewport by <paramref name="rows"/> physical rows
     /// (positive = back in history). Returns true when the offset changed (caller repaints).</summary>
     internal bool FrameScrollBy(int rows)
@@ -1546,6 +1551,10 @@ internal sealed class TuiDriver
         // Upper clamp happens in ComposeFrameRows (needs the wrapped row count). Return the actual
         // post-clamp movement so paging at the oldest boundary does not trigger redundant repaints.
         if (rows > 0) _ = ComposeFrameRows();
+        // A key-driven page into history arms the passive marker + Esc/End snap. A seeded startup
+        // offset (CommitStartup, which bypasses this method) never sets it, so a tall splash opened
+        // at its top shows no marker and does not swallow the first Esc.
+        if (_frameScroll > 0 && _frameScroll != prev) _userScrolled = true;
         return _frameScroll != prev;
     }
 
@@ -1920,9 +1929,9 @@ internal sealed class TuiDriver
 
                 // Frame engine only: page a REAL viewport over the retained transcript - the frame
                 // engine's replacement for the native scrollback the alt screen forfeits. Binds
-                // MIRROR the standard NAV pager so muscle memory carries over: Ctrl+U/Ctrl+D =
-                // half page, Ctrl+B/Ctrl+F = full page, PgUp/PgDn = full page (fallback), and
-                // Esc/End snap back to the live tail while paged. A tiny fixed-size passive marker
+                // MIRROR the standard NAV pager so muscle memory carries over: Ctrl+U/Ctrl+D step
+                // by console.scrollSpeedRows rows (default 1), Ctrl+B/Ctrl+F = full page, PgUp/PgDn
+                // = full page (fallback), and Esc/End snap back to the live tail while paged. A tiny fixed-size passive marker
                 // moves in the reserved last column to show position. Inline mode ignores all of
                 // these
                 // (native scrollback already works there). Ctrl+U keeps its kill-to-start editing
@@ -1932,15 +1941,15 @@ internal sealed class TuiDriver
                 {
                     bool ctrlMod = (key.Modifiers & ConsoleModifiers.Control) != 0;
                     int full = Math.Max(1, Height - 2);
-                    int half = Math.Max(1, full / 2);
                     int delta = 0;
                     if (key.Key == ConsoleKey.PageUp || (ctrlMod && key.Key == ConsoleKey.B)) delta = full;
                     else if (key.Key == ConsoleKey.PageDown || (ctrlMod && key.Key == ConsoleKey.F)) delta = -full;
-                    else if (ctrlMod && key.Key == ConsoleKey.U && _editor.Buffer.Length == 0) delta = half;
-                    else if (ctrlMod && key.Key == ConsoleKey.D && _editor.Buffer.Length == 0) delta = -half;
-                    else if (_frameScroll > 0 && (key.Key == ConsoleKey.End || key.Key == ConsoleKey.Escape))
+                    else if (ctrlMod && key.Key == ConsoleKey.U && _editor.Buffer.Length == 0) delta = _scrollSpeedRows;
+                    else if (ctrlMod && key.Key == ConsoleKey.D && _editor.Buffer.Length == 0) delta = -_scrollSpeedRows;
+                    else if (_userScrolled && _frameScroll > 0 && (key.Key == ConsoleKey.End || key.Key == ConsoleKey.Escape))
                     {
                         _frameScroll = 0;
+                        _userScrolled = false;
                         Repaint();
                         continue;
                     }
@@ -1990,6 +1999,7 @@ internal sealed class TuiDriver
                         _editor.Remember(line);
                         _inInput = false;
                         _frameScroll = 0;   // submitting always returns the frame viewport to the live tail
+                        _userScrolled = false;
                         // Erase input box, then echo the submitted line into scrollback with a
                         // leading blank + accent gutter so each turn is clearly delimited.
                         _pendingGap = false;
@@ -2506,7 +2516,11 @@ internal sealed class TuiDriver
 
         var sb = new System.Text.StringBuilder();
         sb.Append(Ansi.AutoWrapOff);
-        foreach (var row in replay) sb.Append(Ansi.EraseLine).Append(row).Append('\n');
+        // Each replayed row is framed CR..CRLF: the leading \r returns to column 0 (the cursor is
+        // wherever the restored primary buffer left it after HandBack), EraseLine clears the row, and
+        // the trailing \r\n prevents column drift/stair-stepping on stacks where LF is not implicitly
+        // CR+LF (raw ssh/tmux, some VT passthrough).
+        foreach (var row in replay) sb.Append('\r').Append(Ansi.EraseLine).Append(row).Append("\r\n");
         sb.Append(Ansi.AutoWrapOn);
         _term.Write(sb.ToString());
         _term.Flush();

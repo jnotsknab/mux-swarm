@@ -143,6 +143,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "scrollSpeedRows", Aliases = new[] { "scrollspeed", "scroll_speed_rows" }, ValueHint = "<int>=1",
+            Get = () => Cfg.Console.ScrollSpeedRows.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 1) return Bad($"scrollSpeedRows expects an integer >= 1 (got '{v}').");
+                Cfg.Console.ScrollSpeedRows = n;
+                MuxConsole.SetTuiScrollSpeedRows(n);             // live
+                return Save($"scrollSpeedRows = {n} row(s) per Ctrl+U/Ctrl+D step (frame mode). Saved + applied live.");
+            },
+        },
+        new Key
+        {
             Name = "brainMdCharLimit", Aliases = new[] { "brainlimit", "brain_limit" }, ValueHint = "<int>=0",
             Get = () => Cfg.ContextLimits.BrainMdCharLimit.ToString(),
             Set = v =>
