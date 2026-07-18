@@ -293,6 +293,7 @@ public class App
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
+        MuxConsole.FrameEngineEnabled = string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;

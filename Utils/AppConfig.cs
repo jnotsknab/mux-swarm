@@ -226,6 +226,21 @@ public class ConsoleConfig
     public string RenderMode { get; set; } = "auto";
 
     /// <summary>
+    /// v0.12.4 opt-in live-render backend for the interactive TUI: <c>"inline"</c> (default -
+    /// the native-scrollback log-update live region; committed transcript flows into the terminal's
+    /// own scrollback with a cursor-relative bottom footer) or <c>"frame"</c> (a full-frame renderer
+    /// that takes the alternate screen and repaints the WHOLE viewport from retained state every
+    /// present, diffing changed rows). Frame mode removes the hybrid model's resize/reflow artifacts
+    /// - the transcript is always re-wrapped at the current width and there is no scrollback-relative
+    /// anchor to lose - at the cost of native terminal scrollback while the TUI is active (history
+    /// is paged with PgUp/PgDn and browsable via Ctrl+G NAV). Blocking sub-prompts suspend the alt
+    /// screen (?1049l) and resume after, so Spectre pickers render on the primary buffer. The
+    /// default stays <c>"inline"</c>. Ignored in stdio/serve mode and on non-capable terminals.
+    /// </summary>
+    [JsonPropertyName("renderEngine")]
+    public string RenderEngine { get; set; } = "inline";
+
+    /// <summary>
     /// Named TUI color theme (see <see cref="Theme"/>): one of default | dark | light | mono |
     /// solarized | dracula | gruvbox. Selected via <c>/theme &lt;name&gt;</c> or the <c>/setup</c>
     /// theme step. <c>"default"</c> (or any unknown value) yields the original hardcoded palette,

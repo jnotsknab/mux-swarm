@@ -287,7 +287,7 @@ internal sealed class TuiDriver
         })[0];
         _transcript.Add(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
         TrimTranscript();
-        if (!_navActive) _region.CommitAbove(new[] { collapsed }, BuildLiveFrame(Width));
+        if (!_navActive) CommitPaint(new[] { collapsed });
         _pendingGap = true;
     }
 
@@ -304,7 +304,7 @@ internal sealed class TuiDriver
         // While the NAV overlay owns the screen (possibly opened mid-turn), retain history but
         // do NOT physically write - NAV exit issues a full repaint that reflects everything.
         if (_navActive) return;
-        _region.CommitAbove(lines, BuildLiveFrame(Width));
+        CommitPaint(lines);
     }
 
     // input state - true only inside ReadLine's raw-mode loop
@@ -377,11 +377,38 @@ internal sealed class TuiDriver
     /// Shift+Tab is ignored. Set by the session loop; cleared at the top-level menu.</summary>
     public Func<string?>? OnModeCycle { get; set; }
 
-    public TuiDriver(ITuiTerminal? term = null)
+    // v0.12.4 full-frame renderer (console.renderEngine = "frame"). When _engineFrame is set the
+    // driver takes complete alternate-screen ownership through this owner instead of the inline
+    // native-scrollback live region: every paint re-composes the WHOLE viewport (transcript tail
+    // re-wrapped at the current width + the pinned live/footer/input band) from retained state and
+    // presents one atomic diffed frame. Off (the default) the frame renderer is never touched and
+    // the inline path is byte-identical to today.
+    private readonly FrameRenderer _frame;
+    private readonly bool _engineFrame;
+
+    // Frame-engine SUSPEND latch (the fix for the sub-prompt shatter that killed the first frame
+    // engine). Suspend() leaves the alternate screen AND latches this flag; while latched, every
+    // frame-mode paint DEFERS (state is still retained) so the ~100ms sub-agent ticker / resize
+    // poll can never re-enter the alt screen while a blocking Spectre prompt owns the primary
+    // buffer. Resume() (paired TuiResume after each prompt, or ReadLine reclaiming the screen)
+    // unlatches, invalidates, and fully repaints. Volatile: set on prompt threads, read by timers.
+    private volatile bool _suspended;
+
+    public TuiDriver(ITuiTerminal? term = null, bool frameEngine = false)
     {
         _term = term ?? new ConsoleTuiTerminal();
         _region = new LiveRegion(_term);
+        _frame = new FrameRenderer(_term);
+        _engineFrame = frameEngine;
     }
+
+    /// <summary>True when the driver is running the v0.12.4 full-frame (alternate-screen) renderer
+    /// rather than the inline native-scrollback live region. Test/wiring hook.</summary>
+    public bool FrameEngine => _engineFrame;
+
+    /// <summary>True while the frame engine is suspended for a blocking external prompt (alt screen
+    /// left, presents deferred). Always false in inline mode. Test hook.</summary>
+    public bool Suspended => _engineFrame && _suspended;
 
     public int Width => Math.Max(20, _term.Width);
 
@@ -475,7 +502,7 @@ internal sealed class TuiDriver
         // driver commit methods which are not internally synchronized.
         FlushPendingToolCall();
         RetainExpandable(collapsedLine, agent, fullTranscript, error: false);
-        if (!_navActive) _region.CommitAbove(new[] { collapsedLine }, BuildLiveFrame(Width));
+        if (!_navActive) CommitPaint(new[] { collapsedLine });
         _pendingGap = true;
     }
 
@@ -796,7 +823,7 @@ internal sealed class TuiDriver
             RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
             for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
             TrimTranscript();
-            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
+            if (!_navActive) CommitPaint(merged);
         }
         else CommitMirrored(merged);
         _pendingGap = true;
@@ -1216,7 +1243,141 @@ internal sealed class TuiDriver
         // Repaint() previously raced the ticker's SetLive and stranded duplicate footers. The lock
         // is reentrant, so the many callers already under ConsoleLock are unaffected.
         lock (MuxConsole.ConsoleLock)
-            _region.SetLive(BuildLiveFrame(Width));
+            PaintNow();
+    }
+
+    // --- render-engine routing (inline live-region vs full-frame) -----------
+    // These helpers are the ONLY seam between the two renderers. In inline mode they call the
+    // native-scrollback LiveRegion exactly as before (byte-identical). In frame mode they route to
+    // the alternate-screen FrameRenderer, which re-composes and presents the WHOLE viewport from
+    // retained state each time - so a "commit above" is not a distinct physical operation, it is
+    // just another present of the (already-Retained) transcript. While the frame engine is
+    // SUSPENDED for a blocking prompt (see Suspend/Resume) every present is deferred: retained
+    // state still accrues, and Resume()'s invalidate+repaint reflects it all at once.
+
+    /// <summary>Repaint the live view: inline live band, or a full recomposed frame.</summary>
+    private void PaintNow()
+    {
+        if (_engineFrame) PresentFrame();
+        else _region.SetLive(BuildLiveFrame(Width));
+    }
+
+    /// <summary>Commit finished lines: inline pushes them into native scrollback and repaints the
+    /// live band; frame mode just presents (the lines are already retained in <c>_transcript</c>).</summary>
+    private void CommitPaint(IReadOnlyList<string> committedLines)
+    {
+        if (_engineFrame) PresentFrame();
+        else _region.CommitAbove(committedLines, BuildLiveFrame(Width));
+    }
+
+    /// <summary>Force a clean full repaint (resize / Ctrl+L): inline reflows the visible transcript
+    /// window; frame mode invalidates its cache so the next present is a full clear+redraw.</summary>
+    private void ForcePaint()
+    {
+        if (_engineFrame) { _frame.Invalidate(); PresentFrame(); }
+        else ReflowNow();
+    }
+
+    /// <summary>Hand the terminal back cleanly before a blocking external prompt / mode switch /
+    /// exit: inline erases the live band and shows the cursor; frame mode leaves the alternate
+    /// screen (restoring the primary buffer + native scrollback verbatim) and LATCHES suspended so
+    /// no timer-driven present can re-enter the alt screen while the prompt owns the terminal.</summary>
+    private void HandBack()
+    {
+        if (_engineFrame) { _suspended = true; _frame.Leave(); }
+        else _region.Clear();
+    }
+
+    /// <summary>Present one full-frame viewport (frame engine only). Deferred while suspended.</summary>
+    private void PresentFrame()
+    {
+        if (_suspended) return;
+        _frame.Present(ComposeFrameRows());
+    }
+
+    /// <summary>
+    /// Frame engine only: return from a blocking external prompt. Unlatches the suspend, discards
+    /// the cached frame (the prompt drew arbitrary content on the primary buffer; the next present
+    /// re-enters the alt screen from a clean slate), and repaints everything retained while
+    /// suspended. Inline mode is a no-op - the next status repaint restores its footer as before.
+    /// </summary>
+    public void Resume()
+    {
+        if (!_engineFrame || !_suspended) return;
+        _suspended = false;
+        _frame.Invalidate();
+        Repaint();
+    }
+
+    /// <summary>
+    /// Compose the full-frame viewport: the visible transcript tail (retained <c>_transcript</c>
+    /// entries re-wrapped at the CURRENT width, bottom-anchored) topped up to fill the space above
+    /// the live band, then the live stream/tool/footer/input band pinned at the bottom. Every row is
+    /// rendered to ANSI through the SAME wrapper the inline region uses, so frame output is visually
+    /// identical to inline output. Honors <see cref="_frameScroll"/>: when the user has paged back,
+    /// the transcript window slides up by that many physical rows (a real viewport over retained
+    /// history - the frame engine's replacement for native scrollback). Returns exactly
+    /// <c>height</c> physical rows.
+    /// </summary>
+    private List<string> ComposeFrameRows()
+    {
+        int h = Math.Max(1, _term.Height);
+        int cols = Math.Max(1, _term.Width);
+        // Wrap to width-1 and never touch the last column (matches the NAV painter) so a full-width
+        // row can never trip the terminal's bottom-right auto-scroll even with auto-wrap toggled.
+        int wrapW = Math.Max(1, cols - 1);
+
+        // Live band (bottom): built at the floored Width (component layout), wrapped at the real
+        // width - exactly what the inline region does before painting.
+        var liveRows = new List<string>();
+        foreach (var ml in BuildLiveFrame(Width))
+            liveRows.AddRange(LiveRegion.WrapMarkupLine(ml, wrapW));
+        if (liveRows.Count > h)
+            liveRows = liveRows.GetRange(liveRows.Count - h, h);  // keep the freshest tail on screen
+
+        int transcriptRoom = h - liveRows.Count;
+        var transcriptRows = new List<string>();
+        int maxScroll = 0;
+        if (transcriptRoom > 0)
+        {
+            // Render retained entries bottom-up until we have enough rows to satisfy the visible
+            // window PLUS the requested scroll offset, then slide the window up by the offset.
+            int want = transcriptRoom + Math.Max(0, _frameScroll);
+            for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
+                transcriptRows.InsertRange(0, LiveRegion.WrapMarkupLine(_transcript[e].Collapsed, wrapW));
+            maxScroll = Math.Max(0, transcriptRows.Count - transcriptRoom);
+            if (_frameScroll > maxScroll) _frameScroll = maxScroll;   // clamp at oldest retained row
+            int skipTail = Math.Max(0, _frameScroll);
+            int end = transcriptRows.Count - skipTail;
+            int start = Math.Max(0, end - transcriptRoom);
+            transcriptRows = transcriptRows.GetRange(start, Math.Max(0, end - start));
+        }
+
+        var rows = new List<string>(h);
+        for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");  // top padding
+        rows.AddRange(transcriptRows);
+        rows.AddRange(liveRows);
+        if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
+        while (rows.Count < h) rows.Add("");
+        return rows;
+    }
+
+    // Frame-engine viewport scroll offset, in physical rows above the live tail (0 = pinned to the
+    // newest content). PgUp/PgDn / Ctrl+U/Ctrl+D at the prompt adjust it; any commit/stream keeps
+    // the offset (the user is reading history) until they page back to 0 or press End/Esc. Clamped
+    // in ComposeFrameRows to the oldest retained row.
+    private int _frameScroll;
+
+    /// <summary>Frame engine: scroll the viewport by <paramref name="rows"/> physical rows
+    /// (positive = back in history). Returns true when the offset changed (caller repaints).</summary>
+    private bool FrameScrollBy(int rows)
+    {
+        if (!_engineFrame) return false;
+        int prev = _frameScroll;
+        _frameScroll = Math.Max(0, _frameScroll + rows);
+        // Upper clamp happens in ComposeFrameRows (needs the wrapped row count); optimistically
+        // accept here and let the next present snap it back.
+        return _frameScroll != prev;
     }
 
     /// <summary>
@@ -1273,10 +1434,9 @@ internal sealed class TuiDriver
         _lastSeenWidth = w;
         _lastSeenHeight = h;
         if (first) return;        // just record the baseline on the first tick; nothing to redraw
-        // v0.12.4 Option A: reflow the visible transcript window at the new width instead of a plain
-        // live-band repaint. Re-wrapping from the retained logical model is what makes on-screen text
-        // re-lay-out on a drag-resize rather than stranding old hard-wrapped rows.
-        ReflowNow();
+        // Inline: v0.12.4 Option A reflow of the visible transcript window at the new width.
+        // Frame: invalidate + full recomposed present at the new geometry (no reflow seam at all).
+        ForcePaint();
     }
 
     /// <summary>
@@ -1289,7 +1449,7 @@ internal sealed class TuiDriver
         // Re-sync the size baseline so the poll does not immediately re-fire after a manual redraw.
         _lastSeenWidth = _term.Width;
         _lastSeenHeight = _term.Height;
-        ReflowNow();
+        ForcePaint();
     }
 
     // --- bracketed paste -----------------------------------------------------
@@ -1410,7 +1570,7 @@ internal sealed class TuiDriver
                         catch (InvalidOperationException)
                         {
                             _inInput = false;
-                            _region.Clear();
+                            HandBack();
                             return Console.ReadLine();
                         }
                         // ~10 fps indicator animation while listening/hearing/transcribing.
@@ -1432,7 +1592,7 @@ internal sealed class TuiDriver
                     {
                         // stdin not a real console (shouldn't happen in TUI) - fall back.
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return Console.ReadLine();
                     }
                 }
@@ -1587,6 +1747,17 @@ internal sealed class TuiDriver
                     continue;
                 }
 
+                // Frame engine only: PgUp/PgDn page a REAL viewport over the retained transcript -
+                // the frame engine's replacement for the native scrollback the alt screen forfeits.
+                // PgUp scrolls back, PgDn scrolls forward; paging past the newest row pins back to
+                // the live tail. Inline mode ignores these (native scrollback already works there).
+                if (_engineFrame && (key.Key == ConsoleKey.PageUp || key.Key == ConsoleKey.PageDown))
+                {
+                    int page = Math.Max(1, Height - 2);
+                    if (FrameScrollBy(key.Key == ConsoleKey.PageUp ? page : -page)) Repaint();
+                    continue;
+                }
+
                 // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual
                 // when no team board is active. Does not cancel or submit.
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.T)
@@ -1625,6 +1796,7 @@ internal sealed class TuiDriver
                         string line = _editor.Buffer;
                         _editor.Remember(line);
                         _inInput = false;
+                        _frameScroll = 0;   // submitting always returns the frame viewport to the live tail
                         // Erase input box, then echo the submitted line into scrollback with a
                         // leading blank + accent gutter so each turn is clearly delimited.
                         _pendingGap = false;
@@ -1638,11 +1810,11 @@ internal sealed class TuiDriver
                     }
                     case LineEditSignal.Cancel:
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return null;
                     case LineEditSignal.Eof:
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return null;
                     case LineEditSignal.ModeCycle:
                         if (OnModeCycle is not null)
@@ -2006,7 +2178,12 @@ internal sealed class TuiDriver
         {
             try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
             _region.HideCursor();
-            _term.Write(Ansi.EnterAltScreen);
+            // In frame mode the FrameRenderer already OWNS the alternate screen, so NAV must not
+            // nest another EnterAltScreen (?1049h is not a stack - a later single LeaveAltScreen
+            // would then pop us to the primary buffer while the frame renderer still believed it
+            // owned the alt screen). NAV just paints over the shared alt screen and, on exit,
+            // invalidates the frame so it fully redraws. Inline mode enters/leaves as before.
+            if (!_engineFrame) _term.Write(Ansi.EnterAltScreen);
             _term.Write(Ansi.AutoWrapOff);   // full-width rows must not wrap (kills the stray line below the footer)
             _term.Write(Ansi.HideCursor);
             Paint();
@@ -2083,7 +2260,11 @@ internal sealed class TuiDriver
             // Restore the primary screen buffer (scrollback intact) and repaint one fresh live
             // frame reflecting everything that streamed/committed (deferred) while NAV was open.
             _term.Write(Ansi.AutoWrapOn);
-            _term.Write(Ansi.LeaveAltScreen);
+            // Inline mode pops back to the primary buffer; frame mode STAYS on the shared alt
+            // screen (the frame renderer owns it) and force-invalidates so the deferred stream/
+            // commit history that accrued while NAV was open is fully redrawn on the next present.
+            if (_engineFrame) _frame.Invalidate();
+            else _term.Write(Ansi.LeaveAltScreen);
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
             _navActive = false;
             Repaint();
@@ -2094,7 +2275,7 @@ internal sealed class TuiDriver
     /// Clear the live region and hand the terminal back cleanly (cursor shown, no residue).
     /// Called before any blocking external prompt, mode switch, or exit. Idempotent.
     /// </summary>
-    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); _region.Clear(); }
+    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); HandBack(); }
 
     /// <summary>
     /// Full teardown for process exit / mode switch: clear the live region, show the cursor.
@@ -2105,6 +2286,6 @@ internal sealed class TuiDriver
         if (_shuttingDown) return;
         _shuttingDown = true;
         try { if (_bracketedPaste) { _term.Write(Ansi.BracketedPasteOff); _term.Flush(); } } catch { /* ignore */ }
-        try { _region.Clear(); } catch { /* ignore */ }
+        try { HandBack(); } catch { /* ignore */ }
     }
 }

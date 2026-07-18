@@ -437,6 +437,7 @@ public static partial class MuxConsole
                 .UseConverter(Esc)
                 .AddChoices(withBail));
         ErasePromptResidue(_resTop);
+        TuiResume();
 
         if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
         if (sel == CustomAffordanceLabel)
@@ -482,6 +483,7 @@ public static partial class MuxConsole
                 .UseConverter(Esc)
                 .AddChoices(new List<string>(opts) { CancelAffordanceLabel }));
         ErasePromptResidue(_resTop);
+        TuiResume();
         if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
         return PromptChoice.Picked(sel.Equals("Yes", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
     }
@@ -517,6 +519,7 @@ public static partial class MuxConsole
                 .AddChoices(withBail))
             .ToList();
         ErasePromptResidue(_resTop);
+        TuiResume();
 
         if (picked.Contains(CancelAffordanceLabel) || picked.Count == 0)
             return PromptChoice.Cancel();
@@ -1320,6 +1323,7 @@ public static partial class MuxConsole
 
         var _ans = AnsiConsole.Prompt(prompt).Trim();
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _ans;
     }
 
@@ -1341,10 +1345,12 @@ public static partial class MuxConsole
             return InputOverride.ReadLine()?.Trim() ?? string.Empty;
         }
 
-        return AnsiConsole.Prompt(
+        var _sec = AnsiConsole.Prompt(
             new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
                 .PromptStyle(new Style(Color.White))
                 .Secret());
+        TuiResume();
+        return _sec;
     }
 
     public static bool Confirm(string message, bool defaultValue = true)
@@ -1369,6 +1375,7 @@ public static partial class MuxConsole
 
         var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Esc(message)}[/]", defaultValue);
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _c;
     }
 
@@ -1403,6 +1410,7 @@ public static partial class MuxConsole
                 .UseConverter(Esc)
                 .AddChoices(choices));
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _sel;
     }
 
@@ -1442,6 +1450,7 @@ public static partial class MuxConsole
                 .AddChoices(choices))
             .ToList();
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _ms;
     }
 

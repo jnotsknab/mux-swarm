@@ -51,6 +51,14 @@ public static partial class MuxConsole
     public static bool DockedFooterEnabled { get; set; } = true;
 
     /// <summary>
+    /// v0.12.4 opt-in render backend. When true the live TUI uses the full-frame
+    /// (alternate-screen) renderer instead of the inline native-scrollback live region. Set from
+    /// console.renderEngine == "frame" at startup and passed to the driver on construction. Has no
+    /// effect outside the live TUI / on non-capable terminals.
+    /// </summary>
+    public static bool FrameEngineEnabled { get; set; }
+
+    /// <summary>
     /// Informative-line threshold above which a collapsed tool result is Ctrl+E-expandable in
     /// the live TUI. Set from console.collapseToolLines; pushed to the driver on activation.
     /// 0 disables the expand affordance. Default 6.
@@ -520,7 +528,7 @@ public static partial class MuxConsole
             {
                 if (_driver is null)
                 {
-                    _driver = new TuiDriver();
+                    _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
                     _tuiActive = true;
                     // Idle-prompt backslash opens the Agent View dashboard (same entry as the
                     // mid-turn EscapeKeyListener path). Returns false when no agents are running,
@@ -828,6 +836,12 @@ public static partial class MuxConsole
     // (the driver's stated invariant is that its public methods run under the lock). The lock is
     // reentrant, so callers already holding it are unaffected.
     internal static void TuiSuspend() { if (ViaDriver) lock (ConsoleLock) { _driver!.Suspend(); } }
+
+    /// <summary>Resume the live view after a blocking external prompt. Frame engine: re-enter the
+    /// alternate screen and repaint everything retained while suspended (the suspend-envelope fix
+    /// for the sub-prompt shatter). Inline engine: no-op - the next status repaint restores the
+    /// footer as before. Serialized under ConsoleLock like TuiSuspend.</summary>
+    internal static void TuiResume() { if (ViaDriver) lock (ConsoleLock) { _driver!.Resume(); } }
 
     /// <summary>
     /// Expand the latest large tool result INLINE (full panel above the footer) without entering

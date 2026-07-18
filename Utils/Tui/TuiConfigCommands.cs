@@ -91,6 +91,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "renderEngine", Aliases = new[] { "engine" }, ValueHint = "inline|frame",
+            Get = () => Cfg.Console.RenderEngine,
+            Set = v =>
+            {
+                v = v.ToLowerInvariant();
+                if (v is not ("inline" or "frame")) return Bad($"renderEngine expects inline|frame (got '{v}').");
+                Cfg.Console.RenderEngine = v;
+                return Save($"renderEngine = {v}. Saved (applies on next launch).");
+            },
+        },
+        new Key
+        {
             Name = "toolOutput", Aliases = new[] { "verbose", "tool" }, ValueHint = "compact|full",
             Get = () => Cfg.Console.ToolOutput,
             Set = v =>
