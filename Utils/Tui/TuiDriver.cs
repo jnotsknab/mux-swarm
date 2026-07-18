@@ -1463,6 +1463,14 @@ internal sealed class TuiDriver
     private bool _mouseOn;
     private bool _win32Mouse;   // Win32 input-record path active (Windows console hosts)
     private bool _draggingThumb;
+    // Tick (Environment.TickCount64) of the last successfully-parsed mouse event. Drives the
+    // scroll-gate: for a short window after mouse activity, characters from the mouse-report
+    // alphabet that FAIL to parse as a report are swallowed instead of typed - fragments of
+    // burst-delivered reports (split arbitrarily by the .NET Unix driver) can otherwise leak
+    // into the editor as "<64;80;11M" garbage. Real typing is unaffected outside the window,
+    // and inside it only report-alphabet chars are gated.
+    private long _lastMouseTick = long.MinValue;
+    private const int MouseGateMs = 250;
 
     private readonly record struct MouseEvent(int Button, int X, int Y, bool Release);
 
@@ -1517,15 +1525,64 @@ internal sealed class TuiDriver
         return new MouseEvent(nums[0], nums[1], nums[2], final == 'm');
     }
 
+    /// <summary>Try to parse ONE more complete mouse report already sitting in the input queue
+    /// (used to coalesce wheel bursts). Peeks the lead char - ESC, '[', or '<' (however much of
+    /// the prefix the host driver stripped) - and delegates to <see cref="TryConsumeMouseEvent"/>
+    /// at the matching stage. Returns null (with the lead char replayed) when the queue head is
+    /// not a mouse report. Never blocks beyond the parser's own per-char patience.</summary>
+    private MouseEvent? TryParseQueuedMouse()
+    {
+        ConsoleKeyInfo k;
+        if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+        else if (!TryReadKeyNonBlocking(out k)) return null;
+        int stage = k.KeyChar switch { '\u001b' => 0, '[' => 1, '<' => 2, _ => -1 };
+        if (stage < 0) { RequeueFront(k); return null; }
+        var ev = TryConsumeMouseEvent(stage);
+        if (ev is null) RequeueFront(k);   // put the lead char back IN FRONT of its replayed tail
+        return ev;
+    }
+
+    /// <summary>Re-insert a key at the FRONT of the unget queue (Queue has no push-front; rebuild).
+    /// Keeps input order exact when a speculative parse fails after its tail was replayed.</summary>
+    private void RequeueFront(ConsoleKeyInfo k)
+    {
+        if (_ungetq.Count == 0) { _ungetq.Enqueue(k); return; }
+        var rest = _ungetq.ToArray();
+        _ungetq.Clear();
+        _ungetq.Enqueue(k);
+        foreach (var r in rest) _ungetq.Enqueue(r);
+    }
+
     /// <summary>Handle a parsed mouse event at the prompt. Returns true when the event changed the
     /// viewport (caller repaints). Wheel up/down = 3-row scroll; left press/drag on the reserved
     /// rail column = absolute drag (map row -> scroll offset); release ends the drag.</summary>
     private bool HandleMouseEvent(MouseEvent ev)
     {
         const int WheelUp = 64, WheelDown = 65;
+        _lastMouseTick = Environment.TickCount64;   // arm the scroll-gate window
         int b = ev.Button & ~0x1C;   // strip modifier bits (shift/meta/ctrl)
-        if (b == WheelUp)  return FrameScrollBy(3);
-        if (b == WheelDown) return FrameScrollBy(-3);
+        if (b == WheelUp || b == WheelDown)
+        {
+            // Coalesce the burst: a fast wheel emits dozens of reports; parsing + repainting each
+            // one lets later fragments queue mid-parse (the leak source) and wastes presents.
+            // Drain every immediately-queued report into ONE net scroll delta, then repaint once.
+            int net = b == WheelUp ? 3 : -3;
+            while (TryParseQueuedMouse() is { } more)
+            {
+                _lastMouseTick = Environment.TickCount64;
+                int mb = more.Button & ~0x1C;
+                if (mb == WheelUp) net += 3;
+                else if (mb == WheelDown) net -= 3;
+                else
+                {
+                    // Non-wheel event inside the burst: apply the accumulated scroll, then handle it.
+                    bool moved0 = net != 0 && FrameScrollBy(net);
+                    bool moved1 = HandleMouseEvent(more);
+                    return moved0 || moved1;
+                }
+            }
+            return net != 0 && FrameScrollBy(net);
+        }
 
         // Rail interactions: the rail lives in the reserved last physical column (Width + 1,
         // 1-based). The press hit-zone is the last TWO columns - a 1-cell rail is a hard pointer
@@ -1857,6 +1914,26 @@ internal sealed class TuiDriver
                     {
                         if (HandleMouseEvent(m)) Repaint();
                         continue;
+                    }
+
+                    // Scroll-gate: during an active mouse burst (within MouseGateMs of the last
+                    // parsed event) swallow characters from the report alphabet that FAILED to
+                    // parse as a report - they are fragments of a split/torn report (the .NET Unix
+                    // driver can hand them over at arbitrary boundaries) and would otherwise be
+                    // typed into the editor as "<64;80;11M" garbage. Outside the window, or for
+                    // any char not in the report alphabet, typing is completely unaffected - so a
+                    // user can still type '<', digits, ';', 'M'/'m' normally; they are only gated
+                    // in the fraction of a second surrounding real mouse activity.
+                    if (Environment.TickCount64 - _lastMouseTick <= MouseGateMs)
+                    {
+                        char ch = key.KeyChar;
+                        bool reportAlphabet = ch == '\u001b' || ch == '[' || ch == '<' || ch == ';'
+                            || ch == 'M' || ch == 'm' || (ch >= '0' && ch <= '9');
+                        if (reportAlphabet)
+                        {
+                            _lastMouseTick = Environment.TickCount64;   // fragment seen: extend the gate
+                            continue;                                   // swallow, never type it
+                        }
                     }
                 }
 
