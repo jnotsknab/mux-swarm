@@ -58,10 +58,10 @@ public static partial class MuxConsole
     /// </summary>
     public static bool FrameEngineEnabled { get; set; }
 
-    /// <summary>Compact splash (markup lines) captured at startup for the frame engine to commit
-    /// into the driver transcript on activation - the alt screen hides the primary-buffer splash,
-    /// so the frame shows this retained copy instead. Null outside frame mode. Consumed once.</summary>
-    internal static List<string>? FrameSplashLines { get; set; }
+    /// <summary>Deferred full splash builder captured at startup for the frame engine. Layout runs
+    /// at driver activation using the CURRENT terminal width, so a resize between the primary-buffer
+    /// Spectre splash and alternate-screen takeover cannot leave stale panel geometry. Consumed once.</summary>
+    internal static Func<int, List<string>>? FrameSplashFactory { get; set; }
 
     /// <summary>
     /// Informative-line threshold above which a collapsed tool result is Ctrl+E-expandable in
@@ -536,10 +536,10 @@ public static partial class MuxConsole
                     _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
                     // Frame mode: seed the transcript with the retained splash so the first frame
                     // opens on the banner (the primary-buffer splash is hidden by the alt screen).
-                    if (FrameEngineEnabled && FrameSplashLines is { Count: > 0 } fsl)
+                    if (FrameEngineEnabled && FrameSplashFactory is { } splashFactory)
                     {
-                        _driver.Commit(fsl);
-                        FrameSplashLines = null;
+                        _driver.CommitStartup(splashFactory(_driver.Width + 1));
+                        FrameSplashFactory = null;
                     }
                     _tuiActive = true;
                     // Idle-prompt backslash opens the Agent View dashboard (same entry as the
@@ -848,6 +848,10 @@ public static partial class MuxConsole
     // (the driver's stated invariant is that its public methods run under the lock). The lock is
     // reentrant, so callers already holding it are unaffected.
     internal static void TuiSuspend() { if (ViaDriver) lock (ConsoleLock) { _driver!.Suspend(); } }
+
+    /// <summary>Suspend specifically for a bare text prompt. Frame mode replays the newly-committed
+    /// command context onto the restored primary buffer before Spectre draws the input line.</summary>
+    internal static void TuiSuspendForPrompt() { if (ViaDriver) lock (ConsoleLock) { _driver!.SuspendForPrompt(); } }
 
     /// <summary>Resume the live view after a blocking external prompt. Frame engine: re-enter the
     /// alternate screen and repaint everything retained while suspended (the suspend-envelope fix

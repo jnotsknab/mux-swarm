@@ -1,4 +1,5 @@
 using System.Linq;
+using MuxSwarm.Utils;
 using MuxSwarm.Utils.Tui;
 
 namespace MuxSwarm.Tests.Tests;
@@ -139,14 +140,14 @@ public class FrameRendererTests
     // --- fixed passive frame-scroll indicator -------------------------------
 
     [Theory]
-    [InlineData(1, 100, 20, 18)]
-    [InlineData(50, 100, 20, 9)]
+    [InlineData(1, 100, 20, 19)]
+    [InlineData(50, 100, 20, 10)]
     [InlineData(100, 100, 20, 0)]
     public void FrameScrollIndicator_TopMovesButSizeStaysFixed(int scroll, int maxScroll, int trackRows, int expectedTop)
     {
         var placement = TuiDriver.FrameScrollIndicatorPlacement(scroll, maxScroll, trackRows);
         Assert.Equal(expectedTop, placement.Top);
-        Assert.Equal(2, placement.Length);
+        Assert.Equal(1, placement.Length);
     }
 
     [Fact]
@@ -168,12 +169,151 @@ public class FrameRendererTests
         Assert.True(d.FrameScrollBy(10_000));
         var scrolled = d.ComposeFrameRows();
 
-        string marker = Ansi.Invert + " " + Ansi.Reset;
-        Assert.Equal(2, scrolled.Count(r => r.EndsWith(marker, StringComparison.Ordinal)));
+        string marker = TuiDriver.FrameScrollIndicatorCell();
+        Assert.Single(scrolled, r => r.EndsWith(marker, StringComparison.Ordinal));
 
         Assert.True(d.FrameScrollBy(-10_000));
         var tail = d.ComposeFrameRows();
         Assert.DoesNotContain(tail, r => r.EndsWith(marker, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_FirstPageKeepsIndicatorNearBottom_ThenMovesUpMonotonically()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 16 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        for (int i = 0; i < 200; i++) d.CommitLine($"line {i:D3}");
+
+        string marker = TuiDriver.FrameScrollIndicatorCell();
+        static int MarkerRow(IReadOnlyList<string> rows, string marker)
+            => Enumerable.Range(0, rows.Count).Single(i => rows[i].EndsWith(marker, StringComparison.Ordinal));
+
+        Assert.True(d.FrameScrollBy(8));
+        var first = d.ComposeFrameRows();
+        int firstRow = MarkerRow(first, marker);
+        Assert.True(firstRow >= 5, $"First partial page marker was unexpectedly high: row {firstRow}");
+
+        Assert.True(d.FrameScrollBy(24));
+        int secondRow = MarkerRow(d.ComposeFrameRows(), marker);
+        Assert.True(secondRow < firstRow, $"Marker did not move upward: {firstRow} -> {secondRow}");
+
+        Assert.True(d.FrameScrollBy(10_000));
+        Assert.Equal(0, MarkerRow(d.ComposeFrameRows(), marker));
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_SparseTranscriptIsTopAnchored()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 14 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.CommitStartup(new[] { "SPLASH-TOP", "SECOND-LINE" });
+
+        var rows = d.ComposeFrameRows();
+        Assert.Contains("SPLASH-TOP", rows[0]);
+        Assert.Contains("SECOND-LINE", rows[1]);
+    }
+
+    [Fact]
+    public void FrameSplash_MediumIncludesFullBrandArtMascotAndHelp()
+    {
+        var rows = MuxConsole.BuildFrameSplashLines("0.12.4", "gtest", "Tip", "hello world", 120);
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
+
+        Assert.Contains("███╗", plain);
+        Assert.Contains("◠ ◠", plain);
+        Assert.Contains("███████╗██╗", plain);
+        Assert.Contains("v0.12.4", plain);
+        Assert.Contains("hello world", plain);
+        Assert.Contains("Check Out The Repo Here!", plain);
+        Assert.Contains("Type /help for commands", plain);
+    }
+
+
+    [Fact]
+    public void FrameSplash_MediumWrapsLongMessageWithoutDroppingTail()
+    {
+        string message = new string('x', 90) + " END-OF-MESSAGE";
+        var rows = MuxConsole.BuildFrameSplashLines("0.12.4", "", "Tip", message, 72);
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
+
+        Assert.Contains("END-OF-MESSAGE", plain);
+    }
+
+    [Fact]
+    public void FrameSplash_WideIncludesGettingStartedAndRecentSessions()
+    {
+        var sessions = new[]
+        {
+            new MuxConsole.SplashSession("2026-07-18_01-02-03", "agent", "test session"),
+        };
+        var rows = MuxConsole.BuildFrameSplashLines("0.12.4", "", "Fact", "hello", 220, sessions);
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
+
+        Assert.Contains("Getting Started", plain);
+        Assert.Contains("/swarm", plain);
+        Assert.Contains("Recent Sessions", plain);
+        Assert.Contains("2026-07-18_01-02-03", plain);
+        Assert.Contains("test session", plain);
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_SuspendForPrompt_ReplaysOnlyNewContext()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 12 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        d.CommitLine("old context");
+        d.BeginPromptContext();
+        d.Commit(new[] { "choice 1", "choice 2" });
+        t.Clear();
+
+        d.SuspendForPrompt();
+        string output = t.Output;
+        Assert.Contains(Ansi.LeaveAltScreen, output);
+        Assert.Contains("choice 1", output);
+        Assert.Contains("choice 2", output);
+        Assert.DoesNotContain("old context", output);
+
+        t.Clear();
+        d.SuspendForPrompt();
+        Assert.DoesNotContain("choice 1", t.Output);
+    }
+
+    [Fact]
+    public void Driver_InlineEngine_SuspendForPrompt_DoesNotReplayTranscript()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 12 };
+        var d = new TuiDriver(t, frameEngine: false);
+        d.SetFooter(1, 100, false, false, false);
+        d.BeginPromptContext();
+        d.CommitLine("inline choice");
+        t.Clear();
+
+        d.SuspendForPrompt();
+
+        Assert.DoesNotContain("inline choice", t.Output);
+        Assert.DoesNotContain(Ansi.LeaveAltScreen, t.Output);
+    }
+
+    [Fact]
+    public void Driver_FrameEngine_SuspendForPrompt_DefersPresentsUntilResume()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 12 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        d.BeginPromptContext();
+        d.CommitLine("choice");
+        d.SuspendForPrompt();
+        t.Clear();
+
+        d.SetFooter(2, 100, false, false, false);
+        d.CommitLine("while suspended");
+        Assert.Equal("", t.Output);
+
+        d.Resume();
+        Assert.Contains(Ansi.EnterAltScreen, t.Output);
+        Assert.Contains("while suspended", t.Output);
     }
 
     [Fact]

@@ -200,7 +200,12 @@ internal sealed class TuiDriver
 
     /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).</summary>
     private bool _cardMarkdown = true;
-    public void SetCardMarkdown(bool on) => _cardMarkdown = on;
+    public void SetCardMarkdown(bool on)
+    {
+        if (_cardMarkdown == on) return;
+        _cardMarkdown = on;
+        InvalidateFrameRowCounts();
+    }
 
     /// <summary>Capture a multi-line paste as one literal block (console.bracketedPaste, DECSET 2004)
     /// instead of submitting on the first embedded newline.</summary>
@@ -245,21 +250,78 @@ internal sealed class TuiDriver
         public (string Tool, string Text, bool Error)? Expandable; // non-null => Ctrl+E expandable
         public bool Expanded;                                      // current toggle state in NAV
         public bool DiffKind;                                      // expandable body is a unified diff
+        public long Sequence;                                      // monotonic prompt-replay watermark
     }
 
     private readonly List<Entry> _transcript = new();
+    private long _transcriptSequence;
+    private long _promptContextAfterSequence;
+
+    // Exact wrapped-row metrics for the frame scroll marker. Counts are cached per Entry at the
+    // active width; appends update the cache incrementally, while width/style/expansion changes
+    // invalidate it. This avoids an O(history) walk on every spinner tick or streamed line.
+    private readonly Dictionary<Entry, int> _frameRowCountCache = new();
+    private int _frameRowCountWidth = -1;
+    private int _frameTotalRowsCache;
+    private bool _frameRowCountValid;
+    private bool _frameRowCountCardMarkdown;
+
+    private void AddTranscriptEntry(Entry entry)
+    {
+        entry.Sequence = ++_transcriptSequence;
+        _transcript.Add(entry);
+        if (_frameRowCountValid && _frameRowCountWidth == Width
+            && _frameRowCountCardMarkdown == _cardMarkdown)
+        {
+            int count = RenderEntryRows(entry, _frameRowCountWidth).Count;
+            _frameRowCountCache[entry] = count;
+            _frameTotalRowsCache += count;
+        }
+        else
+        {
+            InvalidateFrameRowCounts();
+        }
+    }
+
+    private void InvalidateFrameRowCounts()
+    {
+        _frameRowCountValid = false;
+        _frameRowCountCache.Clear();
+        _frameTotalRowsCache = 0;
+    }
+
+    private int GetFrameTotalRows(int wrapWidth)
+    {
+        if (_frameRowCountValid && _frameRowCountWidth == wrapWidth
+            && _frameRowCountCardMarkdown == _cardMarkdown)
+            return _frameTotalRowsCache;
+
+        _frameRowCountCache.Clear();
+        int total = 0;
+        foreach (var entry in _transcript)
+        {
+            int count = RenderEntryRows(entry, wrapWidth).Count;
+            _frameRowCountCache[entry] = count;
+            total += count;
+        }
+        _frameRowCountWidth = wrapWidth;
+        _frameRowCountCardMarkdown = _cardMarkdown;
+        _frameTotalRowsCache = total;
+        _frameRowCountValid = true;
+        return total;
+    }
 
     /// <summary>Mirror committed plain markup lines into the transcript (one entry per line).</summary>
     private void Retain(IReadOnlyList<string> markupLines)
     {
-        foreach (var l in markupLines) _transcript.Add(new Entry { Collapsed = l });
+        foreach (var l in markupLines) AddTranscriptEntry(new Entry { Collapsed = l });
         TrimTranscript();
     }
 
     /// <summary>Mirror a single expandable tool-result line, retaining its full-panel data.</summary>
     private void RetainExpandable(string collapsedLine, string tool, string text, bool error)
     {
-        _transcript.Add(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
+        AddTranscriptEntry(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
         TrimTranscript();
     }
 
@@ -285,7 +347,7 @@ internal sealed class TuiDriver
             $"  [{TuiComponents.Accent}]\u270e diff[/] [{TuiComponents.Dim}]\u00b7 {Spectre.Console.Markup.Escape(shortTitle)}[/]  "
             + $"[{TuiComponents.DiffAdd}]+{adds}[/] [{TuiComponents.DiffDel}]\u2212{dels}[/] [{TuiComponents.Dim}](ctrl+e expand)[/]"
         })[0];
-        _transcript.Add(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
+        AddTranscriptEntry(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
         TrimTranscript();
         if (!_navActive) CommitPaint(new[] { collapsed });
         _pendingGap = true;
@@ -294,7 +356,17 @@ internal sealed class TuiDriver
     private void TrimTranscript()
     {
         int over = _transcript.Count - TranscriptCap;
-        if (over > 0) _transcript.RemoveRange(0, over);
+        if (over <= 0) return;
+        var removed = _transcript.GetRange(0, over);
+        _transcript.RemoveRange(0, over);
+        if (_frameRowCountValid)
+        {
+            foreach (var entry in removed)
+            {
+                if (_frameRowCountCache.Remove(entry, out int count)) _frameTotalRowsCache -= count;
+                else { InvalidateFrameRowCounts(); break; }
+            }
+        }
     }
 
     /// <summary>Retain + commit lines above the region (mirrors history for vim NAV scrollback).</summary>
@@ -492,6 +564,17 @@ internal sealed class TuiDriver
         CommitMirrored(Lane(markupLines));
     }
 
+    /// <summary>Seed frame-mode startup content and open it at the oldest/top edge when the full
+    /// splash is taller than the available transcript pane. A normal command submission resets the
+    /// viewport to the live tail. Used only during initial frame activation.</summary>
+    public void CommitStartup(IReadOnlyList<string> markupLines)
+    {
+        if (markupLines.Count == 0) return;
+        Retain(markupLines);
+        _frameScroll = int.MaxValue; // ComposeFrameRows clamps this to the exact oldest position.
+        CommitPaint(markupLines);
+    }
+
     /// <summary>Commit a single markup line above the region.</summary>
     public void CommitLine(string markupLine) => Commit(new[] { markupLine });
 
@@ -571,7 +654,7 @@ internal sealed class TuiDriver
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
             if (_transcript[i].Expandable is not null) { idx = i; break; }
-        if (idx >= 0) _transcript[idx].Expanded = true;
+        if (idx >= 0) { _transcript[idx].Expanded = true; InvalidateFrameRowCounts(); }
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -588,6 +671,7 @@ internal sealed class TuiDriver
             if (_transcript[i].Expandable is not null) { idx = i; break; }
         if (idx < 0) return false;
         _transcript[idx].Expanded = true;
+        InvalidateFrameRowCounts();
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -825,7 +909,7 @@ internal sealed class TuiDriver
         if (s.Expandable && merged.Count > 0)
         {
             RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
-            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
+            for (int k = 1; k < merged.Count; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
             TrimTranscript();
             if (!_navActive) CommitPaint(merged);
         }
@@ -1313,6 +1397,7 @@ internal sealed class TuiDriver
     {
         if (!_engineFrame || !_suspended) return;
         _suspended = false;
+        _promptContextAfterSequence = _transcriptSequence;
         _frame.Invalidate();
         Repaint();
     }
@@ -1346,19 +1431,19 @@ internal sealed class TuiDriver
 
         int transcriptRoom = h - liveRows.Count;
         var transcriptRows = new List<string>();
-        int totalRows = 0;
+        int totalRows = transcriptRoom > 0 ? GetFrameTotalRows(wrapW) : 0;
         if (transcriptRoom > 0)
         {
             // Render retained entries bottom-up until we have enough rows to satisfy the visible
             // window PLUS the requested scroll offset, then slide the window up by the offset.
-            // Expanded entries render their FULL panel (the same expansion NAV shows) so an open
-            // card is a coherent box, not just its collapsed one-liner.
+            // The marker/clamp use the exact cached total above, not this deliberately-bounded
+            // render window (the old code treated the partial count as the total and pinned the
+            // marker at the top after the first PgUp).
+            int maxScroll = Math.Max(0, totalRows - transcriptRoom);
+            if (_frameScroll > maxScroll) _frameScroll = maxScroll;
             int want = transcriptRoom + Math.Max(0, _frameScroll);
             for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
                 transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
-            totalRows = transcriptRows.Count;
-            int maxScroll = Math.Max(0, totalRows - transcriptRoom);
-            if (_frameScroll > maxScroll) _frameScroll = maxScroll;   // clamp at oldest retained row
             int skipTail = Math.Max(0, _frameScroll);
             int end = transcriptRows.Count - skipTail;
             int start = Math.Max(0, end - transcriptRoom);
@@ -1366,14 +1451,25 @@ internal sealed class TuiDriver
         }
 
         var rows = new List<string>(h);
-        for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");  // top padding
-        rows.AddRange(transcriptRows);
+        if (_frameScroll == 0 && totalRows <= transcriptRoom)
+        {
+            // Sparse startup/menu content belongs at the TOP of the transcript pane. The footer and
+            // input remain bottom-pinned because the unused rows are inserted between transcript
+            // and live band. Once history fills the pane this naturally becomes tail-anchored.
+            rows.AddRange(transcriptRows);
+            for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
+        }
+        else
+        {
+            for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
+            rows.AddRange(transcriptRows);
+        }
         rows.AddRange(liveRows);
         if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
         while (rows.Count < h) rows.Add("");
 
         // Keyboard-only scrollback gets a tiny passive position marker in the reserved last
-        // column. It has a fixed one/two-cell size and only moves vertically; there is no full rail,
+        // column. It has a fixed one-cell size and only moves vertically; there is no full rail,
         // dynamic thumb sizing, mouse hit target, or wheel/click/drag interaction.
         PaintFrameScrollIndicator(rows, transcriptRoom, totalRows);
         return rows;
@@ -1396,7 +1492,9 @@ internal sealed class TuiDriver
         return LiveRegion.WrapMarkupLine(ent.Collapsed, wrapW);
     }
 
-    private const int FrameScrollIndicatorSize = 2;
+    private const int FrameScrollIndicatorSize = 1;
+    internal static string FrameScrollIndicatorCell()
+        => TuiMarkup.ToAnsi($"[{TuiComponents.Accent}]▏[/]");
 
     /// <summary>Pure placement math for the passive frame-scroll marker. Offset 0 is the live
     /// tail (bottom); <paramref name="maxScroll"/> is the oldest retained position (top).</summary>
@@ -1428,7 +1526,7 @@ internal sealed class TuiDriver
             if (pad < 0) continue;
 
             bool marker = visible && i >= placement.Top && i < placement.Top + placement.Length;
-            rows[i] += marker ? Ansi.Invert + " " + Ansi.Reset : " ";
+            rows[i] += marker ? FrameScrollIndicatorCell() : " ";
         }
     }
 
@@ -1612,6 +1710,7 @@ internal sealed class TuiDriver
         _editor.Reset();
         _paletteSel = -1;
         _inInput = true;
+        BeginPromptContext();
         // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
         // sub-agent expansion never lingers into the input frame. The block stays Ctrl+E/NAV
         // expandable from its committed collapsed line in scrollback.
@@ -2332,6 +2431,7 @@ internal sealed class TuiDriver
                     var ent2 = _transcript[e];
                     if (ent2.Expandable is null) { Paint(); continue; }
                     ent2.Expanded = !ent2.Expanded;
+                    InvalidateFrameRowCounts();
                     (disp, owner) = Build();
                     model.Load(disp);
                     model.SeekRow(FirstLineOf(owner, e));   // stay on the toggled card, no top-snap
@@ -2347,6 +2447,7 @@ internal sealed class TuiDriver
             // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
             // Insert mode at the live input prompt.
             foreach (var e in _transcript) e.Expanded = false;
+            InvalidateFrameRowCounts();
             _editor.SetMode(EditorMode.Insert);
         }
         finally
@@ -2370,6 +2471,46 @@ internal sealed class TuiDriver
     /// Called before any blocking external prompt, mode switch, or exit. Idempotent.
     /// </summary>
     public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); HandBack(); }
+
+    /// <summary>Mark the transcript boundary for context produced by the next submitted command or
+    /// turn. A subsequent bare text prompt can replay only that newly-produced context after frame
+    /// mode leaves the alternate screen.</summary>
+    internal void BeginPromptContext() => _promptContextAfterSequence = _transcriptSequence;
+
+    /// <summary>Frame-mode bridge for a blocking bare Spectre text prompt. Leaves the alternate
+    /// screen, then writes transcript entries committed since the current prompt-context watermark
+    /// onto the restored primary buffer before Spectre draws its input line. This preserves lists
+    /// and explanatory panels from commands such as /setmodel, /swap and /provider. Inline mode is
+    /// identical to Suspend().</summary>
+    public void SuspendForPrompt()
+    {
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        HandBack();
+        if (!_engineFrame) return;
+
+        var replay = new List<string>();
+        foreach (var entry in _transcript)
+        {
+            if (entry.Sequence <= _promptContextAfterSequence) continue;
+            replay.AddRange(RenderEntryRows(entry, Width));
+        }
+        _promptContextAfterSequence = _transcriptSequence;
+        if (replay.Count == 0) return;
+        int maxReplayRows = Math.Max(20, Height * 4);
+        if (replay.Count > maxReplayRows)
+        {
+            replay = replay.GetRange(replay.Count - maxReplayRows + 1, maxReplayRows - 1);
+            replay.Insert(0, TuiMarkup.ToAnsi($"[{TuiComponents.Dim}]… earlier prompt context omitted[/]"));
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(Ansi.AutoWrapOff);
+        foreach (var row in replay) sb.Append(Ansi.EraseLine).Append(row).Append('\n');
+        sb.Append(Ansi.AutoWrapOn);
+        _term.Write(sb.ToString());
+        _term.Flush();
+    }
 
     /// <summary>
     /// Full teardown for process exit / mode switch: clear the live region, show the cursor.
