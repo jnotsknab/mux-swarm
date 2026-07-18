@@ -580,9 +580,10 @@ public static partial class MuxConsole
             // Frame engine: the alternate screen will cover everything written to the primary
             // buffer, so ALSO retain a compact splash for the TUI driver to commit into its
             // transcript on activation - the frame then opens showing the banner instead of a
-            // bare void (the "no splash in frame mode" bug).
-            if (FrameEngineEnabled)
-                FrameSplashLines = new List<string>
+            // bare void. Captured UNCONDITIONALLY because the splash writes BEFORE the config
+            // seeds FrameEngineEnabled (App startup order) - the driver only consumes it in frame
+            // mode, so inline mode is unaffected (the list just goes unused).
+            FrameSplashLines = new List<string>
                 {
                     $"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}",
                     string.IsNullOrEmpty(splashLabel)

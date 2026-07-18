@@ -1466,10 +1466,16 @@ internal sealed class TuiDriver
 
     private readonly record struct MouseEvent(int Button, int X, int Y, bool Release);
 
-    /// <summary>Parse an SGR mouse report after the leading ESC was consumed. Expects the queued
-    /// chars "[<b;x;yM" (or 'm' release). On mismatch, replays probed keys to the unget queue and
-    /// returns null so the ESC keeps its normal meaning.</summary>
-    private MouseEvent? TryConsumeMouseEvent()
+    /// <summary>Parse an SGR mouse report ("ESC [ &lt; b;x;y M|m"). <paramref name="stage"/> says
+    /// how much of the prefix the CALLER already consumed: 0 = the ESC (expect "[&lt;" next),
+    /// 1 = "ESC [" (expect "&lt;"), 2 = "ESC [ &lt;" (body next). Stages 1/2 exist because .NET's
+    /// Unix console driver pre-parses escape input and, for CSI sequences it does not recognize
+    /// (like SGR mouse), CONSUMES part of the prefix itself and delivers the remainder as ordinary
+    /// keypresses - so the report may reach the read loop starting at '[' or even '&lt;'. Without
+    /// these entry points every report dissolved into literal "&lt;64;80;11M" text typed into the
+    /// editor. On mismatch, replays probed keys to the unget queue and returns null so the
+    /// triggering char keeps its normal meaning.</summary>
+    private MouseEvent? TryConsumeMouseEvent(int stage)
     {
         var probed = new List<ConsoleKeyInfo>(16);
         bool Grab(out ConsoleKeyInfo k)
@@ -1489,8 +1495,9 @@ internal sealed class TuiDriver
         }
         void Replay() { foreach (var p in probed) _ungetq.Enqueue(p); }
 
-        if (!Grab(out var c) || c.KeyChar != '[') { Replay(); return null; }
-        if (!Grab(out c) || c.KeyChar != '<') { Replay(); return null; }
+        ConsoleKeyInfo c;
+        if (stage <= 0) { if (!Grab(out c) || c.KeyChar != '[') { Replay(); return null; } }
+        if (stage <= 1) { if (!Grab(out c) || c.KeyChar != '<') { Replay(); return null; } }
         int[] nums = new int[3]; int ni = 0; char final = '\0';
         var digits = new System.Text.StringBuilder();
         while (true)
@@ -1833,13 +1840,24 @@ internal sealed class TuiDriver
                     }
                 }
 
-                // Mouse reports (frame engine): ESC [ < b;x;y M|m arrives as raw chars. Parse and
-                // dispatch BEFORE bracketed paste so the '<' discriminator cleanly separates the two
-                // ESC-[ flows; a non-mouse ESC falls through with all probed keys replayed.
-                if (_mouseOn && key.KeyChar == '\u001b' && TryConsumeMouseEvent() is { } mev)
+                // Mouse reports (frame engine): ESC [ < b;x;y M|m. Depending on the host input
+                // stack the report reaches this loop at different depths: a raw ESC char (real
+                // tty), a '[' (the .NET Unix driver consumed the ESC), or a bare '<' (driver
+                // consumed "ESC[" - the common WSL/SSH case; without this entry the report body
+                // was typed into the editor as literal "<64;80;11M" garbage). All three probes
+                // fully replay on mismatch, so real Esc keypresses / '[' / '<' typing are never
+                // eaten. Runs BEFORE bracketed paste so the '<' discriminator separates the flows.
+                if (_mouseOn)
                 {
-                    if (HandleMouseEvent(mev)) Repaint();
-                    continue;
+                    MouseEvent? mev = null;
+                    if (key.KeyChar == '\u001b') mev = TryConsumeMouseEvent(0);
+                    else if (key.KeyChar == '[') mev = TryConsumeMouseEvent(1);
+                    else if (key.KeyChar == '<') mev = TryConsumeMouseEvent(2);
+                    if (mev is { } m)
+                    {
+                        if (HandleMouseEvent(m)) Repaint();
+                        continue;
+                    }
                 }
 
                 // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
