@@ -217,6 +217,38 @@ public class SgrInputAssemblerTests
     }
 
     [Fact]
+    public void Pump_PushFront_WinsOverQueue_AndPreservesFifo()
+    {
+        // The transition-race contract: an event the mid-turn listener took after the prompt
+        // claimed ownership is handed back via PushFront and MUST be the next event the prompt
+        // sees, ahead of anything already in the inner queue - and multiple pushed-back events
+        // keep their original order.
+        using var pump = ConsoleInputPump.CreateUnstartedForTest();
+        var a = ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('a', ConsoleKey.A, false, false, false));
+        var b = ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('b', ConsoleKey.B, false, false, false));
+        var q = ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('q', ConsoleKey.Q, false, false, false));
+        pump.Enqueue(q);                       // already buffered in the inner queue
+        pump.PushFront(new[] { a, b });        // handed back by the listener
+        Assert.Equal(3, pump.PendingCount);
+        Assert.True(pump.TryTake(out var e1, 0)); Assert.Equal('a', e1.Key.KeyChar);
+        Assert.True(pump.TryTake(out var e2, 0)); Assert.Equal('b', e2.Key.KeyChar);
+        Assert.True(pump.TryTake(out var e3, 0)); Assert.Equal('q', e3.Key.KeyChar);
+        Assert.False(pump.TryTake(out _, 0));
+    }
+
+    [Fact]
+    public void Pump_PromptActive_Flag_RoundTrips()
+    {
+        // Ownership flag used by TuiDriver.ReadLine (set for its lifetime) and honored by the
+        // EscapeKeyListener pump path (stands down while set).
+        Assert.False(ConsoleInputPump.PromptActive);
+        ConsoleInputPump.PromptActive = true;
+        try { Assert.True(ConsoleInputPump.PromptActive); }
+        finally { ConsoleInputPump.PromptActive = false; }
+        Assert.False(ConsoleInputPump.PromptActive);
+    }
+
+    [Fact]
     public void FalsePasteOpener_PassesThroughAsKeys()
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);

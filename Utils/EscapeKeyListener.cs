@@ -137,7 +137,23 @@ public sealed class EscapeKeyListener : IDisposable
                         // listener consumes typed events. Mouse reports are already reassembled
                         // upstream - wheel arrives as a Wheel event (scroll, never a cancel), and
                         // no report byte can ever be misread as an ESC or leak into the editor.
+                        //
+                        // PROMPT OWNERSHIP: this listener's using-scope in the orchestrators spans
+                        // the whole goal iteration - including the IDLE PROMPT after the turn ends.
+                        // Without standing down there, this loop and TuiDriver.ReadLine both block
+                        // on the same queue and typed events round-robin between them: every char
+                        // this loop stole was detoured through the replay queue and only surfaced
+                        // at the NEXT prompt entry (choppy typing + chars "flushed" a turn late).
+                        if (Tui.ConsoleInputPump.PromptActive) { Thread.Sleep(20); continue; }
                         if (!pump.TryTake(out var pev, 100)) continue;
+                        if (Tui.ConsoleInputPump.PromptActive)
+                        {
+                            // Transition race: the prompt claimed ownership while we blocked in
+                            // TryTake. Hand the event straight back at the FRONT of the stream
+                            // (FIFO preserved) - it belongs to the prompt, not to us.
+                            pump.PushFront(new[] { pev });
+                            continue;
+                        }
                         if (pev.Kind == Tui.ConsoleInputPump.EventKind.Wheel)
                         {
                             if (OnWheelScroll is not null)
@@ -226,10 +242,8 @@ public sealed class EscapeKeyListener : IDisposable
                         // "typing feels laggy and misses chars": previously these were dropped here.
                         ReplayKey(key);
                     }
-                    // Poll throttle for the LEGACY path only: the pump path already blocks in
-                    // TryTake(100), so sleeping after every consumed event just throttled the
-                    // mid-turn drain to ~10 events/sec (typed chars piled up in the pump queue
-                    // and were replayed en masse at the next prompt).
+                    // Poll throttle for the LEGACY path only: the pump path already paces itself
+                    // in TryTake(100) and must drain mid-turn events (typed chars, wheel) promptly.
                     if (Tui.ConsoleInputPump.Current is null) Thread.Sleep(100);
                 }
             }

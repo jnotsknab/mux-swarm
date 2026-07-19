@@ -35,6 +35,27 @@ internal sealed class ConsoleInputPump : IDisposable
     /// this to choose the pump path vs. their legacy (non-frame) read path.</summary>
     internal static ConsoleInputPump? Current { get { lock (_currentGate) return _current; } }
 
+    private static volatile bool _promptActive;
+
+    /// <summary>PROMPT OWNERSHIP: true for the whole lifetime of TuiDriver.ReadLine. The
+    /// orchestrators' mid-turn EscapeKeyListener outlives its turn (its using-scope spans the
+    /// whole goal iteration, INCLUDING the idle prompt that follows), so without this flag the
+    /// listener and the prompt loop both block on the same queue and events round-robin between
+    /// them - the listener steals typed chars it does not act on into its replay queue, which
+    /// only drains at the NEXT prompt entry. Symptom: choppy/dropped typing at the post-turn
+    /// prompt, with the missing chars "flushed" into the input box after the next agent reply.
+    /// While set, the listener stands down entirely; a take it wins in the transition race is
+    /// pushed back to the front lane instead of consumed.</summary>
+    internal static bool PromptActive
+    {
+        get => _promptActive;
+        set => _promptActive = value;
+    }
+
+    /// <summary>True after Dispose: lets a bounded-wait consumer distinguish "timeout, keep
+    /// polling" from "pump torn down" (the blocking-forever take used to encode this).</summary>
+    internal bool Disposed => Volatile.Read(ref _disposed) == 1;
+
     private readonly BlockingCollection<InputEvent> _queue = new(new ConcurrentQueue<InputEvent>());
     private readonly Queue<InputEvent> _front = new();   // PushFront replay (replay wins FIFO)
     private readonly object _frontGate = new();
@@ -48,6 +69,11 @@ internal sealed class ConsoleInputPump : IDisposable
         _asm = new SgrInputAssembler(mouseTracking, bracketedPaste);
         _thread = new Thread(PumpMain) { IsBackground = true, Name = "ConsoleInputPump" };
     }
+
+    /// <summary>Test-only: an UNSTARTED pump (no reader thread, no console access) so the
+    /// queue/front-lane ordering contract is testable without a real stdin.</summary>
+    internal static ConsoleInputPump CreateUnstartedForTest(bool mouseTracking = true, bool bracketedPaste = true)
+        => new(mouseTracking, bracketedPaste);
 
     /// <summary>Start THE pump (idempotent: an existing pump is returned). One per process; the
     /// frame engine starts it at activation and stops it at teardown.</summary>
@@ -198,7 +224,7 @@ internal sealed class ConsoleInputPump : IDisposable
         foreach (var e in _asm.FlushTimeout()) Enqueue(e);
     }
 
-    private void Enqueue(InputEvent ev)
+    internal void Enqueue(InputEvent ev)
     {
         try { _queue.Add(ev, _cts.Token); }
         catch (OperationCanceledException) { }

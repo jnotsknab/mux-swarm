@@ -1899,6 +1899,26 @@ internal sealed class TuiDriver
         ConsoleInputPump.InputEvent? carry = null;
         bool prevCtrlC;
         try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
+        // PROMPT OWNERSHIP: for the lifetime of this ReadLine the prompt is the pump's only
+        // consumer. The orchestrators' mid-turn EscapeKeyListener outlives its turn (its scope
+        // spans the goal iteration, including this idle prompt), so without this claim both
+        // loops block on the same queue and typed events round-robin between them - the
+        // listener's share detoured through its replay queue and surfaced one turn late.
+        if (pump is not null)
+        {
+            ConsoleInputPump.PromptActive = true;
+            // Close the entry race: a key the listener stole AFTER the replay-drain above but
+            // BEFORE the claim landed would otherwise sit in its replay queue until the NEXT
+            // prompt. Re-drain now that the listener is standing down.
+            var lateQ = new Queue<ConsoleKeyInfo>();
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(lateQ);
+            if (lateQ.Count > 0)
+            {
+                var lateEvs = new List<ConsoleInputPump.InputEvent>(lateQ.Count);
+                while (lateQ.Count > 0) lateEvs.Add(ConsoleInputPump.InputEvent.OfKey(lateQ.Dequeue()));
+                pump.PushFront(lateEvs);
+            }
+        }
         try
         {
             // The pump owns TreatControlCAsInput for its lifetime; only the legacy path manages it here.
@@ -1945,12 +1965,19 @@ internal sealed class TuiDriver
                             if (!Voice.VoiceSession.IsActive) Repaint();   // voice off: restore caret
                             continue;
                         }
-                        if (!pump.TryTake(out ev, -1))
+                        // Bounded take, not blocking-forever: a transition-race key the listener
+                        // hands back via PushFront lands in the FRONT lane, which TryTake only
+                        // checks on entry - an infinite block on the inner queue would strand it.
+                        if (!pump.TryTake(out ev, 100))
                         {
-                            // Pump disposed (teardown): behave like a cancel.
-                            _inInput = false;
-                            HandBack();
-                            return null;
+                            if (pump.Disposed)
+                            {
+                                // Pump torn down: behave like a cancel.
+                                _inInput = false;
+                                HandBack();
+                                return null;
+                            }
+                            continue;
                         }
                         break;
                     }
@@ -2343,6 +2370,7 @@ internal sealed class TuiDriver
         finally
         {
             _inInput = false;
+            if (pump is not null) ConsoleInputPump.PromptActive = false;
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
     }
