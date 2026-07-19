@@ -228,6 +228,17 @@ public static class GigaMode
                         return $"[ERROR {agent}] Not a member of '{disp}'. Members: {string.Join(", ", roster)}";
                     await gate.WaitAsync(ct);
                     try { return await RunOne(agent, a.Task ?? string.Empty); }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        // Real turn cancellation unwinds the whole batch (same rule as delegate_parallel).
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // One member failing must not nuke the batch: surface its error inline and
+                        // let siblings' results land (same contract as delegate_parallel).
+                        return $"[ERROR {agent}] {ex.Message}";
+                    }
                     finally { gate.Release(); }
                 });
                 var results = await Task.WhenAll(batch);
