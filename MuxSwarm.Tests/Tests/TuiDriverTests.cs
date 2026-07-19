@@ -1846,4 +1846,83 @@ public class TuiDriverTests
         Assert.True(d.ExpandLatestInline());
         Assert.Contains("line 1", term.Output);
     }
+
+    // ---- v0.12.4 shaded-card / diff background-width polish ----
+
+    // The bottom border of a diff card must span the SAME visible width as its shaded body rows,
+    // otherwise the body background reads as bleeding one cell past the border (the reported bug).
+    [Fact]
+    public void Diff_BottomBorder_MatchesShadedBodyWidth()
+    {
+        int width = 60;
+        var d = TuiComponents.Diff("file.cs", "@@ -1 +1 @@\n-old line\n+new line\n ctx", width);
+        var vis = d.Select(MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth).ToList();
+        // Body/border rows never exceed the requested width...
+        Assert.All(vis, w => Assert.True(w <= width, $"row width {w} exceeds {width}"));
+        // ...and the last row (the ╰─ border) is exactly as wide as the widest shaded body row.
+        int body = vis.Take(vis.Count - 1).Max();
+        Assert.Equal(body, vis[^1]);
+    }
+
+    // Wide/CJK glyphs in a diff line must not push the shaded cell past the card width (display-width
+    // padding, not UTF-16 length).
+    [Fact]
+    public void Diff_WideGlyphs_DoNotOverflowWidth()
+    {
+        int width = 40;
+        var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n+\u4f60\u597d\u4e16\u754c CJK line", width);
+        Assert.All(d, row => Assert.True(
+            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+    }
+
+    // Wide glyphs in a shaded tool-result card body must not overflow either.
+    [Fact]
+    public void ToolResultPanel_WideGlyphs_DoNotOverflowWidth()
+    {
+        int width = 40;
+        var rows = TuiComponents.ToolResultPanel("read", "\u3053\u3093\u306b\u3061\u306f wide body line here", error: false, width: width);
+        Assert.All(rows, row => Assert.True(
+            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+    }
+
+    // console.contentBackgrounds = false suppresses card/diff background fills so the terminal's own
+    // background shows through: the resolved markup must carry NO background SGR (48;2;...).
+    [Fact]
+    public void ContentBackgrounds_Off_EmitsNoBackgroundSgr()
+    {
+        bool prev = TuiComponents.ContentBackgrounds;
+        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        try
+        {
+            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            TuiComponents.ContentBackgrounds = false;
+            var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b\n c", 50);
+            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.DoesNotContain("\u001b[48;2;", ansi);
+
+            var card = TuiComponents.ToolResultPanel("read", "alpha\nbeta", error: false, width: 50);
+            string cardAnsi = string.Join("\n", card.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.DoesNotContain("\u001b[48;2;", cardAnsi);
+        }
+        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
+    }
+
+    // Sanity: with backgrounds ON (default), the diff DOES emit background SGR (guards the toggle).
+    [Fact]
+    public void ContentBackgrounds_On_EmitsBackgroundSgr()
+    {
+        bool prev = TuiComponents.ContentBackgrounds;
+        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        try
+        {
+            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            TuiComponents.ContentBackgrounds = true;
+            var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b", 50);
+            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.Contains("\u001b[48;2;", ansi);
+        }
+        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
+    }
 }

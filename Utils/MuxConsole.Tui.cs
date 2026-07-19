@@ -86,6 +86,16 @@ public static partial class MuxConsole
     /// on activation + live via /set. Ignored outside the live TUI.</summary>
     public static bool InputHighlight { get; set; } = true;
 
+    /// <summary>Mirror of console.contentBackgrounds: when false, tool/diff/code cards suppress their
+    /// opaque themed background fill so the terminal's own background shows through. Seeded from config
+    /// at startup and applied live via /set. Backed by <see cref="Tui.TuiComponents.ContentBackgrounds"/>
+    /// (a static styling gate), so it takes effect for every builder path.</summary>
+    public static bool ContentBackgrounds
+    {
+        get => Tui.TuiComponents.ContentBackgrounds;
+        set => Tui.TuiComponents.ContentBackgrounds = value;
+    }
+
     /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).
     /// Pushed to the driver on activation + live via /set.</summary>
     public static bool CardMarkdown { get; set; } = true;
@@ -762,6 +772,15 @@ public static partial class MuxConsole
         InputHighlight = on;
         if (!TuiActive) return;
         lock (ConsoleLock) { _driver!.SetInputHighlight(on); }
+    }
+
+    /// <summary>Toggle opaque content backgrounds live (console.contentBackgrounds) + re-render the
+    /// frame in place. Styling-only change (no geometry), so it just refreshes existing rows.</summary>
+    public static void SetTuiContentBackgrounds(bool on)
+    {
+        ContentBackgrounds = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.RefreshStyling(); }
     }
 
     /// <summary>Toggle muted-markdown card bodies live (console.cardMarkdown) + push to the driver.</summary>

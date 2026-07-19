@@ -33,12 +33,19 @@ internal static class TuiComponents
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background. Themed (v0.12.1).
-    public static string CardBg  => Theme.Active.CardBg;
-    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field
+    // Content background fills (card/diff/code). When ContentBackgrounds is false these resolve to
+    // "default" -> ResolveColor returns null -> NO background SGR is emitted, so the terminal's own
+    // (possibly translucent/glassy) background shows through. Foreground + layout are unchanged
+    // (bg tags are zero visible width). InputBg + cursor/badge fills are intentionally NOT gated
+    // here (input has its own inputHighlight toggle; cursor/mode fills are functional, not chrome).
+    public static bool ContentBackgrounds { get; set; } = true;
+    private static string Bg(string role) => ContentBackgrounds ? role : "default";
+    public static string CardBg  => Bg(Theme.Active.CardBg);
+    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field (gated by inputHighlight)
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
-    public static string DiffAddBg => Theme.Active.DiffAddBg;
-    public static string DiffDelBg => Theme.Active.DiffDelBg;
-    public static string DiffHunkBg => Theme.Active.DiffHunkBg;
+    public static string DiffAddBg => Bg(Theme.Active.DiffAddBg);
+    public static string DiffDelBg => Bg(Theme.Active.DiffDelBg);
+    public static string DiffHunkBg => Bg(Theme.Active.DiffHunkBg);
     public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
@@ -531,11 +538,14 @@ internal static class TuiComponents
                 string gOld = (wi == 0 ? oldS : "").PadLeft(gw);
                 string gNew = (wi == 0 ? newS : "").PadLeft(gw);
                 string mk = wi == 0 ? marker : " ";
-                string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
-                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+                // Pad by DISPLAY width (not UTF-16 length) so wide/CJK/emoji glyphs do not push
+                // the shaded cell past codeW+1 and bleed the bg past the border.
+                string cellText = mk + wrapped[wi];
+                int cellPad = Math.Max(0, codeW + 1 - TuiMarkup.Width(cellText));
+                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
             }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
+        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
         return outp;
     }
 
@@ -545,7 +555,12 @@ internal static class TuiComponents
     /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
     /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
-        => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+    {
+        // Pad by DISPLAY width so wide/CJK/emoji content keeps the shaded band exactly `inner` cells
+        // (UTF-16 PadRight overshoots for double-width glyphs and bleeds the bg past the card edge).
+        int pad = Math.Max(0, inner - TuiMarkup.Width(content));
+        return $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content)}{new string(' ', pad)}[/]";
+    }
 
     /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
     /// WrapMarkup). The base fill is Muted so the sub-agent transcript reads as subordinate to the
@@ -573,15 +588,17 @@ internal static class TuiComponents
     private static string MetaRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>

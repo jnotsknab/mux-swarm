@@ -212,6 +212,15 @@ internal sealed class TuiDriver
         InvalidateFrameRowCounts();
     }
 
+    /// <summary>Invalidate cached frame-row renders + force a repaint after a live change that only
+    /// alters row STYLING, not geometry (e.g. console.contentBackgrounds). Row widths/counts are
+    /// unchanged — background SGR is zero visible width — so this just re-renders in place.</summary>
+    public void RefreshStyling()
+    {
+        InvalidateFrameRowCounts();
+        ForceRedraw();
+    }
+
     /// <summary>Capture a multi-line paste as one literal block (console.bracketedPaste, DECSET 2004)
     /// instead of submitting on the first embedded newline.</summary>
     private bool _bracketedPaste = true;

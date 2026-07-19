@@ -300,6 +300,7 @@ public class App
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
         MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
         MuxConsole.InputHighlight = Config.Console.InputHighlight;
+        MuxConsole.ContentBackgrounds = Config.Console.ContentBackgrounds;
         MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
         MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
         MuxConsole.BracketedPaste = Config.Console.BracketedPaste;

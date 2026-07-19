@@ -336,6 +336,17 @@ public class ConsoleConfig
     public bool InputHighlight { get; set; } = true;
 
     /// <summary>
+    /// When true (default), tool/diff/code cards paint an opaque themed background fill (a solid
+    /// panel look). Set false to suppress card/diff/fenced-code/inline-code background fills so the
+    /// terminal's own (translucent/glassy) background shows through; foreground colors and layout
+    /// are unchanged. Does NOT affect the compose-field shade (see inputHighlight) or the cursor.
+    /// Additive and non-invasive: absent in older configs (defaults to true). Toggled live with
+    /// <c>/set contentBackgrounds false</c>. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("contentBackgrounds")]
+    public bool ContentBackgrounds { get; set; } = true;
+
+    /// <summary>
     /// When true (default), the BODY of expanded tool-result / batch-summary cards renders
     /// as muted markdown (headings, bold, inline code styled but subordinate) instead of raw
     /// markdown source (literal <c>###</c>, <c>**</c>, backticks). Tool names and status stay

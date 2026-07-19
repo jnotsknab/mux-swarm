@@ -296,6 +296,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "contentBackgrounds", Aliases = new[] { "cardbg", "cardbackground", "backgroundfills" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.ContentBackgrounds.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"contentBackgrounds expects a boolean (got '{v}').");
+                Cfg.Console.ContentBackgrounds = on;
+                MuxConsole.SetTuiContentBackgrounds(on);         // live
+                return Save($"contentBackgrounds = {on}{(on ? "" : " (card/diff/code fills off \u2014 terminal background shows through)")}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
             Name = "cardMarkdown", Aliases = new[] { "cardmd", "panelmarkdown" }, ValueHint = "on|off",
             Get = () => Cfg.Console.CardMarkdown.ToString(),
             Set = v =>
