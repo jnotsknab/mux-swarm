@@ -173,6 +173,12 @@ public class App
 
         Config = LoadConfig(ConfigPath);
 
+        // Activate the configured theme BEFORE the splash renders. WriteSplashScreen resolves its
+        // C.* color roles (Banner/Accent/Muted/...) against Theme.Active at emit time; the inline
+        // splash is printed here synchronously, so if the theme is still Default the splash ignores
+        // console.theme. (The frame splash is deferred via FrameSplashFactory and already resolved
+        // post-theme.) Re-asserted later alongside the other render config (idempotent).
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
 
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 

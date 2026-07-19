@@ -589,7 +589,7 @@ public static partial class MuxConsole
             if (AnsiConsole.Profile.Width < 56)
             {
                 AnsiConsole.Write(new Rule(SplashTitleMarkup(version, debugTag))
-                    .RuleStyle(new Style(Color.Grey35))
+                    .RuleStyle(Style.Parse(C.Muted))
                     .LeftJustified());
             }
             else if (AnsiConsole.Profile.Width < 180)
@@ -597,7 +597,7 @@ public static partial class MuxConsole
                 var panel = new Panel(new Markup(string.Join("\n", BuildSplashBrandMarkup(
                         version, debugTag, splashLabel, splashText, includeHelp: true))))
                     .Border(BoxBorder.Rounded)
-                    .BorderStyle(new Style(Color.Grey35))
+                    .BorderStyle(Style.Parse(C.Muted))
                     .Padding(1, 1)
                     .Expand();
 
@@ -625,7 +625,7 @@ public static partial class MuxConsole
 
                 var panel = new Panel(grid)
                     .Border(BoxBorder.Rounded)
-                    .BorderStyle(new Style(Color.Grey35))
+                    .BorderStyle(Style.Parse(C.Muted))
                     .Padding(1, 1)
                     .Expand();
 
@@ -633,7 +633,7 @@ public static partial class MuxConsole
             }
 
             AnsiConsole.WriteLine();
-            AnsiConsole.Write(new Rule().RuleStyle(new Style(Color.Grey23)));
+            AnsiConsole.Write(new Rule().RuleStyle(Style.Parse(C.Muted)));
             AnsiConsole.WriteLine();
         });
     }
