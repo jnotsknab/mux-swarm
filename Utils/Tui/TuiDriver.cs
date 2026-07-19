@@ -903,8 +903,23 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException) { break; }
+                var avPump = ConsoleInputPump.Current;
+                if (avPump is not null)
+                {
+                    // Single input plane: consume the overlay's keys from the shared pump (the
+                    // pump is the only stdin reader); wheel/paste events are swallowed here.
+                    while (true)
+                    {
+                        if (!avPump.TryTake(out var av, 200)) continue;
+                        if (av.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = av.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
 
                 if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
                     { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
@@ -1746,35 +1761,6 @@ internal sealed class TuiDriver
         return true;
     }
 
-    /// <summary>Patient <see cref="MatchTail"/> for the SGR mouse path: each expected char waits up
-    /// to ~8ms (8 x 1ms spin) before concluding absence. A human cannot type the next key within
-    /// 8ms, so a real Esc keypress is never confused with a report prefix - but a mouse report body
-    /// split across reads (SSH/WSL/Mac latency) reassembles instead of leaking literal
-    /// <c>[&lt;64;…</c> chars into the editor (the exact failure that made the char-fed parser
-    /// unusable on Unix). Probed chars are pushed back on mismatch, so nothing is dropped.</summary>
-    private bool MatchTailPatient(char[] tail)
-    {
-        var probed = new List<ConsoleKeyInfo>(tail.Length);
-        for (int i = 0; i < tail.Length; i++)
-        {
-            ConsoleKeyInfo k = default;
-            bool got = false;
-            if (_ungetq.Count > 0) { k = _ungetq.Dequeue(); got = true; }
-            else
-            {
-                for (int spin = 0; spin < 8 && !got; spin++)
-                {
-                    if (TryReadKeyNonBlocking(out k)) got = true;
-                    else Thread.Sleep(1);
-                }
-            }
-            if (!got) { foreach (var p2 in probed) _ungetq.Enqueue(p2); return false; }
-            probed.Add(k);
-            if (k.KeyChar != tail[i]) { foreach (var p2 in probed) _ungetq.Enqueue(p2); return false; }
-        }
-        return true;
-    }
-
     private static bool TryReadKeyNonBlocking(out ConsoleKeyInfo key)
     {
         try
@@ -1805,157 +1791,9 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
-    private static readonly char[] _mousePrefixTail = { '[', '<' };
-
-    /// <summary>
-    /// Called right after an ESC was read in the idle-prompt loop. If the next queued chars are the
-    /// SGR mouse prefix <c>[&lt;</c>, drain the WHOLE report body (<c>b;x;y</c>) up to and including
-    /// its <c>M</c>/<c>m</c> terminator SYNCHRONOUSLY, so no fragment can ever reach the editor. Then
-    /// coalesce any follow-up reports already queued (a fast wheel burst) into ONE net scroll and
-    /// apply it via the same FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when an ESC[&lt; mouse
-    /// report was consumed (the caller must NOT treat the ESC as anything else); false leaves the ESC
-    /// untouched (probed chars are unget for normal handling). Wheel handling is frame-engine only.
-    /// </summary>
-    private bool TryConsumeMouseReport()
-    {
-        if (!MouseTracking) return false;
-        if (!MatchTailPatient(_mousePrefixTail)) return false;   // not a mouse report; ESC keeps its meaning
-
-        int netWheel = 0;
-        bool consumedAny = false;
-
-        // Drain this report and any immediately-following reports (wheel bursts queue several). Each
-        // is classified by the MouseHandler; wheel direction is accumulated so a burst becomes ONE
-        // net scroll + one repaint, and non-wheel events (press/release/drag) are dispatched to their
-        // sinks (unwired today) without ever reaching the editor.
-        while (true)
-        {
-            if (!DrainOneMouseBody(out int button, out int col, out int row, out bool release)) break;
-            consumedAny = true;
-            if (_mouse.Classify(button, col, row, release) is { } ev)
-                netWheel += _mouse.Dispatch(ev);   // returns wheel dir (+1/-1) or 0
-
-            // Peek for another back-to-back report: ESC [ < ... . Only continue the burst when the
-            // full prefix is present and consumed; otherwise stop (leaves non-mouse input intact).
-            if (!TryReadKeyNonBlocking(out var k)) break;
-            if (k.KeyChar != '\u001b') { _ungetq.Enqueue(k); break; }
-            if (!MatchTailPatient(_mousePrefixTail)) { _ungetq.Enqueue(k); break; }  // ESC was not a mouse prefix
-        }
-
-        if (!consumedAny) return false;
-
-        // Apply the coalesced wheel scroll once. Positive = wheel up = scroll BACK into history.
-        if (netWheel != 0 && _engineFrame && OnWheelScroll(netWheel))
-            Repaint();
-        return true;
-    }
-
     // Wheel -> scrollback bridge: step console.scrollSpeedRows rows per net notch through the SAME
     // FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when the offset changed (caller repaints).
     private bool OnWheelScroll(int netWheelDir) => FrameScrollBy(netWheelDir * _scrollSpeedRows);
-
-    /// <summary>Drain the body of one SGR mouse report (already past <c>ESC[&lt;</c>): read up to the
-    /// <c>M</c>/<c>m</c> terminator, parse <c>b;x;y</c>, and yield the button. Returns false if the
-    /// stream ran out or the body was malformed (chars are consumed either way - a torn report is
-    /// dropped, never leaked to the editor).</summary>
-    private bool DrainOneMouseBody(out int button, out int col, out int row, out bool release)
-    {
-        button = 0; col = 0; row = 0; release = false;
-        var body = new System.Text.StringBuilder(12);
-        while (true)
-        {
-            ConsoleKeyInfo k;
-            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
-            else if (!TryReadKeyNonBlocking(out k))
-            {
-                // Patient wait (~8ms) for a report split across reads (SSH/WSL/Mac latency): a
-                // terminal emits the body microseconds apart, but the pty can fragment it. Too
-                // little patience here is what leaked torn bodies like "[<64;…" into the editor.
-                bool got = false;
-                for (int spin = 0; spin < 8 && !got; spin++)
-                {
-                    if (TryReadKeyNonBlocking(out k)) got = true;
-                    else System.Threading.Thread.Sleep(1);
-                }
-                if (!got) return false;
-            }
-            char c = k.KeyChar;
-            if (c == 'M' || c == 'm')
-            {
-                release = c == 'm';
-                return MouseSgrParser.TryParseBody(body.ToString(), out button, out col, out row);
-            }
-            // A stray ESC means the terminator was lost; stop draining this (torn) report.
-            if (c == '\u001b') { _ungetq.Enqueue(k); return false; }
-            if (c == '\0') return false;
-            body.Append(c);
-            if (body.Length > 32) return false;   // runaway guard: no valid report is this long
-        }
-    }
-
-
-    /// <summary>Editor-level catch-net for TORN mouse-report fragments: an SGR report whose leading
-    /// ESC (and maybe the '[') was lost to a torn read upstream (turn boundary, replay race, a read
-    /// path that is not mouse-aware). When the editor is handed a '[' or '<', peek the queued input
-    /// (patiently) for a matching report tail - <c>&lt;b;x;yM</c>, <c>b;x;yM</c>, <c>&lt;b;x;ym</c>,
-    /// <c>b;x;ym</c> - and if it is report-shaped, swallow it as a mouse event (scroll if wheel)
-    /// instead of inserting it as literal text. Covers variants like <c>&lt;[&lt;64;…</c> that slip
-    /// past the ESC-prefix guards. Probed chars are pushed back on a non-match, so nothing is lost.</summary>
-    private bool TryConsumeTornMouseFragment(ConsoleKeyInfo first)
-    {
-        if (!MouseTracking) return false;
-        char c0 = first.KeyChar;
-        if (c0 is not ('[' or '<')) return false;
-
-        // Gather a candidate tail (up to a hard cap) with patience for a fragmented arrival.
-        var buf = new System.Text.StringBuilder(20);
-        if (c0 == '<') buf.Append('<');               // ESC + '[' were the lost prefix
-        // c0 == '[' : ESC was lost; the tail should start '<' or digits
-        var probed = new List<ConsoleKeyInfo>(24);
-        const int cap = 20;
-        for (int i = 0; i < cap; i++)
-        {
-            ConsoleKeyInfo k;
-            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
-            else if (!TryReadKeyPatientShort(out k)) break;
-            probed.Add(k);
-            buf.Append(k.KeyChar);
-            if (k.KeyChar is 'M' or 'm') break;         // report terminator
-            // Bail early on any char that cannot be part of a report tail (digits, ';', '<', M/m),
-            // so typing ordinary text after '[' or '<' costs at most one probe, not 20.
-            if (k.KeyChar is not (>= '0' and <= '9') && k.KeyChar is not (';' or '<')) break;
-        }
-
-        if (MouseSgrParser.TryParseTornFragment(buf.ToString(), out int button, out int col, out int row, out bool release))
-        {
-            // It is report-shaped: route it as a mouse event (wheel -> scroll; else swallow).
-            if (_mouse.Classify(button, col, row, release) is { } mev)
-            {
-                int netWheel = _mouse.Dispatch(mev);
-                if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
-            }
-            return true;
-        }
-
-        // Not a report: push everything back in the SAME order so the chars are handled normally
-        // (nothing lost). _ungetq is FIFO; re-enqueueing in probe order preserves it.
-        foreach (var pk in probed) _ungetq.Enqueue(pk);
-        return false;
-    }
-
-    // Short patient read (~4ms) used by the torn-fragment catch-net: a torn fragment's bytes arrive
-    // in the same burst as the opener, so only brief settle is needed; a human typing the next key
-    // within 4ms of a '[' is implausible, so legitimate input is not confused.
-    private bool TryReadKeyPatientShort(out ConsoleKeyInfo k)
-    {
-        for (int spin = 0; spin < 4; spin++)
-        {
-            if (TryReadKeyNonBlocking(out k)) return true;
-            Thread.Sleep(1);
-        }
-        k = default;
-        return false;
-    }
 
     // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
     // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
@@ -1978,6 +1816,25 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
+    /// <summary>Burst-paste drain for the pump path: collect already-queued Key events (a fast
+    /// burst follows the Enter in the same instant) into literal text. A short 2ms settle bridges
+    /// inter-chunk gaps of a large paste still streaming in, mirroring <see cref="DrainBurstPaste"/>.
+    /// A non-Key event (wheel/paste) is stashed into <paramref name="carry"/> for the next loop
+    /// iteration rather than swallowed.</summary>
+    private static string DrainBurstFromPump(ConsoleInputPump pump, ref ConsoleInputPump.InputEvent? carry)
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            if (!pump.TryTake(out var bev, 2)) break;
+            if (bev.Kind != ConsoleInputPump.EventKind.Key) { carry = bev; break; }
+            var bk = bev.Key;
+            if (bk.Key == ConsoleKey.Enter || bk.KeyChar is '\r' or '\n') { sb.Append('\n'); continue; }
+            if (bk.KeyChar != '\0' && !char.IsControl(bk.KeyChar)) sb.Append(bk.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -1991,25 +1848,116 @@ internal sealed class TuiDriver
         _paletteSel = -1;
         _inInput = true;
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
-        // pressed while the agent was streaming). Without this those keystrokes were silently
-        // discarded - the "typing feels laggy / misses chars after the first message" regression.
-        MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(_ungetq);
+        // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
+        // the shared input pump (the single input plane) so they are the next events this loop
+        // sees; on the legacy path they go to the local unget queue as before.
+        var pump = ConsoleInputPump.Current;
+        if (pump is not null)
+        {
+            var replayQ = new Queue<ConsoleKeyInfo>();
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(replayQ);
+            if (replayQ.Count > 0)
+            {
+                var evs = new List<ConsoleInputPump.InputEvent>(replayQ.Count);
+                while (replayQ.Count > 0) evs.Add(ConsoleInputPump.InputEvent.OfKey(replayQ.Dequeue()));
+                pump.PushFront(evs);
+            }
+        }
+        else
+        {
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(_ungetq);
+        }
         BeginPromptContext();
         // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
         // sub-agent expansion never lingers into the input frame. The block stays Ctrl+E/NAV
         // expandable from its committed collapsed line in scrollback.
         ClearExpanded();
+        ConsoleInputPump.InputEvent? carry = null;
         bool prevCtrlC;
         try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
         try
         {
-            try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            // The pump owns TreatControlCAsInput for its lifetime; only the legacy path manages it here.
+            try { if (pump is null) Console.TreatControlCAsInput = true; } catch { /* ignore */ }
             Repaint();
 
             while (true)
             {
                 ConsoleKeyInfo key;
-                if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                if (carry is not null)
+                {
+                    // A non-wheel event stashed while coalescing a wheel burst / draining a paste.
+                    var cv = carry.Value; carry = null;
+                    if (cv.Kind == ConsoleInputPump.EventKind.Wheel)
+                    {
+                        if (_engineFrame && cv.WheelDir != 0 && OnWheelScroll(cv.WheelDir)) Repaint();
+                        continue;
+                    }
+                    if (cv.Kind == ConsoleInputPump.EventKind.Paste)
+                    {
+                        if (!string.IsNullOrEmpty(cv.PasteText)) { _editor.InsertText(cv.PasteText); _paletteSel = -1; Repaint(); }
+                        continue;
+                    }
+                    key = cv.Key;
+                }
+                else if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else if (pump is not null)
+                {
+                    // FRAME ENGINE - single input plane: the pump is the ONLY stdin reader; this
+                    // loop consumes typed events. Mouse reports are reassembled upstream into Wheel
+                    // events (no byte of one can ever surface here as text), bracketed/burst pastes
+                    // arrive whole as Paste events, and a bare/Alt ESC is already classified.
+                    ConsoleInputPump.InputEvent ev;
+                    while (true)
+                    {
+                        if (Voice.VoiceSession.IsActive)
+                        {
+                            // /voice on: poll so the loop services transcript injects, voice-driven
+                            // submits, and the indicator animation between keys (~30 fps).
+                            bool changed = DrainVoice(out var submitted);
+                            if (submitted is not null) return submitted;
+                            if (pump.TryTake(out ev, 33)) break;
+                            if (changed) Repaint();
+                            if (!Voice.VoiceSession.IsActive) Repaint();   // voice off: restore caret
+                            continue;
+                        }
+                        if (!pump.TryTake(out ev, -1))
+                        {
+                            // Pump disposed (teardown): behave like a cancel.
+                            _inInput = false;
+                            HandBack();
+                            return null;
+                        }
+                        break;
+                    }
+                    switch (ev.Kind)
+                    {
+                        case ConsoleInputPump.EventKind.Wheel:
+                        {
+                            // Coalesce a wheel burst into ONE net scroll + ONE repaint.
+                            int net = ev.WheelDir;
+                            while (pump.TryTake(out var nx, 0))
+                            {
+                                if (nx.Kind == ConsoleInputPump.EventKind.Wheel) { net += nx.WheelDir; continue; }
+                                carry = nx; break;
+                            }
+                            if (_engineFrame && net != 0 && OnWheelScroll(net)) Repaint();
+                            continue;
+                        }
+                        case ConsoleInputPump.EventKind.Paste:
+                        {
+                            string pasted = ev.PasteText ?? string.Empty;
+                            if (pasted.Length > 0)
+                            {
+                                _editor.InsertText(pasted);
+                                _paletteSel = -1;
+                                if (pump.PendingCount == 0) Repaint();
+                            }
+                            continue;
+                        }
+                    }
+                    key = ev.Key;
+                }
                 else if (Voice.VoiceSession.IsActive)
                 {
                     // /voice on: poll instead of blocking so the loop can service transcript
@@ -2086,11 +2034,9 @@ internal sealed class TuiDriver
                     }
                 }
 
-                // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
-                // ESC[201~. On a confirmed opener we drain the body (newlines kept literal) until
-                // the closer and insert it all at once, so a multi-line paste no longer submits on
-                // its first newline. A bare Esc (no paste body) falls through to the editor unchanged.
-                if (_bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
+                // Bracketed paste (DECSET 2004) - LEGACY path only: on the frame engine the pump
+                // reassembles pastes upstream and delivers them as Paste events above.
+                if (pump is null && _bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
                 {
                     string pasted = DrainBracketedPaste();
                     if (pasted.Length > 0)
@@ -2102,36 +2048,23 @@ internal sealed class TuiDriver
                     continue;
                 }
 
-                // SGR mouse report (frame engine wheel scrollback): an ESC that opens ESC[< is a
-                // mouse report - drain it whole and map wheel up/down onto the FrameScrollBy path
-                // (same business logic as Ctrl+U/Ctrl+D, stepping console.scrollSpeedRows per notch).
-                // Consuming the sequence synchronously here guarantees no report fragment can ever
-                // leak into the editor as typed chars (the failure mode of the earlier char-fed
-                // parser). Non-wheel mouse events are parsed and discarded. Inline mode never enables
-                // mouse tracking, so this is a no-op there.
-                if (MouseTracking && key.KeyChar == '\u001b' && TryConsumeMouseReport())
-                    continue;
-
-                // Torn mouse-report catch-net: a fragment whose ESC prefix was lost upstream (e.g.
-                // "<[<64;…" or "[<64;…") must be swallowed as a mouse event, never inserted as text.
-                if (MouseTracking && (key.KeyChar is '[' or '<') && TryConsumeTornMouseFragment(key))
-                    continue;
-
                 // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
                 // read and more input is ALREADY buffered, it is the interior of a fast burst - a
                 // paste, not a human keystroke (a person cannot have the next key queued in the same
                 // instant). Treat it as a literal newline and absorb the rest of the burst into the
                 // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
                 // active when bracketedPaste is enabled and the editor is in plain Insert mode.
+                bool moreQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
                 if (_bracketedPaste && key.Key == ConsoleKey.Enter
                     && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
                     && !_editor.IsSearching
-                    && _ungetq.Count == 0 && KeyQueued())
+                    && _ungetq.Count == 0 && moreQueued)
                 {
-                    string burst = DrainBurstPaste();
+                    string burst = pump is not null ? DrainBurstFromPump(pump, ref carry) : DrainBurstPaste();
                     _editor.InsertText("\n" + burst);
                     _paletteSel = -1;
-                    if (!KeyQueued()) Repaint();
+                    bool stillQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
+                    if (!stillQueued) Repaint();
                     continue;
                 }
 
@@ -2718,8 +2651,30 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException) { break; }
+                var navPump = ConsoleInputPump.Current;
+                if (navPump is not null)
+                {
+                    // Single input plane: the pump is the only stdin reader. Wheel events scroll
+                    // the NAV cursor (a bonus over the legacy keyboard-only overlay); pastes are
+                    // swallowed (there is no text field in NAV).
+                    while (true)
+                    {
+                        if (!navPump.TryTake(out var nv, 200)) continue;
+                        if (nv.Kind == ConsoleInputPump.EventKind.Wheel)
+                        {
+                            if (nv.WheelDir > 0) model.MoveUp(); else model.MoveDown();
+                            Paint();
+                            continue;
+                        }
+                        if (nv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = nv.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
                 bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
                 bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
                 int viewH = Math.Max(1, _term.Height - 2);

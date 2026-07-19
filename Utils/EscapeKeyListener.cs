@@ -19,6 +19,11 @@ public sealed class EscapeKeyListener : IDisposable
     private static int _suspendCount;
     private static readonly object _readGate = new();
 
+    /// <summary>The exclusive-stdin gate, shared with the ConsoleInputPump (frame engine): the
+    /// pump holds it across its KeyAvailable+ReadKey slice so <see cref="SuspendInput"/>'s
+    /// barrier means "no reader in flight" regardless of which component owns the read loop.</summary>
+    internal static object ReadGate => _readGate;
+
     /// <summary>Test/diagnostic probe: true while the background Esc listener is suspended from
     /// consuming stdin (a prompt owns input). Reference-counted, so nested suspensions are safe.</summary>
     internal static bool IsInputSuspended => Volatile.Read(ref _suspendCount) > 0;
@@ -46,11 +51,6 @@ public sealed class EscapeKeyListener : IDisposable
     /// Routing the wheel here (instead of letting the report reach the editor) is what stops the
     /// <c>[&lt;64;…</c> escape-fragment leak AND lets the user scroll during streaming.</summary>
     internal static Action<int>? OnWheelScroll { get; set; }
-
-    /// <summary>Optional probe: true when SGR mouse reporting is enabled in the current UI (the
-    /// listener should interpret an ESC as a potential mouse-report prefix). Set by the TUI driver
-    /// alongside <see cref="OnWheelScroll"/>; false elsewhere, so Esc keeps its plain meaning.</summary>
-    internal static Func<bool>? IsMouseReportingActive { get; set; }
 
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
@@ -129,28 +129,45 @@ public sealed class EscapeKeyListener : IDisposable
                         Thread.Sleep(50);
                         continue;
                     }
-                    // Read the key UNDER the gate so SuspendInput()'s barrier truly means "no read in
-                    // flight". Re-check the suspend count inside the gate to close the race where a
-                    // suspender incremented after our outer check but before we acquired the gate.
                     ConsoleKeyInfo key;
-                    lock (_readGate)
+                    var pump = Tui.ConsoleInputPump.Current;
+                    if (pump is not null)
                     {
-                        if (Volatile.Read(ref _suspendCount) > 0) { Thread.Sleep(50); continue; }
-                        if (Console.IsInputRedirected || !Console.KeyAvailable) { Thread.Sleep(100); continue; }
-                        key = Console.ReadKey(intercept: true);
+                        // SINGLE INPUT PLANE (frame engine): the pump is the only stdin reader; this
+                        // listener consumes typed events. Mouse reports are already reassembled
+                        // upstream - wheel arrives as a Wheel event (scroll, never a cancel), and
+                        // no report byte can ever be misread as an ESC or leak into the editor.
+                        if (!pump.TryTake(out var pev, 100)) continue;
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Wheel)
+                        {
+                            if (OnWheelScroll is not null)
+                            {
+                                try { OnWheelScroll(pev.WheelDir); } catch { /* scroll is best-effort */ }
+                            }
+                            continue;
+                        }
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Paste)
+                        {
+                            // Mid-turn paste: replay the text as keys so it lands at the next
+                            // prompt, exactly like mid-turn typing.
+                            foreach (char pc in pev.PasteText ?? string.Empty)
+                                ReplayKey(new ConsoleKeyInfo(pc, ConsoleKey.NoName, false, false, false));
+                            continue;
+                        }
+                        key = pev.Key;
+                    }
+                    else
+                    {
+                        // Legacy path (inline/classic): poll stdin directly under the gate so
+                        // SuspendInput()'s barrier truly means "no read in flight".
+                        lock (_readGate)
+                        {
+                            if (Volatile.Read(ref _suspendCount) > 0) { Thread.Sleep(50); continue; }
+                            if (Console.IsInputRedirected || !Console.KeyAvailable) { Thread.Sleep(100); continue; }
+                            key = Console.ReadKey(intercept: true);
+                        }
                     }
                     {
-                        // MOUSE REPORT GUARD (Unix path): an SGR wheel report starts with ESC, so
-                        // without this check a wheel tick mid-turn would be misread as the user
-                        // pressing Escape and CANCEL the turn, tearing the rest of the report into
-                        // the editor as literal "[<64;…" chars (the reported leak). When mouse
-                        // reporting is active, patiently probe for the [< prefix first: a report is
-                        // drained whole + routed to scroll; only a BARE Esc cancels.
-                        if (key.Key == ConsoleKey.Escape && (IsMouseReportingActive?.Invoke() ?? false)
-                            && TryDrainMouseReport())
-                        {
-                            continue;   // consumed a mouse report (scrolled); keep listening
-                        }
                         if (key.Key == ConsoleKey.Escape)
                         {
                             // Scoped cancel: if the user foregrounded (expanded) a specific
@@ -227,71 +244,6 @@ public sealed class EscapeKeyListener : IDisposable
             _listenerCts.Cancel();
             _listenerCts.Dispose();
         }
-    }
-
-    // Patiently read one key (~8ms total patience) from the console UNDER the read gate. Returns
-    // false when nothing arrived in time (a fragmented report over SSH/WSL/Mac can split mid-body).
-    private static bool TryReadKeyPatient(out ConsoleKeyInfo k)
-    {
-        for (int spin = 0; spin < 8; spin++)
-        {
-            lock (_readGate)
-            {
-                if (Volatile.Read(ref _suspendCount) == 0 && !Console.IsInputRedirected && Console.KeyAvailable)
-                {
-                    k = Console.ReadKey(intercept: true);
-                    return true;
-                }
-            }
-            Thread.Sleep(1);
-        }
-        k = default;
-        return false;
-    }
-
-    /// <summary>Called right after an ESC was read while SGR mouse reporting is active. Probes for
-    /// the <c>[&lt;</c> prefix (patiently), drains the whole report body up to its M/m terminator, and
-    /// routes a wheel event to <see cref="OnWheelScroll"/>. Returns true when an ESC[&lt; report was
-    /// consumed (the ESC must NOT be treated as a cancel); false when the prefix did not follow, in
-    /// which case any probed bytes are pushed back to the replay queue and the ESC keeps its meaning.</summary>
-    private static bool TryDrainMouseReport()
-    {
-        var probed = new List<ConsoleKeyInfo>(4);
-        // Expect '[' then '<'.
-        foreach (char expect in new[] { '[', '<' })
-        {
-            if (!TryReadKeyPatient(out var k) || k.KeyChar != expect)
-            {
-                // Not a mouse report: push the probed bytes back so nothing is lost, ESC stays ESC.
-                foreach (var pb in probed) ReplayKey(pb);
-                return false;
-            }
-            probed.Add(k);
-        }
-
-        // Drain the body up to M/m terminator.
-        var body = new System.Text.StringBuilder(12);
-        bool release = false;
-        while (true)
-        {
-            if (!TryReadKeyPatient(out var k)) break;   // torn report: drop it, never leak to editor
-            char c = k.KeyChar;
-            if (c == 'M' || c == 'm') { release = c == 'm'; break; }
-            if (c == '\u001b') { ReplayKey(k); return true; }   // stray ESC: stop; still consumed
-            if (c == '\0') return true;
-            body.Append(c);
-            if (body.Length > 32) return true;   // runaway guard
-        }
-
-        if (Tui.MouseSgrParser.TryParseBody(body.ToString(), out int button, out _, out _))
-        {
-            int dir = Tui.MouseSgrParser.WheelDirection(button);
-            if (dir != 0 && OnWheelScroll is not null)
-            {
-                try { OnWheelScroll(dir); } catch { /* scroll is best-effort */ }
-            }
-        }
-        return true;   // consumed (wheel scrolled or non-wheel discarded) - never leaks to the editor
     }
 
 }

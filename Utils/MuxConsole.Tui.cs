@@ -554,6 +554,16 @@ public static partial class MuxConsole
                 if (_driver is null)
                 {
                     _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
+                    if (FrameEngineEnabled)
+                    {
+                        // SINGLE INPUT PLANE: the pump becomes the only stdin reader for the frame
+                        // engine (prompt loop, mid-turn listener, and overlays all consume its
+                        // typed events). It reassembles SGR mouse reports + bracketed pastes
+                        // upstream, so torn "[<64;…" fragments can never reach the editor.
+                        Tui.ConsoleInputPump.Start(
+                            mouseTracking: !string.Equals(MouseTracking, "off", StringComparison.OrdinalIgnoreCase),
+                            bracketedPaste: BracketedPaste);
+                    }
                     // Frame mode: seed the transcript with the retained splash so the first frame
                     // opens on the banner (the primary-buffer splash is hidden by the alt screen).
                     if (FrameEngineEnabled && FrameSplashFactory is { } splashFactory)
@@ -611,17 +621,14 @@ public static partial class MuxConsole
                 _driver.SetBracketedPaste(BracketedPaste);
                 _driver.SetMouseTrackingPreset(MouseTracking);   // frame engine only (gated internally)
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
-                // Mid-turn input-plane hooks: the EscapeKeyListener consults these so an ESC that
-                // opens an SGR mouse report is drained + routed to scrollback (never a cancel/leak),
-                // and keys it does not act on are replayed into the prompt loop on entry.
-                EscapeKeyListener.IsMouseReportingActive = () => ViaDriver && _driver.MouseReportingActive;
+                // Mid-turn wheel hook: the pump reassembles SGR reports and delivers Wheel events
+                // to the EscapeKeyListener, which forwards them here (scroll, never a cancel/leak).
                 EscapeKeyListener.OnWheelScroll = rows => TuiWheelScroll(rows);
             }
             catch
             {
                 _tuiActive = false;
                 _driver = null;
-                EscapeKeyListener.IsMouseReportingActive = null;
                 EscapeKeyListener.OnWheelScroll = null;
             }
         }
@@ -686,6 +693,7 @@ public static partial class MuxConsole
             if (_driver is not null)
             {
                 try { _driver.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             }
             try { _resizeTimer?.Dispose(); } catch { /* ignore */ }
             _resizeTimer = null;
@@ -703,10 +711,12 @@ public static partial class MuxConsole
             AppDomain.CurrentDomain.ProcessExit += (_, _) =>
             {
                 try { _driver?.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             };
             Console.CancelKeyPress += (_, _) =>
             {
                 try { _driver?.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             };
         }
         catch { /* ignore */ }
