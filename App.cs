@@ -1376,6 +1376,10 @@ public class App
                     // landed yet at the menu, so make sure it's ready first (idempotent + cheap).
                     await EnsureMcpReadyAsync();
                     MuxSwarm.State.DaemonCommand.Run(userInput);
+                    // /daemon commits its status panel through the frame transcript but has no
+                    // follow-up prompt (unlike /setmodel), so nothing re-presents the frame before
+                    // the next input line. Force one present so the panel is painted, not swallowed.
+                    MuxConsole.TuiForceRedraw();
                     break;
                 }
 

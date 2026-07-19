@@ -553,4 +553,25 @@ public class FrameRendererTests
         }
         return string.Empty;
     }
+
+    // v0.12.4 (/daemon frame-swallow guard): content committed to the frame transcript with NO
+    // follow-up prompt (e.g. a /daemon status panel via WritePanel -> Commit) must remain visible
+    // in the composed frame. Regression guard against the "only the input line shows" report.
+    [Fact]
+    public void Driver_FrameEngine_CommittedPanel_WithoutPrompt_StaysVisible()
+    {
+        var t = new FakeTerminal { Width = 60, Height = 14 };
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetFooter(1, 100, false, false, false);
+        // Mirror WritePanel/TuiCommitBlock: a header + detail rows committed as one block.
+        d.BeginPromptContext();
+        d.Commit(new[] { "Daemon", "  status: running", "  jobs: 3 active" });
+
+        var rows = d.ComposeFrameRows();
+        string plain = string.Join("\n", rows.Select(MuxSwarm.Utils.Tui.TuiMarkup.Plain));
+        Assert.Contains("Daemon", plain);
+        Assert.Contains("status: running", plain);
+        Assert.Contains("jobs: 3 active", plain);
+    }
+
 }

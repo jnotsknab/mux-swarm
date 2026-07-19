@@ -56,6 +56,9 @@ internal static class MetaCommandDispatch
             case "/daemon":
             case "/da":
                 MuxSwarm.State.DaemonCommand.Run(line);
+                // Re-present the frame so the committed status panel paints before the next input
+                // line (no follow-up prompt does it, unlike /setmodel). No-op outside the TUI.
+                MuxConsole.TuiForceRedraw();
                 return Result.Handled;
 
             case "/kanban":
