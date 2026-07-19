@@ -731,7 +731,18 @@ public static class SingleAgentOrchestrator
         var semaphore = new SemaphoreSlim(App.MaxDegreeParallelism);
 
         if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents && !allowParallelSubAgents)
-            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
+        {
+            // Config guidance, not a runtime failure: dim severity glyph, agent name in agent color,
+            // prose in normal text, and the enabling commands accented so they read as actionable.
+            string agentNm = MuxConsole.EscapeMarkup(singleAgentDef.Name);
+            MuxConsole.WriteMarkup(
+                $"  [{Theme.Active.Warning}]\u2139[/] [{Theme.Active.Agent}]{agentNm}[/] " +
+                $"[{Theme.Active.Prompt}]is configured with delegation capabilities \u2014 run[/] " +
+                $"[{Theme.Active.Accent}]/subagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/sub[/][{Theme.Active.Muted}])[/] " +
+                $"[{Theme.Active.Prompt}]or[/] [{Theme.Active.Accent}]/parasubagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/psub[/][{Theme.Active.Muted}])[/] " +
+                $"[{Theme.Active.Prompt}]to enable delegation in single-agent mode.[/]",
+                stdioFallback: $"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
+        }
 
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
