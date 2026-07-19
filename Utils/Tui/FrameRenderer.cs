@@ -38,6 +38,13 @@ internal sealed class FrameRenderer
     public void Present(IReadOnlyList<string> rows)
     {
         var sb = new StringBuilder(4096);
+        // Open the DEC synchronized-output envelope BEFORE the alt-screen switch. On resume from a
+        // Spectre prompt, Leave() reset _entered, so this Present re-enters the alt screen. If the
+        // EnterAltScreen (CSI ?1049h) were emitted OUTSIDE the envelope, the terminal could flip to
+        // a blank alt buffer immediately and show it for one frame before the synchronized clear +
+        // full repaint lands - the visible "flicker returning from input". Wrapping the switch,
+        // clear, and full paint in one ?2026 envelope reveals only the completed frame atomically.
+        sb.Append(Ansi.BeginSyncOutput);
         if (!_entered)
         {
             // Take the alternate screen. The primary buffer + native scrollback are preserved and
@@ -51,7 +58,6 @@ internal sealed class FrameRenderer
             || _lastRows.Count != rows.Count
             || _lastCols != _term.Width;
 
-        sb.Append(Ansi.BeginSyncOutput);
         if (full)
         {
             // First paint, geometry change, or forced invalidation: re-assert terminal modes

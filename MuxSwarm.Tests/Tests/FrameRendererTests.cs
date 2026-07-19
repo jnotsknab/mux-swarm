@@ -45,12 +45,41 @@ public class FrameRendererTests
         // Exactly one balanced synchronized-output envelope.
         Assert.Equal(1, Count(o, Ansi.BeginSyncOutput));
         Assert.Equal(1, Count(o, Ansi.EndSyncOutput));
+        // The alt-screen switch MUST be inside the sync envelope (BeginSync before EnterAltScreen),
+        // so resuming from a prompt never exposes a blank alt buffer for a frame (the flicker).
+        Assert.True(
+            o.IndexOf(Ansi.BeginSyncOutput, StringComparison.Ordinal)
+                < o.IndexOf(Ansi.EnterAltScreen, StringComparison.Ordinal),
+            "BeginSyncOutput must precede EnterAltScreen to avoid the resume flicker.");
         // Every row painted, each absolutely addressed.
         for (int i = 0; i < rows.Count; i++)
         {
             Assert.Contains(Ansi.MoveTo(i + 1, 1), o);
             Assert.Contains(rows[i], o);
         }
+    }
+
+    // v0.12.4: returning from a prompt (Leave -> re-enter) must re-enter the alt screen INSIDE the
+    // synchronized-output envelope, so the terminal never shows a blank alt buffer mid-resume.
+    [Fact]
+    public void ResumeAfterLeave_ReEntersAltScreen_InsideSyncEnvelope()
+    {
+        var t = new FakeTerminal();
+        var fr = new FrameRenderer(t);
+        var rows = Enumerable.Range(0, t.Height).Select(i => "row" + i).ToList();
+
+        fr.Present(rows);   // first enter
+        fr.Leave();         // prompt suspends the frame
+        t.Clear();
+        fr.Present(rows);   // resume: must re-enter the alt screen
+
+        var o = t.Output;
+        Assert.Contains(Ansi.EnterAltScreen, o);            // did re-enter
+        Assert.Equal(1, Count(o, Ansi.BeginSyncOutput));    // one envelope
+        Assert.True(
+            o.IndexOf(Ansi.BeginSyncOutput, StringComparison.Ordinal)
+                < o.IndexOf(Ansi.EnterAltScreen, StringComparison.Ordinal),
+            "On resume, BeginSyncOutput must precede EnterAltScreen (no flicker).");
     }
 
     [Fact]
