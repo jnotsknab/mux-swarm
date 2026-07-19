@@ -1241,7 +1241,11 @@ internal sealed class TuiDriver
             else
                 lines.AddRange(TuiComponents.BoundedLivePanel(
                     _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError,
-                    markdown: _expandKind == ExpandKind.SubAgent));
+                    // Inline Ctrl+E tool-result expansion renders markdown to match the NAV path
+                    // (ToolResultPanel markdown:_cardMarkdown) and RenderEntryRows. Diffs use a
+                    // separate branch; sub-agent panels already rendered markdown.
+                    markdown: _expandKind == ExpandKind.SubAgent
+                        || (_expandKind == ExpandKind.ToolResult && _cardMarkdown)));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
