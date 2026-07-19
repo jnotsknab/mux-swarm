@@ -50,6 +50,27 @@ internal static class MouseSgrParser
         return 0;                             // horizontal wheel - not used for vertical scrollback
     }
 
+    /// <summary>Validate + parse a TORN report fragment - the text of an SGR mouse report with its
+    /// leading ESC (and optionally the '[') already lost to a torn read. Accepted shapes:
+    /// <c>&lt;b;x;yM</c>, <c>&lt;b;x;ym</c>, <c>b;x;yM</c>, <c>b;x;ym</c>. This is the catch-net for
+    /// fragments like <c>&lt;[&lt;64;…</c> that slip past the prefix guards: if it is report-shaped,
+    /// the editor must swallow it as a mouse event instead of inserting it as literal text.</summary>
+    public static bool TryParseTornFragment(string fragment, out int button, out int x, out int y, out bool release)
+    {
+        button = x = y = 0;
+        release = false;
+        if (string.IsNullOrEmpty(fragment)) return false;
+        // Strip any lost-prefix remainder: "[<" (ESC lost), "<" (ESC+'[' lost), or none (all three lost).
+        int start = fragment.StartsWith("[<", StringComparison.Ordinal) ? 2
+                  : fragment[0] == '<' ? 1
+                  : 0;
+        if (fragment.Length - start < 3) return false;
+        char term = fragment[^1];
+        if (term is not ('M' or 'm')) return false;
+        release = term == 'm';
+        return TryParseBody(fragment[start..^1], out button, out x, out y);
+    }
+
     private static bool TryInt(string s, int start, int end, out int value)
     {
         value = 0;

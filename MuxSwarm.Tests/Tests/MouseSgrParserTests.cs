@@ -58,4 +58,32 @@ public class MouseSgrParserTests
         Assert.Equal(+1, MouseSgrParser.WheelDirection(64 | 0x80));
         Assert.Equal(-1, MouseSgrParser.WheelDirection(65 | 0x80));
     }
+
+    // ---- Torn-fragment catch-net (editor-level leak guard) ----
+
+    [Theory]
+    [InlineData("<64;10;5M", 64, 10, 5, false)]   // ESC + '[' lost
+    [InlineData("64;10;5M", 64, 10, 5, false)]     // ESC + '[' + '<' lost
+    [InlineData("[<64;10;5M", 64, 10, 5, false)]   // ESC lost
+    [InlineData("<65;1;1m", 65, 1, 1, true)]       // release variant
+    public void TryParseTornFragment_AcceptsAllLostPrefixShapes(string frag, int b, int x, int y, bool rel)
+    {
+        Assert.True(MouseSgrParser.TryParseTornFragment(frag, out int button, out int cx, out int cy, out bool release));
+        Assert.Equal(b, button);
+        Assert.Equal(x, cx);
+        Assert.Equal(y, cy);
+        Assert.Equal(rel, release);
+    }
+
+    [Theory]
+    [InlineData("<abc")]                 // not digits
+    [InlineData("64;10;5")]              // no terminator
+    [InlineData("[hello")]               // plain text
+    [InlineData("")]                     // empty
+    [InlineData("<64;10")]               // truncated body + no terminator
+    public void TryParseTornFragment_RejectsNonReportText(string frag)
+    {
+        Assert.False(MouseSgrParser.TryParseTornFragment(frag, out _, out _, out _, out _));
+    }
 }
+

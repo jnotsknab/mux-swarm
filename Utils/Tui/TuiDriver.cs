@@ -1893,6 +1893,70 @@ internal sealed class TuiDriver
         }
     }
 
+
+    /// <summary>Editor-level catch-net for TORN mouse-report fragments: an SGR report whose leading
+    /// ESC (and maybe the '[') was lost to a torn read upstream (turn boundary, replay race, a read
+    /// path that is not mouse-aware). When the editor is handed a '[' or '<', peek the queued input
+    /// (patiently) for a matching report tail - <c>&lt;b;x;yM</c>, <c>b;x;yM</c>, <c>&lt;b;x;ym</c>,
+    /// <c>b;x;ym</c> - and if it is report-shaped, swallow it as a mouse event (scroll if wheel)
+    /// instead of inserting it as literal text. Covers variants like <c>&lt;[&lt;64;…</c> that slip
+    /// past the ESC-prefix guards. Probed chars are pushed back on a non-match, so nothing is lost.</summary>
+    private bool TryConsumeTornMouseFragment(ConsoleKeyInfo first)
+    {
+        if (!MouseTracking) return false;
+        char c0 = first.KeyChar;
+        if (c0 is not ('[' or '<')) return false;
+
+        // Gather a candidate tail (up to a hard cap) with patience for a fragmented arrival.
+        var buf = new System.Text.StringBuilder(20);
+        if (c0 == '<') buf.Append('<');               // ESC + '[' were the lost prefix
+        // c0 == '[' : ESC was lost; the tail should start '<' or digits
+        var probed = new List<ConsoleKeyInfo>(24);
+        const int cap = 20;
+        for (int i = 0; i < cap; i++)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (!TryReadKeyPatientShort(out k)) break;
+            probed.Add(k);
+            buf.Append(k.KeyChar);
+            if (k.KeyChar is 'M' or 'm') break;         // report terminator
+            // Bail early on any char that cannot be part of a report tail (digits, ';', '<', M/m),
+            // so typing ordinary text after '[' or '<' costs at most one probe, not 20.
+            if (k.KeyChar is not (>= '0' and <= '9') && k.KeyChar is not (';' or '<')) break;
+        }
+
+        if (MouseSgrParser.TryParseTornFragment(buf.ToString(), out int button, out int col, out int row, out bool release))
+        {
+            // It is report-shaped: route it as a mouse event (wheel -> scroll; else swallow).
+            if (_mouse.Classify(button, col, row, release) is { } mev)
+            {
+                int netWheel = _mouse.Dispatch(mev);
+                if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+            }
+            return true;
+        }
+
+        // Not a report: push everything back in the SAME order so the chars are handled normally
+        // (nothing lost). _ungetq is FIFO; re-enqueueing in probe order preserves it.
+        foreach (var pk in probed) _ungetq.Enqueue(pk);
+        return false;
+    }
+
+    // Short patient read (~4ms) used by the torn-fragment catch-net: a torn fragment's bytes arrive
+    // in the same burst as the opener, so only brief settle is needed; a human typing the next key
+    // within 4ms of a '[' is implausible, so legitimate input is not confused.
+    private bool TryReadKeyPatientShort(out ConsoleKeyInfo k)
+    {
+        for (int spin = 0; spin < 4; spin++)
+        {
+            if (TryReadKeyNonBlocking(out k)) return true;
+            Thread.Sleep(1);
+        }
+        k = default;
+        return false;
+    }
+
     // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
     // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
     // ends. Enters become literal newlines; printables append; control keys are dropped. A short
@@ -2046,6 +2110,11 @@ internal sealed class TuiDriver
                 // parser). Non-wheel mouse events are parsed and discarded. Inline mode never enables
                 // mouse tracking, so this is a no-op there.
                 if (MouseTracking && key.KeyChar == '\u001b' && TryConsumeMouseReport())
+                    continue;
+
+                // Torn mouse-report catch-net: a fragment whose ESC prefix was lost upstream (e.g.
+                // "<[<64;…" or "[<64;…") must be swallowed as a mouse event, never inserted as text.
+                if (MouseTracking && (key.KeyChar is '[' or '<') && TryConsumeTornMouseFragment(key))
                     continue;
 
                 // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
