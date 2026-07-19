@@ -107,15 +107,30 @@ internal static class TuiComponents
     public static readonly string[] SubAgentFrames =
         { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
 
-    /// <summary>Pulsing dot used to mark the SINGLE in-flight tool per live lane: a dot that
-    /// "breathes" small-&gt;large-&gt;small. Same glyph vocabulary as the static result dots, so the
-    /// only signal is motion (alive) vs stillness (done). Rides the shared ~100ms ticker frame.</summary>
-    public static readonly string[] PulseFrames =
-        { "\u00b7", "\u2022", "\u25CF", "\u2022" };   // middot -> bullet -> big circle -> bullet
+    /// <summary>The single glyph used for BOTH the live pulsing dot and the static "done" dot, so
+    /// the only signal is motion (alive) vs stillness (done). One fixed width-1 glyph: the pulse is
+    /// a BRIGHTNESS animation (dim -> normal -> bold -> normal), never a glyph-shape change, so the
+    /// rendered row width can never oscillate (the earlier ·/•/● frames were East-Asian-Width
+    /// "Ambiguous" and rendered 1- or 2-cells inconsistently across terminals, leaving far-right
+    /// residue as the dot pulsed). Rides the shared ~100ms ticker frame.</summary>
+    public const string PulseGlyph = "\u25CF";   // ● - width-1 in our model AND the static done dot
 
-    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative).</summary>
-    public static string PulseDot(int frame)
-        => PulseFrames[((frame % PulseFrames.Length) + PulseFrames.Length) % PulseFrames.Length];
+    // Brightness cycle applied to the pulse glyph. Spectre decorations dim/bold change WEIGHT, not
+    // width, so every frame is exactly one cell wide regardless of terminal.
+    private static readonly string[] PulseDecos = { "dim", "", "bold", "" };
+
+    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative):
+    /// the fixed glyph. Callers colour it; use <see cref="PulsingDot"/> for the breathing effect.</summary>
+    public static string PulseDot(int frame) => PulseGlyph;
+
+    /// <summary>Fully-styled pulsing dot in <paramref name="colorRole"/>: a fixed-width breathing dot
+    /// (dim/normal/bold cycle) for the live lane head. <paramref name="frame"/> is safe for any int.</summary>
+    public static string PulsingDot(int frame, string colorRole)
+    {
+        string deco = PulseDecos[((frame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
+        string style = string.IsNullOrEmpty(deco) ? colorRole : $"{colorRole} {deco}";
+        return $"[{style}]{PulseGlyph}[/]";
+    }
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
@@ -248,8 +263,8 @@ internal static class TuiComponents
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        string dot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        return new() { $"  [{Warn}]{dot}[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        string dot = frame >= 0 ? PulsingDot(frame, Warn) : $"[{Warn}]{PulseGlyph}[/]";
+        return new() { $"  {dot} [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -315,8 +330,9 @@ internal static class TuiComponents
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
         // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
-        string okDot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]{okDot}[/]";
+        string glyph = error
+            ? $"[{Err}]\u2717[/]"
+            : (frame >= 0 ? PulsingDot(frame, Ok) : $"[{Ok}]{PulseGlyph}[/]");
         string failTag = error ? $" [{Err}]failed[/]" : "";
         string resultPart = first.Length > 0
             ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"
@@ -385,14 +401,14 @@ internal static class TuiComponents
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
         // Pulsing dot marks the live lane head (motion = working); same dot vocabulary as static rows.
-        string spin = PulseDot(frame);
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
             if (st.Length > 60) st = st[..59] + "\u2026";
+            string spin = PulsingDot(frame, tint);
             // The ctrl+e affordance is shown live (not just after completion) so the user knows the
             // still-running sub-agent's buffered output can be expanded inline at any time.
-            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
+            outp.Add($"  {spin} [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
         }
         return outp;
     }
@@ -759,7 +775,7 @@ internal static class TuiComponents
         {
             Voice.VoiceState.Warming      => (ms / 600) % 2 == 0 ? $"[{Dim}]\u25cf[/]" : $"[{Dim}]\u00b7[/]",
             Voice.VoiceState.Listening    => $"[{Accent}]\u25cf[/]",
-            Voice.VoiceState.Hearing      => $"[{Accent}]{PulseDot((int)(ms / 120))}[/]",
+            Voice.VoiceState.Hearing      => PulsingDot((int)(ms / 120), Accent),
             Voice.VoiceState.Transcribing => $"[{Warn}]{Spinner[(int)(ms / 100) % Spinner.Length]}[/]",
             Voice.VoiceState.Error        => $"[{Err}]\u2717[/]",
             _ => null,
