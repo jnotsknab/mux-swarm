@@ -1390,7 +1390,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width, highlight: _inputHighlight));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, width, highlight: _inputHighlight));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -2125,7 +2125,7 @@ internal sealed class TuiDriver
                 // active when bracketedPaste is enabled and the editor is in plain Insert mode.
                 if (_bracketedPaste && key.Key == ConsoleKey.Enter
                     && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
-                    && _editor.Mode == EditorMode.Insert && !_editor.IsSearching
+                    && !_editor.IsSearching
                     && _ungetq.Count == 0 && KeyQueued())
                 {
                     string burst = DrainBurstPaste();
@@ -2554,7 +2554,7 @@ internal sealed class TuiDriver
     /// <param name="focusEntry">Entry index to place the cursor on at entry (-1 = last).</param>
     private void EnterNavMode(int focusEntry = -1)
     {
-        if (_transcript.Count == 0) { _editor.SetMode(EditorMode.Insert); return; }
+        if (_transcript.Count == 0) return;
 
         // Mark the overlay active so the (possibly concurrent, mid-turn) streaming/commit path
         // defers its physical writes while NAV owns the screen. Cleared in the finally below.
@@ -2782,7 +2782,6 @@ internal sealed class TuiDriver
             // Insert mode at the live input prompt.
             foreach (var e in _transcript) e.Expanded = false;
             InvalidateFrameRowCounts();
-            _editor.SetMode(EditorMode.Insert);
         }
         finally
         {
