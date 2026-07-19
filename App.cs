@@ -2431,6 +2431,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
             // instead of failing the turn. No-op unless ExtraHigh was actually requested.
             .Use(inner => new MuxSwarm.Utils.ReasoningEffortFallbackClient(inner, modelId))
+            // Innermost (closest to the wire): strip empty text parts from the outbound history so
+            // providers that reject them (e.g. Kimi/Moonshot: 400 "text content is empty") accept the
+            // replayed assistant turns. No-op on clean histories; harmless for tolerant providers.
+            .Use(inner => new MuxSwarm.Utils.EmptyContentSanitizerClient(inner))
             .Build();
 
         // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every
