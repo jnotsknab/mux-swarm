@@ -237,6 +237,10 @@ internal sealed class TuiDriver
     // (currently unwired) sinks so click-to-interact / drag-select are additive later.
     private readonly MouseHandler _mouse;
     private bool MouseTracking => _mouse.Enabled;
+    // Win32 delivery path (Windows console hosts only): mouse arrives as MOUSE_EVENT input records
+    // that Console.ReadKey discards, so it is read via Win32ConsoleInput (ReadConsoleInputW +
+    // ENABLE_MOUSE_INPUT + QuickEdit off) and fed into the same MouseHandler seam as the Unix VT path.
+    private bool _win32Mouse;
 
     // Hermes-style mouse preset: off = no reporting; wheel = report + wheel scrollback only
     // (press/release/drag parsed + swallowed); buttons = report + wheel + press/release/drag
@@ -265,8 +269,21 @@ internal sealed class TuiDriver
     // own copy/paste selection, so it is disabled there regardless of preset.
     private void ApplyMouseMode()
     {
+        bool want = _engineFrame && !_suspended && _mousePreset != "off";
         _mouse.ButtonsEnabled = _mousePreset == "buttons";
-        _mouse.SetEnabled(_engineFrame && !_suspended && _mousePreset != "off");
+        _mouse.SetEnabled(want);
+        // Windows console hosts translate VT mouse reports into MOUSE_EVENT input records that
+        // Console.ReadKey discards - enable the Win32 record reader as the delivery path there;
+        // on Unix the VT parser path handles it. Off/inline/suspended -> restore the saved mode.
+        if (want && OperatingSystem.IsWindows())
+        {
+            if (!_win32Mouse) _win32Mouse = Win32ConsoleInput.EnableMouse();
+        }
+        else if (_win32Mouse)
+        {
+            Win32ConsoleInput.DisableMouse();
+            _win32Mouse = false;
+        }
     }
     // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
     // stashed here and replayed through the normal edit path so nothing is dropped.
@@ -1905,6 +1922,31 @@ internal sealed class TuiDriver
                     }
                     if (polled is null) continue;
                     key = polled.Value;
+                }
+                else if (_win32Mouse)
+                {
+                    // Windows console host with mouse records active: a BLOCKING Console.ReadKey
+                    // would discard mouse events while waiting, so poll the Win32 input queue
+                    // instead - mouse records dispatch immediately, keydowns flow through
+                    // Console.ReadKey's decoder exactly as before. 10ms idle sleep keeps the poll
+                    // negligible (same cadence as the voice loop). Mouse records are fed through the
+                    // shared MouseHandler seam; wheel -> FrameScrollBy (scrollSpeedRows per notch).
+                    ConsoleKeyInfo? gotKey = null;
+                    while (true)
+                    {
+                        if (Win32ConsoleInput.TryReadEvent(out var wev))
+                        {
+                            if (wev.HasKey) { gotKey = wev.Key; break; }
+                            if (wev.IsMouse && _mouse.Classify(wev.Button, wev.X, wev.Y, wev.Release) is { } mev)
+                            {
+                                int netWheel = _mouse.Dispatch(mev);
+                                if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                            }
+                            continue;   // consumed a no-op record (focus/resize/key-up)
+                        }
+                        Thread.Sleep(10);
+                    }
+                    key = gotKey.Value;
                 }
                 else
                 {
