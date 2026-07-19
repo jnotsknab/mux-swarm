@@ -1734,6 +1734,35 @@ internal sealed class TuiDriver
         return true;
     }
 
+    /// <summary>Patient <see cref="MatchTail"/> for the SGR mouse path: each expected char waits up
+    /// to ~8ms (8 x 1ms spin) before concluding absence. A human cannot type the next key within
+    /// 8ms, so a real Esc keypress is never confused with a report prefix - but a mouse report body
+    /// split across reads (SSH/WSL/Mac latency) reassembles instead of leaking literal
+    /// <c>[&lt;64;…</c> chars into the editor (the exact failure that made the char-fed parser
+    /// unusable on Unix). Probed chars are pushed back on mismatch, so nothing is dropped.</summary>
+    private bool MatchTailPatient(char[] tail)
+    {
+        var probed = new List<ConsoleKeyInfo>(tail.Length);
+        for (int i = 0; i < tail.Length; i++)
+        {
+            ConsoleKeyInfo k = default;
+            bool got = false;
+            if (_ungetq.Count > 0) { k = _ungetq.Dequeue(); got = true; }
+            else
+            {
+                for (int spin = 0; spin < 8 && !got; spin++)
+                {
+                    if (TryReadKeyNonBlocking(out k)) got = true;
+                    else Thread.Sleep(1);
+                }
+            }
+            if (!got) { foreach (var p2 in probed) _ungetq.Enqueue(p2); return false; }
+            probed.Add(k);
+            if (k.KeyChar != tail[i]) { foreach (var p2 in probed) _ungetq.Enqueue(p2); return false; }
+        }
+        return true;
+    }
+
     private static bool TryReadKeyNonBlocking(out ConsoleKeyInfo key)
     {
         try
@@ -1778,7 +1807,7 @@ internal sealed class TuiDriver
     private bool TryConsumeMouseReport()
     {
         if (!MouseTracking) return false;
-        if (!MatchTail(_mousePrefixTail)) return false;   // not a mouse report; ESC keeps its meaning
+        if (!MatchTailPatient(_mousePrefixTail)) return false;   // not a mouse report; ESC keeps its meaning
 
         int netWheel = 0;
         bool consumedAny = false;
@@ -1798,7 +1827,7 @@ internal sealed class TuiDriver
             // full prefix is present and consumed; otherwise stop (leaves non-mouse input intact).
             if (!TryReadKeyNonBlocking(out var k)) break;
             if (k.KeyChar != '\u001b') { _ungetq.Enqueue(k); break; }
-            if (!MatchTail(_mousePrefixTail)) { _ungetq.Enqueue(k); break; }  // ESC was not a mouse prefix
+            if (!MatchTailPatient(_mousePrefixTail)) { _ungetq.Enqueue(k); break; }  // ESC was not a mouse prefix
         }
 
         if (!consumedAny) return false;
@@ -1827,8 +1856,16 @@ internal sealed class TuiDriver
             if (_ungetq.Count > 0) k = _ungetq.Dequeue();
             else if (!TryReadKeyNonBlocking(out k))
             {
-                System.Threading.Thread.Sleep(1);   // brief settle for a report split across reads
-                if (!TryReadKeyNonBlocking(out k)) return false;
+                // Patient wait (~8ms) for a report split across reads (SSH/WSL/Mac latency): a
+                // terminal emits the body microseconds apart, but the pty can fragment it. Too
+                // little patience here is what leaked torn bodies like "[<64;…" into the editor.
+                bool got = false;
+                for (int spin = 0; spin < 8 && !got; spin++)
+                {
+                    if (TryReadKeyNonBlocking(out k)) got = true;
+                    else System.Threading.Thread.Sleep(1);
+                }
+                if (!got) return false;
             }
             char c = k.KeyChar;
             if (c == 'M' || c == 'm')
@@ -1932,6 +1969,7 @@ internal sealed class TuiDriver
                     // negligible (same cadence as the voice loop). Mouse records are fed through the
                     // shared MouseHandler seam; wheel -> FrameScrollBy (scrollSpeedRows per notch).
                     ConsoleKeyInfo? gotKey = null;
+                    int netWheel = 0;   // coalesce a wheel burst into ONE net scroll + ONE repaint
                     while (true)
                     {
                         if (Win32ConsoleInput.TryReadEvent(out var wev))
@@ -1939,13 +1977,21 @@ internal sealed class TuiDriver
                             if (wev.HasKey) { gotKey = wev.Key; break; }
                             if (wev.IsMouse && _mouse.Classify(wev.Button, wev.X, wev.Y, wev.Release) is { } mev)
                             {
-                                int netWheel = _mouse.Dispatch(mev);
-                                if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                                netWheel += _mouse.Dispatch(mev);
+                                continue;   // keep draining the burst; repaint once below
                             }
-                            continue;   // consumed a no-op record (focus/resize/key-up)
+                            // No-op record: if a wheel burst just ended, flush its single repaint now.
+                            if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                            netWheel = 0;
+                            continue;
                         }
+                        // Queue empty for now: flush any pending wheel repaint, then idle-poll.
+                        if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                        netWheel = 0;
                         Thread.Sleep(10);
                     }
+                    // A key arrived mid-burst: flush the accumulated scroll before handling it.
+                    if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
                     key = gotKey.Value;
                 }
                 else
