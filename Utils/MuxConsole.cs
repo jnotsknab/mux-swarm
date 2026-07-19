@@ -432,9 +432,9 @@ public static partial class MuxConsole
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(withBail));
         ErasePromptResidue(_resTop);
         TuiResume();
@@ -478,9 +478,9 @@ public static partial class MuxConsole
 
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(message)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(message)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(new List<string>(opts) { CancelAffordanceLabel }));
         ErasePromptResidue(_resTop);
         TuiResume();
@@ -512,9 +512,9 @@ public static partial class MuxConsole
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
         var picked = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .NotRequired()
                 .AddChoices(withBail))
             .ToList();
@@ -1395,8 +1395,8 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
         }
 
-        var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
-            .PromptStyle(new Style(Color.White));
+        var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Md(message)}[/]")
+            .PromptStyle(AccentStyle());
 
         if (secret) prompt.Secret();
 
@@ -1430,8 +1430,8 @@ public static partial class MuxConsole
         }
 
         var _sec = AnsiConsole.Prompt(
-            new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
-                .PromptStyle(new Style(Color.White))
+            new TextPrompt<string>($"  [{C.Prompt}]{Md(message)}[/]")
+                .PromptStyle(AccentStyle())
                 .Secret());
         TuiResume();
         return _sec;
@@ -1457,7 +1457,7 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(input) ? defaultValue : input.StartsWith('y');
         }
 
-        var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Esc(message)}[/]", defaultValue);
+        var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Md(message)}[/]", defaultValue);
         ErasePromptResidue(_resTop);
         TuiResume();
         return _c;
@@ -1489,9 +1489,9 @@ public static partial class MuxConsole
 
         var _sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(choices));
         ErasePromptResidue(_resTop);
         TuiResume();
@@ -1528,9 +1528,9 @@ public static partial class MuxConsole
 
         var _ms = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(choices))
             .ToList();
         ErasePromptResidue(_resTop);
@@ -1596,6 +1596,32 @@ public static partial class MuxConsole
             }
 
             AnsiConsole.Write(new Panel($"[{C.Prompt}]{Esc(content)}[/]")
+                .Header($"[{C.Step}]{Esc(title)}[/]")
+                .Border(BoxBorder.Rounded)
+                .BorderStyle(new Style(Color.Grey35))
+                .Padding(1, 0));
+        });
+    }
+
+    /// <summary>Like <see cref="WritePanel"/> but each body line is ALREADY themed Spectre markup
+    /// (caller owns coloring + escaping of untrusted text). Used by command output that needs
+    /// per-line semantic color (e.g. /kanban status columns) while keeping its plain-text model
+    /// intact. <paramref name="stdioFallback"/> supplies the unstyled payload for stdio/serve.</summary>
+    public static void WritePanelMarkup(string title, IEnumerable<string> markupLines, string stdioFallback)
+    {
+        var lines = markupLines as IReadOnlyList<string> ?? new List<string>(markupLines);
+        WithConsole(() =>
+        {
+            if (StdioMode)
+            {
+                EmitJson("panel", D(("title", title), ("content", stdioFallback)));
+                return;
+            }
+            if (ViaDriver)
+            {
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", lines)) return;
+            }
+            AnsiConsole.Write(new Panel(string.Join("\n", lines))
                 .Header($"[{C.Step}]{Esc(title)}[/]")
                 .Border(BoxBorder.Rounded)
                 .BorderStyle(new Style(Color.Grey35))
@@ -1835,6 +1861,22 @@ public static partial class MuxConsole
     }
 
     private static string Esc(string text) => Markup.Escape(text);
+
+    /// <summary>Public Spectre-markup escaper for callers building themed markup strings to pass to
+    /// <see cref="WriteMarkup"/> (e.g. command-output polish in CliCmdUtils). Escapes '[' / ']' in
+    /// untrusted values (team/member names, task subjects) so they cannot inject markup tags.</summary>
+    public static string EscapeMarkup(string? text) => Markup.Escape(text ?? "");
+
+    /// <summary>Spectre <see cref="Style"/> built from the active theme Accent role, for prompt
+    /// input + selection highlight styling. Handles hex, named, and "default" (mono theme) color
+    /// strings; <paramref name="bold"/> adds bold decoration. Single source for prompt accenting.</summary>
+    private static Style AccentStyle(bool bold = false)
+        => Style.Parse(bold ? $"{C.Accent} bold" : C.Accent);
+
+    /// <summary>Render one line of Markdown to Spectre markup for prompt titles / option labels,
+    /// so questions and choices show styled bold/code/links instead of literal markdown. Falls back
+    /// to bracket-escaping inside <see cref="Tui.TuiMarkdown.ToMarkup"/>, so it is injection-safe.</summary>
+    private static string Md(string text) => Tui.TuiMarkdown.ToMarkup(text ?? "");
 
     private static string StripMarkup(string markup)
     {
