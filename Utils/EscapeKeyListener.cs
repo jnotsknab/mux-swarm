@@ -23,6 +23,35 @@ public sealed class EscapeKeyListener : IDisposable
     /// consuming stdin (a prompt owns input). Reference-counted, so nested suspensions are safe.</summary>
     internal static bool IsInputSuspended => Volatile.Read(ref _suspendCount) > 0;
 
+    // ---- Shared input plane hardening (single-owner principle) ----
+
+    /// <summary>Keys the listener read but does NOT act on (typed chars during a turn) are pushed
+    /// here instead of discarded. The prompt input loop (<see cref="Tui.TuiDriver.ReadLine"/>) drains
+    /// this FIRST on entry, so a key is never lost regardless of which reader grabbed it. This is the
+    /// fix for "typing during/after a turn feels laggy and misses chars".</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<ConsoleKeyInfo> ReplayQueue = new();
+
+    /// <summary>Enqueue a key the listener consumed but does not act on, for the prompt loop to replay.</summary>
+    internal static void ReplayKey(ConsoleKeyInfo key) => ReplayQueue.Enqueue(key);
+
+    /// <summary>Move every queued replay key into <paramref name="sink"/> (in FIFO order). Called by
+    /// the prompt input loop on entry so mid-turn typing is never dropped.</summary>
+    internal static void DrainReplayTo(System.Collections.Generic.Queue<ConsoleKeyInfo> sink)
+    {
+        while (ReplayQueue.TryDequeue(out var k)) sink.Enqueue(k);
+    }
+
+    /// <summary>Optional hook: net wheel rows to scroll when the listener drains an SGR mouse report
+    /// mid-turn (positive = back into history). Set by the TUI driver; null outside the frame engine.
+    /// Routing the wheel here (instead of letting the report reach the editor) is what stops the
+    /// <c>[&lt;64;…</c> escape-fragment leak AND lets the user scroll during streaming.</summary>
+    internal static Action<int>? OnWheelScroll { get; set; }
+
+    /// <summary>Optional probe: true when SGR mouse reporting is enabled in the current UI (the
+    /// listener should interpret an ESC as a potential mouse-report prefix). Set by the TUI driver
+    /// alongside <see cref="OnWheelScroll"/>; false elsewhere, so Esc keeps its plain meaning.</summary>
+    internal static Func<bool>? IsMouseReportingActive { get; set; }
+
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
@@ -111,6 +140,17 @@ public sealed class EscapeKeyListener : IDisposable
                         key = Console.ReadKey(intercept: true);
                     }
                     {
+                        // MOUSE REPORT GUARD (Unix path): an SGR wheel report starts with ESC, so
+                        // without this check a wheel tick mid-turn would be misread as the user
+                        // pressing Escape and CANCEL the turn, tearing the rest of the report into
+                        // the editor as literal "[<64;…" chars (the reported leak). When mouse
+                        // reporting is active, patiently probe for the [< prefix first: a report is
+                        // drained whole + routed to scroll; only a BARE Esc cancels.
+                        if (key.Key == ConsoleKey.Escape && (IsMouseReportingActive?.Invoke() ?? false)
+                            && TryDrainMouseReport())
+                        {
+                            continue;   // consumed a mouse report (scrolled); keep listening
+                        }
                         if (key.Key == ConsoleKey.Escape)
                         {
                             // Scoped cancel: if the user foregrounded (expanded) a specific
@@ -163,6 +203,11 @@ public sealed class EscapeKeyListener : IDisposable
                             try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
                             continue;
                         }
+                        // Any OTHER key the listener read but does not act on (a typed char the user
+                        // pressed mid-turn) must NOT be discarded - push it to the shared replay
+                        // queue so the prompt input loop replays it on entry. This is the fix for
+                        // "typing feels laggy and misses chars": previously these were dropped here.
+                        ReplayKey(key);
                     }
                     Thread.Sleep(100);
                 }
@@ -183,4 +228,70 @@ public sealed class EscapeKeyListener : IDisposable
             _listenerCts.Dispose();
         }
     }
+
+    // Patiently read one key (~8ms total patience) from the console UNDER the read gate. Returns
+    // false when nothing arrived in time (a fragmented report over SSH/WSL/Mac can split mid-body).
+    private static bool TryReadKeyPatient(out ConsoleKeyInfo k)
+    {
+        for (int spin = 0; spin < 8; spin++)
+        {
+            lock (_readGate)
+            {
+                if (Volatile.Read(ref _suspendCount) == 0 && !Console.IsInputRedirected && Console.KeyAvailable)
+                {
+                    k = Console.ReadKey(intercept: true);
+                    return true;
+                }
+            }
+            Thread.Sleep(1);
+        }
+        k = default;
+        return false;
+    }
+
+    /// <summary>Called right after an ESC was read while SGR mouse reporting is active. Probes for
+    /// the <c>[&lt;</c> prefix (patiently), drains the whole report body up to its M/m terminator, and
+    /// routes a wheel event to <see cref="OnWheelScroll"/>. Returns true when an ESC[&lt; report was
+    /// consumed (the ESC must NOT be treated as a cancel); false when the prefix did not follow, in
+    /// which case any probed bytes are pushed back to the replay queue and the ESC keeps its meaning.</summary>
+    private static bool TryDrainMouseReport()
+    {
+        var probed = new List<ConsoleKeyInfo>(4);
+        // Expect '[' then '<'.
+        foreach (char expect in new[] { '[', '<' })
+        {
+            if (!TryReadKeyPatient(out var k) || k.KeyChar != expect)
+            {
+                // Not a mouse report: push the probed bytes back so nothing is lost, ESC stays ESC.
+                foreach (var pb in probed) ReplayKey(pb);
+                return false;
+            }
+            probed.Add(k);
+        }
+
+        // Drain the body up to M/m terminator.
+        var body = new System.Text.StringBuilder(12);
+        bool release = false;
+        while (true)
+        {
+            if (!TryReadKeyPatient(out var k)) break;   // torn report: drop it, never leak to editor
+            char c = k.KeyChar;
+            if (c == 'M' || c == 'm') { release = c == 'm'; break; }
+            if (c == '\u001b') { ReplayKey(k); return true; }   // stray ESC: stop; still consumed
+            if (c == '\0') return true;
+            body.Append(c);
+            if (body.Length > 32) return true;   // runaway guard
+        }
+
+        if (Tui.MouseSgrParser.TryParseBody(body.ToString(), out int button, out _, out _))
+        {
+            int dir = Tui.MouseSgrParser.WheelDirection(button);
+            if (dir != 0 && OnWheelScroll is not null)
+            {
+                try { OnWheelScroll(dir); } catch { /* scroll is best-effort */ }
+            }
+        }
+        return true;   // consumed (wheel scrolled or non-wheel discarded) - never leaks to the editor
+    }
+
 }

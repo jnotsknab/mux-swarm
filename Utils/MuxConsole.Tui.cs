@@ -611,11 +611,18 @@ public static partial class MuxConsole
                 _driver.SetBracketedPaste(BracketedPaste);
                 _driver.SetMouseTrackingPreset(MouseTracking);   // frame engine only (gated internally)
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
+                // Mid-turn input-plane hooks: the EscapeKeyListener consults these so an ESC that
+                // opens an SGR mouse report is drained + routed to scrollback (never a cancel/leak),
+                // and keys it does not act on are replayed into the prompt loop on entry.
+                EscapeKeyListener.IsMouseReportingActive = () => ViaDriver && _driver.MouseReportingActive;
+                EscapeKeyListener.OnWheelScroll = rows => TuiWheelScroll(rows);
             }
             catch
             {
                 _tuiActive = false;
                 _driver = null;
+                EscapeKeyListener.IsMouseReportingActive = null;
+                EscapeKeyListener.OnWheelScroll = null;
             }
         }
     }
@@ -840,6 +847,11 @@ public static partial class MuxConsole
     /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
     /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
     internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
+    /// viewport by net wheel notches through the driver's FrameScrollBy path + repaints. Serialized
+    /// under ConsoleLock exactly like the streaming writers, so it cannot race a mid-frame present.</summary>
+    internal static void TuiWheelScroll(int netWheelDir) { if (ViaDriver) lock (ConsoleLock) { _driver!.WheelScrollBy(netWheelDir); } }
 
     /// <summary>Toggle the team TaskBoard strip (v0.12.0 M2, Ctrl+T). No-op outside the TUI.</summary>
     internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoardRepaint(); } }

@@ -237,6 +237,18 @@ internal sealed class TuiDriver
     // (currently unwired) sinks so click-to-interact / drag-select are additive later.
     private readonly MouseHandler _mouse;
     private bool MouseTracking => _mouse.Enabled;
+
+    /// <summary>True when SGR mouse reporting is live (frame engine, preset != off, not suspended).
+    /// Read by the mid-turn EscapeKeyListener so it knows an ESC may be a mouse-report prefix.</summary>
+    public bool MouseReportingActive => MouseTracking;
+
+    /// <summary>Mid-turn wheel scroll (called on the EscapeKeyListener thread via MuxConsole hook):
+    /// step console.scrollSpeedRows per net notch through the same FrameScrollBy path, then repaint.
+    /// Thread-safety: the caller (MuxConsole.TuiWheelScroll) takes ConsoleLock before invoking.</summary>
+    public void WheelScrollBy(int netWheelDir)
+    {
+        if (OnWheelScroll(netWheelDir)) Repaint();
+    }
     // Win32 delivery path (Windows console hosts only): mouse arrives as MOUSE_EVENT input records
     // that Console.ReadKey discards, so it is read via Win32ConsoleInput (ReadConsoleInputW +
     // ENABLE_MOUSE_INPUT + QuickEdit off) and fed into the same MouseHandler seam as the Unix VT path.
@@ -1914,6 +1926,10 @@ internal sealed class TuiDriver
         _editor.Reset();
         _paletteSel = -1;
         _inInput = true;
+        // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
+        // pressed while the agent was streaming). Without this those keystrokes were silently
+        // discarded - the "typing feels laggy / misses chars after the first message" regression.
+        MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(_ungetq);
         BeginPromptContext();
         // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
         // sub-agent expansion never lingers into the input frame. The block stays Ctrl+E/NAV
