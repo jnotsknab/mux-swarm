@@ -125,7 +125,7 @@ public static class DetachedRunner
                 // on the emit path when not serving); byte-identical legacy frames when untagged.
                 using var _originScope = MuxConsole.BeginServeOrigin("subagent", $"sub:{job.Agent}");
                 var (raw, status, _, _) = await MultiAgentOrchestrator.RunSubAgentAsync(
-                    specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false);
+                    specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false, hiddenCapture: true);
                 lock (_gate)
                 {
                     job.Result = raw;

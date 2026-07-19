@@ -81,8 +81,7 @@ internal static class TuiCommands
         new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
-        new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
-        new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>)", Scope.SessionOnly),
+        new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>; hide via \\ Agent View 'h')", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 

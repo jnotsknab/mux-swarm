@@ -1713,6 +1713,43 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void AgentView_HiddenStatus_RendersHiddenTag()
+    {
+        // A lane the registry has hidden carries a status prefixed "hidden" (see MuxConsole's
+        // Agent View snapshot) - the dashboard must surface the [hidden] tag on that row.
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        var snap = new System.Collections.Generic.List<(string, string, string)>
+        {
+            ("WebAgent", "working", TuiComponents.AgentTint("WebAgent")),
+            ("CodeAgent", "hidden \u00b7 working", TuiComponents.AgentTint("CodeAgent")),
+        };
+        av.SetRows(snap, now);
+        av.Open();
+        var rows = av.RenderDashboard(70, now, 0);
+        Assert.Contains(rows, r => r.Contains("CodeAgent") && r.Contains("[hidden]"));
+        Assert.Contains(rows, r => r.Contains("WebAgent") && !r.Contains("[hidden]"));
+    }
+
+    [Fact]
+    public void AgentView_MarkHidden_TagsRowLocally()
+    {
+        // The 'h' key flips the lane in the registry and locally tags the row so it repaints as
+        // hidden on the same frame (no refresh round-trip through the capture registry).
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("WebAgent", "CodeAgent"), now);
+        av.Open();
+        av.MarkHidden("CodeAgent", hidden: true);
+        var rows = av.RenderDashboard(70, now, 0);
+        Assert.Contains(rows, r => r.Contains("CodeAgent") && r.Contains("[hidden]"));
+        Assert.Contains(rows, r => r.Contains("WebAgent") && !r.Contains("[hidden]"));
+        // Closing the dashboard clears the local tags (the registry owns hidden state).
+        av.Close();
+        Assert.DoesNotContain(av.RenderDashboard(70, now, 0), r => r.Contains("[hidden]"));
+    }
+
+    [Fact]
     public void Driver_EnterAgentView_ForegroundsSelectedAgentByName()
     {
         var term = new FakeTerminal();

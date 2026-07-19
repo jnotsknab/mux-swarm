@@ -899,7 +899,9 @@ internal sealed class TuiDriver
     /// </summary>
     public bool EnterAgentView(
         IReadOnlyList<(string Agent, string Status, string Tint)> snapshot,
-        Func<string, string?> bodyProvider)
+        Func<string, string?> bodyProvider,
+        Func<string, string?>? onHide = null,
+        Func<string, string?>? onUnhide = null)
     {
         if (_navActive || _agentViewActive) return false;
         if (snapshot.Count == 0) return false;
@@ -935,6 +937,22 @@ internal sealed class TuiDriver
                     { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
                     { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
+
+                // h: hide the selected lane from the main viewport (activity strip + expanded
+                // panel). It stays in this dashboard (tagged hidden), Enter unhides + attaches.
+                if (key.Key == ConsoleKey.H && onHide is not null)
+                {
+                    string? lane = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (lane is not null)
+                    {
+                        string? resolved = onHide(lane);
+                        if (resolved is not null && IsSubAgentExpanded(resolved))
+                            ToggleSubAgentExpanded(resolved, bodyProvider(resolved) ?? "");  // close it
+                        _agentView.MarkHidden(resolved ?? lane, hidden: true);
+                        Repaint();
+                    }
+                    continue;
+                }
 
                 // m: audit the selected agent's mailbox (M4). Commits its message-log rows to the
                 // transcript so cross-agent chatter is visible on demand (off by default - nothing
@@ -974,6 +992,9 @@ internal sealed class TuiDriver
                         _agentView.Close();
                         // Stick Ctrl+E to this agent from now on (issue #1).
                         _foregroundAgent = agent;
+                        // Selecting a hidden lane unhides it (promotes it into the main viewport
+                        // like a standard sub-agent) before its panel attaches.
+                        onUnhide?.Invoke(agent);
                         if (body.Length > 0 && !IsSubAgentExpanded(agent))
                             ToggleSubAgentExpanded(agent, body);
                         Repaint();

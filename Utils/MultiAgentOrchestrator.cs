@@ -1405,15 +1405,18 @@ public static class MultiAgentOrchestrator
         int maxIterations,
         CancellationToken cancellationToken,
         bool prodMode = false,
-        bool cleanSession = false)
+        bool cleanSession = false,
+        bool hiddenCapture = false)
     {
         if (cleanSession)
             specialist.Session.SetInMemoryChatHistory(new List<ChatMessage>());
 
         // Collapse this sub-agent's live output into a single expandable transcript line when
         // enabled (TUI only). Null scope = stream inline as before. AsyncLocal-scoped, so
-        // concurrent parallel sub-agents each capture independently.
-        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name);
+        // concurrent parallel sub-agents each capture independently. hiddenCapture marks the lane
+        // viewport-hidden at registration (/background) - listed in the backslash Agent View but
+        // not in the main viewport, until the user selects it there (or unhides via 'h').
+        using var _subAgentCapture = MuxConsole.BeginSubAgentCapture(specialist.Def.Name, hidden: hiddenCapture);
 
         // Native REPL/shell session scope: bind a FRESH per-child session so this sub-agent's
         // Python worker + shell jobs are its own (disposed when the run ends). This is what makes

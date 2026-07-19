@@ -143,8 +143,9 @@ public static partial class MuxConsole
         // "WebAgent 3", ... Assigned once at registration so the Agent View can key selection +
         // body lookup per LANE (duplicate same-name delegations no longer collapse to one row).
         public string Lane = "";
-        // /hide: when true the lane is removed from the docked activity strip + viewport but kept
-        // in the backslash Agent View (tagged "hidden"), so the user can unhide it later.
+        // When true the lane is removed from the docked activity strip + viewport but kept in the
+        // backslash Agent View (tagged "hidden"). Set at registration for /background lanes, then
+        // toggled via the Agent View 'h' key / Enter-to-select / /unhide.
         public volatile bool Hidden;
         public readonly System.Text.StringBuilder Buffer = new();
         // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
@@ -217,10 +218,10 @@ public static partial class MuxConsole
         return new CaptureScope(cap, prev);
     }
 
-    public static IDisposable? BeginSubAgentCapture(string agent)
+    public static IDisposable? BeginSubAgentCapture(string agent, bool hidden = false)
     {
         if (!CollapseSubAgents || StdioMode || !IsTui) return null;
-        var cap = new SubAgentCapture { Agent = agent };
+        var cap = new SubAgentCapture { Agent = agent, Hidden = hidden };
         var prev = _capture.Value;       // restore on dispose so nested delegation is correct
         _capture.Value = cap;
         lock (_captureGate)
@@ -341,23 +342,13 @@ public static partial class MuxConsole
         }
     }
 
-    /// <summary>/hide: hide a live sub-agent LANE from the docked strip + viewport (kept in the
-    /// backslash Agent View, tagged "hidden"). Resolves <paramref name="lane"/> by exact lane name,
-    /// else by base agent name (first match). Returns the resolved lane name, or null if not found.</summary>
-    public static string? HideSubAgentLane(string lane)
-    {
-        string? resolved = null;
-        lock (_captureGate)
-        {
-            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
-                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && !c.Hidden);
-            if (cap is not null) { cap.Hidden = true; resolved = cap.Lane; }
-        }
-        if (resolved is not null) PushSubAgentActivity();
-        return resolved;
-    }
+    /// <summary>Hide a live sub-agent LANE from the docked strip + viewport (kept in the
+    /// backslash Agent View, tagged "hidden"). Compatibility shim over <see cref="UpdateSubAgentHidden"/>;
+    /// hides from the backslash Agent View ('h' key) and hidden-at-registration (/background).
+    /// Returns the resolved lane name, or null if not found.</summary>
+    public static string? HideSubAgentLane(string lane) => UpdateSubAgentHidden(lane, hidden: true);
 
-    /// <summary>Unhide a previously /hide'd lane (exact lane name, else base agent name). Returns the
+    /// <summary>Unhide a previously hidden lane (exact lane name, else base agent name). Returns the
     /// resolved lane, or null if not found.</summary>
     public static string? UnhideSubAgentLane(string lane)
     {
@@ -372,15 +363,14 @@ public static partial class MuxConsole
         return resolved;
     }
 
-    /// <summary>The live lane names (for /hide + /unhide autocomplete). Visible lanes first, then
-    /// hidden ones suffixed with " (hidden)".</summary>
+    /// <summary>The live lane names (visible first, then hidden ones suffixed with " (hidden)").</summary>
     public static IReadOnlyList<string> ActiveSubAgentLanes()
     {
         lock (_captureGate)
             return _activeCaptures.Select(c => c.Hidden ? $"{c.Lane} (hidden)" : c.Lane).ToList();
     }
 
-    /// <summary>Lane names eligible for /hide (the currently-visible lanes).</summary>
+    /// <summary>Lane names currently visible in the viewport.</summary>
     public static IReadOnlyList<string> VisibleSubAgentLanes()
     {
         lock (_captureGate)
@@ -392,6 +382,22 @@ public static partial class MuxConsole
     {
         lock (_captureGate)
             return _activeCaptures.Where(c => c.Hidden).Select(c => c.Lane).ToList();
+    }
+
+    /// <summary>Set the viewport-hidden flag on a live lane (exact lane name, else base agent name).
+    /// The sole mutation point for hidden state: backslash-view 'h', /unhide, and hidden-at-registration
+    /// (/background) all converge here. Returns the resolved lane name, or null if not found.</summary>
+    public static string? UpdateSubAgentHidden(string lane, bool hidden)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden != hidden);
+            if (cap is not null) { cap.Hidden = hidden; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
     }
 
     /// <summary>Start the shared ~100ms ticker that animates the active-sub-agent panel. Caller
@@ -1043,7 +1049,9 @@ public static partial class MuxConsole
         lock (ConsoleLock)
         {
             return _driver!.EnterAgentView(snapshot,
-                agent => bodies.TryGetValue(agent, out var b) ? b : null);
+                agent => bodies.TryGetValue(agent, out var b) ? b : null,
+                lane => UpdateSubAgentHidden(lane, hidden: true),
+                lane => UpdateSubAgentHidden(lane, hidden: false));
         }
     }
 

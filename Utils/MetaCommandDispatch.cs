@@ -69,24 +69,6 @@ internal static class MetaCommandDispatch
                 CliCmdUtils.HandleVoice(line);
                 return Result.Handled;
 
-            case "/hide":
-            {
-                var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";
-                if (arg.Length == 0)
-                {
-                    var vis = MuxConsole.VisibleSubAgentLanes();
-                    MuxConsole.WriteMuted(vis.Count == 0
-                        ? "No live sub-agents to hide."
-                        : "Usage: /hide <agent>. Live: " + string.Join(", ", vis));
-                    return Result.Handled;
-                }
-                var hidden = MuxConsole.HideSubAgentLane(arg);
-                MuxConsole.WriteMuted(hidden is not null
-                    ? $"Hid '{hidden}' (still in the \\ Agent View; /unhide {hidden} to restore)."
-                    : $"No live sub-agent matching '{arg}'.");
-                return Result.Handled;
-            }
-
             case "/unhide":
             {
                 var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";
