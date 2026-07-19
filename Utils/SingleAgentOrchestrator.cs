@@ -1297,6 +1297,43 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
             singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
 
+        // Live sub-agent introspection for ANY launcher (run_team, blocking delegate_parallel,
+        // swarm members, giga) - complements check_delegations, which only sees detached/background
+        // jobs. Reads the capture registry (the same data the Agent View renders), bounded per lane.
+        var subagentStatusTool = AIFunctionFactory.Create(
+            method: (
+                [Description("Optional agent name to check just one live sub-agent; omit to list ALL currently running sub-agents.")]
+                string? agent
+            ) =>
+            {
+                if (!string.IsNullOrWhiteSpace(agent))
+                {
+                    var one = MuxConsole.GetLiveSubAgentDetail(agent.Trim());
+                    if (one is null)
+                        return $"[subagent_status] No live sub-agent matching '{agent}'. (It may have finished - collect its result, or check the Agent View.)";
+                    var d = one!.Value;
+                    var tailLine = d.Tail.Length > 0 ? $"\n  tail: {d.Tail}" : "";
+                    return $"[subagent_status] {d.Lane} - {d.LiveStatus} (tools: {d.ToolCalls}){tailLine}";
+                }
+                var all = MuxConsole.GetLiveSubAgentDetails();
+                if (all.Count == 0)
+                    return "[subagent_status] No sub-agents are running right now.";
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[subagent_status] {all.Count} live sub-agent(s):");
+                foreach (var c in all)
+                {
+                    sb.AppendLine($"- {c.Lane} ({c.Agent}) - {c.LiveStatus} (tools: {c.ToolCalls})");
+                    if (c.Tail.Length > 0) sb.AppendLine($"    tail: {c.Tail}");
+                }
+                return sb.ToString();
+            },
+            name: "subagent_status",
+            description: "See what your running sub-agents are doing RIGHT NOW - live activity, tool-call count, and a " +
+                         "short output tail for each (any launcher: run_team, delegate_parallel, swarm, giga). " +
+                         "Pass an agent name to check one, or omit to list all. For background jobs fired with " +
+                         "delegate_parallel(background:true), use check_delegations to poll + collect results."
+        );
+
         // Non-blocking delegation: when this lead can spawn sub-agents, also grant check_delegations
         // (delegate_parallel(background:true) fires work into the background + returns at once;
         // check_delegations polls/collects). Optional alongside the blocking tools. Same gate as
@@ -1304,6 +1341,7 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
         {
             singleAgentTools.Add(checkDelegationsTool);
+            singleAgentTools.Add(subagentStatusTool);
         }
 
         // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and

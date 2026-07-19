@@ -409,6 +409,23 @@ public static partial class MuxConsole
         _subAgentTimer = null;
     }
 
+    /// <summary>Snapshot of ALL live captured sub-agents (any launcher: run_team, delegate_parallel
+    /// blocking, swarm members, giga), each with lane, agent name, live activity, tool-call count,
+    /// and a ~120-char tail preview. The subagent_status tool renders this so the lead can watch
+    /// blocking delegations mid-batch, not just detached jobs. Ordered by start.</summary>
+    internal static List<(string Lane, string Agent, string LiveStatus, int ToolCalls, string Tail)> GetLiveSubAgentDetails()
+    {
+        lock (_captureGate)
+        {
+            return _activeCaptures.Select(c =>
+            {
+                string tail = CollapseWhitespace(c.Tail.ToString()).Trim();
+                if (tail.Length > 120) tail = "\u2026" + tail[^120..];
+                return (c.Lane, c.Agent, c.LiveStatus, c.ToolCalls, tail);
+            }).ToList();
+        }
+    }
+
     /// <summary>Live detail for a RUNNING captured sub-agent by agent name (exact or lane-prefix
     /// match, most-recent first): its lane label, one-line live activity, tool-call count, and a
     /// ~120-char tail preview of its streamed output. Returns null when no live capture matches.

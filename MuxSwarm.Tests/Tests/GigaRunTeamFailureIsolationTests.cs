@@ -61,10 +61,16 @@ public class GigaRunTeamFailureIsolationTests : IDisposable
         public Task<ChatResponse> GetResponseAsync(IEnumerable<ChatMessage> messages,
             ChatOptions? options = null, CancellationToken ct = default)
             => throw new InvalidOperationException("provider blew up");
-        public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
             IEnumerable<ChatMessage> messages, ChatOptions? options = null,
-            [EnumeratorCancellation] CancellationToken ct = default)
-            => throw new InvalidOperationException("provider blew up");
+            CancellationToken ct = default)
+        {
+            await Task.Yield();
+            throw new InvalidOperationException("provider blew up");
+            #pragma warning disable CS0162
+            yield return new ChatResponseUpdate(ChatRole.Assistant, "unreachable");
+            #pragma warning restore CS0162
+        }
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public void Dispose() { }
     }
@@ -133,4 +139,61 @@ public class GigaRunTeamFailureIsolationTests : IDisposable
         Assert.Contains("BATCH COMPLETED", text);
         Assert.Contains("[ERROR BadAgent]", text);
     }
+
+    [Fact]
+    public async Task RunTeam_Background_LaunchesDetachedJobs_NotBlocks()
+    {
+        App.SwarmConfig = new SwarmConfig
+        {
+            SingleAgent = new AgentConfig { Name = "MuxAgent", PromptPath = "x", Model = "good" },
+            Agents = new List<AgentConfig>
+            {
+                new() { Name = "GoodAgent", Description = "g", PromptPath = "x", Model = "good" },
+                new() { Name = "BadAgent",  Description = "b", PromptPath = "x", Model = "bad"  },
+            },
+        };
+        var models = new Dictionary<string, string>
+        {
+            ["MuxAgent"] = "good", ["GoodAgent"] = "good", ["BadAgent"] = "bad",
+        };
+        IChatClient Factory(string model) =>
+            model == "bad" ? new BadClient() : new GoodClient();
+
+        var tools = GigaMode.BuildTools(Factory, models, CancellationToken.None);
+        var spawn = Find(tools, "spawn_team")!;
+        var run = Find(tools, "run_team")!;
+
+        await spawn.InvokeAsync(new AIFunctionArguments
+        {
+            ["name"] = "t", ["members"] = "GoodAgent",
+            ["coordination"] = "fanout", ["persist"] = false,
+        });
+
+        // DetachedRunner resolves the member through the specialist registry - seed it with the
+        // canned good agent so the background launch resolves (spawn rebuilt it from disk config).
+        MultiAgentOrchestrator.Specialists = new Dictionary<string, (AIAgent, AgentSession, Common.AgentDefinition)>();
+        {
+            var def = new Common.AgentDefinition("GoodAgent", "g", "x", false, t => t);
+            var agent = new GoodClient().AsAIAgent(new ChatClientAgentOptions { Name = "GoodAgent" });
+            var session = await agent.CreateSessionAsync();
+            MultiAgentOrchestrator.Specialists["GoodAgent"] = (agent, session, def);
+        }
+
+        // background=true must return job ids immediately (not the blocking BATCH COMPLETED payload).
+        var res = await run.InvokeAsync(new AIFunctionArguments
+        {
+            ["name"] = "giga:t",
+            ["assignments"] = "[{\"agent\":\"GoodAgent\",\"task\":\"say ok\"}]",
+            ["background"] = true,
+        });
+        var text = res?.ToString() ?? "";
+        Assert.Contains("background", text);
+        Assert.Contains("bg", text);              // a bg<N> job id is returned
+        Assert.DoesNotContain("BATCH COMPLETED", text);
+
+        // The job is visible to check_delegations' source registry (DetachedRunner.Jobs()).
+        Assert.Contains(DetachedRunner.Jobs(), j => j.Agent == "GoodAgent");
+        foreach (var j in DetachedRunner.Jobs()) DetachedRunner.Cancel(j.Id);   // don't leak into later tests
+    }
 }
+
