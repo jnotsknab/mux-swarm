@@ -357,8 +357,12 @@ internal sealed class LiveRegion
                 else if (delta < 0) sb.Append(Ansi.CursorDown(-delta));
                 cursorOffset = up;
                 sb.Append(Ansi.CursorLeft);
-                sb.Append(Ansi.EraseLine);
-                sb.Append(newRows[r]);
+                // Overwrite the full width instead of erasing first: EraseLine (CSI 2K) is a
+                // Background-Color-Erase that would paint the row to the DEFAULT bg before a shaded
+                // [on ...] band (input field / footer chips) repaints, flashing the band unshaded on
+                // every spinner/timer/keystroke tick (BCE flicker). Writing the row then a trailing
+                // default-bg pad overwrites every cell with no erase-to-default intermediate.
+                AppendRowOverwrite(sb, newRows[r]);
             }
             // Return the cursor to the home line (below the last row).
             if (cursorOffset > 0) sb.Append(Ansi.CursorDown(cursorOffset));
@@ -530,4 +534,20 @@ internal sealed class LiveRegion
         _term.Write(sb.ToString());
         _term.Flush();
     }
+
+    // Rewrite one physical row by overwriting to the full terminal width rather than erasing first,
+    // so a shaded background band never flashes to the default bg before its repaint (BCE). The
+    // trailing pad is emitted AFTER the row's own SGR reset, so it is default-bg and clears residue
+    // from a previously-longer row.
+    private static readonly System.Text.RegularExpressions.Regex AnsiCsi =
+        new("\u001b\\[[0-9;?]*[A-Za-z]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private void AppendRowOverwrite(System.Text.StringBuilder sb, string rowAnsi)
+    {
+        sb.Append(rowAnsi);
+        int vis = TuiMarkup.Width(AnsiCsi.Replace(rowAnsi, string.Empty));
+        int pad = Cols - vis;
+        if (pad > 0) sb.Append(Ansi.Reset).Append(new string(' ', pad));
+    }
+
 }

@@ -123,6 +123,48 @@ public class FrameRendererTests
     }
 
     [Fact]
+    public void SteadyStateRewrite_UsesOverwriteNotEraseLine_NoBceFlash()
+    {
+        // BCE fix: a changed row must be OVERWRITTEN to full width, never preceded by EraseLine
+        // (CSI 2K), so a shaded [on ...] band can't flash to the default bg before its repaint.
+        var t = new FakeTerminal();
+        var fr = new FrameRenderer(t);
+        var rows = Enumerable.Range(0, t.Height).Select(i => "row" + i).ToList();
+
+        fr.Present(rows);
+        t.Clear();
+        var next = rows.ToList();
+        next[3] = "CHANGED";
+        fr.Present(next);
+        var o = t.Output;
+
+        // No erase-line anywhere in the steady-state frame.
+        Assert.DoesNotContain(Ansi.EraseLine, o);
+        // The changed row is padded to the full terminal width (content + trailing default-bg pad).
+        Assert.Contains(Ansi.MoveTo(4, 1), o);
+    }
+
+    [Fact]
+    public void SteadyStateRewrite_ShadedRow_OverwritesFullWidth_NoEraseFirst()
+    {
+        // A row carrying a shaded background band: the rewrite writes the row content directly and
+        // pads with default-bg spaces AFTER a reset, with no EraseLine erasing to default first.
+        var t = new FakeTerminal { Width = 20, Height = 4 };
+        var fr = new FrameRenderer(t);
+        string shaded = "[48;2;30;30;40m shaded [0m";     // an [on ...] band, 8 visible cols
+        var rows = new List<string> { "a", "b", "c", "d" };
+        fr.Present(rows);
+        t.Clear();
+        var next = new List<string> { "a", shaded, "c", "d" };
+        fr.Present(next);
+        var o = t.Output;
+
+        Assert.DoesNotContain(Ansi.EraseLine, o);          // no BCE erase
+        Assert.Contains(shaded, o);                        // band written directly
+        Assert.Contains(Ansi.MoveTo(2, 1), o);             // at the changed row
+    }
+
+    [Fact]
     public void WidthChange_ForcesFullRedraw()
     {
         var t = new FakeTerminal();

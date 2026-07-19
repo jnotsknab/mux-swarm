@@ -69,17 +69,18 @@ internal sealed class FrameRenderer
             sb.Append(Ansi.ClearScreen);
             sb.Append(Ansi.Home);
             for (int i = 0; i < rows.Count; i++)
-                sb.Append(Ansi.MoveTo(i + 1, 1)).Append(rows[i]);
+                WriteRowInto(sb, i, rows[i]);
         }
         else
         {
-            // Steady state: rewrite only the rows whose ANSI changed. Erase-line before the write
-            // fully overwrites the prior row (any width) with no residue. A no-change frame emits
-            // zero row writes (spinner-idle stays O(changed rows), not O(viewport)).
+            // Steady state: rewrite only the rows whose ANSI changed. WriteRowInto OVERWRITES the
+            // full terminal width (content + default-bg pad) rather than erasing first, so a shaded
+            // [on ...] band never flashes to the default background before its repaint (BCE §4). A
+            // no-change frame emits zero row writes (spinner-idle stays O(changed rows), not O(viewport)).
             var last = _lastRows!;
             for (int i = 0; i < rows.Count; i++)
                 if (!string.Equals(rows[i], last[i], StringComparison.Ordinal))
-                    sb.Append(Ansi.MoveTo(i + 1, 1)).Append(Ansi.EraseLine).Append(rows[i]);
+                    WriteRowInto(sb, i, rows[i]);
         }
         sb.Append(Ansi.EndSyncOutput);
 
@@ -115,4 +116,24 @@ internal sealed class FrameRenderer
         }
         catch { /* handing the terminal back must never throw */ }
     }
+
+    // Visible (display) column width of an already-ANSI row: strip CSI sequences, then measure runes.
+    private static readonly System.Text.RegularExpressions.Regex AnsiCsi =
+        new("\u001b\\[[0-9;?]*[A-Za-z]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static int VisibleWidth(string ansiRow) =>
+        TuiMarkup.Width(AnsiCsi.Replace(ansiRow, string.Empty));
+
+    // Write one row by OVERWRITING every cell to the terminal width instead of erasing first. A
+    // trailing default-bg pad clears any residue from a longer previous row; because the row's own
+    // content (including a shaded [on ...] band) is written directly and never preceded by an
+    // erase-to-default, the shaded region can never flash unshaded (BCE §4). The pad spaces sit
+    // AFTER the row's own closing SGR reset, so they are default-bg and clear old cells cleanly.
+    private void WriteRowInto(System.Text.StringBuilder sb, int rowIndex, string rowAnsi)
+    {
+        sb.Append(Ansi.MoveTo(rowIndex + 1, 1)).Append(rowAnsi);
+        int pad = _term.Width - VisibleWidth(rowAnsi);
+        if (pad > 0) sb.Append(Ansi.Reset).Append(new string(' ', pad));
+    }
+
 }
