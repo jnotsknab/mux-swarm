@@ -187,6 +187,36 @@ public class SgrInputAssemblerTests
     }
 
     [Fact]
+    public void PendingSequence_ClassificationWindow_NotExpiredImmediately()
+    {
+        // The pump only flushes a pending sequence after the stream has been IDLE for the
+        // classification window. Immediately after a fed key the window must NOT be expired -
+        // this is what stops a chunked paste (ESC[2 | 00~text...) from tearing at the chunk
+        // boundary and leaking "[200~" into the editor as literal text.
+        var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
+        Feed(asm, "\u001b[2");                      // paste opener torn mid-marker
+        Assert.True(asm.HasPending);
+        Assert.False(asm.PendingExpired(idleMs: 50));   // just fed: window still open
+        Assert.True(asm.PendingExpired(idleMs: 0));     // zero window: expired at once
+    }
+
+    [Fact]
+    public void ChunkedPasteOpener_NoFlushInsideWindow_PasteSurvivesIntact()
+    {
+        // Chunk boundary inside the ESC[200~ opener, with the pump polling in between: as long
+        // as the flush is gated on the idle window (PendingExpired false), feeding the rest of
+        // the sequence later still yields ONE whole paste and zero leaked keys.
+        var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
+        var evs = Feed(asm, "\u001b[2");
+        Assert.Empty(evs);                            // held for classification
+        Assert.False(asm.PendingExpired(idleMs: 50)); // pump would NOT flush here
+        evs.AddRange(Feed(asm, "00~hello\u001b[201~"));
+        var paste = Assert.Single(evs);
+        Assert.Equal(ConsoleInputPump.EventKind.Paste, paste.Kind);
+        Assert.Equal("hello", paste.PasteText);
+    }
+
+    [Fact]
     public void FalsePasteOpener_PassesThroughAsKeys()
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);

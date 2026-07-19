@@ -348,6 +348,15 @@ internal sealed class TuiDriver
     private bool _frameRowCountValid;
     private bool _frameRowCountCardMarkdown;
 
+    // Cached transcript window for ComposeFrameRows: the bottom-up render walks
+    // (viewport + scroll offset) rows of retained history, so recomposing it per keystroke is
+    // what made typing laggy after scrolling back (the deeper the scroll, the worse the lag).
+    // While the user types only the live band changes; the window is keyed on geometry + scroll
+    // + content generation and reused until any of those move. Invalidated alongside the
+    // row-count cache (width/style/expansion changes).
+    private List<string>? _frameWindowCache;
+    private (int W, int Room, int Scroll, int Count, long Seq, bool Md) _frameWindowKey;
+
     private void AddTranscriptEntry(Entry entry)
     {
         entry.Sequence = ++_transcriptSequence;
@@ -370,6 +379,7 @@ internal sealed class TuiDriver
         _frameRowCountValid = false;
         _frameRowCountCache.Clear();
         _frameTotalRowsCache = 0;
+        _frameWindowCache = null;
     }
 
     private int GetFrameTotalRows(int wrapWidth)
@@ -1551,13 +1561,27 @@ internal sealed class TuiDriver
             // marker at the top after the first PgUp).
             int maxScroll = Math.Max(0, totalRows - transcriptRoom);
             if (_frameScroll > maxScroll) _frameScroll = maxScroll;
-            int want = transcriptRoom + Math.Max(0, _frameScroll);
-            for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
-                transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
-            int skipTail = Math.Max(0, _frameScroll);
-            int end = transcriptRows.Count - skipTail;
-            int start = Math.Max(0, end - transcriptRoom);
-            transcriptRows = transcriptRows.GetRange(start, Math.Max(0, end - start));
+            var windowKey = (wrapW, transcriptRoom, _frameScroll, _transcript.Count, _transcriptSequence, _cardMarkdown);
+            if (_frameWindowCache is not null && _frameWindowKey == windowKey)
+            {
+                // Unchanged window (typing at the prompt only mutates the live band): reuse the
+                // rendered slice instead of re-walking history. The caller never mutates this
+                // list (the composed `rows` below is a fresh list; the indicator pass replaces
+                // elements of `rows`, not of this cache).
+                transcriptRows = _frameWindowCache;
+            }
+            else
+            {
+                int want = transcriptRoom + Math.Max(0, _frameScroll);
+                for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
+                    transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
+                int skipTail = Math.Max(0, _frameScroll);
+                int end = transcriptRows.Count - skipTail;
+                int start = Math.Max(0, end - transcriptRoom);
+                transcriptRows = transcriptRows.GetRange(start, Math.Max(0, end - start));
+                _frameWindowCache = transcriptRows;
+                _frameWindowKey = windowKey;
+            }
         }
 
         var rows = new List<string>(h);
@@ -2304,7 +2328,11 @@ internal sealed class TuiDriver
                         // process the buffered key - only the LAST key in the burst triggers a
                         // paint. This is the key fix for multiline-input lag, where each
                         // keystroke would otherwise force a full wrapped-frame re-render.
-                        if (!KeyQueued()) Repaint();
+                        // Under the pump, stdin is drained into the pump's queue almost
+                        // instantly, so Console.KeyAvailable is ~always false - the pump's
+                        // PendingCount is the real backlog signal (KeyQueued() here broke
+                        // coalescing entirely and repainted per keystroke).
+                        if (!(pump is not null ? pump.PendingCount > 0 : KeyQueued())) Repaint();
                         break;
                     case LineEditSignal.Ignored:
                     default:

@@ -226,7 +226,11 @@ public sealed class EscapeKeyListener : IDisposable
                         // "typing feels laggy and misses chars": previously these were dropped here.
                         ReplayKey(key);
                     }
-                    Thread.Sleep(100);
+                    // Poll throttle for the LEGACY path only: the pump path already blocks in
+                    // TryTake(100), so sleeping after every consumed event just throttled the
+                    // mid-turn drain to ~10 events/sec (typed chars piled up in the pump queue
+                    // and were replayed en masse at the next prompt).
+                    if (Tui.ConsoleInputPump.Current is null) Thread.Sleep(100);
                 }
             }
             catch (OperationCanceledException) { }

@@ -183,8 +183,18 @@ internal sealed class ConsoleInputPump : IDisposable
         }
     }
 
+    /// <summary>How long the raw stream must be idle before a pending ESC sequence gives up
+    /// waiting for more bytes and classifies as-is (bare Esc / partial paste). Long enough to
+    /// bridge chunked delivery (a ConPTY/SSH paste chunk boundary inside the ESC[200~ opener),
+    /// short enough that a human Esc press still feels instant.</summary>
+    private const int EscClassifyWindowMs = 50;
+
+    /// <summary>Classification-window flush. The old behavior flushed on the FIRST empty poll,
+    /// which tore any sequence whose bytes arrived in chunks - a paste chunk boundary inside the
+    /// ESC[200~ opener leaked "[200~" into the editor as literal text.</summary>
     private void FlushAssemblerTimeout()
     {
+        if (!_asm.PendingExpired(EscClassifyWindowMs)) return;
         foreach (var e in _asm.FlushTimeout()) Enqueue(e);
     }
 
@@ -212,7 +222,7 @@ internal sealed class ConsoleInputPump : IDisposable
 /// a time; emits keys, wheel events, and whole-paste events. ESC is held in a pending state until
 /// the following bytes classify the sequence (SGR mouse report / bracketed paste / Alt-chord /
 /// bare Esc); <see cref="FlushTimeout"/> emits a bare Esc (or a partial paste) when the
-/// classification window (~10ms of idle, driven by the pump) expires. A torn report is DROPPED in
+/// classification window (~50ms of stream idle, gated by the pump via <see cref="PendingExpired"/>) expires. A torn report is DROPPED in
 /// the machine — it can never surface as key events, at any split point.
 /// </summary>
 internal sealed class SgrInputAssembler
@@ -224,6 +234,7 @@ internal sealed class SgrInputAssembler
     private State _state = State.Ground;
     private readonly StringBuilder _acc = new(32);     // paste text or mouse body
     private int _openMatched;                          // "[200~" / "[201~" match progress
+    private long _lastFeedTick = Environment.TickCount64;
 
     private static readonly char[] PasteOpenTail = { '[', '2', '0', '0', '~' };
     private static readonly char[] PasteCloseTail = { '[', '2', '0', '1', '~' };
@@ -237,8 +248,15 @@ internal sealed class SgrInputAssembler
 
     internal bool HasPending => _state != State.Ground;
 
+    /// <summary>True when a sequence is pending AND the stream has been idle for at least
+    /// <paramref name="idleMs"/> since the last fed key - i.e. the classification window has
+    /// expired and <see cref="FlushTimeout"/> may run without tearing an in-flight sequence.</summary>
+    internal bool PendingExpired(int idleMs)
+        => HasPending && Environment.TickCount64 - _lastFeedTick >= idleMs;
+
     internal IEnumerable<ConsoleInputPump.InputEvent> Feed(ConsoleKeyInfo key)
     {
+        _lastFeedTick = Environment.TickCount64;
         var outp = new List<ConsoleInputPump.InputEvent>(2);
         char c = key.KeyChar;
 
