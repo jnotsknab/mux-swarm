@@ -409,6 +409,27 @@ public static partial class MuxConsole
         _subAgentTimer = null;
     }
 
+    /// <summary>Live detail for a RUNNING captured sub-agent by agent name (exact or lane-prefix
+    /// match, most-recent first): its lane label, one-line live activity, tool-call count, and a
+    /// ~120-char tail preview of its streamed output. Returns null when no live capture matches.
+    /// Used by the sub-agent status tools so the lead sees real progress instead of bare "running",
+    /// without pulling the whole buffer into context.</summary>
+    internal static (string Lane, string LiveStatus, int ToolCalls, string Tail)? GetLiveSubAgentDetail(string agent)
+    {
+        if (string.IsNullOrWhiteSpace(agent)) return null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FindLast(c =>
+                string.Equals(c.Agent, agent, StringComparison.OrdinalIgnoreCase) ||
+                c.Lane.StartsWith(agent, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(c.Lane, agent, StringComparison.OrdinalIgnoreCase));
+            if (cap is null) return null;
+            string tail = CollapseWhitespace(cap.Tail.ToString()).Trim();
+            if (tail.Length > 120) tail = "\u2026" + tail[^120..];
+            return (cap.Lane, cap.LiveStatus, cap.ToolCalls, tail);
+        }
+    }
+
     /// <summary>
     /// Recompute the active-sub-agent snapshot from the registry and push it to the driver's
     /// live region (one line per running agent). Reading LiveStatus here keeps the panel fresh;

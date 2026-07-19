@@ -1220,11 +1220,40 @@ public static class SingleAgentOrchestrator
                 sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
                 foreach (var j in jobs)
                 {
-                    sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
-                    if (j.Status != DetachedStatus.Running && !string.IsNullOrWhiteSpace(j.Result))
+                    if (j.Status == DetachedStatus.Running)
                     {
-                        var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
-                        sb.AppendLine($"  result:\n{r}");
+                        // Surface real progress for running jobs (elapsed + live activity + tool
+                        // count + a short output tail) instead of a bare "Running" - the detail the
+                        // lead needs to decide whether to wait, nudge, or cancel. Bounded: the tail
+                        // preview is ~120 chars and comes from the live capture, not the full buffer.
+                        var elapsed = DateTimeOffset.UtcNow - j.Started;
+                        var live = MuxConsole.GetLiveSubAgentDetail(j.Agent);
+                        string detail = live is { } d
+                            ? $" \u2014 {d.LiveStatus} (tools: {d.ToolCalls})"
+                            : "";
+                        string tail = live is { } d2 && d2.Tail.Length > 0
+                            ? $"\n    tail: {d2.Tail}"
+                            : "";
+                        sb.AppendLine($"- {j.Id} [{j.Agent}] Running ({(int)elapsed.TotalSeconds}s){detail}{tail}");
+                    }
+                    else
+                    {
+                        // Finished: small results inline; large ones spill to a d:Agent#N handle so
+                        // the lead pulls detail via read_delegation instead of a context-blowing dump.
+                        sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
+                        if (!string.IsNullOrWhiteSpace(j.Result))
+                        {
+                            if (!string.IsNullOrWhiteSpace(j.Handle))
+                            {
+                                var tailTxt = j.Result!.Length > 240 ? "\u2026" + j.Result[^240..] : j.Result;
+                                sb.AppendLine($"  result: {j.Result.Length} chars spilled as {j.Handle} (read with read_delegation). tail: {tailTxt}");
+                            }
+                            else
+                            {
+                                var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
+                                sb.AppendLine($"  result:\n{r}");
+                            }
+                        }
                     }
                 }
                 if (running > 0) sb.AppendLine("Some jobs are still running; call check_delegations again later to collect them.");
@@ -1232,8 +1261,10 @@ public static class SingleAgentOrchestrator
             },
             name: "check_delegations",
             description: "Poll the status of background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
-                         "Pass a job id to check one, or omit to list all. Returns each job's status and, for finished jobs, " +
-                         "its full result so you can collect work you fired earlier without blocking."
+                         "Pass a job id to check one, or omit to list all. Running jobs show elapsed time, live activity, " +
+                         "tool-call count, and a short output tail so you can see real progress (not just 'running'). " +
+                         "Finished jobs return their result inline when small, or a d:Agent#N handle to read surgically " +
+                         "with read_delegation when large - so collecting work never blows your context."
         );
 
         var singleAgentTools = (IList<AITool>)

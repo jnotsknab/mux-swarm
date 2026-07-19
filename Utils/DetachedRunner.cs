@@ -20,6 +20,9 @@ public sealed class DetachedJob
     public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? Finished { get; set; }
     public string? Result { get; set; }
+    /// <summary>DelegationStore handle (d:Agent#N) once the finished result is spilled, so the lead
+    /// can pull detail on demand via read_delegation instead of carrying the blob in context.</summary>
+    public string? Handle { get; set; }
     internal CancellationTokenSource Cts { get; init; } = new();
     internal Task? Task { get; set; }
 
@@ -128,6 +131,10 @@ public static class DetachedRunner
                     job.Result = raw;
                     job.Status = status == "success" ? DetachedStatus.Done : DetachedStatus.Failed;
                     job.Finished = DateTimeOffset.UtcNow;
+                    // Spill the finished result into the delegation store so the lead can read it
+                    // surgically via read_delegation (d:Agent#N handle) instead of a giant inline dump.
+                    job.Handle = DelegationStore.Persist(
+                        DelegationStore.CurrentScope, job.Agent, raw ?? "", status, summary: null, artifacts: null)?.Handle;
                 }
             }
             catch (OperationCanceledException)
