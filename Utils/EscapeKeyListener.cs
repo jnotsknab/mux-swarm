@@ -9,17 +9,56 @@ public sealed class EscapeKeyListener : IDisposable
 {
     private readonly CancellationTokenSource _listenerCts;
     private int _disposed;
-    private static volatile bool _paused;
 
+    // Suspension is REFERENCE-COUNTED + ACKNOWLEDGED. `_suspendCount > 0` tells the poll loop to
+    // stand down, but that alone is racy (an in-flight poll could still steal a key). `_readGate`
+    // makes it exclusive: the listener holds it ONLY across its KeyAvailable+ReadKey critical
+    // section, so a suspender that takes the same gate is guaranteed no listener read is in flight
+    // AND none can start until it releases. This gives an interactive prompt true exclusive stdin
+    // ownership, fixing dropped/laggy keys where the listener silently consumed the user's keystroke.
+    private static int _suspendCount;
+    private static readonly object _readGate = new();
+
+    /// <summary>Test/diagnostic probe: true while the background Esc listener is suspended from
+    /// consuming stdin (a prompt owns input). Reference-counted, so nested suspensions are safe.</summary>
+    internal static bool IsInputSuspended => Volatile.Read(ref _suspendCount) > 0;
 
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
     }
 
+    /// <summary>Legacy volatile-style pause/resume kept for callers that only need best-effort
+    /// quieting. Prefer <see cref="SuspendInput"/> for prompts that read stdin — it is acknowledged
+    /// (guarantees no concurrent listener read) whereas these are advisory.</summary>
+    public static void Pause() => Interlocked.Increment(ref _suspendCount);
+    public static void Resume()
+    {
+        if (Volatile.Read(ref _suspendCount) > 0) Interlocked.Decrement(ref _suspendCount);
+    }
 
-    public static void Pause() => _paused = true;
-    public static void Resume() => _paused = false;
+    /// <summary>Acquire EXCLUSIVE, acknowledged stdin ownership for the lifetime of the returned
+    /// scope: increments the suspend count AND takes the listener's read gate, so on return no
+    /// listener key-read is in flight and none can start until dispose. Wrap every blocking
+    /// interactive prompt in this so the background Esc listener cannot steal the user's keys.</summary>
+    public static IDisposable SuspendInput() => new InputSuspension();
+
+    private sealed class InputSuspension : IDisposable
+    {
+        private int _released;
+        public InputSuspension()
+        {
+            Interlocked.Increment(ref _suspendCount);
+            // Barrier: take + release the read gate so any in-flight ReadKey has completed and the
+            // loop will observe _suspendCount before its next read.
+            lock (_readGate) { }
+        }
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            if (Volatile.Read(ref _suspendCount) > 0) Interlocked.Decrement(ref _suspendCount);
+        }
+    }
 
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken)
         => Start(targetCts, outerToken, onExpand: null, onView: null);
@@ -56,14 +95,22 @@ public sealed class EscapeKeyListener : IDisposable
             {
                 while (!listenerCts.Token.IsCancellationRequested)
                 {
-                    if (_paused)
+                    if (Volatile.Read(ref _suspendCount) > 0)
                     {
                         Thread.Sleep(50);
                         continue;
                     }
-                    if (!Console.IsInputRedirected && Console.KeyAvailable)
+                    // Read the key UNDER the gate so SuspendInput()'s barrier truly means "no read in
+                    // flight". Re-check the suspend count inside the gate to close the race where a
+                    // suspender incremented after our outer check but before we acquired the gate.
+                    ConsoleKeyInfo key;
+                    lock (_readGate)
                     {
-                        var key = Console.ReadKey(intercept: true);
+                        if (Volatile.Read(ref _suspendCount) > 0) { Thread.Sleep(50); continue; }
+                        if (Console.IsInputRedirected || !Console.KeyAvailable) { Thread.Sleep(100); continue; }
+                        key = Console.ReadKey(intercept: true);
+                    }
+                    {
                         if (key.Key == ConsoleKey.Escape)
                         {
                             // Scoped cancel: if the user foregrounded (expanded) a specific

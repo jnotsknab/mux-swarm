@@ -430,6 +430,7 @@ public static partial class MuxConsole
             return ResolveScriptedBailout(InputOverride.ReadLine(), list);
 
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Md(title)}[/]")
@@ -476,6 +477,7 @@ public static partial class MuxConsole
             return PromptChoice.Picked(input.StartsWith("y", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Md(message)}[/]")
@@ -510,6 +512,7 @@ public static partial class MuxConsole
         // selects cancel, treat the whole prompt as cancelled; if they select custom, follow up with
         // a free-text line.
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var picked = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Md(title)}[/]")
@@ -1405,6 +1408,7 @@ public static partial class MuxConsole
         else
             prompt.AllowEmpty();
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _ans = AnsiConsole.Prompt(prompt).Trim();
         ErasePromptResidue(_resTop);
         TuiResume();
@@ -1429,6 +1433,7 @@ public static partial class MuxConsole
             return InputOverride.ReadLine()?.Trim() ?? string.Empty;
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _sec = AnsiConsole.Prompt(
             new TextPrompt<string>($"  [{C.Prompt}]{Md(message)}[/]")
                 .PromptStyle(AccentStyle())
@@ -1457,6 +1462,7 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(input) ? defaultValue : input.StartsWith('y');
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Md(message)}[/]", defaultValue);
         ErasePromptResidue(_resTop);
         TuiResume();
@@ -1487,6 +1493,7 @@ public static partial class MuxConsole
             return list[0];
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Md(title)}[/]")
@@ -1526,6 +1533,7 @@ public static partial class MuxConsole
             return selected.Count > 0 ? selected : new List<string> { list[0] };
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _ms = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
                 .Title($"  [{C.Prompt}]{Md(title)}[/]")
