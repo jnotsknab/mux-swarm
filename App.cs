@@ -1219,17 +1219,18 @@ public class App
                         var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
                                    $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
                                    "(overwrite the starter template). Keep it concise and operational.";
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
@@ -1250,17 +1251,18 @@ public class App
                     void SpawnHookScriptHelper(string scriptPath, string purpose)
                     {
                         var task = BuildHookHelperBrief(scriptPath, purpose);
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
@@ -1291,14 +1293,12 @@ public class App
                             void SpawnHookScriptHelper2(string scriptPath, string purpose)
                             {
                                 var task = BuildHookHelperBrief(scriptPath, purpose);
-                                MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                                try
-                                {
-                                    SingleAgentOrchestrator.ChatAgentAsync(
-                                        client: CreateChatClient(helperModel2), GetOrResetCts().Token,
-                                        maxIterations: 4, mcpTools: McpTools, continuous: false).GetAwaiter().GetResult();
-                                }
-                                finally { MuxConsole.InputOverride = System.Console.In; }
+                                // One-shot via incomingGoal (see /createhook above); previously the
+                                // FallbackReader injection left the helper reading stdin and blocked the wizard.
+                                SingleAgentOrchestrator.ChatAgentAsync(
+                                    client: CreateChatClient(helperModel2), GetOrResetCts().Token,
+                                    maxIterations: 4, mcpTools: McpTools,
+                                    incomingGoal: task, continuous: false).GetAwaiter().GetResult();
                             }
                             var cres = MuxSwarm.Utils.Tui.TuiConfigCommands.RunCreateHookWizard(
                                 new[] { "/createhook" }, SpawnHookScriptHelper2);
