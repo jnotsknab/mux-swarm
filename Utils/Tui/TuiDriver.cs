@@ -229,6 +229,22 @@ internal sealed class TuiDriver
         _bracketedPaste = on;
         try { _term.Write(on ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff); _term.Flush(); } catch { /* ignore */ }
     }
+
+    // Wheel scrollback (frame engine only): the MouseHandler owns SGR mode + event classification;
+    // the idle-prompt loop drains the raw report bytes (shared ReadKey/unget machinery) and feeds
+    // them here. Wheel up/down maps onto the SAME FrameScrollBy path Ctrl+U/Ctrl+D use, stepping
+    // console.scrollSpeedRows rows per notch. Press/Release/Drag are classified + dispatched to
+    // (currently unwired) sinks so click-to-interact / drag-select are additive later.
+    private readonly MouseHandler _mouse;
+    private bool MouseTracking => _mouse.Enabled;
+
+    public void SetMouseTracking(bool on)
+    {
+        // Only meaningful under the frame engine (inline mode keeps native scrollback + selection);
+        // enabling 1000/1006 inline would only steal the terminal's own copy/paste selection.
+        if (!_engineFrame) return;
+        _mouse.SetEnabled(on);
+    }
     // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
     // stashed here and replayed through the normal edit path so nothing is dropped.
     private readonly Queue<ConsoleKeyInfo> _ungetq = new();
@@ -486,6 +502,7 @@ internal sealed class TuiDriver
         _region = new LiveRegion(_term);
         _frame = new FrameRenderer(_term);
         _engineFrame = frameEngine;
+        _mouse = new MouseHandler(_term);
     }
 
     /// <summary>True when the driver is running the v0.12.4 full-frame (alternate-screen) renderer
@@ -1390,7 +1407,14 @@ internal sealed class TuiDriver
     /// no timer-driven present can re-enter the alt screen while the prompt owns the terminal.</summary>
     private void HandBack()
     {
-        if (_engineFrame) { _suspended = true; _frame.Leave(); }
+        if (_engineFrame)
+        {
+            // Turn off wheel reporting before leaving the alt screen so the primary buffer / any
+            // blocking prompt gets the terminal back without mouse events being emitted.
+            _mouse.SetEnabled(false);
+            _suspended = true;
+            _frame.Leave();
+        }
         else _region.Clear();
     }
 
@@ -1416,6 +1440,7 @@ internal sealed class TuiDriver
         if (!_engineFrame || !_suspended) return;
         _suspended = false;
         _promptContextAfterSequence = _transcriptSequence;
+        SetMouseTracking(true);   // re-arm wheel scrollback on return to the frame
         _frame.Invalidate();
         Repaint();
     }
@@ -1699,6 +1724,86 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
+    private static readonly char[] _mousePrefixTail = { '[', '<' };
+
+    /// <summary>
+    /// Called right after an ESC was read in the idle-prompt loop. If the next queued chars are the
+    /// SGR mouse prefix <c>[&lt;</c>, drain the WHOLE report body (<c>b;x;y</c>) up to and including
+    /// its <c>M</c>/<c>m</c> terminator SYNCHRONOUSLY, so no fragment can ever reach the editor. Then
+    /// coalesce any follow-up reports already queued (a fast wheel burst) into ONE net scroll and
+    /// apply it via the same FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when an ESC[&lt; mouse
+    /// report was consumed (the caller must NOT treat the ESC as anything else); false leaves the ESC
+    /// untouched (probed chars are unget for normal handling). Wheel handling is frame-engine only.
+    /// </summary>
+    private bool TryConsumeMouseReport()
+    {
+        if (!MouseTracking) return false;
+        if (!MatchTail(_mousePrefixTail)) return false;   // not a mouse report; ESC keeps its meaning
+
+        int netWheel = 0;
+        bool consumedAny = false;
+
+        // Drain this report and any immediately-following reports (wheel bursts queue several). Each
+        // is classified by the MouseHandler; wheel direction is accumulated so a burst becomes ONE
+        // net scroll + one repaint, and non-wheel events (press/release/drag) are dispatched to their
+        // sinks (unwired today) without ever reaching the editor.
+        while (true)
+        {
+            if (!DrainOneMouseBody(out int button, out int col, out int row, out bool release)) break;
+            consumedAny = true;
+            if (_mouse.Classify(button, col, row, release) is { } ev)
+                netWheel += _mouse.Dispatch(ev);   // returns wheel dir (+1/-1) or 0
+
+            // Peek for another back-to-back report: ESC [ < ... . Only continue the burst when the
+            // full prefix is present and consumed; otherwise stop (leaves non-mouse input intact).
+            if (!TryReadKeyNonBlocking(out var k)) break;
+            if (k.KeyChar != '\u001b') { _ungetq.Enqueue(k); break; }
+            if (!MatchTail(_mousePrefixTail)) { _ungetq.Enqueue(k); break; }  // ESC was not a mouse prefix
+        }
+
+        if (!consumedAny) return false;
+
+        // Apply the coalesced wheel scroll once. Positive = wheel up = scroll BACK into history.
+        if (netWheel != 0 && _engineFrame && OnWheelScroll(netWheel))
+            Repaint();
+        return true;
+    }
+
+    // Wheel -> scrollback bridge: step console.scrollSpeedRows rows per net notch through the SAME
+    // FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when the offset changed (caller repaints).
+    private bool OnWheelScroll(int netWheelDir) => FrameScrollBy(netWheelDir * _scrollSpeedRows);
+
+    /// <summary>Drain the body of one SGR mouse report (already past <c>ESC[&lt;</c>): read up to the
+    /// <c>M</c>/<c>m</c> terminator, parse <c>b;x;y</c>, and yield the button. Returns false if the
+    /// stream ran out or the body was malformed (chars are consumed either way - a torn report is
+    /// dropped, never leaked to the editor).</summary>
+    private bool DrainOneMouseBody(out int button, out int col, out int row, out bool release)
+    {
+        button = 0; col = 0; row = 0; release = false;
+        var body = new System.Text.StringBuilder(12);
+        while (true)
+        {
+            ConsoleKeyInfo k;
+            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
+            else if (!TryReadKeyNonBlocking(out k))
+            {
+                System.Threading.Thread.Sleep(1);   // brief settle for a report split across reads
+                if (!TryReadKeyNonBlocking(out k)) return false;
+            }
+            char c = k.KeyChar;
+            if (c == 'M' || c == 'm')
+            {
+                release = c == 'm';
+                return MouseSgrParser.TryParseBody(body.ToString(), out button, out col, out row);
+            }
+            // A stray ESC means the terminator was lost; stop draining this (torn) report.
+            if (c == '\u001b') { _ungetq.Enqueue(k); return false; }
+            if (c == '\0') return false;
+            body.Append(c);
+            if (body.Length > 32) return false;   // runaway guard: no valid report is this long
+        }
+    }
+
     // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
     // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
     // ends. Enters become literal newlines; printables append; control keys are dropped. A short
@@ -1805,6 +1910,16 @@ internal sealed class TuiDriver
                     }
                     continue;
                 }
+
+                // SGR mouse report (frame engine wheel scrollback): an ESC that opens ESC[< is a
+                // mouse report - drain it whole and map wheel up/down onto the FrameScrollBy path
+                // (same business logic as Ctrl+U/Ctrl+D, stepping console.scrollSpeedRows per notch).
+                // Consuming the sequence synchronously here guarantees no report fragment can ever
+                // leak into the editor as typed chars (the failure mode of the earlier char-fed
+                // parser). Non-wheel mouse events are parsed and discarded. Inline mode never enables
+                // mouse tracking, so this is a no-op there.
+                if (MouseTracking && key.KeyChar == '\u001b' && TryConsumeMouseReport())
+                    continue;
 
                 // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
                 // read and more input is ALREADY buffered, it is the interior of a fast burst - a

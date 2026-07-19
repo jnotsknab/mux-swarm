@@ -605,6 +605,7 @@ public static partial class MuxConsole
                 _driver.SetInputHighlight(InputHighlight);
                 _driver.SetCardMarkdown(CardMarkdown);
                 _driver.SetBracketedPaste(BracketedPaste);
+                _driver.SetMouseTracking(true);   // frame engine only (SetMouseTracking gates on it)
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
             }
             catch
