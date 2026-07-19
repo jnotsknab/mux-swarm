@@ -110,6 +110,7 @@ internal static class TuiCommands
         new("/setmodel",     "Change an agent/orchestrator model", Scope.ReplOnly),
         new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
+        new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons)", Scope.ReplOnly),
         new("/config",       "Show all current config settings", Scope.ReplOnly),
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
@@ -163,7 +164,7 @@ internal static class TuiCommands
         "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
-        "/compact", "/handoff", "/heal", "/reflect",
+        "/compact", "/handoff", "/heal", "/reflect", "/mouse",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

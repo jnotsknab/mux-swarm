@@ -82,6 +82,10 @@ public static partial class MuxConsole
     /// + live via /set. Ignored outside the frame render engine.</summary>
     public static int ScrollSpeedRows { get; set; } = 1;
 
+    /// <summary>Mirror of console.mouseTracking (off|wheel|buttons) for the frame engine. Applied
+    /// at TUI activation and live via /set mouseTracking or /mouse.</summary>
+    public static string MouseTracking { get; set; } = "wheel";
+
     /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
     /// on activation + live via /set. Ignored outside the live TUI.</summary>
     public static bool InputHighlight { get; set; } = true;
@@ -605,7 +609,7 @@ public static partial class MuxConsole
                 _driver.SetInputHighlight(InputHighlight);
                 _driver.SetCardMarkdown(CardMarkdown);
                 _driver.SetBracketedPaste(BracketedPaste);
-                _driver.SetMouseTracking(true);   // frame engine only (SetMouseTracking gates on it)
+                _driver.SetMouseTrackingPreset(MouseTracking);   // frame engine only (gated internally)
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
             }
             catch
@@ -805,6 +809,13 @@ public static partial class MuxConsole
         DelegationSpacing = Math.Max(0, lines);
         if (!ViaDriver) return;
         lock (ConsoleLock) { _driver!.SetBlockGap(DelegationSpacing); }
+    }
+
+    public static void SetTuiMouseTracking(string preset)
+    {
+        MouseTracking = preset is "off" or "buttons" ? preset : "wheel";
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetMouseTrackingPreset(MouseTracking); }
     }
 
     public static void SetTuiScrollSpeedRows(int rows)

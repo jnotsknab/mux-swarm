@@ -143,6 +143,20 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "mouseTracking", Aliases = new[] { "mouse", "mousetracking" }, ValueHint = "off|wheel|buttons",
+            Get = () => Cfg.Console.MouseTracking,
+            Set = v =>
+            {
+                var c = (v ?? "").Trim().ToLowerInvariant();
+                if (c is not ("off" or "wheel" or "buttons"))
+                    return Bad($"mouseTracking expects off|wheel|buttons (got '{v}').");
+                Cfg.Console.MouseTracking = c;
+                MuxConsole.SetTuiMouseTracking(c);                 // live (frame engine only)
+                return Save($"mouseTracking = {c}. Saved + applied live (frame engine; inline keeps native scrollback/selection).");
+            },
+        },
+        new Key
+        {
             Name = "scrollSpeedRows", Aliases = new[] { "scrollspeed", "scroll_speed_rows" }, ValueHint = "<int>=1",
             Get = () => Cfg.Console.ScrollSpeedRows.ToString(),
             Set = v =>

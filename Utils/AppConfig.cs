@@ -378,6 +378,18 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("bracketedPaste")]
     public bool BracketedPaste { get; set; } = true;
+
+    /// <summary>
+    /// Mouse reporting preset for the frame render engine (Hermes-style): <c>off</c> = no mouse
+    /// reporting (terminal selection/native behavior untouched); <c>wheel</c> (default) = SGR
+    /// reporting enabled, wheel events drive viewport scrollback (press/release/drag are parsed and
+    /// discarded); <c>buttons</c> = same reporting, but press/release/drag are also dispatched to
+    /// interactive sinks (click-to-interact groundwork; additive as those land). Additive and
+    /// non-invasive: absent in older configs (defaults to <c>wheel</c>). Adjusted live with
+    /// <c>/set mouseTracking off|wheel|buttons</c> or <c>/mouse</c>. Ignored outside the frame engine.
+    /// </summary>
+    [JsonPropertyName("mouseTracking")]
+    public string MouseTracking { get; set; } = "wheel";
 }
 
 /// <summary>

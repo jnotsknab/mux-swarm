@@ -43,6 +43,11 @@ internal sealed class MouseHandler
 
     public bool Enabled => _enabled;
 
+    /// <summary>When false (the <c>wheel</c> preset), press/release/move/drag reports are parsed
+    /// and swallowed - only wheel scrollback acts. When true (the <c>buttons</c> preset) they are
+    /// dispatched to the sinks below (click-to-interact / drag-select groundwork).</summary>
+    public bool ButtonsEnabled { get; set; }
+
     /// <summary>Future Phase 2/3 sinks (click-to-interact, drag-select). Null = ignored today.</summary>
     public System.Action<MouseEvent>? OnPress { get; set; }
     public System.Action<MouseEvent>? OnRelease { get; set; }
@@ -95,13 +100,13 @@ internal sealed class MouseHandler
             case MouseEventKind.Wheel:
                 return ev.WheelDir;
             case MouseEventKind.Press:
-                OnPress?.Invoke(ev);
+                if (ButtonsEnabled) OnPress?.Invoke(ev);
                 return 0;
             case MouseEventKind.Release:
-                OnRelease?.Invoke(ev);
+                if (ButtonsEnabled) OnRelease?.Invoke(ev);
                 return 0;
             case MouseEventKind.Drag:
-                OnDrag?.Invoke(ev);
+                if (ButtonsEnabled) OnDrag?.Invoke(ev);
                 return 0;
             default:
                 return 0;

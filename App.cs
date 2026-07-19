@@ -310,6 +310,7 @@ public class App
         MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
         MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
         MuxConsole.BracketedPaste = Config.Console.BracketedPaste;
+        MuxConsole.MouseTracking = Config.Console.MouseTracking;
         MuxConsole.ShowReasoning = Config.ShowReasoning;
 
         // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
@@ -1186,6 +1187,25 @@ public class App
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set showReasoning {rparts[1].Trim()}");
                     if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); MuxConsole.ShowReasoning = Config.ShowReasoning; }
                     else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
+                case var mc when mc == "/mouse" || mc.StartsWith("/mouse "):
+                {
+                    // Hermes-style mouse preset for the frame engine. Bare /mouse reports the current
+                    // preset; /mouse off|wheel|buttons routes through the mouseTracking /set key so
+                    // validation + persistence stay in one place. "toggle" flips off<->wheel.
+                    var mparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (mparts.Length < 2)
+                    {
+                        MuxConsole.WriteInfo($"mouseTracking = {Config.Console.MouseTracking}  (set with /mouse off|wheel|buttons). Frame engine only; inline keeps native scrollback/selection.");
+                        break;
+                    }
+                    var mv = mparts[1].Trim().ToLowerInvariant();
+                    if (mv == "toggle") mv = Config.Console.MouseTracking == "off" ? "wheel" : "off";
+                    var mres = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set mouseTracking {mv}");
+                    if (mres.Ok) { MuxConsole.WriteSuccess(mres.Message); Config = LoadConfig(ConfigPath); }
+                    else MuxConsole.WriteWarning(mres.Message);
                     break;
                 }
 

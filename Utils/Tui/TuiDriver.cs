@@ -238,12 +238,35 @@ internal sealed class TuiDriver
     private readonly MouseHandler _mouse;
     private bool MouseTracking => _mouse.Enabled;
 
-    public void SetMouseTracking(bool on)
+    // Hermes-style mouse preset: off = no reporting; wheel = report + wheel scrollback only
+    // (press/release/drag parsed + swallowed); buttons = report + wheel + press/release/drag
+    // dispatched to their sinks. Default "wheel". Adjusted via /set mouseTracking or /mouse.
+    private string _mousePreset = "wheel";
+
+    public string MousePreset => _mousePreset;
+
+    /// <summary>Set the mouse reporting preset (off|wheel|buttons). Normalizes unknown values to
+    /// the wheel default. Applies immediately: off disables reporting, wheel/buttons enable it in
+    /// frame mode (unless a blocking prompt is suspended), and buttons also enables the interactive
+    /// sinks. Inline mode keeps native scrollback/selection and is untouched.</summary>
+    public void SetMouseTrackingPreset(string preset)
     {
-        // Only meaningful under the frame engine (inline mode keeps native scrollback + selection);
-        // enabling 1000/1006 inline would only steal the terminal's own copy/paste selection.
-        if (!_engineFrame) return;
-        _mouse.SetEnabled(on);
+        _mousePreset = preset switch
+        {
+            "off" => "off",
+            "buttons" => "buttons",
+            _ => "wheel",
+        };
+        ApplyMouseMode();
+    }
+
+    // Recompute + apply the terminal mouse mode from the current preset + lifecycle state. Only
+    // meaningful under the frame engine; enabling 1000/1006 inline would only steal the terminal's
+    // own copy/paste selection, so it is disabled there regardless of preset.
+    private void ApplyMouseMode()
+    {
+        _mouse.ButtonsEnabled = _mousePreset == "buttons";
+        _mouse.SetEnabled(_engineFrame && !_suspended && _mousePreset != "off");
     }
     // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
     // stashed here and replayed through the normal edit path so nothing is dropped.
@@ -1409,10 +1432,10 @@ internal sealed class TuiDriver
     {
         if (_engineFrame)
         {
-            // Turn off wheel reporting before leaving the alt screen so the primary buffer / any
-            // blocking prompt gets the terminal back without mouse events being emitted.
-            _mouse.SetEnabled(false);
+            // Suspend first, then re-apply the mouse mode: the terminal is handed back without
+            // mouse events being emitted while a blocking prompt owns the primary buffer.
             _suspended = true;
+            ApplyMouseMode();
             _frame.Leave();
         }
         else _region.Clear();
@@ -1440,7 +1463,7 @@ internal sealed class TuiDriver
         if (!_engineFrame || !_suspended) return;
         _suspended = false;
         _promptContextAfterSequence = _transcriptSequence;
-        SetMouseTracking(true);   // re-arm wheel scrollback on return to the frame
+        ApplyMouseMode();   // re-arm reporting per the preset on return to the frame
         _frame.Invalidate();
         Repaint();
     }
