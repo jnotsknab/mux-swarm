@@ -412,14 +412,21 @@ internal static class CliProxyManager
         }
 
         // Unix: setsid <exe> -config <cfg>, stdio -> /dev/null, new session => detached from Mux's group.
+        // The stdio redirect is DONE VIA THE SHELL (</dev/null >/dev/null 2>&1), not .NET pipes: the sidecar
+        // is detached and must OUTLIVE Mux, so a .NET-redirected pipe would break on Mux exit (SIGPIPE/block)
+        // and would need a live drain thread. Without this redirect the Go sidecar INHERITS Mux's TTY and its
+        // logs (gin access lines, auth-file-watch events) bleed straight into the alt-screen TUI viewport.
+        // setsid only detaches the controlling terminal for SIGNAL purposes; it does NOT reassign fd 0/1/2,
+        // which still point at the inherited tty. Positional args ($0/$1) keep paths-with-spaces injection-safe.
         var upsi = new ProcessStartInfo
         {
-            FileName = "setsid",
+            FileName = "/bin/sh",
             UseShellExecute = false,
             WorkingDirectory = InstallDir,
         };
+        upsi.ArgumentList.Add("-c");
+        upsi.ArgumentList.Add("setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
         upsi.ArgumentList.Add(ExecutablePath);
-        upsi.ArgumentList.Add("-config");
         upsi.ArgumentList.Add(ConfigPath);
         try
         {
@@ -427,15 +434,18 @@ internal static class CliProxyManager
         }
         catch
         {
-            // setsid missing (rare): fall back to a plain spawn without tracking. It may still be swept by
-            // the group SIGTERM, but will be re-spawned on next launch.
+            // setsid/sh missing (rare): fall back to a plain spawn without tracking. It may still be swept by
+            // the group SIGTERM, but will be re-spawned on next launch. Redirect stdio to the null device so
+            // its logs never leak into the TUI viewport even on this degraded path.
             var fpsi = new ProcessStartInfo
             {
-                FileName = ExecutablePath,
+                FileName = "/bin/sh",
                 UseShellExecute = false,
                 WorkingDirectory = InstallDir,
             };
-            fpsi.ArgumentList.Add("-config");
+            fpsi.ArgumentList.Add("-c");
+            fpsi.ArgumentList.Add("exec \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
+            fpsi.ArgumentList.Add(ExecutablePath);
             fpsi.ArgumentList.Add(ConfigPath);
             Process.Start(fpsi);
         }
