@@ -731,7 +731,18 @@ public static class SingleAgentOrchestrator
         var semaphore = new SemaphoreSlim(App.MaxDegreeParallelism);
 
         if (singleAgentDef != null && singleAgentDef.CanDelegate && !allowSubAgents && !allowParallelSubAgents)
-            MuxConsole.WriteWarning($"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
+        {
+            // Config guidance, not a runtime failure: dim severity glyph, agent name in agent color,
+            // prose in normal text, and the enabling commands accented so they read as actionable.
+            string agentNm = MuxConsole.EscapeMarkup(singleAgentDef.Name);
+            MuxConsole.WriteMarkup(
+                $"  [{Theme.Active.Warning}]\u2139[/] [{Theme.Active.Agent}]{agentNm}[/] " +
+                $"[{Theme.Active.Prompt}]is configured with delegation capabilities \u2014 run[/] " +
+                $"[{Theme.Active.Accent}]/subagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/sub[/][{Theme.Active.Muted}])[/] " +
+                $"[{Theme.Active.Prompt}]or[/] [{Theme.Active.Accent}]/parasubagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/psub[/][{Theme.Active.Muted}])[/] " +
+                $"[{Theme.Active.Prompt}]to enable delegation in single-agent mode.[/]",
+                stdioFallback: $"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
+        }
 
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
@@ -1209,11 +1220,40 @@ public static class SingleAgentOrchestrator
                 sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
                 foreach (var j in jobs)
                 {
-                    sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
-                    if (j.Status != DetachedStatus.Running && !string.IsNullOrWhiteSpace(j.Result))
+                    if (j.Status == DetachedStatus.Running)
                     {
-                        var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
-                        sb.AppendLine($"  result:\n{r}");
+                        // Surface real progress for running jobs (elapsed + live activity + tool
+                        // count + a short output tail) instead of a bare "Running" - the detail the
+                        // lead needs to decide whether to wait, nudge, or cancel. Bounded: the tail
+                        // preview is ~120 chars and comes from the live capture, not the full buffer.
+                        var elapsed = DateTimeOffset.UtcNow - j.Started;
+                        var live = MuxConsole.GetLiveSubAgentDetail(j.Agent);
+                        string detail = live is { } d
+                            ? $" \u2014 {d.LiveStatus} (tools: {d.ToolCalls})"
+                            : "";
+                        string tail = live is { } d2 && d2.Tail.Length > 0
+                            ? $"\n    tail: {d2.Tail}"
+                            : "";
+                        sb.AppendLine($"- {j.Id} [{j.Agent}] Running ({(int)elapsed.TotalSeconds}s){detail}{tail}");
+                    }
+                    else
+                    {
+                        // Finished: small results inline; large ones spill to a d:Agent#N handle so
+                        // the lead pulls detail via read_delegation instead of a context-blowing dump.
+                        sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
+                        if (!string.IsNullOrWhiteSpace(j.Result))
+                        {
+                            if (!string.IsNullOrWhiteSpace(j.Handle))
+                            {
+                                var tailTxt = j.Result!.Length > 240 ? "\u2026" + j.Result[^240..] : j.Result;
+                                sb.AppendLine($"  result: {j.Result.Length} chars spilled as {j.Handle} (read with read_delegation). tail: {tailTxt}");
+                            }
+                            else
+                            {
+                                var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
+                                sb.AppendLine($"  result:\n{r}");
+                            }
+                        }
                     }
                 }
                 if (running > 0) sb.AppendLine("Some jobs are still running; call check_delegations again later to collect them.");
@@ -1221,8 +1261,10 @@ public static class SingleAgentOrchestrator
             },
             name: "check_delegations",
             description: "Poll the status of background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
-                         "Pass a job id to check one, or omit to list all. Returns each job's status and, for finished jobs, " +
-                         "its full result so you can collect work you fired earlier without blocking."
+                         "Pass a job id to check one, or omit to list all. Running jobs show elapsed time, live activity, " +
+                         "tool-call count, and a short output tail so you can see real progress (not just 'running'). " +
+                         "Finished jobs return their result inline when small, or a d:Agent#N handle to read surgically " +
+                         "with read_delegation when large - so collecting work never blows your context."
         );
 
         var singleAgentTools = (IList<AITool>)
@@ -1255,6 +1297,43 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
             singleAgentTools.Add(LocalAiFunctions.ReadDelegationTool);
 
+        // Live sub-agent introspection for ANY launcher (run_team, blocking delegate_parallel,
+        // swarm members, giga) - complements check_delegations, which only sees detached/background
+        // jobs. Reads the capture registry (the same data the Agent View renders), bounded per lane.
+        var subagentStatusTool = AIFunctionFactory.Create(
+            method: (
+                [Description("Optional agent name to check just one live sub-agent; omit to list ALL currently running sub-agents.")]
+                string? agent
+            ) =>
+            {
+                if (!string.IsNullOrWhiteSpace(agent))
+                {
+                    var one = MuxConsole.GetLiveSubAgentDetail(agent.Trim());
+                    if (one is null)
+                        return $"[subagent_status] No live sub-agent matching '{agent}'. (It may have finished - collect its result, or check the Agent View.)";
+                    var d = one!.Value;
+                    var tailLine = d.Tail.Length > 0 ? $"\n  tail: {d.Tail}" : "";
+                    return $"[subagent_status] {d.Lane} - {d.LiveStatus} (tools: {d.ToolCalls}){tailLine}";
+                }
+                var all = MuxConsole.GetLiveSubAgentDetails();
+                if (all.Count == 0)
+                    return "[subagent_status] No sub-agents are running right now.";
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine($"[subagent_status] {all.Count} live sub-agent(s):");
+                foreach (var c in all)
+                {
+                    sb.AppendLine($"- {c.Lane} ({c.Agent}) - {c.LiveStatus} (tools: {c.ToolCalls})");
+                    if (c.Tail.Length > 0) sb.AppendLine($"    tail: {c.Tail}");
+                }
+                return sb.ToString();
+            },
+            name: "subagent_status",
+            description: "See what your running sub-agents are doing RIGHT NOW - live activity, tool-call count, and a " +
+                         "short output tail for each (any launcher: run_team, delegate_parallel, swarm, giga). " +
+                         "Pass an agent name to check one, or omit to list all. For background jobs fired with " +
+                         "delegate_parallel(background:true), use check_delegations to poll + collect results."
+        );
+
         // Non-blocking delegation: when this lead can spawn sub-agents, also grant check_delegations
         // (delegate_parallel(background:true) fires work into the background + returns at once;
         // check_delegations polls/collects). Optional alongside the blocking tools. Same gate as
@@ -1262,6 +1341,7 @@ public static class SingleAgentOrchestrator
         if (allowSubAgents || allowParallelSubAgents || teamScope is not null || App.GigaMode)
         {
             singleAgentTools.Add(checkDelegationsTool);
+            singleAgentTools.Add(subagentStatusTool);
         }
 
         // v0.12.0 M2 - team lead: append the team tools (team_dispatch + taskboard tools) and

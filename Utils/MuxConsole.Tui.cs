@@ -51,6 +51,19 @@ public static partial class MuxConsole
     public static bool DockedFooterEnabled { get; set; } = true;
 
     /// <summary>
+    /// v0.12.4 opt-in render backend. When true the live TUI uses the full-frame
+    /// (alternate-screen) renderer instead of the inline native-scrollback live region. Set from
+    /// console.renderEngine == "frame" at startup and passed to the driver on construction. Has no
+    /// effect outside the live TUI / on non-capable terminals.
+    /// </summary>
+    public static bool FrameEngineEnabled { get; set; }
+
+    /// <summary>Deferred full splash builder captured at startup for the frame engine. Layout runs
+    /// at driver activation using the CURRENT terminal width, so a resize between the primary-buffer
+    /// Spectre splash and alternate-screen takeover cannot leave stale panel geometry. Consumed once.</summary>
+    internal static Func<int, List<string>>? FrameSplashFactory { get; set; }
+
+    /// <summary>
     /// Informative-line threshold above which a collapsed tool result is Ctrl+E-expandable in
     /// the live TUI. Set from console.collapseToolLines; pushed to the driver on activation.
     /// 0 disables the expand affordance. Default 6.
@@ -63,9 +76,29 @@ public static partial class MuxConsole
     /// from config at startup and pushed to the driver on activation + live via /set.</summary>
     public static int DelegationSpacing { get; set; } = 1;
 
+    /// <summary>Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame-mode viewport at the
+    /// idle prompt (console.scrollSpeedRows). PgUp/PgDn and Ctrl+B/Ctrl+F always page a full
+    /// viewport. Default 1. Seeded from config at startup and pushed to the driver on activation
+    /// + live via /set. Ignored outside the frame render engine.</summary>
+    public static int ScrollSpeedRows { get; set; } = 1;
+
+    /// <summary>Mirror of console.mouseTracking (off|wheel|buttons) for the frame engine. Applied
+    /// at TUI activation and live via /set mouseTracking or /mouse.</summary>
+    public static string MouseTracking { get; set; } = "wheel";
+
     /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
     /// on activation + live via /set. Ignored outside the live TUI.</summary>
     public static bool InputHighlight { get; set; } = true;
+
+    /// <summary>Mirror of console.contentBackgrounds: when false, tool/diff/code cards suppress their
+    /// opaque themed background fill so the terminal's own background shows through. Seeded from config
+    /// at startup and applied live via /set. Backed by <see cref="Tui.TuiComponents.ContentBackgrounds"/>
+    /// (a static styling gate), so it takes effect for every builder path.</summary>
+    public static bool ContentBackgrounds
+    {
+        get => Tui.TuiComponents.ContentBackgrounds;
+        set => Tui.TuiComponents.ContentBackgrounds = value;
+    }
 
     /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).
     /// Pushed to the driver on activation + live via /set.</summary>
@@ -110,8 +143,9 @@ public static partial class MuxConsole
         // "WebAgent 3", ... Assigned once at registration so the Agent View can key selection +
         // body lookup per LANE (duplicate same-name delegations no longer collapse to one row).
         public string Lane = "";
-        // /hide: when true the lane is removed from the docked activity strip + viewport but kept
-        // in the backslash Agent View (tagged "hidden"), so the user can unhide it later.
+        // When true the lane is removed from the docked activity strip + viewport but kept in the
+        // backslash Agent View (tagged "hidden"). Set at registration for /background lanes, then
+        // toggled via the Agent View 'h' key / Enter-to-select / /unhide.
         public volatile bool Hidden;
         public readonly System.Text.StringBuilder Buffer = new();
         // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
@@ -184,10 +218,10 @@ public static partial class MuxConsole
         return new CaptureScope(cap, prev);
     }
 
-    public static IDisposable? BeginSubAgentCapture(string agent)
+    public static IDisposable? BeginSubAgentCapture(string agent, bool hidden = false)
     {
         if (!CollapseSubAgents || StdioMode || !IsTui) return null;
-        var cap = new SubAgentCapture { Agent = agent };
+        var cap = new SubAgentCapture { Agent = agent, Hidden = hidden };
         var prev = _capture.Value;       // restore on dispose so nested delegation is correct
         _capture.Value = cap;
         lock (_captureGate)
@@ -308,23 +342,13 @@ public static partial class MuxConsole
         }
     }
 
-    /// <summary>/hide: hide a live sub-agent LANE from the docked strip + viewport (kept in the
-    /// backslash Agent View, tagged "hidden"). Resolves <paramref name="lane"/> by exact lane name,
-    /// else by base agent name (first match). Returns the resolved lane name, or null if not found.</summary>
-    public static string? HideSubAgentLane(string lane)
-    {
-        string? resolved = null;
-        lock (_captureGate)
-        {
-            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
-                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && !c.Hidden);
-            if (cap is not null) { cap.Hidden = true; resolved = cap.Lane; }
-        }
-        if (resolved is not null) PushSubAgentActivity();
-        return resolved;
-    }
+    /// <summary>Hide a live sub-agent LANE from the docked strip + viewport (kept in the
+    /// backslash Agent View, tagged "hidden"). Compatibility shim over <see cref="UpdateSubAgentHidden"/>;
+    /// hides from the backslash Agent View ('h' key) and hidden-at-registration (/background).
+    /// Returns the resolved lane name, or null if not found.</summary>
+    public static string? HideSubAgentLane(string lane) => UpdateSubAgentHidden(lane, hidden: true);
 
-    /// <summary>Unhide a previously /hide'd lane (exact lane name, else base agent name). Returns the
+    /// <summary>Unhide a previously hidden lane (exact lane name, else base agent name). Returns the
     /// resolved lane, or null if not found.</summary>
     public static string? UnhideSubAgentLane(string lane)
     {
@@ -339,15 +363,14 @@ public static partial class MuxConsole
         return resolved;
     }
 
-    /// <summary>The live lane names (for /hide + /unhide autocomplete). Visible lanes first, then
-    /// hidden ones suffixed with " (hidden)".</summary>
+    /// <summary>The live lane names (visible first, then hidden ones suffixed with " (hidden)").</summary>
     public static IReadOnlyList<string> ActiveSubAgentLanes()
     {
         lock (_captureGate)
             return _activeCaptures.Select(c => c.Hidden ? $"{c.Lane} (hidden)" : c.Lane).ToList();
     }
 
-    /// <summary>Lane names eligible for /hide (the currently-visible lanes).</summary>
+    /// <summary>Lane names currently visible in the viewport.</summary>
     public static IReadOnlyList<string> VisibleSubAgentLanes()
     {
         lock (_captureGate)
@@ -359,6 +382,22 @@ public static partial class MuxConsole
     {
         lock (_captureGate)
             return _activeCaptures.Where(c => c.Hidden).Select(c => c.Lane).ToList();
+    }
+
+    /// <summary>Set the viewport-hidden flag on a live lane (exact lane name, else base agent name).
+    /// The sole mutation point for hidden state: backslash-view 'h', /unhide, and hidden-at-registration
+    /// (/background) all converge here. Returns the resolved lane name, or null if not found.</summary>
+    public static string? UpdateSubAgentHidden(string lane, bool hidden)
+    {
+        string? resolved = null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FirstOrDefault(c => string.Equals(c.Lane, lane, StringComparison.OrdinalIgnoreCase))
+                   ?? _activeCaptures.FirstOrDefault(c => string.Equals(c.Agent, lane, StringComparison.OrdinalIgnoreCase) && c.Hidden != hidden);
+            if (cap is not null) { cap.Hidden = hidden; resolved = cap.Lane; }
+        }
+        if (resolved is not null) PushSubAgentActivity();
+        return resolved;
     }
 
     /// <summary>Start the shared ~100ms ticker that animates the active-sub-agent panel. Caller
@@ -374,6 +413,44 @@ public static partial class MuxConsole
     {
         _subAgentTimer?.Dispose();
         _subAgentTimer = null;
+    }
+
+    /// <summary>Snapshot of ALL live captured sub-agents (any launcher: run_team, delegate_parallel
+    /// blocking, swarm members, giga), each with lane, agent name, live activity, tool-call count,
+    /// and a ~120-char tail preview. The subagent_status tool renders this so the lead can watch
+    /// blocking delegations mid-batch, not just detached jobs. Ordered by start.</summary>
+    internal static List<(string Lane, string Agent, string LiveStatus, int ToolCalls, string Tail)> GetLiveSubAgentDetails()
+    {
+        lock (_captureGate)
+        {
+            return _activeCaptures.Select(c =>
+            {
+                string tail = CollapseWhitespace(c.Tail.ToString()).Trim();
+                if (tail.Length > 120) tail = "\u2026" + tail[^120..];
+                return (c.Lane, c.Agent, c.LiveStatus, c.ToolCalls, tail);
+            }).ToList();
+        }
+    }
+
+    /// <summary>Live detail for a RUNNING captured sub-agent by agent name (exact or lane-prefix
+    /// match, most-recent first): its lane label, one-line live activity, tool-call count, and a
+    /// ~120-char tail preview of its streamed output. Returns null when no live capture matches.
+    /// Used by the sub-agent status tools so the lead sees real progress instead of bare "running",
+    /// without pulling the whole buffer into context.</summary>
+    internal static (string Lane, string LiveStatus, int ToolCalls, string Tail)? GetLiveSubAgentDetail(string agent)
+    {
+        if (string.IsNullOrWhiteSpace(agent)) return null;
+        lock (_captureGate)
+        {
+            var cap = _activeCaptures.FindLast(c =>
+                string.Equals(c.Agent, agent, StringComparison.OrdinalIgnoreCase) ||
+                c.Lane.StartsWith(agent, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(c.Lane, agent, StringComparison.OrdinalIgnoreCase));
+            if (cap is null) return null;
+            string tail = CollapseWhitespace(cap.Tail.ToString()).Trim();
+            if (tail.Length > 120) tail = "\u2026" + tail[^120..];
+            return (cap.Lane, cap.LiveStatus, cap.ToolCalls, tail);
+        }
     }
 
     /// <summary>
@@ -477,6 +554,26 @@ public static partial class MuxConsole
         WithConsole(() => AnsiConsole.MarkupLine(collapsed));
     }
 
+    /// <summary>Commit a FINISHED background job's transcript into scrollback as a retained
+    /// expandable line, so /background jobs 'o' (reopen) lands it in the transcript where Ctrl+E /
+    /// NAV can expand it in place - even though the live capture lane is already gone. No-op when
+    /// the driver is inactive or the body is empty. Caller supplies the job id + agent + status.
+    /// Returns true when committed.</summary>
+    public static bool ReopenFinishedJob(string jobId, string agent, string? status, string? body)
+    {
+        if (!ViaDriver) return false;
+        string text = (body ?? string.Empty).Trim();
+        if (text.Length == 0) return false;
+        int lines = text.Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
+        string tint = TuiComponents.AgentTint(agent);
+        string collapsed = TuiComponents.SubAgentCollapsed($"{jobId}:{agent}", status, lines, 0, tint);
+        lock (ConsoleLock)
+        {
+            _driver!.CommitCollapsed(collapsed, $"{jobId}:{agent}", text);
+        }
+        return true;
+    }
+
     // --- live-region driver --------------------------------------------------
 
     private static TuiDriver? _driver;
@@ -520,7 +617,24 @@ public static partial class MuxConsole
             {
                 if (_driver is null)
                 {
-                    _driver = new TuiDriver();
+                    _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
+                    if (FrameEngineEnabled)
+                    {
+                        // SINGLE INPUT PLANE: the pump becomes the only stdin reader for the frame
+                        // engine (prompt loop, mid-turn listener, and overlays all consume its
+                        // typed events). It reassembles SGR mouse reports + bracketed pastes
+                        // upstream, so torn "[<64;…" fragments can never reach the editor.
+                        Tui.ConsoleInputPump.Start(
+                            mouseTracking: !string.Equals(MouseTracking, "off", StringComparison.OrdinalIgnoreCase),
+                            bracketedPaste: BracketedPaste);
+                    }
+                    // Frame mode: seed the transcript with the retained splash so the first frame
+                    // opens on the banner (the primary-buffer splash is hidden by the alt screen).
+                    if (FrameEngineEnabled && FrameSplashFactory is { } splashFactory)
+                    {
+                        _driver.CommitStartup(splashFactory(_driver.Width + 1));
+                        FrameSplashFactory = null;
+                    }
                     _tuiActive = true;
                     // Idle-prompt backslash opens the Agent View dashboard (same entry as the
                     // mid-turn EscapeKeyListener path). Returns false when no agents are running,
@@ -565,15 +679,21 @@ public static partial class MuxConsole
                 catch { /* files optional */ }
                 _driver.SetCollapseThreshold(CollapseToolLines);
                 _driver.SetBlockGap(DelegationSpacing);
+                _driver.SetScrollSpeedRows(ScrollSpeedRows);
                 _driver.SetInputHighlight(InputHighlight);
                 _driver.SetCardMarkdown(CardMarkdown);
                 _driver.SetBracketedPaste(BracketedPaste);
+                _driver.SetMouseTrackingPreset(MouseTracking);   // frame engine only (gated internally)
                 _driver.SetFooter(_fTokens, _fThreshold, _fPlan, _fUltra, _fPsub, _fSub, giga: _fGiga);
+                // Mid-turn wheel hook: the pump reassembles SGR reports and delivers Wheel events
+                // to the EscapeKeyListener, which forwards them here (scroll, never a cancel/leak).
+                EscapeKeyListener.OnWheelScroll = rows => TuiWheelScroll(rows);
             }
             catch
             {
                 _tuiActive = false;
                 _driver = null;
+                EscapeKeyListener.OnWheelScroll = null;
             }
         }
     }
@@ -637,6 +757,7 @@ public static partial class MuxConsole
             if (_driver is not null)
             {
                 try { _driver.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             }
             try { _resizeTimer?.Dispose(); } catch { /* ignore */ }
             _resizeTimer = null;
@@ -654,10 +775,12 @@ public static partial class MuxConsole
             AppDomain.CurrentDomain.ProcessExit += (_, _) =>
             {
                 try { _driver?.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             };
             Console.CancelKeyPress += (_, _) =>
             {
                 try { _driver?.Shutdown(); } catch { /* ignore */ }
+                try { Tui.ConsoleInputPump.Current?.Dispose(); } catch { /* ignore */ }
             };
         }
         catch { /* ignore */ }
@@ -737,6 +860,15 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetInputHighlight(on); }
     }
 
+    /// <summary>Toggle opaque content backgrounds live (console.contentBackgrounds) + re-render the
+    /// frame in place. Styling-only change (no geometry), so it just refreshes existing rows.</summary>
+    public static void SetTuiContentBackgrounds(bool on)
+    {
+        ContentBackgrounds = on;
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.RefreshStyling(); }
+    }
+
     /// <summary>Toggle muted-markdown card bodies live (console.cardMarkdown) + push to the driver.</summary>
     public static void SetTuiCardMarkdown(bool on)
     {
@@ -760,6 +892,20 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetBlockGap(DelegationSpacing); }
     }
 
+    public static void SetTuiMouseTracking(string preset)
+    {
+        MouseTracking = preset is "off" or "buttons" ? preset : "wheel";
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetMouseTrackingPreset(MouseTracking); }
+    }
+
+    public static void SetTuiScrollSpeedRows(int rows)
+    {
+        ScrollSpeedRows = Math.Max(1, rows);
+        if (!ViaDriver) return;
+        lock (ConsoleLock) { _driver!.SetScrollSpeedRows(ScrollSpeedRows); }
+    }
+
     /// <summary>True when the driver should handle this render (active and on the TUI path).</summary>
     private static bool ViaDriver => _tuiActive && _driver is not null && IsTui && !StdioMode;
 
@@ -775,6 +921,11 @@ public static partial class MuxConsole
     /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
     /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
     internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
+    /// viewport by net wheel notches through the driver's FrameScrollBy path + repaints. Serialized
+    /// under ConsoleLock exactly like the streaming writers, so it cannot race a mid-frame present.</summary>
+    internal static void TuiWheelScroll(int netWheelDir) { if (ViaDriver) lock (ConsoleLock) { _driver!.WheelScrollBy(netWheelDir); } }
 
     /// <summary>Toggle the team TaskBoard strip (v0.12.0 M2, Ctrl+T). No-op outside the TUI.</summary>
     internal static void TuiToggleTaskBoard() { if (ViaDriver) lock (ConsoleLock) { _driver!.ToggleTaskBoardRepaint(); } }
@@ -823,7 +974,21 @@ public static partial class MuxConsole
     internal static void CommitLinesToDriver(IReadOnlyList<string> markupLines) { if (ViaDriver) lock (ConsoleLock) { _driver!.Commit(markupLines); } }
 
     /// <summary>Clear the live region before a blocking external prompt; repaint resumes after.</summary>
-    internal static void TuiSuspend() { if (ViaDriver) _driver!.Suspend(); }
+    // Suspend the live view before a blocking external prompt / mode switch / exit. Serialized
+    // through ConsoleLock so it cannot race the ~100ms resize/sub-agent ticker painting concurrently
+    // (the driver's stated invariant is that its public methods run under the lock). The lock is
+    // reentrant, so callers already holding it are unaffected.
+    internal static void TuiSuspend() { if (ViaDriver) lock (ConsoleLock) { _driver!.Suspend(); } }
+
+    /// <summary>Suspend specifically for a bare text prompt. Frame mode replays the newly-committed
+    /// command context onto the restored primary buffer before Spectre draws the input line.</summary>
+    internal static void TuiSuspendForPrompt() { if (ViaDriver) lock (ConsoleLock) { _driver!.SuspendForPrompt(); } }
+
+    /// <summary>Resume the live view after a blocking external prompt. Frame engine: re-enter the
+    /// alternate screen and repaint everything retained while suspended (the suspend-envelope fix
+    /// for the sub-prompt shatter). Inline engine: no-op - the next status repaint restores the
+    /// footer as before. Serialized under ConsoleLock like TuiSuspend.</summary>
+    internal static void TuiResume() { if (ViaDriver) lock (ConsoleLock) { _driver!.Resume(); } }
 
     /// <summary>
     /// Expand the latest large tool result INLINE (full panel above the footer) without entering
@@ -904,7 +1069,48 @@ public static partial class MuxConsole
         lock (ConsoleLock)
         {
             return _driver!.EnterAgentView(snapshot,
-                agent => bodies.TryGetValue(agent, out var b) ? b : null);
+                agent => bodies.TryGetValue(agent, out var b) ? b : null,
+                lane => UpdateSubAgentHidden(lane, hidden: true),
+                lane => UpdateSubAgentHidden(lane, hidden: false));
+        }
+    }
+
+    /// <summary>
+    /// Foreground the /background jobs dashboard (the bg-job sibling of the Agent View). Builds the
+    /// snapshot from DetachedRunner's registry - running AND finished - and wires o/Enter to reopen
+    /// a finished job's transcript (committed as a retained expandable) and c to cancel a running
+    /// one. Returns false outside the TUI or when there are no jobs (the caller then falls back to
+    /// the static text panel). Holds the console lock for the session, like the Agent View.
+    /// </summary>
+    internal static bool TuiEnterJobView()
+    {
+        if (!ViaDriver) return false;
+        var jobs = DetachedRunner.Jobs();
+        if (jobs.Count == 0) return false;
+        var rows = jobs.Select(j =>
+        {
+            string status = j.Status.ToString();
+            string activity = j.Status == DetachedStatus.Running
+                ? (string.IsNullOrWhiteSpace(j.LiveActivity) ? "working" : j.LiveActivity!)
+                : (string.IsNullOrWhiteSpace(j.Tail) ? "" : j.Tail!);
+            var dur = (j.Finished ?? DateTimeOffset.UtcNow) - j.Started;
+            return new MuxSwarm.Utils.Tui.JobView.JobRow(
+                j.Id, j.Agent, status, activity, j.Goal, (int)dur.TotalSeconds,
+                j.Status == DetachedStatus.Running, TuiComponents.AgentTint(j.Agent));
+        }).ToList();
+
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterJobView(
+                rows,
+                onReopen: id =>
+                {
+                    var job = DetachedRunner.Jobs().FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                    if (job is null) return false;
+                    string? body = string.IsNullOrWhiteSpace(job.Result) ? job.Tail : job.Result;
+                    return ReopenFinishedJob(job.Id, job.Agent, job.Status.ToString(), body);
+                },
+                onCancel: id => DetachedRunner.Cancel(id));
         }
     }
 

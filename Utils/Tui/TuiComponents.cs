@@ -33,12 +33,19 @@ internal static class TuiComponents
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background. Themed (v0.12.1).
-    public static string CardBg  => Theme.Active.CardBg;
-    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field
+    // Content background fills (card/diff/code). When ContentBackgrounds is false these resolve to
+    // "default" -> ResolveColor returns null -> NO background SGR is emitted, so the terminal's own
+    // (possibly translucent/glassy) background shows through. Foreground + layout are unchanged
+    // (bg tags are zero visible width). InputBg + cursor/badge fills are intentionally NOT gated
+    // here (input has its own inputHighlight toggle; cursor/mode fills are functional, not chrome).
+    public static bool ContentBackgrounds { get; set; } = true;
+    private static string Bg(string role) => ContentBackgrounds ? role : "default";
+    public static string CardBg  => Bg(Theme.Active.CardBg);
+    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field (gated by inputHighlight)
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
-    public static string DiffAddBg => Theme.Active.DiffAddBg;
-    public static string DiffDelBg => Theme.Active.DiffDelBg;
-    public static string DiffHunkBg => Theme.Active.DiffHunkBg;
+    public static string DiffAddBg => Bg(Theme.Active.DiffAddBg);
+    public static string DiffDelBg => Bg(Theme.Active.DiffDelBg);
+    public static string DiffHunkBg => Bg(Theme.Active.DiffHunkBg);
     public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
@@ -100,15 +107,30 @@ internal static class TuiComponents
     public static readonly string[] SubAgentFrames =
         { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
 
-    /// <summary>Pulsing dot used to mark the SINGLE in-flight tool per live lane: a dot that
-    /// "breathes" small-&gt;large-&gt;small. Same glyph vocabulary as the static result dots, so the
-    /// only signal is motion (alive) vs stillness (done). Rides the shared ~100ms ticker frame.</summary>
-    public static readonly string[] PulseFrames =
-        { "\u00b7", "\u2022", "\u25CF", "\u2022" };   // middot -> bullet -> big circle -> bullet
+    /// <summary>The single glyph used for BOTH the live pulsing dot and the static "done" dot, so
+    /// the only signal is motion (alive) vs stillness (done). One fixed width-1 glyph: the pulse is
+    /// a BRIGHTNESS animation (dim -> normal -> bold -> normal), never a glyph-shape change, so the
+    /// rendered row width can never oscillate (the earlier ·/•/● frames were East-Asian-Width
+    /// "Ambiguous" and rendered 1- or 2-cells inconsistently across terminals, leaving far-right
+    /// residue as the dot pulsed). Rides the shared ~100ms ticker frame.</summary>
+    public const string PulseGlyph = "\u25CF";   // ● - width-1 in our model AND the static done dot
 
-    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative).</summary>
-    public static string PulseDot(int frame)
-        => PulseFrames[((frame % PulseFrames.Length) + PulseFrames.Length) % PulseFrames.Length];
+    // Brightness cycle applied to the pulse glyph. Spectre decorations dim/bold change WEIGHT, not
+    // width, so every frame is exactly one cell wide regardless of terminal.
+    private static readonly string[] PulseDecos = { "dim", "", "bold", "" };
+
+    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative):
+    /// the fixed glyph. Callers colour it; use <see cref="PulsingDot"/> for the breathing effect.</summary>
+    public static string PulseDot(int frame) => PulseGlyph;
+
+    /// <summary>Fully-styled pulsing dot in <paramref name="colorRole"/>: a fixed-width breathing dot
+    /// (dim/normal/bold cycle) for the live lane head. <paramref name="frame"/> is safe for any int.</summary>
+    public static string PulsingDot(int frame, string colorRole)
+    {
+        string deco = PulseDecos[((frame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
+        string style = string.IsNullOrEmpty(deco) ? colorRole : $"{colorRole} {deco}";
+        return $"[{style}]{PulseGlyph}[/]";
+    }
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
@@ -241,8 +263,8 @@ internal static class TuiComponents
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        string dot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        return new() { $"  [{Warn}]{dot}[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        string dot = frame >= 0 ? PulsingDot(frame, Warn) : $"[{Warn}]{PulseGlyph}[/]";
+        return new() { $"  {dot} [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -308,8 +330,9 @@ internal static class TuiComponents
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
         // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
-        string okDot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]{okDot}[/]";
+        string glyph = error
+            ? $"[{Err}]\u2717[/]"
+            : (frame >= 0 ? PulsingDot(frame, Ok) : $"[{Ok}]{PulseGlyph}[/]");
         string failTag = error ? $" [{Err}]failed[/]" : "";
         string resultPart = first.Length > 0
             ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"
@@ -378,14 +401,14 @@ internal static class TuiComponents
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
         // Pulsing dot marks the live lane head (motion = working); same dot vocabulary as static rows.
-        string spin = PulseDot(frame);
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
             if (st.Length > 60) st = st[..59] + "\u2026";
+            string spin = PulsingDot(frame, tint);
             // The ctrl+e affordance is shown live (not just after completion) so the user knows the
             // still-running sub-agent's buffered output can be expanded inline at any time.
-            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
+            outp.Add($"  {spin} [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
         }
         return outp;
     }
@@ -531,11 +554,14 @@ internal static class TuiComponents
                 string gOld = (wi == 0 ? oldS : "").PadLeft(gw);
                 string gNew = (wi == 0 ? newS : "").PadLeft(gw);
                 string mk = wi == 0 ? marker : " ";
-                string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
-                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+                // Pad by DISPLAY width (not UTF-16 length) so wide/CJK/emoji glyphs do not push
+                // the shaded cell past codeW+1 and bleed the bg past the border.
+                string cellText = mk + wrapped[wi];
+                int cellPad = Math.Max(0, codeW + 1 - TuiMarkup.Width(cellText));
+                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
             }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
+        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
         return outp;
     }
 
@@ -545,7 +571,12 @@ internal static class TuiComponents
     /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
     /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
-        => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+    {
+        // Pad by DISPLAY width so wide/CJK/emoji content keeps the shaded band exactly `inner` cells
+        // (UTF-16 PadRight overshoots for double-width glyphs and bleeds the bg past the card edge).
+        int pad = Math.Max(0, inner - TuiMarkup.Width(content));
+        return $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content)}{new string(' ', pad)}[/]";
+    }
 
     /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
     /// WrapMarkup). The base fill is Muted so the sub-agent transcript reads as subordinate to the
@@ -573,15 +604,17 @@ internal static class TuiComponents
     private static string MetaRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
@@ -742,7 +775,7 @@ internal static class TuiComponents
         {
             Voice.VoiceState.Warming      => (ms / 600) % 2 == 0 ? $"[{Dim}]\u25cf[/]" : $"[{Dim}]\u00b7[/]",
             Voice.VoiceState.Listening    => $"[{Accent}]\u25cf[/]",
-            Voice.VoiceState.Hearing      => $"[{Accent}]{PulseDot((int)(ms / 120))}[/]",
+            Voice.VoiceState.Hearing      => PulsingDot((int)(ms / 120), Accent),
             Voice.VoiceState.Transcribing => $"[{Warn}]{Spinner[(int)(ms / 100) % Spinner.Length]}[/]",
             Voice.VoiceState.Error        => $"[{Err}]\u2717[/]",
             _ => null,
@@ -761,15 +794,7 @@ internal static class TuiComponents
     /// cell at the edit position (Claude-Code style) to show where typing lands.
     /// </summary>
     public static string InputRowWithCursor(string buffer, int cursor)
-        => InputRowWithCursor(buffer, cursor, EditorMode.Insert);
-
-    /// <summary>
-    /// Input row with a synthetic block cursor and a vim-mode prompt marker. Normal mode swaps
-    /// the cyan "\u203a" prompt for a distinct "-- NORMAL --" badge + bold block prompt so the
-    /// active mode is unmistakable; Insert mode is unchanged from the modeless renderer.
-    /// </summary>
-    public static string InputRowWithCursor(string buffer, int cursor, EditorMode mode)
-        => string.Join("\n", InputRowsWithCursor(buffer, cursor, mode));
+        => string.Join("\n", InputRowsWithCursor(buffer, cursor));
 
     /// <summary>
     /// Render the input/compose area as one or more markup lines. A buffer containing embedded
@@ -777,7 +802,7 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0, bool highlight = false)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width = 0, bool highlight = false)
     {
         const string cur = "#E0E0E0";
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
@@ -802,9 +827,7 @@ internal static class TuiComponents
             }
             return outp;
         }
-        string prompt = mode == EditorMode.Normal
-            ? $"[{Warn}]\u25c6[/] [black on {Warn}] NORMAL [/]"
-            : VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
+        string prompt = VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
         string contGutter = $"[{Dim}]\u2502[/]";
         string promptLead = $"  {prompt} ";
@@ -817,9 +840,7 @@ internal static class TuiComponents
         if (string.IsNullOrEmpty(buffer))
             return Shade(new List<string>
             {
-                mode == EditorMode.Normal
-                    ? $"{promptLead}[black on {cur}] [/]"
-                    : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             });
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);

@@ -430,13 +430,15 @@ public static partial class MuxConsole
             return ResolveScriptedBailout(InputOverride.ReadLine(), list);
 
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(withBail));
         ErasePromptResidue(_resTop);
+        TuiResume();
 
         if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
         if (sel == CustomAffordanceLabel)
@@ -475,13 +477,15 @@ public static partial class MuxConsole
             return PromptChoice.Picked(input.StartsWith("y", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(message)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(message)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(new List<string>(opts) { CancelAffordanceLabel }));
         ErasePromptResidue(_resTop);
+        TuiResume();
         if (sel == CancelAffordanceLabel) return PromptChoice.Cancel();
         return PromptChoice.Picked(sel.Equals("Yes", StringComparison.OrdinalIgnoreCase) ? "yes" : "no");
     }
@@ -508,15 +512,17 @@ public static partial class MuxConsole
         // selects cancel, treat the whole prompt as cancelled; if they select custom, follow up with
         // a free-text line.
         var withBail = new List<string>(list) { CustomAffordanceLabel, CancelAffordanceLabel };
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var picked = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .NotRequired()
                 .AddChoices(withBail))
             .ToList();
         ErasePromptResidue(_resTop);
+        TuiResume();
 
         if (picked.Contains(CancelAffordanceLabel) || picked.Count == 0)
             return PromptChoice.Cancel();
@@ -555,8 +561,9 @@ public static partial class MuxConsole
     }
 
     /// <summary>
-    /// Renders a splash screen: block-art title with ASCII mascot, version, and repo link.
-    /// No external dependencies or image files required.
+    /// Renders the responsive Spectre splash screen and retains an equivalent markup-row model for
+    /// the full-frame renderer. The splash is built once from shared content so entering the
+    /// alternate screen never collapses the branded launch experience to a two-line substitute.
     /// </summary>
     public static void WriteSplashScreen(string version, string debugTag = "")
     {
@@ -571,66 +578,26 @@ public static partial class MuxConsole
             AnsiConsole.WriteLine();
 
             // One random curated line per launch (quote / fact / tip / nudge / tagline). Both the
-            // narrow-panel and wide two-column layouts render the SAME pick, computed once here.
+            // Spectre and frame layouts render the SAME pick, computed once here.
             var (splashLabel, splashText) = SplashMessages.Pick();
-            string splashLine = string.IsNullOrEmpty(splashLabel)
-                ? $"[{C.Prompt}]{Esc(splashText)}[/]"
-                : $"[{C.Prompt}]{Esc(splashText)}[/]  [{C.Muted}]{Esc(splashLabel)}[/]";
+            var recentSessions = AnsiConsole.Profile.Width >= 180
+                ? LoadSplashRecentSessions()
+                : new List<SplashSession>();
+            FrameSplashFactory = terminalWidth => BuildFrameSplashLines(
+                version, debugTag, splashLabel, splashText, terminalWidth, recentSessions);
 
             if (AnsiConsole.Profile.Width < 56)
             {
-                AnsiConsole.Write(new Rule($"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}")
-                    .RuleStyle(new Style(Color.Grey35))
+                AnsiConsole.Write(new Rule(SplashTitleMarkup(version, debugTag))
+                    .RuleStyle(Style.Parse(C.Muted))
                     .LeftJustified());
             }
             else if (AnsiConsole.Profile.Width < 180)
             {
-                string[] mux =
-                {
-                    "███╗   ███╗██╗   ██╗██╗  ██╗",
-                    "████╗ ████║██║   ██║╚██╗██╔╝",
-                    "██╔████╔██║██║   ██║ ╚███╔╝ ",
-                    "██║╚██╔╝██║██║   ██║ ██╔██╗ ",
-                    "██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗",
-                    "╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝",
-                };
-
-                string[] bot =
-                {
-                    @"   █     █ ",
-                    @" ▄█████████▄ ",
-                    @" █   ◠ ◠   █ ",
-                    @" █    ◡    █ ",
-                    @" █▄▄▄▄▄▄▄▄▄█ ",
-                    @"  ▀▀▀▀▀▀▀▀▀  ",
-                };
-
-                int muxW = mux.Max(l => l.Length);
-                var sb = new StringBuilder();
-
-                for (int i = 0; i < mux.Length; i++)
-                {
-                    var muxLine = mux[i].PadRight(muxW + 4);
-                    var botLine = i < bot.Length ? bot[i] : "";
-                    sb.AppendLine($"[{C.Banner}]{Esc(muxLine)}[/][{C.Success}]{Esc(botLine)}[/]");
-                }
-
-                const string swarmArt =
-                    "███████╗██╗    ██╗ █████╗ ██████╗ ███╗   ███╗\n" +
-                    "██╔════╝██║    ██║██╔══██╗██╔══██╗████╗ ████║\n" +
-                    "███████╗██║ █╗ ██║███████║██████╔╝██╔████╔██║\n" +
-                    "╚════██║██║███╗██║██╔══██║██╔══██╗██║╚██╔╝██║\n" +
-                    "███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║\n" +
-                    "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝";
-
-                sb.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
-                sb.AppendLine();
-                sb.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  {splashLine}");
-                sb.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]");
-
-                var panel = new Panel(sb.ToString())
+                var panel = new Panel(new Markup(string.Join("\n", BuildSplashBrandMarkup(
+                        version, debugTag, splashLabel, splashText, includeHelp: true))))
                     .Border(BoxBorder.Rounded)
-                    .BorderStyle(new Style(Color.Grey35))
+                    .BorderStyle(Style.Parse(C.Muted))
                     .Padding(1, 1)
                     .Expand();
 
@@ -638,125 +605,10 @@ public static partial class MuxConsole
             }
             else
             {
-                string[] mux =
-                {
-                    "███╗   ███╗██╗   ██╗██╗  ██╗",
-                    "████╗ ████║██║   ██║╚██╗██╔╝",
-                    "██╔████╔██║██║   ██║ ╚███╔╝ ",
-                    "██║╚██╔╝██║██║   ██║ ██╔██╗ ",
-                    "██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗",
-                    "╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝",
-                };
-
-                // swap in whatever mascot you landed on
-                string[] bot =
-                {
-                    @"   █     █ ",
-                    @" ▄█████████▄ ",
-                    @" █   ◠ ◠   █ ",
-                    @" █    ◡    █ ",
-                    @" █▄▄▄▄▄▄▄▄▄█ ",
-                    @"  ▀▀▀▀▀▀▀▀▀  ",
-                };
-
-                int muxW = mux.Max(l => l.Length);
-                var left = new StringBuilder();
-
-                for (int i = 0; i < mux.Length; i++)
-                {
-                    var muxLine = mux[i].PadRight(muxW + 4);
-                    var botLine = i < bot.Length ? bot[i] : "";
-                    left.AppendLine($"[{C.Banner}]{Esc(muxLine)}[/][{C.Success}]{Esc(botLine)}[/]");
-                }
-
-                const string swarmArt =
-                    "███████╗██╗    ██╗ █████╗ ██████╗ ███╗   ███╗\n" +
-                    "██╔════╝██║    ██║██╔══██╗██╔══██╗████╗ ████║\n" +
-                    "███████╗██║ █╗ ██║███████║██████╔╝██╔████╔██║\n" +
-                    "╚════██║██║███╗██║██╔══██║██╔══██╗██║╚██╔╝██║\n" +
-                    "███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║\n" +
-                    "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝";
-
-                left.AppendLine($"[{C.Banner}]{Esc(swarmArt)}[/]");
-                left.AppendLine();
-                left.AppendLine($"[{C.Step}]v{Esc(version)}[/]{(string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")}  [{C.Muted}]·[/]  {splashLine}");
-                left.Append($"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]");
-
-                var right = new StringBuilder();
-                right.AppendLine($"[{C.Step}]Getting Started[/]");
-                right.AppendLine($"[{C.Muted}]Pick a mode to begin, then enter your task[/]");
-                right.AppendLine($"[{C.Muted}]────────────────────────────────────────────[/]");
-                right.AppendLine();
-                right.AppendLine($"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Multi-agent orchestrated loop[/]");
-                right.AppendLine($"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Parallel concurrent dispatch[/]");
-                right.AppendLine($"  [{C.Prompt}]/agent[/]       [{C.Muted}]Single-agent conversation[/]");
-                right.AppendLine($"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off stateless task[/]");
-                right.AppendLine($"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your operator profile[/]");
-                right.AppendLine($"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Run a workflow file[/]");
-                right.AppendLine($"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]");
-                right.AppendLine();
-                right.AppendLine($"[{C.Muted}]────────────────────────────────────────────[/]");
-                right.AppendLine($"[{C.Step}]Quick Tips[/]");
-                right.AppendLine($"  [{C.Muted}]/qc or /qm to exit an active session[/]");
-                right.Append($"  [{C.Muted}]/status to view current config[/]");
-
-                var rightFar = new StringBuilder();
-                rightFar.AppendLine($"[{C.Step}]Recent Sessions[/]");
-                rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
-
-                var sessionsPath = PlatformContext.SessionsDirectory;
-                if (Directory.Exists(sessionsPath))
-                {
-                    var recentDirs = Directory.GetDirectories(sessionsPath)
-                        .OrderByDescending(d => d)
-                        .Take(5)
-                        .ToList();
-
-                    if (recentDirs.Count > 0)
-                    {
-                        foreach (var dir in recentDirs)
-                        {
-                            string ts = Path.GetFileName(dir);
-                            var files = Directory.GetFiles(dir, "*_session.json", SearchOption.AllDirectories);
-                            string type = files.Length > 1 ? "swarm" : "agent";
-
-                            string preview = "No preview";
-                            if (files.Length > 0)
-                            {
-                                try
-                                {
-                                    var raw = Common.GetFirstUserMessage(files[0]);
-                                    if (!string.IsNullOrWhiteSpace(raw)
-                                        && !raw.StartsWith("[SYSTEM", StringComparison.OrdinalIgnoreCase)
-                                        && !raw.StartsWith("[CONTEXT SUMMARY", StringComparison.OrdinalIgnoreCase)
-                                        && !raw.StartsWith("## User Context", StringComparison.OrdinalIgnoreCase)
-                                        && !raw.Contains("Context restoration", StringComparison.OrdinalIgnoreCase)
-                                        && !raw.Contains("Filesystem Write Rules", StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        preview = raw.Length > 40 ? raw[..40] + "..." : raw;
-                                    }
-                                }
-                                catch { /* ignore */ }
-                            }
-
-                            rightFar.AppendLine($"  [{C.Prompt}]{Esc(ts)}[/]");
-                            rightFar.AppendLine($"    [{C.Muted}]{type} · {Esc(preview)}[/]");
-                        }
-                    }
-                    else
-                    {
-                        rightFar.AppendLine($"  [{C.Muted}]No sessions yet[/]");
-                    }
-                }
-                else
-                {
-                    rightFar.AppendLine($"  [{C.Muted}]No sessions yet[/]");
-                }
-
-                rightFar.AppendLine();
-                rightFar.AppendLine($"[{C.Muted}]────────────────────────────────[/]");
-                rightFar.AppendLine($"  [{C.Muted}]/resume to continue a session[/]");
-                rightFar.Append($"  [{C.Muted}]/sessions to view session info[/]");
+                var left = new Markup(string.Join("\n", BuildSplashBrandMarkup(
+                    version, debugTag, splashLabel, splashText, includeHelp: false)));
+                var middle = new Markup(string.Join("\n", BuildSplashGettingStartedMarkup()));
+                var right = new Markup(string.Join("\n", BuildSplashRecentSessionsMarkup(recentSessions)));
 
                 var grid = new Grid();
                 grid.AddColumn(new GridColumn().NoWrap().PadRight(4));
@@ -765,16 +617,15 @@ public static partial class MuxConsole
                 grid.AddColumn(new GridColumn().Width(1).NoWrap());
                 grid.AddColumn(new GridColumn().PadLeft(3));
                 grid.AddRow(
-                    new Markup(left.ToString()),
-                    new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
-                    new Markup(right.ToString()),
-                    new Markup($"[{C.Muted}]│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│\n│[/]"),
-                    new Markup(rightFar.ToString())
-                );
+                    left,
+                    new Markup($"[{C.Muted}]{string.Join("\n", Enumerable.Repeat("│", 18))}[/]"),
+                    middle,
+                    new Markup($"[{C.Muted}]{string.Join("\n", Enumerable.Repeat("│", 18))}[/]"),
+                    right);
 
                 var panel = new Panel(grid)
                     .Border(BoxBorder.Rounded)
-                    .BorderStyle(new Style(Color.Grey35))
+                    .BorderStyle(Style.Parse(C.Muted))
                     .Padding(1, 1)
                     .Expand();
 
@@ -782,10 +633,248 @@ public static partial class MuxConsole
             }
 
             AnsiConsole.WriteLine();
-            AnsiConsole.Write(new Rule().RuleStyle(new Style(Color.Grey23)));
+            AnsiConsole.Write(new Rule().RuleStyle(Style.Parse(C.Muted)));
             AnsiConsole.WriteLine();
         });
     }
+
+    private static readonly string[] SplashMuxArt =
+    {
+        "███╗   ███╗██╗   ██╗██╗  ██╗",
+        "████╗ ████║██║   ██║╚██╗██╔╝",
+        "██╔████╔██║██║   ██║ ╚███╔╝ ",
+        "██║╚██╔╝██║██║   ██║ ██╔██╗ ",
+        "██║ ╚═╝ ██║╚██████╔╝██╔╝ ██╗",
+        "╚═╝     ╚═╝ ╚═════╝ ╚═╝  ╚═╝",
+    };
+
+    private static readonly string[] SplashBotArt =
+    {
+        @"   █     █ ",
+        @" ▄█████████▄ ",
+        @" █   ◠ ◠   █ ",
+        @" █    ◡    █ ",
+        @" █▄▄▄▄▄▄▄▄▄█ ",
+        @"  ▀▀▀▀▀▀▀▀▀  ",
+    };
+
+    private static readonly string[] SplashSwarmArt =
+    {
+        "███████╗██╗    ██╗ █████╗ ██████╗ ███╗   ███╗",
+        "██╔════╝██║    ██║██╔══██╗██╔══██╗████╗ ████║",
+        "███████╗██║ █╗ ██║███████║██████╔╝██╔████╔██║",
+        "╚════██║██║███╗██║██╔══██║██╔══██╗██║╚██╔╝██║",
+        "███████║╚███╔███╔╝██║  ██║██║  ██║██║ ╚═╝ ██║",
+        "╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝",
+    };
+
+    internal readonly record struct SplashSession(string Id, string Type, string Preview);
+
+    private static string SplashTitleMarkup(string version, string debugTag)
+        => $"[bold {C.Banner}]MUX-SWARM[/]  [{C.Muted}]v{Esc(version)}[/]"
+            + (string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]");
+
+    private static string SplashMessageMarkup(string label, string text)
+        => string.IsNullOrEmpty(label)
+            ? $"[{C.Prompt}]{Esc(text)}[/]"
+            : $"[{C.Prompt}]{Esc(text)}[/]  [{C.Muted}]{Esc(label)}[/]";
+
+    private static List<string> BuildSplashBrandMarkup(
+        string version, string debugTag, string splashLabel, string splashText, bool includeHelp,
+        bool spectreHyperlink = true)
+    {
+        int muxW = SplashMuxArt.Max(l => l.Length);
+        var lines = new List<string>();
+        for (int i = 0; i < SplashMuxArt.Length; i++)
+        {
+            string muxLine = SplashMuxArt[i].PadRight(muxW + 4);
+            string botLine = i < SplashBotArt.Length ? SplashBotArt[i] : "";
+            lines.Add($"[{C.Banner}]{Esc(muxLine)}[/][{C.Success}]{Esc(botLine)}[/]");
+        }
+        foreach (var line in SplashSwarmArt) lines.Add($"[{C.Banner}]{Esc(line)}[/]");
+        lines.Add("");
+        lines.Add($"[{C.Step}]v{Esc(version)}[/]"
+            + (string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")
+            + $"  [{C.Muted}]·[/]  {SplashMessageMarkup(splashLabel, splashText)}");
+        string repo = spectreHyperlink
+            ? $"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]"
+            : $"[{C.Muted}]Check Out The Repo Here![/]";
+        lines.Add(repo
+            + (includeHelp ? $"  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]" : ""));
+        return lines;
+    }
+
+    private static List<string> BuildSplashGettingStartedMarkup() => new()
+    {
+        $"[{C.Step}]Getting Started[/]",
+        $"[{C.Muted}]Pick a mode to begin, then enter your task[/]",
+        $"[{C.Muted}]────────────────────────────────────────────[/]",
+        "",
+        $"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Multi-agent orchestrated loop[/]",
+        $"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Parallel concurrent dispatch[/]",
+        $"  [{C.Prompt}]/agent[/]       [{C.Muted}]Single-agent conversation[/]",
+        $"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off stateless task[/]",
+        $"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your operator profile[/]",
+        $"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Run a workflow file[/]",
+        $"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]",
+        "",
+        $"[{C.Muted}]────────────────────────────────────────────[/]",
+        $"[{C.Step}]Quick Tips[/]",
+        $"  [{C.Muted}]/qc or /qm to exit an active session[/]",
+        $"  [{C.Muted}]/status to view current config[/]",
+    };
+
+    private static List<SplashSession> LoadSplashRecentSessions()
+    {
+        var sessions = new List<SplashSession>();
+        try
+        {
+            string sessionsPath = PlatformContext.SessionsDirectory;
+            if (!Directory.Exists(sessionsPath)) return sessions;
+            foreach (var dir in Directory.GetDirectories(sessionsPath).OrderByDescending(d => d).Take(5))
+            {
+                string ts = Path.GetFileName(dir);
+                var files = Directory.GetFiles(dir, "*_session.json", SearchOption.AllDirectories);
+                string type = files.Length > 1 ? "swarm" : "agent";
+                string preview = "No preview";
+                if (files.Length > 0)
+                {
+                    try
+                    {
+                        string raw = Common.GetFirstUserMessage(files[0]);
+                        if (!string.IsNullOrWhiteSpace(raw)
+                            && !raw.StartsWith("[SYSTEM", StringComparison.OrdinalIgnoreCase)
+                            && !raw.StartsWith("[CONTEXT SUMMARY", StringComparison.OrdinalIgnoreCase)
+                            && !raw.StartsWith("## User Context", StringComparison.OrdinalIgnoreCase)
+                            && !raw.Contains("Context restoration", StringComparison.OrdinalIgnoreCase)
+                            && !raw.Contains("Filesystem Write Rules", StringComparison.OrdinalIgnoreCase))
+                        {
+                            preview = raw.Length > 40 ? raw[..40] + "..." : raw;
+                        }
+                    }
+                    catch { /* preview optional */ }
+                }
+                sessions.Add(new SplashSession(ts, type, preview));
+            }
+        }
+        catch { /* startup splash is best-effort */ }
+        return sessions;
+    }
+
+    private static List<string> BuildSplashRecentSessionsMarkup(IReadOnlyList<SplashSession> sessions)
+    {
+        var lines = new List<string>
+        {
+            $"[{C.Step}]Recent Sessions[/]",
+            $"[{C.Muted}]────────────────────────────────[/]",
+        };
+        if (sessions.Count == 0)
+            lines.Add($"  [{C.Muted}]No sessions yet[/]");
+        else
+            foreach (var session in sessions)
+            {
+                lines.Add($"  [{C.Prompt}]{Esc(session.Id)}[/]");
+                lines.Add($"    [{C.Muted}]{Esc(session.Type)} · {Esc(session.Preview)}[/]");
+            }
+        lines.Add("");
+        lines.Add($"[{C.Muted}]────────────────────────────────[/]");
+        lines.Add($"  [{C.Muted}]/resume to continue a session[/]");
+        lines.Add($"  [{C.Muted}]/sessions to view session info[/]");
+        return lines;
+    }
+
+    internal static List<string> BuildFrameSplashLines(
+        string version, string debugTag, string splashLabel, string splashText, int width,
+        IReadOnlyList<SplashSession>? recentSessions = null)
+    {
+        int w = Math.Max(20, width - 1);
+        var recent = recentSessions ?? Array.Empty<SplashSession>();
+        // The frame driver reserves the final physical column; preserve the same responsive
+        // thresholds as Spectre by comparing the actual terminal width, not the reduced content width.
+        int terminalWidth = w + 1;
+        if (terminalWidth < 56)
+        {
+            return new List<string>
+            {
+                SplashTitleMarkup(version, debugTag),
+                SplashMessageMarkup(splashLabel, splashText),
+                $"[{C.Muted}]Check Out The Repo Here! · Type /help for commands[/]",
+                "",
+            };
+        }
+
+        var brand = BuildSplashBrandMarkup(version, debugTag, splashLabel, splashText,
+            includeHelp: terminalWidth < 180, spectreHyperlink: false);
+        if (terminalWidth < 180)
+        {
+            var panel = BuildFramePanel(brand, w);
+            panel.Add("");
+            return panel;
+        }
+
+        var middle = BuildSplashGettingStartedMarkup();
+        var right = BuildSplashRecentSessionsMarkup(recent);
+        int inner = Math.Max(20, w - 4);
+        int leftW = Math.Min(86, Math.Max(64, (inner * 46) / 100));
+        int middleW = Math.Min(52, Math.Max(44, (inner * 28) / 100));
+        int rightW = Math.Max(28, inner - leftW - middleW - 6);
+        var body = ComposeFrameSplashColumns(brand, middle, right, leftW, middleW, rightW);
+        var widePanel = BuildFramePanel(body, w);
+        widePanel.Add("");
+        return widePanel;
+    }
+
+    private static List<string> ComposeFrameSplashColumns(
+        IReadOnlyList<string> left, IReadOnlyList<string> middle, IReadOnlyList<string> right,
+        int leftW, int middleW, int rightW)
+    {
+        var leftRows = WrapSplashColumn(left, leftW);
+        var middleRows = WrapSplashColumn(middle, middleW);
+        var rightRows = WrapSplashColumn(right, rightW);
+        int count = Math.Max(leftRows.Count, Math.Max(middleRows.Count, rightRows.Count));
+        var rows = new List<string>(count);
+        for (int i = 0; i < count; i++)
+        {
+            string l = i < leftRows.Count ? leftRows[i] : "";
+            string m = i < middleRows.Count ? middleRows[i] : "";
+            string r = i < rightRows.Count ? rightRows[i] : "";
+            rows.Add(PadMarkup(l, leftW) + $" [{C.Muted}]│[/] "
+                + PadMarkup(m, middleW) + $" [{C.Muted}]│[/] " + PadMarkup(r, rightW));
+        }
+        return rows;
+    }
+
+    private static List<string> WrapSplashColumn(IReadOnlyList<string> lines, int width)
+    {
+        var rows = new List<string>();
+        foreach (var line in lines) rows.AddRange(Tui.TuiMarkup.WrapMarkup(line, Math.Max(1, width)));
+        return rows;
+    }
+
+    private static List<string> BuildFramePanel(IReadOnlyList<string> body, int width)
+    {
+        int inner = Math.Max(8, width - 4);
+        var rows = new List<string>(body.Count + 4)
+        {
+            $"[{C.Muted}]╭{new string('─', inner + 2)}╮[/]",
+            $"[{C.Muted}]│[/] {new string(' ', inner)} [{C.Muted}]│[/]",
+        };
+        foreach (var line in body)
+            foreach (var wrapped in Tui.TuiMarkup.WrapMarkup(line, inner))
+                rows.Add($"[{C.Muted}]│[/] {PadMarkup(wrapped, inner)} [{C.Muted}]│[/]");
+        rows.Add($"[{C.Muted}]│[/] {new string(' ', inner)} [{C.Muted}]│[/]");
+        rows.Add($"[{C.Muted}]╰{new string('─', inner + 2)}╯[/]");
+        return rows;
+    }
+
+    private static string PadMarkup(string markup, int width)
+    {
+        var wrapped = Tui.TuiMarkup.WrapMarkup(markup ?? "", Math.Max(1, width));
+        string row = wrapped.Count == 0 ? "" : wrapped[0];
+        int pad = Math.Max(0, width - Tui.TuiMarkup.MarkupWidth(row));
+        return row + new string(' ', pad);
+    }
+
 
 
     public static void WriteBanner(string title = "MUX-SWARM SETUP")
@@ -1273,10 +1362,11 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
-        // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
-        // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
-        // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
-        TuiSuspend();
+        // A bare text prompt may depend on context just committed through the frame transcript
+        // (e.g. /setmodel's choices). Frame mode leaves the alternate screen and replays that new
+        // context onto the primary buffer before Spectre draws the input line. Inline mode simply
+        // clears the docked live band as before.
+        TuiSuspendForPrompt();
         int _resTop = SafeCursorTop();
 
         if (StdioMode)
@@ -1308,8 +1398,8 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(result) && defaultValue != null ? defaultValue : result;
         }
 
-        var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
-            .PromptStyle(new Style(Color.White));
+        var prompt = new TextPrompt<string>($"  [{C.Prompt}]{Md(message)}[/]")
+            .PromptStyle(AccentStyle());
 
         if (secret) prompt.Secret();
 
@@ -1318,8 +1408,10 @@ public static partial class MuxConsole
         else
             prompt.AllowEmpty();
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _ans = AnsiConsole.Prompt(prompt).Trim();
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _ans;
     }
 
@@ -1333,7 +1425,7 @@ public static partial class MuxConsole
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
-        TuiSuspend();
+        TuiSuspendForPrompt();
 
         if (StdioMode)
         {
@@ -1341,10 +1433,13 @@ public static partial class MuxConsole
             return InputOverride.ReadLine()?.Trim() ?? string.Empty;
         }
 
-        return AnsiConsole.Prompt(
-            new TextPrompt<string>($"  [{C.Prompt}]{Esc(message)}[/]")
-                .PromptStyle(new Style(Color.White))
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
+        var _sec = AnsiConsole.Prompt(
+            new TextPrompt<string>($"  [{C.Prompt}]{Md(message)}[/]")
+                .PromptStyle(AccentStyle())
                 .Secret());
+        TuiResume();
+        return _sec;
     }
 
     public static bool Confirm(string message, bool defaultValue = true)
@@ -1367,8 +1462,10 @@ public static partial class MuxConsole
             return string.IsNullOrEmpty(input) ? defaultValue : input.StartsWith('y');
         }
 
-        var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Esc(message)}[/]", defaultValue);
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
+        var _c = AnsiConsole.Confirm($"  [{C.Prompt}]{Md(message)}[/]", defaultValue);
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _c;
     }
 
@@ -1396,13 +1493,15 @@ public static partial class MuxConsole
             return list[0];
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _sel = AnsiConsole.Prompt(
             new SelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(choices));
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _sel;
     }
 
@@ -1434,14 +1533,16 @@ public static partial class MuxConsole
             return selected.Count > 0 ? selected : new List<string> { list[0] };
         }
 
+        using var _stdinOwn = EscapeKeyListener.SuspendInput();  // exclusive stdin: Esc listener must not steal prompt keys
         var _ms = AnsiConsole.Prompt(
             new MultiSelectionPrompt<string>()
-                .Title($"  [{C.Prompt}]{Esc(title)}[/]")
-                .HighlightStyle(new Style(Color.White, decoration: Decoration.Bold))
-                .UseConverter(Esc)
+                .Title($"  [{C.Prompt}]{Md(title)}[/]")
+                .HighlightStyle(AccentStyle(bold: true))
+                .UseConverter(Md)
                 .AddChoices(choices))
             .ToList();
         ErasePromptResidue(_resTop);
+        TuiResume();
         return _ms;
     }
 
@@ -1503,6 +1604,32 @@ public static partial class MuxConsole
             }
 
             AnsiConsole.Write(new Panel($"[{C.Prompt}]{Esc(content)}[/]")
+                .Header($"[{C.Step}]{Esc(title)}[/]")
+                .Border(BoxBorder.Rounded)
+                .BorderStyle(new Style(Color.Grey35))
+                .Padding(1, 0));
+        });
+    }
+
+    /// <summary>Like <see cref="WritePanel"/> but each body line is ALREADY themed Spectre markup
+    /// (caller owns coloring + escaping of untrusted text). Used by command output that needs
+    /// per-line semantic color (e.g. /kanban status columns) while keeping its plain-text model
+    /// intact. <paramref name="stdioFallback"/> supplies the unstyled payload for stdio/serve.</summary>
+    public static void WritePanelMarkup(string title, IEnumerable<string> markupLines, string stdioFallback)
+    {
+        var lines = markupLines as IReadOnlyList<string> ?? new List<string>(markupLines);
+        WithConsole(() =>
+        {
+            if (StdioMode)
+            {
+                EmitJson("panel", D(("title", title), ("content", stdioFallback)));
+                return;
+            }
+            if (ViaDriver)
+            {
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", lines)) return;
+            }
+            AnsiConsole.Write(new Panel(string.Join("\n", lines))
                 .Header($"[{C.Step}]{Esc(title)}[/]")
                 .Border(BoxBorder.Rounded)
                 .BorderStyle(new Style(Color.Grey35))
@@ -1742,6 +1869,22 @@ public static partial class MuxConsole
     }
 
     private static string Esc(string text) => Markup.Escape(text);
+
+    /// <summary>Public Spectre-markup escaper for callers building themed markup strings to pass to
+    /// <see cref="WriteMarkup"/> (e.g. command-output polish in CliCmdUtils). Escapes '[' / ']' in
+    /// untrusted values (team/member names, task subjects) so they cannot inject markup tags.</summary>
+    public static string EscapeMarkup(string? text) => Markup.Escape(text ?? "");
+
+    /// <summary>Spectre <see cref="Style"/> built from the active theme Accent role, for prompt
+    /// input + selection highlight styling. Handles hex, named, and "default" (mono theme) color
+    /// strings; <paramref name="bold"/> adds bold decoration. Single source for prompt accenting.</summary>
+    private static Style AccentStyle(bool bold = false)
+        => Style.Parse(bold ? $"{C.Accent} bold" : C.Accent);
+
+    /// <summary>Render one line of Markdown to Spectre markup for prompt titles / option labels,
+    /// so questions and choices show styled bold/code/links instead of literal markdown. Falls back
+    /// to bracket-escaping inside <see cref="Tui.TuiMarkdown.ToMarkup"/>, so it is injection-safe.</summary>
+    private static string Md(string text) => Tui.TuiMarkdown.ToMarkup(text ?? "");
 
     private static string StripMarkup(string markup)
     {

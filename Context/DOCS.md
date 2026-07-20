@@ -766,7 +766,7 @@ Flags can be combined. Common stacks:
 /tag <text>     Tag the live session for easy resume/search
 /detach         Park the live session to the background (re-enter with /attach)
 /voice          Local speech-to-text dictation into the compose field (/voice [auto|off|vol <1-10>])
-/hide <agent>   Hide a live sub-agent from the viewport (/unhide restores it)
+/unhide <agent> Restore a hidden sub-agent to the viewport (hide via the \ Agent View 'h' key)
 /qc, /qm        Exit the active session
 ```
 

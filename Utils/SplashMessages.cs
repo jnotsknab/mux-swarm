@@ -178,7 +178,7 @@ internal static class SplashMessages
         "Tip: wait_job_progress auto-continues from where you last read, so you never re-scan old output.",
         "Tip: /agent for a single specialist, /stateless for a one-off task with no session memory.",
         "Tip: /onboard once to set your operator profile; every agent inherits it.",
-        "Tip: press Esc to cancel the current turn without killing your session.",
+        "Tip: press Esc (or q) to cancel the current turn without killing your session.",
         "Tip: /qc or /qm exits an active session; /status shows your current config.",
         "Tip: /workflow runs a saved multi-phase DAG, feeding each step's result to the next.",
         "Tip: skills are reusable operational modules; list_skills to see what is loaded.",

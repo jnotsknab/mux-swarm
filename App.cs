@@ -173,6 +173,12 @@ public class App
 
         Config = LoadConfig(ConfigPath);
 
+        // Activate the configured theme BEFORE the splash renders. WriteSplashScreen resolves its
+        // C.* color roles (Banner/Accent/Muted/...) against Theme.Active at emit time; the inline
+        // splash is printed here synchronously, so if the theme is still Default the splash ignores
+        // console.theme. (The frame splash is deferred via FrameSplashFactory and already resolved
+        // post-theme.) Re-asserted later alongside the other render config (idempotent).
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
 
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
@@ -293,14 +299,18 @@ public class App
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
+        MuxConsole.FrameEngineEnabled = string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
+        MuxConsole.ScrollSpeedRows = Config.Console.ScrollSpeedRows;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
         MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
         MuxConsole.InputHighlight = Config.Console.InputHighlight;
+        MuxConsole.ContentBackgrounds = Config.Console.ContentBackgrounds;
         MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
         MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
         MuxConsole.BracketedPaste = Config.Console.BracketedPaste;
+        MuxConsole.MouseTracking = Config.Console.MouseTracking;
         MuxConsole.ShowReasoning = Config.ShowReasoning;
 
         // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
@@ -1180,6 +1190,25 @@ public class App
                     break;
                 }
 
+                case var mc when mc == "/mouse" || mc.StartsWith("/mouse "):
+                {
+                    // Hermes-style mouse preset for the frame engine. Bare /mouse reports the current
+                    // preset; /mouse off|wheel|buttons routes through the mouseTracking /set key so
+                    // validation + persistence stay in one place. "toggle" flips off<->wheel.
+                    var mparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (mparts.Length < 2)
+                    {
+                        MuxConsole.WriteInfo($"mouseTracking = {Config.Console.MouseTracking}  (set with /mouse off|wheel|buttons). Frame engine only; inline keeps native scrollback/selection.");
+                        break;
+                    }
+                    var mv = mparts[1].Trim().ToLowerInvariant();
+                    if (mv == "toggle") mv = Config.Console.MouseTracking == "off" ? "wheel" : "off";
+                    var mres = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set mouseTracking {mv}");
+                    if (mres.Ok) { MuxConsole.WriteSuccess(mres.Message); Config = LoadConfig(ConfigPath); }
+                    else MuxConsole.WriteWarning(mres.Message);
+                    break;
+                }
+
                 case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs "):
                 {
                     // Persist CLI args applied automatically at every startup (config.startupArgs).
@@ -1216,17 +1245,18 @@ public class App
                         var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
                                    $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
                                    "(overwrite the starter template). Keep it concise and operational.";
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
@@ -1247,17 +1277,18 @@ public class App
                     void SpawnHookScriptHelper(string scriptPath, string purpose)
                     {
                         var task = BuildHookHelperBrief(scriptPath, purpose);
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
@@ -1288,14 +1319,12 @@ public class App
                             void SpawnHookScriptHelper2(string scriptPath, string purpose)
                             {
                                 var task = BuildHookHelperBrief(scriptPath, purpose);
-                                MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                                try
-                                {
-                                    SingleAgentOrchestrator.ChatAgentAsync(
-                                        client: CreateChatClient(helperModel2), GetOrResetCts().Token,
-                                        maxIterations: 4, mcpTools: McpTools, continuous: false).GetAwaiter().GetResult();
-                                }
-                                finally { MuxConsole.InputOverride = System.Console.In; }
+                                // One-shot via incomingGoal (see /createhook above); previously the
+                                // FallbackReader injection left the helper reading stdin and blocked the wizard.
+                                SingleAgentOrchestrator.ChatAgentAsync(
+                                    client: CreateChatClient(helperModel2), GetOrResetCts().Token,
+                                    maxIterations: 4, mcpTools: McpTools,
+                                    incomingGoal: task, continuous: false).GetAwaiter().GetResult();
                             }
                             var cres = MuxSwarm.Utils.Tui.TuiConfigCommands.RunCreateHookWizard(
                                 new[] { "/createhook" }, SpawnHookScriptHelper2);
@@ -1373,6 +1402,10 @@ public class App
                     // landed yet at the menu, so make sure it's ready first (idempotent + cheap).
                     await EnsureMcpReadyAsync();
                     MuxSwarm.State.DaemonCommand.Run(userInput);
+                    // /daemon commits its status panel through the frame transcript but has no
+                    // follow-up prompt (unlike /setmodel), so nothing re-presents the frame before
+                    // the next input line. Force one present so the panel is painted, not swallowed.
+                    MuxConsole.TuiForceRedraw();
                     break;
                 }
 
@@ -2418,6 +2451,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
             // instead of failing the turn. No-op unless ExtraHigh was actually requested.
             .Use(inner => new MuxSwarm.Utils.ReasoningEffortFallbackClient(inner, modelId))
+            // Innermost (closest to the wire): strip empty text parts from the outbound history so
+            // providers that reject them (e.g. Kimi/Moonshot: 400 "text content is empty") accept the
+            // replayed assistant turns. No-op on clean histories; harmless for tolerant providers.
+            .Use(inner => new MuxSwarm.Utils.EmptyContentSanitizerClient(inner))
             .Build();
 
         // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every

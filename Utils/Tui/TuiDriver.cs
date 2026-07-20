@@ -92,6 +92,11 @@ internal sealed class TuiDriver
     // off-dashboard path is byte-identical to today's frame.
     private readonly AgentView _agentView = new();
     private volatile bool _agentViewActive;
+    // The /background jobs dashboard (v0.12.4): same inline pattern as the Agent View but over the
+    // detached-job registry (running AND finished), so a finished bg agent stays reachable after
+    // its lane vanishes from the backslash view.
+    private readonly JobView _jobView = new();
+    private volatile bool _jobViewActive;
     // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
     // this agent (toggling its panel) instead of snapping back to the latest-registered
     // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
@@ -194,13 +199,32 @@ internal sealed class TuiDriver
     private int _blockGap = 1;
     public void SetBlockGap(int lines) => _blockGap = Math.Max(0, lines);
 
+    /// <summary>Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame viewport at the idle
+    /// prompt (console.scrollSpeedRows). PgUp/PgDn and Ctrl+B/Ctrl+F stay full-page. Min 1.</summary>
+    private int _scrollSpeedRows = 1;
+    public void SetScrollSpeedRows(int rows) => _scrollSpeedRows = Math.Max(1, rows);
+
     /// <summary>Shade the user input/compose field on a band (console.inputHighlight).</summary>
     private bool _inputHighlight = true;
     public void SetInputHighlight(bool on) => _inputHighlight = on;
 
     /// <summary>Render expanded tool-result card bodies as muted markdown (console.cardMarkdown).</summary>
     private bool _cardMarkdown = true;
-    public void SetCardMarkdown(bool on) => _cardMarkdown = on;
+    public void SetCardMarkdown(bool on)
+    {
+        if (_cardMarkdown == on) return;
+        _cardMarkdown = on;
+        InvalidateFrameRowCounts();
+    }
+
+    /// <summary>Invalidate cached frame-row renders + force a repaint after a live change that only
+    /// alters row STYLING, not geometry (e.g. console.contentBackgrounds). Row widths/counts are
+    /// unchanged — background SGR is zero visible width — so this just re-renders in place.</summary>
+    public void RefreshStyling()
+    {
+        InvalidateFrameRowCounts();
+        ForceRedraw();
+    }
 
     /// <summary>Capture a multi-line paste as one literal block (console.bracketedPaste, DECSET 2004)
     /// instead of submitting on the first embedded newline.</summary>
@@ -209,6 +233,74 @@ internal sealed class TuiDriver
     {
         _bracketedPaste = on;
         try { _term.Write(on ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff); _term.Flush(); } catch { /* ignore */ }
+    }
+
+    // Wheel scrollback (frame engine only): the MouseHandler owns SGR mode + event classification;
+    // the idle-prompt loop drains the raw report bytes (shared ReadKey/unget machinery) and feeds
+    // them here. Wheel up/down maps onto the SAME FrameScrollBy path Ctrl+U/Ctrl+D use, stepping
+    // console.scrollSpeedRows rows per notch. Press/Release/Drag are classified + dispatched to
+    // (currently unwired) sinks so click-to-interact / drag-select are additive later.
+    private readonly MouseHandler _mouse;
+    private bool MouseTracking => _mouse.Enabled;
+
+    /// <summary>True when SGR mouse reporting is live (frame engine, preset != off, not suspended).
+    /// Read by the mid-turn EscapeKeyListener so it knows an ESC may be a mouse-report prefix.</summary>
+    public bool MouseReportingActive => MouseTracking;
+
+    /// <summary>Mid-turn wheel scroll (called on the EscapeKeyListener thread via MuxConsole hook):
+    /// step console.scrollSpeedRows per net notch through the same FrameScrollBy path, then repaint.
+    /// Thread-safety: the caller (MuxConsole.TuiWheelScroll) takes ConsoleLock before invoking.</summary>
+    public void WheelScrollBy(int netWheelDir)
+    {
+        if (OnWheelScroll(netWheelDir)) Repaint();
+    }
+    // Win32 delivery path (Windows console hosts only): mouse arrives as MOUSE_EVENT input records
+    // that Console.ReadKey discards, so it is read via Win32ConsoleInput (ReadConsoleInputW +
+    // ENABLE_MOUSE_INPUT + QuickEdit off) and fed into the same MouseHandler seam as the Unix VT path.
+    private bool _win32Mouse;
+
+    // Hermes-style mouse preset: off = no reporting; wheel = report + wheel scrollback only
+    // (press/release/drag parsed + swallowed); buttons = report + wheel + press/release/drag
+    // dispatched to their sinks. Default "wheel". Adjusted via /set mouseTracking or /mouse.
+    private string _mousePreset = "wheel";
+
+    public string MousePreset => _mousePreset;
+
+    /// <summary>Set the mouse reporting preset (off|wheel|buttons). Normalizes unknown values to
+    /// the wheel default. Applies immediately: off disables reporting, wheel/buttons enable it in
+    /// frame mode (unless a blocking prompt is suspended), and buttons also enables the interactive
+    /// sinks. Inline mode keeps native scrollback/selection and is untouched.</summary>
+    public void SetMouseTrackingPreset(string preset)
+    {
+        _mousePreset = preset switch
+        {
+            "off" => "off",
+            "buttons" => "buttons",
+            _ => "wheel",
+        };
+        ApplyMouseMode();
+    }
+
+    // Recompute + apply the terminal mouse mode from the current preset + lifecycle state. Only
+    // meaningful under the frame engine; enabling 1000/1006 inline would only steal the terminal's
+    // own copy/paste selection, so it is disabled there regardless of preset.
+    private void ApplyMouseMode()
+    {
+        bool want = _engineFrame && !_suspended && _mousePreset != "off";
+        _mouse.ButtonsEnabled = _mousePreset == "buttons";
+        _mouse.SetEnabled(want);
+        // Windows console hosts translate VT mouse reports into MOUSE_EVENT input records that
+        // Console.ReadKey discards - enable the Win32 record reader as the delivery path there;
+        // on Unix the VT parser path handles it. Off/inline/suspended -> restore the saved mode.
+        if (want && OperatingSystem.IsWindows())
+        {
+            if (!_win32Mouse) _win32Mouse = Win32ConsoleInput.EnableMouse();
+        }
+        else if (_win32Mouse)
+        {
+            Win32ConsoleInput.DisableMouse();
+            _win32Mouse = false;
+        }
     }
     // Keys consumed while probing an ESC sequence that turned out NOT to be a paste marker are
     // stashed here and replayed through the normal edit path so nothing is dropped.
@@ -245,21 +337,88 @@ internal sealed class TuiDriver
         public (string Tool, string Text, bool Error)? Expandable; // non-null => Ctrl+E expandable
         public bool Expanded;                                      // current toggle state in NAV
         public bool DiffKind;                                      // expandable body is a unified diff
+        public long Sequence;                                      // monotonic prompt-replay watermark
     }
 
     private readonly List<Entry> _transcript = new();
+    private long _transcriptSequence;
+    private long _promptContextAfterSequence;
+
+    // Exact wrapped-row metrics for the frame scroll marker. Counts are cached per Entry at the
+    // active width; appends update the cache incrementally, while width/style/expansion changes
+    // invalidate it. This avoids an O(history) walk on every spinner tick or streamed line.
+    private readonly Dictionary<Entry, int> _frameRowCountCache = new();
+    private int _frameRowCountWidth = -1;
+    private int _frameTotalRowsCache;
+    private bool _frameRowCountValid;
+    private bool _frameRowCountCardMarkdown;
+
+    // Cached transcript window for ComposeFrameRows: the bottom-up render walks
+    // (viewport + scroll offset) rows of retained history, so recomposing it per keystroke is
+    // what made typing laggy after scrolling back (the deeper the scroll, the worse the lag).
+    // While the user types only the live band changes; the window is keyed on geometry + scroll
+    // + content generation and reused until any of those move. Invalidated alongside the
+    // row-count cache (width/style/expansion changes).
+    private List<string>? _frameWindowCache;
+    private (int W, int Room, int Scroll, int Count, long Seq, bool Md) _frameWindowKey;
+
+    private void AddTranscriptEntry(Entry entry)
+    {
+        entry.Sequence = ++_transcriptSequence;
+        _transcript.Add(entry);
+        if (_frameRowCountValid && _frameRowCountWidth == Width
+            && _frameRowCountCardMarkdown == _cardMarkdown)
+        {
+            int count = RenderEntryRows(entry, _frameRowCountWidth).Count;
+            _frameRowCountCache[entry] = count;
+            _frameTotalRowsCache += count;
+        }
+        else
+        {
+            InvalidateFrameRowCounts();
+        }
+    }
+
+    private void InvalidateFrameRowCounts()
+    {
+        _frameRowCountValid = false;
+        _frameRowCountCache.Clear();
+        _frameTotalRowsCache = 0;
+        _frameWindowCache = null;
+    }
+
+    private int GetFrameTotalRows(int wrapWidth)
+    {
+        if (_frameRowCountValid && _frameRowCountWidth == wrapWidth
+            && _frameRowCountCardMarkdown == _cardMarkdown)
+            return _frameTotalRowsCache;
+
+        _frameRowCountCache.Clear();
+        int total = 0;
+        foreach (var entry in _transcript)
+        {
+            int count = RenderEntryRows(entry, wrapWidth).Count;
+            _frameRowCountCache[entry] = count;
+            total += count;
+        }
+        _frameRowCountWidth = wrapWidth;
+        _frameRowCountCardMarkdown = _cardMarkdown;
+        _frameTotalRowsCache = total;
+        _frameRowCountValid = true;
+        return total;
+    }
 
     /// <summary>Mirror committed plain markup lines into the transcript (one entry per line).</summary>
     private void Retain(IReadOnlyList<string> markupLines)
     {
-        foreach (var l in markupLines) _transcript.Add(new Entry { Collapsed = l });
+        foreach (var l in markupLines) AddTranscriptEntry(new Entry { Collapsed = l });
         TrimTranscript();
     }
 
     /// <summary>Mirror a single expandable tool-result line, retaining its full-panel data.</summary>
     private void RetainExpandable(string collapsedLine, string tool, string text, bool error)
     {
-        _transcript.Add(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
+        AddTranscriptEntry(new Entry { Collapsed = collapsedLine, Expandable = (tool, text, error) });
         TrimTranscript();
     }
 
@@ -285,16 +444,26 @@ internal sealed class TuiDriver
             $"  [{TuiComponents.Accent}]\u270e diff[/] [{TuiComponents.Dim}]\u00b7 {Spectre.Console.Markup.Escape(shortTitle)}[/]  "
             + $"[{TuiComponents.DiffAdd}]+{adds}[/] [{TuiComponents.DiffDel}]\u2212{dels}[/] [{TuiComponents.Dim}](ctrl+e expand)[/]"
         })[0];
-        _transcript.Add(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
+        AddTranscriptEntry(new Entry { Collapsed = collapsed, Expandable = (title ?? "diff", body, false), DiffKind = true });
         TrimTranscript();
-        if (!_navActive) _region.CommitAbove(new[] { collapsed }, BuildLiveFrame(Width));
+        if (!_navActive) CommitPaint(new[] { collapsed });
         _pendingGap = true;
     }
 
     private void TrimTranscript()
     {
         int over = _transcript.Count - TranscriptCap;
-        if (over > 0) _transcript.RemoveRange(0, over);
+        if (over <= 0) return;
+        var removed = _transcript.GetRange(0, over);
+        _transcript.RemoveRange(0, over);
+        if (_frameRowCountValid)
+        {
+            foreach (var entry in removed)
+            {
+                if (_frameRowCountCache.Remove(entry, out int count)) _frameTotalRowsCache -= count;
+                else { InvalidateFrameRowCounts(); break; }
+            }
+        }
     }
 
     /// <summary>Retain + commit lines above the region (mirrors history for vim NAV scrollback).</summary>
@@ -304,7 +473,7 @@ internal sealed class TuiDriver
         // While the NAV overlay owns the screen (possibly opened mid-turn), retain history but
         // do NOT physically write - NAV exit issues a full repaint that reflects everything.
         if (_navActive) return;
-        _region.CommitAbove(lines, BuildLiveFrame(Width));
+        CommitPaint(lines);
     }
 
     // input state - true only inside ReadLine's raw-mode loop
@@ -377,13 +546,45 @@ internal sealed class TuiDriver
     /// Shift+Tab is ignored. Set by the session loop; cleared at the top-level menu.</summary>
     public Func<string?>? OnModeCycle { get; set; }
 
-    public TuiDriver(ITuiTerminal? term = null)
+    // v0.12.4 full-frame renderer (console.renderEngine = "frame"). When _engineFrame is set the
+    // driver takes complete alternate-screen ownership through this owner instead of the inline
+    // native-scrollback live region: every paint re-composes the WHOLE viewport (transcript tail
+    // re-wrapped at the current width + the pinned live/footer/input band) from retained state and
+    // presents one atomic diffed frame. Off (the default) the frame renderer is never touched and
+    // the inline path is byte-identical to today.
+    private readonly FrameRenderer _frame;
+    private readonly bool _engineFrame;
+
+    // Frame-engine SUSPEND latch (the fix for the sub-prompt shatter that killed the first frame
+    // engine). Suspend() leaves the alternate screen AND latches this flag; while latched, every
+    // frame-mode paint DEFERS (state is still retained) so the ~100ms sub-agent ticker / resize
+    // poll can never re-enter the alt screen while a blocking Spectre prompt owns the primary
+    // buffer. Resume() (paired TuiResume after each prompt, or ReadLine reclaiming the screen)
+    // unlatches, invalidates, and fully repaints. Volatile: set on prompt threads, read by timers.
+    private volatile bool _suspended;
+
+    public TuiDriver(ITuiTerminal? term = null, bool frameEngine = false)
     {
         _term = term ?? new ConsoleTuiTerminal();
         _region = new LiveRegion(_term);
+        _frame = new FrameRenderer(_term);
+        _engineFrame = frameEngine;
+        _mouse = new MouseHandler(_term);
     }
 
-    public int Width => Math.Max(20, _term.Width);
+    /// <summary>True when the driver is running the v0.12.4 full-frame (alternate-screen) renderer
+    /// rather than the inline native-scrollback live region. Test/wiring hook.</summary>
+    public bool FrameEngine => _engineFrame;
+
+    /// <summary>True while the frame engine is suspended for a blocking external prompt (alt screen
+    /// left, presents deferred). Always false in inline mode. Test hook.</summary>
+    public bool Suspended => _engineFrame && _suspended;
+
+    // Frame mode lays out at (cols - 1): the last column is RESERVED - components never touch it,
+    // so a full-width rule/panel row can never soft-wrap when re-wrapped in ComposeFrameRows (the
+    // stranded "-" fragment / split-card bug), and the reserved column holds the tiny passive
+    // scroll-position marker while paging. Inline mode keeps the true terminal width - byte-identical to before.
+    public int Width => _engineFrame ? Math.Max(20, _term.Width - 1) : Math.Max(20, _term.Width);
 
     /// <summary>Visible terminal height (rows), floored so panel-bounding math stays sane on
     /// tiny/again-unavailable terminals.</summary>
@@ -461,6 +662,17 @@ internal sealed class TuiDriver
         CommitMirrored(Lane(markupLines));
     }
 
+    /// <summary>Seed frame-mode startup content and open it at the oldest/top edge when the full
+    /// splash is taller than the available transcript pane. A normal command submission resets the
+    /// viewport to the live tail. Used only during initial frame activation.</summary>
+    public void CommitStartup(IReadOnlyList<string> markupLines)
+    {
+        if (markupLines.Count == 0) return;
+        Retain(markupLines);
+        _frameScroll = int.MaxValue; // ComposeFrameRows clamps this to the exact oldest position.
+        CommitPaint(markupLines);
+    }
+
     /// <summary>Commit a single markup line above the region.</summary>
     public void CommitLine(string markupLine) => Commit(new[] { markupLine });
 
@@ -475,7 +687,7 @@ internal sealed class TuiDriver
         // driver commit methods which are not internally synchronized.
         FlushPendingToolCall();
         RetainExpandable(collapsedLine, agent, fullTranscript, error: false);
-        if (!_navActive) _region.CommitAbove(new[] { collapsedLine }, BuildLiveFrame(Width));
+        if (!_navActive) CommitPaint(new[] { collapsedLine });
         _pendingGap = true;
     }
 
@@ -540,7 +752,7 @@ internal sealed class TuiDriver
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
             if (_transcript[i].Expandable is not null) { idx = i; break; }
-        if (idx >= 0) _transcript[idx].Expanded = true;
+        if (idx >= 0) { _transcript[idx].Expanded = true; InvalidateFrameRowCounts(); }
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -557,6 +769,7 @@ internal sealed class TuiDriver
             if (_transcript[i].Expandable is not null) { idx = i; break; }
         if (idx < 0) return false;
         _transcript[idx].Expanded = true;
+        InvalidateFrameRowCounts();
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -606,6 +819,95 @@ internal sealed class TuiDriver
         _expandKind = ExpandKind.None; _expandKey = ""; _expandTitle = ""; _expandBody = "";
         _expandTint = ""; _expandError = false; _expandAnchorTail = false;
         Repaint();
+    }
+
+    /// <summary>
+    /// Foreground the /background jobs dashboard (the bg-job sibling of the Agent View). Lists the
+    /// detached-job registry - running AND finished - so a finished bg agent's output stays
+    /// reachable after its lane vanishes from the backslash view. Keys: arrows/j-k select;
+    /// o/Enter fires <paramref name="onReopen"/> for a FINISHED job (its transcript commits as a
+    /// retained expandable); c fires <paramref name="onCancel"/> for a RUNNING job; Esc/q closes.
+    /// Snapshot + callbacks are supplied by the caller because the driver does not own the job
+    /// registry. Returns false when there are no jobs or NAV/Agent View already owns the screen.
+    /// Caller holds the console lock for the session.
+    /// </summary>
+    public bool EnterJobView(
+        IReadOnlyList<JobView.JobRow> snapshot,
+        Func<string, bool> onReopen,
+        Func<string, bool> onCancel)
+    {
+        if (_navActive || _agentViewActive || _jobViewActive) return false;
+        if (snapshot.Count == 0) return false;
+
+        _jobView.SetRows(snapshot);
+        _jobView.Open();
+        _jobViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                var jvPump = ConsoleInputPump.Current;
+                if (jvPump is not null)
+                {
+                    // Single input plane: consume the overlay's keys from the shared pump (the
+                    // pump is the only stdin reader); wheel/paste events are swallowed here.
+                    while (true)
+                    {
+                        if (!jvPump.TryTake(out var jv, 200)) continue;
+                        if (jv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = jv.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _jobView.Move(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _jobView.Move(+1); Repaint(); continue; }
+
+                // Esc / backslash / q: close the dashboard.
+                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)
+                    break;
+
+                // c: cancel the selected RUNNING job (no-op on finished rows).
+                if (key.Key == ConsoleKey.C)
+                {
+                    var row = _jobView.Selected();
+                    if (row is { Running: true } r && onCancel(r.Id))
+                        Repaint();
+                    continue;
+                }
+
+                // o / Enter: reopen the selected FINISHED job's transcript as a retained expandable
+                // committed to scrollback (Ctrl+E / NAV can then expand it in place). Stays open on
+                // a running job / empty body so the user can keep browsing.
+                if (key.Key == ConsoleKey.O || key.Key == ConsoleKey.Enter)
+                {
+                    var row = _jobView.Selected();
+                    if (row is { Running: false } r && onReopen(r.Id))
+                    {
+                        _jobViewActive = false;
+                        _jobView.Close();
+                        Repaint();
+                        return true;
+                    }
+                    continue;
+                }
+            }
+        }
+        finally
+        {
+            _jobViewActive = false;
+            _jobView.Close();
+            Repaint();
+        }
+        return true;
     }
 
     /// <summary>
@@ -691,7 +993,9 @@ internal sealed class TuiDriver
     /// </summary>
     public bool EnterAgentView(
         IReadOnlyList<(string Agent, string Status, string Tint)> snapshot,
-        Func<string, string?> bodyProvider)
+        Func<string, string?> bodyProvider,
+        Func<string, string?>? onHide = null,
+        Func<string, string?>? onUnhide = null)
     {
         if (_navActive || _agentViewActive) return false;
         if (snapshot.Count == 0) return false;
@@ -705,13 +1009,44 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException) { break; }
+                var avPump = ConsoleInputPump.Current;
+                if (avPump is not null)
+                {
+                    // Single input plane: consume the overlay's keys from the shared pump (the
+                    // pump is the only stdin reader); wheel/paste events are swallowed here.
+                    while (true)
+                    {
+                        if (!avPump.TryTake(out var av, 200)) continue;
+                        if (av.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = av.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
 
                 if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
                     { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
                     { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
+
+                // h: hide the selected lane from the main viewport (activity strip + expanded
+                // panel). It stays in this dashboard (tagged hidden), Enter unhides + attaches.
+                if (key.Key == ConsoleKey.H && onHide is not null)
+                {
+                    string? lane = _agentView.SelectedAgent(DateTime.UtcNow);
+                    if (lane is not null)
+                    {
+                        string? resolved = onHide(lane);
+                        if (resolved is not null && IsSubAgentExpanded(resolved))
+                            ToggleSubAgentExpanded(resolved, bodyProvider(resolved) ?? "");  // close it
+                        _agentView.MarkHidden(resolved ?? lane, hidden: true);
+                        Repaint();
+                    }
+                    continue;
+                }
 
                 // m: audit the selected agent's mailbox (M4). Commits its message-log rows to the
                 // transcript so cross-agent chatter is visible on demand (off by default - nothing
@@ -751,6 +1086,9 @@ internal sealed class TuiDriver
                         _agentView.Close();
                         // Stick Ctrl+E to this agent from now on (issue #1).
                         _foregroundAgent = agent;
+                        // Selecting a hidden lane unhides it (promotes it into the main viewport
+                        // like a standard sub-agent) before its panel attaches.
+                        onUnhide?.Invoke(agent);
                         if (body.Length > 0 && !IsSubAgentExpanded(agent))
                             ToggleSubAgentExpanded(agent, body);
                         Repaint();
@@ -794,9 +1132,9 @@ internal sealed class TuiDriver
         if (s.Expandable && merged.Count > 0)
         {
             RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
-            for (int k = 1; k < merged.Count; k++) _transcript.Add(new Entry { Collapsed = merged[k] });
+            for (int k = 1; k < merged.Count; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
             TrimTranscript();
-            if (!_navActive) _region.CommitAbove(merged, BuildLiveFrame(Width));
+            if (!_navActive) CommitPaint(merged);
         }
         else CommitMirrored(merged);
         _pendingGap = true;
@@ -1121,7 +1459,11 @@ internal sealed class TuiDriver
             else
                 lines.AddRange(TuiComponents.BoundedLivePanel(
                     _expandTitle, _expandBody, _expandTint, width, maxRows, _expandAnchorTail, _expandError,
-                    markdown: _expandKind == ExpandKind.SubAgent));
+                    // Inline Ctrl+E tool-result expansion renders markdown to match the NAV path
+                    // (ToolResultPanel markdown:_cardMarkdown) and RenderEntryRows. Diffs use a
+                    // separate branch; sub-agent panels already rendered markdown.
+                    markdown: _expandKind == ExpandKind.SubAgent
+                        || (_expandKind == ExpandKind.ToolResult && _cardMarkdown)));
         }
 
         // Consolidated sub-agent activity panel takes precedence over the single thinking line:
@@ -1159,6 +1501,11 @@ internal sealed class TuiDriver
         if (_agentViewActive)
             lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
 
+        // /background jobs dashboard: same inline-list pattern as the Agent View above. Rendered in
+        // the live region so scrollback is preserved; off (the default) adds nothing.
+        if (_jobViewActive)
+            lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
+
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
         // adds nothing, keeping the frame identical to today.
@@ -1188,7 +1535,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, _editor.Mode, width, highlight: _inputHighlight));
+            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, width, highlight: _inputHighlight));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -1216,7 +1563,282 @@ internal sealed class TuiDriver
         // Repaint() previously raced the ticker's SetLive and stranded duplicate footers. The lock
         // is reentrant, so the many callers already under ConsoleLock are unaffected.
         lock (MuxConsole.ConsoleLock)
-            _region.SetLive(BuildLiveFrame(Width));
+            PaintNow();
+    }
+
+    // --- render-engine routing (inline live-region vs full-frame) -----------
+    // These helpers are the ONLY seam between the two renderers. In inline mode they call the
+    // native-scrollback LiveRegion exactly as before (byte-identical). In frame mode they route to
+    // the alternate-screen FrameRenderer, which re-composes and presents the WHOLE viewport from
+    // retained state each time - so a "commit above" is not a distinct physical operation, it is
+    // just another present of the (already-Retained) transcript. While the frame engine is
+    // SUSPENDED for a blocking prompt (see Suspend/Resume) every present is deferred: retained
+    // state still accrues, and Resume()'s invalidate+repaint reflects it all at once.
+
+    /// <summary>Repaint the live view: inline live band, or a full recomposed frame.</summary>
+    private void PaintNow()
+    {
+        if (_engineFrame) PresentFrame();
+        else _region.SetLive(BuildLiveFrame(Width));
+    }
+
+    /// <summary>Commit finished lines: inline pushes them into native scrollback and repaints the
+    /// live band; frame mode just presents (the lines are already retained in <c>_transcript</c>).</summary>
+    private void CommitPaint(IReadOnlyList<string> committedLines)
+    {
+        if (_engineFrame) PresentFrame();
+        else _region.CommitAbove(committedLines, BuildLiveFrame(Width));
+    }
+
+    /// <summary>Force a clean full repaint (resize / Ctrl+L): inline reflows the visible transcript
+    /// window; frame mode invalidates its cache so the next present is a full clear+redraw.</summary>
+    private void ForcePaint()
+    {
+        if (_engineFrame) { _frame.Invalidate(); PresentFrame(); }
+        else ReflowNow();
+    }
+
+    /// <summary>Hand the terminal back cleanly before a blocking external prompt / mode switch /
+    /// exit: inline erases the live band and shows the cursor; frame mode leaves the alternate
+    /// screen (restoring the primary buffer + native scrollback verbatim) and LATCHES suspended so
+    /// no timer-driven present can re-enter the alt screen while the prompt owns the terminal.</summary>
+    private void HandBack()
+    {
+        if (_engineFrame)
+        {
+            // Suspend first, then re-apply the mouse mode: the terminal is handed back without
+            // mouse events being emitted while a blocking prompt owns the primary buffer.
+            _suspended = true;
+            ApplyMouseMode();
+            _frame.Leave();
+        }
+        else _region.Clear();
+    }
+
+    /// <summary>Present one full-frame viewport (frame engine only). Deferred while suspended.</summary>
+    private void PresentFrame()
+    {
+        // Hard gate: NOTHING may re-enter the alternate screen while a blocking prompt owns the
+        // primary buffer (suspended) or during teardown. The ticker/resize timers race prompt
+        // windows, and a single stray present paints the alt screen over a half-drawn Spectre
+        // list (the "cut-off prompt" artifact).
+        if (_suspended || _shuttingDown) return;
+        _frame.Present(ComposeFrameRows());
+    }
+
+    /// <summary>
+    /// Frame engine only: return from a blocking external prompt. Unlatches the suspend, discards
+    /// the cached frame (the prompt drew arbitrary content on the primary buffer; the next present
+    /// re-enters the alt screen from a clean slate), and repaints everything retained while
+    /// suspended. Inline mode is a no-op - the next status repaint restores its footer as before.
+    /// </summary>
+    public void Resume()
+    {
+        if (!_engineFrame || !_suspended) return;
+        _suspended = false;
+        _promptContextAfterSequence = _transcriptSequence;
+        ApplyMouseMode();   // re-arm reporting per the preset on return to the frame
+        _frame.Invalidate();
+        Repaint();
+    }
+
+    /// <summary>
+    /// Compose the full-frame viewport: the visible transcript tail (retained <c>_transcript</c>
+    /// entries re-wrapped at the CURRENT width, bottom-anchored) topped up to fill the space above
+    /// the live band, then the live stream/tool/footer/input band pinned at the bottom. Every row is
+    /// rendered to ANSI through the SAME wrapper the inline region uses, so frame output is visually
+    /// identical to inline output. Honors <see cref="_frameScroll"/>: when the user has paged back,
+    /// the transcript window slides up by that many physical rows (a real viewport over retained
+    /// history - the frame engine's replacement for native scrollback). Returns exactly
+    /// <c>height</c> physical rows.
+    /// </summary>
+    internal List<string> ComposeFrameRows()
+    {
+        int h = Math.Max(1, _term.Height);
+        // Layout and wrap BOTH use the driver's Width, which in frame mode is already (cols - 1)
+        // with the last physical column reserved. Using one width for component layout AND the wrap
+        // pass is what keeps full-width rules/panels to exactly one physical row each (the earlier
+        // layout-at-cols/wrap-at-cols-1 mismatch split every full-width row and stranded "-"
+        // fragments at the left margin).
+        int wrapW = Width;
+
+        // Live band (bottom): built and wrapped at the same width.
+        var liveRows = new List<string>();
+        foreach (var ml in BuildLiveFrame(wrapW))
+            liveRows.AddRange(LiveRegion.WrapMarkupLine(ml, wrapW));
+        if (liveRows.Count > h)
+            liveRows = liveRows.GetRange(liveRows.Count - h, h);  // keep the freshest tail on screen
+
+        int transcriptRoom = h - liveRows.Count;
+        var transcriptRows = new List<string>();
+        int totalRows = transcriptRoom > 0 ? GetFrameTotalRows(wrapW) : 0;
+        if (transcriptRoom > 0)
+        {
+            // Render retained entries bottom-up until we have enough rows to satisfy the visible
+            // window PLUS the requested scroll offset, then slide the window up by the offset.
+            // The marker/clamp use the exact cached total above, not this deliberately-bounded
+            // render window (the old code treated the partial count as the total and pinned the
+            // marker at the top after the first PgUp).
+            int maxScroll = Math.Max(0, totalRows - transcriptRoom);
+            if (_frameScroll > maxScroll) _frameScroll = maxScroll;
+            var windowKey = (wrapW, transcriptRoom, _frameScroll, _transcript.Count, _transcriptSequence, _cardMarkdown);
+            if (_frameWindowCache is not null && _frameWindowKey == windowKey)
+            {
+                // Unchanged window (typing at the prompt only mutates the live band): reuse the
+                // rendered slice instead of re-walking history. The caller never mutates this
+                // list (the composed `rows` below is a fresh list; the indicator pass replaces
+                // elements of `rows`, not of this cache).
+                transcriptRows = _frameWindowCache;
+            }
+            else
+            {
+                int want = transcriptRoom + Math.Max(0, _frameScroll);
+                for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
+                    transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
+                int skipTail = Math.Max(0, _frameScroll);
+                int end = transcriptRows.Count - skipTail;
+                int start = Math.Max(0, end - transcriptRoom);
+                transcriptRows = transcriptRows.GetRange(start, Math.Max(0, end - start));
+                _frameWindowCache = transcriptRows;
+                _frameWindowKey = windowKey;
+            }
+        }
+
+        var rows = new List<string>(h);
+        // Anchor transcript content to the BOTTOM of the pane (directly above the live band), so
+        // short startup/early-session content sits just over the input box instead of being stranded
+        // at the top with a large empty gap below it. Unused rows are inserted ABOVE the transcript;
+        // the footer/input stay bottom-pinned. Once history fills the pane this is naturally
+        // tail-anchored, and a scrolled-back window (_frameScroll > 0) already carries its own slice.
+        for (int i = transcriptRows.Count; i < transcriptRoom; i++) rows.Add("");
+        rows.AddRange(transcriptRows);
+        rows.AddRange(liveRows);
+        if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
+        while (rows.Count < h) rows.Add("");
+
+        // Keyboard-only scrollback gets a tiny passive position marker in the reserved last
+        // column. It has a fixed one-cell size and only moves vertically; there is no full rail,
+        // dynamic thumb sizing, mouse hit target, or wheel/click/drag interaction.
+        PaintFrameScrollIndicator(rows, transcriptRoom, totalRows);
+        return rows;
+    }
+
+    /// <summary>Render one retained entry to physical rows at <paramref name="wrapW"/>: expanded
+    /// entries get their full panel (diff or tool-result card - the same rendering NAV uses),
+    /// collapsed entries their one-line summary, wrapped.</summary>
+    private List<string> RenderEntryRows(Entry ent, int wrapW)
+    {
+        if (ent.Expandable is { } x && ent.Expanded)
+        {
+            var panel = ent.DiffKind
+                ? TuiComponents.Diff(x.Tool, x.Text, wrapW)
+                : TuiComponents.ToolResultPanel(x.Tool, x.Text, x.Error, wrapW, expanded: true, markdown: _cardMarkdown);
+            var outRows = new List<string>();
+            foreach (var l in panel) outRows.AddRange(LiveRegion.WrapMarkupLine(l, wrapW));
+            return outRows;
+        }
+        return LiveRegion.WrapMarkupLine(ent.Collapsed, wrapW);
+    }
+
+    private const int FrameScrollIndicatorSize = 1;
+    internal static string FrameScrollIndicatorCell()
+        => TuiMarkup.ToAnsi($"[{TuiComponents.Accent}]▏[/]");
+
+    /// <summary>Pure placement math for the passive frame-scroll marker. Offset 0 is the live
+    /// tail (bottom); <paramref name="maxScroll"/> is the oldest retained position (top).</summary>
+    internal static (int Top, int Length) FrameScrollIndicatorPlacement(int scroll, int maxScroll, int trackRows)
+    {
+        int length = Math.Min(FrameScrollIndicatorSize, Math.Max(0, trackRows));
+        if (length == 0) return (0, 0);
+        int travel = Math.Max(0, trackRows - length);
+        double fraction = Math.Clamp((double)scroll / Math.Max(1, maxScroll), 0.0, 1.0);
+        int top = (int)Math.Round((1.0 - fraction) * travel);
+        return (top, length);
+    }
+
+    /// <summary>Paint a fixed-size passive marker in the reserved physical column. Every transcript
+    /// row is padded to the content width and receives an explicit final cell in both marker and
+    /// no-marker states, so moving/hiding the marker always overwrites its previous cells.</summary>
+    private void PaintFrameScrollIndicator(List<string> rows, int transcriptRoom, int totalRows)
+    {
+        int trackRows = Math.Min(transcriptRoom, rows.Count);
+        int maxScroll = Math.Max(0, totalRows - transcriptRoom);
+        bool visible = _userScrolled && _frameScroll > 0 && maxScroll > 0 && trackRows > 0;
+        var placement = FrameScrollIndicatorPlacement(_frameScroll, maxScroll, trackRows);
+
+        for (int i = 0; i < trackRows; i++)
+        {
+            string plain = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;?]*[A-Za-z]", "");
+            int pad = Width - TuiMarkup.Width(plain);
+            if (pad > 0) rows[i] += new string(' ', pad);
+            if (pad < 0) continue;
+
+            bool marker = visible && i >= placement.Top && i < placement.Top + placement.Length;
+            rows[i] += marker ? FrameScrollIndicatorCell() : " ";
+        }
+    }
+
+    // Frame-engine viewport scroll offset, in physical rows above the live tail (0 = pinned to the
+    // newest content). PgUp/PgDn / Ctrl+U/Ctrl+D at the prompt adjust it; any commit/stream keeps
+    // the offset (the user is reading history) until they page back to 0 or press End/Esc. Clamped
+    // in ComposeFrameRows to the oldest retained row.
+    private int _frameScroll;
+
+    // True once the user has actively paged the frame viewport (Ctrl+U/D, PgUp/Dn, Ctrl+B/F) this
+    // session. Gates the passive scroll marker and the Esc/End snap-to-tail so a seeded startup
+    // offset (a tall splash opened at its top) never lights the marker or swallows the first Esc.
+    // Reset when the viewport returns to the live tail (snap or submit).
+    private bool _userScrolled;
+
+    /// <summary>Frame engine: scroll the viewport by <paramref name="rows"/> physical rows
+    /// (positive = back in history). Returns true when the offset changed (caller repaints).</summary>
+    internal bool FrameScrollBy(int rows)
+    {
+        if (!_engineFrame) return false;
+        int prev = _frameScroll;
+        _frameScroll = Math.Max(0, _frameScroll + rows);
+        // Upper clamp happens in ComposeFrameRows (needs the wrapped row count). Return the actual
+        // post-clamp movement so paging at the oldest boundary does not trigger redundant repaints.
+        if (rows > 0) _ = ComposeFrameRows();
+        // A key-driven page into history arms the passive marker + Esc/End snap. A seeded startup
+        // offset (CommitStartup, which bypasses this method) never sets it, so a tall splash opened
+        // at its top shows no marker and does not swallow the first Esc.
+        if (_frameScroll > 0 && _frameScroll != prev) _userScrolled = true;
+        return _frameScroll != prev;
+    }
+
+    /// <summary>
+    /// v0.12.4 Option A - build the viewport-bounded window of RECENT transcript, re-wrapped at the
+    /// CURRENT terminal width, that a resize repaint reflows. This is the reflow: <c>_transcript</c>
+    /// holds the logical markup lines (width-independent); <see cref="TuiMarkup.WrapMarkup"/> re-wraps
+    /// each at the live width, so a narrow-&gt;wide (or wide-&gt;narrow) drag re-lays-out the on-screen
+    /// text instead of preserving its old hard-wrap geometry. Only the last viewport-worth of entries
+    /// is wrapped (older history stays in immutable native scrollback, which no terminal can reflow),
+    /// so the work is bounded regardless of transcript length.
+    /// </summary>
+    private List<string> BuildReflowWindow()
+    {
+        int wrapW = Math.Max(1, Width - 1);   // never render into the last column (no soft-wrap)
+        int room = Math.Max(1, Height);       // at most a viewport of transcript rows is ever visible
+        var rows = new List<string>();
+        // Walk entries newest-first, wrapping each at the current width, until we have a viewport's
+        // worth of physical rows; then keep the freshest `room` rows. Bounded work: we stop early.
+        // Use LiveRegion.WrapMarkupLine (markup -> wrapped ANSI rows) - the SAME renderer the live
+        // band uses - so the reflowed transcript is real ANSI, not literal "[#RRGGBB]" markup tokens.
+        // (TuiMarkup.WrapMarkup returns MARKUP slices for NAV, which re-parses them; writing those
+        // straight to the terminal printed the raw tags and bloated every row's width.)
+        for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
+            rows.InsertRange(0, LiveRegion.WrapMarkupLine(_transcript[e].Collapsed, wrapW));
+        if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
+        return rows;
+    }
+
+    /// <summary>Reflow repaint for a resize / manual redraw: re-wrap the recent transcript window at
+    /// the new width and repaint it plus the live band as one bottom-anchored atomic frame.</summary>
+    private void ReflowNow()
+    {
+        lock (MuxConsole.ConsoleLock)
+            _region.ReflowRepaint(BuildReflowWindow(), BuildLiveFrame(Width));
     }
 
     // Last terminal size observed by the resize poll (see PollResize). -1 until first checked.
@@ -1233,13 +1855,16 @@ internal sealed class TuiDriver
     public void PollResize()
     {
         if (_shuttingDown || _navActive) return;
+        if (_engineFrame && _suspended) return;   // a blocking prompt owns the terminal; defer
         int w = _term.Width, h = _term.Height;
         if (w == _lastSeenWidth && h == _lastSeenHeight) return;
         bool first = _lastSeenWidth < 0;
         _lastSeenWidth = w;
         _lastSeenHeight = h;
         if (first) return;        // just record the baseline on the first tick; nothing to redraw
-        _region.ForceRepaint();
+        // Inline: v0.12.4 Option A reflow of the visible transcript window at the new width.
+        // Frame: invalidate + full recomposed present at the new geometry (no reflow seam at all).
+        ForcePaint();
     }
 
     /// <summary>
@@ -1252,7 +1877,7 @@ internal sealed class TuiDriver
         // Re-sync the size baseline so the poll does not immediately re-fire after a manual redraw.
         _lastSeenWidth = _term.Width;
         _lastSeenHeight = _term.Height;
-        _region.ForceRepaint();
+        ForcePaint();
     }
 
     // --- bracketed paste -----------------------------------------------------
@@ -1310,6 +1935,10 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
+    // Wheel -> scrollback bridge: step console.scrollSpeedRows rows per net notch through the SAME
+    // FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when the offset changed (caller repaints).
+    private bool OnWheelScroll(int netWheelDir) => FrameScrollBy(netWheelDir * _scrollSpeedRows);
+
     // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
     // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
     // ends. Enters become literal newlines; printables append; control keys are dropped. A short
@@ -1331,6 +1960,25 @@ internal sealed class TuiDriver
         return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
+    /// <summary>Burst-paste drain for the pump path: collect already-queued Key events (a fast
+    /// burst follows the Enter in the same instant) into literal text. A short 2ms settle bridges
+    /// inter-chunk gaps of a large paste still streaming in, mirroring <see cref="DrainBurstPaste"/>.
+    /// A non-Key event (wheel/paste) is stashed into <paramref name="carry"/> for the next loop
+    /// iteration rather than swallowed.</summary>
+    private static string DrainBurstFromPump(ConsoleInputPump pump, ref ConsoleInputPump.InputEvent? carry)
+    {
+        var sb = new System.Text.StringBuilder();
+        while (true)
+        {
+            if (!pump.TryTake(out var bev, 2)) break;
+            if (bev.Kind != ConsoleInputPump.EventKind.Key) { carry = bev; break; }
+            var bk = bev.Key;
+            if (bk.Key == ConsoleKey.Enter || bk.KeyChar is '\r' or '\n') { sb.Append('\n'); continue; }
+            if (bk.KeyChar != '\0' && !char.IsControl(bk.KeyChar)) sb.Append(bk.KeyChar);
+        }
+        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
+    }
+
     // --- input ---------------------------------------------------------------
 
     /// <summary>
@@ -1343,21 +1991,144 @@ internal sealed class TuiDriver
         _editor.Reset();
         _paletteSel = -1;
         _inInput = true;
+        // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
+        // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
+        // the shared input pump (the single input plane) so they are the next events this loop
+        // sees; on the legacy path they go to the local unget queue as before.
+        var pump = ConsoleInputPump.Current;
+        if (pump is not null)
+        {
+            var replayQ = new Queue<ConsoleKeyInfo>();
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(replayQ);
+            if (replayQ.Count > 0)
+            {
+                var evs = new List<ConsoleInputPump.InputEvent>(replayQ.Count);
+                while (replayQ.Count > 0) evs.Add(ConsoleInputPump.InputEvent.OfKey(replayQ.Dequeue()));
+                pump.PushFront(evs);
+            }
+        }
+        else
+        {
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(_ungetq);
+        }
+        BeginPromptContext();
         // Collapse any mid-turn live-expand panel before the idle prompt so a stale tool-result /
         // sub-agent expansion never lingers into the input frame. The block stays Ctrl+E/NAV
         // expandable from its committed collapsed line in scrollback.
         ClearExpanded();
+        ConsoleInputPump.InputEvent? carry = null;
         bool prevCtrlC;
         try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
+        // PROMPT OWNERSHIP: for the lifetime of this ReadLine the prompt is the pump's only
+        // consumer. The orchestrators' mid-turn EscapeKeyListener outlives its turn (its scope
+        // spans the goal iteration, including this idle prompt), so without this claim both
+        // loops block on the same queue and typed events round-robin between them - the
+        // listener's share detoured through its replay queue and surfaced one turn late.
+        if (pump is not null)
+        {
+            ConsoleInputPump.PromptActive = true;
+            // Close the entry race: a key the listener stole AFTER the replay-drain above but
+            // BEFORE the claim landed would otherwise sit in its replay queue until the NEXT
+            // prompt. Re-drain now that the listener is standing down.
+            var lateQ = new Queue<ConsoleKeyInfo>();
+            MuxSwarm.Utils.EscapeKeyListener.DrainReplayTo(lateQ);
+            if (lateQ.Count > 0)
+            {
+                var lateEvs = new List<ConsoleInputPump.InputEvent>(lateQ.Count);
+                while (lateQ.Count > 0) lateEvs.Add(ConsoleInputPump.InputEvent.OfKey(lateQ.Dequeue()));
+                pump.PushFront(lateEvs);
+            }
+        }
         try
         {
-            try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            // The pump owns TreatControlCAsInput for its lifetime; only the legacy path manages it here.
+            try { if (pump is null) Console.TreatControlCAsInput = true; } catch { /* ignore */ }
             Repaint();
 
             while (true)
             {
                 ConsoleKeyInfo key;
-                if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                if (carry is not null)
+                {
+                    // A non-wheel event stashed while coalescing a wheel burst / draining a paste.
+                    var cv = carry.Value; carry = null;
+                    if (cv.Kind == ConsoleInputPump.EventKind.Wheel)
+                    {
+                        if (_engineFrame && cv.WheelDir != 0 && OnWheelScroll(cv.WheelDir)) Repaint();
+                        continue;
+                    }
+                    if (cv.Kind == ConsoleInputPump.EventKind.Paste)
+                    {
+                        if (!string.IsNullOrEmpty(cv.PasteText)) { _editor.InsertText(cv.PasteText); _paletteSel = -1; Repaint(); }
+                        continue;
+                    }
+                    key = cv.Key;
+                }
+                else if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
+                else if (pump is not null)
+                {
+                    // FRAME ENGINE - single input plane: the pump is the ONLY stdin reader; this
+                    // loop consumes typed events. Mouse reports are reassembled upstream into Wheel
+                    // events (no byte of one can ever surface here as text), bracketed/burst pastes
+                    // arrive whole as Paste events, and a bare/Alt ESC is already classified.
+                    ConsoleInputPump.InputEvent ev;
+                    while (true)
+                    {
+                        if (Voice.VoiceSession.IsActive)
+                        {
+                            // /voice on: poll so the loop services transcript injects, voice-driven
+                            // submits, and the indicator animation between keys (~30 fps).
+                            bool changed = DrainVoice(out var submitted);
+                            if (submitted is not null) return submitted;
+                            if (pump.TryTake(out ev, 33)) break;
+                            if (changed) Repaint();
+                            if (!Voice.VoiceSession.IsActive) Repaint();   // voice off: restore caret
+                            continue;
+                        }
+                        // Bounded take, not blocking-forever: a transition-race key the listener
+                        // hands back via PushFront lands in the FRONT lane, which TryTake only
+                        // checks on entry - an infinite block on the inner queue would strand it.
+                        if (!pump.TryTake(out ev, 100))
+                        {
+                            if (pump.Disposed)
+                            {
+                                // Pump torn down: behave like a cancel.
+                                _inInput = false;
+                                HandBack();
+                                return null;
+                            }
+                            continue;
+                        }
+                        break;
+                    }
+                    switch (ev.Kind)
+                    {
+                        case ConsoleInputPump.EventKind.Wheel:
+                        {
+                            // Coalesce a wheel burst into ONE net scroll + ONE repaint.
+                            int net = ev.WheelDir;
+                            while (pump.TryTake(out var nx, 0))
+                            {
+                                if (nx.Kind == ConsoleInputPump.EventKind.Wheel) { net += nx.WheelDir; continue; }
+                                carry = nx; break;
+                            }
+                            if (_engineFrame && net != 0 && OnWheelScroll(net)) Repaint();
+                            continue;
+                        }
+                        case ConsoleInputPump.EventKind.Paste:
+                        {
+                            string pasted = ev.PasteText ?? string.Empty;
+                            if (pasted.Length > 0)
+                            {
+                                _editor.InsertText(pasted);
+                                _paletteSel = -1;
+                                if (pump.PendingCount == 0) Repaint();
+                            }
+                            continue;
+                        }
+                    }
+                    key = ev.Key;
+                }
                 else if (Voice.VoiceSession.IsActive)
                 {
                     // /voice on: poll instead of blocking so the loop can service transcript
@@ -1373,7 +2144,7 @@ internal sealed class TuiDriver
                         catch (InvalidOperationException)
                         {
                             _inInput = false;
-                            _region.Clear();
+                            HandBack();
                             return Console.ReadLine();
                         }
                         // ~10 fps indicator animation while listening/hearing/transcribing.
@@ -1388,6 +2159,40 @@ internal sealed class TuiDriver
                     if (polled is null) continue;
                     key = polled.Value;
                 }
+                else if (_win32Mouse)
+                {
+                    // Windows console host with mouse records active: a BLOCKING Console.ReadKey
+                    // would discard mouse events while waiting, so poll the Win32 input queue
+                    // instead - mouse records dispatch immediately, keydowns flow through
+                    // Console.ReadKey's decoder exactly as before. 10ms idle sleep keeps the poll
+                    // negligible (same cadence as the voice loop). Mouse records are fed through the
+                    // shared MouseHandler seam; wheel -> FrameScrollBy (scrollSpeedRows per notch).
+                    ConsoleKeyInfo? gotKey = null;
+                    int netWheel = 0;   // coalesce a wheel burst into ONE net scroll + ONE repaint
+                    while (true)
+                    {
+                        if (Win32ConsoleInput.TryReadEvent(out var wev))
+                        {
+                            if (wev.HasKey) { gotKey = wev.Key; break; }
+                            if (wev.IsMouse && _mouse.Classify(wev.Button, wev.X, wev.Y, wev.Release) is { } mev)
+                            {
+                                netWheel += _mouse.Dispatch(mev);
+                                continue;   // keep draining the burst; repaint once below
+                            }
+                            // No-op record: if a wheel burst just ended, flush its single repaint now.
+                            if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                            netWheel = 0;
+                            continue;
+                        }
+                        // Queue empty for now: flush any pending wheel repaint, then idle-poll.
+                        if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                        netWheel = 0;
+                        Thread.Sleep(10);
+                    }
+                    // A key arrived mid-burst: flush the accumulated scroll before handling it.
+                    if (netWheel != 0 && OnWheelScroll(netWheel)) Repaint();
+                    key = gotKey.Value;
+                }
                 else
                 {
                     try { key = Console.ReadKey(intercept: true); }
@@ -1395,16 +2200,14 @@ internal sealed class TuiDriver
                     {
                         // stdin not a real console (shouldn't happen in TUI) - fall back.
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return Console.ReadLine();
                     }
                 }
 
-                // Bracketed paste (DECSET 2004): the terminal brackets a paste with ESC[200~ ... 
-                // ESC[201~. On a confirmed opener we drain the body (newlines kept literal) until
-                // the closer and insert it all at once, so a multi-line paste no longer submits on
-                // its first newline. A bare Esc (no paste body) falls through to the editor unchanged.
-                if (_bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
+                // Bracketed paste (DECSET 2004) - LEGACY path only: on the frame engine the pump
+                // reassembles pastes upstream and delivers them as Paste events above.
+                if (pump is null && _bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
                 {
                     string pasted = DrainBracketedPaste();
                     if (pasted.Length > 0)
@@ -1422,15 +2225,17 @@ internal sealed class TuiDriver
                 // instant). Treat it as a literal newline and absorb the rest of the burst into the
                 // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
                 // active when bracketedPaste is enabled and the editor is in plain Insert mode.
+                bool moreQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
                 if (_bracketedPaste && key.Key == ConsoleKey.Enter
                     && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
-                    && _editor.Mode == EditorMode.Insert && !_editor.IsSearching
-                    && _ungetq.Count == 0 && KeyQueued())
+                    && !_editor.IsSearching
+                    && _ungetq.Count == 0 && moreQueued)
                 {
-                    string burst = DrainBurstPaste();
+                    string burst = pump is not null ? DrainBurstFromPump(pump, ref carry) : DrainBurstPaste();
                     _editor.InsertText("\n" + burst);
                     _paletteSel = -1;
-                    if (!KeyQueued()) Repaint();
+                    bool stillQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
+                    if (!stillQueued) Repaint();
                     continue;
                 }
 
@@ -1550,6 +2355,39 @@ internal sealed class TuiDriver
                     continue;
                 }
 
+                // Frame engine only: page a REAL viewport over the retained transcript - the frame
+                // engine's replacement for the native scrollback the alt screen forfeits. Binds
+                // MIRROR the standard NAV pager so muscle memory carries over: Ctrl+U/Ctrl+D step
+                // by console.scrollSpeedRows rows (default 1), Ctrl+B/Ctrl+F = full page, PgUp/PgDn
+                // = full page (fallback), and Esc/End snap back to the live tail while paged. A tiny fixed-size passive marker
+                // moves in the reserved last column to show position. Inline mode ignores all of
+                // these
+                // (native scrollback already works there). Ctrl+U keeps its kill-to-start editing
+                // role whenever the input buffer is non-empty - paging only owns it on an empty
+                // buffer, same as the Esc-opens-NAV convention.
+                if (_engineFrame)
+                {
+                    bool ctrlMod = (key.Modifiers & ConsoleModifiers.Control) != 0;
+                    int full = Math.Max(1, Height - 2);
+                    int delta = 0;
+                    if (key.Key == ConsoleKey.PageUp || (ctrlMod && key.Key == ConsoleKey.B)) delta = full;
+                    else if (key.Key == ConsoleKey.PageDown || (ctrlMod && key.Key == ConsoleKey.F)) delta = -full;
+                    else if (ctrlMod && key.Key == ConsoleKey.U && _editor.Buffer.Length == 0) delta = _scrollSpeedRows;
+                    else if (ctrlMod && key.Key == ConsoleKey.D && _editor.Buffer.Length == 0) delta = -_scrollSpeedRows;
+                    else if (_userScrolled && _frameScroll > 0 && (key.Key == ConsoleKey.End || key.Key == ConsoleKey.Escape))
+                    {
+                        _frameScroll = 0;
+                        _userScrolled = false;
+                        Repaint();
+                        continue;
+                    }
+                    if (delta != 0)
+                    {
+                        if (FrameScrollBy(delta)) Repaint();
+                        continue;
+                    }
+                }
+
                 // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual
                 // when no team board is active. Does not cancel or submit.
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.T)
@@ -1588,6 +2426,8 @@ internal sealed class TuiDriver
                         string line = _editor.Buffer;
                         _editor.Remember(line);
                         _inInput = false;
+                        _frameScroll = 0;   // submitting always returns the frame viewport to the live tail
+                        _userScrolled = false;
                         // Erase input box, then echo the submitted line into scrollback with a
                         // leading blank + accent gutter so each turn is clearly delimited.
                         _pendingGap = false;
@@ -1601,11 +2441,11 @@ internal sealed class TuiDriver
                     }
                     case LineEditSignal.Cancel:
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return null;
                     case LineEditSignal.Eof:
                         _inInput = false;
-                        _region.Clear();
+                        HandBack();
                         return null;
                     case LineEditSignal.ModeCycle:
                         if (OnModeCycle is not null)
@@ -1635,7 +2475,11 @@ internal sealed class TuiDriver
                         // process the buffered key - only the LAST key in the burst triggers a
                         // paint. This is the key fix for multiline-input lag, where each
                         // keystroke would otherwise force a full wrapped-frame re-render.
-                        if (!KeyQueued()) Repaint();
+                        // Under the pump, stdin is drained into the pump's queue almost
+                        // instantly, so Console.KeyAvailable is ~always false - the pump's
+                        // PendingCount is the real backlog signal (KeyQueued() here broke
+                        // coalescing entirely and repainted per keystroke).
+                        if (!(pump is not null ? pump.PendingCount > 0 : KeyQueued())) Repaint();
                         break;
                     case LineEditSignal.Ignored:
                     default:
@@ -1646,6 +2490,7 @@ internal sealed class TuiDriver
         finally
         {
             _inInput = false;
+            if (pump is not null) ConsoleInputPump.PromptActive = false;
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
     }
@@ -1818,7 +2663,7 @@ internal sealed class TuiDriver
     /// <param name="focusEntry">Entry index to place the cursor on at entry (-1 = last).</param>
     private void EnterNavMode(int focusEntry = -1)
     {
-        if (_transcript.Count == 0) { _editor.SetMode(EditorMode.Insert); return; }
+        if (_transcript.Count == 0) return;
 
         // Mark the overlay active so the (possibly concurrent, mid-turn) streaming/commit path
         // defers its physical writes while NAV owns the screen. Cleared in the finally below.
@@ -1969,7 +2814,12 @@ internal sealed class TuiDriver
         {
             try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
             _region.HideCursor();
-            _term.Write(Ansi.EnterAltScreen);
+            // In frame mode the FrameRenderer already OWNS the alternate screen, so NAV must not
+            // nest another EnterAltScreen (?1049h is not a stack - a later single LeaveAltScreen
+            // would then pop us to the primary buffer while the frame renderer still believed it
+            // owned the alt screen). NAV just paints over the shared alt screen and, on exit,
+            // invalidates the frame so it fully redraws. Inline mode enters/leaves as before.
+            if (!_engineFrame) _term.Write(Ansi.EnterAltScreen);
             _term.Write(Ansi.AutoWrapOff);   // full-width rows must not wrap (kills the stray line below the footer)
             _term.Write(Ansi.HideCursor);
             Paint();
@@ -1977,8 +2827,30 @@ internal sealed class TuiDriver
             while (true)
             {
                 ConsoleKeyInfo key;
-                try { key = Console.ReadKey(intercept: true); }
-                catch (InvalidOperationException) { break; }
+                var navPump = ConsoleInputPump.Current;
+                if (navPump is not null)
+                {
+                    // Single input plane: the pump is the only stdin reader. Wheel events scroll
+                    // the NAV cursor (a bonus over the legacy keyboard-only overlay); pastes are
+                    // swallowed (there is no text field in NAV).
+                    while (true)
+                    {
+                        if (!navPump.TryTake(out var nv, 200)) continue;
+                        if (nv.Kind == ConsoleInputPump.EventKind.Wheel)
+                        {
+                            if (nv.WheelDir > 0) model.MoveUp(); else model.MoveDown();
+                            Paint();
+                            continue;
+                        }
+                        if (nv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = nv.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
                 bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
                 bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
                 int viewH = Math.Max(1, _term.Height - 2);
@@ -2024,6 +2896,7 @@ internal sealed class TuiDriver
                     var ent2 = _transcript[e];
                     if (ent2.Expandable is null) { Paint(); continue; }
                     ent2.Expanded = !ent2.Expanded;
+                    InvalidateFrameRowCounts();
                     (disp, owner) = Build();
                     model.Load(disp);
                     model.SeekRow(FirstLineOf(owner, e));   // stay on the toggled card, no top-snap
@@ -2039,14 +2912,18 @@ internal sealed class TuiDriver
             // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
             // Insert mode at the live input prompt.
             foreach (var e in _transcript) e.Expanded = false;
-            _editor.SetMode(EditorMode.Insert);
+            InvalidateFrameRowCounts();
         }
         finally
         {
             // Restore the primary screen buffer (scrollback intact) and repaint one fresh live
             // frame reflecting everything that streamed/committed (deferred) while NAV was open.
             _term.Write(Ansi.AutoWrapOn);
-            _term.Write(Ansi.LeaveAltScreen);
+            // Inline mode pops back to the primary buffer; frame mode STAYS on the shared alt
+            // screen (the frame renderer owns it) and force-invalidates so the deferred stream/
+            // commit history that accrued while NAV was open is fully redrawn on the next present.
+            if (_engineFrame) _frame.Invalidate();
+            else _term.Write(Ansi.LeaveAltScreen);
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
             _navActive = false;
             Repaint();
@@ -2057,7 +2934,51 @@ internal sealed class TuiDriver
     /// Clear the live region and hand the terminal back cleanly (cursor shown, no residue).
     /// Called before any blocking external prompt, mode switch, or exit. Idempotent.
     /// </summary>
-    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); _region.Clear(); }
+    public void Suspend() { FlushSettlingResult(); FlushPendingToolCall(); HandBack(); }
+
+    /// <summary>Mark the transcript boundary for context produced by the next submitted command or
+    /// turn. A subsequent bare text prompt can replay only that newly-produced context after frame
+    /// mode leaves the alternate screen.</summary>
+    internal void BeginPromptContext() => _promptContextAfterSequence = _transcriptSequence;
+
+    /// <summary>Frame-mode bridge for a blocking bare Spectre text prompt. Leaves the alternate
+    /// screen, then writes transcript entries committed since the current prompt-context watermark
+    /// onto the restored primary buffer before Spectre draws its input line. This preserves lists
+    /// and explanatory panels from commands such as /setmodel, /swap and /provider. Inline mode is
+    /// identical to Suspend().</summary>
+    public void SuspendForPrompt()
+    {
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        HandBack();
+        if (!_engineFrame) return;
+
+        var replay = new List<string>();
+        foreach (var entry in _transcript)
+        {
+            if (entry.Sequence <= _promptContextAfterSequence) continue;
+            replay.AddRange(RenderEntryRows(entry, Width));
+        }
+        _promptContextAfterSequence = _transcriptSequence;
+        if (replay.Count == 0) return;
+        int maxReplayRows = Math.Max(20, Height * 4);
+        if (replay.Count > maxReplayRows)
+        {
+            replay = replay.GetRange(replay.Count - maxReplayRows + 1, maxReplayRows - 1);
+            replay.Insert(0, TuiMarkup.ToAnsi($"[{TuiComponents.Dim}]… earlier prompt context omitted[/]"));
+        }
+
+        var sb = new System.Text.StringBuilder();
+        sb.Append(Ansi.AutoWrapOff);
+        // Each replayed row is framed CR..CRLF: the leading \r returns to column 0 (the cursor is
+        // wherever the restored primary buffer left it after HandBack), EraseLine clears the row, and
+        // the trailing \r\n prevents column drift/stair-stepping on stacks where LF is not implicitly
+        // CR+LF (raw ssh/tmux, some VT passthrough).
+        foreach (var row in replay) sb.Append('\r').Append(Ansi.EraseLine).Append(row).Append("\r\n");
+        sb.Append(Ansi.AutoWrapOn);
+        _term.Write(sb.ToString());
+        _term.Flush();
+    }
 
     /// <summary>
     /// Full teardown for process exit / mode switch: clear the live region, show the cursor.
@@ -2068,6 +2989,6 @@ internal sealed class TuiDriver
         if (_shuttingDown) return;
         _shuttingDown = true;
         try { if (_bracketedPaste) { _term.Write(Ansi.BracketedPasteOff); _term.Flush(); } } catch { /* ignore */ }
-        try { _region.Clear(); } catch { /* ignore */ }
+        try { HandBack(); } catch { /* ignore */ }
     }
 }

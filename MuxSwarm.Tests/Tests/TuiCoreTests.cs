@@ -540,6 +540,151 @@ public class TuiCoreTests
         Assert.Contains(Ansi.ClearScreen, term.Output);
         Assert.Equal(3, lr.PaintedRows); // 26 / 10 => 3 rows at the new width
     }
+
+    // --- v0.12.4 inline-hardening: single-write + atomic synchronized transactions -----------
+
+    /// <summary>A fake terminal that counts Write/Flush calls, to assert each repaint transaction
+    /// is emitted as ONE Write + ONE Flush (buffered, not per-escape auto-flushed).</summary>
+    private sealed class CountingTerminal : ITuiTerminal
+    {
+        private readonly StringBuilder _sb = new();
+        public int Width { get; set; } = 40;
+        public int Height { get; set; } = 20;
+        public int Writes { get; private set; }
+        public int Flushes { get; private set; }
+        public void Write(string s) { Writes++; _sb.Append(s); }
+        public void Flush() { Flushes++; }
+        public string Output => _sb.ToString();
+        public void Reset() { _sb.Clear(); Writes = 0; Flushes = 0; }
+    }
+
+
+    [Fact]
+    public void LiveRegion_SetLive_FullRepaint_IsSingleWriteAndFlush()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "one", "two" });
+        term.Reset();
+
+        // Row-count change forces the full erase+repaint path.
+        lr.SetLive(new List<string> { "a", "b", "c" });
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+    }
+
+    [Fact]
+    public void LiveRegion_CommitAbove_IsSingleAtomicSynchronizedWrite()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "footer" });
+        term.Reset();
+
+        lr.CommitAbove(new List<string> { "permanent line" }, new List<string> { "footer2" });
+
+        // One buffered Write + one Flush for the whole erase->commit->repaint transaction.
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+        // Exactly one balanced synchronized-output envelope wraps the transaction, so a slow
+        // WSL/SSH path can never present the erased-but-not-repainted intermediate frame.
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.BeginSyncOutput));
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.EndSyncOutput));
+        Assert.Contains("permanent line", term.Output);
+        Assert.Contains("footer2", term.Output);
+    }
+
+    [Fact]
+    public void LiveRegion_SetLive_NoChange_EmitsNoRepaintWrite()
+    {
+        var term = new CountingTerminal();
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "stable" });
+        term.Reset();
+
+        lr.SetLive(new List<string> { "stable" });   // identical frame
+        // No visible repaint: at most a flush, and no erase/paint bytes.
+        Assert.DoesNotContain(Ansi.EraseLine, term.Output);
+        Assert.DoesNotContain(Ansi.EraseDown, term.Output);
+    }
+
+    // --- v0.12.4 Option A: resize reflow of the recent transcript window --------------------
+
+    [Fact]
+    public void LiveRegion_ReflowRepaint_ClearsAndBottomAnchorsWindowPlusLive()
+    {
+        var term = new CountingTerminal { Width = 40, Height = 10 };
+        var lr = new LiveRegion(term);
+        lr.SetLive(new List<string> { "footer" });
+        term.Reset();
+
+        var window = new List<string> { "history one", "history two" };
+        var live = new List<string> { "rule", "footer", "> input" };
+        lr.ReflowRepaint(window, live);
+
+        // Full clear (resize repaint is a clean full redraw, never a stale cursor-up erase).
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        // One atomic synchronized envelope, one Write + Flush.
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.BeginSyncOutput));
+        Assert.Equal(1, CountOccurrences(term.Output, Ansi.EndSyncOutput));
+        Assert.Equal(1, term.Writes);
+        Assert.Equal(1, term.Flushes);
+        // Both the reflowed transcript window and the live band are present.
+        Assert.Contains("history one", term.Output);
+        Assert.Contains("history two", term.Output);
+        Assert.Contains("> input", term.Output);
+        // Bottom-anchored: window(2) + live(3) = 5 rows, viewport headroom = Height-1 = 9, so 4
+        // leading blank rows pad the top and the footer/input dock at the bottom.
+        Assert.Equal(9, lr.PaintedRows);
+    }
+
+    [Fact]
+    public void LiveRegion_ReflowRepaint_BoundsWindowToViewport()
+    {
+        var term = new CountingTerminal { Width = 40, Height = 6 };
+        var lr = new LiveRegion(term);
+        term.Reset();
+
+        // 20 history rows but only a 6-row viewport: the window must be clamped so the erase/paint
+        // never exceeds the viewport (the cursor-saturation stranding bug).
+        var window = Enumerable.Range(0, 20).Select(i => "line" + i).ToList();
+        var live = new List<string> { "footer" };
+        lr.ReflowRepaint(window, live);
+
+        // PaintedRows can never exceed the viewport-1 clamp used across the region.
+        Assert.True(lr.PaintedRows <= term.Height);
+        // The freshest history survives; the oldest is dropped (bounded window).
+        Assert.Contains("line19", term.Output);
+        Assert.DoesNotContain("line0\n", term.Output);
+    }
+    [Fact]
+    public void DIAG_StreamTailThenCommit_EraseGeometryIsExact()
+    {
+        // Reproduce the tail->commit cycle that the WSL screenshots show duplicating: paint a live
+        // frame with a streaming tail + footer, then commit that tail as a permanent line and
+        // repaint the footer. Assert the emitted stream erases EXACTLY the previously painted rows
+        // (no under-erase that would strand the old tail above the committed copy).
+        var term = new CountingTerminal { Width = 40, Height = 20 };
+        var lr = new LiveRegion(term);
+
+        // Frame 1: streaming tail "partial answer" + a rule + footer (3 rows).
+        lr.SetLive(new List<string> { "partial answer", "----", "footer" });
+        int painted1 = lr.PaintedRows;
+        term.Reset();
+
+        // Commit the finished line above, refreshing the live band to just rule+footer.
+        lr.CommitAbove(new List<string> { "partial answer" }, new List<string> { "----", "footer" });
+        string o = term.Output;
+
+        // Must move up over exactly the 3 rows painted in frame 1 before writing the committed line.
+        Assert.Contains(Ansi.CursorUp(painted1), o);
+        Assert.Contains(Ansi.EraseDown, o);
+        // Exactly one committed copy of the line in the stream (not two).
+        Assert.Equal(1, CountOccurrences(o, "partial answer"));
+        // New live band is 2 rows.
+        Assert.Equal(2, lr.PaintedRows);
+    }
+
     // --- emoji / wide-grapheme display width (table border alignment) -----------------------
 
     [Fact]

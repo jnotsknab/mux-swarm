@@ -9,17 +9,85 @@ public sealed class EscapeKeyListener : IDisposable
 {
     private readonly CancellationTokenSource _listenerCts;
     private int _disposed;
-    private static volatile bool _paused;
 
+    // Suspension is REFERENCE-COUNTED + ACKNOWLEDGED. `_suspendCount > 0` tells the poll loop to
+    // stand down, but that alone is racy (an in-flight poll could still steal a key). `_readGate`
+    // makes it exclusive: the listener holds it ONLY across its KeyAvailable+ReadKey critical
+    // section, so a suspender that takes the same gate is guaranteed no listener read is in flight
+    // AND none can start until it releases. This gives an interactive prompt true exclusive stdin
+    // ownership, fixing dropped/laggy keys where the listener silently consumed the user's keystroke.
+    private static int _suspendCount;
+    private static readonly object _readGate = new();
+
+    /// <summary>The exclusive-stdin gate, shared with the ConsoleInputPump (frame engine): the
+    /// pump holds it across its KeyAvailable+ReadKey slice so <see cref="SuspendInput"/>'s
+    /// barrier means "no reader in flight" regardless of which component owns the read loop.</summary>
+    internal static object ReadGate => _readGate;
+
+    /// <summary>Test/diagnostic probe: true while the background Esc listener is suspended from
+    /// consuming stdin (a prompt owns input). Reference-counted, so nested suspensions are safe.</summary>
+    internal static bool IsInputSuspended => Volatile.Read(ref _suspendCount) > 0;
+
+    // ---- Shared input plane hardening (single-owner principle) ----
+
+    /// <summary>Keys the listener read but does NOT act on (typed chars during a turn) are pushed
+    /// here instead of discarded. The prompt input loop (<see cref="Tui.TuiDriver.ReadLine"/>) drains
+    /// this FIRST on entry, so a key is never lost regardless of which reader grabbed it. This is the
+    /// fix for "typing during/after a turn feels laggy and misses chars".</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<ConsoleKeyInfo> ReplayQueue = new();
+
+    /// <summary>Enqueue a key the listener consumed but does not act on, for the prompt loop to replay.</summary>
+    internal static void ReplayKey(ConsoleKeyInfo key) => ReplayQueue.Enqueue(key);
+
+    /// <summary>Move every queued replay key into <paramref name="sink"/> (in FIFO order). Called by
+    /// the prompt input loop on entry so mid-turn typing is never dropped.</summary>
+    internal static void DrainReplayTo(System.Collections.Generic.Queue<ConsoleKeyInfo> sink)
+    {
+        while (ReplayQueue.TryDequeue(out var k)) sink.Enqueue(k);
+    }
+
+    /// <summary>Optional hook: net wheel rows to scroll when the listener drains an SGR mouse report
+    /// mid-turn (positive = back into history). Set by the TUI driver; null outside the frame engine.
+    /// Routing the wheel here (instead of letting the report reach the editor) is what stops the
+    /// <c>[&lt;64;…</c> escape-fragment leak AND lets the user scroll during streaming.</summary>
+    internal static Action<int>? OnWheelScroll { get; set; }
 
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
     }
 
+    /// <summary>Legacy volatile-style pause/resume kept for callers that only need best-effort
+    /// quieting. Prefer <see cref="SuspendInput"/> for prompts that read stdin — it is acknowledged
+    /// (guarantees no concurrent listener read) whereas these are advisory.</summary>
+    public static void Pause() => Interlocked.Increment(ref _suspendCount);
+    public static void Resume()
+    {
+        if (Volatile.Read(ref _suspendCount) > 0) Interlocked.Decrement(ref _suspendCount);
+    }
 
-    public static void Pause() => _paused = true;
-    public static void Resume() => _paused = false;
+    /// <summary>Acquire EXCLUSIVE, acknowledged stdin ownership for the lifetime of the returned
+    /// scope: increments the suspend count AND takes the listener's read gate, so on return no
+    /// listener key-read is in flight and none can start until dispose. Wrap every blocking
+    /// interactive prompt in this so the background Esc listener cannot steal the user's keys.</summary>
+    public static IDisposable SuspendInput() => new InputSuspension();
+
+    private sealed class InputSuspension : IDisposable
+    {
+        private int _released;
+        public InputSuspension()
+        {
+            Interlocked.Increment(ref _suspendCount);
+            // Barrier: take + release the read gate so any in-flight ReadKey has completed and the
+            // loop will observe _suspendCount before its next read.
+            lock (_readGate) { }
+        }
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            if (Volatile.Read(ref _suspendCount) > 0) Interlocked.Decrement(ref _suspendCount);
+        }
+    }
 
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken)
         => Start(targetCts, outerToken, onExpand: null, onView: null);
@@ -56,20 +124,78 @@ public sealed class EscapeKeyListener : IDisposable
             {
                 while (!listenerCts.Token.IsCancellationRequested)
                 {
-                    if (_paused)
+                    if (Volatile.Read(ref _suspendCount) > 0)
                     {
                         Thread.Sleep(50);
                         continue;
                     }
-                    if (!Console.IsInputRedirected && Console.KeyAvailable)
+                    ConsoleKeyInfo key;
+                    var pump = Tui.ConsoleInputPump.Current;
+                    if (pump is not null)
                     {
-                        var key = Console.ReadKey(intercept: true);
-                        if (key.Key == ConsoleKey.Escape)
+                        // SINGLE INPUT PLANE (frame engine): the pump is the only stdin reader; this
+                        // listener consumes typed events. Mouse reports are already reassembled
+                        // upstream - wheel arrives as a Wheel event (scroll, never a cancel), and
+                        // no report byte can ever be misread as an ESC or leak into the editor.
+                        //
+                        // PROMPT OWNERSHIP: this listener's using-scope in the orchestrators spans
+                        // the whole goal iteration - including the IDLE PROMPT after the turn ends.
+                        // Without standing down there, this loop and TuiDriver.ReadLine both block
+                        // on the same queue and typed events round-robin between them: every char
+                        // this loop stole was detoured through the replay queue and only surfaced
+                        // at the NEXT prompt entry (choppy typing + chars "flushed" a turn late).
+                        if (Tui.ConsoleInputPump.PromptActive) { Thread.Sleep(20); continue; }
+                        if (!pump.TryTake(out var pev, 100)) continue;
+                        if (Tui.ConsoleInputPump.PromptActive)
+                        {
+                            // Transition race: the prompt claimed ownership while we blocked in
+                            // TryTake. Hand the event straight back at the FRONT of the stream
+                            // (FIFO preserved) - it belongs to the prompt, not to us.
+                            pump.PushFront(new[] { pev });
+                            continue;
+                        }
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Wheel)
+                        {
+                            if (OnWheelScroll is not null)
+                            {
+                                try { OnWheelScroll(pev.WheelDir); } catch { /* scroll is best-effort */ }
+                            }
+                            continue;
+                        }
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Paste)
+                        {
+                            // Mid-turn paste: replay the text as keys so it lands at the next
+                            // prompt, exactly like mid-turn typing.
+                            foreach (char pc in pev.PasteText ?? string.Empty)
+                                ReplayKey(new ConsoleKeyInfo(pc, ConsoleKey.NoName, false, false, false));
+                            continue;
+                        }
+                        key = pev.Key;
+                    }
+                    else
+                    {
+                        // Legacy path (inline/classic): poll stdin directly under the gate so
+                        // SuspendInput()'s barrier truly means "no read in flight".
+                        lock (_readGate)
+                        {
+                            if (Volatile.Read(ref _suspendCount) > 0) { Thread.Sleep(50); continue; }
+                            if (Console.IsInputRedirected || !Console.KeyAvailable) { Thread.Sleep(100); continue; }
+                            key = Console.ReadKey(intercept: true);
+                        }
+                    }
+                    {
+                        // Esc cancels. A BARE 'q'/'Q' is an alias: some terminals/apps capture Esc,
+                        // so q guarantees a working cancel. It mirrors Esc exactly - scoped cancel
+                        // first, else the whole turn - and only when unmodified (Ctrl/Alt+Q ignored).
+                        bool cancelKey = key.Key == ConsoleKey.Escape
+                            || (key.Key == ConsoleKey.Q
+                                && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0);
+                        if (cancelKey)
                         {
                             // Scoped cancel: if the user foregrounded (expanded) a specific
-                            // sub-agent via the backslash Agent View, Esc cancels ONLY that child
+                            // sub-agent via the backslash Agent View, Esc/q cancels ONLY that child
                             // and keeps listening (siblings + the lead turn continue). With no
-                            // sub-agents / none foregrounded, Esc cancels the whole turn as before.
+                            // sub-agents / none foregrounded, Esc/q cancels the whole turn as before.
                             if (MuxConsole.TryCancelForegroundedSubAgent())
                                 continue;
                             targetCts.Cancel();
@@ -116,8 +242,15 @@ public sealed class EscapeKeyListener : IDisposable
                             try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
                             continue;
                         }
+                        // Any OTHER key the listener read but does not act on (a typed char the user
+                        // pressed mid-turn) must NOT be discarded - push it to the shared replay
+                        // queue so the prompt input loop replays it on entry. This is the fix for
+                        // "typing feels laggy and misses chars": previously these were dropped here.
+                        ReplayKey(key);
                     }
-                    Thread.Sleep(100);
+                    // Poll throttle for the LEGACY path only: the pump path already paces itself
+                    // in TryTake(100) and must drain mid-turn events (typed chars, wheel) promptly.
+                    if (Tui.ConsoleInputPump.Current is null) Thread.Sleep(100);
                 }
             }
             catch (OperationCanceledException) { }
@@ -136,4 +269,5 @@ public sealed class EscapeKeyListener : IDisposable
             _listenerCts.Dispose();
         }
     }
+
 }

@@ -64,7 +64,7 @@ public static class GigaMode
         sb.AppendLine("  = 'fanout' (independent parallel tasks) or 'taskboard' (dependency-gated board).");
         sb.AppendLine("  persist=true also writes it to swarm.json teams[] so it survives a restart. The team");
         sb.AppendLine("  is prefixed 'giga:' so it is clearly distinguished from user-configured teams.");
-        sb.AppendLine("- run_team(name, assignments): run a batch of member tasks concurrently and collect");
+        sb.AppendLine("- run_team(name, assignments, background?): run a batch of member tasks concurrently and collect; background=true fires and forgets (collect via check_delegations)");
         sb.AppendLine("  their results (bounded by maxParallel). assignments = JSON array of");
         sb.AppendLine("  {\"agent\":\"<member>\",\"task\":\"<instruction>\"}. Each member runs in its own session,");
         sb.AppendLine("  appears live in the Agent View, and has its own mailbox.");
@@ -196,7 +196,10 @@ public static class GigaMode
         tools.Add(AIFunctionFactory.Create(
             method: async (
                 [Description("The team name to run (an ephemeral giga: team you spawned, or a configured team). Omit to use the active giga team.")] string? name,
-                [Description("JSON array of assignments: [{\"agent\":\"<member>\",\"task\":\"<instruction>\"}, ...]")] string assignments) =>
+                [Description("JSON array of assignments: [{\"agent\":\"<member>\",\"task\":\"<instruction>\"}, ...]")] string assignments,
+                [Description("When true, fire the members into the BACKGROUND and return their job ids IMMEDIATELY " +
+                             "(non-blocking) so you keep working; poll/collect later with check_delegations. " +
+                             "Default false blocks until the batch finishes and returns all results.")] bool background = false) =>
             {
                 var disp = string.IsNullOrWhiteSpace(name) ? (ActiveTeamName ?? "") : name!.Trim();
                 List<string> roster;
@@ -218,6 +221,35 @@ public static class GigaMode
                 catch (Exception ex) { return $"[giga] Could not parse assignments JSON: {ex.Message}"; }
                 if (list is null || list.Count == 0) return "[giga] No assignments provided.";
 
+                // Non-blocking path: fire each member into the background via DetachedRunner and
+                // return job ids at once (mirrors delegate_parallel(background:true)). Members still
+                // run through the shared sub-agent path, so they surface live in the Agent View, and
+                // the lead collects later with check_delegations.
+                if (background)
+                {
+                    var launched = new List<string>();
+                    var failed = new List<string>();
+                    foreach (var a in list)
+                    {
+                        var agent = (a.Agent ?? string.Empty).Trim();
+                        if (!rosterSet.Contains(agent))
+                        {
+                            failed.Add($"{agent} (not a member of '{disp}')");
+                            continue;
+                        }
+                        var job = await DetachedRunner.LaunchAsync(agent, a.Task ?? string.Empty,
+                            chatClientFactory, agentModels, ct);
+                        if (job is null) failed.Add(agent);
+                        else launched.Add($"  {job.Id} <- {agent}");
+                    }
+                    var bg = new StringBuilder();
+                    bg.AppendLine($"[run_team · background] Team '{disp}': launched {launched.Count} background job(s); they run while you continue.");
+                    foreach (var l in launched) bg.AppendLine(l);
+                    if (failed.Count > 0) bg.AppendLine($"  Could not launch: {string.Join(", ", failed)}.");
+                    bg.AppendLine("Keep working. Call check_delegations (optionally with these ids) to poll status and collect results.");
+                    return bg.ToString();
+                }
+
                 // Bound concurrency so a giant batch does not blow past rate limits all at once.
                 int maxPar = App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4;
                 using var gate = new SemaphoreSlim(maxPar);
@@ -228,6 +260,17 @@ public static class GigaMode
                         return $"[ERROR {agent}] Not a member of '{disp}'. Members: {string.Join(", ", roster)}";
                     await gate.WaitAsync(ct);
                     try { return await RunOne(agent, a.Task ?? string.Empty); }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        // Real turn cancellation unwinds the whole batch (same rule as delegate_parallel).
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        // One member failing must not nuke the batch: surface its error inline and
+                        // let siblings' results land (same contract as delegate_parallel).
+                        return $"[ERROR {agent}] {ex.Message}";
+                    }
                     finally { gate.Release(); }
                 });
                 var results = await Task.WhenAll(batch);
@@ -238,7 +281,8 @@ public static class GigaMode
             },
             name: "run_team",
             description: "Dispatch a batch of tasks to the active (or named) team's members concurrently and collect " +
-                         "their results, bounded by maxParallel. Each member runs in its own session and appears live in the Agent View."));
+                         "their results, bounded by maxParallel. Each member runs in its own session and appears live in the Agent View. " +
+                         "Pass background=true to fire-and-forget: returns job ids immediately; collect later with check_delegations."));
 
         // --- Lead-level mailbox + board wrappers (operate on the ACTIVE giga team).
         tools.Add(AIFunctionFactory.Create(

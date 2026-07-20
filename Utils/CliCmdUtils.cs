@@ -1108,11 +1108,22 @@ public static class CliCmdUtils
             {
                 var members = t.Members is { Count: > 0 } ? string.Join(", ", t.Members) : "(none)";
                 var lead = string.IsNullOrWhiteSpace(t.Lead) ? "Orchestrator" : t.Lead;
-                MuxConsole.WriteMuted($"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
+                string nm = MuxConsole.EscapeMarkup(t.Name);
+                string coord = MuxConsole.EscapeMarkup(t.Coordination);
+                string ld = MuxConsole.EscapeMarkup(lead);
+                string mem = MuxConsole.EscapeMarkup(members);
+                // Themed label/value contrast: team name accented, [mode] badge, dim labels + normal values.
+                MuxConsole.WriteMarkup(
+                    $"  [{Theme.Active.Accent}]{nm}[/]  [{Theme.Active.Muted}][[{coord}]][/]  " +
+                    $"[{Theme.Active.Muted}]lead[/] [{Theme.Active.Prompt}]{ld}[/]  " +
+                    $"[{Theme.Active.Muted}]members[/] [{Theme.Active.Prompt}]{mem}[/]",
+                    stdioFallback: $"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
                 if (!string.IsNullOrWhiteSpace(t.Description))
-                    MuxConsole.WriteMuted($"      {t.Description}");
+                    MuxConsole.WriteMarkup($"      [{Theme.Active.Muted}]{MuxConsole.EscapeMarkup(t.Description)}[/]",
+                        stdioFallback: $"      {t.Description}");
             }
-            MuxConsole.WriteMuted("  Launch with: /teams <name>");
+            MuxConsole.WriteMarkup($"  [{Theme.Active.Muted}]Launch with[/] [{Theme.Active.Accent}]/teams <name>[/]",
+                stdioFallback: "  Launch with: /teams <name>");
         }
 
         var live = MuxSwarm.Utils.Teams.TeamState.LoadAll();
@@ -1120,7 +1131,23 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteInfo($"Persisted/resumable teams ({live.Count}):");
             foreach (var s in live)
-                MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+            {
+                string nm = MuxConsole.EscapeMarkup(s.Name);
+                string coord = MuxConsole.EscapeMarkup(s.Coordination);
+                string statusRaw = s.Status ?? "";
+                // Semantic status color: active -> success, ended/failed -> error, else muted.
+                string statusColor = statusRaw.ToLowerInvariant() switch
+                {
+                    "active" or "running" => Theme.Active.Success,
+                    "failed" or "error" or "ended" or "stopped" => Theme.Active.Error,
+                    _ => Theme.Active.Warning,
+                };
+                MuxConsole.WriteMarkup(
+                    $"  [{Theme.Active.Accent}]{nm}[/]  [{Theme.Active.Muted}][[{coord}]][/]  " +
+                    $"[{Theme.Active.Muted}]status[/] [{statusColor}]{MuxConsole.EscapeMarkup(statusRaw)}[/]  " +
+                    $"[{Theme.Active.Muted}]last active {s.LastActive:yyyy-MM-dd HH:mm}[/]",
+                    stdioFallback: $"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+            }
         }
     }
 
