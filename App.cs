@@ -279,6 +279,13 @@ public class App
         args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
 
+        // Auto-allow the workspace: add the resolved workspace root (the launch dir / @-index root,
+        // possibly set by --workspace above) to the native Filesystem tools' AllowedPaths so the
+        // project you launched in is usable by the file tools without hand-editing config. Gated by
+        // executionLimits.autoAllowWorkspace (default true); idempotent. Runs AFTER ParseArgs so a
+        // --workspace override is the dir that gets allowed.
+        MaybeAutoAllowWorkspace();
+
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
@@ -1653,6 +1660,63 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         }
         if (sb.Length > 0) tokens.Add(sb.ToString());
         return tokens;
+    }
+
+    /// <summary>
+    /// Adds the resolved workspace root to the native Filesystem AllowedPaths when
+    /// executionLimits.autoAllowWorkspace is true (default). Idempotent + best-effort: the path is
+    /// canonicalized and only appended when not already present (case-insensitive on Windows). Skips
+    /// silently when disabled, when the workspace resolves to the install/base dir (nothing project-
+    /// specific to allow), or on any error. Keeps the interactive @-index root and the file tools'
+    /// writable root in sync so "launch in a project, edit it" works with zero config.
+    /// </summary>
+    private static void MaybeAutoAllowWorkspace()
+    {
+        try
+        {
+            Config.Filesystem ??= new FilesystemConfig();
+            Config.Filesystem.AllowedPaths ??= new List<string>();
+            ApplyAutoAllowWorkspace(
+                Config.Filesystem.AllowedPaths,
+                ExecutionLimits.Current.AutoAllowWorkspace,
+                PlatformContext.WorkspaceIsInstallDir,
+                PlatformContext.WorkspaceRoot,
+                Directory.Exists);
+        }
+        catch { /* best-effort; never block startup */ }
+    }
+
+    /// <summary>
+    /// Pure logic for <see cref="MaybeAutoAllowWorkspace"/> (seams injected for testing). Appends the
+    /// resolved workspace root to <paramref name="allowedPaths"/> when auto-allow is enabled, the
+    /// workspace is not the install/base dir, the dir exists, and it is not already present
+    /// (case-insensitive on Windows). Mutates the list in place; returns true if a path was added.
+    /// </summary>
+    internal static bool ApplyAutoAllowWorkspace(
+        List<string> allowedPaths, bool enabled, bool workspaceIsInstallDir,
+        string workspaceRoot, Func<string, bool> dirExists)
+    {
+        if (!enabled) return false;
+        if (workspaceIsInstallDir) return false; // nothing project-specific to grant
+
+        string ws;
+        try { ws = System.IO.Path.GetFullPath(workspaceRoot); }
+        catch { return false; }
+        if (!dirExists(ws)) return false;
+
+        var cmp = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        string Norm(string p)
+        {
+            try { return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(p)); }
+            catch { return p; }
+        }
+        var target = Norm(ws);
+        if (allowedPaths.Any(p => string.Equals(Norm(p), target, cmp)))
+            return false; // already allowed
+
+        allowedPaths.Add(ws);
+        return true;
     }
 
     private static ParsedArgs ParseArgs(string[] args)
