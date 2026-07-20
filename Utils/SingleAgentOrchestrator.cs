@@ -94,9 +94,31 @@ public static class SingleAgentOrchestrator
         {
             var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
             var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
-            return swarm?.SingleAgent?.ModelOpts;
+            return ResolveSingleAgentModelOpts(swarm, AgentDef?.Name);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Resolve the modelOpts to apply in single-agent mode. Prefers the SELECTED agent's own
+    /// entry (matched by name in <c>agents</c>) when running as a named agent (/agent &lt;name&gt;
+    /// or --agent &lt;name&gt;), mirroring how <c>LoadSingleAgentModel</c> resolves the model
+    /// per-agent-first. Falls back to the <c>singleAgent</c> block when there is no matching agent
+    /// or it has no modelOpts. This keeps per-agent sampling params (e.g. a provider that only
+    /// accepts temperature 1) honored in single-agent mode, not just swarm mode.
+    /// </summary>
+    internal static ModelOpts? ResolveSingleAgentModelOpts(SwarmConfig? swarm, string? agentName)
+    {
+        if (!string.IsNullOrEmpty(agentName))
+        {
+            var perAgent = swarm?.Agents?
+                .FirstOrDefault(a => a.Name.Equals(agentName, StringComparison.OrdinalIgnoreCase))
+                ?.ModelOpts;
+            if (perAgent is not null)
+                return perAgent;
+        }
+
+        return swarm?.SingleAgent?.ModelOpts;
     }
 
     /// <summary>
