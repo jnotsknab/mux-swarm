@@ -168,4 +168,39 @@ public class CliProxyManagerTests
     {
         Assert.Equal("MUX_CLIPROXY_KEY", CliProxyManager.ClientKeyEnvVar);
     }
+
+    [Fact]
+    public void AcquirePreferredPort_ReturnsPreferred_WhenFree()
+    {
+        // Nothing squatting -> must pin to the config port, never drift.
+        if (!CliProxyManager.PortIsFree(CliProxyManager.PreferredPort))
+            return; // a real sidecar/other proc holds it in this env; skip (covered by the live test)
+
+        Assert.Equal(CliProxyManager.PreferredPort, CliProxyManager.AcquirePreferredPort());
+    }
+
+    [Fact]
+    public void AcquirePreferredPort_FallsBackToFreePort_WhenPreferredHeldByUnkillableListener()
+    {
+        // Occupy PreferredPort with a plain socket owned by THIS process. It is a raw TcpListener, not a
+        // cli-proxy-api process the killer can resolve+terminate, so the reclaim must fail gracefully and
+        // return a DIFFERENT free port rather than hang or hand back the occupied one. This exercises the
+        // "could not reclaim -> use a free port (config is rewritten to match)" branch deterministically.
+        if (!CliProxyManager.PortIsFree(CliProxyManager.PreferredPort))
+            return; // port already busy in this env; skip
+
+        var squatter = new System.Net.Sockets.TcpListener(
+            System.Net.IPAddress.Loopback, CliProxyManager.PreferredPort);
+        squatter.Start();
+        try
+        {
+            int chosen = CliProxyManager.AcquirePreferredPort();
+            Assert.NotEqual(CliProxyManager.PreferredPort, chosen);
+            Assert.InRange(chosen, 1, 65535);
+        }
+        finally
+        {
+            squatter.Stop();
+        }
+    }
 }

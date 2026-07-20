@@ -627,9 +627,14 @@ internal static class CliProxyManager
         await RunGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            StopInternal();   // kills the listener on our port + clears _runningPort
+            StopInternal();   // kills the listener on our tracked port + clears _runningPort
 
-            int port = PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
+            // Reclaim the fixed PreferredPort: a foreign/orphaned sidecar (a prior crashed session, or one
+            // StopInternal could not see because we were not tracking its port) may still be squatting on it.
+            // Without this, PortIsFree(PreferredPort) is false and we would silently fall back to a RANDOM
+            // free port - which then forces the user to hand-edit config.yaml. /proxy restart must instead
+            // kill whatever holds the port and PIN back to PreferredPort. Random fallback only if that fails.
+            int port = AcquirePreferredPort();
             Directory.CreateDirectory(AuthDir);
             await File.WriteAllTextAsync(ConfigPath, BuildConfigYaml(port, _apiKey!, _mgmtKey!, AuthDir), ct)
                 .ConfigureAwait(false);
@@ -933,7 +938,7 @@ internal static class CliProxyManager
         return pids;
     }
 
-    private static bool PortIsFree(int port)
+    internal static bool PortIsFree(int port)
     {
         try
         {
@@ -951,6 +956,31 @@ internal static class CliProxyManager
         int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return port;
+    }
+
+    /// <summary>
+    /// Returns <see cref="PreferredPort"/>, first evicting anything already listening on it (a foreign or
+    /// orphaned cli-proxy-api from a prior/crashed session that our port-scoped StopInternal never saw). This
+    /// makes /proxy restart deterministic: kill the squatter, then PIN back to the config port instead of
+    /// silently drifting to a random port (which forces a manual config.yaml edit). Falls back to a random
+    /// free port only if the port genuinely cannot be reclaimed (e.g. a foreign owner we lack rights to kill).
+    /// </summary>
+    internal static int AcquirePreferredPort()
+    {
+        if (PortIsFree(PreferredPort)) return PreferredPort;
+
+        try { KillListenerOnPort(PreferredPort); } catch { /* best effort */ }
+
+        // The OS releases the port asynchronously after the owning process dies; poll briefly before giving up.
+        for (int i = 0; i < 20; i++)   // up to ~2s
+        {
+            if (PortIsFree(PreferredPort)) return PreferredPort;
+            Thread.Sleep(100);
+        }
+
+        // Could not reclaim it (foreign owner, no rights, or a lingering socket): don't hang the user - use a
+        // free port so the sidecar still starts. Config.yaml is rewritten to match, so no manual edit needed.
+        return PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
     }
 
     /// <summary>
