@@ -554,6 +554,26 @@ public static partial class MuxConsole
         WithConsole(() => AnsiConsole.MarkupLine(collapsed));
     }
 
+    /// <summary>Commit a FINISHED background job's transcript into scrollback as a retained
+    /// expandable line, so /background jobs 'o' (reopen) lands it in the transcript where Ctrl+E /
+    /// NAV can expand it in place - even though the live capture lane is already gone. No-op when
+    /// the driver is inactive or the body is empty. Caller supplies the job id + agent + status.
+    /// Returns true when committed.</summary>
+    public static bool ReopenFinishedJob(string jobId, string agent, string? status, string? body)
+    {
+        if (!ViaDriver) return false;
+        string text = (body ?? string.Empty).Trim();
+        if (text.Length == 0) return false;
+        int lines = text.Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
+        string tint = TuiComponents.AgentTint(agent);
+        string collapsed = TuiComponents.SubAgentCollapsed($"{jobId}:{agent}", status, lines, 0, tint);
+        lock (ConsoleLock)
+        {
+            _driver!.CommitCollapsed(collapsed, $"{jobId}:{agent}", text);
+        }
+        return true;
+    }
+
     // --- live-region driver --------------------------------------------------
 
     private static TuiDriver? _driver;
@@ -1052,6 +1072,45 @@ public static partial class MuxConsole
                 agent => bodies.TryGetValue(agent, out var b) ? b : null,
                 lane => UpdateSubAgentHidden(lane, hidden: true),
                 lane => UpdateSubAgentHidden(lane, hidden: false));
+        }
+    }
+
+    /// <summary>
+    /// Foreground the /background jobs dashboard (the bg-job sibling of the Agent View). Builds the
+    /// snapshot from DetachedRunner's registry - running AND finished - and wires o/Enter to reopen
+    /// a finished job's transcript (committed as a retained expandable) and c to cancel a running
+    /// one. Returns false outside the TUI or when there are no jobs (the caller then falls back to
+    /// the static text panel). Holds the console lock for the session, like the Agent View.
+    /// </summary>
+    internal static bool TuiEnterJobView()
+    {
+        if (!ViaDriver) return false;
+        var jobs = DetachedRunner.Jobs();
+        if (jobs.Count == 0) return false;
+        var rows = jobs.Select(j =>
+        {
+            string status = j.Status.ToString();
+            string activity = j.Status == DetachedStatus.Running
+                ? (string.IsNullOrWhiteSpace(j.LiveActivity) ? "working" : j.LiveActivity!)
+                : (string.IsNullOrWhiteSpace(j.Tail) ? "" : j.Tail!);
+            var dur = (j.Finished ?? DateTimeOffset.UtcNow) - j.Started;
+            return new MuxSwarm.Utils.Tui.JobView.JobRow(
+                j.Id, j.Agent, status, activity, j.Goal, (int)dur.TotalSeconds,
+                j.Status == DetachedStatus.Running, TuiComponents.AgentTint(j.Agent));
+        }).ToList();
+
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterJobView(
+                rows,
+                onReopen: id =>
+                {
+                    var job = DetachedRunner.Jobs().FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.OrdinalIgnoreCase));
+                    if (job is null) return false;
+                    string? body = string.IsNullOrWhiteSpace(job.Result) ? job.Tail : job.Result;
+                    return ReopenFinishedJob(job.Id, job.Agent, job.Status.ToString(), body);
+                },
+                onCancel: id => DetachedRunner.Cancel(id));
         }
     }
 

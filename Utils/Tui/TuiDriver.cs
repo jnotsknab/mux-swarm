@@ -92,6 +92,11 @@ internal sealed class TuiDriver
     // off-dashboard path is byte-identical to today's frame.
     private readonly AgentView _agentView = new();
     private volatile bool _agentViewActive;
+    // The /background jobs dashboard (v0.12.4): same inline pattern as the Agent View but over the
+    // detached-job registry (running AND finished), so a finished bg agent stays reachable after
+    // its lane vanishes from the backslash view.
+    private readonly JobView _jobView = new();
+    private volatile bool _jobViewActive;
     // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
     // this agent (toggling its panel) instead of snapping back to the latest-registered
     // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
@@ -817,6 +822,95 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
+    /// Foreground the /background jobs dashboard (the bg-job sibling of the Agent View). Lists the
+    /// detached-job registry - running AND finished - so a finished bg agent's output stays
+    /// reachable after its lane vanishes from the backslash view. Keys: arrows/j-k select;
+    /// o/Enter fires <paramref name="onReopen"/> for a FINISHED job (its transcript commits as a
+    /// retained expandable); c fires <paramref name="onCancel"/> for a RUNNING job; Esc/q closes.
+    /// Snapshot + callbacks are supplied by the caller because the driver does not own the job
+    /// registry. Returns false when there are no jobs or NAV/Agent View already owns the screen.
+    /// Caller holds the console lock for the session.
+    /// </summary>
+    public bool EnterJobView(
+        IReadOnlyList<JobView.JobRow> snapshot,
+        Func<string, bool> onReopen,
+        Func<string, bool> onCancel)
+    {
+        if (_navActive || _agentViewActive || _jobViewActive) return false;
+        if (snapshot.Count == 0) return false;
+
+        _jobView.SetRows(snapshot);
+        _jobView.Open();
+        _jobViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                var jvPump = ConsoleInputPump.Current;
+                if (jvPump is not null)
+                {
+                    // Single input plane: consume the overlay's keys from the shared pump (the
+                    // pump is the only stdin reader); wheel/paste events are swallowed here.
+                    while (true)
+                    {
+                        if (!jvPump.TryTake(out var jv, 200)) continue;
+                        if (jv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = jv.Key; break;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _jobView.Move(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _jobView.Move(+1); Repaint(); continue; }
+
+                // Esc / backslash / q: close the dashboard.
+                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)
+                    break;
+
+                // c: cancel the selected RUNNING job (no-op on finished rows).
+                if (key.Key == ConsoleKey.C)
+                {
+                    var row = _jobView.Selected();
+                    if (row is { Running: true } r && onCancel(r.Id))
+                        Repaint();
+                    continue;
+                }
+
+                // o / Enter: reopen the selected FINISHED job's transcript as a retained expandable
+                // committed to scrollback (Ctrl+E / NAV can then expand it in place). Stays open on
+                // a running job / empty body so the user can keep browsing.
+                if (key.Key == ConsoleKey.O || key.Key == ConsoleKey.Enter)
+                {
+                    var row = _jobView.Selected();
+                    if (row is { Running: false } r && onReopen(r.Id))
+                    {
+                        _jobViewActive = false;
+                        _jobView.Close();
+                        Repaint();
+                        return true;
+                    }
+                    continue;
+                }
+            }
+        }
+        finally
+        {
+            _jobViewActive = false;
+            _jobView.Close();
+            Repaint();
+        }
+        return true;
+    }
+
+    /// <summary>
     /// TOGGLE the mid-turn expansion of a still-running sub-agent's buffered transcript. The
     /// expanded view is a bounded panel rendered INSIDE the repaintable live region (see
     /// BuildLiveFrame), not committed to scrollback - so pressing Ctrl+E repeatedly just flips
@@ -1406,6 +1500,11 @@ internal sealed class TuiDriver
         // default) this adds nothing, keeping the frame byte-identical to today's.
         if (_agentViewActive)
             lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
+
+        // /background jobs dashboard: same inline-list pattern as the Agent View above. Rendered in
+        // the live region so scrollback is preserved; off (the default) adds nothing.
+        if (_jobViewActive)
+            lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
 
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
