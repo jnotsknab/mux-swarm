@@ -665,7 +665,7 @@ public class TuiDriverTests
         // The whole point of the feature: Esc cancels mid-turn, and there is a secondary
         // (Ctrl+G) affordance to open/expand that does NOT cancel - documented in both the
         // prompt and turn contexts.
-        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Esc"
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Esc / q"
             && k.Desc.Contains("Cancel", System.StringComparison.OrdinalIgnoreCase));
         Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Ctrl+G");
         Assert.Contains(TuiCommands.Keys, k => k.Context == "prompt" && k.Keys == "Ctrl+G");
@@ -1747,6 +1747,62 @@ public class TuiDriverTests
         // Closing the dashboard clears the local tags (the registry owns hidden state).
         av.Close();
         Assert.DoesNotContain(av.RenderDashboard(70, now, 0), r => r.Contains("[hidden]"));
+    }
+
+    // --- v0.12.4: /background jobs dashboard (JobView) -------------------------------------------
+
+    private static System.Collections.Generic.List<JobView.JobRow> JobSnap()
+    {
+        return new System.Collections.Generic.List<JobView.JobRow>
+        {
+            new("bg1", "WebAgent", "Done", "tail of the finished output", "research GPUs", 12, false, TuiComponents.AgentTint("WebAgent")),
+            new("bg2", "CodeAgent", "Running", "calling: read_file", "write a haiku", 5, true, TuiComponents.AgentTint("CodeAgent")),
+        };
+    }
+
+    [Fact]
+    public void JobView_RenderDashboard_ListsRunningAndFinished()
+    {
+        // The whole point of the view: finished bg jobs stay listed (the backslash Agent View drops
+        // them), so their output stays reachable.
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        jv.Open();
+        var rows = jv.RenderDashboard(90, 0);
+        string j = string.Join("\n", rows);
+        Assert.Contains("bg1", j);
+        Assert.Contains("bg2", j);
+        Assert.Contains("background jobs", j);
+        Assert.Contains("reopen", j);   // the key-hint footer row
+    }
+
+    [Fact]
+    public void JobView_Move_ClampsAndSelectsById()
+    {
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        Assert.Equal("bg1", jv.SelectedId());   // first selected by default
+        jv.Move(-1);
+        Assert.Equal("bg1", jv.SelectedId());   // clamp at top
+        jv.Move(+1);
+        Assert.Equal("bg2", jv.SelectedId());
+        jv.Move(+1);
+        Assert.Equal("bg2", jv.SelectedId());   // clamp at bottom
+        // Selection is tracked by id and survives a snapshot refresh.
+        jv.SetRows(JobSnap());
+        Assert.Equal("bg2", jv.SelectedId());
+    }
+
+    [Fact]
+    public void JobView_Selected_ReportsRunningFlag()
+    {
+        // Reopen applies only to finished rows; cancel only to running - the row's Running flag
+        // drives both, so verify it round-trips.
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        Assert.False(jv.Selected()!.Value.Running);   // bg1 Done
+        jv.Move(+1);
+        Assert.True(jv.Selected()!.Value.Running);    // bg2 Running
     }
 
     [Fact]

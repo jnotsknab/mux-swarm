@@ -302,7 +302,7 @@ internal static class TuiCommands
         new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
-        new("Esc",         "Cancel the current turn", "turn"),
+        new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
         new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),
