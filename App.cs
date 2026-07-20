@@ -2110,6 +2110,21 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
+        // Dispose any previously-connected MCP clients before rebuilding. On a reload/refresh this method
+        // reconnects every enabled server and reassigns McpClients[name]; without disposing the old clients
+        // first, each refresh LEAKED the prior subprocess (e.g. repeated /refresh spawned a new npx server
+        // per call, orphaning the old ones). Dispose is best-effort per client so one hung disposal can't
+        // block the whole reconnect.
+        if (McpClients.Count > 0)
+        {
+            foreach (var (_, oldClient) in McpClients.ToArray())
+            {
+                try { await oldClient.DisposeAsync(); }
+                catch { /* best-effort: subprocess may already be dead */ }
+            }
+            McpClients.Clear();
+        }
+
         McpTools = new List<McpClientTool>();
 
         var baseDir = PlatformContext.BaseDirectory;
