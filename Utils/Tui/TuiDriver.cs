@@ -178,11 +178,21 @@ internal sealed class TuiDriver
     private (string Tool, string? Args, string Result, bool Error, bool Expandable, string? ExpandBody)? _settling;
 
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
-    // (total session age, shown by the session timer); _loopStart is set when an agentic
-    // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
-    // the loop clock ticks continuously the whole time the user is inside a loop.
+    // (total session age, shown by the session timer). _turnStart is set when the user submits
+    // input (turn begins) and cleared at turn end, capturing the elapsed span into _lastTurn -
+    // so the footer shows a live ticking turn timer while the model works and the LAST turn's
+    // duration (dimmed) while idle.
     private readonly DateTime _sessionStart = DateTime.UtcNow;
-    private DateTime? _loopStart;
+    private DateTime? _turnStart;
+    private TimeSpan? _lastTurn;
+
+    // Session tool-call count pushed by the orchestrator (the footer "calls N" chip).
+    private uint _toolCalls;
+
+    // Mode-pulse window: when ultra/giga is toggled ON, the mode chip breathes for a short
+    // period (PulseSecs) then goes static. Frame index rides the shared ~100ms ticker paints.
+    private DateTime? _modePulseUntil;
+    private const double ModePulseSecs = 3.0;
 
     // Active sub-agent lane tint for gutter attribution on committed transcript lines. Null
     // for the primary agent (no gutter); set to a per-agent color while a sub-agent/specialist
@@ -590,9 +600,12 @@ internal sealed class TuiDriver
     /// tiny/again-unavailable terminals.</summary>
     public int Height => Math.Max(10, _term.Height);
 
-    /// <summary>Update the context meter / mode badges and repaint the live region.</summary>
+    /// <summary>Update the context meter / mode badges and repaint the live region. A rising
+    /// edge on ultra/giga opens the short mode-pulse window (the chip breathes, then settles).</summary>
     public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0, bool giga = false)
     {
+        if ((ultra && !_ultra) || (giga && !_giga))
+            _modePulseUntil = DateTime.UtcNow.AddSeconds(ModePulseSecs);
         _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached; _giga = giga;
         Repaint();
     }
@@ -606,13 +619,28 @@ internal sealed class TuiDriver
         Repaint();
     }
 
-    /// <summary>Start the loop clock - the live "&#x25cf; m:ss" footer badge that ticks the whole
-    /// time the user is inside an agentic interface. Idempotent: re-entering a loop while one is
-    /// already running keeps the original start (does not reset the clock).</summary>
-    public void StartLoopClock() { _loopStart ??= DateTime.UtcNow; }
+    /// <summary>Start the turn clock - the live "&#x25cf; m:ss" footer badge that ticks while the
+    /// model works the current turn. Called when user input is submitted; resets any prior start.</summary>
+    public void StartTurnClock() { _turnStart = DateTime.UtcNow; }
 
-    /// <summary>Stop and clear the loop clock (back at the top-level menu, no loop active).</summary>
-    public void StopLoopClock() { _loopStart = null; }
+    /// <summary>Stop the turn clock: capture the elapsed span as the dimmed idle "last turn"
+    /// chip and clear the live timer. No-op when no turn was running.</summary>
+    public void StopTurnClock()
+    {
+        if (_turnStart is { } ts) _lastTurn = DateTime.UtcNow - ts;
+        _turnStart = null;
+    }
+
+    /// <summary>Clear both turn-clock states (new/wiped session - no stale last-turn chip).</summary>
+    public void ResetTurnClock() { _turnStart = null; _lastTurn = null; }
+
+    /// <summary>Update the session tool-call count shown as the footer "calls N" chip.</summary>
+    public void SetToolCalls(uint calls)
+    {
+        if (_toolCalls == calls) return;
+        _toolCalls = calls;
+        Repaint();
+    }
 
     /// <summary>Set (or clear, with null) the active-session id badge shown in the footer.</summary>
     public void SetSessionId(string? sessionId)
@@ -1516,12 +1544,21 @@ internal sealed class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
+        // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
+        // short post-activation window; -1 renders the chip static and schedules nothing extra.
+        int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
+            ? (int)(Environment.TickCount64 / 150)
+            : -1;
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
-            modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
+            modeCycleHint: OnModeCycle is not null, cached: _cached,
             sysTokens: _sysTokens, toolTokens: _toolTokens,
             sessionElapsed: DateTime.UtcNow - _sessionStart,
-            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null,
-            giga: _giga));
+            giga: _giga,
+            turnElapsed: _turnStart is { } ts2 ? DateTime.UtcNow - ts2 : null,
+            lastTurn: _lastTurn,
+            toolCalls: _toolCalls,
+            width: width,
+            pulseFrame: pulseFrame));
 
         if (_inInput)
         {
@@ -1856,6 +1893,15 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown || _navActive) return;
         if (_engineFrame && _suspended) return;   // a blocking prompt owns the terminal; defer
+        // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
+        // prompt, so it drives the short post-activation breathe of the ultra/giga chip.
+        // Repaints ONLY inside the pulse window (plus one settle paint when it closes);
+        // outside the window this adds zero work.
+        if (_modePulseUntil is { } pulseUntil)
+        {
+            if (DateTime.UtcNow < pulseUntil) Repaint();
+            else { _modePulseUntil = null; Repaint(); }
+        }
         int w = _term.Width, h = _term.Height;
         if (w == _lastSeenWidth && h == _lastSeenHeight) return;
         bool first = _lastSeenWidth < 0;

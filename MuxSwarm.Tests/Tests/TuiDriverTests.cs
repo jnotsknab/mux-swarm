@@ -56,7 +56,7 @@ public class TuiDriverTests
     {
         var f = TuiComponents.Footer(0, 0, false, false, false, effort: "high");
         Assert.Contains("high", f);
-        Assert.Contains("/effort", f);
+        Assert.Contains("\u25d0", f);   // effort glyph; the "/effort" tutorial literal is gone
     }
 
     [Fact]
@@ -263,12 +263,12 @@ public class TuiDriverTests
     }
 
     [Fact]
-    public void Footer_ShowsSessionIdBadge_AndCachedTokens()
+    public void Footer_ShowsToolCallsChip_AndCachedTokens()
     {
         var f = TuiComponents.Footer(50_000, 200_000, plan: false, ultra: false, psub: false,
-            sessionId: "2026-06-20_12-31-01", cached: 39_080);
-        Assert.Contains("2026-06-20_12-31-01", f);
-        Assert.Contains("session", f);
+            cached: 39_080, toolCalls: 23);
+        Assert.Contains("calls", f);
+        Assert.Contains("23", f);
         Assert.Contains("39.1k cached", f);
     }
 
@@ -278,7 +278,73 @@ public class TuiDriverTests
         var bare = TuiComponents.Footer(0, 0, false, false, false);
         Assert.DoesNotContain("tui", bare);
         var hinted = TuiComponents.Footer(0, 0, false, false, false, effort: "high", modeCycleHint: true);
-        Assert.Contains("cycle", hinted);
+        Assert.Contains("\u21e7\u21b9", hinted);   // glyph-only hint; the "cycle" literal is gone
+    }
+
+    [Fact]
+    public void Footer_TurnTimer_LiveTicksAndIdleShowsDimmedLastTurn()
+    {
+        // Live turn: bright dot + m:ss clock.
+        var live = TuiComponents.Footer(0, 0, false, false, false,
+            turnElapsed: TimeSpan.FromSeconds(7));
+        Assert.Contains("\u25cf 0:07", TuiMarkup.Plain(live));
+
+        // Idle with a recorded last turn: dimmed dot + short duration.
+        var idle = TuiComponents.Footer(0, 0, false, false, false,
+            lastTurn: TimeSpan.FromSeconds(12));
+        Assert.Contains("\u25cf 12s", TuiMarkup.Plain(idle));
+        Assert.Contains($"[{TuiComponents.Dim}]\u25cf", idle);
+
+        // Live turn suppresses the idle chip even when a last turn exists.
+        var both = TuiComponents.Footer(0, 0, false, false, false,
+            turnElapsed: TimeSpan.FromSeconds(3), lastTurn: TimeSpan.FromSeconds(12));
+        Assert.DoesNotContain("12s", TuiMarkup.Plain(both));
+    }
+
+    [Fact]
+    public void Footer_Responsive_NeverExceedsWidth_AndDropsChipsInOrder()
+    {
+        string Full() => TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+            effort: "xhigh", modeCycleHint: true, cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+            sessionElapsed: TimeSpan.FromHours(19), lastTurn: TimeSpan.FromSeconds(12), toolCalls: 23);
+
+        // Unbounded (width 0): everything renders.
+        var wide = TuiMarkup.Plain(Full());
+        Assert.Contains("sys", wide);
+        Assert.Contains("cached", wide);
+        Assert.Contains("calls", wide);
+
+        // Constrained: the composed line must fit, dropping lowest-value chips first.
+        foreach (int w in new[] { 200, 140, 100, 80, 60, 40, 25 })
+        {
+            var f = TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+                effort: "xhigh", modeCycleHint: true, cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+                sessionElapsed: TimeSpan.FromHours(19), lastTurn: TimeSpan.FromSeconds(12), toolCalls: 23,
+                width: w);
+            Assert.True(TuiMarkup.MarkupWidth(f) <= w,
+                $"footer width {TuiMarkup.MarkupWidth(f)} exceeds terminal width {w}: '{TuiMarkup.Plain(f)}'");
+        }
+
+        // At a mid tier the breakdown chips are gone but the meter+mode survive.
+        var mid = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+            effort: "xhigh", cached: 126_700, sysTokens: 20_500, toolTokens: 26_200, toolCalls: 23, width: 80));
+        Assert.DoesNotContain("sys", mid);
+        Assert.Contains("ultra", mid);
+        Assert.Contains("%", mid);
+    }
+
+    [Fact]
+    public void Footer_ModePulse_ChangesStyleOnlyNeverWidth()
+    {
+        var frames = new[] { -1, 0, 1, 2, 3 }
+            .Select(fr => TuiComponents.Footer(0, 0, plan: false, ultra: true, psub: false, pulseFrame: fr))
+            .ToArray();
+        // Same plain text at every frame (weight-only animation - width can never oscillate)...
+        var plains = frames.Select(TuiMarkup.Plain).Distinct().ToArray();
+        Assert.Single(plains);
+        // ...but at least one pulsing frame styles the chip differently from the static render.
+        Assert.True(frames.Skip(1).Any(f => f != frames[0]),
+            "pulse frames should differ in markup from the static render");
     }
 
     [Fact]

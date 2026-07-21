@@ -189,6 +189,10 @@ internal static class TuiComponents
     private static string ClockHM(TimeSpan t)
         => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : $"{t.Minutes}m";
 
+    /// <summary>Short duration for the idle last-turn chip: "12s" under a minute, m:ss above.</summary>
+    private static string ShortDur(TimeSpan t)
+        => t.TotalSeconds < 60 ? $"{Math.Max(0, (int)Math.Round(t.TotalSeconds))}s" : ClockMS(t);
+
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
     private static string CollapseWs(string s)
@@ -649,106 +653,97 @@ internal static class TuiComponents
     };
 
     /// <summary>
-    /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
-    /// region and is repainted every frame, so it never strands or scrolls away.
+    /// The pinned footer: mode badges + timers + a context meter. Lives at the bottom of the
+    /// live region and is repainted every frame, so it never strands or scrolls away.
+    /// Responsive: when <paramref name="width"/> is known, lower-value chips are dropped (and
+    /// the meter compacted) until the line fits on one row - it never wraps mid-chip. Drop
+    /// order: Shift+Tab hint, sys/tools breakdown, cached text, session timer + calls, meter
+    /// shrink, meter to bare percent, idle last-turn + effort chips.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null, bool giga = false)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, int width = 0, int pulseFrame = -1)
     {
-        // No standing "tui" badge - it is noise. Only show active modes.
-        // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
-        // active the three mode badges are redundant noise - collapse them to a single "ultra"
-        // chip. Otherwise show whichever discrete modes are on.
-        // Giga is a SUPERSET of ultra (ultra reasoning + plan + dynamic team/workflow
-        // orchestration), so when giga is active it supersedes the ultra chip - one "giga" badge
-        // stands for the whole stack. Otherwise ultra collapses plan/psub/sub into one chip, and
-        // failing that the discrete modes show individually.
-        var badges = new List<string>();
-        if (giga)
+        // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
+        // discrete modes show individually. For a short window after activation the chip
+        // "breathes" (dim/normal/bold cycle - weight-only, same trick as PulsingDot, so the
+        // rendered width can never oscillate); pulseFrame < 0 renders it static.
+        string ModeStyle(string colour)
         {
-            badges.Add($"[{Giga}]giga[/]");
+            if (pulseFrame < 0) return colour;
+            string deco = PulseDecos[((pulseFrame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
+            return string.IsNullOrEmpty(deco) ? colour : $"{colour} {deco}";
         }
-        else if (ultra)
-        {
-            badges.Add($"[{Ultra}]ultra[/]");
-        }
+        var modeBadges = new List<string>();
+        if (giga) modeBadges.Add($"[{ModeStyle(Giga)}]giga[/]");
+        else if (ultra) modeBadges.Add($"[{ModeStyle(Ultra)}]ultra[/]");
         else
         {
-            if (plan) badges.Add($"[{Plan}]plan[/]");
-            if (psub) badges.Add($"[{Accent}]psub[/]");
-            if (sub) badges.Add($"[{Ok}]sub[/]");
+            if (plan) modeBadges.Add($"[{Plan}]plan[/]");
+            if (psub) modeBadges.Add($"[{Accent}]psub[/]");
+            if (sub) modeBadges.Add($"[{Ok}]sub[/]");
         }
 
-        // Loop clock: a live elapsed clock that runs the whole time the user is inside an agentic
-        // interface (/agent, /stateless, /swarm, /pswarm). Starts on loop entry and ticks
-        // continuously until the loop exits; cleared (null) at the top-level menu.
-        if (loopElapsed is { } le)
-            badges.Add($"[{Warn}]\u25cf {ClockMS(le)}[/]");
-        // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
+        // Turn timer: bright + ticking while the model works the current turn; between turns
+        // the LAST turn's duration shows dimmed (same glyph, dim = idle) so the cost of the
+        // previous exchange stays visible until the next send resets it.
+        string liveTurnChip = turnElapsed is { } te ? $"[{Warn}]\u25cf {ClockMS(te)}[/]" : "";
+        string idleTurnChip = turnElapsed is null && lastTurn is { } lt ? $"[{Dim}]\u25cf {ShortDur(lt)}[/]" : "";
+
+        // Session timer: total wall-clock since the session opened. Hidden under a minute so a
         // fresh session does not show a noisy "0m".
-        if (sessionElapsed is { } se && se.TotalSeconds >= 60)
-            badges.Add($"[{Dim}]{ClockHM(se)}[/]");
+        string sessChip = sessionElapsed is { } se && se.TotalSeconds >= 60 ? $"[{Dim}]{ClockHM(se)}[/]" : "";
 
-        // Context meter: full bar+percent when a threshold is known; a bare token count when
-        // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
-        // threshold) so the footer never shows a noisy, meaningless "0 tokens".
-        // The meter plots TOTAL context (live + cached) against the threshold, because
-        // compaction fires on the total crossing it - so the bar reaching full genuinely
-        // means compaction is imminent. The filled span is split into a dim cached segment
-        // and a bright live segment so the user sees how much headroom is real (live) vs
-        // already-pinned (cached). `tokens` here is the live (uncached) count.
-        string meter;
-        if (threshold > 0)
+        // Context meter: bar+percent when a threshold is known (bar shrinks, then collapses to
+        // a bare percent+total, under width pressure); a bare token count when tokens have
+        // accrued without a threshold; nothing at all when idle so the footer never shows a
+        // noisy, meaningless "0 tokens". The bar plots TOTAL context (live + cached) against
+        // the threshold - compaction fires on the total crossing it - split into a dim cached
+        // segment and a bright live segment. `tokens` here is the live (uncached) count.
+        string Meter(int level)
         {
-            uint total = tokens + cached;
-            double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
-            const int width = 16;
-            int filled = (int)Math.Round(fracTotal * width);
-            int cachedCells = Math.Clamp((int)Math.Round((double)cached / threshold * width), 0, filled);
-            int liveCells = filled - cachedCells;
-            int empty = Math.Max(0, width - filled);
-            string liveColour = fracTotal < 0.6 ? Ok : fracTotal < 0.85 ? Warn : Err;
-            string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
-                         $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
-                         $"[{Dim}]" + new string('\u2501', empty) + "[/]";
-            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{Fmt(cached)} cached[/]" : "";
-            meter = $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]{cachedHint}";
-        }
-        else if (tokens > 0)
-        {
-            meter = $"[{Muted}]{Fmt(tokens)} tokens[/]";
-        }
-        else
-        {
-            meter = "";
+            if (threshold > 0)
+            {
+                uint total = tokens + cached;
+                double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
+                if (level >= 6)
+                    return $"[{Muted}]{fracTotal * 100:F0}% {Fmt(total)}[/]";
+                int barWidth = level >= 5 ? 10 : 16;
+                int filled = (int)Math.Round(fracTotal * barWidth);
+                int cachedCells = Math.Clamp((int)Math.Round((double)cached / threshold * barWidth), 0, filled);
+                int liveCells = filled - cachedCells;
+                int empty = Math.Max(0, barWidth - filled);
+                string liveColour = fracTotal < 0.6 ? Ok : fracTotal < 0.85 ? Warn : Err;
+                string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
+                             $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
+                             $"[{Dim}]" + new string('\u2501', empty) + "[/]";
+                return $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]";
+            }
+            return tokens > 0 ? $"[{Muted}]{Fmt(tokens)} tokens[/]" : "";
         }
 
-        // Static overhead breakdown: on a FRESH session the context is dominated by the system
-        // prompt + the serialized tool/MCP schemas, not the conversation. Surfacing "sys" and
-        // "tools" chips explains why a brand-new session already reads e.g. 30k tokens. Shown only
-        // when a breakdown is known and there is meaningful overhead to explain.
-        string breakdownChip = "";
-        if (sysTokens > 0 || toolTokens > 0)
+        // Compose the footer at a degradation level (0 = everything). Uniform middot
+        // separators throughout - no mixed double-space/triple-space seams.
+        string Compose(int level)
         {
-            var parts = new List<string>();
-            if (sysTokens > 0)  parts.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
-            if (toolTokens > 0) parts.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
-            breakdownChip = $"  [{Dim}]\u00b7[/]  " + string.Join($" [{Dim}]\u00b7[/] ", parts);
+            var chips = new List<string>(modeBadges);
+            if (liveTurnChip.Length > 0) chips.Add(liveTurnChip);
+            if (idleTurnChip.Length > 0 && level < 7) chips.Add(idleTurnChip);
+            if (sessChip.Length > 0 && level < 4) chips.Add(sessChip);
+            string meter = Meter(level);
+            if (meter.Length > 0) chips.Add(meter);
+            if (cached > 0 && threshold > 0 && level < 3) chips.Add($"[{Dim}]{Fmt(cached)} cached[/]");
+            if (sysTokens > 0 && level < 2) chips.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
+            if (toolTokens > 0 && level < 2) chips.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
+            if (toolCalls > 0 && level < 4) chips.Add($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]");
+            if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add($"[{Warn}]\u25d0 {Esc(effort)}[/]");
+            if (modeCycleHint && level < 1) chips.Add($"[{Dim}]\u21e7\u21b9[/]");
+            return "  " + string.Join($" [{Dim}]\u00b7[/] ", chips);
         }
 
-        string left = string.Join($" [{Dim}]\u00b7[/] ", badges);
-        // The effort chip always gets a leading dot-separator so it never butts up against the
-        // meter / cached-tokens text (the "cached\u25d0" run-together bug).
-        string effortChip = string.IsNullOrEmpty(effort)
-            ? ""
-            : $"  [{Dim}]\u00b7[/]  [{Warn}]\u25d0 {Esc(effort)}[/] [{Dim}]/effort[/]";
-        // Shift+Tab discoverability hint, shown only when a mode-cycle is wired up.
-        string hint = modeCycleHint ? $"  [{Dim}]\u21e7\u21b9 cycle[/]" : "";
-        // Active-session id badge (Claude-Code style), shown beside the hint when present.
-        string sess = string.IsNullOrEmpty(sessionId) ? "" : $"  [{Dim}]\u00b7[/]  [{Agent}]session[/] [{Muted}]{Esc(sessionId!)}[/]";
-        string right = string.IsNullOrEmpty(meter) ? "" : $"   {meter}";
-        // Avoid a leading double-space when there are no badges at all.
-        string body = $"{left}{right}{breakdownChip}{effortChip}{hint}{sess}";
-        return $"  {body.TrimStart()}";
+        string line = Compose(0);
+        if (width > 8)
+            for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
+                line = Compose(lvl);
+        return line;
     }
 
     /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),

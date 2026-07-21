@@ -30,6 +30,8 @@ public static class SingleAgentOrchestrator
     // Snapped from each UsageContent checkpoint's running totals; cleared on /wipe.
     private static long _cumInputTokens;
     private static long _cumOutputTokens;
+    // Session tool-call count surfaced as the footer "calls N" chip; cleared on /wipe.
+    private static uint _sessionToolCalls;
 
     private static bool _pendingCompaction;
 
@@ -1581,6 +1583,9 @@ public static class SingleAgentOrchestrator
         // Surface the active session id in the docked footer; the badge replaces the noisy
         // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
         MuxConsole.SetTuiSessionId(sessionTimestamp);
+        // Fresh session: zero the footer tool-call counter (static across sequential sessions).
+        _sessionToolCalls = 0;
+        MuxConsole.SetTuiToolCalls(0);
 
         // Size-tiered delegation retention scope: a single-agent session that spawns sub-agents
         // (/sub, /psub, /ultra, /giga, team-lead) keys its spilled raw + cumulative lead-cap counter
@@ -1928,6 +1933,7 @@ public static class SingleAgentOrchestrator
                     turnSpan?.SetTag("model", resolvedModelId);
                     turnSpan?.SetTag("iteration", i);
                     var turnSw = Stopwatch.StartNew();
+                    MuxConsole.StartTuiTurnClock();
 
                     ThinkingIndicator? thinking = null;
                     bool startedStreaming = false;
@@ -2042,6 +2048,7 @@ public static class SingleAgentOrchestrator
                                 {
                                     lastToolName = functionCall.Name;
                                     CostLedger.RecordToolCall(resolvedModelId);
+                                    MuxConsole.SetTuiToolCalls(++_sessionToolCalls);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old
@@ -2236,6 +2243,7 @@ public static class SingleAgentOrchestrator
                         });
 
                         turnSw.Stop();
+                        MuxConsole.StopTuiTurnClock();
                         OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                             new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
@@ -2465,6 +2473,9 @@ public static class SingleAgentOrchestrator
                     _cachedTokens = 0;
                     _cumInputTokens = 0;
                     _cumOutputTokens = 0;
+                    _sessionToolCalls = 0;
+                    MuxConsole.SetTuiToolCalls(0);
+                    MuxConsole.ResetTuiTurnClock();
                     _pendingCompaction = false;
                     _pendingReseed = false;
                     CostLedger.ResetSession();

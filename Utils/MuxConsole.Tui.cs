@@ -809,19 +809,34 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached, giga); }
     }
 
-    /// <summary>Start the loop clock (live "&#x25cf; m:ss" footer badge) - called when an agentic
-    /// interface (/agent, /stateless, /swarm, /pswarm) is entered. No-op outside the driver.</summary>
-    public static void StartTuiLoopClock()
+    /// <summary>Start the turn clock (live "&#x25cf; m:ss" footer badge) - called when user input
+    /// is submitted to the model. No-op outside the driver.</summary>
+    public static void StartTuiTurnClock()
     {
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.StartLoopClock(); }
+        lock (ConsoleLock) { _driver!.StartTurnClock(); }
     }
 
-    /// <summary>Stop/clear the loop clock - called back at the top-level menu. No-op outside the driver.</summary>
-    public static void StopTuiLoopClock()
+    /// <summary>Stop the turn clock at turn end - the elapsed span becomes the dimmed idle
+    /// "last turn" chip. No-op outside the driver.</summary>
+    public static void StopTuiTurnClock()
     {
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.StopLoopClock(); }
+        lock (ConsoleLock) { _driver!.StopTurnClock(); }
+    }
+
+    /// <summary>Clear both turn-clock states (session start/wipe). No-op outside the driver.</summary>
+    public static void ResetTuiTurnClock()
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.ResetTurnClock(); }
+    }
+
+    /// <summary>Push the session tool-call count into the docked footer "calls N" chip.</summary>
+    public static void SetTuiToolCalls(uint calls)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetToolCalls(calls); }
     }
 
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>

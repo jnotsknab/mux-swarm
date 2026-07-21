@@ -551,7 +551,7 @@ public class App
 
             // Back at the top-level menu (no agentic loop active): stop the loop clock. It is
             // (re)started on the next /agent | /stateless | /swarm | /pswarm via the session header.
-            if (pendingFromSession is null) MuxConsole.StopTuiLoopClock();
+            if (pendingFromSession is null) MuxConsole.ResetTuiTurnClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
@@ -646,7 +646,7 @@ public class App
                         teamScope.LeadDef.Name, LoadSingleAgentModel());
 
                     ServeMode.ActiveMode = "teams";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(teamLeadModel),
@@ -672,7 +672,7 @@ public class App
                     var maCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "swarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -693,7 +693,7 @@ public class App
                     var pCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "pswarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -714,7 +714,7 @@ public class App
                     var agentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "agent";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
@@ -768,7 +768,7 @@ public class App
                     var statelessAgentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "stateless";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "stateless", "stateless");
@@ -818,7 +818,7 @@ public class App
                         MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
                         break;
                     }
-                    MuxConsole.StartTuiLoopClock();
+                    MuxConsole.ResetTuiTurnClock();
                     ServeMode.ActiveMode = handle.Mode;
                     try {
                         handle.ReleaseAttach();             // resume the parked frame (it takes the console)
