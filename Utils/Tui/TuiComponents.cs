@@ -657,10 +657,10 @@ internal static class TuiComponents
     /// live region and is repainted every frame, so it never strands or scrolls away.
     /// Responsive: when <paramref name="width"/> is known, lower-value chips are dropped (and
     /// the meter compacted) until the line fits on one row - it never wraps mid-chip. Drop
-    /// order: Shift+Tab hint, sys/tools breakdown, cached text, session timer + calls, meter
-    /// shrink, meter to bare percent, idle last-turn + effort chips.
+    /// order: Shift+Tab hint, sys/tools breakdown, cached text, session timer + calls, model,
+    /// meter shrink, meter to bare percent, idle last-turn + effort chips.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, int width = 0, int pulseFrame = -1)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, string? model = null, int width = 0, int pulseFrame = -1)
     {
         // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
         // discrete modes show individually. For a short window after activation the chip
@@ -734,6 +734,16 @@ internal static class TuiComponents
             if (sysTokens > 0 && level < 2) chips.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
             if (toolTokens > 0 && level < 2) chips.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
             if (toolCalls > 0 && level < 4) chips.Add($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]");
+            // Model chip: the resolved model id (path prefix stripped), high-value so it
+            // survives to mid tiers - after a provider fallback/pin this is the fastest way
+            // to see what the session is actually running on.
+            if (!string.IsNullOrEmpty(model) && level < 5)
+            {
+                string m = model!;
+                int slash = m.LastIndexOf('/');
+                if (slash >= 0 && slash < m.Length - 1) m = m[(slash + 1)..];
+                chips.Add($"[{Agent}]{Esc(m)}[/]");
+            }
             if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add($"[{Warn}]\u25d0 {Esc(effort)}[/]");
             if (modeCycleHint && level < 1) chips.Add($"[{Dim}]\u21e7\u21b9[/]");
             return "  " + string.Join($" [{Dim}]\u00b7[/] ", chips);

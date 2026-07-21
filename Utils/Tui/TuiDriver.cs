@@ -189,6 +189,9 @@ internal sealed class TuiDriver
     // Session tool-call count pushed by the orchestrator (the footer "calls N" chip).
     private uint _toolCalls;
 
+    // Resolved model id pushed by the orchestrator (the footer model chip). Null = hidden.
+    private string? _model;
+
     // Mode-pulse window: when ultra/giga is toggled ON, the mode chip breathes for a short
     // period (PulseSecs) then goes static. Frame index rides the shared ~100ms ticker paints.
     private DateTime? _modePulseUntil;
@@ -639,6 +642,15 @@ internal sealed class TuiDriver
     {
         if (_toolCalls == calls) return;
         _toolCalls = calls;
+        Repaint();
+    }
+
+    /// <summary>Set (or clear, with null) the resolved model id shown as the footer model chip.</summary>
+    public void SetModel(string? model)
+    {
+        var m = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
+        if (m == _model) return;
+        _model = m;
         Repaint();
     }
 
@@ -1557,6 +1569,7 @@ internal sealed class TuiDriver
             turnElapsed: _turnStart is { } ts2 ? DateTime.UtcNow - ts2 : null,
             lastTurn: _lastTurn,
             toolCalls: _toolCalls,
+            model: _model,
             width: width,
             pulseFrame: pulseFrame));
 

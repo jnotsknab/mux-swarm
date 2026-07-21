@@ -839,6 +839,13 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetToolCalls(calls); }
     }
 
+    /// <summary>Set (or clear, with null) the resolved model id shown in the docked footer.</summary>
+    public static void SetTuiModel(string? model)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetModel(model); }
+    }
+
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
     public static void SetTuiSessionId(string? sessionId)
     {

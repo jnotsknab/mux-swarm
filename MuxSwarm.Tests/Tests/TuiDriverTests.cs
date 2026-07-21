@@ -273,6 +273,27 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void Footer_ModelChip_ShownAndPathPrefixStripped()
+    {
+        var f = TuiMarkup.Plain(TuiComponents.Footer(0, 0, false, false, false,
+            model: "anthropic/claude-opus-4-8"));
+        Assert.Contains("claude-opus-4-8", f);
+        Assert.DoesNotContain("anthropic/", f);
+
+        // Survives mid-tier width pressure (outlives sys/tools/cached/calls)...
+        var mid = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, false, true, false,
+            effort: "xhigh", cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+            toolCalls: 23, model: "claude-opus-4-8", width: 90));
+        Assert.Contains("claude-opus-4-8", mid);
+        Assert.DoesNotContain("sys", mid);
+
+        // ...but yields before the meter at narrow widths.
+        var narrow = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, false, true, false,
+            effort: "xhigh", model: "claude-opus-4-8", width: 45));
+        Assert.DoesNotContain("claude-opus-4-8", narrow);
+    }
+
+    [Fact]
     public void Footer_NoTuiBadge_ButShowsModeCycleHint()
     {
         var bare = TuiComponents.Footer(0, 0, false, false, false);

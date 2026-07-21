@@ -1583,9 +1583,11 @@ public static class SingleAgentOrchestrator
         // Surface the active session id in the docked footer; the badge replaces the noisy
         // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
         MuxConsole.SetTuiSessionId(sessionTimestamp);
-        // Fresh session: zero the footer tool-call counter (static across sequential sessions).
+        // Fresh session: zero the footer tool-call counter (static across sequential sessions)
+        // and surface the resolved model id as the footer model chip.
         _sessionToolCalls = 0;
         MuxConsole.SetTuiToolCalls(0);
+        MuxConsole.SetTuiModel(resolvedModelId);
 
         // Size-tiered delegation retention scope: a single-agent session that spawns sub-agents
         // (/sub, /psub, /ultra, /giga, team-lead) keys its spilled raw + cumulative lead-cap counter
@@ -2595,10 +2597,12 @@ public static class SingleAgentOrchestrator
                         // Release the session-scoped TUI hooks so the menu's footer is clean while
                         // parked; they are re-asserted on resume below.
                         MuxConsole.SetTuiSessionId(null);
+                        MuxConsole.SetTuiModel(null);
                         // Park: hand the console back to the menu and block (async) until /attach.
                         await interactiveHandle.ParkAndAwaitAttachAsync(cancellationToken);
                         // --- resumed ---
                         MuxConsole.SetTuiSessionId(sessionTimestamp);
+                        MuxConsole.SetTuiModel(resolvedModelId);
                         RenderStatusBar();
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
                     }
@@ -2667,6 +2671,7 @@ public static class SingleAgentOrchestrator
         MuxConsole.SetTuiModeCycle(null);
         MuxConsole.SetTuiEffort(null);
         MuxConsole.SetTuiSessionId(null);
+        MuxConsole.SetTuiModel(null);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);
