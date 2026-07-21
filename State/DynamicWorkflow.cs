@@ -20,6 +20,72 @@ namespace MuxSwarm.State;
 /// </summary>
 public static class DynamicWorkflow
 {
+    /// <summary>
+    /// Ensure the muxswarm SDK is importable by <paramref name="py"/>. Resolution order:
+    ///   1. Already importable -> ready.
+    ///   2. MUX_SDK_PATH env var (or a sibling "sdk" folder in the install dir) containing a
+    ///      muxswarm package -> returned as a PYTHONPATH injection for the child.
+    ///   3. Best-effort `pip install muxswarm` (bounded), then re-probe.
+    /// Returns (ready, pythonPathOverride, error): ready=false + error when nothing worked -
+    /// the caller surfaces the error instead of launching a doomed driver.
+    /// </summary>
+    public static (bool Ready, string? PythonPath, string? Error) EnsureSdk(string py)
+    {
+        if (ProbeImport(py, null)) return (true, null, null);
+
+        // Local-clone fallback: an explicit MUX_SDK_PATH, or an "sdk" folder shipped/cloned
+        // beside the engine install.
+        foreach (var cand in new[]
+                 {
+                     Environment.GetEnvironmentVariable("MUX_SDK_PATH"),
+                     Path.Combine(PlatformContext.BaseDirectory, "sdk"),
+                 })
+        {
+            if (SdkPathIsUsable(cand) && ProbeImport(py, cand!)) return (true, cand, null);
+        }
+
+        // Auto-install from PyPI, best-effort and bounded.
+        try
+        {
+            var psi = new ProcessStartInfo(py, "-m pip install --quiet muxswarm")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            using var p = Process.Start(psi);
+            if (p is not null && p.WaitForExit(120_000) && p.ExitCode == 0 && ProbeImport(py, null))
+                return (true, null, null);
+        }
+        catch { /* fall through to the error */ }
+
+        return (false, null,
+            "[workflow] The muxswarm SDK is not importable by the resolved python and auto-install failed. " +
+            "Fix one of: `pip install muxswarm`, set MUX_SDK_PATH to a local mux-swarm-sdk clone, " +
+            "or place the SDK under <install-dir>/sdk. Dynamic mode needs it; /workflow static does not.");
+    }
+
+    /// <summary>True when <paramref name="dir"/> looks like an importable SDK root
+    /// (contains muxswarm/__init__.py).</summary>
+    internal static bool SdkPathIsUsable(string? dir)
+        => !string.IsNullOrWhiteSpace(dir)
+           && File.Exists(Path.Combine(dir!, "muxswarm", "__init__.py"));
+
+    private static bool ProbeImport(string py, string? pythonPath)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(py, "-c \"import muxswarm\"")
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            if (pythonPath is not null)
+            {
+                var existing = Environment.GetEnvironmentVariable("PYTHONPATH");
+                psi.Environment["PYTHONPATH"] = string.IsNullOrEmpty(existing)
+                    ? pythonPath
+                    : pythonPath + Path.PathSeparator + existing;
+            }
+            using var p = Process.Start(psi);
+            return p is not null && p.WaitForExit(15_000) && p.ExitCode == 0;
+        }
+        catch { return false; }
+    }
+
     /// <summary>Resolve a python launcher, or null when none is on PATH.</summary>
     public static string? ResolvePython()
     {
@@ -201,6 +267,8 @@ public static class DynamicWorkflow
         var py = python ?? ResolvePython();
         if (py is null)
             return "[workflow] Dynamic mode needs python on PATH. Install python 3.9+ or use static workflows.";
+        var (sdkReady, sdkPythonPath, sdkError) = EnsureSdk(py);
+        if (!sdkReady) return sdkError!;
         int maxPar = maxParallel ?? (App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4);
 
         var (id, dir) = WorkflowRunRegistry.NewRunDir(name);
@@ -224,6 +292,14 @@ public static class DynamicWorkflow
         // "No endpoint provided. Setup failed." (live-observed).
         if (File.Exists(PlatformContext.ConfigPath)) psi.Environment["MUX_CFG"] = PlatformContext.ConfigPath;
         if (File.Exists(PlatformContext.SwarmPath)) psi.Environment["MUX_SWARMCFG"] = PlatformContext.SwarmPath;
+        // SDK resolved via a local clone rather than site-packages: inject it for the child.
+        if (sdkPythonPath is not null)
+        {
+            var existingPp = Environment.GetEnvironmentVariable("PYTHONPATH");
+            psi.Environment["PYTHONPATH"] = string.IsNullOrEmpty(existingPp)
+                ? sdkPythonPath
+                : sdkPythonPath + Path.PathSeparator + existingPp;
+        }
 
         Process proc;
         try

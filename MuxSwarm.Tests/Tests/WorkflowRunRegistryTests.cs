@@ -255,6 +255,17 @@ public class WorkflowRunRegistryTests : IDisposable
     }
 
     [Fact]
+    public void SdkPathProbe_RequiresMuxswarmPackage()
+    {
+        Assert.False(DynamicWorkflow.SdkPathIsUsable(null));
+        Assert.False(DynamicWorkflow.SdkPathIsUsable(_dir));   // exists but no muxswarm/
+        var pkg = Path.Combine(_dir, "muxswarm");
+        Directory.CreateDirectory(pkg);
+        File.WriteAllText(Path.Combine(pkg, "__init__.py"), "");
+        Assert.True(DynamicWorkflow.SdkPathIsUsable(_dir));
+    }
+
+    [Fact]
     public void Validator_RejectsContractViolations_AcceptsSkeletonShape()
     {
         Assert.NotNull(DynamicWorkflow.ValidateScript(""));
