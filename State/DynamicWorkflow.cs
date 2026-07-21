@@ -54,8 +54,11 @@ public static class DynamicWorkflow
         - FIRST write manifest.json: {"id","name","mode":"dynamic","sections":[{"name",
           "tasks":[{"id","agent","label","status":"pending"}]}]}.
         - Per task: append {"task":"<id>","status":"running"} to status.ndjson, run the agent via
-          `await mux.run_goal(goal, mode="agent", agent=<agent>, timeout=...)`, then append
+          `res = await mux.run_goal(goal, mode="agent", agent=<agent>, timeout=...)`, then append
           {"task":"<id>","status":"done","detail":"<short result>"} (or "failed").
+          RunResult has NO `.text` attribute. The output is `res.final_summary or res.streamed_text`
+          (summary of the last task_complete, else the concatenated stream); `res.ok` / `res.errors`
+          for success checks. Using `res.text` raises AttributeError and fails the task.
         - Bound concurrency with asyncio.Semaphore(MUX_MAX_PARALLEL). Feed results forward between
           sections through variables. Append {"run":"done"} (or {"run":"failed","error":...}) LAST.
         - Deterministic + idempotent where possible; no interactive input; exit 0 on success.
@@ -79,8 +82,9 @@ public static class DynamicWorkflow
                     emit(task=tid, status="running")
                     try:
                         res = await mux.run_goal(goal, mode="agent", agent=agent, timeout=600)
-                        emit(task=tid, status="done", detail=(res.text or "")[:160])
-                        return res.text
+                        out = res.final_summary or res.streamed_text or ""
+                        emit(task=tid, status="done", detail=out[:160])
+                        return out
                     except Exception as e:
                         emit(task=tid, status="failed", detail=str(e)[:160]); raise
             r1 = await run_task("t1", "WebAgent", "research X")
