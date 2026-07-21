@@ -92,7 +92,12 @@ internal static class TuiCommands
         new("/stateless",    "Stateless single-agent loop (one-off tasks)", Scope.ReplOnly),
         new("/subagents",    "Enable sub-agent delegation (/sub)", Scope.ReplOnly),
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
-        new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
+        new("/workflow",     "Run a workflow - static (JSON steps) or dynamic (scripted mux processes)", Scope.ReplOnly),
+        new("/workflow static",  "Run a saved JSON step workflow over the engine repl (/workflow static [path])", Scope.ReplOnly),
+        new("/workflow dynamic", "Author + launch a Python driver script of separate mux processes (/workflow dynamic [goal])", Scope.ReplOnly),
+        new("/workflows",        "Live workflow-run viewer - panels per section w/ sub-agent status", Scope.ReplOnly),
+        new("/workflows saved",  "List saved workflow files", Scope.ReplOnly),
+        new("/workflows delete", "Delete a saved workflow file (/workflows delete <name>)", Scope.ReplOnly),
         new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
         new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
         new("/createhook",   "Guided wizard to scaffold a swarm hook (/createhook [id])", Scope.ReplOnly),
@@ -180,7 +185,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> InteractivePicker = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam",
+        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam", "/workflow",
     };
 
     /// <summary>True when <paramref name="line"/> is a bare command that opens an interactive picker

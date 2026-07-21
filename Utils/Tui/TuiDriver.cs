@@ -97,6 +97,9 @@ internal sealed class TuiDriver
     // its lane vanishes from the backslash view.
     private readonly JobView _jobView = new();
     private volatile bool _jobViewActive;
+
+    private readonly WorkflowView _workflowView = new();
+    private volatile bool _workflowViewActive;
     // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
     // this agent (toggling its panel) instead of snapping back to the latest-registered
     // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
@@ -951,6 +954,83 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
+    /// Foreground the /workflows dashboard: a keyboard-navigable viewer over the workflow-run
+    /// registry with the selected run expanded into per-section panels (nested task rows +
+    /// recent journal events). Keys: arrows/j-k select; c cancels a RUNNING run (dynamic driver
+    /// tree killed); Esc/q closes. The registry snapshot is re-pulled on every repaint via
+    /// <paramref name="snapshotProvider"/> so live dynamic-run updates stream in while open.
+    /// Caller holds the console lock for the session.
+    /// </summary>
+    public bool EnterWorkflowView(
+        Func<IReadOnlyList<MuxSwarm.State.WorkflowRun>> snapshotProvider,
+        Func<string, bool> onCancel)
+    {
+        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive) return false;
+
+        _workflowView.SetRuns(snapshotProvider());
+        _workflowView.Open();
+        _workflowViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                var wvPump = ConsoleInputPump.Current;
+                if (wvPump is not null)
+                {
+                    bool got = false;
+                    key = default;
+                    while (!got)
+                    {
+                        if (!wvPump.TryTake(out var wv, 200))
+                        {
+                            // Poll timeout: refresh the snapshot so running dynamic runs stream
+                            // their journal updates into the open panels.
+                            _workflowView.SetRuns(snapshotProvider());
+                            Repaint();
+                            continue;
+                        }
+                        if (wv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = wv.Key; got = true;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _workflowView.Move(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _workflowView.Move(+1); Repaint(); continue; }
+
+                if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
+                    break;
+
+                if (key.Key == ConsoleKey.C)
+                {
+                    var id = _workflowView.SelectedId();
+                    if (id is not null && onCancel(id))
+                    {
+                        _workflowView.SetRuns(snapshotProvider());
+                        Repaint();
+                    }
+                    continue;
+                }
+            }
+        }
+        finally
+        {
+            _workflowViewActive = false;
+            _workflowView.Close();
+            Repaint();
+        }
+        return true;
+    }
+
+    /// <summary>
     /// TOGGLE the mid-turn expansion of a still-running sub-agent's buffered transcript. The
     /// expanded view is a bounded panel rendered INSIDE the repaintable live region (see
     /// BuildLiveFrame), not committed to scrollback - so pressing Ctrl+E repeatedly just flips
@@ -1545,6 +1625,10 @@ internal sealed class TuiDriver
         // the live region so scrollback is preserved; off (the default) adds nothing.
         if (_jobViewActive)
             lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
+
+        // /workflows dashboard: same inline-list pattern; off (the default) adds nothing.
+        if (_workflowViewActive)
+            lines.AddRange(_workflowView.RenderDashboard(width));
 
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it

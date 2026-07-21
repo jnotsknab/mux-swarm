@@ -86,6 +86,8 @@ public static class PlatformContext
     public static readonly string SessionsDirectory = Path.Combine(BaseDirectory, "Sessions");
     public static readonly string TeamsDirectory = Path.Combine(BaseDirectory, "Teams");
     public static readonly string SkillsDirectory = Path.Combine(BaseDirectory, "Skills", "bundled");
+    /// <summary>Root for workflow run manifests/status journals (v0.12.4 dynamic workflows).</summary>
+    public static readonly string WorkflowRunsDirectory = Path.Combine(BaseDirectory, "Runtime", "workflows", "runs");
     public static readonly string MascotPath = Path.Combine(BaseDirectory, "assets", "mascot.png");
 
 

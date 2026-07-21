@@ -1136,6 +1136,23 @@ public static partial class MuxConsole
         }
     }
 
+    /// <summary>
+    /// Foreground the /workflows dashboard: panels per workflow section with nested task rows,
+    /// live-refreshed from the WorkflowRunRegistry while open (dynamic runs stream journal
+    /// updates in). Returns false outside the TUI (the caller then falls back to a static text
+    /// panel). Holds the console lock for the session, like the Agent/Job Views.
+    /// </summary>
+    internal static bool TuiEnterWorkflowView()
+    {
+        if (!ViaDriver) return false;
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterWorkflowView(
+                snapshotProvider: () => MuxSwarm.State.WorkflowRunRegistry.Snapshot(),
+                onCancel: id => MuxSwarm.State.WorkflowRunRegistry.Cancel(id));
+        }
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
 

@@ -78,6 +78,12 @@ public static class GigaMode
         sb.AppendLine("- run_workflow(path): execute a workflow file phase-by-phase in order, routing each step");
         sb.AppendLine("  to its agent and feeding prior step results forward as context.");
         sb.AppendLine("- list_workflows(): list saved workflow files you can run.");
+        sb.AppendLine("- run_dynamic_workflow(name, script): ULTRACODE-STYLE dynamic orchestration. YOU author a");
+        sb.AppendLine("  complete Python driver script (muxswarm SDK) that spawns SEPARATE headless mux processes");
+        sb.AppendLine("  (one per task) and holds all intermediate results in script variables - they never enter");
+        sb.AppendLine("  your context. The run streams into the /workflows viewer via its status journal. Prefer");
+        sb.AppendLine("  this over run_workflow for large fan-outs or multi-phase pipelines where intermediate");
+        sb.AppendLine("  output is bulky. The tool returns the script contract; follow it exactly.");
         sb.AppendLine();
         sb.AppendLine("### How to use it");
         sb.AppendLine("1. Decide whether the task is genuinely parallelizable or multi-phase. If a single agent");
@@ -100,7 +106,7 @@ public static class GigaMode
     /// read_inbox, task_create, task_assign, task_list, team_peerwork, write_workflow, run_workflow,
     /// list_workflows). Kept in sync with the tools.Add() calls below; used to project the
     /// session-header tool badge before the live toolset is assembled.</summary>
-    public const int ToolCount = 11;
+    public const int ToolCount = 12;
 
     public static IList<AITool> BuildTools(
         Func<string, IChatClient> chatClientFactory,
@@ -485,6 +491,23 @@ public static class GigaMode
             },
             name: "list_workflows",
             description: "List the saved workflow files you can run with run_workflow."));
+
+        // --- Dynamic workflow (ultracode parity): the agent authors a Python driver script that
+        // spawns separate headless mux processes; the engine only launches + journals it.
+        tools.Add(AIFunctionFactory.Create(
+            method: (
+                [Description("Short workflow name (labels the run in /workflows).")] string name,
+                [Description("COMPLETE Python driver script following the dynamic-workflow contract (muxswarm SDK, manifest.json + status.ndjson into MUX_RUN_DIR). Pass an empty string to get the contract + skeleton back without launching.")] string script) =>
+            {
+                int maxPar = App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4;
+                if (string.IsNullOrWhiteSpace(script))
+                    return DynamicWorkflow.ScriptContract(maxPar);
+                return DynamicWorkflow.Launch(name ?? "giga-workflow", script);
+            },
+            name: "run_dynamic_workflow",
+            description: "Launch an agent-authored Python driver script that orchestrates separate headless mux " +
+                         "processes (ultracode-style dynamic workflow). Intermediate results stay in script variables; " +
+                         "progress streams to /workflows. Call with an empty script first to receive the exact contract."));
 
         return tools;
     }

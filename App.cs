@@ -836,8 +836,15 @@ public class App
                     MinContDelay = CliCmdUtils.HandleContToggle(ContinuousExec);
                     break;
                 
-                case "/workflow":
-                    CliCmdUtils.HandleInteractiveWorkflow();
+                case var wfc when wfc == "/workflow" || wfc.StartsWith("/workflow ", StringComparison.Ordinal):
+                    // /workflow [static [path]] | [dynamic [goal]] - bare enters a mode picker.
+                    var wfArg = wfc.Length > "/workflow".Length ? wfc.Substring("/workflow".Length).Trim() : "";
+                    CliCmdUtils.HandleInteractiveWorkflow(wfArg);
+                    break;
+                case var wfsc when wfsc == "/workflows" || wfsc.StartsWith("/workflows ", StringComparison.Ordinal):
+                    // /workflows [saved | delete <name>] - bare opens the live run viewer.
+                    var wfsArg = wfsc.Length > "/workflows".Length ? wfsc.Substring("/workflows".Length).Trim() : "";
+                    CliCmdUtils.HandleWorkflowsCommand(wfsArg);
                     break;
                 case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
                     // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
