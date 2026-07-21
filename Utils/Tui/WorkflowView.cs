@@ -5,17 +5,20 @@ namespace MuxSwarm.Utils.Tui;
 /// <summary>
 /// The /workflows live viewer model (v0.12.4). Follows the AgentView/JobView pattern: PURE -
 /// holds selection state and produces markup rows from a registry snapshot, no console I/O,
-/// fully unit-testable. More comprehensive than the `\` Agent View: one PANEL per workflow
-/// section with its task rows (agent + status + detail) nested inside, plus a recent-events
-/// strip for the selected run. The driver serializes access through the console lock.
+/// fully unit-testable. Master/detail layout (mux-style, low density): the selected run
+/// expands into a linked pair of panels - LEFT lists the workflow's phases (sections) with
+/// done-fraction counters, RIGHT enumerates ONLY the selected phase's tasks with per-task
+/// telemetry (agent, status, model, tool count, duration). Up/Down selects the run,
+/// Left/Right selects the phase. The driver serializes access through the console lock.
 /// </summary>
 internal sealed class WorkflowView
 {
     private List<WorkflowRun> _runs = new();
     private string? _selectedId;
+    private int _phaseIdx;
     private bool _open;
-    private const int MaxTaskRowsPerSection = 6;
-    private const int MaxRecent = 3;
+    private const int MaxTaskRows = 12;
+    private const int PhaseColWidth = 30;
 
     public bool IsOpen => _open;
     public void Open() => _open = true;
@@ -27,7 +30,10 @@ internal sealed class WorkflowView
     {
         _runs = new List<WorkflowRun>(snapshot);
         if (_selectedId is null || !_runs.Any(r => string.Equals(r.Id, _selectedId, StringComparison.Ordinal)))
+        {
             _selectedId = _runs.LastOrDefault(r => r.State == WorkflowRunState.Running)?.Id ?? _runs.LastOrDefault()?.Id;
+            _phaseIdx = 0;
+        }
     }
 
     public int Count => _runs.Count;
@@ -39,12 +45,27 @@ internal sealed class WorkflowView
             ? _selectedId : _runs[^1].Id;
     }
 
+    private WorkflowRun? SelectedRun()
+    {
+        var id = SelectedId();
+        return id is null ? null : _runs.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.Ordinal));
+    }
+
     public void Move(int delta)
     {
         if (_runs.Count == 0) return;
         int idx = _runs.FindIndex(r => string.Equals(r.Id, SelectedId(), StringComparison.Ordinal));
         idx = Math.Clamp(idx + delta, 0, _runs.Count - 1);
+        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) _phaseIdx = 0;
         _selectedId = _runs[idx].Id;
+    }
+
+    /// <summary>Move the phase (section) selection of the selected run, clamped.</summary>
+    public void MovePhase(int delta)
+    {
+        var run = SelectedRun();
+        if (run is null || run.Manifest.Sections.Count == 0) return;
+        _phaseIdx = Math.Clamp(_phaseIdx + delta, 0, run.Manifest.Sections.Count - 1);
     }
 
     private static string StateMarkup(WorkflowRunState s) => s switch
@@ -63,9 +84,29 @@ internal sealed class WorkflowView
         _ => $"[{TuiComponents.Dim}]\u25cb[/]",   // pending
     };
 
+    private static string PhaseGlyph(WorkflowSection sec, int ordinal)
+    {
+        int done = sec.Tasks.Count(t => t.Status == "done");
+        if (sec.Tasks.Count > 0 && done == sec.Tasks.Count) return $"[{TuiComponents.Ok}]\u2714[/]";
+        if (sec.Tasks.Any(t => t.Status == "failed")) return $"[{TuiComponents.Err}]\u2717[/]";
+        if (sec.Tasks.Any(t => t.Status == "running")) return $"[{TuiComponents.Ok}]\u25cf[/]";
+        return $"[{TuiComponents.Dim}]{ordinal}[/]";
+    }
+
+    private static string Dur(int secs)
+        => secs >= 60 ? $"{secs / 60}m{secs % 60:00}s" : $"{secs}s";
+
+    /// <summary>Pad a markup cell to a fixed PLAIN-text width (markup tags are zero-width).</summary>
+    private static string Pad(string markup, int width)
+    {
+        int w = TuiMarkup.MarkupWidth(markup);
+        return w >= width ? markup : markup + new string(' ', width - w);
+    }
+
     /// <summary>
-    /// Render the dashboard: header, run list (selection-highlighted), then the SELECTED run
-    /// expanded as section panels with nested task rows + a recent-events strip. Bounded rows.
+    /// Render the dashboard: header, run rows (selection-highlighted), and for the selected
+    /// run a linked master/detail pair - phases (left) and the selected phase's tasks with
+    /// telemetry (right). Bounded rows; low density by construction (one phase expanded).
     /// </summary>
     public List<string> RenderDashboard(int width)
     {
@@ -86,37 +127,64 @@ internal sealed class WorkflowView
             var dur = (r.Finished ?? DateTimeOffset.UtcNow) - r.Started;
             string durTxt = dur.TotalHours >= 1 ? $"{(int)dur.TotalHours}h{dur.Minutes:00}m" : $"{(int)dur.TotalMinutes}m{dur.Seconds:00}s";
             string line = $"[{TuiComponents.Agent}]{Esc(r.Name)}[/] {StateMarkup(r.State)} " +
-                          $"[{TuiComponents.Dim}]{Esc(r.Mode)} \u00b7 {durTxt} \u00b7 {Esc(r.Id)}[/]";
+                          $"[{TuiComponents.Dim}]{Esc(r.Mode)} \u00b7 {durTxt}[/]";
             rows.Add(isSel ? $"  [{TuiComponents.Accent}]\u203a[/] {line}" : $"    {line}");
+        }
 
-            if (!isSel) continue;
-            // Expanded: one panel per section, task rows nested.
-            foreach (var sec in r.Manifest.Sections)
+        var run = SelectedRun();
+        if (run is not null)
+        {
+            var secs = run.Manifest.Sections;
+            if (secs.Count == 0)
             {
-                int done = sec.Tasks.Count(t => t.Status == "done");
-                rows.Add($"      [{TuiComponents.Accent}]\u250c[/] [{TuiComponents.Text}]{Esc(sec.Name)}[/] [{TuiComponents.Dim}]{done}/{sec.Tasks.Count}[/]");
-                int shown = 0;
-                foreach (var t in sec.Tasks)
+                rows.Add($"      [{TuiComponents.Dim}](no manifest yet - the driver script declares phases as it starts)[/]");
+            }
+            else
+            {
+                int pi = Math.Clamp(_phaseIdx, 0, secs.Count - 1);
+                var cur = secs[pi];
+
+                // LEFT panel rows: phases with fraction counters.
+                var left = new List<string> { $"[{TuiComponents.Muted}]Phases[/]" };
+                for (int i = 0; i < secs.Count; i++)
                 {
-                    if (shown++ >= MaxTaskRowsPerSection)
-                    {
-                        rows.Add($"      [{TuiComponents.Dim}]\u2502   +{sec.Tasks.Count - MaxTaskRowsPerSection} more[/]");
-                        break;
-                    }
-                    string detail = string.IsNullOrEmpty(t.Detail) ? "" : $" [{TuiComponents.Dim}]\u00b7 {Esc(Trunc(t.Detail!, Math.Max(20, width - 46)))}[/]";
-                    rows.Add($"      [{TuiComponents.Dim}]\u2502[/] {TaskGlyph(t.Status)} [{TuiComponents.Agent}]{Esc(t.Agent)}[/] [{TuiComponents.Muted}]{Esc(Trunc(t.Label, 40))}[/]{detail}");
+                    var s = secs[i];
+                    int done = s.Tasks.Count(t => t.Status == "done");
+                    string frac = s.Tasks.Count > 0 ? $"{done}/{s.Tasks.Count}" : "";
+                    string mark = i == pi ? $"[{TuiComponents.Accent}]\u203a[/]" : " ";
+                    left.Add($"{mark} {PhaseGlyph(s, i + 1)} [{(i == pi ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(Trunc(s.Name, 16))}[/] [{TuiComponents.Dim}]{frac}[/]");
+                }
+
+                // RIGHT panel rows: the selected phase's tasks with telemetry.
+                var right = new List<string> { $"[{TuiComponents.Muted}]{Esc(cur.Name)} \u00b7 {cur.Tasks.Count} task(s)[/]" };
+                int shown = 0;
+                int labelW = Math.Max(16, width - PhaseColWidth - 44);
+                foreach (var t in cur.Tasks)
+                {
+                    if (shown++ >= MaxTaskRows) { right.Add($"[{TuiComponents.Dim}]+{cur.Tasks.Count - MaxTaskRows} more[/]"); break; }
+                    var tele = new List<string>();
+                    if (!string.IsNullOrEmpty(t.Model)) tele.Add(Esc(t.Model!));
+                    if (t.Tools is { } tc) tele.Add($"{tc} tools");
+                    if (t.Secs is { } sd) tele.Add(Dur(sd));
+                    string teleTxt = tele.Count > 0 ? $" [{TuiComponents.Dim}]{string.Join(" \u00b7 ", tele)}[/]" : "";
+                    string detail = t.Status == "failed" && !string.IsNullOrEmpty(t.Detail)
+                        ? $" [{TuiComponents.Err}]{Esc(Trunc(t.Detail!, Math.Max(16, labelW)))}[/]" : "";
+                    right.Add($"{TaskGlyph(t.Status)} [{TuiComponents.Agent}]{Esc(t.Agent)}[/] [{TuiComponents.Muted}]{Esc(Trunc(t.Label, labelW))}[/]{teleTxt}{detail}");
+                }
+
+                // Compose two columns joined with a vertical rule; pad by PLAIN width.
+                int n = Math.Max(left.Count, right.Count);
+                for (int i = 0; i < n; i++)
+                {
+                    string lc = i < left.Count ? left[i] : "";
+                    string rc = i < right.Count ? right[i] : "";
+                    rows.Add($"      {Pad(lc, PhaseColWidth)}[{TuiComponents.Border}]\u2502[/] {rc}");
                 }
             }
-            if (r.Manifest.Sections.Count == 0)
-                rows.Add($"      [{TuiComponents.Dim}]\u2502 (no manifest yet - the driver script declares sections as it starts)[/]");
-            if (r.Error is not null)
-                rows.Add($"      [{TuiComponents.Err}]\u2717 {Esc(Trunc(r.Error, Math.Max(20, width - 12)))}[/]");
-            // Recent-events strip (newest last), dimmed.
-            var recent = r.RecentEvents.ToArray();
-            foreach (var ev in recent.Skip(Math.Max(0, recent.Length - MaxRecent)))
-                rows.Add($"      [{TuiComponents.Dim}]  {Esc(Trunc(ev, Math.Max(20, width - 10)))}[/]");
+            if (run.Error is not null)
+                rows.Add($"      [{TuiComponents.Err}]\u2717 {Esc(Trunc(run.Error, Math.Max(20, width - 12)))}[/]");
         }
-        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 select \u00b7 c cancel \u00b7 esc/q close[/]");
+        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 run \u00b7 \u2190\u2192 phase \u00b7 c cancel \u00b7 esc/q close[/]");
         return rows;
     }
 

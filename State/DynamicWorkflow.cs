@@ -50,7 +50,11 @@ public static class DynamicWorkflow
         Requirements:
         - Use only: python stdlib + `muxswarm` (importable; MUX_BINARY env points at the engine).
         - Read env: MUX_RUN_DIR (write manifest/status there), MUX_BINARY, MUX_INSTALL_DIR,
-          MUX_MAX_PARALLEL (concurrency cap = {{maxParallel}}).
+          MUX_MAX_PARALLEL (concurrency cap = {{maxParallel}}), MUX_CFG, MUX_SWARMCFG.
+        - MANDATORY: construct the client as MuxSwarm(binary=os.environ["MUX_BINARY"],
+          install_dir=os.environ["MUX_INSTALL_DIR"], cfg=os.environ.get("MUX_CFG"),
+          swarmcfg=os.environ.get("MUX_SWARMCFG")). Omitting cfg/swarmcfg makes every child
+          engine drop into first-run setup and fail with "No endpoint provided. Setup failed."
         - FIRST write manifest.json: {"id","name","mode":"dynamic","sections":[{"name",
           "tasks":[{"id","agent","label","status":"pending"}]}]}.
         - Per task: append {"task":"<id>","status":"running"} to status.ndjson, run the agent via
@@ -59,19 +63,23 @@ public static class DynamicWorkflow
           RunResult has NO `.text` attribute. The output is `res.final_summary or res.streamed_text`
           (summary of the last task_complete, else the concatenated stream); `res.ok` / `res.errors`
           for success checks. Using `res.text` raises AttributeError and fails the task.
+        - Telemetry (optional but preferred): include secs (wall seconds, int), tools (count of
+          TOOL_CALL events), model (agent's model id if known) in the done/failed status lines -
+          the /workflows viewer renders them per task.
         - Bound concurrency with asyncio.Semaphore(MUX_MAX_PARALLEL). Feed results forward between
           sections through variables. Append {"run":"done"} (or {"run":"failed","error":...}) LAST.
         - Deterministic + idempotent where possible; no interactive input; exit 0 on success.
         Skeleton:
         ```python
-        import asyncio, json, os, sys
+        import asyncio, json, os, sys, time
         from muxswarm import MuxSwarm
         RUN = os.environ["MUX_RUN_DIR"]; MAXP = int(os.environ.get("MUX_MAX_PARALLEL", "4"))
         def emit(**kw):
             with open(os.path.join(RUN, "status.ndjson"), "a", encoding="utf-8") as f:
                 f.write(json.dumps(kw) + "\n")
         async def main():
-            mux = MuxSwarm(binary=os.environ["MUX_BINARY"], install_dir=os.environ["MUX_INSTALL_DIR"])
+            mux = MuxSwarm(binary=os.environ["MUX_BINARY"], install_dir=os.environ["MUX_INSTALL_DIR"],
+                           cfg=os.environ.get("MUX_CFG"), swarmcfg=os.environ.get("MUX_SWARMCFG"))
             manifest = {"id": os.path.basename(RUN), "name": "my-workflow", "mode": "dynamic",
                         "sections": [{"name": "Research", "tasks": [
                             {"id": "t1", "agent": "WebAgent", "label": "research X", "status": "pending"}]}]}
@@ -80,13 +88,17 @@ public static class DynamicWorkflow
             async def run_task(tid, agent, goal):
                 async with sem:
                     emit(task=tid, status="running")
+                    t0 = time.monotonic()
                     try:
                         res = await mux.run_goal(goal, mode="agent", agent=agent, timeout=600)
                         out = res.final_summary or res.streamed_text or ""
-                        emit(task=tid, status="done", detail=out[:160])
+                        tools = sum(1 for ev in res.events if getattr(ev.type, "value", "") == "tool_call")
+                        emit(task=tid, status="done", detail=out[:160],
+                             secs=int(time.monotonic() - t0), tools=tools)
                         return out
                     except Exception as e:
-                        emit(task=tid, status="failed", detail=str(e)[:160]); raise
+                        emit(task=tid, status="failed", detail=str(e)[:160],
+                             secs=int(time.monotonic() - t0)); raise
             r1 = await run_task("t1", "WebAgent", "research X")
             emit(run="done")
         asyncio.run(main())
@@ -121,9 +133,37 @@ public static class DynamicWorkflow
         return Launch(name, script, py, maxPar);
     }
 
-    /// <summary>Launch an already-authored driver script (giga hands the script text straight in).</summary>
+    /// <summary>
+    /// Pre-flight contract validation: catches the known-fatal script mistakes BEFORE spawning
+    /// so the author gets the contract back as tool feedback instead of a dead run in the
+    /// viewer. Returns null when the script passes, else the rejection message.
+    /// </summary>
+    public static string? ValidateScript(string script)
+    {
+        var problems = new List<string>();
+        if (string.IsNullOrWhiteSpace(script)) problems.Add("script is empty");
+        else
+        {
+            if (!script.Contains("muxswarm")) problems.Add("does not import/use the muxswarm SDK");
+            if (!script.Contains("MUX_RUN_DIR")) problems.Add("never reads MUX_RUN_DIR (manifest/status journal would be lost)");
+            if (!script.Contains("MUX_CFG")) problems.Add("never passes MUX_CFG/MUX_SWARMCFG to MuxSwarm(...) - every child engine will fail setup with 'No endpoint provided'");
+            if (!script.Contains("manifest.json")) problems.Add("never writes manifest.json (the /workflows viewer would show no phases)");
+            if (!script.Contains("status.ndjson")) problems.Add("never appends status.ndjson (no live progress)");
+            if (script.Contains(".text")) problems.Add("references RunResult .text which does not exist - use final_summary/streamed_text");
+        }
+        if (problems.Count == 0) return null;
+        return "[workflow] Script REJECTED (contract violations):\n- " + string.Join("\n- ", problems)
+             + "\nFix the script per the contract below and call the tool again.\n\n";
+    }
+
+    /// <summary>Launch an already-authored driver script (giga hands the script text straight in).
+    /// The script is contract-validated first; violations return the contract instead of launching.</summary>
     public static string Launch(string name, string script, string? python = null, int? maxParallel = null)
     {
+        int capForContract = maxParallel ?? (App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4);
+        if (ValidateScript(script) is { } rejection)
+            return rejection + ScriptContract(capForContract);
+
         var py = python ?? ResolvePython();
         if (py is null)
             return "[workflow] Dynamic mode needs python on PATH. Install python 3.9+ or use static workflows.";
@@ -145,6 +185,11 @@ public static class DynamicWorkflow
         psi.Environment["MUX_INSTALL_DIR"] = PlatformContext.BaseDirectory;
         psi.Environment["MUX_RUN_DIR"] = dir;
         psi.Environment["MUX_MAX_PARALLEL"] = maxPar.ToString();
+        // Children MUST inherit the parent's live config: a test/staged binary's own Configs/
+        // folder is empty, and a config-less child drops into first-run setup and dies with
+        // "No endpoint provided. Setup failed." (live-observed).
+        if (File.Exists(PlatformContext.ConfigPath)) psi.Environment["MUX_CFG"] = PlatformContext.ConfigPath;
+        if (File.Exists(PlatformContext.SwarmPath)) psi.Environment["MUX_SWARMCFG"] = PlatformContext.SwarmPath;
 
         Process proc;
         try

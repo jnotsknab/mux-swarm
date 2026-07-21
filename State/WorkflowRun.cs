@@ -17,6 +17,9 @@ public sealed class WorkflowTask
     [JsonPropertyName("label")] public string Label { get; set; } = "";
     [JsonPropertyName("status")] public string Status { get; set; } = "pending"; // pending|running|done|failed
     [JsonPropertyName("detail")] public string? Detail { get; set; }
+    [JsonPropertyName("secs")] public int? Secs { get; set; }
+    [JsonPropertyName("tools")] public int? Tools { get; set; }
+    [JsonPropertyName("model")] public string? Model { get; set; }
 }
 
 /// <summary>One section/phase of a workflow: a named panel grouping its tasks.</summary>
@@ -216,12 +219,18 @@ public static class WorkflowRunRegistry
         var id = tid.GetString() ?? "";
         string? status = el.TryGetProperty("status", out var st) ? st.GetString() : null;
         string? detail = el.TryGetProperty("detail", out var dt) ? dt.GetString() : null;
+        int? secs = el.TryGetProperty("secs", out var sc) && sc.ValueKind == JsonValueKind.Number ? sc.GetInt32() : null;
+        int? toolsN = el.TryGetProperty("tools", out var tl) && tl.ValueKind == JsonValueKind.Number ? tl.GetInt32() : null;
+        string? model = el.TryGetProperty("model", out var md) ? md.GetString() : null;
         foreach (var sec in run.Manifest.Sections)
             foreach (var t in sec.Tasks)
                 if (string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase))
                 {
                     if (status is not null) t.Status = status;
                     if (detail is not null) t.Detail = detail;
+                    if (secs is not null) t.Secs = secs;
+                    if (toolsN is not null) t.Tools = toolsN;
+                    if (model is not null) t.Model = model;
                     return;
                 }
     }

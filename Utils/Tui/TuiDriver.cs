@@ -1005,6 +1005,10 @@ internal sealed class TuiDriver
                     { _workflowView.Move(-1); Repaint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
                     { _workflowView.Move(+1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H)
+                    { _workflowView.MovePhase(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L)
+                    { _workflowView.MovePhase(+1); Repaint(); continue; }
 
                 if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
                     break;

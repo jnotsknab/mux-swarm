@@ -118,29 +118,70 @@ public class WorkflowRunRegistryTests : IDisposable
     }
 
     [Fact]
-    public void Viewer_RendersPanels_TasksAndSelection()
+    public void Viewer_MasterDetail_PhasesAndSelectedPhaseTasks()
     {
         var run = NewDynamicRun("build-site");
         WriteManifest(
             ("Research", new[] { ("t1", "WebAgent", "gather docs") }),
             ("Implement", new[] { ("t2", "CodeAgent", "write pages"), ("t3", "CodeAgent", "style pass") }));
-        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"detail\":\"12 sources\"}");
+        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"secs\":95,\"tools\":14}");
         AppendStatus("{\"task\":\"t2\",\"status\":\"running\"}");
         Poll();
 
         var view = new WorkflowView();
         view.SetRuns(WorkflowRunRegistry.Snapshot());
-        var rows = view.RenderDashboard(120);
+        var rows = view.RenderDashboard(140);
         string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
 
-        Assert.Contains("workflows", plain);
-        Assert.Contains("build-site", plain);
+        // Left panel: both phases with fraction counters.
+        Assert.Contains("Phases", plain);
         Assert.Contains("Research", plain);
         Assert.Contains("Implement", plain);
+        Assert.Contains("1/1", plain);
+        Assert.Contains("0/2", plain);
+        // Right panel: phase 0 (Research) is selected by default - its task + telemetry show,
+        // the OTHER phase's task labels do not (master/detail, not a dense full dump).
         Assert.Contains("WebAgent", plain);
-        Assert.Contains("12 sources", plain);
-        Assert.Contains("1/1", plain);       // Research done-count
-        Assert.Contains("0/2", plain);       // Implement done-count
+        Assert.Contains("gather docs", plain);
+        Assert.Contains("14 tools", plain);
+        Assert.Contains("1m35s", plain);
+        Assert.DoesNotContain("write pages", plain);
+
+        // Phase navigation swaps the detail panel.
+        view.MovePhase(+1);
+        plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.Contains("write pages", plain);
+        Assert.DoesNotContain("gather docs", plain);
+    }
+
+    [Fact]
+    public void Viewer_FailedTaskDetail_ShownInline()
+    {
+        var run = NewDynamicRun("wf-fail");
+        WriteManifest(("S", new[] { ("t1", "WebAgent", "look it up") }));
+        AppendStatus("{\"task\":\"t1\",\"status\":\"failed\",\"detail\":\"No endpoint provided\"}");
+        Poll();
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        string plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.Contains("No endpoint provided", plain);
+    }
+
+    [Fact]
+    public void Validator_RejectsContractViolations_AcceptsSkeletonShape()
+    {
+        Assert.NotNull(DynamicWorkflow.ValidateScript(""));
+        Assert.NotNull(DynamicWorkflow.ValidateScript("print('hi')"));
+        // Missing cfg wiring is fatal (the live 'No endpoint provided' failure class).
+        var noCfg = "import muxswarm, os\nRUN=os.environ['MUX_RUN_DIR']\n# manifest.json status.ndjson";
+        Assert.Contains("No endpoint provided", DynamicWorkflow.ValidateScript(noCfg));
+        // .text usage is fatal.
+        var withText = "import muxswarm, os\nRUN=os.environ['MUX_RUN_DIR']\nos.environ.get('MUX_CFG')\n# manifest.json status.ndjson\nres.text";
+        Assert.Contains(".text", DynamicWorkflow.ValidateScript(withText));
+        // A script exercising the whole contract passes.
+        var good = "import muxswarm, os\nRUN=os.environ['MUX_RUN_DIR']\ncfg=os.environ.get('MUX_CFG')\n" +
+                   "# writes manifest.json and appends status.ndjson\nout = res.final_summary or res.streamed_text";
+        Assert.Null(DynamicWorkflow.ValidateScript(good));
     }
 
     [Fact]
