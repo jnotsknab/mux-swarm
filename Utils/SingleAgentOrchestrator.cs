@@ -85,6 +85,54 @@ public static class SingleAgentOrchestrator
             || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Dispatch classification for the very FIRST interactive input of a session.
+    /// The session-agnostic MetaCommandDispatch only covers a fraction of the in-session
+    /// command surface, so anything it returns NotHandled for is classified here: commands
+    /// already serviceable before the agent exists are dispatched directly; every REMAINING
+    /// known session-native command is guarded (notice + re-prompt) so no known command can
+    /// ever leak to the model as the opening goal. Unknown slash text stays a goal.</summary>
+    internal enum FirstTurnInputKind
+    {
+        /// <summary>A real goal (plain text or an unknown slash command) - send to the agent.</summary>
+        Goal,
+        /// <summary>!&lt;command&gt; - run the shell command; its output becomes the opening goal.</summary>
+        Shell,
+        /// <summary>Bare "/" or "/?" - render the slash-command palette.</summary>
+        Palette,
+        /// <summary>/doctor - stateless health check.</summary>
+        Doctor,
+        /// <summary>/diff - working-tree git diff.</summary>
+        Diff,
+        /// <summary>/cost [all] - cost readout (zeros on turn one, but valid).</summary>
+        Cost,
+        /// <summary>/init - workspace scan; needs only the chat client, which exists here.</summary>
+        Init,
+        /// <summary>/review - diff review; needs only the chat client, which exists here.</summary>
+        Review,
+        /// <summary>Any other known session-native command - nothing to act on yet; notice + re-prompt.</summary>
+        GuardedSessionNative,
+    }
+
+    internal static FirstTurnInputKind ClassifyFirstTurnInput(string? input)
+    {
+        var t = (input ?? "").Trim();
+        if (t.StartsWith("!") && t.Length > 1) return FirstTurnInputKind.Shell;
+        if (t == "/" || t == "/?") return FirstTurnInputKind.Palette;
+        if (t.Length == 0 || t[0] != '/') return FirstTurnInputKind.Goal;
+        string cmd = t.Split(' ', 2)[0].ToLowerInvariant();
+        return cmd switch
+        {
+            "/doctor" => FirstTurnInputKind.Doctor,
+            "/diff"   => FirstTurnInputKind.Diff,
+            "/cost"   => FirstTurnInputKind.Cost,
+            "/init"   => FirstTurnInputKind.Init,
+            "/review" => FirstTurnInputKind.Review,
+            _ => Tui.TuiCommands.IsSessionNative(cmd)
+                ? FirstTurnInputKind.GuardedSessionNative
+                : FirstTurnInputKind.Goal,
+        };
+    }
+
     private static ModelOpts? GetSingleAgentModelOpts()
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
@@ -877,7 +925,59 @@ public static class SingleAgentOrchestrator
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
                 if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
 
-                initialGoal = firstInput;
+                // Second gate: MetaCommandDispatch only knows the session-agnostic commands, so
+                // without this every other known session command would silently become the
+                // opening LLM goal. Commands serviceable before the agent exists are dispatched
+                // here; the rest of the session-native surface gets a notice + re-prompt via the
+                // TuiCommands.IsSessionNative catch-all, so NO known command can leak as a goal.
+                switch (ClassifyFirstTurnInput(firstInput))
+                {
+                    case FirstTurnInputKind.Shell:
+                    {
+                        string shellCmd = firstInput.Trim()[1..].Trim();
+                        if (shellCmd.Length == 0) { MuxConsole.WriteMuted("Usage: !<command>"); continue; }
+                        ShellCapture.Result r = await ShellCapture.RunAsync(
+                            shellCmd, PlatformContext.WorkspaceRoot, 60, 60_000, cancellationToken);
+                        string output = string.IsNullOrWhiteSpace(r.Combined) ? "(no output)" : r.Combined;
+                        MuxConsole.WritePanel($"! {shellCmd}", output);
+                        initialGoal = $"[ran: {shellCmd}]\n{output}";
+                        break;
+                    }
+                    case FirstTurnInputKind.Palette:
+                        MuxConsole.RenderTuiSlashPalette();
+                        continue;
+                    case FirstTurnInputKind.Doctor:
+                        HandleDoctor();
+                        continue;
+                    case FirstTurnInputKind.Diff:
+                        await HandleDiffAsync(cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.Cost:
+                    {
+                        var costArg = firstInput.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        if (costArg.Length > 1 && costArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                            HandleCostBreakdown(resolvedModelId);
+                        else
+                            HandleCost(resolvedModelId);
+                        continue;
+                    }
+                    case FirstTurnInputKind.Init:
+                        // compactionChatOptions is resolved later in the session bootstrap; the
+                        // handler accepts null options (same as an unconfigured compaction agent).
+                        await HandleInitAsync(client, null, cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.Review:
+                        await HandleReviewAsync(client, null, cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.GuardedSessionNative:
+                        MuxConsole.WriteMuted(
+                            $"'{firstInput.Trim().Split(' ', 2)[0]}' needs a running session - nothing to act on yet. "
+                            + "Send a first message to start the session.");
+                        continue;
+                    default:
+                        initialGoal = firstInput;
+                        break;
+                }
                 break;
             }
         }
