@@ -73,6 +73,12 @@ public static class DynamicWorkflow
           TOOL_CALL events), tokens (int, from the last agent_turn_end event's "tokens" field in
           res.events raw payloads), model (agent's model id if known) in the done/failed status
           lines - the /workflows viewer renders them per task.
+        - PER-TASK OUTPUT FILE (MANDATORY): stream each task's output to MUX_RUN_DIR/task_<id>.out
+          LIVE - pass an on_event callback to run_goal that appends every stream-event's text to
+          the file as it arrives (open in append mode per write, no buffering held across awaits).
+          The /workflows viewer tails this file when the user expands the task row, so this is
+          what makes live progress and full output visible. The 160-char detail field is only the
+          collapsed-row summary; the .out file is the real transcript.
         - Bound concurrency with asyncio.Semaphore(MUX_MAX_PARALLEL). Feed results forward between
           sections through variables. Append {"run":"done"} (or {"run":"failed","error":...}) LAST.
         - Deterministic + idempotent where possible; no interactive input; exit 0 on success.
@@ -98,13 +104,23 @@ public static class DynamicWorkflow
                 p = os.path.join(RUN, f"goal_{tid}.txt")
                 with open(p, "w", encoding="utf-8") as f: f.write(text)
                 return p
+            def out_write(tid, text):
+                with open(os.path.join(RUN, f"task_{tid}.out"), "a", encoding="utf-8") as f:
+                    f.write(text)
             async def run_task(tid, agent, goal):
                 async with sem:
                     emit(task=tid, status="running")
                     t0 = time.monotonic()
+                    def on_ev(ev, _tid=tid):
+                        if getattr(ev.type, "value", "") == "stream":
+                            t = ev.raw.get("text") or ""
+                            if t: out_write(_tid, t)
                     try:
-                        res = await mux.run_goal(goal_arg(tid, goal), mode="agent", agent=agent, timeout=600)
+                        res = await mux.run_goal(goal_arg(tid, goal), mode="agent", agent=agent,
+                                                 on_event=on_ev, timeout=600)
                         out = res.final_summary or res.streamed_text or ""
+                        if res.final_summary and res.final_summary not in (res.streamed_text or ""):
+                            out_write(tid, "\n" + res.final_summary)
                         tools = sum(1 for ev in res.events if getattr(ev.type, "value", "") == "tool_call")
                         toks = 0
                         for ev in res.events:
@@ -166,6 +182,7 @@ public static class DynamicWorkflow
             if (!script.Contains("MUX_CFG")) problems.Add("never passes MUX_CFG/MUX_SWARMCFG to MuxSwarm(...) - every child engine will fail setup with 'No endpoint provided'");
             if (!script.Contains("manifest.json")) problems.Add("never writes manifest.json (the /workflows viewer would show no phases)");
             if (!script.Contains("status.ndjson")) problems.Add("never appends status.ndjson (no live progress)");
+            if (!script.Contains(".out")) problems.Add("never writes per-task task_<id>.out output files (expanded rows in /workflows would show nothing)");
             if (script.Contains(".text")) problems.Add("references RunResult .text which does not exist - use final_summary/streamed_text");
         }
         if (problems.Count == 0) return null;

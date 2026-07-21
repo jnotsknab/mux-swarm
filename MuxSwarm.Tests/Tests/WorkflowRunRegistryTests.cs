@@ -179,13 +179,40 @@ public class WorkflowRunRegistryTests : IDisposable
         Assert.Contains("task number 16", plain);
         Assert.DoesNotContain("task number 1 ", plain.Replace("task number 1\n", ""));
 
-        // Expansion: back to t1, expanded detail body renders; collapsed it is absent (done task).
+        // Expansion: back to t1, expanded body renders; collapsed it is absent (done task).
         for (int i = 0; i < 15; i++) view.MoveTask(-1);
         plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
         Assert.DoesNotContain("only show when the row is expanded", plain);
         view.ToggleTaskExpand();
         plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        // No task_t1.out file -> falls back to journal detail.
         Assert.Contains("only show when the row is expanded", plain);
+    }
+
+    [Fact]
+    public void Viewer_ExpandedTask_TailsLiveOutputFile()
+    {
+        var run = NewDynamicRun("live-out");
+        WriteManifest(("S", new[] { ("t1", "WebAgent", "stream me") }));
+        AppendStatus("{\"task\":\"t1\",\"status\":\"running\"}");
+        // Simulate the driver streaming: many lines so the tail window engages.
+        var lines = Enumerable.Range(1, 40).Select(i => $"streamed line {i}");
+        File.WriteAllText(Path.Combine(_dir, "task_t1.out"), string.Join("\n", lines));
+        Poll();
+
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        view.ToggleTaskExpand();
+        string plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        // The TAIL shows (last lines), earliest lines are elided with a marker.
+        Assert.Contains("streamed line 40", plain);
+        Assert.DoesNotContain("streamed line 1\n", plain);
+        Assert.Contains("earlier line", plain);
+
+        // Live growth: append more, re-render (no re-poll needed - file read at render).
+        File.AppendAllText(Path.Combine(_dir, "task_t1.out"), "\nfresh streamed tail");
+        plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.Contains("fresh streamed tail", plain);
     }
 
     [Fact]
@@ -236,7 +263,7 @@ public class WorkflowRunRegistryTests : IDisposable
         Assert.Contains(".text", DynamicWorkflow.ValidateScript(withText));
         // A script exercising the whole contract passes.
         var good = "import muxswarm, os\nRUN=os.environ['MUX_RUN_DIR']\ncfg=os.environ.get('MUX_CFG')\n" +
-                   "# writes manifest.json and appends status.ndjson\nout = res.final_summary or res.streamed_text";
+                   "# writes manifest.json and appends status.ndjson and task_t1.out\nout = res.final_summary or res.streamed_text";
         Assert.Null(DynamicWorkflow.ValidateScript(good));
     }
 

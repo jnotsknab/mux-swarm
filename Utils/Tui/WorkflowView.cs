@@ -164,6 +164,7 @@ internal sealed class WorkflowView
         var run = SelectedRun();
         if (run is not null)
         {
+            _renderRunDir = run.RunDir;
             var secs = run.Manifest.Sections;
             if (secs.Count == 0)
             {
@@ -216,15 +217,19 @@ internal sealed class WorkflowView
                     right.Add($"{chev}{TaskGlyph(t.Status)} [{TuiComponents.Agent}]{Esc(t.Agent)}[/] [{(isTaskSel ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(Trunc(t.Label, labelW))}[/]{teleTxt}{detail}");
                     if (_taskExpanded && isTaskSel)
                     {
-                        // Expanded: full label + full detail, wrapped to the panel width, dimmed
-                        // (error-colored when failed). Bounded to keep the live region sane.
-                        string body = string.IsNullOrEmpty(t.Detail) ? "(no detail reported yet)" : t.Detail!;
+                        // Expanded: LIVE TAIL of the task's output file (task_<id>.out in the run
+                        // dir, streamed by the driver script as the child produces it), falling
+                        // back to the journal detail when no file exists. Shows the LAST
+                        // ExpandTailLines wrapped lines so a running task reads like a live
+                        // transcript tail; refreshed every repaint (the modal repolls ~200ms).
+                        string body = ReadTaskOutput(t) ?? (string.IsNullOrEmpty(t.Detail) ? "(no output yet)" : t.Detail!);
                         string colour = t.Status == "failed" ? TuiComponents.Err : TuiComponents.Dim;
                         int wrapW = Math.Max(24, width - PhaseColWidth - 14);
-                        var wrapped = TuiMarkup.WrapPlain($"{t.Label} \u00b7 {body}", wrapW);
-                        foreach (var wl in wrapped.Take(6))
+                        var wrapped = TuiMarkup.WrapPlain(body, wrapW);
+                        int skip = Math.Max(0, wrapped.Count - ExpandTailLines);
+                        if (skip > 0) right.Add($"   [{TuiComponents.Dim}]\u2191 {skip} earlier line(s)[/]");
+                        foreach (var wl in wrapped.Skip(skip))
                             right.Add($"   [{colour}]{Esc(wl)}[/]");
-                        if (wrapped.Count > 6) right.Add($"   [{TuiComponents.Dim}]\u2026[/]");
                     }
                 }
                 if (off + MaxTaskRows < cur.Tasks.Count)
@@ -244,6 +249,33 @@ internal sealed class WorkflowView
         }
         rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]");
         return rows;
+    }
+
+    private const int ExpandTailLines = 14;
+    private const int MaxOutReadBytes = 64 * 1024;
+
+    // Set per-render so the expansion reader knows the selected run's directory.
+    private string? _renderRunDir;
+
+    /// <summary>Best-effort read of the task's live output file (task_&lt;id&gt;.out in the run
+    /// dir, appended by the driver script as the child streams). Reads only the trailing
+    /// window so huge transcripts stay cheap. Null when absent/unreadable.</summary>
+    private string? ReadTaskOutput(WorkflowTask t)
+    {
+        if (_renderRunDir is null) return null;
+        try
+        {
+            var p = Path.Combine(_renderRunDir, $"task_{t.Id}.out");
+            if (!File.Exists(p)) return null;
+            using var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length == 0) return null;
+            long start = Math.Max(0, fs.Length - MaxOutReadBytes);
+            fs.Seek(start, SeekOrigin.Begin);
+            using var sr = new StreamReader(fs);
+            var s = sr.ReadToEnd();
+            return string.IsNullOrWhiteSpace(s) ? null : s;
+        }
+        catch { return null; }
     }
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
