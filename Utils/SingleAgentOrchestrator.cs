@@ -2569,6 +2569,15 @@ public static class SingleAgentOrchestrator
                     // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
                     MuxSwarm.State.DaemonCommand.Run(metaCmd);
                 }
+                else if (metaCmd.Equals("/workflows", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/workflows ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Live workflow-run viewer (session-agnostic process-level state); MUST
+                    // precede the IsReplOnly slash-anywhere fallthrough now that the command
+                    // is Scope.Both.
+                    CliCmdUtils.HandleWorkflowsCommand(
+                        metaCmd.Length > "/workflows".Length ? metaCmd.Substring("/workflows".Length).Trim() : "");
+                }
                 else if (metaCmd.Equals("/update", StringComparison.OrdinalIgnoreCase))
                 {
                     // Process-level self-update (Scope.Both), identical to the menu path: pull the
