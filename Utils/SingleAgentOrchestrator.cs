@@ -2051,6 +2051,14 @@ public static class SingleAgentOrchestrator
                                     lastToolName = functionCall.Name;
                                     CostLedger.RecordToolCall(resolvedModelId);
                                     MuxConsole.SetTuiToolCalls(++_sessionToolCalls);
+                                    // Stdio parity: the SDK event enum has TOOL_CALL but the engine
+                                    // only ever emitted tool_result on this path; headless drivers
+                                    // (dynamic workflows) count tool_call, so emit it at invocation
+                                    // time. STDIO-GATED: the TUI thinking indicator already shows
+                                    // tool activity, and the tool_call hook is enqueued below -
+                                    // calling WriteToolCall unconditionally would double both.
+                                    if (MuxConsole.StdioMode)
+                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old

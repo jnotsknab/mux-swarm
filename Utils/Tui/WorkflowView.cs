@@ -55,11 +55,13 @@ internal sealed class WorkflowView
         return id is null ? null : _runs.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.Ordinal));
     }
 
+    /// <summary>Cycle the run selection (Tab). WRAPS at the ends so repeated Tab loops
+    /// through every run instead of pinning at the last one.</summary>
     public void Move(int delta)
     {
         if (_runs.Count == 0) return;
         int idx = _runs.FindIndex(r => string.Equals(r.Id, SelectedId(), StringComparison.Ordinal));
-        idx = Math.Clamp(idx + delta, 0, _runs.Count - 1);
+        idx = ((idx + delta) % _runs.Count + _runs.Count) % _runs.Count;
         if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
         _selectedId = _runs[idx].Id;
     }

@@ -1742,6 +1742,15 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>Stdio-ONLY tool_call event (no TUI render, no hook enqueue) - used by the
+    /// orchestrator's invocation site where rendering + hooks are already handled separately.
+    /// Headless drivers (SDK / dynamic workflows) rely on this for tool counting.</summary>
+    public static void EmitToolCallStdio(string agent, string tool)
+    {
+        if (!StdioMode) return;
+        WithConsole(() => EmitJson("tool_call", D(("agent", agent), ("tool", tool))));
+    }
+
     public static void WriteToolCall(string agent, string tool, string? args = null)
     {
         WithConsole(() =>

@@ -230,10 +230,14 @@ public class WorkflowRunRegistryTests : IDisposable
         Assert.Contains("first", plain);
         Assert.Contains("second", plain);
         Assert.Equal(b.Id, view.SelectedId());
-        // Ordinal jump + Tab-style cycle both re-target.
+        // Ordinal jump + Tab-style cycle both re-target; Tab WRAPS past the last run.
         view.SelectRunAt(1);
         Assert.Equal(a.Id, view.SelectedId());
         view.Move(+1);
+        Assert.Equal(b.Id, view.SelectedId());
+        view.Move(+1);   // wrap: last -> first
+        Assert.Equal(a.Id, view.SelectedId());
+        view.Move(-1);   // wrap backwards: first -> last
         Assert.Equal(b.Id, view.SelectedId());
     }
 
@@ -280,10 +284,10 @@ public class WorkflowRunRegistryTests : IDisposable
 
         view.Move(-1);
         Assert.Equal(done.Id, view.SelectedId());
-        view.Move(-1);                              // clamped
-        Assert.Equal(done.Id, view.SelectedId());
-        view.Move(+1);
+        view.Move(-1);                              // wraps: first -> last
         Assert.Equal(live.Id, view.SelectedId());
+        view.Move(+1);                              // wraps: last -> first
+        Assert.Equal(done.Id, view.SelectedId());
     }
 
     [Fact]
