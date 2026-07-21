@@ -124,7 +124,7 @@ public class WorkflowRunRegistryTests : IDisposable
         WriteManifest(
             ("Research", new[] { ("t1", "WebAgent", "gather docs") }),
             ("Implement", new[] { ("t2", "CodeAgent", "write pages"), ("t3", "CodeAgent", "style pass") }));
-        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"secs\":95,\"tools\":14}");
+        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"secs\":95,\"tools\":14,\"tokens\":41300}");
         AppendStatus("{\"task\":\"t2\",\"status\":\"running\"}");
         Poll();
 
@@ -145,6 +145,7 @@ public class WorkflowRunRegistryTests : IDisposable
         Assert.Contains("gather docs", plain);
         Assert.Contains("14 tools", plain);
         Assert.Contains("1m35s", plain);
+        Assert.Contains("41.3k tok", plain);
         Assert.DoesNotContain("write pages", plain);
 
         // Phase navigation swaps the detail panel.
@@ -152,6 +153,61 @@ public class WorkflowRunRegistryTests : IDisposable
         plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
         Assert.Contains("write pages", plain);
         Assert.DoesNotContain("gather docs", plain);
+    }
+
+    [Fact]
+    public void Viewer_TaskSelection_WindowFollowsAndExpands()
+    {
+        var run = NewDynamicRun("many-tasks");
+        var tasks = Enumerable.Range(1, 20).Select(i => ($"t{i}", "WebAgent", $"task number {i}")).ToArray();
+        WriteManifest(("Big", tasks));
+        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"detail\":\"a fairly long detail body that should only show when the row is expanded with enter\"}");
+        Poll();
+
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        string plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        // 20 tasks, window of 12: initial window shows t1..t12 and a "more" hint below.
+        Assert.Contains("task number 1", plain);
+        Assert.Contains("task number 12", plain);
+        Assert.DoesNotContain("task number 13", plain);
+        Assert.Contains("8 more", plain);
+
+        // Scroll selection past the window: window follows.
+        for (int i = 0; i < 15; i++) view.MoveTask(+1);
+        plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.Contains("task number 16", plain);
+        Assert.DoesNotContain("task number 1 ", plain.Replace("task number 1\n", ""));
+
+        // Expansion: back to t1, expanded detail body renders; collapsed it is absent (done task).
+        for (int i = 0; i < 15; i++) view.MoveTask(-1);
+        plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.DoesNotContain("only show when the row is expanded", plain);
+        view.ToggleTaskExpand();
+        plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        Assert.Contains("only show when the row is expanded", plain);
+    }
+
+    [Fact]
+    public void Viewer_MultipleRuns_ListedAndSwitchable()
+    {
+        var a = NewDynamicRun("first"); a.State = WorkflowRunState.Done;
+        var b = NewDynamicRun("second");
+        WriteManifest(("S", new[] { ("t1", "A", "x") }));
+        Poll();
+
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        string plain = string.Join("\n", view.RenderDashboard(140).Select(TuiMarkup.Plain));
+        // Both runs listed; newest running selected.
+        Assert.Contains("first", plain);
+        Assert.Contains("second", plain);
+        Assert.Equal(b.Id, view.SelectedId());
+        // Ordinal jump + Tab-style cycle both re-target.
+        view.SelectRunAt(1);
+        Assert.Equal(a.Id, view.SelectedId());
+        view.Move(+1);
+        Assert.Equal(b.Id, view.SelectedId());
     }
 
     [Fact]

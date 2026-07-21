@@ -16,6 +16,8 @@ internal sealed class WorkflowView
     private List<WorkflowRun> _runs = new();
     private string? _selectedId;
     private int _phaseIdx;
+    private int _taskIdx;
+    private bool _taskExpanded;
     private bool _open;
     private const int MaxTaskRows = 12;
     private const int PhaseColWidth = 30;
@@ -33,6 +35,8 @@ internal sealed class WorkflowView
         {
             _selectedId = _runs.LastOrDefault(r => r.State == WorkflowRunState.Running)?.Id ?? _runs.LastOrDefault()?.Id;
             _phaseIdx = 0;
+            _taskIdx = 0;
+            _taskExpanded = false;
         }
     }
 
@@ -56,7 +60,7 @@ internal sealed class WorkflowView
         if (_runs.Count == 0) return;
         int idx = _runs.FindIndex(r => string.Equals(r.Id, SelectedId(), StringComparison.Ordinal));
         idx = Math.Clamp(idx + delta, 0, _runs.Count - 1);
-        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) _phaseIdx = 0;
+        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
         _selectedId = _runs[idx].Id;
     }
 
@@ -65,7 +69,33 @@ internal sealed class WorkflowView
     {
         var run = SelectedRun();
         if (run is null || run.Manifest.Sections.Count == 0) return;
-        _phaseIdx = Math.Clamp(_phaseIdx + delta, 0, run.Manifest.Sections.Count - 1);
+        int next = Math.Clamp(_phaseIdx + delta, 0, run.Manifest.Sections.Count - 1);
+        if (next != _phaseIdx) { _taskIdx = 0; _taskExpanded = false; }
+        _phaseIdx = next;
+    }
+
+    /// <summary>Move the task SELECTION within the selected phase (Up/Down); the visible
+    /// window follows the selection. Collapses any expansion on move.</summary>
+    public void MoveTask(int delta)
+    {
+        var run = SelectedRun();
+        if (run is null || run.Manifest.Sections.Count == 0) return;
+        var sec = run.Manifest.Sections[Math.Clamp(_phaseIdx, 0, run.Manifest.Sections.Count - 1)];
+        if (sec.Tasks.Count == 0) return;
+        _taskIdx = Math.Clamp(_taskIdx + delta, 0, sec.Tasks.Count - 1);
+        _taskExpanded = false;
+    }
+
+    /// <summary>Toggle the selected task's expansion (full detail text, wrapped).</summary>
+    public void ToggleTaskExpand() => _taskExpanded = !_taskExpanded;
+
+    /// <summary>Select a run by 1-based ordinal (number keys). No-op out of range.</summary>
+    public void SelectRunAt(int ordinal)
+    {
+        if (ordinal < 1 || ordinal > _runs.Count) return;
+        var id = _runs[ordinal - 1].Id;
+        if (!string.Equals(id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
+        _selectedId = id;
     }
 
     private static string StateMarkup(WorkflowRunState s) => s switch
@@ -155,22 +185,50 @@ internal sealed class WorkflowView
                     left.Add($"{mark} {PhaseGlyph(s, i + 1)} [{(i == pi ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(Trunc(s.Name, 16))}[/] [{TuiComponents.Dim}]{frac}[/]");
                 }
 
-                // RIGHT panel rows: the selected phase's tasks with telemetry.
-                var right = new List<string> { $"[{TuiComponents.Muted}]{Esc(cur.Name)} \u00b7 {cur.Tasks.Count} task(s)[/]" };
-                int shown = 0;
-                int labelW = Math.Max(16, width - PhaseColWidth - 44);
-                foreach (var t in cur.Tasks)
+                // RIGHT panel rows: a selection-follow window over the selected phase's tasks
+                // with telemetry (tokens \u00b7 tools \u00b7 duration; running tasks tick live). The
+                // selected row carries a chevron and can be EXPANDED (enter/o) to show its full
+                // detail text wrapped beneath.
+                int ti = Math.Clamp(_taskIdx, 0, Math.Max(0, cur.Tasks.Count - 1));
+                int off = Math.Clamp(ti - MaxTaskRows + 1, 0, Math.Max(0, cur.Tasks.Count - MaxTaskRows));
+                if (ti < off) off = ti;
+                string winHint = cur.Tasks.Count > MaxTaskRows
+                    ? $" \u00b7 {off + 1}-{Math.Min(off + MaxTaskRows, cur.Tasks.Count)} of {cur.Tasks.Count}"
+                    : "";
+                var right = new List<string> { $"[{TuiComponents.Muted}]{Esc(cur.Name)} \u00b7 {cur.Tasks.Count} task(s){winHint}[/]" };
+                if (off > 0) right.Add($"[{TuiComponents.Dim}]\u2191 {off} more[/]");
+                int labelW = Math.Max(16, width - PhaseColWidth - 52);
+                for (int k = off; k < Math.Min(off + MaxTaskRows, cur.Tasks.Count); k++)
                 {
-                    if (shown++ >= MaxTaskRows) { right.Add($"[{TuiComponents.Dim}]+{cur.Tasks.Count - MaxTaskRows} more[/]"); break; }
+                    var t = cur.Tasks[k];
+                    bool isTaskSel = k == ti;
                     var tele = new List<string>();
                     if (!string.IsNullOrEmpty(t.Model)) tele.Add(Esc(t.Model!));
+                    if (t.Tokens is { } tok) tele.Add(tok >= 1000 ? $"{tok / 1000.0:0.0}k tok" : $"{tok} tok");
                     if (t.Tools is { } tc) tele.Add($"{tc} tools");
                     if (t.Secs is { } sd) tele.Add(Dur(sd));
+                    else if (t.Status == "running" && t.StartedAt is { } st)
+                        tele.Add(Dur((int)(DateTimeOffset.UtcNow - st).TotalSeconds));
                     string teleTxt = tele.Count > 0 ? $" [{TuiComponents.Dim}]{string.Join(" \u00b7 ", tele)}[/]" : "";
-                    string detail = t.Status == "failed" && !string.IsNullOrEmpty(t.Detail)
+                    string detail = t.Status == "failed" && !string.IsNullOrEmpty(t.Detail) && !(_taskExpanded && isTaskSel)
                         ? $" [{TuiComponents.Err}]{Esc(Trunc(t.Detail!, Math.Max(16, labelW)))}[/]" : "";
-                    right.Add($"{TaskGlyph(t.Status)} [{TuiComponents.Agent}]{Esc(t.Agent)}[/] [{TuiComponents.Muted}]{Esc(Trunc(t.Label, labelW))}[/]{teleTxt}{detail}");
+                    string chev = isTaskSel ? $"[{TuiComponents.Accent}]\u203a[/]" : " ";
+                    right.Add($"{chev}{TaskGlyph(t.Status)} [{TuiComponents.Agent}]{Esc(t.Agent)}[/] [{(isTaskSel ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(Trunc(t.Label, labelW))}[/]{teleTxt}{detail}");
+                    if (_taskExpanded && isTaskSel)
+                    {
+                        // Expanded: full label + full detail, wrapped to the panel width, dimmed
+                        // (error-colored when failed). Bounded to keep the live region sane.
+                        string body = string.IsNullOrEmpty(t.Detail) ? "(no detail reported yet)" : t.Detail!;
+                        string colour = t.Status == "failed" ? TuiComponents.Err : TuiComponents.Dim;
+                        int wrapW = Math.Max(24, width - PhaseColWidth - 14);
+                        var wrapped = TuiMarkup.WrapPlain($"{t.Label} \u00b7 {body}", wrapW);
+                        foreach (var wl in wrapped.Take(6))
+                            right.Add($"   [{colour}]{Esc(wl)}[/]");
+                        if (wrapped.Count > 6) right.Add($"   [{TuiComponents.Dim}]\u2026[/]");
+                    }
                 }
+                if (off + MaxTaskRows < cur.Tasks.Count)
+                    right.Add($"[{TuiComponents.Dim}]\u2193 {cur.Tasks.Count - off - MaxTaskRows} more[/]");
 
                 // Compose two columns joined with a vertical rule; pad by PLAIN width.
                 int n = Math.Max(left.Count, right.Count);
@@ -184,7 +242,7 @@ internal sealed class WorkflowView
             if (run.Error is not null)
                 rows.Add($"      [{TuiComponents.Err}]\u2717 {Esc(Trunc(run.Error, Math.Max(20, width - 12)))}[/]");
         }
-        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 run \u00b7 \u2190\u2192 phase \u00b7 c cancel \u00b7 esc/q close[/]");
+        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]");
         return rows;
     }
 

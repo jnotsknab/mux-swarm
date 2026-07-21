@@ -1707,7 +1707,9 @@ public static partial class MuxConsole
     {
         WithConsole(() =>
         {
-            if (StdioMode) { EmitJson("agent_turn_end"); return; }
+            // Carry the session token total so headless drivers (dynamic workflows) can
+            // surface per-child token usage without a new event type. Additive field.
+            if (StdioMode) { EmitJson("agent_turn_end", D(("tokens", SingleAgentOrchestrator.SessionTokens))); return; }
             if (Capturing) return;   // collapsed sub-agent: no inline turn spacer
             if (TuiCommit("")) return;
             AnsiConsole.WriteLine();

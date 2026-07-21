@@ -1001,14 +1001,22 @@ internal sealed class TuiDriver
                     catch (InvalidOperationException) { break; }
                 }
 
+                // Up/Down scroll the selected phase's TASK window (the dense dimension);
+                // Left/Right switch phases; Tab cycles runs; 1-9 jump straight to a run.
                 if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
-                    { _workflowView.Move(-1); Repaint(); continue; }
+                    { _workflowView.MoveTask(-1); Repaint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
-                    { _workflowView.Move(+1); Repaint(); continue; }
+                    { _workflowView.MoveTask(+1); Repaint(); continue; }
                 if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H)
                     { _workflowView.MovePhase(-1); Repaint(); continue; }
                 if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L)
                     { _workflowView.MovePhase(+1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Tab)
+                    { _workflowView.Move(+1); Repaint(); continue; }
+                if (key.KeyChar is >= '1' and <= '9')
+                    { _workflowView.SelectRunAt(key.KeyChar - '0'); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Enter || key.Key == ConsoleKey.O)
+                    { _workflowView.ToggleTaskExpand(); Repaint(); continue; }
 
                 if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
                     break;

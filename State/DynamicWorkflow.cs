@@ -63,9 +63,16 @@ public static class DynamicWorkflow
           RunResult has NO `.text` attribute. The output is `res.final_summary or res.streamed_text`
           (summary of the last task_complete, else the concatenated stream); `res.ok` / `res.errors`
           for success checks. Using `res.text` raises AttributeError and fails the task.
+        - LONG GOALS / FEEDING RESULTS FORWARD (MANDATORY): NEVER inline large text (prior phase
+          results, corpora) into the goal string - on Windows the child argv limit is ~32k chars
+          and exceeding it fails with [WinError 206]. Instead write the full prompt to a file in
+          MUX_RUN_DIR (e.g. goal_synth.txt) and pass THE FILE PATH as the goal - the engine
+          detects an existing file path and reads its contents as the goal. Rule of thumb: any
+          goal over ~2000 chars goes through a file.
         - Telemetry (optional but preferred): include secs (wall seconds, int), tools (count of
-          TOOL_CALL events), model (agent's model id if known) in the done/failed status lines -
-          the /workflows viewer renders them per task.
+          TOOL_CALL events), tokens (int, from the last agent_turn_end event's "tokens" field in
+          res.events raw payloads), model (agent's model id if known) in the done/failed status
+          lines - the /workflows viewer renders them per task.
         - Bound concurrency with asyncio.Semaphore(MUX_MAX_PARALLEL). Feed results forward between
           sections through variables. Append {"run":"done"} (or {"run":"failed","error":...}) LAST.
         - Deterministic + idempotent where possible; no interactive input; exit 0 on success.
@@ -85,16 +92,26 @@ public static class DynamicWorkflow
                             {"id": "t1", "agent": "WebAgent", "label": "research X", "status": "pending"}]}]}
             json.dump(manifest, open(os.path.join(RUN, "manifest.json"), "w", encoding="utf-8"))
             sem = asyncio.Semaphore(MAXP)
+            def goal_arg(tid, text):
+                # Long goals MUST go through a file (argv limit); the engine reads file paths.
+                if len(text) <= 2000: return text
+                p = os.path.join(RUN, f"goal_{tid}.txt")
+                with open(p, "w", encoding="utf-8") as f: f.write(text)
+                return p
             async def run_task(tid, agent, goal):
                 async with sem:
                     emit(task=tid, status="running")
                     t0 = time.monotonic()
                     try:
-                        res = await mux.run_goal(goal, mode="agent", agent=agent, timeout=600)
+                        res = await mux.run_goal(goal_arg(tid, goal), mode="agent", agent=agent, timeout=600)
                         out = res.final_summary or res.streamed_text or ""
                         tools = sum(1 for ev in res.events if getattr(ev.type, "value", "") == "tool_call")
+                        toks = 0
+                        for ev in res.events:
+                            if getattr(ev.type, "value", "") == "agent_turn_end":
+                                toks = ev.raw.get("tokens", toks) or toks
                         emit(task=tid, status="done", detail=out[:160],
-                             secs=int(time.monotonic() - t0), tools=tools)
+                             secs=int(time.monotonic() - t0), tools=tools, tokens=int(toks))
                         return out
                     except Exception as e:
                         emit(task=tid, status="failed", detail=str(e)[:160],
