@@ -1063,13 +1063,25 @@ internal sealed class TuiDriver
         if (pump is null) return null;
         if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive || _promptModalActive) return null;
         if (kind != PromptModalView.Kind.Text && (choices is null || choices.Count == 0)) return null;
+        // The idle-prompt ReadLine loop is a CONCURRENT pump consumer; two blocking TryTake
+        // loops on one queue would split typed keys randomly between the input editor and the
+        // modal. If a prompt already owns the pump (e.g. a background agent's ask_user fires
+        // while the user sits at the idle prompt), fall back to the legacy path, whose
+        // SuspendInput stand-down the ReadLine loop already tolerates.
+        if (ConsoleInputPump.PromptActive) return null;
 
         _promptModal.Open(kind, question, choices, defaultValue, secret, initialSel);
         _promptModalActive = true;
         // Claim the pump: the mid-turn EscapeKeyListener must stand down for the modal's
-        // lifetime exactly as it does for the idle prompt (same ownership contract).
+        // lifetime exactly as it does for the idle prompt (same ownership contract), and the
+        // pump itself must keep reading THROUGH EscapeKeyListener.IsInputSuspended - the
+        // ask_user tool wrapper Pause()s the listener around the whole prompt, which is the
+        // pump's legacy-Spectre stand-down signal. Without ModalActive the modal deadlocks:
+        // it blocks on TryTake while the pump waits for a suspension only the modal's return
+        // can lift (the frame-engine ask_user freeze).
         bool prevPromptActive = ConsoleInputPump.PromptActive;
         ConsoleInputPump.PromptActive = true;
+        ConsoleInputPump.ModalActive = true;
         try
         {
             Repaint();
@@ -1077,7 +1089,7 @@ internal sealed class TuiDriver
             {
                 if (!pump.TryTake(out var ev, 100))
                 {
-                    if (pump.Disposed) return new PromptModalResult(true, null, -1, null);
+                    if (pump.Disposed) return new PromptModalResult(true, null, _promptModal.Sel, null);
                     // Timeout tick: keep the frame fresh (resize polls, ticker-driven chrome).
                     Repaint();
                     continue;
@@ -1096,8 +1108,11 @@ internal sealed class TuiDriver
                 }
                 var key = ev.Key;
 
+                // Cancel carries the CURSOR position so legacy-contract callers (no cancel
+                // affordance) can map Esc to "the item under the cursor" instead of index 0;
+                // Esc-without-navigation therefore yields the initial selection.
                 if (key.Key == ConsoleKey.Escape)
-                    return new PromptModalResult(true, null, -1, null);
+                    return new PromptModalResult(true, null, _promptModal.Sel, null);
                 if (key.Key == ConsoleKey.PageUp) { _promptModal.ScrollBody(+5); Repaint(); continue; }
                 if (key.Key == ConsoleKey.PageDown) { _promptModal.ScrollBody(-5); Repaint(); continue; }
 
@@ -1132,6 +1147,7 @@ internal sealed class TuiDriver
         }
         finally
         {
+            ConsoleInputPump.ModalActive = false;
             ConsoleInputPump.PromptActive = prevPromptActive;
             _promptModalActive = false;
             _promptModal.Close();

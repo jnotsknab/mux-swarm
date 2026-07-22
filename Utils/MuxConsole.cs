@@ -1536,12 +1536,14 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
-        // Frame engine: in-frame modal, no alt-screen flip (see Prompt). Esc = first choice
-        // (the legacy Spectre prompt had no cancel either).
+        // Frame engine: in-frame modal, no alt-screen flip (see Prompt). The legacy Spectre
+        // prompt had no cancel; Esc maps to the item UNDER THE CURSOR (the modal carries its
+        // selection in the cancel result), so backing out without navigating yields the first/
+        // initial choice rather than silently "selecting" index 0 after the user moved.
         var selList = choices.ToList();
         if (selList.Count > 0 &&
             TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Select, title, selList) is { } pmSel)
-            return selList[pmSel.Cancelled ? 0 : pmSel.Index];
+            return selList[Math.Clamp(pmSel.Index, 0, selList.Count - 1)];
         choices = selList;
 
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the

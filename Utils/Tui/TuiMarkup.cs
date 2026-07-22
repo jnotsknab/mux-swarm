@@ -287,8 +287,9 @@ internal static class TuiMarkup
     public static string TruncateMarkup(string markup, int maxWidth, string ellipsis = "\u2026")
     {
         if (maxWidth <= 0) return "";
+        markup ??= "";
         if (MarkupWidth(markup) <= maxWidth) return markup;
-        var spans = Parse(markup ?? "");
+        var spans = Parse(markup);
         int budget = Math.Max(0, maxWidth - Width(ellipsis));
         var sb = new StringBuilder();
         int w = 0;

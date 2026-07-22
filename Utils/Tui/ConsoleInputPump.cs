@@ -52,6 +52,22 @@ internal sealed class ConsoleInputPump : IDisposable
         set => _promptActive = value;
     }
 
+    private static volatile bool _modalActive;
+
+    /// <summary>MODAL OWNERSHIP (v0.12.4 in-frame prompt modal): true while TuiDriver.RunPromptModal
+    /// is consuming the pump. The ask_user tool wrapper calls EscapeKeyListener.Pause() around its
+    /// whole prompt, which flips IsInputSuspended - the pump's stand-down signal for yielding raw
+    /// stdin to a legacy Spectre prompt. The in-frame modal is NOT a raw-stdin reader (it feeds off
+    /// this pump), so standing down would deadlock it: modal blocks on TryTake, pump refuses to
+    /// read until the suspension lifts, and the suspension lifts only when the modal returns.
+    /// While set, the pump keeps reading THROUGH the suspension; the EscapeKeyListener still
+    /// stands down via PromptActive, so the modal remains the sole consumer.</summary>
+    internal static bool ModalActive
+    {
+        get => _modalActive;
+        set => _modalActive = value;
+    }
+
     /// <summary>True after Dispose: lets a bounded-wait consumer distinguish "timeout, keep
     /// polling" from "pump torn down" (the blocking-forever take used to encode this).</summary>
     internal bool Disposed => Volatile.Read(ref _disposed) == 1;
@@ -137,7 +153,9 @@ internal sealed class ConsoleInputPump : IDisposable
             while (!_cts.IsCancellationRequested)
             {
                 // Prompts own stdin exclusively: stand down exactly like the listener does.
-                if (EscapeKeyListener.IsInputSuspended)
+                // EXCEPT while the in-frame prompt modal is consuming the pump (see ModalActive):
+                // it is the prompt, and starving it here deadlocks ask_user on the frame engine.
+                if (EscapeKeyListener.IsInputSuspended && !_modalActive)
                 {
                     FlushAssemblerTimeout();
                     Thread.Sleep(20);
@@ -150,7 +168,7 @@ internal sealed class ConsoleInputPump : IDisposable
                 // increment-after-check race, same contract as the listener.
                 lock (EscapeKeyListener.ReadGate)
                 {
-                    if (EscapeKeyListener.IsInputSuspended) { Thread.Sleep(20); continue; }
+                    if (EscapeKeyListener.IsInputSuspended && !_modalActive) { Thread.Sleep(20); continue; }
                     if (Win32ConsoleInput.Active)
                         PumpWin32Slice();
                     else
