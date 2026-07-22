@@ -100,6 +100,8 @@ internal sealed class TuiDriver
 
     private readonly WorkflowView _workflowView = new();
     private volatile bool _workflowViewActive;
+    private readonly PromptModalView _promptModal = new();
+    private volatile bool _promptModalActive;
     // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
     // this agent (toggling its panel) instead of snapping back to the latest-registered
     // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
@@ -1043,6 +1045,101 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
+    /// Run a blocking prompt IN the frame (v0.12.4): renders the <see cref="PromptModalView"/>
+    /// inside the live band and drives it from the single input plane until the user submits
+    /// or cancels. The alternate screen is NEVER left, so the transcript above (a streamed
+    /// plan, a /command's output) stays visible the whole time - this replaces the jarring
+    /// Suspend/Resume buffer flip for ask_user-class prompts on the frame engine. Long
+    /// question bodies get a tail-anchored scrollable viewport (PgUp/PgDn/wheel). Returns
+    /// null when the frame-modal path is unavailable (not frame engine, no pump, or another
+    /// modal owns the screen) - the caller then falls back to the legacy Spectre prompt.
+    /// </summary>
+    public PromptModalResult? RunPromptModal(
+        PromptModalView.Kind kind, string question, IReadOnlyList<string>? choices,
+        string? defaultValue = null, bool secret = false, int initialSel = 0)
+    {
+        if (!_engineFrame || _suspended || _shuttingDown) return null;
+        var pump = ConsoleInputPump.Current;
+        if (pump is null) return null;
+        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive || _promptModalActive) return null;
+        if (kind != PromptModalView.Kind.Text && (choices is null || choices.Count == 0)) return null;
+
+        _promptModal.Open(kind, question, choices, defaultValue, secret, initialSel);
+        _promptModalActive = true;
+        // Claim the pump: the mid-turn EscapeKeyListener must stand down for the modal's
+        // lifetime exactly as it does for the idle prompt (same ownership contract).
+        bool prevPromptActive = ConsoleInputPump.PromptActive;
+        ConsoleInputPump.PromptActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                if (!pump.TryTake(out var ev, 100))
+                {
+                    if (pump.Disposed) return new PromptModalResult(true, null, -1, null);
+                    // Timeout tick: keep the frame fresh (resize polls, ticker-driven chrome).
+                    Repaint();
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Wheel)
+                {
+                    _promptModal.ScrollBody(ev.WheelDir > 0 ? +3 : -3);
+                    Repaint();
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Paste)
+                {
+                    if (kind == PromptModalView.Kind.Text && ev.PasteText is { } pt)
+                        { _promptModal.InputAppend(pt); Repaint(); }
+                    continue;
+                }
+                var key = ev.Key;
+
+                if (key.Key == ConsoleKey.Escape)
+                    return new PromptModalResult(true, null, -1, null);
+                if (key.Key == ConsoleKey.PageUp) { _promptModal.ScrollBody(+5); Repaint(); continue; }
+                if (key.Key == ConsoleKey.PageDown) { _promptModal.ScrollBody(-5); Repaint(); continue; }
+
+                if (kind == PromptModalView.Kind.Text)
+                {
+                    if (key.Key == ConsoleKey.Enter)
+                    {
+                        var txt = _promptModal.InputText;
+                        if (txt.Length == 0 && !string.IsNullOrEmpty(defaultValue)) txt = defaultValue!;
+                        return new PromptModalResult(false, txt, -1, null);
+                    }
+                    if (key.Key == ConsoleKey.Backspace) { _promptModal.InputBackspace(); Repaint(); continue; }
+                    if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+                        { _promptModal.InputAppend(key.KeyChar); Repaint(); }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _promptModal.MoveSel(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _promptModal.MoveSel(+1); Repaint(); continue; }
+                if (kind == PromptModalView.Kind.MultiSelect && key.Key == ConsoleKey.Spacebar)
+                    { _promptModal.ToggleChecked(); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    if (kind == PromptModalView.Kind.MultiSelect)
+                        return new PromptModalResult(false, null, _promptModal.Sel,
+                            _promptModal.CheckedIndices.OrderBy(i => i).ToList());
+                    return new PromptModalResult(false, null, _promptModal.Sel, null);
+                }
+            }
+        }
+        finally
+        {
+            ConsoleInputPump.PromptActive = prevPromptActive;
+            _promptModalActive = false;
+            _promptModal.Close();
+            Repaint();
+        }
+    }
+
+    /// <summary>
     /// TOGGLE the mid-turn expansion of a still-running sub-agent's buffered transcript. The
     /// expanded view is a bounded panel rendered INSIDE the repaintable live region (see
     /// BuildLiveFrame), not committed to scrollback - so pressing Ctrl+E repeatedly just flips
@@ -1639,8 +1736,18 @@ internal sealed class TuiDriver
             lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
 
         // /workflows dashboard: same inline-list pattern; off (the default) adds nothing.
+        // Width AND height flow in so the viewer can stack its panels / shrink its task
+        // window on small terminals instead of composing rows the renderer would soft-wrap.
         if (_workflowViewActive)
-            lines.AddRange(_workflowView.RenderDashboard(width));
+            lines.AddRange(_workflowView.RenderDashboard(width, Height));
+
+        // v0.12.4 in-frame prompt modal (ask_user / confirm / select / text): rendered INSIDE
+        // the live band so the alternate screen is never left - the transcript (e.g. the plan
+        // body the agent just streamed) stays visible above, the footer stays pinned below.
+        // Replaces the jarring Suspend->primary-buffer->Spectre->Resume flip on the frame
+        // engine; inline mode and non-TTY paths keep the legacy prompt path.
+        if (_promptModalActive)
+            lines.AddRange(_promptModal.Render(width, Height));
 
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it

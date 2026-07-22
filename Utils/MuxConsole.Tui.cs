@@ -1153,6 +1153,32 @@ public static partial class MuxConsole
         }
     }
 
+    /// <summary>
+    /// Try the IN-FRAME prompt modal (frame engine only): renders the question + choices/input
+    /// inside the live band so the alternate screen is never left and the transcript above
+    /// (e.g. a just-streamed plan body) stays visible. Returns null when unavailable (inline
+    /// renderer, stdio, no pump, or another modal open) - callers then fall back to the legacy
+    /// Suspend + Spectre prompt path. On an answered prompt a dim Q/A trace line is committed
+    /// to the transcript so the exchange survives in scrollback (the legacy flip left none).
+    /// </summary>
+    internal static PromptModalResult? TuiPromptModal(
+        PromptModalView.Kind kind, string question, IReadOnlyList<string>? choices,
+        string? defaultValue = null, bool secret = false, int initialSel = 0)
+    {
+        if (!ViaDriver || !FrameEngineEnabled) return null;
+        if (InputOverride != Console.In) return null;   // scripted input owns the prompt
+        lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+        var res = _driver!.RunPromptModal(kind, question, choices, defaultValue, secret, initialSel);
+        if (res is null) return null;
+        string q = TuiMarkup.TruncatePlain(question.Replace("\r", " ").Replace("\n", " "), 60);
+        string a = res.Cancelled ? "cancelled"
+            : kind == PromptModalView.Kind.Text ? (secret ? "\u2022\u2022\u2022\u2022" : (string.IsNullOrEmpty(res.Text) ? "(empty)" : TuiMarkup.TruncatePlain(res.Text!, 60)))
+            : kind == PromptModalView.Kind.MultiSelect ? (res.Checked is { Count: > 0 } ck ? TuiMarkup.TruncatePlain(string.Join(", ", ck.Select(i => choices![i])), 60) : "(none)")
+            : choices![res.Index];
+        CommitToDriver($"  [{TC.Dim}]? {Spectre.Console.Markup.Escape(q)} \u00b7 {Spectre.Console.Markup.Escape(a)}[/]");
+        return res;
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
 

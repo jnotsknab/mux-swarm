@@ -279,6 +279,45 @@ internal static class TuiMarkup
     }
 
     /// <summary>
+    /// Hard-truncate MARKUP to a maximum display width, preserving span styling (tags are
+    /// zero-width) and appending an ellipsis when truncation occurs. The markup analogue of
+    /// <see cref="TruncatePlain"/>: used to clamp composed dashboard rows so the frame
+    /// renderer never soft-wraps them on small terminals.
+    /// </summary>
+    public static string TruncateMarkup(string markup, int maxWidth, string ellipsis = "\u2026")
+    {
+        if (maxWidth <= 0) return "";
+        if (MarkupWidth(markup) <= maxWidth) return markup;
+        var spans = Parse(markup ?? "");
+        int budget = Math.Max(0, maxWidth - Width(ellipsis));
+        var sb = new StringBuilder();
+        int w = 0;
+        bool cut = false;
+        foreach (var span in spans)
+        {
+            if (cut) break;
+            var keep = new StringBuilder();
+            var e = System.Globalization.StringInfo.GetTextElementEnumerator(span.Text ?? "");
+            while (e.MoveNext())
+            {
+                string el = (string)e.Current;
+                int ew = TextElementWidth(el);
+                if (w + ew > budget) { cut = true; break; }
+                keep.Append(el);
+                w += ew;
+            }
+            if (keep.Length > 0)
+            {
+                string tag = ToMarkupTag(span.Style);
+                if (tag.Length > 0) { sb.Append(tag); sb.Append(EscapeLiteral(keep.ToString())); sb.Append("[/]"); }
+                else sb.Append(EscapeLiteral(keep.ToString()));
+            }
+        }
+        sb.Append(ellipsis);
+        return sb.ToString();
+    }
+
+    /// <summary>
     /// Word-wrap plain text to the given width, breaking over-long words. Existing newlines
     /// are honored. Returns at least one (possibly empty) line.
     /// </summary>

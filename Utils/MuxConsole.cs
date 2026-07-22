@@ -417,6 +417,24 @@ public static partial class MuxConsole
     {
         var list = choices.ToList();
         lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+
+        // Frame engine: in-frame modal (no alt-screen flip; a long ask_user question body -
+        // e.g. a whole plan - stays scrollable above the choices). Esc maps to Cancelled,
+        // which is EXACTLY the bailout the affordance row emulated on the legacy path.
+        {
+            var modalRows = new List<string>(list) { CustomAffordanceLabel };
+            if (TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Select, title, modalRows) is { } pm)
+            {
+                if (pm.Cancelled) return PromptChoice.Cancel();
+                if (pm.Index == list.Count)
+                {
+                    var typedC = Prompt($"{title} (custom)", null);
+                    return string.IsNullOrWhiteSpace(typedC) ? PromptChoice.Cancel() : PromptChoice.CustomText(typedC);
+                }
+                return PromptChoice.Picked(list[pm.Index]);
+            }
+        }
+
         TuiSuspend();
         int _resTop = SafeCursorTop();
 
@@ -453,6 +471,15 @@ public static partial class MuxConsole
     public static PromptChoice ConfirmChoice(string message, bool defaultValue = true)
     {
         lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+
+        // Frame engine: in-frame modal (no alt-screen flip; see SelectChoice). Esc = Cancelled.
+        if (TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Select, message,
+                new[] { "Yes", "No" }, initialSel: defaultValue ? 0 : 1) is { } pmCc)
+        {
+            if (pmCc.Cancelled) return PromptChoice.Cancel();
+            return PromptChoice.Picked(pmCc.Index == 0 ? "yes" : "no");
+        }
+
         TuiSuspend();
         int _resTop = SafeCursorTop();
 
@@ -496,6 +523,23 @@ public static partial class MuxConsole
     {
         var list = choices.ToList();
         lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+
+        // Frame engine: in-frame modal (no alt-screen flip; see SelectChoice). Esc = Cancelled;
+        // checking the custom affordance row routes to the free-text follow-up.
+        {
+            var modalRows = new List<string>(list) { CustomAffordanceLabel };
+            if (TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.MultiSelect, title, modalRows) is { } pm)
+            {
+                if (pm.Cancelled || pm.Checked is not { Count: > 0 } ck) return PromptChoice.Cancel();
+                if (ck.Contains(list.Count))
+                {
+                    var typedC = Prompt($"{title} (custom)", null);
+                    return string.IsNullOrWhiteSpace(typedC) ? PromptChoice.Cancel() : PromptChoice.CustomText(typedC);
+                }
+                return PromptChoice.Picked(string.Join(", ", ck.Where(i => i < list.Count).Select(i => list[i])));
+            }
+        }
+
         TuiSuspend();
         int _resTop = SafeCursorTop();
 
@@ -1362,6 +1406,13 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Frame engine: run the prompt IN the frame (no alt-screen flip; the transcript,
+        // including any plan body just streamed, stays visible above the modal). Null =
+        // unavailable -> legacy Suspend + Spectre path below, unchanged.
+        if (!UsingDelimiter &&
+            TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Text, message, null, defaultValue, secret) is { } pmT)
+            return pmT.Cancelled ? (defaultValue ?? string.Empty) : (pmT.Text ?? string.Empty);
+
         // A bare text prompt may depend on context just committed through the frame transcript
         // (e.g. /setmodel's choices). Frame mode leaves the alternate screen and replays that new
         // context onto the primary buffer before Spectre draws the input line. Inline mode simply
@@ -1422,6 +1473,10 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Frame engine: in-frame modal, no alt-screen flip (see Prompt).
+        if (TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Text, message, null, null, secret: true) is { } pmS)
+            return pmS.Cancelled ? string.Empty : (pmS.Text ?? string.Empty);
+
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
@@ -1449,6 +1504,11 @@ public static partial class MuxConsole
             StopActiveIndicator_NoLock();
         }
 
+        // Frame engine: in-frame modal, no alt-screen flip (see Prompt). Esc = the default.
+        if (TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Select, message,
+                new[] { "Yes", "No" }, initialSel: defaultValue ? 0 : 1) is { } pmC)
+            return pmC.Cancelled ? defaultValue : pmC.Index == 0;
+
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
         // leaving a stranded/duplicate badge row. The next status update repaints it cleanly.
@@ -1475,6 +1535,14 @@ public static partial class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Frame engine: in-frame modal, no alt-screen flip (see Prompt). Esc = first choice
+        // (the legacy Spectre prompt had no cancel either).
+        var selList = choices.ToList();
+        if (selList.Count > 0 &&
+            TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.Select, title, selList) is { } pmSel)
+            return selList[pmSel.Cancelled ? 0 : pmSel.Index];
+        choices = selList;
 
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,
@@ -1511,6 +1579,18 @@ public static partial class MuxConsole
         {
             StopActiveIndicator_NoLock();
         }
+
+        // Frame engine: in-frame modal, no alt-screen flip (see Prompt). Esc/empty = first
+        // choice, matching the legacy scripted fallback semantics.
+        var msList = choices.ToList();
+        if (msList.Count > 0 &&
+            TuiPromptModal(MuxSwarm.Utils.Tui.PromptModalView.Kind.MultiSelect, title, msList) is { } pmMs)
+        {
+            if (!pmMs.Cancelled && pmMs.Checked is { Count: > 0 } ck)
+                return ck.Select(i => msList[i]).ToList();
+            return new List<string> { msList[0] };
+        }
+        choices = msList;
 
         // Clear the docked TUI footer band before a blocking interactive prompt; otherwise the
         // pinned footer is left painted and Spectre's prompt scrolls it up into scrollback,

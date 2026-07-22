@@ -302,6 +302,67 @@ public class WorkflowRunRegistryTests : IDisposable
     }
 
     [Fact]
+    public void Viewer_SmallTerminal_StacksPanels_AndClampsRows()
+    {
+        var run = NewDynamicRun("small-term");
+        WriteManifest(
+            ("Research", new[] { ("t1", "WebAgent", "a fairly long task label that would overflow a narrow terminal by a lot") }),
+            ("Implement", new[] { ("t2", "CodeAgent", "second phase task") }));
+        AppendStatus("{\"task\":\"t1\",\"status\":\"done\",\"secs\":95,\"tools\":14,\"tokens\":41300}");
+        Poll();
+
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        var rows = view.RenderDashboard(60);
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
+
+        // STACKED: no side-by-side rule column, no "Phases" header - a phase strip instead.
+        Assert.DoesNotContain("Phases", plain);
+        Assert.Contains("phase 1/2", plain);
+        Assert.Contains("WebAgent", plain);
+        // Every composed row fits the width - nothing left for the renderer to soft-wrap.
+        Assert.All(rows, r => Assert.True(TuiMarkup.MarkupWidth(r) <= 60,
+            $"row exceeds width ({TuiMarkup.MarkupWidth(r)} > 60): {TuiMarkup.Plain(r)}"));
+
+        // Phase paging still works in stacked mode.
+        view.MovePhase(+1);
+        plain = string.Join("\n", view.RenderDashboard(60).Select(TuiMarkup.Plain));
+        Assert.Contains("phase 2/2", plain);
+        Assert.Contains("CodeAgent", plain);
+    }
+
+    [Fact]
+    public void Viewer_WideTerminal_KeepsMasterDetail_AndClampsRows()
+    {
+        var run = NewDynamicRun("wide-term");
+        WriteManifest(("S", new[] { ("t1", "WebAgent", new string('x', 300)) }));
+        Poll();
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        var rows = view.RenderDashboard(140);
+        Assert.Contains("Phases", string.Join("\n", rows.Select(TuiMarkup.Plain)));
+        Assert.All(rows, r => Assert.True(TuiMarkup.MarkupWidth(r) <= 140,
+            $"row exceeds width ({TuiMarkup.MarkupWidth(r)} > 140)"));
+    }
+
+    [Fact]
+    public void Viewer_HeightBudget_ShrinksTaskWindow()
+    {
+        var run = NewDynamicRun("short-term");
+        var tasks = Enumerable.Range(1, 20).Select(i => ($"t{i}", "A", $"task number {i}")).ToArray();
+        WriteManifest(("Big", tasks));
+        Poll();
+        var view = new WorkflowView();
+        view.SetRuns(WorkflowRunRegistry.Snapshot());
+        // Height 14: far fewer than the 12-row default window fit; the window must shrink
+        // rather than compose rows the terminal cannot show.
+        var rows = view.RenderDashboard(140, height: 14);
+        Assert.True(rows.Count <= 14 + 2, $"composed {rows.Count} rows for height 14");
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
+        Assert.Contains("of 20", plain);
+    }
+
+    [Fact]
     public void Viewer_EmptyRegistry_RendersHint()
     {
         var view = new WorkflowView();
