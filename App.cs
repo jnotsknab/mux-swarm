@@ -13,7 +13,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.12.3";
+    public static readonly string Version = "0.12.4";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -278,6 +278,13 @@ public class App
 
         args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
+
+        // Auto-allow the workspace: add the resolved workspace root (the launch dir / @-index root,
+        // possibly set by --workspace above) to the native Filesystem tools' AllowedPaths so the
+        // project you launched in is usable by the file tools without hand-editing config. Gated by
+        // executionLimits.autoAllowWorkspace (default true); idempotent. Runs AFTER ParseArgs so a
+        // --workspace override is the dir that gets allowed.
+        MaybeAutoAllowWorkspace();
 
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
@@ -544,7 +551,7 @@ public class App
 
             // Back at the top-level menu (no agentic loop active): stop the loop clock. It is
             // (re)started on the next /agent | /stateless | /swarm | /pswarm via the session header.
-            if (pendingFromSession is null) MuxConsole.StopTuiLoopClock();
+            if (pendingFromSession is null) MuxConsole.ResetTuiTurnClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
@@ -639,7 +646,7 @@ public class App
                         teamScope.LeadDef.Name, LoadSingleAgentModel());
 
                     ServeMode.ActiveMode = "teams";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(teamLeadModel),
@@ -665,7 +672,7 @@ public class App
                     var maCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "swarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -686,7 +693,7 @@ public class App
                     var pCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "pswarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -707,7 +714,7 @@ public class App
                     var agentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "agent";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
@@ -761,7 +768,7 @@ public class App
                     var statelessAgentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "stateless";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "stateless", "stateless");
@@ -811,7 +818,7 @@ public class App
                         MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
                         break;
                     }
-                    MuxConsole.StartTuiLoopClock();
+                    MuxConsole.ResetTuiTurnClock();
                     ServeMode.ActiveMode = handle.Mode;
                     try {
                         handle.ReleaseAttach();             // resume the parked frame (it takes the console)
@@ -829,8 +836,15 @@ public class App
                     MinContDelay = CliCmdUtils.HandleContToggle(ContinuousExec);
                     break;
                 
-                case "/workflow":
-                    CliCmdUtils.HandleInteractiveWorkflow();
+                case var wfc when wfc == "/workflow" || wfc.StartsWith("/workflow ", StringComparison.Ordinal):
+                    // /workflow [static [path]] | [dynamic [goal]] - bare enters a mode picker.
+                    var wfArg = wfc.Length > "/workflow".Length ? wfc.Substring("/workflow".Length).Trim() : "";
+                    CliCmdUtils.HandleInteractiveWorkflow(wfArg);
+                    break;
+                case var wfsc when wfsc == "/workflows" || wfsc.StartsWith("/workflows ", StringComparison.Ordinal):
+                    // /workflows [saved | delete <name>] - bare opens the live run viewer.
+                    var wfsArg = wfsc.Length > "/workflows".Length ? wfsc.Substring("/workflows".Length).Trim() : "";
+                    CliCmdUtils.HandleWorkflowsCommand(wfsArg);
                     break;
                 case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
                     // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
@@ -1655,6 +1669,63 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         return tokens;
     }
 
+    /// <summary>
+    /// Adds the resolved workspace root to the native Filesystem AllowedPaths when
+    /// executionLimits.autoAllowWorkspace is true (default). Idempotent + best-effort: the path is
+    /// canonicalized and only appended when not already present (case-insensitive on Windows). Skips
+    /// silently when disabled, when the workspace resolves to the install/base dir (nothing project-
+    /// specific to allow), or on any error. Keeps the interactive @-index root and the file tools'
+    /// writable root in sync so "launch in a project, edit it" works with zero config.
+    /// </summary>
+    private static void MaybeAutoAllowWorkspace()
+    {
+        try
+        {
+            Config.Filesystem ??= new FilesystemConfig();
+            Config.Filesystem.AllowedPaths ??= new List<string>();
+            ApplyAutoAllowWorkspace(
+                Config.Filesystem.AllowedPaths,
+                ExecutionLimits.Current.AutoAllowWorkspace,
+                PlatformContext.WorkspaceIsInstallDir,
+                PlatformContext.WorkspaceRoot,
+                Directory.Exists);
+        }
+        catch { /* best-effort; never block startup */ }
+    }
+
+    /// <summary>
+    /// Pure logic for <see cref="MaybeAutoAllowWorkspace"/> (seams injected for testing). Appends the
+    /// resolved workspace root to <paramref name="allowedPaths"/> when auto-allow is enabled, the
+    /// workspace is not the install/base dir, the dir exists, and it is not already present
+    /// (case-insensitive on Windows). Mutates the list in place; returns true if a path was added.
+    /// </summary>
+    internal static bool ApplyAutoAllowWorkspace(
+        List<string> allowedPaths, bool enabled, bool workspaceIsInstallDir,
+        string workspaceRoot, Func<string, bool> dirExists)
+    {
+        if (!enabled) return false;
+        if (workspaceIsInstallDir) return false; // nothing project-specific to grant
+
+        string ws;
+        try { ws = System.IO.Path.GetFullPath(workspaceRoot); }
+        catch { return false; }
+        if (!dirExists(ws)) return false;
+
+        var cmp = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        string Norm(string p)
+        {
+            try { return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(p)); }
+            catch { return p; }
+        }
+        var target = Norm(ws);
+        if (allowedPaths.Any(p => string.Equals(Norm(p), target, cmp)))
+            return false; // already allowed
+
+        allowedPaths.Add(ws);
+        return true;
+    }
+
     private static ParsedArgs ParseArgs(string[] args)
     {
         string? goal = null;
@@ -2046,6 +2117,21 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
+        // Dispose any previously-connected MCP clients before rebuilding. On a reload/refresh this method
+        // reconnects every enabled server and reassigns McpClients[name]; without disposing the old clients
+        // first, each refresh LEAKED the prior subprocess (e.g. repeated /refresh spawned a new npx server
+        // per call, orphaning the old ones). Dispose is best-effort per client so one hung disposal can't
+        // block the whole reconnect.
+        if (McpClients.Count > 0)
+        {
+            foreach (var (_, oldClient) in McpClients.ToArray())
+            {
+                try { await oldClient.DisposeAsync(); }
+                catch { /* best-effort: subprocess may already be dead */ }
+            }
+            McpClients.Clear();
+        }
+
         McpTools = new List<McpClientTool>();
 
         var baseDir = PlatformContext.BaseDirectory;

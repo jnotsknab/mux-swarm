@@ -412,14 +412,21 @@ internal static class CliProxyManager
         }
 
         // Unix: setsid <exe> -config <cfg>, stdio -> /dev/null, new session => detached from Mux's group.
+        // The stdio redirect is DONE VIA THE SHELL (</dev/null >/dev/null 2>&1), not .NET pipes: the sidecar
+        // is detached and must OUTLIVE Mux, so a .NET-redirected pipe would break on Mux exit (SIGPIPE/block)
+        // and would need a live drain thread. Without this redirect the Go sidecar INHERITS Mux's TTY and its
+        // logs (gin access lines, auth-file-watch events) bleed straight into the alt-screen TUI viewport.
+        // setsid only detaches the controlling terminal for SIGNAL purposes; it does NOT reassign fd 0/1/2,
+        // which still point at the inherited tty. Positional args ($0/$1) keep paths-with-spaces injection-safe.
         var upsi = new ProcessStartInfo
         {
-            FileName = "setsid",
+            FileName = "/bin/sh",
             UseShellExecute = false,
             WorkingDirectory = InstallDir,
         };
+        upsi.ArgumentList.Add("-c");
+        upsi.ArgumentList.Add("setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
         upsi.ArgumentList.Add(ExecutablePath);
-        upsi.ArgumentList.Add("-config");
         upsi.ArgumentList.Add(ConfigPath);
         try
         {
@@ -427,15 +434,18 @@ internal static class CliProxyManager
         }
         catch
         {
-            // setsid missing (rare): fall back to a plain spawn without tracking. It may still be swept by
-            // the group SIGTERM, but will be re-spawned on next launch.
+            // setsid/sh missing (rare): fall back to a plain spawn without tracking. It may still be swept by
+            // the group SIGTERM, but will be re-spawned on next launch. Redirect stdio to the null device so
+            // its logs never leak into the TUI viewport even on this degraded path.
             var fpsi = new ProcessStartInfo
             {
-                FileName = ExecutablePath,
+                FileName = "/bin/sh",
                 UseShellExecute = false,
                 WorkingDirectory = InstallDir,
             };
-            fpsi.ArgumentList.Add("-config");
+            fpsi.ArgumentList.Add("-c");
+            fpsi.ArgumentList.Add("exec \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
+            fpsi.ArgumentList.Add(ExecutablePath);
             fpsi.ArgumentList.Add(ConfigPath);
             Process.Start(fpsi);
         }
@@ -617,9 +627,14 @@ internal static class CliProxyManager
         await RunGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            StopInternal();   // kills the listener on our port + clears _runningPort
+            StopInternal();   // kills the listener on our tracked port + clears _runningPort
 
-            int port = PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
+            // Reclaim the fixed PreferredPort: a foreign/orphaned sidecar (a prior crashed session, or one
+            // StopInternal could not see because we were not tracking its port) may still be squatting on it.
+            // Without this, PortIsFree(PreferredPort) is false and we would silently fall back to a RANDOM
+            // free port - which then forces the user to hand-edit config.yaml. /proxy restart must instead
+            // kill whatever holds the port and PIN back to PreferredPort. Random fallback only if that fails.
+            int port = AcquirePreferredPort();
             Directory.CreateDirectory(AuthDir);
             await File.WriteAllTextAsync(ConfigPath, BuildConfigYaml(port, _apiKey!, _mgmtKey!, AuthDir), ct)
                 .ConfigureAwait(false);
@@ -923,7 +938,7 @@ internal static class CliProxyManager
         return pids;
     }
 
-    private static bool PortIsFree(int port)
+    internal static bool PortIsFree(int port)
     {
         try
         {
@@ -941,6 +956,31 @@ internal static class CliProxyManager
         int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
         l.Stop();
         return port;
+    }
+
+    /// <summary>
+    /// Returns <see cref="PreferredPort"/>, first evicting anything already listening on it (a foreign or
+    /// orphaned cli-proxy-api from a prior/crashed session that our port-scoped StopInternal never saw). This
+    /// makes /proxy restart deterministic: kill the squatter, then PIN back to the config port instead of
+    /// silently drifting to a random port (which forces a manual config.yaml edit). Falls back to a random
+    /// free port only if the port genuinely cannot be reclaimed (e.g. a foreign owner we lack rights to kill).
+    /// </summary>
+    internal static int AcquirePreferredPort()
+    {
+        if (PortIsFree(PreferredPort)) return PreferredPort;
+
+        try { KillListenerOnPort(PreferredPort); } catch { /* best effort */ }
+
+        // The OS releases the port asynchronously after the owning process dies; poll briefly before giving up.
+        for (int i = 0; i < 20; i++)   // up to ~2s
+        {
+            if (PortIsFree(PreferredPort)) return PreferredPort;
+            Thread.Sleep(100);
+        }
+
+        // Could not reclaim it (foreign owner, no rights, or a lingering socket): don't hang the user - use a
+        // free port so the sidecar still starts. Config.yaml is rewritten to match, so no manual edit needed.
+        return PortIsFree(PreferredPort) ? PreferredPort : FindFreePort();
     }
 
     /// <summary>

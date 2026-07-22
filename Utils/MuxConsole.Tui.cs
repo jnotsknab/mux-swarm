@@ -809,19 +809,41 @@ public static partial class MuxConsole
         lock (ConsoleLock) { _driver!.SetFooter(_fTokens, _fThreshold, plan, ultra, parallelSub, sub, _fCached, giga); }
     }
 
-    /// <summary>Start the loop clock (live "&#x25cf; m:ss" footer badge) - called when an agentic
-    /// interface (/agent, /stateless, /swarm, /pswarm) is entered. No-op outside the driver.</summary>
-    public static void StartTuiLoopClock()
+    /// <summary>Start the turn clock (live "&#x25cf; m:ss" footer badge) - called when user input
+    /// is submitted to the model. No-op outside the driver.</summary>
+    public static void StartTuiTurnClock()
     {
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.StartLoopClock(); }
+        lock (ConsoleLock) { _driver!.StartTurnClock(); }
     }
 
-    /// <summary>Stop/clear the loop clock - called back at the top-level menu. No-op outside the driver.</summary>
-    public static void StopTuiLoopClock()
+    /// <summary>Stop the turn clock at turn end - the elapsed span becomes the dimmed idle
+    /// "last turn" chip. No-op outside the driver.</summary>
+    public static void StopTuiTurnClock()
     {
         if (!TuiActive) return;
-        lock (ConsoleLock) { _driver!.StopLoopClock(); }
+        lock (ConsoleLock) { _driver!.StopTurnClock(); }
+    }
+
+    /// <summary>Clear both turn-clock states (session start/wipe). No-op outside the driver.</summary>
+    public static void ResetTuiTurnClock()
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.ResetTurnClock(); }
+    }
+
+    /// <summary>Push the session tool-call count into the docked footer "calls N" chip.</summary>
+    public static void SetTuiToolCalls(uint calls)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetToolCalls(calls); }
+    }
+
+    /// <summary>Set (or clear, with null) the resolved model id shown in the docked footer.</summary>
+    public static void SetTuiModel(string? model)
+    {
+        if (!TuiActive) return;
+        lock (ConsoleLock) { _driver!.SetModel(model); }
     }
 
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
@@ -1112,6 +1134,49 @@ public static partial class MuxConsole
                 },
                 onCancel: id => DetachedRunner.Cancel(id));
         }
+    }
+
+    /// <summary>
+    /// Foreground the /workflows dashboard: panels per workflow section with nested task rows,
+    /// live-refreshed from the WorkflowRunRegistry while open (dynamic runs stream journal
+    /// updates in). Returns false outside the TUI (the caller then falls back to a static text
+    /// panel). Holds the console lock for the session, like the Agent/Job Views.
+    /// </summary>
+    internal static bool TuiEnterWorkflowView()
+    {
+        if (!ViaDriver) return false;
+        lock (ConsoleLock)
+        {
+            return _driver!.EnterWorkflowView(
+                snapshotProvider: () => MuxSwarm.State.WorkflowRunRegistry.Snapshot(),
+                onCancel: id => MuxSwarm.State.WorkflowRunRegistry.Cancel(id));
+        }
+    }
+
+    /// <summary>
+    /// Try the IN-FRAME prompt modal (frame engine only): renders the question + choices/input
+    /// inside the live band so the alternate screen is never left and the transcript above
+    /// (e.g. a just-streamed plan body) stays visible. Returns null when unavailable (inline
+    /// renderer, stdio, no pump, or another modal open) - callers then fall back to the legacy
+    /// Suspend + Spectre prompt path. On an answered prompt a dim Q/A trace line is committed
+    /// to the transcript so the exchange survives in scrollback (the legacy flip left none).
+    /// </summary>
+    internal static PromptModalResult? TuiPromptModal(
+        PromptModalView.Kind kind, string question, IReadOnlyList<string>? choices,
+        string? defaultValue = null, bool secret = false, int initialSel = 0)
+    {
+        if (!ViaDriver || !FrameEngineEnabled) return null;
+        if (InputOverride != Console.In) return null;   // scripted input owns the prompt
+        lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
+        var res = _driver!.RunPromptModal(kind, question, choices, defaultValue, secret, initialSel);
+        if (res is null) return null;
+        string q = TuiMarkup.TruncatePlain(question.Replace("\r", " ").Replace("\n", " "), 60);
+        string a = res.Cancelled ? "cancelled"
+            : kind == PromptModalView.Kind.Text ? (secret ? "\u2022\u2022\u2022\u2022" : (string.IsNullOrEmpty(res.Text) ? "(empty)" : TuiMarkup.TruncatePlain(res.Text!, 60)))
+            : kind == PromptModalView.Kind.MultiSelect ? (res.Checked is { Count: > 0 } ck ? TuiMarkup.TruncatePlain(string.Join(", ", ck.Select(i => choices![i])), 60) : "(none)")
+            : choices![res.Index];
+        CommitToDriver($"  [{TC.Dim}]? {Spectre.Console.Markup.Escape(q)} \u00b7 {Spectre.Console.Markup.Escape(a)}[/]");
+        return res;
     }
 
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>

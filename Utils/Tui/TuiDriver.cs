@@ -97,6 +97,11 @@ internal sealed class TuiDriver
     // its lane vanishes from the backslash view.
     private readonly JobView _jobView = new();
     private volatile bool _jobViewActive;
+
+    private readonly WorkflowView _workflowView = new();
+    private volatile bool _workflowViewActive;
+    private readonly PromptModalView _promptModal = new();
+    private volatile bool _promptModalActive;
     // The sub-agent the user last FOREGROUNDED via the backslash dashboard. Ctrl+E sticks to
     // this agent (toggling its panel) instead of snapping back to the latest-registered
     // capture, so the quick-open key tracks the user's chosen focus. Null = no explicit
@@ -178,11 +183,24 @@ internal sealed class TuiDriver
     private (string Tool, string? Args, string Result, bool Error, bool Expandable, string? ExpandBody)? _settling;
 
     // Wall-clock timers surfaced as footer badges. _sessionStart is fixed at construction
-    // (total session age, shown by the session timer); _loopStart is set when an agentic
-    // interface (/agent, /stateless, /swarm, /pswarm) is entered and cleared when it exits, so
-    // the loop clock ticks continuously the whole time the user is inside a loop.
+    // (total session age, shown by the session timer). _turnStart is set when the user submits
+    // input (turn begins) and cleared at turn end, capturing the elapsed span into _lastTurn -
+    // so the footer shows a live ticking turn timer while the model works and the LAST turn's
+    // duration (dimmed) while idle.
     private readonly DateTime _sessionStart = DateTime.UtcNow;
-    private DateTime? _loopStart;
+    private DateTime? _turnStart;
+    private TimeSpan? _lastTurn;
+
+    // Session tool-call count pushed by the orchestrator (the footer "calls N" chip).
+    private uint _toolCalls;
+
+    // Resolved model id pushed by the orchestrator (the footer model chip). Null = hidden.
+    private string? _model;
+
+    // Mode-pulse window: when ultra/giga is toggled ON, the mode chip breathes for a short
+    // period (PulseSecs) then goes static. Frame index rides the shared ~100ms ticker paints.
+    private DateTime? _modePulseUntil;
+    private const double ModePulseSecs = 3.0;
 
     // Active sub-agent lane tint for gutter attribution on committed transcript lines. Null
     // for the primary agent (no gutter); set to a per-agent color while a sub-agent/specialist
@@ -590,9 +608,12 @@ internal sealed class TuiDriver
     /// tiny/again-unavailable terminals.</summary>
     public int Height => Math.Max(10, _term.Height);
 
-    /// <summary>Update the context meter / mode badges and repaint the live region.</summary>
+    /// <summary>Update the context meter / mode badges and repaint the live region. A rising
+    /// edge on ultra/giga opens the short mode-pulse window (the chip breathes, then settles).</summary>
     public void SetFooter(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, uint cached = 0, bool giga = false)
     {
+        if ((ultra && !_ultra) || (giga && !_giga))
+            _modePulseUntil = DateTime.UtcNow.AddSeconds(ModePulseSecs);
         _tokens = tokens; _threshold = threshold; _plan = plan; _ultra = ultra; _psub = psub; _sub = sub; _cached = cached; _giga = giga;
         Repaint();
     }
@@ -606,13 +627,37 @@ internal sealed class TuiDriver
         Repaint();
     }
 
-    /// <summary>Start the loop clock - the live "&#x25cf; m:ss" footer badge that ticks the whole
-    /// time the user is inside an agentic interface. Idempotent: re-entering a loop while one is
-    /// already running keeps the original start (does not reset the clock).</summary>
-    public void StartLoopClock() { _loopStart ??= DateTime.UtcNow; }
+    /// <summary>Start the turn clock - the live "&#x25cf; m:ss" footer badge that ticks while the
+    /// model works the current turn. Called when user input is submitted; resets any prior start.</summary>
+    public void StartTurnClock() { _turnStart = DateTime.UtcNow; }
 
-    /// <summary>Stop and clear the loop clock (back at the top-level menu, no loop active).</summary>
-    public void StopLoopClock() { _loopStart = null; }
+    /// <summary>Stop the turn clock: capture the elapsed span as the dimmed idle "last turn"
+    /// chip and clear the live timer. No-op when no turn was running.</summary>
+    public void StopTurnClock()
+    {
+        if (_turnStart is { } ts) _lastTurn = DateTime.UtcNow - ts;
+        _turnStart = null;
+    }
+
+    /// <summary>Clear both turn-clock states (new/wiped session - no stale last-turn chip).</summary>
+    public void ResetTurnClock() { _turnStart = null; _lastTurn = null; }
+
+    /// <summary>Update the session tool-call count shown as the footer "calls N" chip.</summary>
+    public void SetToolCalls(uint calls)
+    {
+        if (_toolCalls == calls) return;
+        _toolCalls = calls;
+        Repaint();
+    }
+
+    /// <summary>Set (or clear, with null) the resolved model id shown as the footer model chip.</summary>
+    public void SetModel(string? model)
+    {
+        var m = string.IsNullOrWhiteSpace(model) ? null : model.Trim();
+        if (m == _model) return;
+        _model = m;
+        Repaint();
+    }
 
     /// <summary>Set (or clear, with null) the active-session id badge shown in the footer.</summary>
     public void SetSessionId(string? sessionId)
@@ -908,6 +953,206 @@ internal sealed class TuiDriver
             Repaint();
         }
         return true;
+    }
+
+    /// <summary>
+    /// Foreground the /workflows dashboard: a keyboard-navigable viewer over the workflow-run
+    /// registry with the selected run expanded into per-section panels (nested task rows +
+    /// recent journal events). Keys: arrows/j-k select; c cancels a RUNNING run (dynamic driver
+    /// tree killed); Esc/q closes. The registry snapshot is re-pulled on every repaint via
+    /// <paramref name="snapshotProvider"/> so live dynamic-run updates stream in while open.
+    /// Caller holds the console lock for the session.
+    /// </summary>
+    public bool EnterWorkflowView(
+        Func<IReadOnlyList<MuxSwarm.State.WorkflowRun>> snapshotProvider,
+        Func<string, bool> onCancel)
+    {
+        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive) return false;
+
+        _workflowView.SetRuns(snapshotProvider());
+        _workflowView.Open();
+        _workflowViewActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                ConsoleKeyInfo key;
+                var wvPump = ConsoleInputPump.Current;
+                if (wvPump is not null)
+                {
+                    bool got = false;
+                    key = default;
+                    while (!got)
+                    {
+                        if (!wvPump.TryTake(out var wv, 200))
+                        {
+                            // Poll timeout: refresh the snapshot so running dynamic runs stream
+                            // their journal updates into the open panels.
+                            _workflowView.SetRuns(snapshotProvider());
+                            Repaint();
+                            continue;
+                        }
+                        if (wv.Kind != ConsoleInputPump.EventKind.Key) continue;
+                        key = wv.Key; got = true;
+                    }
+                }
+                else
+                {
+                    try { key = Console.ReadKey(intercept: true); }
+                    catch (InvalidOperationException) { break; }
+                }
+
+                // Up/Down scroll the selected phase's TASK window (the dense dimension);
+                // Left/Right switch phases; Tab cycles runs; 1-9 jump straight to a run.
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _workflowView.MoveTask(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _workflowView.MoveTask(+1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H)
+                    { _workflowView.MovePhase(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L)
+                    { _workflowView.MovePhase(+1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Tab)
+                    { _workflowView.Move(+1); Repaint(); continue; }
+                if (key.KeyChar is >= '1' and <= '9')
+                    { _workflowView.SelectRunAt(key.KeyChar - '0'); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Enter || key.Key == ConsoleKey.O)
+                    { _workflowView.ToggleTaskExpand(); Repaint(); continue; }
+
+                if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
+                    break;
+
+                if (key.Key == ConsoleKey.C)
+                {
+                    var id = _workflowView.SelectedId();
+                    if (id is not null && onCancel(id))
+                    {
+                        _workflowView.SetRuns(snapshotProvider());
+                        Repaint();
+                    }
+                    continue;
+                }
+            }
+        }
+        finally
+        {
+            _workflowViewActive = false;
+            _workflowView.Close();
+            Repaint();
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Run a blocking prompt IN the frame (v0.12.4): renders the <see cref="PromptModalView"/>
+    /// inside the live band and drives it from the single input plane until the user submits
+    /// or cancels. The alternate screen is NEVER left, so the transcript above (a streamed
+    /// plan, a /command's output) stays visible the whole time - this replaces the jarring
+    /// Suspend/Resume buffer flip for ask_user-class prompts on the frame engine. Long
+    /// question bodies get a tail-anchored scrollable viewport (PgUp/PgDn/wheel). Returns
+    /// null when the frame-modal path is unavailable (not frame engine, no pump, or another
+    /// modal owns the screen) - the caller then falls back to the legacy Spectre prompt.
+    /// </summary>
+    public PromptModalResult? RunPromptModal(
+        PromptModalView.Kind kind, string question, IReadOnlyList<string>? choices,
+        string? defaultValue = null, bool secret = false, int initialSel = 0)
+    {
+        if (!_engineFrame || _suspended || _shuttingDown) return null;
+        var pump = ConsoleInputPump.Current;
+        if (pump is null) return null;
+        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive || _promptModalActive) return null;
+        if (kind != PromptModalView.Kind.Text && (choices is null || choices.Count == 0)) return null;
+        // The idle-prompt ReadLine loop is a CONCURRENT pump consumer; two blocking TryTake
+        // loops on one queue would split typed keys randomly between the input editor and the
+        // modal. If a prompt already owns the pump (e.g. a background agent's ask_user fires
+        // while the user sits at the idle prompt), fall back to the legacy path, whose
+        // SuspendInput stand-down the ReadLine loop already tolerates.
+        if (ConsoleInputPump.PromptActive) return null;
+
+        _promptModal.Open(kind, question, choices, defaultValue, secret, initialSel);
+        _promptModalActive = true;
+        // Claim the pump: the mid-turn EscapeKeyListener must stand down for the modal's
+        // lifetime exactly as it does for the idle prompt (same ownership contract), and the
+        // pump itself must keep reading THROUGH EscapeKeyListener.IsInputSuspended - the
+        // ask_user tool wrapper Pause()s the listener around the whole prompt, which is the
+        // pump's legacy-Spectre stand-down signal. Without ModalActive the modal deadlocks:
+        // it blocks on TryTake while the pump waits for a suspension only the modal's return
+        // can lift (the frame-engine ask_user freeze).
+        bool prevPromptActive = ConsoleInputPump.PromptActive;
+        ConsoleInputPump.PromptActive = true;
+        ConsoleInputPump.ModalActive = true;
+        try
+        {
+            Repaint();
+            while (true)
+            {
+                if (!pump.TryTake(out var ev, 100))
+                {
+                    if (pump.Disposed) return new PromptModalResult(true, null, _promptModal.Sel, null);
+                    // Timeout tick: keep the frame fresh (resize polls, ticker-driven chrome).
+                    Repaint();
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Wheel)
+                {
+                    _promptModal.ScrollBody(ev.WheelDir > 0 ? +3 : -3);
+                    Repaint();
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Paste)
+                {
+                    if (kind == PromptModalView.Kind.Text && ev.PasteText is { } pt)
+                        { _promptModal.InputAppend(pt); Repaint(); }
+                    continue;
+                }
+                var key = ev.Key;
+
+                // Cancel carries the CURSOR position so legacy-contract callers (no cancel
+                // affordance) can map Esc to "the item under the cursor" instead of index 0;
+                // Esc-without-navigation therefore yields the initial selection.
+                if (key.Key == ConsoleKey.Escape)
+                    return new PromptModalResult(true, null, _promptModal.Sel, null);
+                if (key.Key == ConsoleKey.PageUp) { _promptModal.ScrollBody(+5); Repaint(); continue; }
+                if (key.Key == ConsoleKey.PageDown) { _promptModal.ScrollBody(-5); Repaint(); continue; }
+
+                if (kind == PromptModalView.Kind.Text)
+                {
+                    if (key.Key == ConsoleKey.Enter)
+                    {
+                        var txt = _promptModal.InputText;
+                        if (txt.Length == 0 && !string.IsNullOrEmpty(defaultValue)) txt = defaultValue!;
+                        return new PromptModalResult(false, txt, -1, null);
+                    }
+                    if (key.Key == ConsoleKey.Backspace) { _promptModal.InputBackspace(); Repaint(); continue; }
+                    if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+                        { _promptModal.InputAppend(key.KeyChar); Repaint(); }
+                    continue;
+                }
+
+                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                    { _promptModal.MoveSel(-1); Repaint(); continue; }
+                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                    { _promptModal.MoveSel(+1); Repaint(); continue; }
+                if (kind == PromptModalView.Kind.MultiSelect && key.Key == ConsoleKey.Spacebar)
+                    { _promptModal.ToggleChecked(); Repaint(); continue; }
+                if (key.Key == ConsoleKey.Enter)
+                {
+                    if (kind == PromptModalView.Kind.MultiSelect)
+                        return new PromptModalResult(false, null, _promptModal.Sel,
+                            _promptModal.CheckedIndices.OrderBy(i => i).ToList());
+                    return new PromptModalResult(false, null, _promptModal.Sel, null);
+                }
+            }
+        }
+        finally
+        {
+            ConsoleInputPump.ModalActive = false;
+            ConsoleInputPump.PromptActive = prevPromptActive;
+            _promptModalActive = false;
+            _promptModal.Close();
+            Repaint();
+        }
     }
 
     /// <summary>
@@ -1506,6 +1751,20 @@ internal sealed class TuiDriver
         if (_jobViewActive)
             lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
 
+        // /workflows dashboard: same inline-list pattern; off (the default) adds nothing.
+        // Width AND height flow in so the viewer can stack its panels / shrink its task
+        // window on small terminals instead of composing rows the renderer would soft-wrap.
+        if (_workflowViewActive)
+            lines.AddRange(_workflowView.RenderDashboard(width, Height));
+
+        // v0.12.4 in-frame prompt modal (ask_user / confirm / select / text): rendered INSIDE
+        // the live band so the alternate screen is never left - the transcript (e.g. the plan
+        // body the agent just streamed) stays visible above, the footer stays pinned below.
+        // Replaces the jarring Suspend->primary-buffer->Spectre->Resume flip on the frame
+        // engine; inline mode and non-TTY paths keep the legacy prompt path.
+        if (_promptModalActive)
+            lines.AddRange(_promptModal.Render(width, Height));
+
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
         // adds nothing, keeping the frame identical to today.
@@ -1516,12 +1775,22 @@ internal sealed class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         lines.Add(TuiComponents.FullRule(width));
+        // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
+        // short post-activation window; -1 renders the chip static and schedules nothing extra.
+        int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
+            ? (int)(Environment.TickCount64 / 150)
+            : -1;
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
-            modeCycleHint: OnModeCycle is not null, sessionId: _sessionId, cached: _cached,
+            modeCycleHint: OnModeCycle is not null, cached: _cached,
             sysTokens: _sysTokens, toolTokens: _toolTokens,
             sessionElapsed: DateTime.UtcNow - _sessionStart,
-            loopElapsed: _loopStart is { } ls ? DateTime.UtcNow - ls : null,
-            giga: _giga));
+            giga: _giga,
+            turnElapsed: _turnStart is { } ts2 ? DateTime.UtcNow - ts2 : null,
+            lastTurn: _lastTurn,
+            toolCalls: _toolCalls,
+            model: _model,
+            width: width,
+            pulseFrame: pulseFrame));
 
         if (_inInput)
         {
@@ -1856,6 +2125,15 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown || _navActive) return;
         if (_engineFrame && _suspended) return;   // a blocking prompt owns the terminal; defer
+        // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
+        // prompt, so it drives the short post-activation breathe of the ultra/giga chip.
+        // Repaints ONLY inside the pulse window (plus one settle paint when it closes);
+        // outside the window this adds zero work.
+        if (_modePulseUntil is { } pulseUntil)
+        {
+            if (DateTime.UtcNow < pulseUntil) Repaint();
+            else { _modePulseUntil = null; Repaint(); }
+        }
         int w = _term.Width, h = _term.Height;
         if (w == _lastSeenWidth && h == _lastSeenHeight) return;
         bool first = _lastSeenWidth < 0;

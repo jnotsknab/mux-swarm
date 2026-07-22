@@ -65,6 +65,14 @@ internal static class MetaCommandDispatch
                 MuxSwarm.Utils.Teams.KanbanCommand.Run(line);
                 return Result.Handled;
 
+            case "/workflows":
+                // Live workflow-run viewer + saved/delete. Session-agnostic: the run registry
+                // and the TUI modal are process-level state, so it works identically at the
+                // menu, on turn one, and inside a live session.
+                CliCmdUtils.HandleWorkflowsCommand(
+                    line.Length > "/workflows".Length ? line.Substring("/workflows".Length).Trim() : "");
+                return Result.Handled;
+
             case "/voice":
                 CliCmdUtils.HandleVoice(line);
                 return Result.Handled;

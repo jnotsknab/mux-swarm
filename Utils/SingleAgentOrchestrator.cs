@@ -30,6 +30,8 @@ public static class SingleAgentOrchestrator
     // Snapped from each UsageContent checkpoint's running totals; cleared on /wipe.
     private static long _cumInputTokens;
     private static long _cumOutputTokens;
+    // Session tool-call count surfaced as the footer "calls N" chip; cleared on /wipe.
+    private static uint _sessionToolCalls;
 
     private static bool _pendingCompaction;
 
@@ -85,6 +87,54 @@ public static class SingleAgentOrchestrator
             || trimmed.Equals("/qm", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Dispatch classification for the very FIRST interactive input of a session.
+    /// The session-agnostic MetaCommandDispatch only covers a fraction of the in-session
+    /// command surface, so anything it returns NotHandled for is classified here: commands
+    /// already serviceable before the agent exists are dispatched directly; every REMAINING
+    /// known session-native command is guarded (notice + re-prompt) so no known command can
+    /// ever leak to the model as the opening goal. Unknown slash text stays a goal.</summary>
+    internal enum FirstTurnInputKind
+    {
+        /// <summary>A real goal (plain text or an unknown slash command) - send to the agent.</summary>
+        Goal,
+        /// <summary>!&lt;command&gt; - run the shell command; its output becomes the opening goal.</summary>
+        Shell,
+        /// <summary>Bare "/" or "/?" - render the slash-command palette.</summary>
+        Palette,
+        /// <summary>/doctor - stateless health check.</summary>
+        Doctor,
+        /// <summary>/diff - working-tree git diff.</summary>
+        Diff,
+        /// <summary>/cost [all] - cost readout (zeros on turn one, but valid).</summary>
+        Cost,
+        /// <summary>/init - workspace scan; needs only the chat client, which exists here.</summary>
+        Init,
+        /// <summary>/review - diff review; needs only the chat client, which exists here.</summary>
+        Review,
+        /// <summary>Any other known session-native command - nothing to act on yet; notice + re-prompt.</summary>
+        GuardedSessionNative,
+    }
+
+    internal static FirstTurnInputKind ClassifyFirstTurnInput(string? input)
+    {
+        var t = (input ?? "").Trim();
+        if (t.StartsWith("!") && t.Length > 1) return FirstTurnInputKind.Shell;
+        if (t == "/" || t == "/?") return FirstTurnInputKind.Palette;
+        if (t.Length == 0 || t[0] != '/') return FirstTurnInputKind.Goal;
+        string cmd = t.Split(' ', 2)[0].ToLowerInvariant();
+        return cmd switch
+        {
+            "/doctor" => FirstTurnInputKind.Doctor,
+            "/diff"   => FirstTurnInputKind.Diff,
+            "/cost"   => FirstTurnInputKind.Cost,
+            "/init"   => FirstTurnInputKind.Init,
+            "/review" => FirstTurnInputKind.Review,
+            _ => Tui.TuiCommands.IsSessionNative(cmd)
+                ? FirstTurnInputKind.GuardedSessionNative
+                : FirstTurnInputKind.Goal,
+        };
+    }
+
     private static ModelOpts? GetSingleAgentModelOpts()
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
@@ -94,9 +144,31 @@ public static class SingleAgentOrchestrator
         {
             var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
             var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
-            return swarm?.SingleAgent?.ModelOpts;
+            return ResolveSingleAgentModelOpts(swarm, AgentDef?.Name);
         }
         catch { return null; }
+    }
+
+    /// <summary>
+    /// Resolve the modelOpts to apply in single-agent mode. Prefers the SELECTED agent's own
+    /// entry (matched by name in <c>agents</c>) when running as a named agent (/agent &lt;name&gt;
+    /// or --agent &lt;name&gt;), mirroring how <c>LoadSingleAgentModel</c> resolves the model
+    /// per-agent-first. Falls back to the <c>singleAgent</c> block when there is no matching agent
+    /// or it has no modelOpts. This keeps per-agent sampling params (e.g. a provider that only
+    /// accepts temperature 1) honored in single-agent mode, not just swarm mode.
+    /// </summary>
+    internal static ModelOpts? ResolveSingleAgentModelOpts(SwarmConfig? swarm, string? agentName)
+    {
+        if (!string.IsNullOrEmpty(agentName))
+        {
+            var perAgent = swarm?.Agents?
+                .FirstOrDefault(a => a.Name.Equals(agentName, StringComparison.OrdinalIgnoreCase))
+                ?.ModelOpts;
+            if (perAgent is not null)
+                return perAgent;
+        }
+
+        return swarm?.SingleAgent?.ModelOpts;
     }
 
     /// <summary>
@@ -855,7 +927,59 @@ public static class SingleAgentOrchestrator
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
                 if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
 
-                initialGoal = firstInput;
+                // Second gate: MetaCommandDispatch only knows the session-agnostic commands, so
+                // without this every other known session command would silently become the
+                // opening LLM goal. Commands serviceable before the agent exists are dispatched
+                // here; the rest of the session-native surface gets a notice + re-prompt via the
+                // TuiCommands.IsSessionNative catch-all, so NO known command can leak as a goal.
+                switch (ClassifyFirstTurnInput(firstInput))
+                {
+                    case FirstTurnInputKind.Shell:
+                    {
+                        string shellCmd = firstInput.Trim()[1..].Trim();
+                        if (shellCmd.Length == 0) { MuxConsole.WriteMuted("Usage: !<command>"); continue; }
+                        ShellCapture.Result r = await ShellCapture.RunAsync(
+                            shellCmd, PlatformContext.WorkspaceRoot, 60, 60_000, cancellationToken);
+                        string output = string.IsNullOrWhiteSpace(r.Combined) ? "(no output)" : r.Combined;
+                        MuxConsole.WritePanel($"! {shellCmd}", output);
+                        initialGoal = $"[ran: {shellCmd}]\n{output}";
+                        break;
+                    }
+                    case FirstTurnInputKind.Palette:
+                        MuxConsole.RenderTuiSlashPalette();
+                        continue;
+                    case FirstTurnInputKind.Doctor:
+                        HandleDoctor();
+                        continue;
+                    case FirstTurnInputKind.Diff:
+                        await HandleDiffAsync(cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.Cost:
+                    {
+                        var costArg = firstInput.Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        if (costArg.Length > 1 && costArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                            HandleCostBreakdown(resolvedModelId);
+                        else
+                            HandleCost(resolvedModelId);
+                        continue;
+                    }
+                    case FirstTurnInputKind.Init:
+                        // compactionChatOptions is resolved later in the session bootstrap; the
+                        // handler accepts null options (same as an unconfigured compaction agent).
+                        await HandleInitAsync(client, null, cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.Review:
+                        await HandleReviewAsync(client, null, cancellationToken);
+                        continue;
+                    case FirstTurnInputKind.GuardedSessionNative:
+                        MuxConsole.WriteMuted(
+                            $"'{firstInput.Trim().Split(' ', 2)[0]}' needs a running session - nothing to act on yet. "
+                            + "Send a first message to start the session.");
+                        continue;
+                    default:
+                        initialGoal = firstInput;
+                        break;
+                }
                 break;
             }
         }
@@ -1459,6 +1583,11 @@ public static class SingleAgentOrchestrator
         // Surface the active session id in the docked footer; the badge replaces the noisy
         // per-save "[AGENT SESSION] Saved to ..." confirmation (now suppressed under TUI).
         MuxConsole.SetTuiSessionId(sessionTimestamp);
+        // Fresh session: zero the footer tool-call counter (static across sequential sessions)
+        // and surface the resolved model id as the footer model chip.
+        _sessionToolCalls = 0;
+        MuxConsole.SetTuiToolCalls(0);
+        MuxConsole.SetTuiModel(resolvedModelId);
 
         // Size-tiered delegation retention scope: a single-agent session that spawns sub-agents
         // (/sub, /psub, /ultra, /giga, team-lead) keys its spilled raw + cumulative lead-cap counter
@@ -1806,6 +1935,7 @@ public static class SingleAgentOrchestrator
                     turnSpan?.SetTag("model", resolvedModelId);
                     turnSpan?.SetTag("iteration", i);
                     var turnSw = Stopwatch.StartNew();
+                    MuxConsole.StartTuiTurnClock();
 
                     ThinkingIndicator? thinking = null;
                     bool startedStreaming = false;
@@ -1920,6 +2050,15 @@ public static class SingleAgentOrchestrator
                                 {
                                     lastToolName = functionCall.Name;
                                     CostLedger.RecordToolCall(resolvedModelId);
+                                    MuxConsole.SetTuiToolCalls(++_sessionToolCalls);
+                                    // Stdio parity: the SDK event enum has TOOL_CALL but the engine
+                                    // only ever emitted tool_result on this path; headless drivers
+                                    // (dynamic workflows) count tool_call, so emit it at invocation
+                                    // time. STDIO-GATED: the TUI thinking indicator already shows
+                                    // tool activity, and the tool_call hook is enqueued below -
+                                    // calling WriteToolCall unconditionally would double both.
+                                    if (MuxConsole.StdioMode)
+                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old
@@ -2114,6 +2253,7 @@ public static class SingleAgentOrchestrator
                         });
 
                         turnSw.Stop();
+                        MuxConsole.StopTuiTurnClock();
                         OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                             new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
@@ -2343,6 +2483,9 @@ public static class SingleAgentOrchestrator
                     _cachedTokens = 0;
                     _cumInputTokens = 0;
                     _cumOutputTokens = 0;
+                    _sessionToolCalls = 0;
+                    MuxConsole.SetTuiToolCalls(0);
+                    MuxConsole.ResetTuiTurnClock();
                     _pendingCompaction = false;
                     _pendingReseed = false;
                     CostLedger.ResetSession();
@@ -2426,6 +2569,15 @@ public static class SingleAgentOrchestrator
                     // Runtime control of the in-house daemon (cron/watch/on/off/jobs/cancel).
                     MuxSwarm.State.DaemonCommand.Run(metaCmd);
                 }
+                else if (metaCmd.Equals("/workflows", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/workflows ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Live workflow-run viewer (session-agnostic process-level state); MUST
+                    // precede the IsReplOnly slash-anywhere fallthrough now that the command
+                    // is Scope.Both.
+                    CliCmdUtils.HandleWorkflowsCommand(
+                        metaCmd.Length > "/workflows".Length ? metaCmd.Substring("/workflows".Length).Trim() : "");
+                }
                 else if (metaCmd.Equals("/update", StringComparison.OrdinalIgnoreCase))
                 {
                     // Process-level self-update (Scope.Both), identical to the menu path: pull the
@@ -2462,10 +2614,12 @@ public static class SingleAgentOrchestrator
                         // Release the session-scoped TUI hooks so the menu's footer is clean while
                         // parked; they are re-asserted on resume below.
                         MuxConsole.SetTuiSessionId(null);
+                        MuxConsole.SetTuiModel(null);
                         // Park: hand the console back to the menu and block (async) until /attach.
                         await interactiveHandle.ParkAndAwaitAttachAsync(cancellationToken);
                         // --- resumed ---
                         MuxConsole.SetTuiSessionId(sessionTimestamp);
+                        MuxConsole.SetTuiModel(resolvedModelId);
                         RenderStatusBar();
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
                     }
@@ -2534,6 +2688,7 @@ public static class SingleAgentOrchestrator
         MuxConsole.SetTuiModeCycle(null);
         MuxConsole.SetTuiEffort(null);
         MuxConsole.SetTuiSessionId(null);
+        MuxConsole.SetTuiModel(null);
 
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);

@@ -234,7 +234,18 @@ public static class LocalAiFunctions
                         agentModels: Common.LoadAgentModels());
                 }
 
-                return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete. ";
+                // A refresh reconnects MCP servers and rebuilds App.McpTools, but the CURRENTLY-RUNNING
+                // agent captured its tool list at session construction and does NOT re-read it mid-session.
+                // So if an MCP server had FAILED, reconnecting it here will not surface its tools into this
+                // live session - the user must exit and re-enter (e.g. /qc then /resume) to rebuild the agent
+                // session object and re-inject the recovered tools. Surface that explicitly on an MCP refresh.
+                string note = refreshMcpServers
+                    ? " NOTE: if an MCP server was failing, its tools will NOT propagate into this live session"
+                      + " - exit and re-enter the session (e.g. /qc then /resume) to rebuild the agent and pick"
+                      + " up the reconnected tools."
+                    : "";
+
+                return $"Skills Refreshed is: {refreshSkills}, MCP Servers Refreshed is: {refreshMcpServers}, Config Files Refreshed is: {refreshConfigs}. System refresh complete.{note}";
 
             },
             name: "mux_refresh",
