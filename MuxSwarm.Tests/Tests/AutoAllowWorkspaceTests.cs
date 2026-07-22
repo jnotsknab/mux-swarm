@@ -13,7 +13,11 @@ namespace MuxSwarm.Tests.Tests;
 /// </summary>
 public class AutoAllowWorkspaceTests
 {
-    private const string Ws = @"C:\Users\x\code\proj";
+    // Platform-native so the trailing-slash normalization under test is real on every CI
+    // runner: '\\' is NOT a directory separator on Linux/macOS, so a Windows literal there
+    // exercises nothing (and fails).
+    private static readonly string Ws = OperatingSystem.IsWindows()
+        ? @"C:\Users\x\code\proj" : "/home/x/code/proj";
 
     [Fact]
     public void Enabled_AddsWorkspace_WhenMissing()
@@ -64,7 +68,7 @@ public class AutoAllowWorkspaceTests
     [Fact]
     public void AlreadyPresent_TrailingSlash_StillIdempotent()
     {
-        var allowed = new List<string> { Ws + @"\" };
+        var allowed = new List<string> { Ws + Path.DirectorySeparatorChar };
         bool added = App.ApplyAutoAllowWorkspace(allowed, enabled: true, workspaceIsInstallDir: false, Ws, _ => true);
         Assert.False(added);
         Assert.Single(allowed);
