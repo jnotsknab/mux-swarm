@@ -60,8 +60,8 @@ public static class McpServerDefaults
         AddIfMissing("Fetch", new McpServerConfig
         {
             Type = "stdio",
-            Command = "uvx",
-            Args = new[] { "mcp-server-fetch" },
+            Command = "npx",
+            Args = new[] { "mcp-fetch-server" },
             Env = new Dictionary<string, string?>(),
             Enabled = true
         });
