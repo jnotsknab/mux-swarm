@@ -2280,7 +2280,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
                 var httpTransport = new HttpClientTransport(httpOptions);
                 using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
-                var httpClient = await McpClient.CreateAsync(httpTransport, cancellationToken: httpCts.Token);
+                var httpClientOptions = string.IsNullOrWhiteSpace(serverConfig.ProtocolVersion)
+                    ? null
+                    : new McpClientOptions { ProtocolVersion = serverConfig.ProtocolVersion };
+                var httpClient = await McpClient.CreateAsync(httpTransport, httpClientOptions, cancellationToken: httpCts.Token);
 
                 var httpTools = await httpClient.ListToolsAsync(cancellationToken: httpCts.Token);
                 var namedHttpTools = httpTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
@@ -2319,7 +2322,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 }
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
-                var stdioClient = await McpClient.CreateAsync(stdioTransport, cancellationToken: cts.Token);
+                var stdioClientOptions = string.IsNullOrWhiteSpace(serverConfig.ProtocolVersion)
+                    ? null
+                    : new McpClientOptions { ProtocolVersion = serverConfig.ProtocolVersion };
+                var stdioClient = await McpClient.CreateAsync(stdioTransport, stdioClientOptions, cancellationToken: cts.Token);
 
                 var stdioTools = await stdioClient.ListToolsAsync(cancellationToken: cts.Token);
                 var namedStdioTools = stdioTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();

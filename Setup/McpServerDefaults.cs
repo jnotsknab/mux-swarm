@@ -11,6 +11,14 @@ namespace MuxSwarm.Setup;
 public static class McpServerDefaults
 {
     /// <summary>
+    /// Protocol pin for bundled 1.x-era stdio servers whose SDKs fatally reject the 2026-07-28
+    /// server/discover probe (pydantic/literal validation crash -> exit 1), leaving the 2.0 client
+    /// no error to fall back from. Forces the legacy initialize handshake, which is exactly what
+    /// the auto-fallback would have negotiated anyway. Remove the pin when a server modernizes.
+    /// </summary>
+    private const string LegacyProtocolPin = "2025-11-25";
+
+    /// <summary>
     /// Adds any missing default MCP servers to the given dictionary.
     /// Only fills gaps — never overwrites user-customized entries.
     /// </summary>
@@ -31,6 +39,7 @@ public static class McpServerDefaults
             Command = "npx",
             Args = new[] { "-y", "@modelcontextprotocol/server-memory" },
             Env = new Dictionary<string, string?>(),
+            ProtocolVersion = LegacyProtocolPin,
             Enabled = true
         });
 
@@ -63,6 +72,7 @@ public static class McpServerDefaults
             Command = "npx",
             Args = new[] { "mcp-fetch-server" },
             Env = new Dictionary<string, string?>(),
+            ProtocolVersion = LegacyProtocolPin,
             Enabled = true
         });
 
@@ -77,6 +87,7 @@ public static class McpServerDefaults
                 "--data-dir", "chroma-db"
             },
             Env = new Dictionary<string, string?>(),
+            ProtocolVersion = LegacyProtocolPin,
             Enabled = true
         });
 
@@ -86,6 +97,7 @@ public static class McpServerDefaults
             Command = "npx",
             Args = new[] { "-y", "@brave/brave-search-mcp-server" },
             Env = new Dictionary<string, string?> { ["BRAVE_API_KEY"] = "BRAVE_API_KEY" },
+            ProtocolVersion = LegacyProtocolPin,
             Enabled = true
         });
 
@@ -101,6 +113,7 @@ public static class McpServerDefaults
             Command = "npx",
             Args = new[] { "-y", "@playwright/mcp@latest", "--headless", "--no-sandbox", "--caps", "core,pdf,network,storage" },
             Env = new Dictionary<string, string?>(),
+            ProtocolVersion = LegacyProtocolPin,
             Enabled = true
         });
 
