@@ -29,7 +29,13 @@ public static class DynamicWorkflow
     /// Returns (ready, pythonPathOverride, error): ready=false + error when nothing worked -
     /// the caller surfaces the error instead of launching a doomed driver.
     /// </summary>
-    public static (bool Ready, string? PythonPath, string? Error) EnsureSdk(string py)
+    /// <summary>
+    /// Non-mutating half of <see cref="EnsureSdk"/>: reports whether the SDK is already
+    /// importable (directly or via MUX_SDK_PATH / a sibling "sdk" folder) WITHOUT attempting
+    /// a pip install. Exists so readiness can be checked cheaply -- EnsureSdk's bounded
+    /// install can block for up to two minutes, which is far too slow for a UI probe.
+    /// </summary>
+    public static (bool Ready, string? PythonPath, string? Error) ProbeSdk(string py)
     {
         if (ProbeImport(py, null)) return (true, null, null);
 
@@ -44,21 +50,95 @@ public static class DynamicWorkflow
             if (SdkPathIsUsable(cand) && ProbeImport(py, cand!)) return (true, cand, null);
         }
 
-        // Auto-install from PyPI, best-effort and bounded.
-        try
-        {
-            var psi = new ProcessStartInfo(py, "-m pip install --quiet muxswarm")
-            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-            using var p = Process.Start(psi);
-            if (p is not null && p.WaitForExit(120_000) && p.ExitCode == 0 && ProbeImport(py, null))
-                return (true, null, null);
-        }
-        catch { /* fall through to the error */ }
+        return (false, null,
+            "The muxswarm SDK is not importable by the resolved python. Install it with " +
+            "`pip install muxswarm`, set MUX_SDK_PATH to a local mux-swarm-sdk clone, or place " +
+            "the SDK under <install-dir>/sdk. Dynamic mode needs it; static mode does not.");
+    }
+
+    public static (bool Ready, string? PythonPath, string? Error) EnsureSdk(string py)
+    {
+        if (ProbeSdk(py) is { Ready: true } hit) return hit;
+
+        // Auto-install from PyPI, best-effort and bounded. uv is tried FIRST because it is
+        // what the SDK is distributed with and what mux's own venvs use: uv-managed venvs
+        // commonly have NO pip module at all (uv installs without bootstrapping pip), so a
+        // raw `python -m pip` fails with "No module named pip" even though the environment
+        // is perfectly installable -- and uv installs in ~200ms. Order:
+        //   1. `uv pip install --python <py>` -- the fast, primary path (SDK ships with uv).
+        //   2. `python -m pip` -- for environments that have pip but not uv.
+        //   3. `python -m ensurepip` then pip -- last resort to bootstrap pip.
+        // NOTE: <py> is an ABSOLUTE interpreter path (see ResolvePython), so uv installs into
+        // the exact interpreter the import-probe and driver launch use -- no cross-interpreter
+        // mismatch that would install successfully yet fail the re-probe.
+        if (ResolveUv() is { } uv &&
+            TryInstall(py, uv, "pip", "install", "--python", py, "muxswarm"))
+            return (true, null, null);
+
+        if (TryInstall(py, py, "-m", "pip", "install", "--quiet", "muxswarm")) return (true, null, null);
+
+        if (TryInstall(py, py, "-m", "ensurepip", "--upgrade") &&
+            TryInstall(py, py, "-m", "pip", "install", "--quiet", "muxswarm"))
+            return (true, null, null);
 
         return (false, null,
-            "[workflow] The muxswarm SDK is not importable by the resolved python and auto-install failed. " +
-            "Fix one of: `pip install muxswarm`, set MUX_SDK_PATH to a local mux-swarm-sdk clone, " +
-            "or place the SDK under <install-dir>/sdk. Dynamic mode needs it; /workflow static does not.");
+            "[workflow] The muxswarm SDK is not importable by the resolved python and auto-install failed " +
+            "(tried pip, uv, and ensurepip). Fix one of: `pip install muxswarm`, `uv pip install muxswarm`, " +
+            "set MUX_SDK_PATH to a local mux-swarm-sdk clone, or place the SDK under <install-dir>/sdk. " +
+            "Dynamic mode needs it; /workflow static does not.");
+    }
+
+    /// <summary>Run an installer command and report whether the SDK imports afterwards. Args are
+    /// passed individually via ArgumentList so an embedded path (e.g. uv's --python "&lt;abs path&gt;")
+    /// is never re-split or quote-mangled -- the same class of bug that broke ProbeImport.</summary>
+    private static bool TryInstall(string py, string exe, params string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+            };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi);
+            if (p is null) return false;
+            try { p.StandardInput.Close(); } catch { }
+            _ = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(120_000)) { try { p.Kill(true); } catch { } return false; }
+            if (p.ExitCode != 0) return false;
+        }
+        catch { return false; }
+        // ensurepip installs no package, so re-probing here also gates that step correctly.
+        return args.Any(a => a.Contains("ensurepip")) || ProbeImport(py, null);
+    }
+
+    /// <summary>Locate the uv launcher, or null when it is not installed.</summary>
+    internal static string? ResolveUv()
+    {
+        var exe = OperatingSystem.IsWindows() ? "uv.exe" : "uv";
+        // uv's default install location is not always on a service's PATH.
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (var cand in new[]
+                 {
+                     exe,
+                     Path.Combine(home, ".local", "bin", exe),
+                     Path.Combine(home, ".cargo", "bin", exe),
+                 })
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(cand, "--version")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using var p = Process.Start(psi);
+                if (p is not null && p.WaitForExit(10_000) && p.ExitCode == 0) return cand;
+            }
+            catch { /* try the next candidate */ }
+        }
+        return null;
     }
 
     /// <summary>True when <paramref name="dir"/> looks like an importable SDK root
@@ -71,8 +151,22 @@ public static class DynamicWorkflow
     {
         try
         {
-            var psi = new ProcessStartInfo(py, "-c \"import muxswarm\"")
-            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            // Pass args via ArgumentList, NOT a quoted string. `-c "import muxswarm"` as a single
+            // raw argument gets its quotes mangled by .NET's argument round trip, so python never
+            // sees a valid -c program and drops into the interactive REPL, blocking on stdin until
+            // the 15s timeout kills it -- which reads as a FALSE "not importable" and defeats the
+            // whole SDK-auto-install ladder (each install's post-probe also hangs). ArgumentList
+            // quotes each element correctly; redirecting + closing stdin removes any residual
+            // possibility of an interpreter waiting on input.
+            var psi = new ProcessStartInfo(py)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("import muxswarm");
             if (pythonPath is not null)
             {
                 var existing = Environment.GetEnvironmentVariable("PYTHONPATH");
@@ -81,12 +175,23 @@ public static class DynamicWorkflow
                     : pythonPath + Path.PathSeparator + existing;
             }
             using var p = Process.Start(psi);
-            return p is not null && p.WaitForExit(15_000) && p.ExitCode == 0;
+            if (p is null) return false;
+            try { p.StandardInput.Close(); } catch { }
+            _ = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(15_000)) { try { p.Kill(true); } catch { } return false; }
+            return p.ExitCode == 0;
         }
         catch { return false; }
     }
 
-    /// <summary>Resolve a python launcher, or null when none is on PATH.</summary>
+    /// <summary>Resolve a python launcher to an ABSOLUTE interpreter path, or null when none is on
+    /// PATH. Returning the absolute path (via sys.executable) rather than a bare launcher name is
+    /// essential: pip, uv (--python), the import probe, and the driver launch must all target the
+    /// SAME interpreter. A bare "python.exe" is re-resolved independently by each of those (PATH
+    /// order, uv's own discovery, the Windows Store app-execution alias), so uv can install the SDK
+    /// into one python while the probe checks another -- yielding a false "auto-install failed" even
+    /// though the install succeeded. Canonicalizing here removes that ambiguity entirely.</summary>
     public static string? ResolvePython()
     {
         foreach (var cand in OperatingSystem.IsWindows()
@@ -95,12 +200,34 @@ public static class DynamicWorkflow
         {
             try
             {
-                var psi = new ProcessStartInfo(cand, "--version")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                // Canonicalize to the real interpreter path in one shot. This also runs the
+                // candidate, so a non-functional alias is skipped rather than returned.
+                // Pass args via ArgumentList, NOT a single quoted string: the inner quotes of
+                // `-c "import sys; ..."` get mangled by .NET's arg-string round trip, so python
+                // never sees a valid -c program and drops into the interactive REPL, blocking on
+                // stdin until it is killed. ArgumentList quotes each element correctly. Also
+                // redirect stdin and close it, so even a misparse cannot wait on input.
+                var psi = new ProcessStartInfo(cand)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardInput = true,
+                    UseShellExecute = false,
+                };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("import sys; print(sys.executable)");
                 using var p = Process.Start(psi);
                 if (p is null) continue;
-                p.WaitForExit(4000);
-                if (p.ExitCode == 0) return cand;
+                try { p.StandardInput.Close(); } catch { }
+                // Read stdout ASYNC and bound the wait: a bare "python.exe" can also resolve to the
+                // Windows Store app-execution stub, which may block without producing output. Drain
+                // both pipes async, wait with a hard ceiling, and kill + skip anything that overruns.
+                var outTask = p.StandardOutput.ReadToEndAsync();
+                _ = p.StandardError.ReadToEndAsync();   // drain so the child can never block on a full stderr pipe
+                if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } continue; }
+                if (p.ExitCode != 0) continue;
+                var exe = (outTask.Wait(1000) ? outTask.Result : "").Trim();
+                if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) return exe;
             }
             catch { /* try next */ }
         }
@@ -281,6 +408,14 @@ public static class DynamicWorkflow
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Redirect stdin too. When serve mode launches the driver, an un-redirected stdin is
+            // INHERITED from the serve process -- a pipe/handle with no console attached. CPython's
+            // startup (io/site init) can then block on that handle indefinitely: the driver stays
+            // alive but never reaches even its first line (manifest.json write), so the run shows
+            // 0/0 with an empty driver.log forever. Redirecting + closing stdin gives the child a
+            // clean, closed input stream so it starts normally. (The same inherited-stdin hang bit
+            // the SDK probe helpers.)
+            RedirectStandardInput = true,
             WorkingDirectory = dir,
         };
         psi.Environment["MUX_BINARY"] = Environment.ProcessPath ?? Path.Combine(PlatformContext.BaseDirectory, OperatingSystem.IsWindows() ? "MuxSwarm.exe" : "MuxSwarm");
@@ -305,6 +440,9 @@ public static class DynamicWorkflow
         try
         {
             proc = Process.Start(psi) ?? throw new InvalidOperationException("python did not start");
+            // Close the driver's stdin immediately: it never reads input, and leaving the pipe open
+            // is what lets a serve-launched child block in interpreter startup.
+            try { proc.StandardInput.Close(); } catch { /* already gone */ }
             // Drain child stdio to the run dir so a failing script leaves a readable log and the
             // pipes never fill (the TUI must NOT inherit them - see the /login reflex).
             var logPath = Path.Combine(dir, "driver.log");
@@ -325,6 +463,111 @@ public static class DynamicWorkflow
             Id = id, Name = name, Mode = "dynamic", RunDir = dir, Driver = proc,
         });
         return $"[workflow] Dynamic run '{name}' launched (id {id}, driver pid {proc.Id}, cap {maxPar}). Watch it with /workflows; script + journal in {dir}.";
+    }
+
+    /// <summary>Absolute path to a run's authored driver script, or null when the run/dir is gone.</summary>
+    public static string? ScriptPath(string runId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run?.RunDir is null) return null;
+        var p = Path.Combine(run.RunDir, "driver.py");
+        return File.Exists(p) ? p : null;
+    }
+
+    /// <summary>Read a run's driver script, or null when unavailable.</summary>
+    public static string? ReadScript(string runId)
+        => ScriptPath(runId) is { } p ? File.ReadAllText(p) : null;
+
+    /// <summary>Overwrite a run's driver script (used by the web editor before a re-run). Returns
+    /// an error string on failure, else null. Contract-validated so a broken edit is rejected up
+    /// front rather than producing a dead run.</summary>
+    public static string? WriteScript(string runId, string script)
+    {
+        if (ScriptPath(runId) is not { } p) return "No script for this run.";
+        if (ValidateScript(script) is { } rejection) return rejection;
+        try { File.WriteAllText(p, script, new UTF8Encoding(false)); return null; }
+        catch (Exception ex) { return ex.Message; }
+    }
+
+    /// <summary>Read a task's captured output (task_&lt;id&gt;.out) for a run, or null.</summary>
+    public static string? ReadTaskOutput(string runId, string taskId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run?.RunDir is null) return null;
+        // taskId is caller-supplied; keep it to a bare file stem so it can never traverse.
+        var safe = new string(taskId.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_').ToArray());
+        if (safe.Length == 0) return null;
+        var p = Path.Combine(run.RunDir, $"task_{safe}.out");
+        return File.Exists(p) ? File.ReadAllText(p) : null;
+    }
+
+    /// <summary>Persist a run's driver script as a reusable saved definition
+    /// (&lt;name&gt;.workflow.json in the Teams dir, shape { name, mode:"dynamic", script }). Returns
+    /// (savedName, error). Shared by the web API and the TUI /workflows save verb.</summary>
+    public static (string? Saved, string? Error) SaveRunAsDefinition(string runId, string? asName = null)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run is null) return (null, $"No run '{runId}'.");
+        if (ReadScript(runId) is not { } script) return (null, "This run has no driver script to save.");
+        var name = SanitizeName(string.IsNullOrWhiteSpace(asName) ? run.Name : asName!);
+        try
+        {
+            Directory.CreateDirectory(PlatformContext.TeamsDirectory);
+            var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+            var payload = JsonSerializer.Serialize(new { name, mode = "dynamic", script },
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(file, payload, new UTF8Encoding(false));
+            return (name, null);
+        }
+        catch (Exception ex) { return (null, ex.Message); }
+    }
+
+    /// <summary>Re-launch a run from its (optionally edited) driver script without re-authoring.
+    /// Returns the launch message (which the caller inspects for success like the initial POST).</summary>
+    public static string RerunFromRun(string runId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run is null) return $"[workflow] No run '{runId}'.";
+        if (ReadScript(runId) is not { } script) return "[workflow] This run has no driver script to re-run.";
+        return Launch(run.Name, script, ResolvePython());
+    }
+
+    /// <summary>Launch a previously saved dynamic definition (&lt;name&gt;.workflow.json with a
+    /// "script" field). Returns the launch message. Saved STATIC step-workflows are not dynamic and
+    /// are handled by the existing static path, so this only accepts definitions carrying a script.</summary>
+    public static string LaunchSaved(string savedName)
+    {
+        var name = SanitizeName(savedName);
+        var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+        if (!File.Exists(file)) return $"[workflow] No saved workflow '{name}'.";
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            if (!doc.RootElement.TryGetProperty("script", out var sc) || sc.ValueKind != JsonValueKind.String)
+                return $"[workflow] Saved workflow '{name}' has no dynamic script (it may be a static step workflow).";
+            return Launch(name, sc.GetString()!, ResolvePython());
+        }
+        catch (Exception ex) { return $"[workflow] Could not load saved workflow '{name}': {ex.Message}"; }
+    }
+
+    /// <summary>Delete a saved dynamic definition (&lt;name&gt;.workflow.json). Returns (deleted, error).</summary>
+    public static (bool Deleted, string? Error) DeleteSaved(string savedName)
+    {
+        var name = SanitizeName(savedName);
+        var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+        if (!File.Exists(file)) return (false, $"No saved workflow '{name}'.");
+        try { File.Delete(file); return (true, null); }
+        catch (Exception ex) { return (false, ex.Message); }
+    }
+
+    /// <summary>Reduce an arbitrary label to a safe file stem for a saved definition.</summary>
+    private static string SanitizeName(string raw)
+    {
+        var name = new string((raw ?? "").Trim()
+            .Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-').ToArray())
+            .Trim('-');
+        if (name.Length == 0) name = "workflow";
+        return name.Length > 48 ? name[..48] : name;
     }
 
     private static string StripFences(string s)

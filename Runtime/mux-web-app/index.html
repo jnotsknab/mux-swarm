@@ -123,7 +123,7 @@
   --accent-fg: #09090b; /* Zinc 950 */
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
-  --sidebar-width: 320px;
+  --sidebar-width: 420px;
   --radius: 0.5rem;
   /* Typography & density (user-controllable from Settings → Typography) */
   --ui-font-size: 14px;
@@ -157,6 +157,50 @@ html, body,
   padding-bottom: .15rem; border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
 }
 .stream-block[data-agent] { border-left: none; padding-left: 0; margin-top: .5rem; }
+
+    /* ── Reasoning blocks ──────────────────────────────────────────────────
+       Same chrome-less cluster shape as .tool-group/.event-group: the body is
+       revealed only by .open. Purple accent matches the session viewer's
+       reasoning styling so the two surfaces agree. */
+    .reasoning-block { margin: 4px 0; }
+    .reasoning-header {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; user-select: none;
+      padding: 2px 0;
+      font-size: calc(12px * var(--ui-font-scale, 1));
+      color: #c8a6ff;
+    }
+    .reasoning-header:hover { opacity: 0.85; }
+    .reasoning-block .rb-chev {
+      display: inline-flex; align-items: center; flex-shrink: 0;
+      transition: transform 0.15s ease; opacity: 0.7;
+    }
+    .reasoning-block.open .rb-chev { transform: rotate(0deg); }
+    .reasoning-block:not(.open) .rb-chev { transform: rotate(-90deg); }
+    .reasoning-block .rb-label { font-weight: 600; flex-shrink: 0; letter-spacing: 0.01em; }
+    .reasoning-block .rb-latest {
+      color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; min-width: 0; opacity: 0.8;
+      font-style: italic;
+    }
+    .reasoning-block.open .rb-latest { display: none; }
+    .reasoning-block .reasoning-body { display: none; }
+    .reasoning-block.open .reasoning-body {
+      display: block;
+      margin: 4px 0 6px 0;
+      padding-left: 12px;
+      border-left: 2px solid rgba(200,166,255,0.35);
+      color: var(--muted);
+      font-style: italic;
+      font-size: calc(12.5px * var(--ui-font-scale, 1));
+      line-height: var(--ui-line-height, 1.6);
+    }
+    /* Reasoning is secondary content: keep code/emphasis inside it quiet too. */
+    .reasoning-block .reasoning-body code { font-style: normal; opacity: 0.9; }
+    .reasoning-block .reasoning-body strong { color: var(--text); font-weight: 600; }
+    /* 'hide' mode is enforced in JS (chunks never enter the DOM); this is a
+       belt-and-braces guard for blocks already rendered when the user flips it. */
+    body.hide-reasoning .reasoning-block { display: none; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
@@ -458,11 +502,19 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 .sidebar.open { transform: translateX(0); }
 
-.sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+.sidebar-header {
+  padding: 16px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 6px; align-items: center;
+  /* Tabs scroll rather than wrap: a wrapped tab row clipped 'Tool Output'
+     at narrow widths and hid the tab entirely. */
+  overflow-x: auto; scrollbar-width: none;
+}
+.sidebar-header::-webkit-scrollbar { display: none; }
 
 .sidebar-tab {
-  flex: 1; background: transparent; color: var(--muted); border: none;
-  border-radius: calc(var(--radius) - 2px); padding: 8px 12px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
+  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+  background: transparent; color: var(--muted); border: none;
+  border-radius: calc(var(--radius) - 2px); padding: 8px 10px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500; cursor: pointer; transition: all 0.2s ease;
 }
 .sidebar-tab:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.1); }
@@ -520,6 +572,9 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 
 /* ── Output ── */
 .output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
+/* Give #output a definite height so the splash's percentage min-height
+   resolves and the empty state optically centers. */
+.output { min-height: 0; }
 .output::-webkit-scrollbar { width: 4px; }
 .output::-webkit-scrollbar-track { background: transparent; }
 .output::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -1337,82 +1392,85 @@ body.hide-all-pills .event-group { display: none !important; }
 .prompt-block button:hover { background: rgba(var(--accent-rgb), 0.15); color: var(--text); border-color: var(--accent); }
 .prompt-block button:active { transform: scale(0.96); }
 
-/* ── Welcome card ── */
-.welcome-card {
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 22px 24px; margin: 8px 0; max-width: 720px;
+/* ── Splash (empty state) ──
+   Centered wordmark, tagline and a live status strip. Fills the transcript
+   viewport so it optically centers, then is removed on first real content. */
+.mux-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Fill the scroll viewport minus the composer so the block sits centered
+     rather than pinned to the top of the transcript. */
+  min-height: calc(100% - 96px);
+  padding: 24px;
+  animation: fadeIn 0.25s ease;
+  text-align: center;
 }
-.welcome-card .welcome-head { margin-bottom: 16px; }
-.welcome-card h2 { color: var(--blue); font-size: calc(17px * var(--ui-font-scale, 1)); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.02em; }
-.welcome-card p { color: var(--muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); margin: 0; line-height: 1.55; }
-
-/* Starter cards (clickable) */
-.welcome-card .starter-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-  margin-bottom: 14px;
+.mux-splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 560px;
 }
-.welcome-card .starter-card {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  background: var(--bg-input, rgba(255,255,255,0.02));
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 14px 12px;
-  cursor: pointer; text-align: left;
-  color: var(--text);
+.mux-splash-mark {
   font-family: var(--font-sans, ui-sans-serif, system-ui);
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+  font-weight: 800;
+  font-size: calc(42px * var(--ui-font-scale, 1));
+  line-height: 1.05;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text);
+  /* Subtle vertical sheen keeps the wordmark from reading as flat bold text. */
+  background: linear-gradient(180deg, var(--text) 0%, var(--muted) 165%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-.welcome-card .starter-card:hover {
-  border-color: var(--accent, var(--blue));
-  background: rgba(255,255,255,0.04);
+.mux-splash-tagline {
+  color: var(--muted);
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  max-width: 46ch;
 }
-.welcome-card .starter-card:active { transform: translateY(1px); }
-.welcome-card .starter-icon { font-size: calc(20px * var(--ui-font-scale, 1)); line-height: 0; margin-bottom: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent, #7dd3fc); opacity: 0.92; }
-.starter-icon svg { width: calc(22px * var(--ui-font-scale, 1)); height: calc(22px * var(--ui-font-scale, 1)); display: block; }
-.welcome-card .starter-title { font-weight: 600; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text); }
-.welcome-card .starter-sub { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--muted); line-height: 1.45; }
-.welcome-card .starter-cmd {
-  margin-top: 6px;
+/* Dynamic tip/quote line (same pool as the TUI splash). The optional label is a
+   dim author/category prefix rendered before the text. */
+.mux-splash-tip {
+  color: var(--muted);
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  max-width: 52ch;
+  font-style: italic;
+}
+.mux-splash-tip .lbl {
+  font-style: normal;
+  color: var(--muted);
+  opacity: 0.7;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--green);
-  background: rgba(0,0,0,0.18); padding: 2px 6px; border-radius: 4px;
 }
+/* Minimal status line: plain, dot-separated, no pills. */
+.mux-splash-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--muted);
+}
+.mux-splash-meta .mi { white-space: nowrap; }
+.mux-splash-meta .mi .v { color: var(--text); }
+.mux-splash-meta .sep { opacity: 0.4; }
 
-/* "More commands" disclosure */
-.welcome-card .welcome-more { margin: 4px 0 0; }
-.welcome-card .welcome-more > summary {
-  cursor: pointer; user-select: none; list-style: none;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 0; color: var(--muted);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  border-top: 1px solid var(--border);
+@media (max-width: 640px) {
+  .mux-splash-mark { font-size: calc(30px * var(--ui-font-scale, 1)); letter-spacing: 0.07em; }
+  .mux-splash { min-height: calc(100% - 120px); padding: 16px; }
 }
-.welcome-card .welcome-more > summary::-webkit-details-marker { display: none; }
-.welcome-card .welcome-more > summary::before {
-  content: ''; width: 5px; height: 5px;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg); transition: transform 0.18s ease;
-  margin-right: 6px;
-}
-.welcome-card .welcome-more[open] > summary::before { transform: rotate(45deg); }
-.welcome-card .welcome-more > summary span:first-child { font-weight: 600; color: var(--text); flex: 1; }
-.welcome-card .welcome-more .more-hint { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
-.welcome-card .cmd-section { margin-top: 10px; }
-.welcome-card .cmd-section-head {
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
-  margin-bottom: 6px; font-weight: 600;
-}
-.welcome-card .cmd-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.welcome-card .cmd { color: var(--green); font-weight: 500; font-family: var(--font-mono, ui-monospace, monospace); }
-.welcome-card .cmd[data-cmd] { cursor: pointer; border-radius: 3px; padding: 0 3px; margin: 0 -3px; transition: background 0.12s ease; }
-.welcome-card .cmd[data-cmd]:hover { background: rgba(var(--accent-rgb, 100,180,220), 0.12); }
-.welcome-card .desc { color: var(--muted); }
-
-.welcome-card .shortcut-row { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); }
-.welcome-card kbd { background: var(--bg-input); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text); }
 
 /* ── Inline confirm card (session switch warning) ── */
 .mux-confirm-card {
@@ -1544,6 +1602,284 @@ body.hide-all-pills .event-group { display: none !important; }
   box-shadow: 0 10px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.25);
 }
 .input-area .btn-group { align-self: flex-end; }
+
+/* ── Session / mode selector ── (mirrors the model selector; abstracts the
+   /agent /swarm /pswarm /stateless session starters + /plan /ultra /giga /sub
+   /psub modifiers into a single clickable control, no slash commands typed). */
+.session-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.2;
+  cursor: pointer;
+  min-height: 32px;
+  max-width: 210px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.session-btn:hover { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+.session-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.session-btn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-btn svg { flex: 0 0 auto; opacity: 0.7; }
+/* Status dot: dim when idle (interactive), green + pulsing while a session runs. */
+.session-btn-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--muted); opacity: 0.5; }
+.session-btn.is-live .session-btn-dot { background: var(--green, #10b981); opacity: 1;
+  animation: sessDotPulse 1.4s ease-in-out infinite; }
+@keyframes sessDotPulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .session-btn.is-live .session-btn-dot { animation: none; } }
+
+.session-menu {
+  position: fixed; z-index: 200;
+  min-width: 300px; max-width: min(420px, calc(100vw - 16px));
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+  animation: fadeIn 0.12s ease;
+}
+.session-menu-head {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+}
+.session-sec { padding: 6px; border-bottom: 1px solid var(--border); }
+.session-sec:last-child { border-bottom: none; }
+.session-sec-title { padding: 4px 6px 6px; color: var(--muted);
+  font-size: calc(9.5px * var(--ui-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.07em; }
+/* Session-start rows: one active at a time (radio feel). */
+.session-opt {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 8px 8px; border-radius: 6px; font-family: inherit; color: var(--text);
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+}
+.session-opt:hover { background: rgba(var(--accent-rgb), 0.12); }
+.session-opt.is-active { background: rgba(var(--accent-rgb), 0.10); }
+.session-opt .so-radio { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+  border: 1.5px solid var(--border); position: relative; }
+.session-opt.is-active .so-radio { border-color: var(--accent); }
+.session-opt.is-active .so-radio::after { content: ''; position: absolute; inset: 2.5px;
+  border-radius: 50%; background: var(--accent); }
+.session-opt .so-body { min-width: 0; flex: 1 1 auto; }
+.session-opt .so-name { display: block; font-weight: 600; }
+.session-opt .so-desc { display: block; color: var(--muted);
+  font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.35; margin-top: 1px; }
+/* End-session button (destructive-ish accent). */
+.session-end { display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; padding: 9px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1)); }
+.session-end:hover { border-color: var(--red, #ef4444); color: var(--red, #ef4444);
+  background: rgba(239,68,68,0.08); }
+/* Modifier toggles. */
+.session-mod {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 7px 8px; border-radius: 6px; font-family: inherit; color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.session-mod:hover { background: rgba(var(--accent-rgb), 0.10); }
+.session-mod .sm-body { min-width: 0; flex: 1 1 auto; }
+.session-mod .sm-name { display: block; font-weight: 600; }
+.session-mod .sm-desc { display: block; color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.3; margin-top: 1px; }
+/* iOS-style switch. */
+.session-mod .sm-sw { width: 30px; height: 17px; border-radius: 999px; flex: 0 0 auto;
+  background: rgba(127,127,127,0.35); position: relative; transition: background 0.15s; }
+.session-mod .sm-sw::after { content: ''; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+.session-mod.is-on .sm-sw { background: var(--accent); }
+.session-mod.is-on .sm-sw::after { transform: translateX(13px); }
+.session-mod.is-forced { opacity: 0.6; cursor: default; }
+.session-mod.is-forced:hover { background: transparent; }
+.session-foot { padding: 8px 12px; color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.4; border-top: 1px solid var(--border); }
+
+/* ── Model selector ── */
+.model-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.2;
+  cursor: pointer;
+  min-height: 32px;
+  max-width: 190px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.model-btn:hover { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+.model-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.model-btn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-btn svg { flex: 0 0 auto; opacity: 0.7; }
+
+.model-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 16px));
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+  animation: fadeIn 0.12s ease;
+}
+.model-menu-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+}
+.model-menu-loading { padding: 14px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.model-menu-list { max-height: 320px; overflow-y: auto; }
+.model-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 0 4px; border-bottom: 1px solid var(--border);
+}
+.model-menu-item:last-child { border-bottom: none; }
+.model-menu-item.is-active { background: rgba(var(--accent-rgb), 0.07); }
+/* Agent and model are SEPARATE hit targets in one row: click the name to make
+   that agent active, click the model to change it. Avoids a second tab layer. */
+.model-menu-item .mm-agent-btn,
+.model-menu-item .mm-model-btn {
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 9px 8px; border-radius: 5px; font-family: inherit; min-width: 0;
+}
+.model-menu-item .mm-agent-btn { flex: 0 0 auto; max-width: 45%; }
+.model-menu-item .mm-model-btn { flex: 1 1 auto; overflow: hidden; }
+.model-menu-item .mm-agent-btn:hover,
+.model-menu-item .mm-model-btn:hover { background: rgba(var(--accent-rgb), 0.14); }
+.model-menu-item .mm-agent {
+  display: block; color: var(--text); font-weight: 600;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.model-menu-item.is-active .mm-agent::after {
+  content: 'active'; margin-left: 6px; font-size: 0.8em; font-weight: 500;
+  color: var(--accent, #64b4dc); opacity: 0.9;
+}
+.model-menu-item .mm-model {
+  display: block; color: var(--muted); font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.model-menu .mm-hint {
+  padding: 0 12px 8px; color: var(--muted); opacity: 0.75;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+/* Model catalog: scrolls inside the menu so a large provider list can't push
+   the Apply button off-screen. */
+.model-menu .mm-models {
+  max-height: 220px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.model-menu .mm-models::-webkit-scrollbar { width: 4px; }
+.model-menu .mm-models::-webkit-scrollbar-track { background: transparent; }
+.model-menu .mm-models::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.model-menu .mm-models:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+.model-menu-list {
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.model-menu-list::-webkit-scrollbar { width: 4px; }
+.model-menu-list::-webkit-scrollbar-track { background: transparent; }
+.model-menu-list::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.model-menu-list:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+.model-menu .mm-model-row {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; cursor: pointer; color: var(--text);
+  font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale, 1));
+  padding: 6px 8px; border-radius: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.model-menu .mm-model-row:hover { background: rgba(var(--accent-rgb), 0.14); }
+.model-menu .mm-model-row.is-current { color: var(--accent, #64b4dc); font-weight: 600; }
+.model-menu .mm-loading, .model-menu .mm-status {
+  padding: 6px 8px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.model-menu .mm-status:empty { display: none; }
+.model-menu .mm-status.is-error { color: var(--red, #e06c75); }
+.model-menu-form .mm-back {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+}
+.model-menu-form .mm-back:hover { color: var(--text); }
+
+/* --- Capability hint bar ---
+   The engine emits CLI guidance ("run /subagents to enable delegation") that is
+   correct in a terminal but dead prose in the web app. We intercept those lines
+   and re-render them as a quiet bar with real buttons, so the instruction
+   becomes a click. Dismissed state is per-session. */
+.mux-hint-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 6px 0; padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-card, rgba(255,255,255,0.02));
+  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted);
+}
+.mux-hint-bar .hb-text { flex: 1 1 220px; min-width: 0; }
+.mux-hint-bar .hb-text b { color: var(--text); font-weight: 600; }
+.mux-hint-bar .hb-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.mux-hint-bar button {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 10px; cursor: pointer; font-family: inherit;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+}
+.mux-hint-bar button:hover { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
+.mux-hint-bar .hb-dismiss { background: transparent; border-color: transparent; color: var(--muted); }
+.mux-hint-bar .hb-dismiss:hover { color: var(--text); background: transparent; }
+body.hide-capability-hints .mux-hint-bar { display: none !important; }
+.model-menu-form { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.model-menu-form .mm-current {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.model-menu-form .mm-current code {
+  color: var(--accent); font-family: var(--font-mono, monospace); word-break: break-all;
+}
+.model-menu-form .mm-input {
+  background: var(--bg-input, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  outline: none;
+}
+.model-menu-form .mm-input:focus { border-color: var(--accent); }
+.model-menu-form .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.model-menu-form button {
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--font-sans, system-ui);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+.model-menu-form .mm-cancel:hover { color: var(--text); }
+.model-menu-form .mm-apply {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--bg); font-weight: 600;
+}
+.model-menu-form .mm-apply:hover { filter: brightness(1.1); }
+
+/* The composer is tight on phones: the model button keeps its own row. */
+@media (max-width: 640px) {
+  .model-btn { max-width: 120px; font-size: calc(10px * var(--ui-font-scale, 1)); padding: 5px 6px; }
+}
 /* Reserve space so the last transcript line isn't hidden behind the floating bar */
 .output { padding-bottom: 96px; }
 
@@ -1750,10 +2086,6 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
   .sidebar { padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
-  .welcome-card { padding: 14px 16px; }
-  .welcome-card .starter-grid { grid-template-columns: 1fr; }
-  .welcome-card .cmd-grid { grid-template-columns: 1fr; gap: 2px; }
-  .welcome-card .shortcut-row { font-size: calc(10px * var(--ui-font-scale, 1)); }
   .tool-call { 
   font-size: calc(12px * var(--ui-font-scale, 1)); 
   padding: 6px 10px; 
@@ -1784,7 +2116,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 }
 
 @media (min-width: 1200px) {
-  :root { --sidebar-width: 360px; }
+  :root { --sidebar-width: 480px; }
 }
 
 /* ── Live Output / Diffs ── */
@@ -2167,12 +2499,29 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 /* ── Toasts ── */
 .toast-container { position: fixed; bottom: 80px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
 .toast {
-  background: var(--bg-card); border-left: 3px solid var(--border); border-radius: 6px; padding: 10px 14px;
-  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  position: relative; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px 9px 13px;
+  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28); backdrop-filter: blur(6px);
   animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto;
+  overflow: hidden;
 }
-.toast.success { border-left-color: var(--green); }
-.toast.error { border-left-color: var(--red); }
+/* Elegant status: a soft glow ring around a small dot instead of a left bookmark. */
+.toast .toast-ico { display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex: 0 0 auto; }
+.toast .toast-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.toast.success .toast-dot { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
+.toast.error   .toast-dot { background: var(--red);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 22%, transparent); }
+.toast.info    .toast-dot { background: var(--accent, #64b4dc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #64b4dc) 22%, transparent); }
+/* A faint top hairline accent (color-tinted) reads as premium without a stripe. */
+.toast::before { content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-accent, var(--green)) 55%, transparent), transparent); opacity: .0; }
+.toast.success { --fg-accent: var(--green); }
+.toast.error   { --fg-accent: var(--red); }
+.toast.info    { --fg-accent: var(--accent, #64b4dc); }
+.toast::before { opacity: .5; }
+.toast .toast-time { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1));
+  font-family: var(--font-mono, monospace); margin-left: 6px; }
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes fadeOutRight { to { transform: translateX(100%); opacity: 0; } }
 
@@ -2262,6 +2611,15 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
         <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
       <div class="btn-group">
+        <button class="session-btn" id="sessionBtn" type="button" title="Session &amp; mode" aria-haspopup="menu" aria-expanded="false">
+          <span class="session-btn-dot" id="sessionBtnDot" aria-hidden="true"></span>
+          <span class="session-btn-name" id="sessionBtnName">Interactive</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="model-btn" id="modelBtn" type="button" title="Model" aria-haspopup="listbox" aria-expanded="false">
+          <span class="model-btn-name" id="modelBtnName">model</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
         <button class="mic-btn" id="micBtn" title="Voice Input"><svg data-icon="mic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></button>
         <button class="upload-btn" id="uploadBtn" title="Upload file"><svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="fileInput" />
@@ -2275,6 +2633,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
+      <button class="sidebar-tab" data-tab="skills">Skills</button>
+      <button class="sidebar-tab" data-tab="tools">Tools</button>
       <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
       <button class="sidebar-close" id="sidebarClose">×</button>
     </div>
@@ -2449,6 +2809,7 @@ const icons = {
   file: `<svg data-icon="file" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`,
   download: `<svg data-icon="download" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`,
   paperclip: `<svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`,
+  pin: `<svg data-icon="pin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`,
   zap: `<svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
   arrowUpRight: `<svg data-icon="arrow-up-right" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
   check: `<svg data-icon="check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
@@ -2742,109 +3103,107 @@ const icons = {
     };
   }
 
-  // ─── Welcome card ───
+  // ─── Splash (empty state) ───
+  // Centered wordmark + tagline + a LIVE status strip. Everything shown here is
+  // read from /api/health and /api/status at render time, so it can never drift
+  // the way the old hand-maintained command tables did. The splash removes
+  // itself the moment real transcript content arrives.
   let welcomeShown = false;
   function showWelcome() {
     if (welcomeShown) return;
     welcomeShown = true;
-    const html = `<div class="welcome-card">
-      <div class="welcome-head">
-        <h2>Mux-Swarm</h2>
-        <p>CLI-native agentic swarm OS. Pick how you want to start — click a card or type a command.</p>
-      </div>
 
-      <div class="starter-grid">
-        <button class="starter-card" data-cmd="/agent" type="button">
-          <div class="starter-icon"><svg data-icon="user" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></div>
-          <div class="starter-title">Single agent</div>
-          <div class="starter-sub">Talk to one agent. Best for chat, code review, focused work.</div>
-          <div class="starter-cmd">/agent</div>
-        </button>
-        <button class="starter-card" data-cmd="/swarm" type="button">
-          <div class="starter-icon"><svg data-icon="network" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2 6.4 17"/><path d="M12 7.2 17.6 17"/><path d="M7.2 19h9.6"/></svg></div>
-          <div class="starter-title">Swarm</div>
-          <div class="starter-sub">Orchestrate multiple agents on a complex task end-to-end.</div>
-          <div class="starter-cmd">/swarm</div>
-        </button>
-        <button class="starter-card" data-cmd="/stateless" type="button">
-          <div class="starter-icon"><svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
-          <div class="starter-title">One-off task</div>
-          <div class="starter-sub">Fire-and-forget. No session, no history — fastest path to an answer.</div>
-          <div class="starter-cmd">/stateless</div>
-        </button>
-      </div>
+    const el = document.createElement('div');
+    el.className = 'mux-splash';
+    el.id = 'muxSplash';
+    // Static fallback tagline: shown until (or unless) the dynamic tip loads, so the
+    // splash is never empty on a slow/failed fetch.
+    const fallbackTagline = 'Ask a question, paste an error, or point me at a repo. ' +
+      'I can read code, run tools, and orchestrate a swarm of agents.';
+    el.innerHTML =
+      '<div class="mux-splash-inner">' +
+        '<div class="mux-splash-mark">MUX&#8202;SWARM</div>' +
+        '<div class="mux-splash-tip" id="muxSplashTip">' + esc(fallbackTagline) + '</div>' +
+        '<div class="mux-splash-meta" id="muxSplashMeta"></div>' +
+      '</div>';
+    output.appendChild(el);
 
-      <details class="welcome-more">
-        <summary><span>More commands</span><span class="more-hint">type <kbd>/</kbd> any time for the full palette</span></summary>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Modes</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/agent">/agent</span><span class="desc">Single-agent conversation</span>
-            <span class="cmd" data-cmd="/swarm">/swarm</span><span class="desc">Multi-agent orchestrated loop</span>
-            <span class="cmd" data-cmd="/pswarm">/pswarm</span><span class="desc">Parallel concurrent dispatch</span>
-            <span class="cmd" data-cmd="/stateless">/stateless</span><span class="desc">One-off stateless task</span>
-            <span class="cmd" data-cmd="/workflow">/workflow</span><span class="desc">Run a workflow file</span>
-            <span class="cmd" data-cmd="/resume">/resume</span><span class="desc">Resume a previous session</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Enhance a session</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/subagents">/subagents</span><span class="desc">Toggle sub-agent delegation (single-agent loop)</span>
-            <span class="cmd" data-cmd="/parasubagents">/parasubagents</span><span class="desc">Toggle parallel sub-agent delegation</span>
-            <span class="cmd" data-cmd="/plan">/plan</span><span class="desc">Toggle plan mode (confirm before executing)</span>
-            <span class="cmd" data-cmd="/continuous">/continuous</span><span class="desc">Toggle continuous autonomous execution</span>
-            <span class="cmd" data-cmd="/compact">/compact</span><span class="desc">Compact current session context</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Inspect</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/status">/status</span><span class="desc">Provider, models, tools, skills, sessions</span>
-            <span class="cmd" data-cmd="/tools">/tools</span><span class="desc">List available MCP tools</span>
-            <span class="cmd" data-cmd="/skills">/skills</span><span class="desc">List available local skills</span>
-            <span class="cmd" data-cmd="/memory">/memory</span><span class="desc">View knowledge graph</span>
-            <span class="cmd" data-cmd="/sessions">/sessions</span><span class="desc">List all saved sessions</span>
-            <span class="cmd" data-cmd="/model">/model</span><span class="desc">View current models</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Setup</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/onboard">/onboard</span><span class="desc">Create or update operator profile</span>
-            <span class="cmd" data-cmd="/setup">/setup</span><span class="desc">Run initial setup / reconfigure</span>
-            <span class="cmd" data-cmd="/provider">/provider</span><span class="desc">View or switch the active LLM provider</span>
-            <span class="cmd" data-cmd="/refresh">/refresh</span><span class="desc">Full Mux refresh (config, MCP, skills)</span>
-            <span class="cmd" data-cmd="/help">/help</span><span class="desc">Full command reference</span>
-          </div>
-        </div>
-      </details>
+    // Dynamic tip + minimal status line. Everything is read from the runtime at render
+    // time (best-effort): a failed fetch just leaves the fallback tagline and an empty
+    // meta line rather than blocking the splash.
+    (async () => {
+      const tipEl = document.getElementById('muxSplashTip');
+      const meta = document.getElementById('muxSplashMeta');
+      let h = null, st = null;
+      try { h = await fetch(_apiUrl('/api/health')).then(r => r.ok ? r.json() : null); } catch (_) {}
+      try { st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null); } catch (_) {}
 
-      <div class="shortcut-row">
-        <kbd>Enter</kbd> send &nbsp; <kbd>Shift+Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl+V</kbd> paste file &nbsp; <kbd>📎</kbd> upload
-      </div>
-    </div>`;
-    appendHTML(html);
+      // Tip: same curated pool as the TUI splash (SplashMessages.Pick on the engine).
+      // Shape: { label, text }. label is an author (quotes) or category prefix; may be
+      // empty for bare facts. Render label dim + prefixed when present.
+      if (tipEl && h && h.tip && h.tip.text) {
+        const t = h.tip;
+        tipEl.innerHTML = t.label
+          ? esc(t.text) + ' <span class="lbl">\u2014 ' + esc(t.label) + '</span>'
+          : esc(t.text);
+      }
 
-    // Wire up clickable starter cards & cmd chips: click inserts the command
-    // into the input (user can edit / press Enter); shift-click sends immediately.
-    try {
-      const cards = document.querySelectorAll('.welcome-card [data-cmd]');
-      cards.forEach(el => {
-        el.addEventListener('click', (e) => {
-          const cmd = el.getAttribute('data-cmd');
-          if (!cmd) return;
-          if (e.shiftKey) {
-            send(cmd);
-          } else {
-            input.value = cmd;
-            input.focus();
-            try { input.setSelectionRange(cmd.length, cmd.length); } catch(_) {}
-            try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch(_) {}
-          }
-        });
+      // Minimal meta: version · N agents · provider. No pills, no mode badge.
+      if (meta) {
+        const items = [];
+        if (h && h.version) items.push('<span class="mi"><span class="v">v' + esc(h.version) + '</span></span>');
+        if (h && h.agentCount) items.push('<span class="mi"><span class="v">' + esc(String(h.agentCount)) + '</span> agents</span>');
+        if (st && st.provider) items.push('<span class="mi">' + esc(st.provider) + '</span>');
+        meta.innerHTML = items.join('<span class="sep">\u00b7</span>');
+      }
+    })();
+  }
+
+  // --- Capability hints ---
+  // The engine's delegation notice is a CLI instruction: "run /subagents (/sub)
+  // or /parasubagents (/psub)". In the web app we render it as a bar with real
+  // buttons and swallow the prose, so the user clicks instead of typing a slash
+  // command. Returns true when the message was consumed.
+  const _hintsShown = new Set();
+  function renderCapabilityHint(message) {
+    const t = String(message || '');
+    const m = t.match(/^\s*(?:\[AGENT\]\s*)?(\S+)\s+is configured with delegation capabilities/i);
+    if (!m) return false;
+    if (document.body.classList.contains('hide-capability-hints')) return true;
+    // One bar per agent per session: the engine re-emits this every turn.
+    const key = 'delegation:' + m[1].toLowerCase();
+    if (_hintsShown.has(key)) return true;
+    _hintsShown.add(key);
+
+    const el = document.createElement('div');
+    el.className = 'mux-hint-bar';
+    el.innerHTML =
+      '<span class="hb-text"><b>' + esc(m[1]) + '</b> can delegate to sub-agents. ' +
+        'Delegation is off in single-agent mode.</span>' +
+      '<span class="hb-actions">' +
+        '<button type="button" data-cmd="/subagents">Enable</button>' +
+        '<button type="button" data-cmd="/parasubagents">Enable parallel</button>' +
+        '<button type="button" class="hb-dismiss">Dismiss</button>' +
+      '</span>';
+    el.querySelectorAll('button[data-cmd]').forEach(b => {
+      b.addEventListener('click', () => {
+        const cmd = b.dataset.cmd;
+        try { _suppressUserEchoOnce.add(cmd); } catch (_) {}
+        send(cmd);
+        el.remove();
       });
-    } catch (_) {}
+    });
+    el.querySelector('.hb-dismiss').addEventListener('click', () => el.remove());
+    breakPillGroup();
+    output.appendChild(el);
+    scrollToBottom();
+    return true;
+  }
+
+  // The splash is an empty state: any real transcript content evicts it.
+  function dismissSplash() {
+    const s = document.getElementById('muxSplash');
+    if (s) s.remove();
   }
   // ─── Busy state ───
   function setBusy(busy) {
@@ -3188,30 +3547,43 @@ const icons = {
     // transcript or flip the composer busy state — route every such frame into
     // the Node Graph's daemon lane and stop. Absent tag => normal handling.
     try {
-      if (ev && ev.origin === 'daemon' && window.MuxDaemonLane) {
-        // Non-invasive: surface a toast when a daemon goal STARTS (once per lane
-        // per run) instead of yanking the user into the daemon tab. The lane fills
-        // in the background; the ⚙ Daemon badge count reflects active runs.
+      // Any frame the backend tagged origin:'daemon' belongs to the daemon lane and
+      // must NEVER reach the main transcript. Guard on the TAG alone (not on
+      // MuxDaemonLane being ready): if the lane module hasn't initialized yet, buffer
+      // the frame and drain it once it exists. Absent tag => normal handling below.
+      if (ev && ev.origin === 'daemon') {
         try {
           if (ev.type === 'agent_turn_start') {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             if (!_daemonToasted.has(lane)) {
               _daemonToasted.add(lane);
               if (typeof showToast === 'function')
-                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''));
+                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''), 'info');
             }
           } else if (ev.type === 'success' && /Goal completed/i.test(ev.message || '')) {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             _daemonToasted.delete(lane);
-            if (typeof showToast === 'function') showToast('Daemon done: ' + lane);
+            if (typeof showToast === 'function') showToast('Daemon done: ' + lane, 'success');
           } else if (ev.type === 'error') {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             _daemonToasted.delete(lane);
+            if (typeof showToast === 'function') showToast('Daemon failed: ' + lane, 'error');
           }
         } catch (_) {}
-        window.MuxDaemonLane.push(ev);
-        return;
+        if (window.MuxDaemonLane) {
+          if (window._daemonFrameBuffer) { for (const b of window._daemonFrameBuffer) { try { window.MuxDaemonLane.push(b); } catch(_){} } window._daemonFrameBuffer = null; }
+          try { window.MuxDaemonLane.push(ev); } catch (_) {}
+        } else {
+          (window._daemonFrameBuffer = window._daemonFrameBuffer || []).push(ev);
+        }
+        return;   // hard stop: never fall through to main-transcript rendering
       }
+    } catch (_) {}
+    // Safety net: a few daemon lifecycle lines (e.g. "[Daemon] Running in background.",
+    // "[Daemon] Starting N trigger(s)...") are emitted OUTSIDE any origin scope, so they
+    // arrive untagged and would otherwise render in the main transcript. Drop them.
+    try {
+      if (ev && typeof ev.message === 'string' && /^\[Daemon(:[^\]]+)?\]/.test(ev.message.trim())) return;
     } catch (_) {}
     // ─── Background sub-agent routing ───
     // Background delegations (delegate_parallel background:true, /background) are tagged
@@ -3351,6 +3723,8 @@ const icons = {
       }
       case 'body':
       case 'markup':
+        // Capability guidance -> actionable bar (see renderCapabilityHint).
+        if (ev.message && renderCapabilityHint(ev.message)) break;
         if (ev.message && /^Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime/m.test(ev.message)) {
           renderHelpPanel(ev.message);
         } else if (ev.message && ev.message.length > 200) {
@@ -3371,6 +3745,7 @@ const icons = {
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'working'); break; }
         finalizeStream(ev.agent);
         breakToolGroup(); try { breakPillGroup(); } catch(_){}
+        try { breakReasoningBlock(); } catch(_){}
         setBusy(true);
         const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
@@ -3382,6 +3757,7 @@ const icons = {
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'done', 'done'); break; }
         finalizeStream(ev.agent);
         breakToolGroup(); try { breakPillGroup(); } catch(_){}
+        try { breakReasoningBlock(); } catch(_){}
         setBusy(false);
         // Safety net: if a /compact placeholder is still showing when the turn
         // ends (compaction always wraps inside a turn), the real event matcher
@@ -3399,12 +3775,20 @@ const icons = {
         // absent => treat as prose (legacy-safe).
         if (!ev.reasoning) { breakToolGroup(); try { breakPillGroup(); } catch(_){} }
         const skey = String(ev.agent || '');
+        // Reasoning chunks never enter the answer buffer -- they accumulate in
+        // their own collapsible block so they can be styled, folded, or hidden
+        // independently of the final answer (TUI parity).
+        if (ev.reasoning) { appendReasoning(skey, ev.text || ''); break; }
+        // Answer prose closes any open reasoning block: the model stopped
+        // thinking and started answering.
+        breakReasoningBlock();
         // Sub-agent output folds into its persistent roster row (one row per
         // agent, appended in place) rather than spawning a new stream card per
         // stream/stop cycle. Lead/main output keeps the normal transcript block.
         if (isSubAgent(skey)) { appendSubStream(skey, ev.text || ''); break; }
         let st = _agentStreams.get(skey);
         if (!st) {
+          dismissSplash();
           st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
           output.appendChild(st.el);
@@ -3716,7 +4100,7 @@ const icons = {
           // NEVER overwrite the accumulated stream body. The engine emits the real
           // completion summary on this specialist event.
           const r = setSubStatus(ev.agent, 'done', 'completed');
-          const clean = stripSentinels(summary);
+          const clean = stripSentinels(summary).trim();
           // Engine sends the real summary here; a bare legacy 'sub-task' is ignored
           // (the row keeps its streamed body and the button simply marks completion).
           if (clean && !/^sub[-\s]?task$/i.test(clean)) setSubSummary(ev.agent, clean);
@@ -3758,7 +4142,10 @@ const icons = {
         input.focus();
         break;
 
-      case 'input_request':  setBusy(false); renderInputPrompt(ev); break;
+      case 'input_request':
+        setBusy(false);
+        renderInputPrompt(ev);
+        break;
       case 'confirm_request': setBusy(false); renderConfirm(ev); break;
       case 'select_request':  setBusy(false); renderSelect(ev); break;
       case 'multiselect_request': setBusy(false); renderSelect(ev, true); break;
@@ -3814,6 +4201,77 @@ const icons = {
     scrollToBottom();
   }
 
+  // ─── Reasoning blocks ───
+  // Reasoning (muted) stream chunks accumulate into their own collapsible block
+  // instead of being merged into the answer prose. Deliberately the same shape
+  // as the tool-call / status-pill clusters above: a module-level singleton, a
+  // break() that ends the run, a header that toggles .open, and a userToggled
+  // latch so an explicit click always wins over auto-collapse.
+  //
+  // Visibility is a 3-way setting (body dataset, set by the settings module):
+  //   'show'     -- render, auto-collapse once it grows past the threshold
+  //   'collapsed'-- render, always start collapsed
+  //   'hide'     -- drop reasoning entirely (never enters the DOM)
+  let _reasoningBlock = null;
+  function breakReasoningBlock() {
+    // Trim the trailing edge once the block is final (chunks keep their spaces
+    // while streaming -- see stripSentinels).
+    if (_reasoningBlock && _reasoningBlock.el.isConnected) {
+      const g = _reasoningBlock;
+      const clean = g.text.trim();
+      if (!clean) { g.el.remove(); }
+      else if (clean !== g.text) { g.text = clean; g.body.innerHTML = renderMarkdown(clean); }
+    }
+    _reasoningBlock = null;
+  }
+  function reasoningMode() {
+    return document.body.dataset.showReasoning || 'show';
+  }
+  function ensureReasoningBlock(agent) {
+    if (_reasoningBlock && _reasoningBlock.el.isConnected) return _reasoningBlock;
+    const el = document.createElement('div');
+    el.className = 'reasoning-block open';
+    el.innerHTML =
+      '<div class="reasoning-header">' +
+        '<span class="rb-chev">' + icons.chevronDown + '</span>' +
+        '<span class="rb-label">Reasoning</span>' +
+        '<span class="rb-latest"></span>' +
+      '</div>' +
+      '<div class="reasoning-body"></div>';
+    const g = { el, body: el.querySelector('.reasoning-body'),
+                label: el.querySelector('.rb-label'),
+                latest: el.querySelector('.rb-latest'),
+                text: '', userToggled: false };
+    el.querySelector('.reasoning-header').addEventListener('click', () => {
+      g.userToggled = true;
+      el.classList.toggle('open');
+    });
+    if (reasoningMode() === 'collapsed') el.classList.remove('open');
+    output.appendChild(el);
+    _reasoningBlock = g;
+    return g;
+  }
+  function appendReasoning(agent, chunk) {
+    if (reasoningMode() === 'hide') return;   // never enters the DOM
+    if (!chunk) return;
+    // Sub-agent reasoning stays in the roster row, matching how its prose is
+    // handled -- it must not spawn a top-level block in the main column.
+    if (isSubAgent(agent)) return;
+    const g = ensureReasoningBlock(agent);
+    g.text += chunk;
+    g.body.innerHTML = renderMarkdown(g.text);
+    // Collapsed preview: last fragment of thought, flattened to one line.
+    const flat = g.text.replace(/\s+/g, ' ').trim();
+    g.latest.textContent = flat ? ('\u00b7 ' + flat.slice(-90)) : '';
+    // Auto-collapse once the block outgrows the threshold, mirroring the
+    // tool-group behaviour (explicit user toggle always wins).
+    if (reasoningMode() === 'show' && !g.userToggled) {
+      const limit = parseInt(document.body.dataset.reasoningCollapseAt || '600', 10) || 600;
+      if (g.text.length >= limit) g.el.classList.remove('open');
+    }
+    scrollToBottom();
+  }
+
   // ─── Status-pill coalescing ───
   // The 9 status event types (success/warning/error/info/debug/step/rule/
   // task_start/task_done) each used to stamp one standalone row, walling the
@@ -3853,6 +4311,20 @@ const icons = {
   // session-saved). These render STANDALONE; only genuinely noisy status lines
   // (retries, daemon next-fire, MCP notices, step/rule banners, generic info)
   // fold into the collapsed cluster.
+  // Session-lifecycle chatter that the splash/status strip already conveys
+  // (agent counts, tool counts, exit acknowledgements, skill reloads). It is
+  // reassuring on a terminal but pure noise stacked in a transcript, so these
+  // never expand a cluster on their own -- they fold in and stay folded.
+  function isBootNoise(text) {
+    const t = String(text || '');
+    return (
+      /^Loaded \d+ agents? from swarm\.json/i.test(t) ||
+      /has \d+ tools? available/i.test(t) ||
+      /Exited from .* successfully/i.test(t) ||
+      /^Loaded \d+ skills?/i.test(t) ||
+      /^(Connected|Registered) \d+ MCP/i.test(t)
+    );
+  }
   function isImportantPill(text) {
     const t = String(text || '');
     return (
@@ -3890,7 +4362,10 @@ const icons = {
     g.latest.textContent = _prev ? ('\u00b7 ' + _prev.slice(0, 80)) : '';
     const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
     const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
-    if (!autoOff && g.count >= Math.max(limit, 3) && !g.userToggled) g.el.classList.remove('open');
+    // Boot/lifecycle noise folds on sight; ordinary status lines still get the
+    // usual grace of a few visible rows before the cluster closes.
+    const floor = isBootNoise(_prev) ? 1 : 3;
+    if (!autoOff && g.count >= Math.max(limit, floor) && !g.userToggled) g.el.classList.remove('open');
     scrollToBottom();
   }
   function pillFromText(text, cls) {
@@ -3907,6 +4382,7 @@ const icons = {
 
   // ─── Rendering helpers ───
   function appendText(text, cls) {
+    dismissSplash();
     const el = document.createElement('div');
     el.className = `event ${cls || ''}`;
     el.textContent = text || '';
@@ -3915,6 +4391,7 @@ const icons = {
   }
 
   function appendHTML(html) {
+    dismissSplash();
     const w = document.createElement('div');
     w.innerHTML = html;
     const added = [];
@@ -4141,7 +4618,12 @@ const icons = {
   function stripSentinels(s) {
     // Backend delegation sentinels (e.g. AGENT_DEMO_DONE) can fuse into the
     // stream with no delimiter; drop bare ALL-CAPS _DONE-style tokens.
-    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '').trimEnd();
+    // NOTE: deliberately does NOT trim. This runs over the WHOLE accumulated
+    // buffer after every chunk append, so a trailing trim here destroyed the
+    // space of any chunk that ended at a sentence boundary:
+    //   "... done. " + "Next" => "... done.Next"
+    // Callers needing clean edges trim at finalize/preview time instead.
+    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '');
   }
   function subPreview(text) {
     const flat = String(text || '').replace(/`{1,3}[^`]*`{1,3}/g, m => m.replace(/`/g,''))
@@ -4195,7 +4677,7 @@ const icons = {
   }
   function setSubSummary(name, text) {
     const r = ensureSubRow(name);
-    const clean = stripSentinels(text);
+    const clean = stripSentinels(text).trim();
     if (!clean) return;
     r.summary = clean;
     if (r.summaryTextEl) r.summaryTextEl.innerHTML = renderMarkdown(clean);
@@ -4430,6 +4912,9 @@ const icons = {
   }
   // Expose for use by other <script> blocks (e.g. live preview panel).
   try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; window.buildNestedToolCard = buildNestedToolCard; window.renderToolDetailHTML = renderToolDetailHTML; } catch(_) {}
+  // Node-graph panel lives in a separate <script> block; give it the same send()
+  // path the composer uses so a static workflow dispatches as a normal goal.
+  try { window.MuxSend = (t) => send(t); } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -4615,7 +5100,500 @@ const icons = {
     ws.send(text);
   }
 
+  // --- Model / agent selector ---
+  // Backed by dedicated endpoints (GET /api/agents, GET /api/models,
+  // POST /api/model, POST /api/agent) rather than puppeting the interactive
+  // /setmodel + /swap prompts. Nothing here touches the agent input stream, so
+  // changing a model can never end or disturb a live session.
+  let _modelSlots = [];
+  let _modelCatalog = null;   // null = not fetched yet, [] = provider serves none
+
+  async function loadModelSlots(force) {
+    if (_modelSlots.length && !force) return _modelSlots;
+    try {
+      const r = await fetch(_apiUrl('/api/agents'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const agents = await r.json();
+      _modelSlots = Array.isArray(agents) ? agents : [];
+    } catch (_) {
+      _modelSlots = [];
+    }
+    return _modelSlots;
+  }
+
+  // Model ids advertised by the active provider. Best-effort: an empty list just
+  // means free-text entry, never an error state.
+  async function loadModelCatalog() {
+    if (_modelCatalog) return _modelCatalog;
+    try {
+      const r = await fetch(_apiUrl('/api/models'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      _modelCatalog = (data && Array.isArray(data.items)) ? data.items : [];
+    } catch (_) {
+      _modelCatalog = [];
+    }
+    return _modelCatalog;
+  }
+
+  function refreshModelButton() {
+    const nameEl = document.getElementById('modelBtnName');
+    if (!nameEl) return;
+    // Headline the ACTIVE single agent's model when known; otherwise fall back to
+    // the most common model across the swarm so the button always says something real.
+    let best = '', bestN = 0;
+    const active = _activeAgentName &&
+      _modelSlots.find(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase());
+    if (active && active.model) {
+      best = active.model;
+    } else {
+      const counts = new Map();
+      for (const s of _modelSlots) {
+        if (!s || !s.model) continue;
+        counts.set(s.model, (counts.get(s.model) || 0) + 1);
+      }
+      for (const [m, n] of counts) if (n > bestN) { best = m; bestN = n; }
+    }
+    nameEl.textContent = best ? shortModelName(best) : 'model';
+    nameEl.title = (_activeAgentName ? _activeAgentName + ' \u2014 ' : '') + (best || 'No model configured');
+  }
+
+  // Which agent single-agent mode is currently bound to. Set by a successful
+  // /api/agent swap; used only to headline the button.
+  let _activeAgentName = null;
+
+  // Trim vendor prefixes/date suffixes so the composer button stays compact.
+  function shortModelName(m) {
+    let s = String(m || '');
+    const slash = s.lastIndexOf('/');
+    if (slash >= 0) s = s.slice(slash + 1);
+    return s.length > 22 ? s.slice(0, 21) + '\u2026' : s;
+  }
+
+  function closeModelMenu() {
+    const m = document.getElementById('modelMenu');
+    if (m) m.remove();
+    const b = document.getElementById('modelBtn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+
+  function modelMenuEl() { return document.getElementById('modelMenu'); }
+
+  async function openModelMenu() {
+    closeModelMenu();
+    const btn = document.getElementById('modelBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', 'true');
+
+    const menu = document.createElement('div');
+    menu.className = 'model-menu';
+    menu.id = 'modelMenu';
+    menu.innerHTML = '<div class="model-menu-loading">Loading\u2026</div>';
+    document.body.appendChild(menu);
+    positionModelMenu(menu, btn);
+
+    const slots = await loadModelSlots(true);
+    if (!modelMenuEl()) return;   // closed while loading
+    if (!slots.length) {
+      menu.innerHTML = '<div class="model-menu-loading">No agents configured.</div>';
+      return;
+    }
+    renderSlotList(menu, slots);
+  }
+
+  // Root view: one row per slot. Clicking the AGENT name swaps the active agent;
+  // clicking the MODEL opens the model picker for that slot. Two targets, one row
+  // -- no sub-tabs to maintain.
+  function renderSlotList(menu, slots) {
+    menu.innerHTML =
+      '<div class="model-menu-head">Agents &amp; models</div>' +
+      '<div class="mm-hint">Click an agent to make it active \u00b7 click its model to change</div>' +
+      '<div class="model-menu-list">' +
+      slots.map((s, i) => {
+        const isActive = _activeAgentName &&
+          String(s.name || '').toLowerCase() === _activeAgentName.toLowerCase();
+        return '<div class="model-menu-item' + (isActive ? ' is-active' : '') + '">' +
+          '<button class="mm-agent-btn" type="button" data-i="' + i + '" ' +
+                  'title="Make ' + esc(s.name || 'agent') + ' the active agent">' +
+            '<span class="mm-agent">' + esc(s.name || 'agent') + '</span>' +
+          '</button>' +
+          '<button class="mm-model-btn" type="button" data-i="' + i + '" ' +
+                  'title="Change model for ' + esc(s.name || 'agent') + '">' +
+            '<span class="mm-model">' + esc(s.model || 'not set') + '</span>' +
+          '</button>' +
+        '</div>';
+      }).join('') +
+      '</div>';
+    positionModelMenu(menu, document.getElementById('modelBtn'));
+
+    menu.querySelectorAll('.mm-agent-btn').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const slot = slots[parseInt(el.dataset.i, 10)];
+        if (slot) swapAgent(menu, slot);
+      });
+    });
+    menu.querySelectorAll('.mm-model-btn').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const slot = slots[parseInt(el.dataset.i, 10)];
+        if (slot) pickModel(menu, slot);
+      });
+    });
+  }
+
+  function mmStatus(menu, text, kind) {
+    const el = menu.querySelector('.mm-status');
+    if (el) { el.textContent = text || ''; el.className = 'mm-status' + (kind ? ' ' + kind : ''); }
+  }
+
+  // POST /api/agent -- rebinds single-agent mode.
+  async function swapAgent(menu, slot) {
+    const name = slot.name || '';
+    menu.innerHTML =
+      '<div class="model-menu-head">' + esc(name) + '</div>' +
+      '<div class="model-menu-form"><div class="mm-status">Switching\u2026</div></div>';
+    try {
+      const r = await fetch(_apiUrl('/api/agent'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+      _activeAgentName = (data && data.agent) || name;
+      refreshModelButton();
+      closeModelMenu();
+      routePill(pillFromText('Active agent: ' + _activeAgentName, 'event-success'));
+    } catch (e) {
+      if (!modelMenuEl()) return;
+      mmStatus(menu, 'Could not switch agent: ' + (e.message || e), 'is-error');
+    }
+  }
+
+  // Model picker for one slot: a filterable list of ids the provider actually
+  // advertises, plus free-text for anything not in the catalog.
+  async function pickModel(menu, slot) {
+    const name = slot.name || 'agent';
+    menu.innerHTML =
+      '<div class="model-menu-head">' + esc(name) + '</div>' +
+      '<div class="model-menu-form">' +
+        '<div class="mm-current">current: <code>' + esc(slot.model || 'not set') + '</code></div>' +
+        '<input class="mm-input" type="text" spellcheck="false" autocomplete="off" ' +
+               'placeholder="Filter or type a model id\u2026" value="" aria-label="Model id">' +
+        '<div class="mm-models" role="listbox"><div class="mm-loading">Loading models\u2026</div></div>' +
+        '<div class="mm-status"></div>' +
+        '<div class="mm-actions">' +
+          '<button class="mm-back" type="button">Back</button>' +
+          '<button class="mm-apply" type="button">Apply</button>' +
+        '</div>' +
+      '</div>';
+
+    const inp = menu.querySelector('.mm-input');
+    const list = menu.querySelector('.mm-models');
+
+    const commit = async (value) => {
+      const v = String(value || '').trim();
+      if (!v) { mmStatus(menu, 'Enter a model id.', 'is-error'); return; }
+      if (v === slot.model) { closeModelMenu(); return; }
+      mmStatus(menu, 'Applying\u2026', '');
+      try {
+        const r = await fetch(_apiUrl('/api/model'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ slot: name, model: v }),
+        });
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        slot.model = v;
+        const cached = _modelSlots.find(s => s && s.name === name);
+        if (cached) cached.model = v;
+        refreshModelButton();
+        closeModelMenu();
+        routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
+      } catch (e) {
+        if (!modelMenuEl()) return;
+        mmStatus(menu, 'Could not set model: ' + (e.message || e), 'is-error');
+      }
+    };
+
+    menu.querySelector('.mm-apply').addEventListener('click', (e) => { e.stopPropagation(); commit(inp.value); });
+    menu.querySelector('.mm-back').addEventListener('click', (e) => { e.stopPropagation(); renderSlotList(menu, _modelSlots); });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(inp.value); }
+      if (e.key === 'Escape') { e.preventDefault(); closeModelMenu(); }
+    });
+    inp.focus();
+
+    const models = await loadModelCatalog();
+    if (!modelMenuEl()) return;
+    const draw = () => {
+      const q = inp.value.trim().toLowerCase();
+      const hits = q ? models.filter(m => m.toLowerCase().includes(q)) : models;
+      if (!models.length) {
+        list.innerHTML = '<div class="mm-loading">Provider serves no model list \u2014 type an id above.</div>';
+        return;
+      }
+      if (!hits.length) {
+        list.innerHTML = '<div class="mm-loading">No match \u2014 press Enter to use it anyway.</div>';
+        return;
+      }
+      list.innerHTML = hits.slice(0, 200).map(m =>
+        '<button class="mm-model-row' + (m === slot.model ? ' is-current' : '') + '" type="button" ' +
+                'role="option" data-m="' + esc(m) + '">' + esc(m) + '</button>').join('');
+      list.querySelectorAll('.mm-model-row').forEach(el => {
+        el.addEventListener('click', (e) => { e.stopPropagation(); commit(el.dataset.m); });
+      });
+    };
+    draw();
+    inp.addEventListener('input', draw);
+    positionModelMenu(menu, document.getElementById('modelBtn'));
+  }
+
+  function positionModelMenu(menu, btn) {
+    if (!menu || !btn) return;
+    const r = btn.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    // Anchor above the composer; flip below only if there is no room above.
+    const h = menu.offsetHeight || 220;
+    const top = r.top - h - 8;
+    menu.style.top = (top < 8 ? Math.min(r.bottom + 8, window.innerHeight - h - 8) : top) + 'px';
+  }
+
+  (function wireModelBtn(){
+    const btn = document.getElementById('modelBtn');
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (document.getElementById('modelMenu')) closeModelMenu();
+      else openModelMenu();
+    });
+    // NOTE: use the captured composed path, not m.contains(e.target). Clicking a
+    // row re-renders the menu body synchronously, detaching e.target before this
+    // (bubbled) handler runs -- containment then reports false and we would close
+    // the menu on the very click that opened the model list.
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('modelMenu');
+      if (!m) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      if (path.includes(m) || path.includes(btn)) return;
+      closeModelMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModelMenu();
+    });
+    // Prime the label once the socket is up.
+    loadModelSlots(false).then(refreshModelButton);
+  })();
+
   
+
+  // ─── Session / mode selector ───
+  // Abstracts the slash-command startup flow into a single composer control that
+  // mirrors the model selector. Starting/ending a session and toggling reasoning
+  // modifiers all dispatch the SAME existing commands a user would type (via send),
+  // so there is nothing new on the engine except the read-only /api/status flags we
+  // reflect here. State is seeded from /api/status on open + after each action, and
+  // the button label is kept honest by a light poll.
+  const SESSION_STARTERS = [
+    { cmd: '/agent',     name: 'Agent',          desc: 'Single agent, stateful conversation.' },
+    { cmd: '/swarm',     name: 'Swarm',          desc: 'Multi-agent orchestrator, one goal.' },
+    { cmd: '/pswarm',    name: 'Parallel Swarm', desc: 'Agents work in parallel on sub-goals.' },
+    { cmd: '/stateless', name: 'Stateless',      desc: 'Single agent, no memory between turns.' },
+  ];
+  const SESSION_MODS = [
+    { key: 'plan', cmd: '/plan',  name: 'Plan',      desc: 'Present a plan and wait for approval.' },
+    { key: 'ultra', cmd: '/ultra', name: 'Ultra',    desc: 'Max reasoning + plan + parallel delegation.' },
+    { key: 'giga', cmd: '/giga',  name: 'Giga',      desc: 'Ultra + dynamic orchestration (spawn/run teams).' },
+    { key: 'sub',  cmd: '/subagents', name: 'Sub-agents', desc: 'Let a single agent delegate to sub-agents.' },
+    { key: 'psub', cmd: '/psub',  name: 'Parallel sub-agents', desc: 'Delegate to sub-agents in parallel.' },
+  ];
+  // Last-known runtime flags. Seeded from /api/status; used to render toggle states.
+  let _sessStatus = { mode: 'interactive', inSession: false, plan: false, ultra: false, giga: false, sub: false, psub: false };
+
+  async function fetchSessionStatus() {
+    try {
+      const st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null);
+      if (st) {
+        _sessStatus = {
+          mode: st.mode || 'interactive',
+          inSession: !!st.inSession,
+          plan: !!st.plan, ultra: !!st.ultra, giga: !!st.giga,
+          sub: !!st.sub, psub: !!st.psub,
+        };
+      }
+    } catch (_) {}
+    return _sessStatus;
+  }
+
+  function _titleCase(s){ s = String(s || ''); return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+  function refreshSessionButton() {
+    const nameEl = document.getElementById('sessionBtnName');
+    const btn = document.getElementById('sessionBtn');
+    if (!nameEl || !btn) return;
+    const s = _sessStatus;
+    // Prefer the client's own tracked mode (activeSessionMode) when present -- it flips
+    // instantly on click, before the poll catches up.
+    let mode = s.mode;
+    if (activeSessionMode) mode = activeSessionMode.replace(/^\//, '');
+    const live = !!activeSessionMode || (s.inSession && s.mode !== 'interactive');
+    let label = live ? _titleCase(mode === 'pswarm' ? 'Parallel Swarm' : mode) : 'Interactive';
+    // Append the strongest active modifier so the button reads e.g. "Agent · Ultra".
+    const modBadge = s.giga ? 'Giga' : s.ultra ? 'Ultra' : s.plan ? 'Plan' : '';
+    if (modBadge) label += ' \u00b7 ' + modBadge;
+    nameEl.textContent = label;
+    btn.classList.toggle('is-live', live);
+  }
+
+  function closeSessionMenu() {
+    const m = document.getElementById('sessionMenu');
+    if (m) m.remove();
+    const b = document.getElementById('sessionBtn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+
+  function positionSessionMenu(menu, btn) {
+    if (!menu || !btn) return;
+    const r = btn.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    const h = menu.offsetHeight || 260;
+    const top = r.top - h - 8;
+    menu.style.top = (top < 8 ? Math.min(r.bottom + 8, window.innerHeight - h - 8) : top) + 'px';
+  }
+
+  function renderSessionMenu(menu) {
+    const s = _sessStatus;
+    const live = !!activeSessionMode || (s.inSession && s.mode !== 'interactive');
+    const curCmd = activeSessionMode || (live ? '/' + s.mode : null);
+
+    // Section 1: start a session, or end the running one.
+    let startSec;
+    if (live) {
+      startSec =
+        '<div class="session-sec">' +
+          '<div class="session-sec-title">Active session</div>' +
+          '<button class="session-end" type="button" data-act="end">' +
+            '<span>End session</span>' +
+          '</button>' +
+        '</div>';
+    } else {
+      startSec =
+        '<div class="session-sec">' +
+          '<div class="session-sec-title">Start a session</div>' +
+          SESSION_STARTERS.map(o =>
+            '<button class="session-opt" type="button" data-start="' + o.cmd + '">' +
+              '<span class="so-radio"></span>' +
+              '<span class="so-body"><span class="so-name">' + esc(o.name) + '</span>' +
+                '<span class="so-desc">' + esc(o.desc) + '</span></span>' +
+            '</button>').join('') +
+        '</div>';
+    }
+
+    // Section 2: modifiers. Ultra forces plan; giga forces ultra+plan -> show those as
+    // forced-on (non-interactive) when a superset is active, so the cascade is legible.
+    // The engine only processes these at the top-level menu (between sessions), and
+    // send() would auto-/qc out of a live session for any non-safe command -- so while
+    // in-session we LOCK them (disabled, reflecting current state) to avoid a surprise
+    // session exit. They steer the next session; end the current one to change them.
+    const forcedPlan = s.ultra || s.giga;
+    const forcedUltra = s.giga;
+    const modSec =
+      '<div class="session-sec">' +
+        '<div class="session-sec-title">Modifiers</div>' +
+        SESSION_MODS.map(m => {
+          const on = !!s[m.key];
+          const cascade = (m.key === 'plan' && forcedPlan) || (m.key === 'ultra' && forcedUltra);
+          const locked = live || cascade;   // in-session OR forced-on by a superset
+          let note = '';
+          if (cascade) note = ' (on via ' + (s.giga ? 'Giga' : 'Ultra') + ')';
+          return '<button class="session-mod' + (on ? ' is-on' : '') + (locked ? ' is-forced' : '') + '" ' +
+                    'type="button" data-mod="' + m.cmd + '"' + (locked ? ' disabled' : '') + '>' +
+            '<span class="sm-body"><span class="sm-name">' + esc(m.name) + '</span>' +
+              '<span class="sm-desc">' + esc(m.desc) + note + '</span></span>' +
+            '<span class="sm-sw"></span>' +
+          '</button>';
+        }).join('') +
+      '</div>';
+
+    const foot = live
+      ? '<div class="session-foot">Modifiers are locked during a session \u2014 end it to change them.</div>'
+      : '<div class="session-foot">Modifiers steer the next session you start.</div>';
+
+    menu.innerHTML = '<div class="session-menu-head">Session &amp; mode</div>' + startSec + modSec + foot;
+
+    // Wire: start a session.
+    menu.querySelectorAll('[data-start]').forEach(el => el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cmd = el.dataset.start;
+      closeSessionMenu();
+      send(cmd);
+      // Optimistic: reflect immediately; the poll will confirm.
+      setTimeout(() => { fetchSessionStatus().then(refreshSessionButton); }, 400);
+    }));
+    // Wire: end the running session.
+    const endBtn = menu.querySelector('[data-act="end"]');
+    if (endBtn) endBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSessionMenu();
+      send('/qc');
+      setTimeout(() => { fetchSessionStatus().then(refreshSessionButton); }, 400);
+    });
+    // Wire: toggle a modifier (re-render the menu in place to show the new state).
+    menu.querySelectorAll('[data-mod]').forEach(el => el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (el.disabled) return;
+      const cmd = el.dataset.mod;
+      send(cmd);
+      // Give the engine a beat, refetch true state, and re-render if still open.
+      await new Promise(r => setTimeout(r, 450));
+      await fetchSessionStatus();
+      refreshSessionButton();
+      if (document.getElementById('sessionMenu')) { renderSessionMenu(menu); positionSessionMenu(menu, document.getElementById('sessionBtn')); }
+    }));
+
+    positionSessionMenu(menu, document.getElementById('sessionBtn'));
+  }
+
+  async function openSessionMenu() {
+    closeSessionMenu();
+    const btn = document.getElementById('sessionBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', 'true');
+    const menu = document.createElement('div');
+    menu.className = 'session-menu';
+    menu.id = 'sessionMenu';
+    menu.innerHTML = '<div class="session-menu-head">Session &amp; mode</div><div class="model-menu-loading">Loading\u2026</div>';
+    document.body.appendChild(menu);
+    positionSessionMenu(menu, btn);
+    await fetchSessionStatus();
+    if (!document.getElementById('sessionMenu')) return;  // closed while loading
+    renderSessionMenu(menu);
+    refreshSessionButton();
+  }
+
+  (function wireSessionBtn(){
+    const btn = document.getElementById('sessionBtn');
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (document.getElementById('sessionMenu')) closeSessionMenu();
+      else openSessionMenu();
+    });
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('sessionMenu');
+      if (!m) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      if (path.includes(m) || path.includes(btn)) return;
+      closeSessionMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSessionMenu(); });
+    // Prime the label once, then keep it honest with a light poll.
+    fetchSessionStatus().then(refreshSessionButton);
+    setInterval(() => { fetchSessionStatus().then(refreshSessionButton); }, 4000);
+  })();
+
   // Slash commands that ARE safe to run while inside an agent session
   // (they're handled by the in-session loop itself). Every other slash command
   // implies leaving the session, so we transparently /qc first. The server-side
@@ -5321,7 +6299,12 @@ const icons = {
   function showToast(msg, type = 'success') {
     const t = document.createElement('div');
     t.className = `toast ${type}`;
-    t.innerHTML = `<span style="display:flex;align-items:center;gap:8px">${type === 'success' ? icons.check : icons.x} ${esc(msg)}</span>`;
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    t.innerHTML = `<span style="display:flex;align-items:center;gap:9px">` +
+      `<span class="toast-ico"><span class="toast-dot"></span></span>` +
+      `<span style="flex:1 1 auto">${esc(msg)}</span>` +
+      `<span class="toast-time">${esc(time)}</span>` +
+    `</span>`;
     toastContainer.appendChild(t);
     setTimeout(() => {
       t.style.animation = 'fadeOutRight 0.3s forwards';
@@ -5425,6 +6408,15 @@ const icons = {
   const sidebarResizer = $('sidebarResizer');
   let isResizing = false;
 
+  // Restore a user-chosen width. Clamped on read so a stale/absurd stored value
+  // (e.g. saved on a much wider monitor) can never wedge the sidebar off-screen.
+  try {
+    const _sw = parseInt(localStorage.getItem('muxSidebarWidth') || '', 10);
+    if (_sw >= 250 && _sw <= window.innerWidth * 0.8) {
+      document.documentElement.style.setProperty('--sidebar-width', _sw + 'px');
+    }
+  } catch (_) {}
+
   if (sidebarResizer) {
     sidebarResizer.addEventListener('mousedown', (e) => {
       if (window.innerWidth <= 768) return; // Disable on mobile
@@ -5443,6 +6435,7 @@ const icons = {
       if (newWidth > window.innerWidth * 0.8) newWidth = window.innerWidth * 0.8;
       
       document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+      try { localStorage.setItem('muxSidebarWidth', String(newWidth)); } catch (_) {}
     });
 
     window.addEventListener('mouseup', () => {
@@ -5456,21 +6449,30 @@ const icons = {
   }
 
   // ─── Sidebar ───
+  // Single source of truth for what a tab renders. Previously this switch was
+  // duplicated in toggleSidebar() and the tab click handler, so a tab added to
+  // only one of them fell through to loadFileList() and 404'd.
+  function renderTab() {
+    if (currentTab === 'diffs') {
+      sidebarContent.innerHTML = '';
+      sidebarContent.appendChild(diffsArea);
+    } else if (currentTab === 'sessions') {
+      loadSessionsView();
+    } else if (currentTab === 'skills') {
+      loadCatalogView('skills');
+    } else if (currentTab === 'tools') {
+      loadCatalogView('tools');
+    } else {
+      loadFileList();
+    }
+  }
+
   function toggleSidebar() {
     sidebarOpen = !sidebarOpen;
     sidebar.classList.toggle('open', sidebarOpen);
     app.classList.toggle('sidebar-open', sidebarOpen);
     sidebarToggle.classList.toggle('active', sidebarOpen);
-    if (sidebarOpen) {
-      if (currentTab === 'diffs') {
-        sidebarContent.innerHTML = '';
-        sidebarContent.appendChild(diffsArea);
-      } else if (currentTab === 'sessions') {
-        loadSessionsView();
-      } else {
-        loadFileList();
-      }
-    }
+    if (sidebarOpen) renderTab();
   }
   sidebarToggle.addEventListener('click', toggleSidebar);
   sidebarClose.addEventListener('click', toggleSidebar);
@@ -5481,17 +6483,101 @@ const icons = {
       try { window.currentTab = currentTab; } catch(_) {}
       document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      
-      if (currentTab === 'diffs') {
-        sidebarContent.innerHTML = '';
-        sidebarContent.appendChild(diffsArea);
-      } else if (currentTab === 'sessions') {
-        loadSessionsView();
-      } else {
-        loadFileList();
-      }
+      renderTab();
     });
   });
+
+  // ─── Skills / Tools catalog tabs ───
+  // Both read a plain {count, items:[{name, description, ...}]} payload, so one
+  // renderer serves both. Tools additionally carry a `server` field and are
+  // grouped by it (Native/Filesystem/Shell + one group per MCP server).
+  const _catalogCache = {};
+  async function loadCatalogView(kind) {
+    sidebarContent.innerHTML = '<div class="loading">Loading ' + kind + '…</div>';
+    let data = _catalogCache[kind];
+    if (!data) {
+      try {
+        const r = await fetch(_apiUrl('/api/' + kind), { headers: { 'Accept': 'application/json' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        data = await r.json();
+        _catalogCache[kind] = data;
+      } catch (e) {
+        sidebarContent.innerHTML =
+          '<div class="error-msg">Could not load ' + esc(kind) + ': ' + esc(e.message || String(e)) + '</div>';
+        return;
+      }
+    }
+    // Guard against a stale render if the user switched tabs mid-fetch.
+    if (currentTab !== kind) return;
+    renderCatalog(kind, data);
+  }
+
+  function renderCatalog(kind, data) {
+    const items = (data && data.items) || [];
+    if (!items.length) {
+      sidebarContent.innerHTML = '<div class="mux-cat-empty">No ' + esc(kind) + ' available.</div>';
+      return;
+    }
+
+    // Group: tools by server, skills into one implicit bucket.
+    const groups = new Map();
+    for (const it of items) {
+      const g = (kind === 'tools' ? (it.server || 'Other') : 'Skills');
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(it);
+    }
+
+    let html =
+      '<div class="mux-cat-root">' +
+        '<div class="mux-cat-head">' +
+          '<input class="mux-cat-search" type="search" placeholder="Filter ' + esc(kind) + '…" aria-label="Filter ' + esc(kind) + '">' +
+          '<span class="mux-cat-count">' + items.length + '</span>' +
+        '</div>' +
+        '<div class="mux-cat-body">';
+
+    for (const [group, rows] of groups) {
+      // Skills render as a flat list (one implicit group); tools get a header
+      // per server so MCP origin is visible at a glance.
+      const showHead = kind === 'tools';
+      html += '<div class="mux-cat-group">';
+      if (showHead) {
+        html += '<div class="mux-cat-group-head">' + esc(group) +
+                '<span class="mux-cat-group-n">' + rows.length + '</span></div>';
+      }
+      for (const it of rows) {
+        const desc = String(it.description || '').trim();
+        html +=
+          '<div class="mux-cat-item" data-name="' + esc(String(it.name || '').toLowerCase()) +
+               '" data-desc="' + esc(desc.toLowerCase()) + '">' +
+            '<div class="mux-cat-name">' + esc(it.name || '') +
+              (it.kind === 'native' ? '<span class="mux-cat-tag">built-in</span>' : '') +
+            '</div>' +
+            (desc ? '<div class="mux-cat-desc">' + esc(desc) + '</div>' : '') +
+          '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div></div>';
+    sidebarContent.innerHTML = html;
+
+    const search = sidebarContent.querySelector('.mux-cat-search');
+    if (search) {
+      search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        sidebarContent.querySelectorAll('.mux-cat-item').forEach(el => {
+          const hit = !q ||
+            (el.dataset.name || '').includes(q) ||
+            (el.dataset.desc || '').includes(q);
+          el.classList.toggle('filtered-out', !hit);
+        });
+        // Hide a group whose rows were all filtered out.
+        sidebarContent.querySelectorAll('.mux-cat-group').forEach(g => {
+          const any = g.querySelector('.mux-cat-item:not(.filtered-out)');
+          g.classList.toggle('filtered-out', !any);
+        });
+      });
+    }
+  }
 
   async function loadFileList(subpath = '') {
     sidebarContent.innerHTML = '<div class="loading">Loading...</div>';
@@ -5694,6 +6780,28 @@ const icons = {
 
   // ─── Sessions tab: Claude-Desktop-style two-pane viewer ───
   const _sessionCache = new Map(); // folderName -> parsed agent_session.json
+
+  // ─── Session pinning ───
+  // Pins are a client-side preference: the engine has no pin concept, and the
+  // sessions directory is deliberately not writable through the API. Keyed by
+  // session folder name, which is stable for the life of the session.
+  const PIN_KEY = 'muxPinnedSessions.v1';
+  function loadPins() {
+    try {
+      const v = JSON.parse(localStorage.getItem(PIN_KEY) || '[]');
+      return new Set(Array.isArray(v) ? v : []);
+    } catch (_) { return new Set(); }
+  }
+  function savePins(set) {
+    try { localStorage.setItem(PIN_KEY, JSON.stringify([...set])); } catch (_) {}
+  }
+  function isPinned(name) { return loadPins().has(name); }
+  function togglePin(name) {
+    const pins = loadPins();
+    if (pins.has(name)) pins.delete(name); else pins.add(name);
+    savePins(pins);
+    return pins.has(name);
+  }
   let _selectedSession = null;
 
   function _fmtSessionDate(folderName) {
@@ -5758,6 +6866,17 @@ const icons = {
     return out;
   }
 
+  // Re-sort the rendered session rows so pinned ones sit at the top. Operates on
+  // the live DOM (no refetch) and preserves the existing relative order inside
+  // each band, which is already recency-sorted.
+  function reflowPinned(listEl) {
+    if (!listEl) return;
+    const rows = [...listEl.querySelectorAll('.mux-sess-row')];
+    const pinned = rows.filter(r => r.classList.contains('pinned'));
+    const rest = rows.filter(r => !r.classList.contains('pinned'));
+    for (const r of [...pinned, ...rest]) listEl.appendChild(r);
+  }
+
   async function loadSessionsView() {
     sidebarContent.innerHTML = '<div class="loading">Loading sessions…</div>';
     let listData;
@@ -5771,6 +6890,11 @@ const icons = {
     }
     const folders = (listData.items || []).filter(it => it.isDir).map(it => it.name);
     folders.sort((a,b) => a < b ? 1 : (a > b ? -1 : 0));
+    // Pinned sessions float to the top; recency order is preserved within each band.
+    {
+      const pins = loadPins();
+      folders.sort((a, b) => (pins.has(b) ? 1 : 0) - (pins.has(a) ? 1 : 0));
+    }
 
     sidebarContent.innerHTML = `
       <div class="mux-sess-root">
@@ -5796,15 +6920,25 @@ const icons = {
     const rowEls = new Map();
     for (const name of folders) {
       const row = document.createElement('div');
-      row.className = 'mux-sess-row';
+      row.className = 'mux-sess-row' + (isPinned(name) ? ' pinned' : '');
       row.dataset.folder = name;
       row.innerHTML = `
+        <button class="mux-sess-pin" type="button" aria-label="Pin session" title="Pin session">${icons.pin}</button>
         <div class="mux-sess-row-title">${esc(_fmtSessionDate(name))}</div>
         <div class="mux-sess-row-snippet"><span class="mux-sess-skel">loading…</span></div>
         <div class="mux-sess-row-meta">
           <span class="mux-sess-folder">${esc(name)}</span>
         </div>`;
       row.addEventListener('click', () => selectSession(name));
+      // Pin toggle must not also select the session.
+      row.querySelector('.mux-sess-pin').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nowPinned = togglePin(name);
+        row.classList.toggle('pinned', nowPinned);
+        // Re-float the row without refetching: pinned rows go to the top of the
+        // list, unpinned ones return to their recency position.
+        reflowPinned(listEl);
+      });
       listEl.appendChild(row);
       rowEls.set(name, row);
     }
@@ -6204,6 +7338,100 @@ const icons = {
       }
       /* Container queries supported via the sidebar host */
       #sidebarContent { container-type: inline-size; container-name: muxSidebar; }
+
+      /* Status dots shared by the node-graph Flows lane: the only place colour is
+         used in that surface, so state reads instantly without tinting chrome. */
+      .wf-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted, #71717a); }
+      .wf-dot.idle { background: rgba(161,161,170,.35); }
+      .wf-dot.ok   { background: var(--green, #10b981); }
+      .wf-dot.err  { background: var(--red, #ef4444); }
+      .wf-dot.warn { background: var(--amber, #f59e0b); }
+      .wf-dot.run  { background: var(--amber, #f59e0b); animation: wf-pulse 1.4s ease-in-out infinite; }
+      @keyframes wf-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+      @media (prefers-reduced-motion: reduce) { .wf-dot.run { animation: none; } }
+
+      /* ── Skills / Tools catalog tabs ── */
+      .mux-cat-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .mux-cat-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border, #27272a);
+        flex: 0 0 auto;
+      }
+      .mux-cat-search {
+        flex: 1; min-width: 0;
+        background: var(--bg-input, rgba(255,255,255,0.03));
+        border: 1px solid var(--border, #27272a);
+        border-radius: 6px;
+        padding: 5px 9px;
+        color: var(--text);
+        font-family: var(--font-sans, system-ui);
+        font-size: calc(12px * var(--ui-font-scale, 1));
+        outline: none;
+      }
+      .mux-cat-search:focus { border-color: var(--accent, #64b4dc); }
+      .mux-cat-count {
+        color: var(--muted, #71717a);
+        font-family: var(--font-mono, monospace);
+        font-size: calc(11px * var(--ui-font-scale, 1));
+        flex: 0 0 auto;
+      }
+      .mux-cat-body {
+        flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 4px 0 12px;
+        scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+      }
+      .mux-cat-body::-webkit-scrollbar { width: 4px; }
+      .mux-cat-body::-webkit-scrollbar-track { background: transparent; }
+      .mux-cat-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+      .mux-cat-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+      .mux-cat-group.filtered-out, .mux-cat-item.filtered-out { display: none; }
+      .mux-cat-group-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        position: sticky; top: 0; z-index: 1;
+        background: var(--bg, #0a0a0a);
+        padding: 7px 10px 5px;
+        color: var(--accent, #64b4dc);
+        font-size: calc(10.5px * var(--ui-font-scale, 1));
+        font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+      }
+      .mux-cat-group-n {
+        color: var(--muted, #71717a); font-weight: 500;
+        letter-spacing: 0; text-transform: none;
+        font-family: var(--font-mono, monospace);
+      }
+      .mux-cat-item {
+        padding: 6px 10px 7px;
+        border-bottom: 1px solid rgba(127,127,127,0.10);
+      }
+      .mux-cat-item:hover { background: rgba(255,255,255,0.025); }
+      .mux-cat-name {
+        display: flex; align-items: center; gap: 6px;
+        color: var(--text);
+        font-family: var(--font-mono, monospace);
+        font-size: calc(12px * var(--ui-font-scale, 1));
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .mux-cat-tag {
+        flex: 0 0 auto;
+        padding: 1px 5px; border-radius: 4px;
+        background: rgba(var(--accent-rgb, 100,180,220), 0.15);
+        color: var(--accent, #64b4dc);
+        font-size: calc(9px * var(--ui-font-scale, 1));
+        font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      }
+      .mux-cat-desc {
+        margin-top: 2px;
+        color: var(--muted, #71717a);
+        font-family: var(--font-sans, system-ui);
+        font-size: calc(11.5px * var(--ui-font-scale, 1));
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      .mux-cat-empty {
+        padding: 16px; color: var(--muted, #71717a); font-style: italic;
+        font-size: calc(12.5px * var(--ui-font-scale, 1));
+      }
       /* Fallback if container queries unsupported: use media query on viewport */
       @supports not (container-type: inline-size) {
         @media (min-width: 900px) {
@@ -6227,6 +7455,36 @@ const icons = {
         transition: background 0.12s;
       }
       .mux-sess-row:hover { background: rgba(var(--accent-rgb),0.06); }
+
+      /* ── Session pinning ── */
+      .mux-sess-row { position: relative; }
+      /* Keep the title clear of the pin button. */
+      .mux-sess-row .mux-sess-row-title { padding-right: 22px; }
+      .mux-sess-pin {
+        position: absolute;
+        top: 6px; right: 6px;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 20px; height: 20px;
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: var(--muted, #71717a);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity .12s ease, color .12s ease, background .12s ease;
+      }
+      .mux-sess-row:hover .mux-sess-pin,
+      .mux-sess-pin:focus-visible { opacity: 0.65; }
+      .mux-sess-pin:hover { opacity: 1; color: var(--accent, #64b4dc); background: rgba(var(--accent-rgb),0.12); }
+      /* A pinned row keeps its marker visible at all times. */
+      .mux-sess-row.pinned .mux-sess-pin {
+        opacity: 1;
+        color: var(--accent, #64b4dc);
+      }
+      .mux-sess-row.pinned {
+        background: rgba(255,255,255,0.022);
+      }
       .mux-sess-row.active {
         background: rgba(var(--accent-rgb),0.1);
         box-shadow: inset 2px 0 0 var(--accent, #64b4dc);
@@ -8247,6 +9505,9 @@ const icons = {
     hideToolCalls: false,
     toolGroupAutoCollapse: true,
     toolGroupCollapseAt: 1,
+    hideCapabilityHints: false,
+    showReasoning: 'show',
+    reasoningCollapseAt: 600,
     uiFontSize: 14,
     uiLineHeight: 1.6,
     uiSpacingScale: 1.0,
@@ -8255,7 +9516,8 @@ const icons = {
     fontSans: 'IBM Plex Sans',
     customFonts: [],
     warnSessionSwitch: true,
-    editorTheme: 'auto'
+    editorTheme: 'auto',
+    flowsAutoActivity: true
   };
   function loadState(){
     try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
@@ -8329,6 +9591,11 @@ const icons = {
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
     b.dataset.toolGroupCollapseAt = String(state.toolGroupCollapseAt || 1);
+    b.classList.toggle('hide-capability-hints', !!state.hideCapabilityHints);
+    b.dataset.flowsAutoActivity = state.flowsAutoActivity === false ? '0' : '1';
+    b.dataset.showReasoning = state.showReasoning || 'show';
+    b.classList.toggle('hide-reasoning', state.showReasoning === 'hide');
+    b.dataset.reasoningCollapseAt = String(state.reasoningCollapseAt || 600);
     // Typography
     const root = document.documentElement;
     root.style.setProperty('--ui-font-size', (state.uiFontSize || 14) + 'px');
@@ -8577,8 +9844,18 @@ const icons = {
       sliderRow('toolGroupCollapseAt', 'Auto-collapse after', 1, 20, 1,
         'Number of tool calls before a group auto-collapses. 1 = always start collapsed.',
         (v) => v + (v === 1 ? ' call' : ' calls')),
+      toggleRow('hideCapabilityHints', 'Hide capability hints',
+        'Suppress the delegation/capability bars the engine emits as CLI guidance.'),
+      segRow('showReasoning', 'Reasoning output',
+        [{label:'Show', value:'show'}, {label:'Collapsed', value:'collapsed'}, {label:'Hide', value:'hide'}],
+        'Model reasoning is streamed separately from the answer. Show: render and auto-collapse once long. Collapsed: always start folded. Hide: drop it entirely.'),
+      sliderRow('reasoningCollapseAt', 'Collapse reasoning after', 100, 4000, 100,
+        'Characters of reasoning before the block auto-collapses (Show mode only).',
+        (v) => v + ' chars'),
       toggleRow('showTokens',       'Show tokens-in-context badge'),
       toggleRow('showSavedBanner',  'Show session-saved banner'),
+      toggleRow('flowsAutoActivity', 'Auto-open Activity on workflow start',
+        'When you start a workflow from the Flows panel, jump to Activity \u2192 Workflows so you see it run immediately. Off: stay on the current tab.'),
     ]);
     section('Paths & Privacy', [
       segRow('pathMode', 'Session path display',
@@ -9177,7 +10454,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-daemon-lane-title { font-weight: 600; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; color: var(--muted); }
 .mng-daemon-lane-spacer { flex: 1 1 auto; }
 .mng-daemon-lane-body { flex: 1 1 auto; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
-.mng-dl-row { border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5)); overflow: hidden; }
+.mng-dl-row { border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5)); overflow: hidden; flex: 0 0 auto; }
 .mng-dl-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; cursor: pointer; user-select: none; font-size: 12px; }
 .mng-dl-head:hover { background: rgba(255,255,255,.03); }
 .mng-dl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber, #f59e0b); flex: 0 0 auto; }
@@ -9193,6 +10470,142 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-dl-body::-webkit-scrollbar-track { background: transparent; }
 .mng-dl-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
 .mng-dl-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+/* -- Flows lane (workflows + schedules) --
+   Same docked-lane shape as the Daemon Activity lane so the panel has one
+   consistent surface vocabulary. Depth is carried by a neutral connector rail,
+   never an accent stripe. */
+.mng-flows-lane {
+  /* Overlay, not an in-flow block: .mng-canvas-wrap is height:100% with
+     overflow:hidden, so an in-flow lane unhides below the clip and is invisible.
+     Same treatment as .mng-daemon-lane. */
+  position: absolute; inset: 0; z-index: 7;
+  display: flex; flex-direction: column;
+  background: var(--bg, #0b0b0e);
+}
+.mng-flows-lane[hidden] { display: none; }
+.mng-flows-tabs { display: inline-flex; gap: 2px; margin-left: 10px; }
+.mng-flows-tab {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--muted); padding: 3px 9px; border-radius: 5px;
+  font-family: inherit; font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.mng-flows-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.mng-flows-tab.is-on { color: var(--text); background: rgba(var(--accent-rgb, 100,180,220), .14); font-weight: 600; }
+
+#mngFlowsBody { display: flex; flex-direction: column; gap: 6px; }
+.mng-fl-empty { color: var(--muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); padding: 10px 4px; }
+.mng-fl-spacer { flex: 1 1 auto; }
+.mng-fl-count { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.mng-fl-state { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); text-transform: capitalize; }
+.mng-fl-name { font-weight: 600; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mng-fl-name.mono { font-family: var(--font-mono, monospace); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.mng-fl-chip {
+  flex: 0 0 auto; padding: 1px 6px; border-radius: 4px;
+  background: rgba(127,127,127,.16); color: var(--muted);
+  font-size: calc(9px * var(--ui-font-scale, 1));
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+
+.mng-fl-run, .mng-fl-trig, .mng-fl-dhead, .mng-fl-saved {
+  border: 1px solid var(--border, rgba(255,255,255,.10));
+  border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
+  overflow: hidden;
+  /* In a flex-column scroll view (.mng-fl-view), children must NOT flex-shrink or
+     they compress to fit instead of overflowing -> the list would never scroll and
+     rows just squish as more are added. Keep natural height; let the column scroll. */
+  flex: 0 0 auto;
+}
+.mng-fl-trig { padding: 7px 10px 8px; }
+.mng-fl-trig.is-off { opacity: .55; }
+.mng-fl-dhead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.mng-fl-run-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.mng-fl-trig .mng-fl-run-head { padding: 0; }
+.mng-fl-bar { height: 2px; background: rgba(127,127,127,.16); }
+.mng-fl-bar > span { display: block; height: 100%; background: var(--green, #10b981); transition: width .3s ease; }
+.mng-fl-run.wf-failed .mng-fl-bar > span { background: var(--red, #ef4444); }
+.mng-fl-err { padding: 5px 10px; color: var(--red, #ef4444); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+
+.mng-fl-sec { margin: 5px 0 5px 16px; padding-left: 10px; border-left: 1px solid rgba(127,127,127,.18); }
+.mng-fl-sec-head { display: flex; align-items: center; gap: 7px; padding: 3px 4px; }
+.mng-fl-sec-name { font-weight: 600; color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mng-fl-task { display: flex; align-items: flex-start; gap: 7px; padding: 4px 4px 4px 8px; margin-left: 6px; border-left: 1px solid rgba(127,127,127,.12); }
+.mng-fl-task .wf-dot { margin-top: 4px; }
+.mng-fl-task-body { min-width: 0; flex: 1 1 auto; }
+.mng-fl-task-label { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.4; word-break: break-word; }
+.mng-fl-task-meta { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); margin-top: 1px; font-family: var(--font-mono, monospace); word-break: break-word; }
+.mng-fl-task-meta code { background: rgba(127,127,127,.14); padding: 0 4px; border-radius: 3px; }
+.mng-fl-goal { color: var(--text); opacity: .8; margin-top: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; word-break: break-word; position: relative; }
+/* Clamp long descriptions to a few lines by default; the row exposes a toggle to
+   expand. Only rows whose text actually overflows get the pointer + chevron. */
+.mng-fl-goal.is-clamped { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.mng-fl-goal.is-expanded { max-height: 40vh; overflow-y: auto; padding-right: 4px;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent; }
+.mng-fl-goal.is-expanded::-webkit-scrollbar { width: 4px; }
+.mng-fl-goal.is-expanded::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+/* Expand/collapse control appended to a clipped description. Shown only when the
+   text overflows (JS toggles .has-more on the trigger row). */
+.mng-fl-more { display: none; margin-top: 2px; color: var(--muted); cursor: pointer;
+  font-size: calc(10px * var(--ui-font-scale, 1)); font-family: var(--font-mono, monospace);
+  user-select: none; align-items: center; gap: 4px; }
+.mng-fl-more:hover { color: var(--text); }
+.mng-fl-trig.has-more .mng-fl-more { display: inline-flex; }
+.mng-fl-more .mng-more-chev { transition: transform .15s ease; display: inline-block; }
+.mng-fl-trig.is-expanded .mng-more-chev { transform: rotate(180deg); }
+/* When a description can overflow, the whole goal block reads as clickable. */
+.mng-fl-trig.has-more .mng-fl-goal { cursor: pointer; }
+.mng-fl-saved { padding: 6px 10px; }
+.mng-fl-saved h5 { margin: 0 0 4px; color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); text-transform: uppercase; letter-spacing: .07em; }
+.mng-fl-saved-row { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); padding: 2px 0; }
+.mng-fl-del { color: var(--muted); }
+.mng-fl-del:hover { color: var(--red, #ef4444); border-color: var(--red, #ef4444); }
+
+/* Composer: creation forms for workflows and triggers. */
+.mng-flows-compose {
+  flex: 0 0 auto; max-height: 60%; overflow-y: auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+  background: var(--bg-card, rgba(24,24,27,.5));
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.mng-flows-compose[hidden] { display: none; }
+.mng-flows-compose::-webkit-scrollbar { width: 4px; }
+.mng-flows-compose::-webkit-scrollbar-track { background: transparent; }
+.mng-flows-compose::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-fl-form { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.mng-fl-form-head { color: var(--text); font-weight: 600; font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.mng-fl-lbl {
+  display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-width: 0;
+  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+.mng-fl-lbl[hidden] { display: none; }
+.mng-fl-hint { color: var(--muted); opacity: .7; font-family: var(--font-mono, monospace); font-size: calc(9.5px * var(--ui-font-scale, 1)); }
+.mng-fl-form textarea.mng-input { resize: vertical; font-family: var(--font-sans, system-ui); line-height: 1.45; }
+.mng-fl-seg { display: inline-flex; gap: 2px; background: rgba(127,127,127,.10); padding: 2px; border-radius: 6px; align-self: flex-start; }
+.mng-fl-seg-btn {
+  background: transparent; border: none; cursor: pointer; color: var(--muted);
+  padding: 3px 12px; border-radius: 4px; font-family: inherit;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+.mng-fl-seg-btn:hover { color: var(--text); }
+.mng-fl-seg-btn.is-on { background: var(--bg-input, rgba(255,255,255,.06)); color: var(--text); font-weight: 600; }
+.mng-fl-status { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); min-height: 1em; }
+.mng-fl-status:empty { display: none; }
+.mng-fl-status.is-err { color: var(--red, #ef4444); }
+/* Compiled cron for the chosen preset: the expression stays visible even
+   though the user never has to author one. */
+.mng-fl-cron-preview {
+  color: var(--muted); font-family: var(--font-mono, monospace);
+  font-size: calc(10px * var(--ui-font-scale, 1)); opacity: .85;
+}
+.mng-fl-cron-preview:empty { display: none; }
+.f-preset-args[hidden] { display: none; }
+.mng-fl-form .mng-row { gap: 8px; }
+/* Form action buttons: grouped to the right, not spread edge-to-edge. */
+.mng-fl-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
+#mngFlowsBody::-webkit-scrollbar { width: 4px; }
+#mngFlowsBody::-webkit-scrollbar-track { background: transparent; }
+#mngFlowsBody::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+#mngFlowsBody:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
 .mng-daemon-lane-body::-webkit-scrollbar { width: 4px; }
 .mng-daemon-lane-body::-webkit-scrollbar-track { background: transparent; }
 .mng-daemon-lane-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
@@ -9209,6 +10622,145 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-canvas .mng-node-card { cursor: pointer; transition: filter 0.15s; }
 .mng-canvas .mng-node-card:hover { filter: brightness(1.15); }
 .mng-canvas .mng-node-card.selected rect.mng-node-bg { stroke: var(--accent); stroke-width: 2; }
+
+/* ============================================================================
+   Dynamic-workflow node graph + per-run controls + script editor.
+   Self-contained inside the Flows lane; uses the same neutral card/dot/rail
+   vocabulary (status dots as the only colour; no accent stripes).
+   ============================================================================ */
+/* Lane body containers are mutually exclusive VIEWS. Each owns its own scroll
+   context so Workflows / Schedules / Activity can never bleed into each other. */
+.mng-fl-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent; }
+.mng-fl-view[hidden] { display: none; }
+.mng-fl-view::-webkit-scrollbar { width: 4px; }
+.mng-fl-view::-webkit-scrollbar-track { background: transparent; }
+.mng-fl-view::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-fl-view:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
+/* Activity view: its own two sub-tabs (Workflow runs / Daemon jobs), each its own
+   scroll body, so the run graphs and daemon output never share a surface. */
+.mng-fl-activity { padding: 0; overflow: hidden; }   /* the sub-bodies scroll, not this */
+.mng-act-subtabs { display: flex; gap: 2px; padding: 6px 8px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.08)); }
+.mng-act-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent; }
+.mng-act-body[hidden] { display: none; }
+.mng-act-body::-webkit-scrollbar { width: 4px; }
+.mng-act-body::-webkit-scrollbar-track { background: transparent; }
+.mng-act-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-act-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
+/* Collapsible + removable sub-panel chrome (saved defs, run/job cards, activity output).
+   A header strip carries a collapse chevron and a hide (x) button. */
+.mng-panelctl { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.mng-panelctl .mng-iconbtn {
+  background: transparent; border: none; cursor: pointer; color: var(--muted);
+  width: 20px; height: 20px; border-radius: 4px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: calc(12px * var(--ui-font-scale, 1)); padding: 0;
+}
+.mng-panelctl .mng-iconbtn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.mng-panelctl .mng-iconbtn.mng-hide:hover { color: var(--red, #ef4444); }
+.mng-collapse-chev { transition: transform .15s ease; display: inline-block; }
+.is-collapsed .mng-collapse-chev { transform: rotate(-90deg); }
+/* When collapsed, hide everything in the panel except its header row. */
+.mng-fl-run.is-collapsed > :not(.mng-wf-actions),
+.mng-fl-saved.is-collapsed > :not(.mng-fl-saved-head),
+.mng-dl-row.is-collapsed .mng-dl-body { display: none; }
+.mng-fl-saved-head { display: flex; align-items: center; gap: 6px; }
+.mng-fl-saved-head h5 { margin: 0; }
+.mng-fl-substatus { color: var(--muted); font-family: var(--font-mono, monospace);
+  font-size: calc(9.5px * var(--ui-font-scale, 1)); opacity: .85; margin-right: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+
+
+/* Per-run action bar */
+.mng-wf-actions { display: flex; align-items: center; gap: 6px; padding: 5px 10px 8px; flex-wrap: wrap; }
+.mng-wf-actions .mng-btn { font-size: calc(10.5px * var(--ui-font-scale, 1)); padding: 3px 9px; }
+.mng-wf-actions .mng-fl-spacer { flex: 1 1 auto; }
+
+/* Node graph: run -> section -> task, laid out as a flowing column of stages.
+   Running nodes/edges pulse; everything else is still. */
+.mng-wfg { padding: 4px 6px 8px; }
+.mng-wfg-stage { display: flex; align-items: stretch; gap: 10px; position: relative; }
+.mng-wfg-secwrap { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-width: 0;
+  border: 1px solid rgba(127,127,127,.12); border-radius: 10px; padding: 8px 10px 10px;
+  background: rgba(127,127,127,.035); }
+.mng-wfg-sec-label { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1));
+  text-transform: uppercase; letter-spacing: .06em; margin: 2px 0 0 2px; display:flex; align-items:center; gap:6px; }
+.mng-wfg-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: start; }
+.mng-wfg-node {
+  border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 9px;
+  background: var(--bg-card, rgba(24,24,27,.55)); padding: 8px 9px;
+  cursor: pointer; transition: border-color .15s, background .15s; position: relative;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.mng-wfg-node:hover { border-color: rgba(255,255,255,.22); background: rgba(36,36,42,.6); }
+.mng-wfg-node.is-open { border-color: rgba(255,255,255,.28); }
+.mng-wfg-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mng-wfg-node-title { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width:0; }
+.mng-wfg-node-meta { color: var(--muted); font-size: calc(9.5px * var(--ui-font-scale, 1));
+  font-family: var(--font-mono, monospace); display: flex; flex-wrap: wrap; gap: 6px; }
+.mng-wfg-node-out {
+  margin-top: 4px; border-top: 1px dashed rgba(127,127,127,.22); padding-top: 6px;
+  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono, monospace); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  color: var(--text); line-height: 1.45;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.mng-wfg-node-out::-webkit-scrollbar { width: 4px; height: 4px; }
+.mng-wfg-node-out::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-wfg-node-out[hidden] { display: none; }
+.mng-wfg-node-out .muted { color: var(--muted); }
+
+/* The vertical connector rail between run head, sections and tasks. Neutral. */
+.mng-wfg-rail { width: 0; border-left: 1px solid rgba(127,127,127,.20); margin-left: 8px; }
+.mng-wfg-runhead { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
+.mng-wfg-runname { font-weight: 700; color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+
+/* Pulsing/flow indicators (running only). Respects reduced-motion. */
+@keyframes mngPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes mngFlow { to { background-position: 12px 0; } }
+.mng-wfg-node.is-running { border-color: rgba(120,180,220,.5); }
+.mng-wfg-node.is-running .wf-dot.run { animation: mngPulse 1.1s ease-in-out infinite; }
+.mng-wfg-node.is-running::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
+  background-image: linear-gradient(90deg, rgba(120,180,220,.65) 50%, transparent 0);
+  background-size: 12px 2px; animation: mngFlow .6s linear infinite;
+}
+.mng-wfg-rail.is-running { border-left-color: rgba(120,180,220,.5);
+  background-image: linear-gradient(180deg, rgba(120,180,220,.55) 50%, transparent 0);
+  background-size: 2px 10px; background-repeat: repeat-y; animation: mngFlow .6s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mng-wfg-node.is-running .wf-dot.run,
+  .mng-wfg-node.is-running::after,
+  .mng-wfg-rail.is-running { animation: none; }
+}
+
+/* Script editor modal (Monaco, textarea fallback) */
+.mng-script-modal { position: fixed; inset: 0; z-index: 60; display: none;
+  background: rgba(0,0,0,.55); align-items: center; justify-content: center; }
+.mng-script-modal.open { display: flex; }
+.mng-script-box { width: min(920px, 92vw); height: min(78vh, 720px);
+  background: var(--bg, #0b0b0e); border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+.mng-script-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10)); }
+.mng-script-title { font-weight: 600; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.mng-script-sub { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.mng-script-host { flex: 1 1 auto; min-height: 0; }
+.mng-script-host textarea { width: 100%; height: 100%; box-sizing: border-box; resize: none;
+  background: var(--bg-input, #111); color: var(--text); border: none; outline: none;
+  font-family: var(--font-mono, monospace); font-size: 13px; padding: 10px; line-height: 1.5; }
+.mng-script-status { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.mng-script-status.is-err { color: var(--red, #ef4444); }
+.mng-script-status.is-ok { color: var(--green, #10b981); }
+
 .mng-canvas .mng-node-card.active rect.mng-node-bg { stroke: var(--green); stroke-width: 2; }
 .mng-canvas .mng-node-card.main rect.mng-node-bg { stroke: var(--accent); stroke-width: 1.5; }
 .mng-canvas rect.mng-node-bg { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; rx: 8; ry: 8; }
@@ -9648,14 +11200,63 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       <!-- Daemon activity lane: collapsed per-trigger rows for background daemon
            goals, kept out of the main viewport. Populated via window.MuxDaemonLane
            from origin:'daemon' WS frames. -->
-      <div class="mng-daemon-lane" id="mngDaemonLane" hidden>
+      <!-- Flows lane: three TOP-LEVEL tabs, each a fully separate embedded view
+           (full DOM swap, no shared containers):
+             • Workflows       — the workflows that are SET UP (saved definitions)
+             • Scheduled Tasks — the triggers that are SET UP (+ daemon on/off)
+             • Activity        — where everything RUNS/renders, with its own two
+                                  sub-tabs (Workflow runs / Daemon jobs).
+           Composers post to the runtime API. -->
+      <div class="mng-flows-lane" id="mngFlowsLane" hidden>
         <div class="mng-daemon-lane-bar">
-          <span class="mng-daemon-lane-title">Daemon Activity</span>
+          <span class="mng-daemon-lane-title">Flows</span>
+          <span class="mng-flows-tabs">
+            <button class="mng-flows-tab is-on" id="mngFlowsTabWf" type="button">Workflows</button>
+            <button class="mng-flows-tab" id="mngFlowsTabCron" type="button">Scheduled Tasks</button>
+            <button class="mng-flows-tab" id="mngFlowsTabAct" type="button">Activity
+              <span class="mng-daemon-badge" id="mngFlowsActBadge" hidden>0</span></button>
+          </span>
           <span class="mng-daemon-lane-spacer"></span>
-          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes">Clear</button>
-          <button class="mng-btn" id="mngDaemonClose" title="Hide">×</button>
+          <button class="mng-btn" id="mngFlowsNew" title="Create">+ New</button>
+          <button class="mng-btn" id="mngDaemonClear" title="Clear finished output" hidden>Clear</button>
+          <button class="mng-btn" id="mngFlowsRefresh" title="Refresh">⟳</button>
+          <button class="mng-btn" id="mngFlowsClose" title="Hide">✕</button>
         </div>
-        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody"></div>
+        <div class="mng-flows-compose" id="mngFlowsCompose" hidden></div>
+
+        <!-- (1) WORKFLOWS: only the workflows that are set up (saved definitions). -->
+        <div class="mng-fl-view" id="mngWfDefsView"></div>
+
+        <!-- (2) SCHEDULED TASKS: only the triggers that are set up + daemon toggle. -->
+        <div class="mng-fl-view" id="mngSchedBody" hidden></div>
+
+        <!-- (3) ACTIVITY: the run/output plane, with its OWN two sub-tabs. -->
+        <div class="mng-fl-view mng-fl-activity" id="mngActivityView" hidden>
+          <div class="mng-act-subtabs">
+            <button class="mng-flows-tab is-on" id="mngActTabWf" type="button">Workflow runs</button>
+            <button class="mng-flows-tab" id="mngActTabDaemon" type="button">Daemon jobs
+              <span class="mng-daemon-badge" id="mngActDaemonBadge" hidden>0</span></button>
+          </div>
+          <!-- Activity → Workflow runs: live node graphs. -->
+          <div class="mng-act-body" id="mngActWfBody"></div>
+          <!-- Activity → Daemon jobs: the element MuxDaemonLane streams into. -->
+          <div class="mng-act-body" id="mngDaemonLaneBody" hidden></div>
+        </div>
+      </div>
+      <!-- Dynamic-workflow driver-script editor (Monaco with a textarea fallback). -->
+      <div class="mng-script-modal" id="mngScriptModal">
+        <div class="mng-script-box">
+          <div class="mng-script-bar">
+            <span class="mng-script-title" id="mngScriptTitle">Driver script</span>
+            <span class="mng-script-sub" id="mngScriptSub"></span>
+            <span class="mng-daemon-lane-spacer"></span>
+            <span class="mng-script-status" id="mngScriptStatus"></span>
+            <button class="mng-btn" id="mngScriptSave">Save</button>
+            <button class="mng-btn" id="mngScriptSaveRun">Save &amp; Re-run</button>
+            <button class="mng-btn" id="mngScriptClose">Close</button>
+          </div>
+          <div class="mng-script-host" id="mngScriptHost"></div>
+        </div>
       </div>
       <div class="mng-instance-view" id="mngInstanceView" hidden>
         <div class="mng-instance-bar">
@@ -11117,18 +12718,26 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     let activeCount = 0;
     function els(){
       return {
-        lane:  document.getElementById('mngDaemonLane'),
+        // Activity is a VIEW of the Flows lane now; there is no separate lane element.
+        lane:  document.getElementById('mngFlowsLane'),
         body:  document.getElementById('mngDaemonLaneBody'),
-        badge: document.getElementById('mngDaemonBadge'),
+        badge: document.getElementById('mngActDaemonBadge'),   // Activity > Daemon sub-tab badge
+        tabBadge: document.getElementById('mngFlowsActBadge'),  // top-level Activity tab badge
+
       };
     }
     function refreshBadge(){
-      const { badge } = els(); if (!badge) return;
+      const { badge, tabBadge } = els();
       const n = rows.size;
-      badge.textContent = String(activeCount || n);
-      badge.hidden = n === 0;
+      const label = String(activeCount || n);
+      for (const b of [badge, tabBadge]) {
+        if (!b) continue;
+        b.textContent = label;
+        b.hidden = n === 0;
+      }
     }
-    function show(){ const { lane } = els(); if (lane) lane.hidden = false; }  // reveal lane content; never force-opens the panel (non-invasive)
+    // Reveal the Activity view; never force-opens the panel itself (non-invasive).
+    function show(){ try { window.MuxFlows && window.MuxFlows.showActivity && window.MuxFlows.showActivity('daemon'); } catch (_) {} }
     function ensureRow(lane, label){
       let r = rows.get(lane);
       if (r && r.el.isConnected) return r;
@@ -11142,9 +12751,20 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           '<span class="mng-dl-status"></span>' +
           '<span class="mng-dl-spacer"></span>' +
           '<span class="mng-dl-chev">\u25be</span>' +
+          '<span class="mng-panelctl">' +
+            '<button class="mng-iconbtn mng-hide mng-dl-hide" title="Remove this job">\u2715</button>' +
+          '</span>' +
         '</div>' +
         '<div class="mng-dl-body"></div>';
       el.querySelector('.mng-dl-head').addEventListener('click', () => el.classList.toggle('dl-collapsed'));
+      el.querySelector('.mng-dl-hide').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const laneKey = lane;
+        try { el.remove(); } catch(_){}
+        rows.delete(laneKey);
+        if (activeCount > 0 && !r._finished) { activeCount--; }
+        refreshBadge();
+      });
       el.querySelector('.mng-dl-label').textContent = label || lane;
       body.appendChild(el);
       r = { el, body: el.querySelector('.mng-dl-body'), statusEl: el.querySelector('.mng-dl-status'), text: '' };
@@ -11164,7 +12784,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         /has \d+ tools available/i.test(m) ||
         /^\[GOAL\]/i.test(m) ||
         /^\[AGENT SESSION\]/i.test(m) ||
-        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired)/i.test(m) ||
+        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired|Goal completed)/i.test(m) ||
+        /^\[Daemon\]\s*(Starting|Running)/i.test(m) ||
         /^Total Tokens:/i.test(m) ||
         /tokens used this goal/i.test(m) ||
         /^Press \[Esc\]/i.test(m) ||
@@ -11193,7 +12814,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const lane = String(ev.lane || 'daemon');
       const label = lane.replace(/^daemon:/, '');
       const r = ensureRow(lane, label); if (!r) return;
-      show();
+      // Do NOT force-open the panel on every frame -- the badge + start toast signal
+      // activity; yanking the user into the Daemon sub-tab mid-task is hostile.
       switch (ev.type) {
         case 'agent_turn_start':
           r._finished = false;
@@ -11259,18 +12881,1052 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       }
       refreshBadge();
     }
-    function hide(){ const { lane } = els(); if (lane) lane.hidden = true; }
+    function hide(){ try { window.MuxFlows && window.MuxFlows.hide(); } catch (_) {} }
     (function wire(){
       const btn = document.getElementById('mngBtnDaemon');
       const cl  = document.getElementById('mngDaemonClear');
-      const cx  = document.getElementById('mngDaemonClose');
+
       if (btn) btn.addEventListener('click', () => { const { lane } = els(); if (!lane) return; if (lane.hidden) show(); else hide(); });
       if (cl)  cl.addEventListener('click', clearFinished);
-      if (cx)  cx.addEventListener('click', hide);
     })();
     return { push, clearFinished, show, hide };
   })();
   window.MuxDaemonLane = MuxDaemonLane;
+
+
+  // -- Flows lane: workflow runs + daemon schedules, with creation --
+  // Lives in the node graph panel because this IS the graph plane: runs are
+  // node trees and triggers are the scheduled entry points into them. Mirrors
+  // MuxDaemonLane's shape (lane + bar + body) so both docked surfaces behave
+  // identically. Everything here drives the runtime API -- no slash commands.
+  const MuxFlows = (function(){
+    let view = 'wf';          // 'wf' | 'cron' | 'act' (top-level tabs)
+    let actView = 'wf';       // 'wf' | 'daemon' (Activity sub-tabs)
+    let timer = null;
+    let composing = null;     // null | 'wf' | 'cron'
+
+    function els(){
+      return {
+        lane:    document.getElementById('mngFlowsLane'),
+        wfdefs:  document.getElementById('mngWfDefsView'),   // (1) Workflows: saved defs
+        sched:   document.getElementById('mngSchedBody'),    // (2) Scheduled Tasks: triggers
+        activity:document.getElementById('mngActivityView'), // (3) Activity: run/output plane
+        actWf:   document.getElementById('mngActWfBody'),    //     Activity > Workflow runs
+        actDaemon:document.getElementById('mngDaemonLaneBody'), //  Activity > Daemon jobs
+        compose: document.getElementById('mngFlowsCompose'),
+        tabWf:   document.getElementById('mngFlowsTabWf'),
+        tabCron: document.getElementById('mngFlowsTabCron'),
+        tabAct:  document.getElementById('mngFlowsTabAct'),
+        actTabWf: document.getElementById('mngActTabWf'),
+        actTabDaemon: document.getElementById('mngActTabDaemon'),
+      };
+    }
+    function api(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+    function esc(s){
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    async function jfetch(path, opts){
+      const r = await fetch(api(path), Object.assign({
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      }, opts || {}));
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+      return data;
+    }
+    // Compact relative time: "3m ago", "2h ago", "just now".
+    function relTime(iso){
+      const then = new Date(iso).getTime(); if (!then) return '';
+      const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+      if (secs < 45) return 'just now';
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      const days = Math.round(hrs / 24);
+      return days + 'd ago';
+    }
+
+    const DOT = { done:'ok', failed:'err', running:'run', cancelled:'warn', pending:'idle' };
+
+    // ---- workflow runs ----
+    // A dynamic run renders as a flowing NODE GRAPH: a run head, then per-section
+    // task nodes in a grid. Running nodes/edges pulse. Clicking a task node toggles
+    // its captured output inline (fetched lazily). A static run stays a compact row.
+    // 'openTasks' keeps expanded task-output panels open across the 1.5s poll rebuild.
+    const openTasks = new Set();          // key: runId + '::' + taskId
+    // key -> { text, final }. 'final' = captured while the task was in a terminal
+    // state, so it is the COMPLETE output and needn't be refetched. A non-final entry
+    // is a live/partial snapshot that the poll keeps refreshing until the task ends.
+    const taskOutCache = new Map();
+    const _lastRuns = new Map();          // runId -> run object from the last draw (for status lookups)
+
+    function metaFor(t){
+      const meta = [];
+      if (t.agent) meta.push(esc(t.agent));
+      if (t.model) meta.push(esc(t.model));
+      if (t.secs != null) meta.push(t.secs + 's');
+      if (t.tools != null) meta.push(t.tools + ' tools');
+      if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
+      return meta;
+    }
+
+    function taskNodeHtml(run, t){
+      const key = run.id + '::' + t.id;
+      const open = openTasks.has(key);
+      const cls = 'mng-wfg-node' + (t.status === 'running' ? ' is-running' : '') + (open ? ' is-open' : '');
+      const meta = metaFor(t);
+      const cached = taskOutCache.get(key);
+      const cachedText = cached ? cached.text : null;
+      const outInner = open
+        ? (cachedText != null
+            ? (cachedText.trim() ? esc(cachedText) : '<span class="muted">(no output captured)</span>')
+            : '<span class="muted">loading output\u2026</span>')
+        : '';
+      return '<div class="' + cls + '" data-run="' + esc(run.id) + '" data-task="' + esc(t.id) + '">' +
+               '<div class="mng-wfg-node-head">' +
+                 '<span class="wf-dot ' + (DOT[t.status] || 'idle') + '"></span>' +
+                 '<span class="mng-wfg-node-title">' + esc(t.label || t.id) + '</span>' +
+               '</div>' +
+               (meta.length ? '<div class="mng-wfg-node-meta">' + meta.map(m => '<span>' + m + '</span>').join('') + '</div>' : '') +
+               (t.detail ? '<div class="mng-wfg-node-meta"><span>' + esc(String(t.detail).slice(0,120)) + '</span></div>' : '') +
+               '<div class="mng-wfg-node-out"' + (open ? '' : ' hidden') + '>' + outInner + '</div>' +
+             '</div>';
+    }
+
+    function runHtml(run){
+      const tasks = run.sections.reduce((a,s) => a.concat(s.tasks), []);
+      const done = tasks.filter(t => t.status === 'done').length;
+      const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
+      const running = run.state === 'running';
+
+      // Action bar: cancel (while running), re-run, save, view/edit script (dynamic only).
+      let actions = '<div class="mng-wf-actions">' +
+        '<span class="wf-dot ' + (DOT[run.state] || 'idle') + '"></span>' +
+        '<span class="mng-wfg-runname">' + esc(run.name || run.id) + '</span>' +
+        '<span class="mng-fl-chip">' + esc(run.mode) + '</span>' +
+        '<span class="mng-fl-count">' + done + '/' + tasks.length + '</span>' +
+        '<span class="mng-fl-spacer"></span>' +
+        (running ? '<button class="mng-btn mng-fl-cancel" data-id="' + esc(run.id) + '">Cancel</button>' : '');
+      if (run.mode === 'dynamic') {
+        actions +=
+          '<button class="mng-btn mng-wf-rerun" data-id="' + esc(run.id) + '"' + (running ? ' disabled' : '') + '>Re-run</button>' +
+          '<button class="mng-btn mng-wf-save" data-id="' + esc(run.id) + '">Save</button>' +
+          '<button class="mng-btn mng-wf-script" data-id="' + esc(run.id) + '">Script</button>';
+      }
+      actions += '<span class="mng-panelctl">' +
+          '<button class="mng-iconbtn mng-run-collapse" data-id="' + esc(run.id) + '" title="Collapse">' + (collapsedRuns.has(run.id) ? '\u25b8' : '\u25be') + '</button>' +
+          '<button class="mng-iconbtn mng-hide mng-run-hide" data-id="' + esc(run.id) + '" title="Hide this run">\u2715</button>' +
+        '</span>';
+      actions += '</div>';
+
+      const collapsed = collapsedRuns.has(run.id);
+      let h = '<div class="mng-fl-run wf-' + esc(run.state) + (collapsed ? ' is-collapsed' : '') + '">' + actions +
+              '<div class="mng-fl-bar"><span style="width:' + pct + '%"></span></div>';
+      if (run.error) h += '<div class="mng-fl-err">' + esc(run.error) + '</div>';
+
+      // Static runs (or dynamic with no manifest yet) get a light empty state instead
+      // of a big dead area.
+      if (!run.sections.length || !tasks.length) {
+        h += '<div class="mng-fl-empty" style="padding:10px">' +
+             (running ? 'Starting\u2026 the driver is authoring its task plan.' : 'No tasks recorded for this run.') +
+             '</div>';
+        return h + '</div>';
+      }
+
+      h += '<div class="mng-wfg">';
+      run.sections.forEach((sec, i) => {
+        const sd = sec.tasks.filter(t => t.status === 'done').length;
+        const secRunning = sec.tasks.some(t => t.status === 'running');
+        const st = sec.tasks.some(t => t.status === 'failed') ? 'err'
+                 : secRunning ? 'run'
+                 : (sec.tasks.length && sd === sec.tasks.length) ? 'ok' : 'idle';
+        h += '<div class="mng-wfg-stage">' +
+               '<div class="mng-wfg-rail' + (secRunning ? ' is-running' : '') + '"></div>' +
+               '<div class="mng-wfg-secwrap">' +
+                 '<div class="mng-wfg-sec-label"><span class="wf-dot ' + st + '"></span>' +
+                    esc(sec.name || ('Stage ' + (i+1))) + ' \u00b7 ' + sd + '/' + sec.tasks.length + '</div>' +
+                 '<div class="mng-wfg-tasks">' +
+                    sec.tasks.map(t => taskNodeHtml(run, t)).join('') +
+                 '</div>' +
+               '</div>' +
+             '</div>';
+      });
+      h += '</div>';
+      return h + '</div>';
+    }
+
+    // Session-only dismiss sets: hide a run card or saved def until refresh (no disk delete).
+    const dismissedRuns = new Set();
+    const dismissedSaved = new Set();
+    const collapsedRuns = new Set();   // run ids whose graph is collapsed
+    const collapsedSaved = { v: false }; // saved-definitions panel collapse
+    const expandedTriggers = new Set(); // trigger ids whose description is expanded (kept across polls)
+    const runStatePrev = new Map();    // run id -> last-seen state, for completion toasts
+    let _runStateSeeded = false;       // don't toast for runs already finished on first load
+
+    // (1) WORKFLOWS TAB -- only the workflows that are SET UP (saved definitions).
+    async function drawWfDefs(){
+      const { wfdefs: body } = els(); if (!body) return;
+      let data;
+      try { data = await jfetch('/api/workflows'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load workflows: ' + esc(e.message) + '</div>'; return; }
+      if (view !== 'wf') return;
+
+      const saved = (data.saved || []).filter(s => !dismissedSaved.has(s));
+      let h = '';
+      if (!saved.length) {
+        h += '<div class="mng-fl-empty">No saved workflows. Start one with <strong>+ New</strong>, then <strong>Save</strong> a run from Activity to reuse it here.</div>';
+      } else {
+        h += '<div class="mng-fl-saved' + (collapsedSaved.v ? ' is-collapsed' : '') + '">' +
+               '<div class="mng-fl-saved-head">' +
+                 '<span class="mng-collapse-chev">\u25be</span>' +
+                 '<h5>Saved definitions</h5>' +
+                 '<span class="mng-panelctl">' +
+                   '<button class="mng-iconbtn mng-saved-collapse" title="Collapse">' + (collapsedSaved.v ? '\u25b8' : '\u25be') + '</button>' +
+                 '</span>' +
+               '</div>' +
+               saved.map(s => '<div class="mng-fl-saved-row">' +
+                 '<span class="wf-dot idle"></span>' +
+                 '<span>' + esc(s) + '</span>' +
+                 '<span class="mng-fl-spacer"></span>' +
+                 '<button class="mng-btn mng-wf-runsaved" data-name="' + esc(s) + '">Run</button>' +
+                 '<span class="mng-panelctl">' +
+                   '<button class="mng-iconbtn mng-hide mng-saved-del" data-name="' + esc(s) + '" title="Delete saved workflow">\u2715</button>' +
+                 '</span>' +
+               '</div>').join('') +
+             '</div>';
+      }
+      body.innerHTML = h;
+
+      const savedPanel = body.querySelector('.mng-fl-saved');
+      body.querySelectorAll('.mng-saved-collapse').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); collapsedSaved.v = !collapsedSaved.v; drawWfDefs();
+      }));
+      const head = body.querySelector('.mng-fl-saved-head');
+      if (head) head.addEventListener('click', () => { collapsedSaved.v = !collapsedSaved.v; drawWfDefs(); });
+      body.querySelectorAll('.mng-wf-runsaved').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true; b.textContent = 'Running\u2026';
+        try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name) + '/run', { method:'POST', body:'{}' }); maybeAutoActivity(); }
+        catch (err) { try { showToast && showToast('Run failed: ' + err.message); } catch(_){} b.disabled=false; b.textContent='Run'; }
+      }));
+      body.querySelectorAll('.mng-saved-del').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!window.confirm('Delete saved workflow "' + b.dataset.name + '"? This removes it from disk.')) return;
+        try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name), { method:'DELETE' }); }
+        catch (err) { try { showToast && showToast('Delete failed: ' + err.message); } catch(_){} }
+        drawWfDefs();
+      }));
+    }
+
+    // ACTIVITY > WORKFLOW RUNS -- the live node graphs (run/section/task).
+    // Re-entrancy + error guard: a throw inside the render (or two overlapping polls
+    // racing the same body) used to leave stale DOM with dead collapse/expand handlers,
+    // freezing the whole view until a hard refresh. The wrapper drops overlapping calls
+    // and never lets an exception escape the poll loop.
+    let _drawingRuns = false;
+    async function drawActivityRuns(){
+      if (_drawingRuns) return;
+      _drawingRuns = true;
+      try { await _drawActivityRunsImpl(); }
+      catch (e) { try { console.error('drawActivityRuns failed', e); } catch (_) {} }
+      finally { _drawingRuns = false; }
+    }
+    async function _drawActivityRunsImpl(){
+      const { actWf: body } = els(); if (!body) return;
+      let data;
+      try { data = await jfetch('/api/workflows'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load runs: ' + esc(e.message) + '</div>'; return; }
+      if (!(view === 'act' && actView === 'wf')) return;
+
+      // Completion toasts are handled centrally by bgWatch (runs persistently regardless
+      // of tab), so we do NOT re-fire them here -- that would double-toast every finish.
+
+      // Snapshot runs for status lookups by open-output refresh.
+      _lastRuns.clear();
+      for (const r of (data.items || [])) _lastRuns.set(r.id, r);
+
+      const items = (data.items || []).filter(r => !dismissedRuns.has(r.id));
+      let h = '';
+      if (!items.length) {
+        h += '<div class="mng-fl-empty">No workflow runs yet. Start one from the <strong>Workflows</strong> tab.</div>';
+      } else {
+        h += items.map(r => { try { return runHtml(r); }
+          catch (e) { try { console.error('runHtml failed for', r && r.id, e); } catch (_) {}
+            return '<div class="mng-fl-run"><div class="mng-fl-err">Could not render run ' + esc((r && r.id) || '?') + '</div></div>'; }
+        }).join('');
+      }
+      body.innerHTML = h;
+
+      body.querySelectorAll('.mng-fl-cancel').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true;
+        try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/cancel', { method:'POST', body:'{}' }); } catch (_) {}
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-wf-rerun').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true; b.textContent = 'Re-running\u2026';
+        try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/rerun', { method:'POST', body:'{}' }); }
+        catch (err) { b.disabled = false; b.textContent = 'Re-run'; try { showToast && showToast('Re-run failed: ' + err.message); } catch(_){} }
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-wf-save').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = (window.prompt('Save this workflow as:', b.dataset.id.replace(/^\d{8}-\d{6}-/, '')) || '').trim();
+        if (!name) return;
+        b.disabled = true;
+        try { const r = await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/save', { method:'POST', body: JSON.stringify({ name }) });
+              try { showToast && showToast('Saved as ' + r.saved); } catch(_){} }
+        catch (err) { try { showToast && showToast('Save failed: ' + err.message); } catch(_){} }
+        b.disabled = false;
+      }));
+      body.querySelectorAll('.mng-wf-script').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openScriptEditor(b.dataset.id); }));
+      // Collapse / hide (dismiss) a whole run card.
+      body.querySelectorAll('.mng-run-collapse').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const id = b.dataset.id;
+        if (collapsedRuns.has(id)) collapsedRuns.delete(id); else collapsedRuns.add(id);
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-run-hide').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); dismissedRuns.add(b.dataset.id); drawActivityRuns();
+      }));
+      // Task node: click to expand its captured output.
+      body.querySelectorAll('.mng-wfg-node').forEach(node => {
+        node.addEventListener('click', () => toggleTaskOutput(node.dataset.run, node.dataset.task));
+      });
+
+      // Refresh any open task-output panels whose text isn't final yet (live streaming).
+      refreshOpenOutputs();
+
+      // Poll only while something is live and this sub-view is showing.
+      if (data.running && !timer) timer = setInterval(() => { if (view === 'act' && actView === 'wf') drawActivityRuns(); }, 1500);
+      if (!data.running && timer) { clearInterval(timer); timer = null; }
+    }
+    // Toggle a task's output panel: fetch on open, keep open across polls. A running
+    // task's output is refetched by the poll (see refreshOpenOutputs) until it reaches
+    // a terminal state, so the panel streams instead of freezing on its first snapshot.
+    async function toggleTaskOutput(runId, taskId){
+      if (!runId || !taskId) return;
+      const key = runId + '::' + taskId;
+      if (openTasks.has(key)) { openTasks.delete(key); drawActivityRuns(); return; }
+      openTasks.add(key);
+      drawActivityRuns();
+      const cached = taskOutCache.get(key);
+      if (!cached || !cached.final) {
+        await fetchTaskOutput(runId, taskId);
+        if (openTasks.has(key) && view === 'act' && actView === 'wf') drawActivityRuns();
+      }
+    }
+    // Fetch a single task's captured output and cache it, tagging whether it is final
+    // (the task is in a terminal state, so the text is complete and won't be refetched).
+    async function fetchTaskOutput(runId, taskId){
+      const key = runId + '::' + taskId;
+      const st = taskStatus(runId, taskId);
+      const final = st != null && st !== 'running' && st !== 'pending';
+      try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/task/' + encodeURIComponent(taskId) + '/output');
+            taskOutCache.set(key, { text: r.output || '', final }); }
+      catch (_) { if (!taskOutCache.has(key)) taskOutCache.set(key, { text: '', final: false }); }
+    }
+    // Look up a task's current status from the last-drawn run set (populated each draw).
+    function taskStatus(runId, taskId){
+      const run = _lastRuns.get(runId); if (!run) return null;
+      for (const s of run.sections) for (const t of s.tasks) if (t.id === taskId) return t.status;
+      return null;
+    }
+    // After a rebuild, refetch every OPEN task whose cached output isn't final yet, so
+    // live nodes keep streaming. Each refresh re-renders and tails the panel to the end.
+    async function refreshOpenOutputs(){
+      const pending = [];
+      for (const key of openTasks) {
+        const cached = taskOutCache.get(key);
+        if (cached && cached.final) continue;
+        const [runId, taskId] = key.split('::');
+        pending.push(fetchTaskOutput(runId, taskId).then(() => key));
+      }
+      if (!pending.length) return;
+      const keys = await Promise.all(pending);
+      if (!(view === 'act' && actView === 'wf')) return;
+      // Patch just the output panels in place (no full rebuild) to avoid clobbering
+      // scroll on unrelated cards; tail each panel so the newest streamed text shows.
+      for (const key of keys) {
+        const cached = taskOutCache.get(key); if (!cached) continue;
+        const [runId, taskId] = key.split('::');
+        const node = document.querySelector('.mng-wfg-node[data-run="' + cssq(runId) + '"][data-task="' + cssq(taskId) + '"]');
+        if (!node) continue;
+        const out = node.querySelector('.mng-wfg-node-out'); if (!out || out.hidden) continue;
+        const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 8;
+        out.textContent = cached.text.trim() ? cached.text : '';
+        if (!cached.text.trim()) out.innerHTML = '<span class="muted">(no output captured)</span>';
+        // Auto-follow the tail while streaming so completion output is never hidden.
+        if (!cached.final || atBottom) out.scrollTop = out.scrollHeight;
+      }
+    }
+    // Escape a value for use inside an attribute selector (runId/taskId are simple ids,
+    // but guard anyway). Uses native CSS.escape when present.
+    function cssq(s){
+      s = String(s);
+      if (window.CSS && CSS.escape) return CSS.escape(s);
+      return s.replace(/["'\\\]]/g, '\\$&');
+    }
+
+    // ---- daemon schedules ----
+    async function drawCron(){
+      const { sched: body } = els(); if (!body) return;   // Schedules OWN view (not the Workflows body)
+      let data;
+      try { data = await jfetch('/api/daemon'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load daemon: ' + esc(e.message) + '</div>'; return; }
+      if (view !== 'cron') return;
+
+      let h =
+        '<div class="mng-fl-dhead">' +
+          '<span class="wf-dot ' + (data.enabled ? 'run' : 'idle') + '"></span>' +
+          '<span class="mng-fl-name">Daemon ' + (data.enabled ? 'running' : 'stopped') + '</span>' +
+          '<span class="mng-fl-spacer"></span>' +
+          '<button class="mng-btn" id="mngFlDaemonToggle">' + (data.enabled ? 'Stop' : 'Start') + '</button>' +
+        '</div>';
+
+      if (!data.items.length) {
+        h += '<div class="mng-fl-empty">No triggers. Use <strong>+ New</strong> to add a schedule.</div>';
+      }
+      for (const t of data.items){
+        const meta = [];
+        if (t.schedule) meta.push('<code>' + esc(t.schedule) + '</code>');
+        if (t.path) meta.push(esc(t.path));
+        if (t.check) meta.push(esc(t.check));
+        if (t.mode) meta.push(esc(t.mode));
+        if (t.agent) meta.push(esc(t.agent));
+        const fmt = (iso) => new Date(iso).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        const when = t.nextFire ? fmt(t.nextFire) : null;
+        // Idle status line: last fired (relative) + next fire, so a resting trigger still
+        // reads as "alive". Cron shows next; anything fired shows last.
+        const statusBits = [];
+        if (t.lastFired) statusBits.push('last fired ' + relTime(t.lastFired));
+        else statusBits.push('not fired yet');
+        if (when) statusBits.push('next ' + when);
+        const expanded = expandedTriggers.has(t.id);
+      const goalCls = 'mng-fl-goal' + (expanded ? ' is-expanded' : ' is-clamped');
+      h += '<div class="mng-fl-trig' + (t.enabled ? '' : ' is-off') + (expanded ? ' is-expanded' : '') +
+             '" data-id="' + esc(t.id) + '">' +
+               '<div class="mng-fl-run-head">' +
+                 '<span class="wf-dot ' + (t.enabled ? 'ok' : 'idle') + '"></span>' +
+                 '<span class="mng-fl-name mono">' + esc(t.id) + '</span>' +
+                 '<span class="mng-fl-chip">' + esc(t.type) + '</span>' +
+                 '<span class="mng-fl-spacer"></span>' +
+                 '<span class="mng-fl-substatus">' + esc(statusBits.join('  \u00b7  ')) + '</span>' +
+                 '<button class="mng-btn mng-fl-mute" data-id="' + esc(t.id) + '" data-on="' + (t.enabled?'1':'0') + '">' +
+                   (t.enabled ? 'Mute' : 'Unmute') + '</button>' +
+                 '<button class="mng-btn mng-fl-del" data-id="' + esc(t.id) + '" title="Delete trigger">\u00d7</button>' +
+               '</div>' +
+               (meta.length ? '<div class="mng-fl-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
+               (t.goal ? '<div class="' + goalCls + '" data-goal="' + esc(t.id) + '">' + esc(t.goal) + '</div>' +
+                         '<div class="mng-fl-more" data-more="' + esc(t.id) + '">' +
+                           '<span class="mng-more-chev">\u25be</span>' +
+                           '<span class="mng-more-lbl">' + (expanded ? 'Show less' : 'Show more') + '</span>' +
+                         '</div>' : '') +
+             '</div>';
+      }
+      body.innerHTML = h;
+
+      // Mark rows whose description actually overflows so the Show more/less control
+      // (and pointer affordance) only appear where there is hidden text to reveal.
+      // A clamped goal overflows when its scrollHeight exceeds its clientHeight; an
+      // already-expanded goal always keeps its toggle so it can be collapsed again.
+      body.querySelectorAll('.mng-fl-goal').forEach(g => {
+        const trig = g.closest('.mng-fl-trig'); if (!trig) return;
+        const overflowing = g.classList.contains('is-expanded') || (g.scrollHeight - g.clientHeight > 1);
+        trig.classList.toggle('has-more', overflowing);
+      });
+      // Toggle expand/collapse for a trigger's description. Clicking the goal text or
+      // the Show more/less control flips it; state persists across the daemon poll.
+      const toggleGoal = (id) => {
+        if (!id) return;
+        if (expandedTriggers.has(id)) expandedTriggers.delete(id); else expandedTriggers.add(id);
+        drawCron();
+      };
+      body.querySelectorAll('.mng-fl-more').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); toggleGoal(b.dataset.more);
+      }));
+      body.querySelectorAll('.mng-fl-trig.has-more .mng-fl-goal').forEach(g => g.addEventListener('click', (e) => {
+        e.stopPropagation(); toggleGoal(g.dataset.goal);
+      }));
+
+      const tg = document.getElementById('mngFlDaemonToggle');
+      if (tg) tg.addEventListener('click', async () => {
+        tg.disabled = true;
+        try { await jfetch('/api/daemon', { method:'POST', body: JSON.stringify({ enabled: !data.enabled }) }); }
+        catch (_) {}
+        drawCron();
+      });
+      body.querySelectorAll('.mng-fl-mute').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try { await jfetch('/api/daemon/' + encodeURIComponent(b.dataset.id) + '/toggle',
+                             { method:'POST', body: JSON.stringify({ enabled: b.dataset.on !== '1' }) }); }
+          catch (_) {}
+          drawCron();
+        });
+      });
+      body.querySelectorAll('.mng-fl-del').forEach(b => {
+        b.addEventListener('click', async () => {
+          // Deleting rewrites Config.json, so confirm rather than silently mutate.
+          if (!window.confirm('Delete trigger "' + b.dataset.id + '"? This rewrites Config.json.')) return;
+          b.disabled = true;
+          try { await jfetch('/api/daemon/' + encodeURIComponent(b.dataset.id), { method:'DELETE' }); }
+          catch (e) { window.alert('Could not delete: ' + e.message); }
+          drawCron();
+        });
+      });
+    }
+
+    // ---- composers ----
+    function closeCompose(){
+      const { compose } = els();
+      composing = null;
+      if (compose) { compose.hidden = true; compose.innerHTML = ''; }
+    }
+
+    function openCompose(){
+      const { compose } = els(); if (!compose) return;
+      if (view !== 'wf' && view !== 'cron') return;   // Activity has nothing to create
+      if (composing) { closeCompose(); return; }
+      composing = view;
+      compose.hidden = false;
+      compose.innerHTML = (view === 'wf') ? wfFormHtml() : cronFormHtml();
+      if (view === 'wf') wireWfForm(compose); else wireCronForm(compose);
+      const first = compose.querySelector('input,textarea,select');
+      if (first) first.focus();
+    }
+
+    function wfFormHtml(){
+      return '' +
+        '<div class="mng-fl-form">' +
+          '<div class="mng-fl-form-head">New workflow</div>' +
+          '<label class="mng-fl-lbl">Name<input class="mng-input" data-f="name" placeholder="release-audit"></label>' +
+          '<label class="mng-fl-lbl">Goal' +
+            '<textarea class="mng-input mng-fl-goal-in" data-f="goal" rows="3" ' +
+              'placeholder="Audit the repo for unused dependencies and open a PR removing them."></textarea></label>' +
+          '<label class="mng-fl-lbl">Mode' +
+            '<select class="mng-select" data-f="mode">' +
+              '<option value="dynamic">dynamic \u2014 agent authors a driver script</option>' +
+              '<option value="static">static \u2014 run as an in-session goal</option>' +
+            '</select></label>' +
+          '<div class="mng-fl-status"></div>' +
+          '<div class="mng-fl-actions">' +
+            '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
+            '<button class="mng-btn mng-fl-submit" type="button">Start</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function wireWfForm(root){
+      const get = f => root.querySelector('[data-f="' + f + '"]');
+      const status = root.querySelector('.mng-fl-status');
+      const setStatus = (msg, cls) => { status.textContent = msg || ''; status.className = 'mng-fl-status' + (cls ? ' ' + cls : ''); };
+
+      // Dynamic mode needs python + the muxswarm SDK, and authoring is a long model
+      // call. Probe readiness up front so a missing toolchain is reported in ~a
+      // second instead of after a multi-minute round trip that then fails.
+      const modeSel = get('mode');
+      const checkReady = async () => {
+        if (modeSel.value !== 'dynamic') { setStatus(''); return true; }
+        setStatus('Checking dynamic mode\u2026');
+        try {
+          const pf = await jfetch('/api/workflows/preflight');
+          if (pf.ready) { setStatus(''); return true; }
+          // SDK missing but auto-installable (uv present): let the user proceed; the
+          // POST installs it on start. Only a truly un-installable toolchain blocks.
+          if (pf.installable) { setStatus(pf.message || 'The SDK will be installed automatically on start.'); return true; }
+          setStatus(pf.message || 'Dynamic mode unavailable.', 'is-err');
+          return false;
+        } catch (_) { setStatus(''); return true; }   // older binary: let the POST decide
+      };
+      modeSel.addEventListener('change', checkReady);
+      checkReady();
+
+      root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
+      root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
+        const goal = get('goal').value.trim();
+        if (!goal) { setStatus('A goal is required.', 'is-err'); return; }
+        const mode = modeSel.value;
+        if (!(await checkReady())) return;
+
+        e.target.disabled = true;
+        // Authoring can take minutes; say so and keep a live elapsed counter so the
+        // form never looks wedged.
+        const t0 = Date.now();
+        let tick = null;
+        if (mode === 'dynamic') {
+          const base = 'Authoring driver script';
+          setStatus(base + '\u2026 0s');
+          tick = setInterval(() => {
+            setStatus(base + '\u2026 ' + Math.round((Date.now() - t0) / 1000) + 's (this can take a few minutes)');
+          }, 1000);
+        } else {
+          setStatus('Dispatching\u2026');
+        }
+        try {
+          const res = await jfetch('/api/workflows', {
+            method: 'POST',
+            body: JSON.stringify({ name: get('name').value.trim(), goal, mode }),
+          });
+          if (tick) clearInterval(tick);
+          // Static workflows execute in-session: hand the goal to the socket, which
+          // is exactly what the REPL does after its prompts.
+          if (res.dispatch === 'goal' && typeof window.MuxSend === 'function') window.MuxSend(goal);
+          closeCompose();
+          maybeAutoActivity();
+        } catch (err) {
+          if (tick) clearInterval(tick);
+          e.target.disabled = false;
+          setStatus(err.message, 'is-err');
+        }
+      });
+    }
+
+    // Plain-language schedules. Each preset renders its own small inputs and
+    // compiles to a 5-field cron expression, so the user never types cron unless
+    // they choose Custom. 'dom'/'dow' follow standard cron semantics.
+    const CRON_PRESETS = [
+      { label: 'Every N minutes', args: [{ k:'n', t:'number', d:15, min:1, max:59, lbl:'Minutes' }],
+        build: a => `*/${a.n} * * * *` },
+      { label: 'Every hour, at minute', args: [{ k:'m', t:'number', d:0, min:0, max:59, lbl:'Minute' }],
+        build: a => `${a.m} * * * *` },
+      { label: 'Every day at', args: [{ k:'t', t:'time', d:'03:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * *`; } },
+      { label: 'Every weekday (Mon-Fri) at', args: [{ k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * 1-5`; } },
+      { label: 'Every week on', args: [{ k:'d', t:'dow', d:'1', lbl:'Day' }, { k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * ${a.d}`; } },
+      { label: 'Every month on day', args: [{ k:'d', t:'number', d:1, min:1, max:28, lbl:'Day' }, { k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} ${a.d} * *`; } },
+      { label: 'Custom cron expression\u2026', args: [], build: null },
+    ];
+    const DOW = [['0','Sunday'],['1','Monday'],['2','Tuesday'],['3','Wednesday'],['4','Thursday'],['5','Friday'],['6','Saturday']];
+
+    function presetArgsHtml(p){
+      return p.args.map(a => {
+        let ctl;
+        if (a.t === 'time') ctl = '<input class="mng-input" type="time" data-a="' + a.k + '" value="' + a.d + '">';
+        else if (a.t === 'dow') ctl = '<select class="mng-select" data-a="' + a.k + '">' +
+          DOW.map(d => '<option value="' + d[0] + '"' + (d[0] === a.d ? ' selected' : '') + '>' + d[1] + '</option>').join('') + '</select>';
+        else ctl = '<input class="mng-input" type="number" data-a="' + a.k + '" value="' + a.d +
+                   '" min="' + a.min + '" max="' + a.max + '">';
+        return '<label class="mng-fl-lbl">' + esc(a.lbl) + ctl + '</label>';
+      }).join('');
+    }
+
+    function cronFormHtml(){
+      return '' +
+        '<div class="mng-fl-form">' +
+          '<div class="mng-fl-form-head">New trigger</div>' +
+          '<div class="mng-fl-seg" role="tablist">' +
+            '<button class="mng-fl-seg-btn is-on" data-t="cron">Cron</button>' +
+            '<button class="mng-fl-seg-btn" data-t="watch">Watch</button>' +
+            '<button class="mng-fl-seg-btn" data-t="status">Status</button>' +
+          '</div>' +
+          '<label class="mng-fl-lbl">Id<input class="mng-input" data-f="id" placeholder="nightly-audit"></label>' +
+          '<label class="mng-fl-lbl f-cron">When' +
+            '<select class="mng-select" data-f="preset">' +
+              CRON_PRESETS.map((p, i) => '<option value="' + i + '">' + esc(p.label) + '</option>').join('') +
+            '</select></label>' +
+          '<div class="mng-row f-cron f-preset-args"></div>' +
+          '<label class="mng-fl-lbl f-cron f-cron-raw" hidden>Cron expression ' +
+            '<span class="mng-fl-hint">min hour dom mon dow</span>' +
+            '<input class="mng-input" data-f="schedule" placeholder="0 3 * * *"></label>' +
+          '<div class="mng-fl-cron-preview f-cron"></div>' +
+          '<label class="mng-fl-lbl f-watch" hidden>Path glob' +
+            '<input class="mng-input" data-f="path" placeholder="C:\\src\\**\\*.cs"></label>' +
+          '<label class="mng-fl-lbl f-status" hidden>Check ' +
+            '<span class="mng-fl-hint">http:// \u00b7 process:name \u00b7 tcp:host:port</span>' +
+            '<input class="mng-input" data-f="check" placeholder="https://example.com/health"></label>' +
+          '<label class="mng-fl-lbl f-goal">Goal' +
+            '<textarea class="mng-input" data-f="goal" rows="2" placeholder="Summarise what changed and post it."></textarea></label>' +
+          '<div class="mng-row">' +
+            '<label class="mng-fl-lbl">Mode' +
+              '<select class="mng-select" data-f="mode">' +
+                '<option value="agent">agent</option><option value="swarm">swarm</option><option value="pswarm">pswarm</option>' +
+              '</select></label>' +
+            '<label class="mng-fl-lbl f-agent">Agent' +
+              '<select class="mng-select" data-f="agent"><option value="">(default)</option></select></label>' +
+            '<label class="mng-fl-lbl f-status" hidden>Interval (s)' +
+              '<input class="mng-input" data-f="interval" type="number" min="5" value="30"></label>' +
+          '</div>' +
+          '<div class="mng-fl-status"></div>' +
+          '<div class="mng-fl-actions">' +
+            '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
+            '<button class="mng-btn mng-fl-submit" type="button">Create</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function wireCronForm(root){
+      let type = 'cron';
+      const get = f => root.querySelector('[data-f="' + f + '"]');
+      const status = root.querySelector('.mng-fl-status');
+      const argsRow = root.querySelector('.f-preset-args');
+      const preview = root.querySelector('.mng-fl-cron-preview');
+      const rawWrap = root.querySelector('.f-cron-raw');
+
+      // Compile the active preset to cron and show the result, so the expression
+      // is always visible even though the user never has to write one.
+      function currentCron(){
+        const p = CRON_PRESETS[parseInt(get('preset').value, 10)];
+        if (!p || !p.build) return get('schedule').value.trim();
+        const a = {};
+        argsRow.querySelectorAll('[data-a]').forEach(el => { a[el.dataset.a] = el.value; });
+        try { return p.build(a); } catch (_) { return ''; }
+      }
+      function syncPreset(){
+        const p = CRON_PRESETS[parseInt(get('preset').value, 10)];
+        const custom = !p || !p.build;
+        argsRow.innerHTML = custom ? '' : presetArgsHtml(p);
+        argsRow.hidden = custom;
+        rawWrap.hidden = !custom;
+        argsRow.querySelectorAll('[data-a]').forEach(el => el.addEventListener('input', syncPreview));
+        syncPreview();
+      }
+      function syncPreview(){
+        const c = currentCron();
+        preview.textContent = c ? 'cron: ' + c : '';
+      }
+      get('preset').addEventListener('change', syncPreset);
+      get('schedule').addEventListener('input', syncPreview);
+      syncPreset();
+      // Only the fields the chosen trigger type actually uses stay visible; the
+      // API enforces the same per-type requirements server-side.
+      const applyType = () => {
+        root.querySelectorAll('.f-cron').forEach(el => el.hidden = type !== 'cron');
+        root.querySelectorAll('.f-watch').forEach(el => el.hidden = type !== 'watch');
+        root.querySelectorAll('.f-status').forEach(el => el.hidden = type !== 'status');
+        root.querySelectorAll('.f-goal').forEach(el => el.hidden = type === 'status');
+        // Agent picker rides on mode+type; keep it in step when the type changes.
+        const al = root.querySelector('.f-agent');
+        const ms = root.querySelector('[data-f="mode"]');
+        if (al && ms) al.hidden = !(ms.value === 'agent' && type !== 'status');
+      };
+      root.querySelectorAll('.mng-fl-seg-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          root.querySelectorAll('.mng-fl-seg-btn').forEach(x => x.classList.remove('is-on'));
+          b.classList.add('is-on');
+          type = b.dataset.t;
+          applyType();
+        });
+      });
+      applyType();
+
+      // Agent picker: only meaningful for single-agent mode (swarm/pswarm pick their
+      // own specialists). Populated from the live roster; hidden unless mode=agent and
+      // the trigger type actually fires a goal (status triggers do not).
+      const modeSel = get('mode');
+      const agentSel = get('agent');
+      const agentLbl = root.querySelector('.f-agent');
+      const syncAgentVisible = () => {
+        if (agentLbl) agentLbl.hidden = !(modeSel.value === 'agent' && type !== 'status');
+      };
+      (async () => {
+        try {
+          const agents = await jfetch('/api/agents');
+          if (Array.isArray(agents)) {
+            for (const a of agents) {
+              if (!a || !a.name) continue;
+              const o = document.createElement('option');
+              o.value = a.name;
+              o.textContent = a.role ? (a.name + ' \u2014 ' + a.role) : a.name;
+              agentSel.appendChild(o);
+            }
+          }
+        } catch (_) { /* leave (default) only */ }
+      })();
+      modeSel.addEventListener('change', syncAgentVisible);
+      syncAgentVisible();
+
+      root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
+      root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
+        const payload = { id: get('id').value.trim(), type, mode: get('mode').value };
+        if (type === 'cron')   payload.schedule = currentCron();
+        if (type === 'watch')  payload.path = get('path').value.trim();
+        if (type === 'status') {
+          payload.check = get('check').value.trim();
+          const iv = parseInt(get('interval').value, 10);
+          if (iv > 0) payload.interval = iv;
+        }
+        if (type !== 'status') payload.goal = get('goal').value.trim();
+        if (payload.mode === 'agent' && type !== 'status') {
+          const chosen = get('agent').value.trim();
+          if (chosen) payload.agent = chosen;
+        }
+
+        e.target.disabled = true;
+        status.className = 'mng-fl-status';
+        status.textContent = 'Creating\u2026';
+        try {
+          await jfetch('/api/daemon/trigger', { method:'POST', body: JSON.stringify(payload) });
+          closeCompose();
+          drawCron();
+        } catch (err) {
+          e.target.disabled = false;
+          status.textContent = err.message;
+          status.className = 'mng-fl-status is-err';
+        }
+      });
+    }
+
+    // ---- lane plumbing ----
+    // ---- driver-script editor (Monaco, textarea fallback) ----
+    // Self-contained: loads Monaco off /monaco/vs/loader.js on first open; if that
+    // fails (assets absent / offline), falls back to a plain <textarea>. Editing then
+    // re-running is the "edit the underlying SDK script" flow.
+    let _scriptEd = null, _scriptRunId = null, _scriptModel = 'textarea';
+    function _sm(){
+      return {
+        modal: document.getElementById('mngScriptModal'),
+        host:  document.getElementById('mngScriptHost'),
+        title: document.getElementById('mngScriptTitle'),
+        sub:   document.getElementById('mngScriptSub'),
+        status:document.getElementById('mngScriptStatus'),
+        save:  document.getElementById('mngScriptSave'),
+        saverun: document.getElementById('mngScriptSaveRun'),
+        close: document.getElementById('mngScriptClose'),
+      };
+    }
+    function _scriptStatus(msg, cls){
+      const { status } = _sm(); if (!status) return;
+      status.textContent = msg || ''; status.className = 'mng-script-status' + (cls ? ' ' + cls : '');
+    }
+    function _scriptValue(){
+      if (_scriptModel === 'monaco' && _scriptEd) return _scriptEd.getValue();
+      const ta = document.querySelector('#mngScriptHost textarea');
+      return ta ? ta.value : '';
+    }
+    function _mountTextarea(host, content){
+      _scriptModel = 'textarea';
+      host.innerHTML = '';
+      const ta = document.createElement('textarea');
+      ta.spellcheck = false; ta.value = content;
+      host.appendChild(ta); ta.focus();
+    }
+    function _mountMonaco(host, content){
+      // Reuse the global loader if the file editor already pulled it in.
+      function build(){
+        try {
+          host.innerHTML = '';
+          _scriptModel = 'monaco';
+          _scriptEd = window.monaco.editor.create(host, {
+            value: content, language: 'python', automaticLayout: true,
+            theme: (document.body.dataset.themePreset && /light/i.test(document.body.dataset.themePreset)) ? 'vs' : 'vs-dark',
+            fontSize: 13, minimap: { enabled: true }, scrollBeyondLastLine: false,
+          });
+        } catch (_) { _mountTextarea(host, content); }
+      }
+      if (window.monaco && window.monaco.editor) { build(); return; }
+      if (!window.require) {
+        const sc = document.createElement('script'); sc.src = '/monaco/vs/loader.js';
+        sc.onload = () => {
+          try {
+            window.require.config({ paths: { vs: '/monaco/vs' } });
+            window.MonacoEnvironment = { getWorkerUrl: function(){
+              return URL.createObjectURL(new Blob([
+                "self.MonacoEnvironment={baseUrl:'" + location.origin + "/monaco/'};",
+                "importScripts('" + location.origin + "/monaco/vs/base/worker/workerMain.js');"
+              ], { type: 'text/javascript' })); } };
+            window.require(['vs/editor/editor.main'], build);
+          } catch (_) { _mountTextarea(host, content); }
+        };
+        sc.onerror = () => _mountTextarea(host, content);
+        document.head.appendChild(sc);
+      } else {
+        try { window.require(['vs/editor/editor.main'], build); } catch (_) { _mountTextarea(host, content); }
+      }
+    }
+    async function openScriptEditor(runId){
+      const m = _sm(); if (!m.modal) return;
+      _scriptRunId = runId;
+      m.title.textContent = 'Driver script';
+      m.sub.textContent = runId;
+      _scriptStatus('Loading\u2026');
+      m.modal.classList.add('open');
+      let content = '';
+      try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/script'); content = r.script || ''; _scriptStatus(''); }
+      catch (e) { _scriptStatus(e.message, 'is-err'); content = '# ' + e.message; }
+      _mountMonaco(m.host, content);
+    }
+    function closeScriptEditor(){
+      const m = _sm(); if (m.modal) m.modal.classList.remove('open');
+      if (_scriptEd) { try { _scriptEd.dispose(); } catch(_){} _scriptEd = null; }
+      _scriptRunId = null;
+    }
+    async function saveScript(){
+      if (!_scriptRunId) return false;
+      _scriptStatus('Saving\u2026');
+      try {
+        await jfetch('/api/workflows/' + encodeURIComponent(_scriptRunId) + '/script',
+          { method: 'PUT', body: JSON.stringify({ script: _scriptValue() }) });
+        _scriptStatus('Saved.', 'is-ok');
+        return true;
+      } catch (e) { _scriptStatus(e.message, 'is-err'); return false; }
+    }
+    (function wireScriptEditor(){
+      const m = _sm();
+      if (m.close) m.close.addEventListener('click', closeScriptEditor);
+      if (m.save)  m.save.addEventListener('click', saveScript);
+      if (m.saverun) m.saverun.addEventListener('click', async () => {
+        const rid = _scriptRunId;
+        if (!(await saveScript())) return;
+        try { await jfetch('/api/workflows/' + encodeURIComponent(rid) + '/rerun', { method: 'POST', body: '{}' });
+              closeScriptEditor(); setView('act'); setActView('wf'); }
+        catch (e) { _scriptStatus('Re-run failed: ' + e.message, 'is-err'); }
+      });
+      if (m.modal) m.modal.addEventListener('mousedown', (e) => { if (e.target === m.modal) closeScriptEditor(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && m.modal && m.modal.classList.contains('open')) closeScriptEditor(); });
+    })();
+
+    function draw(){
+      if (view === 'wf')   return drawWfDefs();
+      if (view === 'cron') return drawCron();
+      if (view === 'act')  return actView === 'wf' ? drawActivityRuns() : undefined; // daemon jobs stream in
+    }
+    // Apply the Activity sub-tab (Workflow runs / Daemon jobs) selection.
+    function applyActSub(){
+      const e = els();
+      if (e.actTabWf)     e.actTabWf.classList.toggle('is-on', actView === 'wf');
+      if (e.actTabDaemon) e.actTabDaemon.classList.toggle('is-on', actView === 'daemon');
+      if (e.actWf)     e.actWf.hidden     = actView !== 'wf';
+      if (e.actDaemon) e.actDaemon.hidden = actView !== 'daemon';
+      // Clear only makes sense on the streamed daemon output.
+      const cl = document.getElementById('mngDaemonClear');
+      if (cl) cl.hidden = !(view === 'act' && actView === 'daemon');
+    }
+    function setActView(v){
+      actView = v;
+      applyActSub();
+      if (timer) { clearInterval(timer); timer = null; }
+      if (v === 'wf') drawActivityRuns();
+    }
+    function setView(v){
+      view = v;
+      const e = els();
+      if (e.tabWf)   e.tabWf.classList.toggle('is-on', v === 'wf');
+      if (e.tabCron) e.tabCron.classList.toggle('is-on', v === 'cron');
+      if (e.tabAct)  e.tabAct.classList.toggle('is-on', v === 'act');
+      // Three fully-separate top-level VIEWS (full swap). Exactly one visible.
+      if (e.wfdefs)   e.wfdefs.hidden   = v !== 'wf';
+      if (e.sched)    e.sched.hidden    = v !== 'cron';
+      if (e.activity) e.activity.hidden = v !== 'act';
+      // + New only makes sense where you CREATE (Workflows / Scheduled Tasks).
+      const nw = document.getElementById('mngFlowsNew');
+      if (nw) nw.hidden = v === 'act';
+      if (composing) closeCompose();
+      if (timer) { clearInterval(timer); timer = null; }
+      if (v === 'act') applyActSub();
+      else { const cl = document.getElementById('mngDaemonClear'); if (cl) cl.hidden = true; }
+      draw();
+    }
+    // Auto-jump to Activity > Workflow runs when a workflow starts, unless the user
+    // disabled it in settings (body[data-flows-auto-activity=0]).
+    function maybeAutoActivity(){
+      const on = document.body.dataset.flowsAutoActivity !== '0';
+      if (on) { setView('act'); setActView('wf'); }
+      else if (view === 'act' && actView === 'wf') drawActivityRuns();
+      ensureBgWatch();
+    }
+
+    // Background completion watcher: fires workflow done/failed/cancelled toasts even
+    // when the user is on another tab (the per-view poll only runs while Activity>Wf is
+    // open). Previously this was only armed by UI-initiated starts (maybeAutoActivity)
+    // and self-STOPPED when idle -- so workflows started via cron / saved / slash, or any
+    // run that began while you were elsewhere, produced no notification. It now runs
+    // PERSISTENTLY from module init: fast cadence (2.5s) while any run is active, slow
+    // (10s) when idle, and never fully stops, so no completion is ever missed.
+    let _bgTimer = null;
+    let _bgActive = false;   // true == polling at the fast cadence
+    async function bgWatch(){
+      let data;
+      try { data = await jfetch('/api/workflows'); } catch (_) { scheduleBgWatch(false); return; }
+      for (const r of (data.items || [])) {
+        const prev = runStatePrev.get(r.id);
+        if (_runStateSeeded && prev && prev !== r.state && r.state !== 'running') {
+          const nm = r.name || r.id;
+          if (r.state === 'done')            showToast('Workflow done: ' + nm, 'success');
+          else if (r.state === 'failed')     showToast('Workflow failed: ' + nm, 'error');
+          else if (r.state === 'cancelled')  showToast('Workflow cancelled: ' + nm, 'info');
+        }
+        runStatePrev.set(r.id, r.state);
+      }
+      _runStateSeeded = true;
+      // Keep the top-level Activity badge honest.
+      const badge = document.getElementById('mngFlowsActBadge');
+      if (badge) { const n = data.running || 0; badge.textContent = String(n); badge.hidden = n === 0; }
+      scheduleBgWatch(!!data.running);
+    }
+    // Reschedule the next poll: fast while runs are active, slow when idle. Only resets
+    // the interval when the cadence actually changes, so we don't churn timers.
+    function scheduleBgWatch(active){
+      if (_bgTimer && _bgActive === active) return;
+      if (_bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
+      _bgActive = active;
+      _bgTimer = setInterval(bgWatch, active ? 2500 : 10000);
+    }
+    // Kept for callers that want to guarantee the watcher is live and poke it immediately.
+    function ensureBgWatch(){ if (!_bgTimer) scheduleBgWatch(false); bgWatch(); }
+    function show(v){ const { lane } = els(); if (lane) { lane.hidden = false; setView(v || view); } }
+    function hide(){
+      const { lane } = els(); if (lane) lane.hidden = true;
+      if (timer) { clearInterval(timer); timer = null; }
+      closeCompose();
+    }
+    function isOpenOn(v){
+      const { lane } = els();
+      return !!lane && !lane.hidden && view === v;
+    }
+    (function wire(){
+      const tw = document.getElementById('mngFlowsTabWf');
+      const tc = document.getElementById('mngFlowsTabCron');
+      const ta = document.getElementById('mngFlowsTabAct');
+      if (tw) tw.addEventListener('click', () => setView('wf'));
+      if (tc) tc.addEventListener('click', () => setView('cron'));
+      if (ta) ta.addEventListener('click', () => { setView('act'); applyActSub(); if (actView === 'wf') drawActivityRuns(); });
+      // Activity sub-tabs.
+      const aw = document.getElementById('mngActTabWf');
+      const ad = document.getElementById('mngActTabDaemon');
+      if (aw) aw.addEventListener('click', () => setActView('wf'));
+      if (ad) ad.addEventListener('click', () => setActView('daemon'));
+      const nw = document.getElementById('mngFlowsNew');
+      if (nw) nw.addEventListener('click', openCompose);
+      const rf = document.getElementById('mngFlowsRefresh');
+      if (rf) rf.addEventListener('click', draw);
+      const cx = document.getElementById('mngFlowsClose');
+      if (cx) cx.addEventListener('click', hide);
+    })();
+
+    // Open the lane directly on Activity + a chosen sub-tab (used by the daemon lane
+    // when a job starts streaming).
+    function showActivity(sub){
+      const { lane } = els(); if (lane) lane.hidden = false;
+      setView('act'); setActView(sub || 'daemon');
+    }
+    // Arm the background completion watcher immediately so workflow notifications fire
+    // regardless of how a run was started (UI, cron, saved, slash) or which tab is open.
+    ensureBgWatch();
+
+    return { show, hide, draw, setView, isOpenOn, showActivity };
+  })();
+  window.MuxFlows = MuxFlows;
+
+  // The old standalone Daemon button now opens the Flows lane on its Activity
+  // view, so there is exactly one docked surface for the whole plane.
+  (function reweaveDaemonBtn(){
+    const btn = document.getElementById('mngBtnDaemon');
+    if (!btn) return;
+    const fresh = btn.cloneNode(true);          // drop MuxDaemonLane's handler
+    btn.parentNode.replaceChild(fresh, btn);
+    fresh.title = 'Workflows, schedules & daemon activity';
+    // Sole entry point for the lane: it already owns Workflows / Schedules /
+    // Activity, so a second toolbar button was redundant.
+    fresh.addEventListener('click', () => {
+      const lane = document.getElementById('mngFlowsLane');
+      if (lane && !lane.hidden) MuxFlows.hide();
+      else MuxFlows.show();
+    });
+  })();
 
   window.MuxNodeGraph = {
     open: openPanel,

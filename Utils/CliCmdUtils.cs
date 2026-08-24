@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -591,7 +591,35 @@ public static class CliCmdUtils
             MuxConsole.WriteSuccess($"Deleted saved workflow '{name}'.");
             return;
         }
-        if (a.StartsWith("saved", StringComparison.OrdinalIgnoreCase))
+        if (a.StartsWith("save", StringComparison.OrdinalIgnoreCase) && !a.StartsWith("saved", StringComparison.OrdinalIgnoreCase))
+        {
+            // /workflows save <runId> [as <name>]  -- persist a run's driver script as a reusable definition.
+            var rest = a.Length > 4 ? a[4..].Trim() : "";
+            string runId = rest, asName = "";
+            var asIdx = rest.IndexOf(" as ", StringComparison.OrdinalIgnoreCase);
+            if (asIdx >= 0) { runId = rest[..asIdx].Trim(); asName = rest[(asIdx + 4)..].Trim(); }
+            if (runId.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows save <runId> [as <name>]"); return; }
+            var (saved, err) = DynamicWorkflow.SaveRunAsDefinition(runId, asName.Length > 0 ? asName : null);
+            MuxConsole.WriteMuted(saved is not null
+                ? $"Saved workflow '{saved}'. Re-run it with /workflows run {saved}."
+                : $"[workflows] Could not save: {err}");
+            return;
+        }
+        if (a.StartsWith("rerun", StringComparison.OrdinalIgnoreCase))
+        {
+            var runId = a.Length > 5 ? a[5..].Trim() : "";
+            if (runId.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows rerun <runId>"); return; }
+            MuxConsole.WriteMuted(DynamicWorkflow.RerunFromRun(runId));
+            return;
+        }
+        if (a.StartsWith("run ", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = a[4..].Trim();
+            if (name.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows run <savedName>"); return; }
+            MuxConsole.WriteMuted(DynamicWorkflow.LaunchSaved(name));
+            return;
+        }
+                if (a.StartsWith("saved", StringComparison.OrdinalIgnoreCase))
         {
             var files = Directory.Exists(PlatformContext.TeamsDirectory)
                 ? Directory.EnumerateFiles(PlatformContext.TeamsDirectory, "*.workflow.json")
@@ -629,7 +657,9 @@ public static class CliCmdUtils
 
     /// <summary>Client for authoring dynamic driver scripts: the single-agent model, else the
     /// Orchestrator's. Mirrors ResolveDecomposeClient's graceful-null contract.</summary>
-    private static (Microsoft.Extensions.AI.IChatClient? client, Microsoft.Extensions.AI.ChatOptions? opts) ResolveWorkflowAuthorClient()
+    /// <summary>Resolve the chat client used to author dynamic workflow driver scripts.
+    /// Internal so the serve-mode API can launch a run through the same path as /workflow.</summary>
+    internal static (Microsoft.Extensions.AI.IChatClient? client, Microsoft.Extensions.AI.ChatOptions? opts) ResolveWorkflowAuthorClient()
     {
         try
         {
