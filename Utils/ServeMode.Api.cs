@@ -994,7 +994,24 @@ public static partial class ServeMode
 
         App.Config.Daemon ??= new DaemonConfig();
         App.Config.Daemon.Enabled = enabled;
-        await WriteJson(context, 200, new { enabled });
+
+        // Flipping the config flag is not enough: the DaemonRunner is only booted at
+        // process start (--daemon). Web callers expect the toggle to actually start/stop
+        // the background runner, so drive it the same way "/daemon on|off" does. Without
+        // this, an enabled daemon never fires and its output never streams.
+        bool running;
+        if (enabled)
+        {
+            running = await Task.Run(() => State.DaemonCommand.EnsureStarted() is not null,
+                context.RequestAborted);
+        }
+        else
+        {
+            State.DaemonCommand.Stop();
+            running = false;
+        }
+
+        await WriteJson(context, 200, new { enabled, running });
     }
 
     // POST /api/daemon/{id}/toggle   body: { enabled }
@@ -1169,6 +1186,15 @@ public static partial class ServeMode
             return;
         }
 
+        // Register with a LIVE runner so the trigger fires without a restart. Runtime add
+        // supports cron|watch only; status/webhook triggers take effect on next daemon start.
+        // A cold daemon just persists (it will pick the trigger up when started).
+        if (App.DaemonRunner is { IsStarted: true } runner && type is "cron" or "watch"
+            && runner.AddTriggerRuntime(trigger) is not null)
+        {
+            MuxConsole.WriteMuted($"[daemon] Registered runtime trigger '{trigger.Id}'.");
+        }
+
         await WriteJson(context, 201, TriggerView(trigger));
     }
 
@@ -1217,14 +1243,23 @@ public static partial class ServeMode
             return;
         }
 
-        // Probe only: never trigger a pip install from a readiness check.
+        // Probe only: never trigger a pip install from a readiness check. When the SDK
+        // is not present but uv IS (uv-managed venvs ship without pip), the POST path
+        // can auto-install it on start, so report that as a soft "installable" state
+        // rather than a hard block -- the UI can then let the user proceed.
         var (sdkReady, _, sdkError) = State.DynamicWorkflow.ProbeSdk(python);
+        var installable = !sdkReady && State.DynamicWorkflow.ResolveUv() is not null;
         await WriteJson(context, 200, new
         {
             ready = sdkReady,
+            installable,
             reason = sdkReady ? null : "sdk",
             python,
-            message = sdkReady ? null : sdkError,
+            message = sdkReady
+                ? null
+                : installable
+                    ? "The muxswarm SDK is not installed yet; it will be installed automatically (via uv) when the workflow starts."
+                    : sdkError,
         });
     }
 
@@ -1286,12 +1321,17 @@ public static partial class ServeMode
             });
             return;
         }
-        // Probe, do NOT EnsureSdk: the latter attempts a bounded pip install that can
-        // block the request for two minutes. A web caller gets an actionable error
-        // instead; the REPL path keeps its auto-install behaviour.
-        if (State.DynamicWorkflow.ProbeSdk(python) is { Ready: false } probe)
+        // Ensure the SDK BEFORE authoring: the install ladder (pip -> uv -> ensurepip)
+        // fails fast when pip is absent (~30ms) and uv-managed venvs install in ~400ms,
+        // so this is cheap in practice. Doing it here means a web-launched dynamic
+        // workflow actually gets the SDK installed instead of being rejected, and a
+        // genuinely un-installable toolchain fails now rather than after a multi-minute
+        // authoring round trip. Off the request's sync path via Task.Run.
+        var (sdkReady, _, sdkErr) = await Task.Run(
+            () => State.DynamicWorkflow.EnsureSdk(python), context.RequestAborted);
+        if (!sdkReady)
         {
-            await WriteJson(context, 503, new { error = probe.Error, reason = "sdk" });
+            await WriteJson(context, 503, new { error = sdkErr, reason = "sdk" });
             return;
         }
 

@@ -27,6 +27,26 @@ namespace MuxSwarm.State;
 /// </summary>
 public static class DaemonCommand
 {
+    /// <summary>
+    /// Public entry point for the serve layer: ensure the DaemonRunner is started (lazily create +
+    /// Start), returning it or null on failure. Mirrors "/daemon on" without the console chrome so
+    /// the web API can start the daemon the same way the REPL does.
+    /// </summary>
+    public static DaemonRunner? EnsureStarted() => EnsureRunner();
+
+    /// <summary>Stop the DaemonRunner if running (mirrors "/daemon off"). Returns true if one was
+    /// stopped, false when nothing was running.</summary>
+    public static bool Stop()
+    {
+        if (App.DaemonRunner is not null)
+        {
+            _ = App.DaemonRunner.DisposeAsync();
+            App.DaemonRunner = null;
+            return true;
+        }
+        return false;
+    }
+
     /// <summary>Ensure a started DaemonRunner exists (lazily create + Start), or null on failure.</summary>
     private static DaemonRunner? EnsureRunner()
     {

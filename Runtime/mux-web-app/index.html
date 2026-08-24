@@ -12569,6 +12569,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         try {
           const pf = await jfetch('/api/workflows/preflight');
           if (pf.ready) { setStatus(''); return true; }
+          // SDK missing but auto-installable (uv present): let the user proceed; the
+          // POST installs it on start. Only a truly un-installable toolchain blocks.
+          if (pf.installable) { setStatus(pf.message || 'The SDK will be installed automatically on start.'); return true; }
           setStatus(pf.message || 'Dynamic mode unavailable.', 'is-err');
           return false;
         } catch (_) { setStatus(''); return true; }   // older binary: let the POST decide
@@ -12679,6 +12682,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
               '<select class="mng-select" data-f="mode">' +
                 '<option value="agent">agent</option><option value="swarm">swarm</option><option value="pswarm">pswarm</option>' +
               '</select></label>' +
+            '<label class="mng-fl-lbl f-agent">Agent' +
+              '<select class="mng-select" data-f="agent"><option value="">(default)</option></select></label>' +
             '<label class="mng-fl-lbl f-status" hidden>Interval (s)' +
               '<input class="mng-input" data-f="interval" type="number" min="5" value="30"></label>' +
           '</div>' +
@@ -12730,6 +12735,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         root.querySelectorAll('.f-watch').forEach(el => el.hidden = type !== 'watch');
         root.querySelectorAll('.f-status').forEach(el => el.hidden = type !== 'status');
         root.querySelectorAll('.f-goal').forEach(el => el.hidden = type === 'status');
+        // Agent picker rides on mode+type; keep it in step when the type changes.
+        const al = root.querySelector('.f-agent');
+        const ms = root.querySelector('[data-f="mode"]');
+        if (al && ms) al.hidden = !(ms.value === 'agent' && type !== 'status');
       };
       root.querySelectorAll('.mng-fl-seg-btn').forEach(b => {
         b.addEventListener('click', () => {
@@ -12740,6 +12749,32 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         });
       });
       applyType();
+
+      // Agent picker: only meaningful for single-agent mode (swarm/pswarm pick their
+      // own specialists). Populated from the live roster; hidden unless mode=agent and
+      // the trigger type actually fires a goal (status triggers do not).
+      const modeSel = get('mode');
+      const agentSel = get('agent');
+      const agentLbl = root.querySelector('.f-agent');
+      const syncAgentVisible = () => {
+        if (agentLbl) agentLbl.hidden = !(modeSel.value === 'agent' && type !== 'status');
+      };
+      (async () => {
+        try {
+          const agents = await jfetch('/api/agents');
+          if (Array.isArray(agents)) {
+            for (const a of agents) {
+              if (!a || !a.name) continue;
+              const o = document.createElement('option');
+              o.value = a.name;
+              o.textContent = a.role ? (a.name + ' \u2014 ' + a.role) : a.name;
+              agentSel.appendChild(o);
+            }
+          }
+        } catch (_) { /* leave (default) only */ }
+      })();
+      modeSel.addEventListener('change', syncAgentVisible);
+      syncAgentVisible();
 
       root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
       root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
@@ -12752,6 +12787,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           if (iv > 0) payload.interval = iv;
         }
         if (type !== 'status') payload.goal = get('goal').value.trim();
+        if (payload.mode === 'agent' && type !== 'status') {
+          const chosen = get('agent').value.trim();
+          if (chosen) payload.agent = chosen;
+        }
 
         e.target.disabled = true;
         status.className = 'mng-fl-status';
