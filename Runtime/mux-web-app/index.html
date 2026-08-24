@@ -1671,7 +1671,21 @@ body.hide-all-pills .event-group { display: none !important; }
 }
 /* Model catalog: scrolls inside the menu so a large provider list can't push
    the Apply button off-screen. */
-.model-menu .mm-models { max-height: 220px; overflow-y: auto; scrollbar-width: thin; }
+.model-menu .mm-models {
+  max-height: 220px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.model-menu .mm-models::-webkit-scrollbar { width: 4px; }
+.model-menu .mm-models::-webkit-scrollbar-track { background: transparent; }
+.model-menu .mm-models::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.model-menu .mm-models:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+.model-menu-list {
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.model-menu-list::-webkit-scrollbar { width: 4px; }
+.model-menu-list::-webkit-scrollbar-track { background: transparent; }
+.model-menu-list::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.model-menu-list:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
 .model-menu .mm-model-row {
   display: block; width: 100%; text-align: left; background: transparent;
   border: none; cursor: pointer; color: var(--text);
@@ -1699,8 +1713,8 @@ body.hide-all-pills .event-group { display: none !important; }
 .mux-hint-bar {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
   margin: 6px 0; padding: 8px 12px;
-  border: 1px solid var(--border); border-left: 2px solid var(--accent, #64b4dc);
-  border-radius: 6px; background: rgba(var(--accent-rgb), 0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px; background: var(--bg-card, rgba(255,255,255,0.02));
   font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted);
 }
 .mux-hint-bar .hb-text { flex: 1 1 220px; min-width: 0; }
@@ -2490,6 +2504,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
       <button class="sidebar-tab" data-tab="skills">Skills</button>
       <button class="sidebar-tab" data-tab="tools">Tools</button>
+      <button class="sidebar-tab" data-tab="flows">Flows</button>
+      <button class="sidebar-tab" data-tab="daemon">Daemon</button>
       <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
       <button class="sidebar-close" id="sidebarClose">×</button>
     </div>
@@ -5060,13 +5076,15 @@ const icons = {
     positionModelMenu(menu, document.getElementById('modelBtn'));
 
     menu.querySelectorAll('.mm-agent-btn').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
         const slot = slots[parseInt(el.dataset.i, 10)];
         if (slot) swapAgent(menu, slot);
       });
     });
     menu.querySelectorAll('.mm-model-btn').forEach(el => {
-      el.addEventListener('click', () => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
         const slot = slots[parseInt(el.dataset.i, 10)];
         if (slot) pickModel(menu, slot);
       });
@@ -5148,8 +5166,9 @@ const icons = {
       }
     };
 
-    menu.querySelector('.mm-apply').addEventListener('click', () => commit(inp.value));
-    menu.querySelector('.mm-back').addEventListener('click', () => renderSlotList(menu, _modelSlots));
+    menu.querySelector('.mm-apply').addEventListener('click', (e) => { e.stopPropagation(); commit(inp.value); });
+    menu.querySelector('.mm-back').addEventListener('click', (e) => { e.stopPropagation(); renderSlotList(menu, _modelSlots); });
+    menu.addEventListener('click', (e) => e.stopPropagation());
     inp.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); commit(inp.value); }
       if (e.key === 'Escape') { e.preventDefault(); closeModelMenu(); }
@@ -5173,7 +5192,7 @@ const icons = {
         '<button class="mm-model-row' + (m === slot.model ? ' is-current' : '') + '" type="button" ' +
                 'role="option" data-m="' + esc(m) + '">' + esc(m) + '</button>').join('');
       list.querySelectorAll('.mm-model-row').forEach(el => {
-        el.addEventListener('click', () => commit(el.dataset.m));
+        el.addEventListener('click', (e) => { e.stopPropagation(); commit(el.dataset.m); });
       });
     };
     draw();
@@ -5199,9 +5218,16 @@ const icons = {
       if (document.getElementById('modelMenu')) closeModelMenu();
       else openModelMenu();
     });
+    // NOTE: use the captured composed path, not m.contains(e.target). Clicking a
+    // row re-renders the menu body synchronously, detaching e.target before this
+    // (bubbled) handler runs -- containment then reports false and we would close
+    // the menu on the very click that opened the model list.
     document.addEventListener('click', (e) => {
       const m = document.getElementById('modelMenu');
-      if (m && !m.contains(e.target) && e.target !== btn) closeModelMenu();
+      if (!m) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      if (path.includes(m) || path.includes(btn)) return;
+      closeModelMenu();
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeModelMenu();
@@ -6074,6 +6100,10 @@ const icons = {
       loadCatalogView('skills');
     } else if (currentTab === 'tools') {
       loadCatalogView('tools');
+    } else if (currentTab === 'flows') {
+      loadWorkflowsView();
+    } else if (currentTab === 'daemon') {
+      loadDaemonView();
     } else {
       loadFileList();
     }
@@ -6091,6 +6121,7 @@ const icons = {
 
   document.querySelectorAll('.sidebar-tab').forEach(tab => {
     tab.addEventListener('click', () => {
+      if (currentTab === 'flows' && tab.dataset.tab !== 'flows') stopWorkflowPoll();
       currentTab = tab.dataset.tab; currentPath = '';
       try { window.currentTab = currentTab; } catch(_) {}
       document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
@@ -6189,6 +6220,231 @@ const icons = {
         });
       });
     }
+  }
+
+  // --- Workflow graph (Flows tab) ---
+  // Mux's graph-engineering plane. Each run is a column of section nodes; every
+  // section holds its task nodes, so the DAG shape the engine declared is what you
+  // see. Polls only while the tab is open and something is still running.
+  let _wfTimer = null;
+  function stopWorkflowPoll() { if (_wfTimer) { clearInterval(_wfTimer); _wfTimer = null; } }
+
+  async function loadWorkflowsView() {
+    stopWorkflowPoll();
+    sidebarContent.innerHTML = '<div class="loading">Loading workflows\u2026</div>';
+    const draw = async () => {
+      if (currentTab !== 'flows') { stopWorkflowPoll(); return; }
+      let data;
+      try {
+        const r = await fetch(_apiUrl('/api/workflows'), { headers: { 'Accept': 'application/json' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        data = await r.json();
+      } catch (e) {
+        stopWorkflowPoll();
+        sidebarContent.innerHTML = '<div class="mux-cat-empty">Could not load workflows: ' + esc(e.message || String(e)) + '</div>';
+        return;
+      }
+      if (currentTab !== 'flows') { stopWorkflowPoll(); return; }
+      renderWorkflows(data);
+      // Idle runs need no polling; stop as soon as nothing is live.
+      if (!data.running && _wfTimer) stopWorkflowPoll();
+    };
+    await draw();
+    _wfTimer = setInterval(draw, 1500);
+  }
+
+  const WF_DOT = { done: 'ok', failed: 'err', running: 'run', cancelled: 'warn', pending: 'idle' };
+
+  function renderWorkflows(data) {
+    const runs = (data && data.items) || [];
+    const saved = (data && data.saved) || [];
+
+    // Preserve which nodes the user collapsed across the 1.5s repaint.
+    const collapsed = new Set();
+    sidebarContent.querySelectorAll('.wf-sec.is-collapsed').forEach(el => collapsed.add(el.dataset.k));
+
+    let html = '<div class="wf-root">';
+    if (!runs.length) {
+      html += '<div class="mux-cat-empty">No workflow runs yet. Start one with <code>/workflow</code>.</div>';
+    }
+
+    for (const run of runs) {
+      const done = run.sections.reduce((n, s) => n + s.tasks.filter(t => t.status === 'done').length, 0);
+      const total = run.sections.reduce((n, s) => n + s.tasks.length, 0);
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      html +=
+        '<div class="wf-run wf-' + esc(run.state) + '">' +
+          '<div class="wf-run-head">' +
+            '<span class="wf-dot ' + (WF_DOT[run.state] || 'idle') + '"></span>' +
+            '<span class="wf-run-name">' + esc(run.name || run.id) + '</span>' +
+            '<span class="wf-chip">' + esc(run.mode) + '</span>' +
+            '<span class="wf-spacer"></span>' +
+            '<span class="wf-count">' + done + '/' + total + '</span>' +
+            (run.state === 'running'
+              ? '<button class="wf-cancel" type="button" data-id="' + esc(run.id) + '">Cancel</button>'
+              : '<span class="wf-state">' + esc(run.state) + '</span>') +
+          '</div>' +
+          '<div class="wf-bar"><span style="width:' + pct + '%"></span></div>';
+
+      if (run.error) html += '<div class="wf-err">' + esc(run.error) + '</div>';
+
+      // Sections are graph nodes; the connector rail implies edge order.
+      for (let si = 0; si < run.sections.length; si++) {
+        const sec = run.sections[si];
+        const key = run.id + ':' + si;
+        const sDone = sec.tasks.filter(t => t.status === 'done').length;
+        const sRun = sec.tasks.some(t => t.status === 'running');
+        const sFail = sec.tasks.some(t => t.status === 'failed');
+        const sState = sFail ? 'err' : (sRun ? 'run' : (sDone === sec.tasks.length && sec.tasks.length ? 'ok' : 'idle'));
+        html +=
+          '<div class="wf-sec' + (collapsed.has(key) ? ' is-collapsed' : '') + '" data-k="' + esc(key) + '">' +
+            '<div class="wf-sec-head">' +
+              '<span class="wf-chev">' + icons.chevronDown + '</span>' +
+              '<span class="wf-dot ' + sState + '"></span>' +
+              '<span class="wf-sec-name">' + esc(sec.name) + '</span>' +
+              '<span class="wf-spacer"></span>' +
+              '<span class="wf-count">' + sDone + '/' + sec.tasks.length + '</span>' +
+            '</div>' +
+            '<div class="wf-tasks">';
+        for (const t of sec.tasks) {
+          const meta = [];
+          if (t.agent) meta.push(esc(t.agent));
+          if (t.model) meta.push(esc(t.model));
+          if (t.secs != null) meta.push(t.secs + 's');
+          if (t.tools != null) meta.push(t.tools + ' tools');
+          if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
+          html +=
+            '<div class="wf-task wf-t-' + esc(t.status) + '">' +
+              '<span class="wf-dot ' + (WF_DOT[t.status] || 'idle') + '"></span>' +
+              '<div class="wf-task-body">' +
+                '<div class="wf-task-label">' + esc(t.label || t.id) + '</div>' +
+                (meta.length ? '<div class="wf-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
+                (t.detail ? '<div class="wf-task-detail">' + esc(t.detail) + '</div>' : '') +
+              '</div>' +
+            '</div>';
+        }
+        html += '</div></div>';
+      }
+
+      if (run.recent && run.recent.length) {
+        html += '<div class="wf-recent">' +
+          run.recent.slice(-4).map(l => '<div class="wf-recent-line">' + esc(l) + '</div>').join('') +
+        '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (saved.length) {
+      html += '<div class="wf-saved"><div class="wf-saved-head">Saved definitions</div>' +
+        saved.map(s => '<div class="wf-saved-row"><span>' + esc(s) + '</span>' +
+          '<button class="wf-run-btn" type="button" data-name="' + esc(s) + '">Run</button></div>').join('') +
+        '</div>';
+    }
+    html += '</div>';
+    sidebarContent.innerHTML = html;
+
+    sidebarContent.querySelectorAll('.wf-sec-head').forEach(el => {
+      el.addEventListener('click', () => el.parentElement.classList.toggle('is-collapsed'));
+    });
+    sidebarContent.querySelectorAll('.wf-cancel').forEach(el => {
+      el.addEventListener('click', async () => {
+        el.disabled = true;
+        try {
+          await fetch(_apiUrl('/api/workflows/' + encodeURIComponent(el.dataset.id) + '/cancel'),
+                      { method: 'POST', headers: { 'Accept': 'application/json' } });
+        } catch (_) {}
+        loadWorkflowsView();
+      });
+    });
+    sidebarContent.querySelectorAll('.wf-run-btn').forEach(el => {
+      el.addEventListener('click', () => {
+        const cmd = '/workflow static ' + el.dataset.name;
+        try { _suppressUserEchoOnce.add(cmd); } catch (_) {}
+        send(cmd);
+      });
+    });
+  }
+
+  // --- Daemon / cron (Daemon tab) ---
+  async function loadDaemonView() {
+    sidebarContent.innerHTML = '<div class="loading">Loading daemon\u2026</div>';
+    let data;
+    try {
+      const r = await fetch(_apiUrl('/api/daemon'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      data = await r.json();
+    } catch (e) {
+      sidebarContent.innerHTML = '<div class="mux-cat-empty">Could not load daemon: ' + esc(e.message || String(e)) + '</div>';
+      return;
+    }
+    if (currentTab !== 'daemon') return;
+
+    const items = (data && data.items) || [];
+    let html =
+      '<div class="wf-root">' +
+        '<div class="dmn-head">' +
+          '<span class="wf-dot ' + (data.enabled ? 'run' : 'idle') + '"></span>' +
+          '<span class="dmn-title">Daemon</span>' +
+          '<span class="wf-spacer"></span>' +
+          '<button class="dmn-toggle" type="button">' + (data.enabled ? 'Disable' : 'Enable') + '</button>' +
+        '</div>';
+
+    if (!items.length) {
+      html += '<div class="mux-cat-empty">No triggers configured.</div>';
+    }
+    for (const t of items) {
+      const when = t.nextFire
+        ? new Date(t.nextFire).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : null;
+      const meta = [];
+      if (t.schedule) meta.push('<code>' + esc(t.schedule) + '</code>');
+      if (t.path) meta.push(esc(t.path));
+      if (t.check) meta.push(esc(t.check));
+      if (t.mode) meta.push(esc(t.mode));
+      if (t.agent) meta.push(esc(t.agent));
+      html +=
+        '<div class="dmn-row' + (t.enabled ? '' : ' is-off') + '">' +
+          '<div class="dmn-row-head">' +
+            '<span class="wf-dot ' + (t.enabled ? 'ok' : 'idle') + '"></span>' +
+            '<span class="dmn-id">' + esc(t.id) + '</span>' +
+            '<span class="wf-chip">' + esc(t.type) + '</span>' +
+            '<span class="wf-spacer"></span>' +
+            '<button class="dmn-trig" type="button" data-id="' + esc(t.id) + '" data-on="' + (t.enabled ? '1' : '0') + '">' +
+              (t.enabled ? 'Mute' : 'Unmute') + '</button>' +
+          '</div>' +
+          (meta.length ? '<div class="dmn-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
+          (t.goal ? '<div class="dmn-goal">' + esc(t.goal) + '</div>' : '') +
+          (when ? '<div class="dmn-next">next \u00b7 ' + esc(when) + '</div>' : '') +
+        '</div>';
+    }
+    html += '</div>';
+    sidebarContent.innerHTML = html;
+
+    const tog = sidebarContent.querySelector('.dmn-toggle');
+    if (tog) tog.addEventListener('click', async () => {
+      tog.disabled = true;
+      try {
+        await fetch(_apiUrl('/api/daemon'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ enabled: !data.enabled }),
+        });
+      } catch (_) {}
+      loadDaemonView();
+    });
+    sidebarContent.querySelectorAll('.dmn-trig').forEach(el => {
+      el.addEventListener('click', async () => {
+        el.disabled = true;
+        try {
+          await fetch(_apiUrl('/api/daemon/' + encodeURIComponent(el.dataset.id) + '/toggle'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ enabled: el.dataset.on !== '1' }),
+          });
+        } catch (_) {}
+        loadDaemonView();
+      });
+    });
   }
 
   async function loadFileList(subpath = '') {
@@ -6951,6 +7207,160 @@ const icons = {
       /* Container queries supported via the sidebar host */
       #sidebarContent { container-type: inline-size; container-name: muxSidebar; }
 
+      /* -- Workflow graph (Flows) + Daemon --
+         Mux's graph plane rendered as nested nodes: a run node holds section
+         nodes, each section holds task nodes. Depth is carried by a connector
+         rail (a 1px neutral guide, NOT an accent bookmark stripe) so the DAG
+         shape reads at a glance without colouring the chrome. */
+      .wf-root { padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+
+      .wf-run {
+        border: 1px solid var(--border, rgba(255,255,255,.10));
+        border-radius: 8px;
+        background: var(--bg-card, rgba(24,24,27,.5));
+        overflow: hidden;
+      }
+      .wf-run-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1));
+      }
+      .wf-run-name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wf-spacer { flex: 1 1 auto; }
+      .wf-count { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(11px * var(--ui-font-scale, 1)); }
+      .wf-state { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); text-transform: capitalize; }
+      .wf-chip {
+        flex: 0 0 auto; padding: 1px 6px; border-radius: 4px;
+        background: rgba(127,127,127,0.14); color: var(--muted);
+        font-size: calc(9.5px * var(--ui-font-scale, 1));
+        font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+      }
+
+      /* Status dots: the only place colour is used, so state reads instantly. */
+      .wf-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted, #71717a); }
+      .wf-dot.idle { background: rgba(161,161,170,.35); }
+      .wf-dot.ok   { background: var(--green, #10b981); }
+      .wf-dot.err  { background: var(--red, #ef4444); }
+      .wf-dot.warn { background: var(--amber, #f59e0b); }
+      .wf-dot.run  { background: var(--amber, #f59e0b); animation: wf-pulse 1.4s ease-in-out infinite; }
+      @keyframes wf-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+      @media (prefers-reduced-motion: reduce) { .wf-dot.run { animation: none; } }
+
+      .wf-bar { height: 2px; background: rgba(127,127,127,.16); }
+      .wf-bar > span { display: block; height: 100%; background: var(--green, #10b981); transition: width .3s ease; }
+      .wf-run.wf-failed .wf-bar > span { background: var(--red, #ef4444); }
+      .wf-err {
+        padding: 6px 10px; color: var(--red, #ef4444);
+        font-size: calc(11px * var(--ui-font-scale, 1));
+      }
+
+      /* Section node: indented under the run and joined by a neutral rail. */
+      .wf-sec { margin: 6px 0 6px 16px; padding-left: 10px; border-left: 1px solid rgba(127,127,127,.18); }
+      .wf-sec-head {
+        display: flex; align-items: center; gap: 7px;
+        padding: 4px 6px; cursor: pointer; user-select: none; border-radius: 5px;
+        font-size: calc(11.5px * var(--ui-font-scale, 1));
+      }
+      .wf-sec-head:hover { background: rgba(255,255,255,.03); }
+      .wf-sec-name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .wf-chev { display: inline-flex; color: var(--muted); transition: transform .15s ease; }
+      .wf-sec.is-collapsed .wf-chev { transform: rotate(-90deg); }
+      .wf-sec.is-collapsed .wf-tasks { display: none; }
+
+      /* Task node: the leaf. */
+      .wf-task {
+        display: flex; align-items: flex-start; gap: 7px;
+        padding: 5px 6px 5px 8px; margin-left: 6px;
+        border-left: 1px solid rgba(127,127,127,.12);
+      }
+      .wf-task-body { min-width: 0; flex: 1 1 auto; }
+      .wf-task .wf-dot { margin-top: 4px; }
+      .wf-task-label {
+        color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1));
+        line-height: 1.4; word-break: break-word;
+      }
+      .wf-task.wf-t-pending .wf-task-label { color: var(--muted); }
+      .wf-task.wf-t-done .wf-task-label { opacity: .75; }
+      .wf-task-meta, .wf-task-detail {
+        color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+        margin-top: 1px; word-break: break-word;
+      }
+      .wf-task-meta { font-family: var(--font-mono, monospace); }
+
+      .wf-recent {
+        border-top: 1px solid rgba(127,127,127,.12);
+        padding: 5px 10px; color: var(--muted);
+        font-family: var(--font-mono, monospace);
+        font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.5;
+      }
+      .wf-recent-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+      .wf-cancel, .wf-run-btn, .dmn-toggle, .dmn-trig {
+        background: var(--bg-input, rgba(255,255,255,.04));
+        border: 1px solid var(--border, rgba(255,255,255,.10));
+        border-radius: 5px; color: var(--text); cursor: pointer;
+        padding: 2px 8px; font-family: inherit;
+        font-size: calc(10.5px * var(--ui-font-scale, 1));
+      }
+      .wf-cancel:hover, .wf-run-btn:hover, .dmn-toggle:hover, .dmn-trig:hover {
+        border-color: var(--accent, #64b4dc); background: rgba(var(--accent-rgb, 100,180,220), .12);
+      }
+      .wf-cancel[disabled], .dmn-toggle[disabled], .dmn-trig[disabled] { opacity: .5; cursor: default; }
+
+      .wf-saved {
+        border: 1px solid var(--border, rgba(255,255,255,.10));
+        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
+        overflow: hidden;
+      }
+      .wf-saved-head {
+        padding: 7px 10px; color: var(--muted);
+        font-size: calc(10.5px * var(--ui-font-scale, 1));
+        font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+        border-bottom: 1px solid rgba(127,127,127,.12);
+      }
+      .wf-saved-row {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        padding: 6px 10px; font-size: calc(11.5px * var(--ui-font-scale, 1));
+        color: var(--text);
+      }
+      .wf-saved-row + .wf-saved-row { border-top: 1px solid rgba(127,127,127,.08); }
+
+      /* Daemon rows reuse the same node vocabulary. */
+      .dmn-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 10px; border: 1px solid var(--border, rgba(255,255,255,.10));
+        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
+      }
+      .dmn-title {
+        font-weight: 700; color: var(--text); letter-spacing: .05em; text-transform: uppercase;
+        font-size: calc(11px * var(--ui-font-scale, 1));
+      }
+      .dmn-row {
+        border: 1px solid var(--border, rgba(255,255,255,.10));
+        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
+        padding: 7px 10px 8px;
+      }
+      .dmn-row.is-off { opacity: .55; }
+      .dmn-row-head { display: flex; align-items: center; gap: 8px; }
+      .dmn-id {
+        font-weight: 600; color: var(--text); font-family: var(--font-mono, monospace);
+        font-size: calc(11.5px * var(--ui-font-scale, 1));
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      .dmn-meta, .dmn-next {
+        color: var(--muted); margin-top: 3px;
+        font-size: calc(10.5px * var(--ui-font-scale, 1)); word-break: break-word;
+      }
+      .dmn-meta code {
+        font-family: var(--font-mono, monospace);
+        background: rgba(127,127,127,.14); padding: 0 4px; border-radius: 3px;
+      }
+      .dmn-goal {
+        color: var(--text); opacity: .8; margin-top: 4px;
+        font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45;
+        word-break: break-word;
+      }
+      .dmn-next { font-family: var(--font-mono, monospace); }
+
       /* ── Skills / Tools catalog tabs ── */
       .mux-cat-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
       .mux-cat-head {
@@ -6977,7 +7387,14 @@ const icons = {
         font-size: calc(11px * var(--ui-font-scale, 1));
         flex: 0 0 auto;
       }
-      .mux-cat-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 4px 0 12px; }
+      .mux-cat-body {
+        flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 4px 0 12px;
+        scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+      }
+      .mux-cat-body::-webkit-scrollbar { width: 4px; }
+      .mux-cat-body::-webkit-scrollbar-track { background: transparent; }
+      .mux-cat-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+      .mux-cat-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
       .mux-cat-group.filtered-out, .mux-cat-item.filtered-out { display: none; }
       .mux-cat-group-head {
         display: flex; align-items: center; justify-content: space-between; gap: 8px;
@@ -7077,7 +7494,7 @@ const icons = {
         color: var(--accent, #64b4dc);
       }
       .mux-sess-row.pinned {
-        border-left: 2px solid var(--accent, #64b4dc);
+        background: rgba(255,255,255,0.022);
       }
       .mux-sess-row.active {
         background: rgba(var(--accent-rgb),0.1);

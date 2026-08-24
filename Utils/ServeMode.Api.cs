@@ -23,6 +23,11 @@ namespace MuxSwarm.Utils;
 ///   GET /api/models                  model ids advertised by the active provider endpoint
 ///   POST /api/model                  { slot, model } -> persist a slot's model to Swarm.json
 ///   POST /api/agent                  { name } -> swap the active single-agent definition
+///   GET  /api/workflows              workflow runs (sections/tasks) + saved definitions
+///   POST /api/workflows/{id}/cancel  cancel a running workflow
+///   GET  /api/daemon                 daemon state + trigger catalog with next fire times
+///   POST /api/daemon                 { enabled } -> toggle the daemon
+///   POST /api/daemon/{id}/toggle     enable/disable a single trigger
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
@@ -51,6 +56,11 @@ public static partial class ServeMode
         app.MapGet("/api/models", HandleModels);
         app.MapPost("/api/model", HandleSetModel);
         app.MapPost("/api/agent", HandleSetAgent);
+        app.MapGet("/api/workflows", HandleWorkflows);
+        app.MapPost("/api/workflows/{id}/cancel", HandleWorkflowCancel);
+        app.MapGet("/api/daemon", HandleDaemon);
+        app.MapPost("/api/daemon", HandleDaemonToggle);
+        app.MapPost("/api/daemon/{id}/toggle", HandleTriggerToggle);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
@@ -827,6 +837,192 @@ public static partial class ServeMode
 
         SingleAgentOrchestrator.AgentDef = matched;
         await WriteJson(context, 200, new { agent = matched.Name, description = matched.Description });
+    }
+
+    // GET /api/workflows
+    // The graph plane: every workflow run with its full section/task shape, plus the
+    // saved workflow definitions. This is the same snapshot the TUI viewer renders,
+    // exposed read-only so the web app can draw the node graph without a slash command.
+    private static async Task HandleWorkflows(HttpContext context)
+    {
+        var runs = State.WorkflowRunRegistry.Snapshot()
+            .OrderByDescending(r => r.Started)
+            .Select(r => new
+            {
+                id = r.Id,
+                name = r.Name,
+                mode = r.Mode,
+                state = r.State.ToString().ToLowerInvariant(),
+                started = r.Started,
+                finished = r.Finished,
+                error = r.Error,
+                recent = r.RecentEvents.ToArray(),
+                sections = r.Manifest.Sections.Select(s => new
+                {
+                    name = s.Name,
+                    tasks = s.Tasks.Select(t => new
+                    {
+                        id = t.Id,
+                        agent = t.Agent,
+                        label = t.Label,
+                        status = t.Status,
+                        detail = t.Detail,
+                        secs = t.Secs,
+                        tools = t.Tools,
+                        tokens = t.Tokens,
+                        model = t.Model,
+                    }).ToList(),
+                }).ToList(),
+            })
+            .ToList();
+
+        var saved = new List<string>();
+        try
+        {
+            if (Directory.Exists(PlatformContext.TeamsDirectory))
+            {
+                saved = Directory.EnumerateFiles(PlatformContext.TeamsDirectory, "*.workflow.json")
+                    .Select(f => Path.GetFileNameWithoutExtension(f)!.Replace(".workflow", ""))
+                    .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+
+        await WriteJson(context, 200, new
+        {
+            running = runs.Count(r => r.state == "running"),
+            count = runs.Count,
+            items = runs,
+            saved,
+        });
+    }
+
+    // POST /api/workflows/{id}/cancel
+    private static async Task HandleWorkflowCancel(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            await WriteJson(context, 400, new { error = "No run id" });
+            return;
+        }
+        if (!State.WorkflowRunRegistry.Cancel(id))
+        {
+            await WriteJson(context, 404, new { error = $"No running workflow with id: {id}" });
+            return;
+        }
+        await WriteJson(context, 200, new { id, state = "cancelled" });
+    }
+
+    // Trigger summary shared by the daemon endpoints. NextFire is computed only for
+    // cron triggers; the other types are event-driven and have no schedule.
+    private static object TriggerView(DaemonTrigger t)
+    {
+        DateTime? next = null;
+        if (string.Equals(t.Type, "cron", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(t.Schedule))
+        {
+            try { next = CronExpression.Parse(t.Schedule!)?.GetNextOccurrence(DateTime.Now); }
+            catch { /* a malformed schedule must not break the listing */ }
+        }
+        return new
+        {
+            id = t.Id,
+            type = t.Type,
+            mode = t.Mode,
+            agent = t.Agent,
+            goal = t.Goal,
+            schedule = t.Schedule,
+            path = t.Path,
+            check = t.Check,
+            command = t.Command,
+            interval = t.EffectiveInterval,
+            enabled = !DisabledTriggers.Contains(t.Id),
+            nextFire = next,
+        };
+    }
+
+    /// <summary>
+    /// Trigger ids muted at runtime from the web UI. Kept in memory (not written back to
+    /// Config.json) so a UI toggle is a session-scoped mute, matching how the daemon
+    /// treats other runtime state. The daemon loop consults this before firing.
+    /// </summary>
+    public static readonly HashSet<string> DisabledTriggers = new(StringComparer.OrdinalIgnoreCase);
+
+    // GET /api/daemon
+    private static async Task HandleDaemon(HttpContext context)
+    {
+        var cfg = App.Config.Daemon;
+        var triggers = (cfg?.Triggers ?? []).Select(TriggerView).ToList();
+        await WriteJson(context, 200, new
+        {
+            enabled = cfg?.Enabled == true,
+            count = triggers.Count,
+            items = triggers,
+        });
+    }
+
+    // POST /api/daemon   body: { enabled }
+    private static async Task HandleDaemonToggle(HttpContext context)
+    {
+        bool enabled;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            if (!doc.RootElement.TryGetProperty("enabled", out var el))
+            {
+                await WriteJson(context, 400, new { error = "'enabled' is required" });
+                return;
+            }
+            enabled = el.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        App.Config.Daemon ??= new DaemonConfig();
+        App.Config.Daemon.Enabled = enabled;
+        await WriteJson(context, 200, new { enabled });
+    }
+
+    // POST /api/daemon/{id}/toggle   body: { enabled }
+    private static async Task HandleTriggerToggle(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            await WriteJson(context, 400, new { error = "No trigger id" });
+            return;
+        }
+
+        var trigger = (App.Config.Daemon?.Triggers ?? []).FirstOrDefault(t =>
+            string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (trigger is null)
+        {
+            await WriteJson(context, 404, new { error = $"No such trigger: {id}" });
+            return;
+        }
+
+        bool enabled;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            enabled = !doc.RootElement.TryGetProperty("enabled", out var el) || el.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        if (enabled) DisabledTriggers.Remove(trigger.Id);
+        else DisabledTriggers.Add(trigger.Id);
+
+        await WriteJson(context, 200, TriggerView(trigger));
     }
 
     // B5d -- GET /api/status
