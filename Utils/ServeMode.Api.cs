@@ -68,6 +68,7 @@ public static partial class ServeMode
         app.MapPost("/api/workflows/{id}/rerun", HandleWorkflowRerun);
         app.MapPost("/api/workflows/{id}/save", HandleWorkflowSave);
         app.MapPost("/api/workflows/saved/{name}/run", HandleWorkflowRunSaved);
+        app.MapDelete("/api/workflows/saved/{name}", HandleWorkflowDeleteSaved);
         app.MapGet("/api/daemon", HandleDaemon);
         app.MapPost("/api/daemon", HandleDaemonToggle);
         app.MapPost("/api/daemon/{id}/toggle", HandleTriggerToggle);
@@ -1013,6 +1014,15 @@ public static partial class ServeMode
         var result = await Task.Run(() => State.DynamicWorkflow.LaunchSaved(name), context.RequestAborted);
         var launched = State.WorkflowRunRegistry.Snapshot().Count > before;
         await WriteJson(context, launched ? 202 : 502, new { name, launched, message = result });
+    }
+
+    // DELETE /api/workflows/saved/{name} -> remove a saved dynamic definition.
+    private static async Task HandleWorkflowDeleteSaved(HttpContext context)
+    {
+        var name = context.Request.RouteValues["name"]?.ToString() ?? "";
+        var (deleted, err) = State.DynamicWorkflow.DeleteSaved(name);
+        if (!deleted) { await WriteJson(context, 404, new { error = err }); return; }
+        await WriteJson(context, 200, new { name, deleted = true });
     }
 
     // Trigger summary shared by the daemon endpoints. NextFire is computed only for

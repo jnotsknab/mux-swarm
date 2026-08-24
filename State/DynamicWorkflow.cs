@@ -550,6 +550,16 @@ public static class DynamicWorkflow
         catch (Exception ex) { return $"[workflow] Could not load saved workflow '{name}': {ex.Message}"; }
     }
 
+    /// <summary>Delete a saved dynamic definition (&lt;name&gt;.workflow.json). Returns (deleted, error).</summary>
+    public static (bool Deleted, string? Error) DeleteSaved(string savedName)
+    {
+        var name = SanitizeName(savedName);
+        var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+        if (!File.Exists(file)) return (false, $"No saved workflow '{name}'.");
+        try { File.Delete(file); return (true, null); }
+        catch (Exception ex) { return (false, ex.Message); }
+    }
+
     /// <summary>Reduce an arbitrary label to a safe file stem for a saved definition.</summary>
     private static string SanitizeName(string raw)
     {
