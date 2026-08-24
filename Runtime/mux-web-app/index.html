@@ -2504,8 +2504,6 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
       <button class="sidebar-tab" data-tab="skills">Skills</button>
       <button class="sidebar-tab" data-tab="tools">Tools</button>
-      <button class="sidebar-tab" data-tab="flows">Flows</button>
-      <button class="sidebar-tab" data-tab="daemon">Daemon</button>
       <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
       <button class="sidebar-close" id="sidebarClose">×</button>
     </div>
@@ -4764,6 +4762,9 @@ const icons = {
   }
   // Expose for use by other <script> blocks (e.g. live preview panel).
   try { window.renderMarkdown = renderMarkdown; window.escHtml = esc; window.buildNestedToolCard = buildNestedToolCard; window.renderToolDetailHTML = renderToolDetailHTML; } catch(_) {}
+  // Node-graph panel lives in a separate <script> block; give it the same send()
+  // path the composer uses so a static workflow dispatches as a normal goal.
+  try { window.MuxSend = (t) => send(t); } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -6100,10 +6101,6 @@ const icons = {
       loadCatalogView('skills');
     } else if (currentTab === 'tools') {
       loadCatalogView('tools');
-    } else if (currentTab === 'flows') {
-      loadWorkflowsView();
-    } else if (currentTab === 'daemon') {
-      loadDaemonView();
     } else {
       loadFileList();
     }
@@ -6121,7 +6118,6 @@ const icons = {
 
   document.querySelectorAll('.sidebar-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      if (currentTab === 'flows' && tab.dataset.tab !== 'flows') stopWorkflowPoll();
       currentTab = tab.dataset.tab; currentPath = '';
       try { window.currentTab = currentTab; } catch(_) {}
       document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
@@ -6220,231 +6216,6 @@ const icons = {
         });
       });
     }
-  }
-
-  // --- Workflow graph (Flows tab) ---
-  // Mux's graph-engineering plane. Each run is a column of section nodes; every
-  // section holds its task nodes, so the DAG shape the engine declared is what you
-  // see. Polls only while the tab is open and something is still running.
-  let _wfTimer = null;
-  function stopWorkflowPoll() { if (_wfTimer) { clearInterval(_wfTimer); _wfTimer = null; } }
-
-  async function loadWorkflowsView() {
-    stopWorkflowPoll();
-    sidebarContent.innerHTML = '<div class="loading">Loading workflows\u2026</div>';
-    const draw = async () => {
-      if (currentTab !== 'flows') { stopWorkflowPoll(); return; }
-      let data;
-      try {
-        const r = await fetch(_apiUrl('/api/workflows'), { headers: { 'Accept': 'application/json' } });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        data = await r.json();
-      } catch (e) {
-        stopWorkflowPoll();
-        sidebarContent.innerHTML = '<div class="mux-cat-empty">Could not load workflows: ' + esc(e.message || String(e)) + '</div>';
-        return;
-      }
-      if (currentTab !== 'flows') { stopWorkflowPoll(); return; }
-      renderWorkflows(data);
-      // Idle runs need no polling; stop as soon as nothing is live.
-      if (!data.running && _wfTimer) stopWorkflowPoll();
-    };
-    await draw();
-    _wfTimer = setInterval(draw, 1500);
-  }
-
-  const WF_DOT = { done: 'ok', failed: 'err', running: 'run', cancelled: 'warn', pending: 'idle' };
-
-  function renderWorkflows(data) {
-    const runs = (data && data.items) || [];
-    const saved = (data && data.saved) || [];
-
-    // Preserve which nodes the user collapsed across the 1.5s repaint.
-    const collapsed = new Set();
-    sidebarContent.querySelectorAll('.wf-sec.is-collapsed').forEach(el => collapsed.add(el.dataset.k));
-
-    let html = '<div class="wf-root">';
-    if (!runs.length) {
-      html += '<div class="mux-cat-empty">No workflow runs yet. Start one with <code>/workflow</code>.</div>';
-    }
-
-    for (const run of runs) {
-      const done = run.sections.reduce((n, s) => n + s.tasks.filter(t => t.status === 'done').length, 0);
-      const total = run.sections.reduce((n, s) => n + s.tasks.length, 0);
-      const pct = total ? Math.round((done / total) * 100) : 0;
-      html +=
-        '<div class="wf-run wf-' + esc(run.state) + '">' +
-          '<div class="wf-run-head">' +
-            '<span class="wf-dot ' + (WF_DOT[run.state] || 'idle') + '"></span>' +
-            '<span class="wf-run-name">' + esc(run.name || run.id) + '</span>' +
-            '<span class="wf-chip">' + esc(run.mode) + '</span>' +
-            '<span class="wf-spacer"></span>' +
-            '<span class="wf-count">' + done + '/' + total + '</span>' +
-            (run.state === 'running'
-              ? '<button class="wf-cancel" type="button" data-id="' + esc(run.id) + '">Cancel</button>'
-              : '<span class="wf-state">' + esc(run.state) + '</span>') +
-          '</div>' +
-          '<div class="wf-bar"><span style="width:' + pct + '%"></span></div>';
-
-      if (run.error) html += '<div class="wf-err">' + esc(run.error) + '</div>';
-
-      // Sections are graph nodes; the connector rail implies edge order.
-      for (let si = 0; si < run.sections.length; si++) {
-        const sec = run.sections[si];
-        const key = run.id + ':' + si;
-        const sDone = sec.tasks.filter(t => t.status === 'done').length;
-        const sRun = sec.tasks.some(t => t.status === 'running');
-        const sFail = sec.tasks.some(t => t.status === 'failed');
-        const sState = sFail ? 'err' : (sRun ? 'run' : (sDone === sec.tasks.length && sec.tasks.length ? 'ok' : 'idle'));
-        html +=
-          '<div class="wf-sec' + (collapsed.has(key) ? ' is-collapsed' : '') + '" data-k="' + esc(key) + '">' +
-            '<div class="wf-sec-head">' +
-              '<span class="wf-chev">' + icons.chevronDown + '</span>' +
-              '<span class="wf-dot ' + sState + '"></span>' +
-              '<span class="wf-sec-name">' + esc(sec.name) + '</span>' +
-              '<span class="wf-spacer"></span>' +
-              '<span class="wf-count">' + sDone + '/' + sec.tasks.length + '</span>' +
-            '</div>' +
-            '<div class="wf-tasks">';
-        for (const t of sec.tasks) {
-          const meta = [];
-          if (t.agent) meta.push(esc(t.agent));
-          if (t.model) meta.push(esc(t.model));
-          if (t.secs != null) meta.push(t.secs + 's');
-          if (t.tools != null) meta.push(t.tools + ' tools');
-          if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
-          html +=
-            '<div class="wf-task wf-t-' + esc(t.status) + '">' +
-              '<span class="wf-dot ' + (WF_DOT[t.status] || 'idle') + '"></span>' +
-              '<div class="wf-task-body">' +
-                '<div class="wf-task-label">' + esc(t.label || t.id) + '</div>' +
-                (meta.length ? '<div class="wf-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
-                (t.detail ? '<div class="wf-task-detail">' + esc(t.detail) + '</div>' : '') +
-              '</div>' +
-            '</div>';
-        }
-        html += '</div></div>';
-      }
-
-      if (run.recent && run.recent.length) {
-        html += '<div class="wf-recent">' +
-          run.recent.slice(-4).map(l => '<div class="wf-recent-line">' + esc(l) + '</div>').join('') +
-        '</div>';
-      }
-      html += '</div>';
-    }
-
-    if (saved.length) {
-      html += '<div class="wf-saved"><div class="wf-saved-head">Saved definitions</div>' +
-        saved.map(s => '<div class="wf-saved-row"><span>' + esc(s) + '</span>' +
-          '<button class="wf-run-btn" type="button" data-name="' + esc(s) + '">Run</button></div>').join('') +
-        '</div>';
-    }
-    html += '</div>';
-    sidebarContent.innerHTML = html;
-
-    sidebarContent.querySelectorAll('.wf-sec-head').forEach(el => {
-      el.addEventListener('click', () => el.parentElement.classList.toggle('is-collapsed'));
-    });
-    sidebarContent.querySelectorAll('.wf-cancel').forEach(el => {
-      el.addEventListener('click', async () => {
-        el.disabled = true;
-        try {
-          await fetch(_apiUrl('/api/workflows/' + encodeURIComponent(el.dataset.id) + '/cancel'),
-                      { method: 'POST', headers: { 'Accept': 'application/json' } });
-        } catch (_) {}
-        loadWorkflowsView();
-      });
-    });
-    sidebarContent.querySelectorAll('.wf-run-btn').forEach(el => {
-      el.addEventListener('click', () => {
-        const cmd = '/workflow static ' + el.dataset.name;
-        try { _suppressUserEchoOnce.add(cmd); } catch (_) {}
-        send(cmd);
-      });
-    });
-  }
-
-  // --- Daemon / cron (Daemon tab) ---
-  async function loadDaemonView() {
-    sidebarContent.innerHTML = '<div class="loading">Loading daemon\u2026</div>';
-    let data;
-    try {
-      const r = await fetch(_apiUrl('/api/daemon'), { headers: { 'Accept': 'application/json' } });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      data = await r.json();
-    } catch (e) {
-      sidebarContent.innerHTML = '<div class="mux-cat-empty">Could not load daemon: ' + esc(e.message || String(e)) + '</div>';
-      return;
-    }
-    if (currentTab !== 'daemon') return;
-
-    const items = (data && data.items) || [];
-    let html =
-      '<div class="wf-root">' +
-        '<div class="dmn-head">' +
-          '<span class="wf-dot ' + (data.enabled ? 'run' : 'idle') + '"></span>' +
-          '<span class="dmn-title">Daemon</span>' +
-          '<span class="wf-spacer"></span>' +
-          '<button class="dmn-toggle" type="button">' + (data.enabled ? 'Disable' : 'Enable') + '</button>' +
-        '</div>';
-
-    if (!items.length) {
-      html += '<div class="mux-cat-empty">No triggers configured.</div>';
-    }
-    for (const t of items) {
-      const when = t.nextFire
-        ? new Date(t.nextFire).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-        : null;
-      const meta = [];
-      if (t.schedule) meta.push('<code>' + esc(t.schedule) + '</code>');
-      if (t.path) meta.push(esc(t.path));
-      if (t.check) meta.push(esc(t.check));
-      if (t.mode) meta.push(esc(t.mode));
-      if (t.agent) meta.push(esc(t.agent));
-      html +=
-        '<div class="dmn-row' + (t.enabled ? '' : ' is-off') + '">' +
-          '<div class="dmn-row-head">' +
-            '<span class="wf-dot ' + (t.enabled ? 'ok' : 'idle') + '"></span>' +
-            '<span class="dmn-id">' + esc(t.id) + '</span>' +
-            '<span class="wf-chip">' + esc(t.type) + '</span>' +
-            '<span class="wf-spacer"></span>' +
-            '<button class="dmn-trig" type="button" data-id="' + esc(t.id) + '" data-on="' + (t.enabled ? '1' : '0') + '">' +
-              (t.enabled ? 'Mute' : 'Unmute') + '</button>' +
-          '</div>' +
-          (meta.length ? '<div class="dmn-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
-          (t.goal ? '<div class="dmn-goal">' + esc(t.goal) + '</div>' : '') +
-          (when ? '<div class="dmn-next">next \u00b7 ' + esc(when) + '</div>' : '') +
-        '</div>';
-    }
-    html += '</div>';
-    sidebarContent.innerHTML = html;
-
-    const tog = sidebarContent.querySelector('.dmn-toggle');
-    if (tog) tog.addEventListener('click', async () => {
-      tog.disabled = true;
-      try {
-        await fetch(_apiUrl('/api/daemon'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-          body: JSON.stringify({ enabled: !data.enabled }),
-        });
-      } catch (_) {}
-      loadDaemonView();
-    });
-    sidebarContent.querySelectorAll('.dmn-trig').forEach(el => {
-      el.addEventListener('click', async () => {
-        el.disabled = true;
-        try {
-          await fetch(_apiUrl('/api/daemon/' + encodeURIComponent(el.dataset.id) + '/toggle'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-            body: JSON.stringify({ enabled: el.dataset.on !== '1' }),
-          });
-        } catch (_) {}
-        loadDaemonView();
-      });
-    });
   }
 
   async function loadFileList(subpath = '') {
@@ -7207,35 +6978,8 @@ const icons = {
       /* Container queries supported via the sidebar host */
       #sidebarContent { container-type: inline-size; container-name: muxSidebar; }
 
-      /* -- Workflow graph (Flows) + Daemon --
-         Mux's graph plane rendered as nested nodes: a run node holds section
-         nodes, each section holds task nodes. Depth is carried by a connector
-         rail (a 1px neutral guide, NOT an accent bookmark stripe) so the DAG
-         shape reads at a glance without colouring the chrome. */
-      .wf-root { padding: 8px; display: flex; flex-direction: column; gap: 10px; }
-
-      .wf-run {
-        border: 1px solid var(--border, rgba(255,255,255,.10));
-        border-radius: 8px;
-        background: var(--bg-card, rgba(24,24,27,.5));
-        overflow: hidden;
-      }
-      .wf-run-head {
-        display: flex; align-items: center; gap: 8px;
-        padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1));
-      }
-      .wf-run-name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wf-spacer { flex: 1 1 auto; }
-      .wf-count { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(11px * var(--ui-font-scale, 1)); }
-      .wf-state { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); text-transform: capitalize; }
-      .wf-chip {
-        flex: 0 0 auto; padding: 1px 6px; border-radius: 4px;
-        background: rgba(127,127,127,0.14); color: var(--muted);
-        font-size: calc(9.5px * var(--ui-font-scale, 1));
-        font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
-      }
-
-      /* Status dots: the only place colour is used, so state reads instantly. */
+      /* Status dots shared by the node-graph Flows lane: the only place colour is
+         used in that surface, so state reads instantly without tinting chrome. */
       .wf-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--muted, #71717a); }
       .wf-dot.idle { background: rgba(161,161,170,.35); }
       .wf-dot.ok   { background: var(--green, #10b981); }
@@ -7244,122 +6988,6 @@ const icons = {
       .wf-dot.run  { background: var(--amber, #f59e0b); animation: wf-pulse 1.4s ease-in-out infinite; }
       @keyframes wf-pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
       @media (prefers-reduced-motion: reduce) { .wf-dot.run { animation: none; } }
-
-      .wf-bar { height: 2px; background: rgba(127,127,127,.16); }
-      .wf-bar > span { display: block; height: 100%; background: var(--green, #10b981); transition: width .3s ease; }
-      .wf-run.wf-failed .wf-bar > span { background: var(--red, #ef4444); }
-      .wf-err {
-        padding: 6px 10px; color: var(--red, #ef4444);
-        font-size: calc(11px * var(--ui-font-scale, 1));
-      }
-
-      /* Section node: indented under the run and joined by a neutral rail. */
-      .wf-sec { margin: 6px 0 6px 16px; padding-left: 10px; border-left: 1px solid rgba(127,127,127,.18); }
-      .wf-sec-head {
-        display: flex; align-items: center; gap: 7px;
-        padding: 4px 6px; cursor: pointer; user-select: none; border-radius: 5px;
-        font-size: calc(11.5px * var(--ui-font-scale, 1));
-      }
-      .wf-sec-head:hover { background: rgba(255,255,255,.03); }
-      .wf-sec-name { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .wf-chev { display: inline-flex; color: var(--muted); transition: transform .15s ease; }
-      .wf-sec.is-collapsed .wf-chev { transform: rotate(-90deg); }
-      .wf-sec.is-collapsed .wf-tasks { display: none; }
-
-      /* Task node: the leaf. */
-      .wf-task {
-        display: flex; align-items: flex-start; gap: 7px;
-        padding: 5px 6px 5px 8px; margin-left: 6px;
-        border-left: 1px solid rgba(127,127,127,.12);
-      }
-      .wf-task-body { min-width: 0; flex: 1 1 auto; }
-      .wf-task .wf-dot { margin-top: 4px; }
-      .wf-task-label {
-        color: var(--text); font-size: calc(11.5px * var(--ui-font-scale, 1));
-        line-height: 1.4; word-break: break-word;
-      }
-      .wf-task.wf-t-pending .wf-task-label { color: var(--muted); }
-      .wf-task.wf-t-done .wf-task-label { opacity: .75; }
-      .wf-task-meta, .wf-task-detail {
-        color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
-        margin-top: 1px; word-break: break-word;
-      }
-      .wf-task-meta { font-family: var(--font-mono, monospace); }
-
-      .wf-recent {
-        border-top: 1px solid rgba(127,127,127,.12);
-        padding: 5px 10px; color: var(--muted);
-        font-family: var(--font-mono, monospace);
-        font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.5;
-      }
-      .wf-recent-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-      .wf-cancel, .wf-run-btn, .dmn-toggle, .dmn-trig {
-        background: var(--bg-input, rgba(255,255,255,.04));
-        border: 1px solid var(--border, rgba(255,255,255,.10));
-        border-radius: 5px; color: var(--text); cursor: pointer;
-        padding: 2px 8px; font-family: inherit;
-        font-size: calc(10.5px * var(--ui-font-scale, 1));
-      }
-      .wf-cancel:hover, .wf-run-btn:hover, .dmn-toggle:hover, .dmn-trig:hover {
-        border-color: var(--accent, #64b4dc); background: rgba(var(--accent-rgb, 100,180,220), .12);
-      }
-      .wf-cancel[disabled], .dmn-toggle[disabled], .dmn-trig[disabled] { opacity: .5; cursor: default; }
-
-      .wf-saved {
-        border: 1px solid var(--border, rgba(255,255,255,.10));
-        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
-        overflow: hidden;
-      }
-      .wf-saved-head {
-        padding: 7px 10px; color: var(--muted);
-        font-size: calc(10.5px * var(--ui-font-scale, 1));
-        font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-        border-bottom: 1px solid rgba(127,127,127,.12);
-      }
-      .wf-saved-row {
-        display: flex; align-items: center; justify-content: space-between; gap: 8px;
-        padding: 6px 10px; font-size: calc(11.5px * var(--ui-font-scale, 1));
-        color: var(--text);
-      }
-      .wf-saved-row + .wf-saved-row { border-top: 1px solid rgba(127,127,127,.08); }
-
-      /* Daemon rows reuse the same node vocabulary. */
-      .dmn-head {
-        display: flex; align-items: center; gap: 8px;
-        padding: 8px 10px; border: 1px solid var(--border, rgba(255,255,255,.10));
-        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
-      }
-      .dmn-title {
-        font-weight: 700; color: var(--text); letter-spacing: .05em; text-transform: uppercase;
-        font-size: calc(11px * var(--ui-font-scale, 1));
-      }
-      .dmn-row {
-        border: 1px solid var(--border, rgba(255,255,255,.10));
-        border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
-        padding: 7px 10px 8px;
-      }
-      .dmn-row.is-off { opacity: .55; }
-      .dmn-row-head { display: flex; align-items: center; gap: 8px; }
-      .dmn-id {
-        font-weight: 600; color: var(--text); font-family: var(--font-mono, monospace);
-        font-size: calc(11.5px * var(--ui-font-scale, 1));
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      }
-      .dmn-meta, .dmn-next {
-        color: var(--muted); margin-top: 3px;
-        font-size: calc(10.5px * var(--ui-font-scale, 1)); word-break: break-word;
-      }
-      .dmn-meta code {
-        font-family: var(--font-mono, monospace);
-        background: rgba(127,127,127,.14); padding: 0 4px; border-radius: 3px;
-      }
-      .dmn-goal {
-        color: var(--text); opacity: .8; margin-top: 4px;
-        font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45;
-        word-break: break-word;
-      }
-      .dmn-next { font-family: var(--font-mono, monospace); }
 
       /* ── Skills / Tools catalog tabs ── */
       .mux-cat-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
@@ -10477,6 +10105,107 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-dl-body::-webkit-scrollbar-track { background: transparent; }
 .mng-dl-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
 .mng-dl-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+/* -- Flows lane (workflows + schedules) --
+   Same docked-lane shape as the Daemon Activity lane so the panel has one
+   consistent surface vocabulary. Depth is carried by a neutral connector rail,
+   never an accent stripe. */
+.mng-flows-lane {
+  border-top: 1px solid var(--border, rgba(255,255,255,.10));
+  background: var(--bg, #0a0a0a);
+  display: flex; flex-direction: column;
+  flex: 0 0 auto; max-height: 46%; min-height: 190px;
+}
+.mng-flows-lane[hidden] { display: none; }
+.mng-flows-tabs { display: inline-flex; gap: 2px; margin-left: 10px; }
+.mng-flows-tab {
+  background: transparent; border: none; cursor: pointer;
+  color: var(--muted); padding: 3px 9px; border-radius: 5px;
+  font-family: inherit; font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.mng-flows-tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+.mng-flows-tab.is-on { color: var(--text); background: rgba(var(--accent-rgb, 100,180,220), .14); font-weight: 600; }
+
+#mngFlowsBody { display: flex; flex-direction: column; gap: 6px; }
+.mng-fl-empty { color: var(--muted); font-size: calc(11.5px * var(--ui-font-scale, 1)); padding: 10px 4px; }
+.mng-fl-spacer { flex: 1 1 auto; }
+.mng-fl-count { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.mng-fl-state { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); text-transform: capitalize; }
+.mng-fl-name { font-weight: 600; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mng-fl-name.mono { font-family: var(--font-mono, monospace); font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.mng-fl-chip {
+  flex: 0 0 auto; padding: 1px 6px; border-radius: 4px;
+  background: rgba(127,127,127,.16); color: var(--muted);
+  font-size: calc(9px * var(--ui-font-scale, 1));
+  font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+
+.mng-fl-run, .mng-fl-trig, .mng-fl-dhead, .mng-fl-saved {
+  border: 1px solid var(--border, rgba(255,255,255,.10));
+  border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
+  overflow: hidden;
+}
+.mng-fl-trig { padding: 7px 10px 8px; }
+.mng-fl-trig.is-off { opacity: .55; }
+.mng-fl-dhead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.mng-fl-run-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.mng-fl-trig .mng-fl-run-head { padding: 0; }
+.mng-fl-bar { height: 2px; background: rgba(127,127,127,.16); }
+.mng-fl-bar > span { display: block; height: 100%; background: var(--green, #10b981); transition: width .3s ease; }
+.mng-fl-run.wf-failed .mng-fl-bar > span { background: var(--red, #ef4444); }
+.mng-fl-err { padding: 5px 10px; color: var(--red, #ef4444); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+
+.mng-fl-sec { margin: 5px 0 5px 16px; padding-left: 10px; border-left: 1px solid rgba(127,127,127,.18); }
+.mng-fl-sec-head { display: flex; align-items: center; gap: 7px; padding: 3px 4px; }
+.mng-fl-sec-name { font-weight: 600; color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); }
+.mng-fl-task { display: flex; align-items: flex-start; gap: 7px; padding: 4px 4px 4px 8px; margin-left: 6px; border-left: 1px solid rgba(127,127,127,.12); }
+.mng-fl-task .wf-dot { margin-top: 4px; }
+.mng-fl-task-body { min-width: 0; flex: 1 1 auto; }
+.mng-fl-task-label { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.4; word-break: break-word; }
+.mng-fl-task-meta { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); margin-top: 1px; font-family: var(--font-mono, monospace); word-break: break-word; }
+.mng-fl-task-meta code { background: rgba(127,127,127,.14); padding: 0 4px; border-radius: 3px; }
+.mng-fl-goal { color: var(--text); opacity: .8; margin-top: 4px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.45; word-break: break-word; }
+.mng-fl-saved { padding: 6px 10px; }
+.mng-fl-saved h5 { margin: 0 0 4px; color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); text-transform: uppercase; letter-spacing: .07em; }
+.mng-fl-saved-row { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1)); padding: 2px 0; }
+.mng-fl-del { color: var(--muted); }
+.mng-fl-del:hover { color: var(--red, #ef4444); border-color: var(--red, #ef4444); }
+
+/* Composer: creation forms for workflows and triggers. */
+.mng-flows-compose {
+  flex: 0 0 auto; max-height: 60%; overflow-y: auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10));
+  background: var(--bg-card, rgba(24,24,27,.5));
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.mng-flows-compose[hidden] { display: none; }
+.mng-flows-compose::-webkit-scrollbar { width: 4px; }
+.mng-flows-compose::-webkit-scrollbar-track { background: transparent; }
+.mng-flows-compose::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-fl-form { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.mng-fl-form-head { color: var(--text); font-weight: 600; font-size: calc(11.5px * var(--ui-font-scale, 1)); }
+.mng-fl-lbl {
+  display: flex; flex-direction: column; gap: 3px; flex: 1 1 auto; min-width: 0;
+  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+.mng-fl-lbl[hidden] { display: none; }
+.mng-fl-hint { color: var(--muted); opacity: .7; font-family: var(--font-mono, monospace); font-size: calc(9.5px * var(--ui-font-scale, 1)); }
+.mng-fl-form textarea.mng-input { resize: vertical; font-family: var(--font-sans, system-ui); line-height: 1.45; }
+.mng-fl-seg { display: inline-flex; gap: 2px; background: rgba(127,127,127,.10); padding: 2px; border-radius: 6px; align-self: flex-start; }
+.mng-fl-seg-btn {
+  background: transparent; border: none; cursor: pointer; color: var(--muted);
+  padding: 3px 12px; border-radius: 4px; font-family: inherit;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+.mng-fl-seg-btn:hover { color: var(--text); }
+.mng-fl-seg-btn.is-on { background: var(--bg-input, rgba(255,255,255,.06)); color: var(--text); font-weight: 600; }
+.mng-fl-status { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); min-height: 1em; }
+.mng-fl-status:empty { display: none; }
+.mng-fl-status.is-err { color: var(--red, #ef4444); }
+#mngFlowsBody::-webkit-scrollbar { width: 4px; }
+#mngFlowsBody::-webkit-scrollbar-track { background: transparent; }
+#mngFlowsBody::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+#mngFlowsBody:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
 .mng-daemon-lane-body::-webkit-scrollbar { width: 4px; }
 .mng-daemon-lane-body::-webkit-scrollbar-track { background: transparent; }
 .mng-daemon-lane-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
@@ -10905,6 +10634,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     <button class="mng-btn" id="mngBtnAdd" title="Add a node">+ Add</button>
     <button class="mng-btn" id="mngBtnLayout" title="Auto-layout">Layout</button>
     <button class="mng-btn" id="mngBtnCenter" title="Center view">Center</button>
+    <button class="mng-btn" id="mngBtnFlows" title="Workflows &amp; schedules">◱ Flows</button>
     <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Daemon activity">⚙ Daemon <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
     <button class="mng-btn" id="mngBtnMax" title="Maximize">⛶</button>
     <button class="mng-btn" id="mngBtnClose" title="Close">×</button>
@@ -10932,6 +10662,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       <!-- Daemon activity lane: collapsed per-trigger rows for background daemon
            goals, kept out of the main viewport. Populated via window.MuxDaemonLane
            from origin:'daemon' WS frames. -->
+      <!-- Flows lane: the scheduling/graph plane. Two sub-views (Workflows and
+           Schedules) share one lane so the panel keeps a single docked surface,
+           mirroring how the Daemon Activity lane behaves. Both can CREATE, not
+           just visualize: the composers below post to the runtime API. -->
+      <div class="mng-flows-lane" id="mngFlowsLane" hidden>
+        <div class="mng-daemon-lane-bar">
+          <span class="mng-daemon-lane-title">Flows</span>
+          <span class="mng-flows-tabs">
+            <button class="mng-flows-tab is-on" id="mngFlowsTabWf" type="button">Workflows</button>
+            <button class="mng-flows-tab" id="mngFlowsTabCron" type="button">Schedules</button>
+          </span>
+          <span class="mng-daemon-lane-spacer"></span>
+          <button class="mng-btn" id="mngFlowsNew" title="Create">+ New</button>
+          <button class="mng-btn" id="mngFlowsRefresh" title="Refresh">↻</button>
+          <button class="mng-btn" id="mngFlowsClose" title="Hide">×</button>
+        </div>
+        <div class="mng-flows-compose" id="mngFlowsCompose" hidden></div>
+        <div class="mng-daemon-lane-body" id="mngFlowsBody"></div>
+      </div>
       <div class="mng-daemon-lane" id="mngDaemonLane" hidden>
         <div class="mng-daemon-lane-bar">
           <span class="mng-daemon-lane-title">Daemon Activity</span>
@@ -12555,6 +12304,392 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     return { push, clearFinished, show, hide };
   })();
   window.MuxDaemonLane = MuxDaemonLane;
+
+
+  // -- Flows lane: workflow runs + daemon schedules, with creation --
+  // Lives in the node graph panel because this IS the graph plane: runs are
+  // node trees and triggers are the scheduled entry points into them. Mirrors
+  // MuxDaemonLane's shape (lane + bar + body) so both docked surfaces behave
+  // identically. Everything here drives the runtime API -- no slash commands.
+  const MuxFlows = (function(){
+    let view = 'wf';          // 'wf' | 'cron'
+    let timer = null;
+    let composing = null;     // null | 'wf' | 'cron'
+
+    function els(){
+      return {
+        lane:    document.getElementById('mngFlowsLane'),
+        body:    document.getElementById('mngFlowsBody'),
+        compose: document.getElementById('mngFlowsCompose'),
+        tabWf:   document.getElementById('mngFlowsTabWf'),
+        tabCron: document.getElementById('mngFlowsTabCron'),
+      };
+    }
+    function api(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+    function esc(s){
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    async function jfetch(path, opts){
+      const r = await fetch(api(path), Object.assign({
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      }, opts || {}));
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+      return data;
+    }
+
+    const DOT = { done:'ok', failed:'err', running:'run', cancelled:'warn', pending:'idle' };
+
+    // ---- workflow runs ----
+    function runHtml(run){
+      const tasks = run.sections.reduce((a,s) => a.concat(s.tasks), []);
+      const done = tasks.filter(t => t.status === 'done').length;
+      const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
+      let h =
+        '<div class="mng-fl-run wf-' + esc(run.state) + '">' +
+          '<div class="mng-fl-run-head">' +
+            '<span class="wf-dot ' + (DOT[run.state] || 'idle') + '"></span>' +
+            '<span class="mng-fl-name">' + esc(run.name || run.id) + '</span>' +
+            '<span class="mng-fl-chip">' + esc(run.mode) + '</span>' +
+            '<span class="mng-fl-spacer"></span>' +
+            '<span class="mng-fl-count">' + done + '/' + tasks.length + '</span>' +
+            (run.state === 'running'
+              ? '<button class="mng-btn mng-fl-cancel" data-id="' + esc(run.id) + '">Cancel</button>'
+              : '<span class="mng-fl-state">' + esc(run.state) + '</span>') +
+          '</div>' +
+          '<div class="mng-fl-bar"><span style="width:' + pct + '%"></span></div>';
+      if (run.error) h += '<div class="mng-fl-err">' + esc(run.error) + '</div>';
+      for (const sec of run.sections){
+        const sd = sec.tasks.filter(t => t.status === 'done').length;
+        const st = sec.tasks.some(t => t.status === 'failed') ? 'err'
+                 : sec.tasks.some(t => t.status === 'running') ? 'run'
+                 : (sec.tasks.length && sd === sec.tasks.length) ? 'ok' : 'idle';
+        h += '<div class="mng-fl-sec">' +
+               '<div class="mng-fl-sec-head">' +
+                 '<span class="wf-dot ' + st + '"></span>' +
+                 '<span class="mng-fl-sec-name">' + esc(sec.name) + '</span>' +
+                 '<span class="mng-fl-spacer"></span>' +
+                 '<span class="mng-fl-count">' + sd + '/' + sec.tasks.length + '</span>' +
+               '</div>';
+        for (const t of sec.tasks){
+          const meta = [];
+          if (t.agent) meta.push(esc(t.agent));
+          if (t.model) meta.push(esc(t.model));
+          if (t.secs != null) meta.push(t.secs + 's');
+          if (t.tools != null) meta.push(t.tools + ' tools');
+          if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
+          h += '<div class="mng-fl-task">' +
+                 '<span class="wf-dot ' + (DOT[t.status] || 'idle') + '"></span>' +
+                 '<div class="mng-fl-task-body">' +
+                   '<div class="mng-fl-task-label">' + esc(t.label || t.id) + '</div>' +
+                   (meta.length ? '<div class="mng-fl-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
+                   (t.detail ? '<div class="mng-fl-task-meta">' + esc(t.detail) + '</div>' : '') +
+                 '</div>' +
+               '</div>';
+        }
+        h += '</div>';
+      }
+      return h + '</div>';
+    }
+
+    async function drawWorkflows(){
+      const { body } = els(); if (!body) return;
+      let data;
+      try { data = await jfetch('/api/workflows'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load workflows: ' + esc(e.message) + '</div>'; return; }
+      if (view !== 'wf') return;
+
+      let h = '';
+      if (!data.items.length) {
+        h += '<div class="mng-fl-empty">No workflow runs. Use <strong>+ New</strong> to start one.</div>';
+      } else {
+        h += data.items.map(runHtml).join('');
+      }
+      if (data.saved && data.saved.length) {
+        h += '<div class="mng-fl-saved"><h5>Saved definitions</h5>' +
+             data.saved.map(s => '<div class="mng-fl-saved-row"><span>' + esc(s) + '</span></div>').join('') +
+             '</div>';
+      }
+      body.innerHTML = h;
+      body.querySelectorAll('.mng-fl-cancel').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/cancel', { method:'POST', body:'{}' }); }
+          catch (_) {}
+          drawWorkflows();
+        });
+      });
+      // Poll only while something is live.
+      if (data.running && !timer) timer = setInterval(() => { if (view === 'wf') drawWorkflows(); }, 1500);
+      if (!data.running && timer) { clearInterval(timer); timer = null; }
+    }
+
+    // ---- daemon schedules ----
+    async function drawCron(){
+      const { body } = els(); if (!body) return;
+      let data;
+      try { data = await jfetch('/api/daemon'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load daemon: ' + esc(e.message) + '</div>'; return; }
+      if (view !== 'cron') return;
+
+      let h =
+        '<div class="mng-fl-dhead">' +
+          '<span class="wf-dot ' + (data.enabled ? 'run' : 'idle') + '"></span>' +
+          '<span class="mng-fl-name">Daemon ' + (data.enabled ? 'running' : 'stopped') + '</span>' +
+          '<span class="mng-fl-spacer"></span>' +
+          '<button class="mng-btn" id="mngFlDaemonToggle">' + (data.enabled ? 'Stop' : 'Start') + '</button>' +
+        '</div>';
+
+      if (!data.items.length) {
+        h += '<div class="mng-fl-empty">No triggers. Use <strong>+ New</strong> to add a schedule.</div>';
+      }
+      for (const t of data.items){
+        const meta = [];
+        if (t.schedule) meta.push('<code>' + esc(t.schedule) + '</code>');
+        if (t.path) meta.push(esc(t.path));
+        if (t.check) meta.push(esc(t.check));
+        if (t.mode) meta.push(esc(t.mode));
+        if (t.agent) meta.push(esc(t.agent));
+        const when = t.nextFire
+          ? new Date(t.nextFire).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
+          : null;
+        h += '<div class="mng-fl-trig' + (t.enabled ? '' : ' is-off') + '">' +
+               '<div class="mng-fl-run-head">' +
+                 '<span class="wf-dot ' + (t.enabled ? 'ok' : 'idle') + '"></span>' +
+                 '<span class="mng-fl-name mono">' + esc(t.id) + '</span>' +
+                 '<span class="mng-fl-chip">' + esc(t.type) + '</span>' +
+                 '<span class="mng-fl-spacer"></span>' +
+                 '<button class="mng-btn mng-fl-mute" data-id="' + esc(t.id) + '" data-on="' + (t.enabled?'1':'0') + '">' +
+                   (t.enabled ? 'Mute' : 'Unmute') + '</button>' +
+                 '<button class="mng-btn mng-fl-del" data-id="' + esc(t.id) + '" title="Delete trigger">\u00d7</button>' +
+               '</div>' +
+               (meta.length ? '<div class="mng-fl-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
+               (t.goal ? '<div class="mng-fl-goal">' + esc(t.goal) + '</div>' : '') +
+               (when ? '<div class="mng-fl-task-meta">next \u00b7 ' + esc(when) + '</div>' : '') +
+             '</div>';
+      }
+      body.innerHTML = h;
+
+      const tg = document.getElementById('mngFlDaemonToggle');
+      if (tg) tg.addEventListener('click', async () => {
+        tg.disabled = true;
+        try { await jfetch('/api/daemon', { method:'POST', body: JSON.stringify({ enabled: !data.enabled }) }); }
+        catch (_) {}
+        drawCron();
+      });
+      body.querySelectorAll('.mng-fl-mute').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          try { await jfetch('/api/daemon/' + encodeURIComponent(b.dataset.id) + '/toggle',
+                             { method:'POST', body: JSON.stringify({ enabled: b.dataset.on !== '1' }) }); }
+          catch (_) {}
+          drawCron();
+        });
+      });
+      body.querySelectorAll('.mng-fl-del').forEach(b => {
+        b.addEventListener('click', async () => {
+          // Deleting rewrites Config.json, so confirm rather than silently mutate.
+          if (!window.confirm('Delete trigger "' + b.dataset.id + '"? This rewrites Config.json.')) return;
+          b.disabled = true;
+          try { await jfetch('/api/daemon/' + encodeURIComponent(b.dataset.id), { method:'DELETE' }); }
+          catch (e) { window.alert('Could not delete: ' + e.message); }
+          drawCron();
+        });
+      });
+    }
+
+    // ---- composers ----
+    function closeCompose(){
+      const { compose } = els();
+      composing = null;
+      if (compose) { compose.hidden = true; compose.innerHTML = ''; }
+    }
+
+    function openCompose(){
+      const { compose } = els(); if (!compose) return;
+      if (composing) { closeCompose(); return; }
+      composing = view;
+      compose.hidden = false;
+      compose.innerHTML = (view === 'wf') ? wfFormHtml() : cronFormHtml();
+      if (view === 'wf') wireWfForm(compose); else wireCronForm(compose);
+      const first = compose.querySelector('input,textarea,select');
+      if (first) first.focus();
+    }
+
+    function wfFormHtml(){
+      return '' +
+        '<div class="mng-fl-form">' +
+          '<div class="mng-fl-form-head">New workflow</div>' +
+          '<label class="mng-fl-lbl">Name<input class="mng-input" data-f="name" placeholder="release-audit"></label>' +
+          '<label class="mng-fl-lbl">Goal' +
+            '<textarea class="mng-input mng-fl-goal-in" data-f="goal" rows="3" ' +
+              'placeholder="Audit the repo for unused dependencies and open a PR removing them."></textarea></label>' +
+          '<label class="mng-fl-lbl">Mode' +
+            '<select class="mng-select" data-f="mode">' +
+              '<option value="dynamic">dynamic \u2014 agent authors a driver script</option>' +
+              '<option value="static">static \u2014 run as an in-session goal</option>' +
+            '</select></label>' +
+          '<div class="mng-fl-status"></div>' +
+          '<div class="mng-row">' +
+            '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
+            '<button class="mng-btn mng-fl-submit" type="button">Start</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function wireWfForm(root){
+      const get = f => root.querySelector('[data-f="' + f + '"]');
+      const status = root.querySelector('.mng-fl-status');
+      root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
+      root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
+        const goal = get('goal').value.trim();
+        if (!goal) { status.textContent = 'A goal is required.'; status.className = 'mng-fl-status is-err'; return; }
+        const mode = get('mode').value;
+        e.target.disabled = true;
+        status.className = 'mng-fl-status';
+        status.textContent = mode === 'dynamic' ? 'Authoring driver script\u2026' : 'Dispatching\u2026';
+        try {
+          const res = await jfetch('/api/workflows', {
+            method: 'POST',
+            body: JSON.stringify({ name: get('name').value.trim(), goal, mode }),
+          });
+          // Static workflows execute in-session: hand the goal to the socket, which
+          // is exactly what the REPL does after its prompts.
+          if (res.dispatch === 'goal' && typeof window.MuxSend === 'function') window.MuxSend(goal);
+          closeCompose();
+          drawWorkflows();
+        } catch (err) {
+          e.target.disabled = false;
+          status.textContent = err.message;
+          status.className = 'mng-fl-status is-err';
+        }
+      });
+    }
+
+    function cronFormHtml(){
+      return '' +
+        '<div class="mng-fl-form">' +
+          '<div class="mng-fl-form-head">New trigger</div>' +
+          '<div class="mng-fl-seg" role="tablist">' +
+            '<button class="mng-fl-seg-btn is-on" data-t="cron">Cron</button>' +
+            '<button class="mng-fl-seg-btn" data-t="watch">Watch</button>' +
+            '<button class="mng-fl-seg-btn" data-t="status">Status</button>' +
+          '</div>' +
+          '<label class="mng-fl-lbl">Id<input class="mng-input" data-f="id" placeholder="nightly-audit"></label>' +
+          '<label class="mng-fl-lbl f-cron">Schedule ' +
+            '<span class="mng-fl-hint">min hour dom mon dow</span>' +
+            '<input class="mng-input" data-f="schedule" placeholder="0 3 * * *"></label>' +
+          '<label class="mng-fl-lbl f-watch" hidden>Path glob' +
+            '<input class="mng-input" data-f="path" placeholder="C:\\src\\**\\*.cs"></label>' +
+          '<label class="mng-fl-lbl f-status" hidden>Check ' +
+            '<span class="mng-fl-hint">http:// \u00b7 process:name \u00b7 tcp:host:port</span>' +
+            '<input class="mng-input" data-f="check" placeholder="https://example.com/health"></label>' +
+          '<label class="mng-fl-lbl f-goal">Goal' +
+            '<textarea class="mng-input" data-f="goal" rows="2" placeholder="Summarise what changed and post it."></textarea></label>' +
+          '<div class="mng-row">' +
+            '<label class="mng-fl-lbl">Mode' +
+              '<select class="mng-select" data-f="mode">' +
+                '<option value="agent">agent</option><option value="swarm">swarm</option><option value="pswarm">pswarm</option>' +
+              '</select></label>' +
+            '<label class="mng-fl-lbl f-status" hidden>Interval (s)' +
+              '<input class="mng-input" data-f="interval" type="number" min="5" value="30"></label>' +
+          '</div>' +
+          '<div class="mng-fl-status"></div>' +
+          '<div class="mng-row">' +
+            '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
+            '<button class="mng-btn mng-fl-submit" type="button">Create</button>' +
+          '</div>' +
+        '</div>';
+    }
+
+    function wireCronForm(root){
+      let type = 'cron';
+      const get = f => root.querySelector('[data-f="' + f + '"]');
+      const status = root.querySelector('.mng-fl-status');
+      // Only the fields the chosen trigger type actually uses stay visible; the
+      // API enforces the same per-type requirements server-side.
+      const applyType = () => {
+        root.querySelectorAll('.f-cron').forEach(el => el.hidden = type !== 'cron');
+        root.querySelectorAll('.f-watch').forEach(el => el.hidden = type !== 'watch');
+        root.querySelectorAll('.f-status').forEach(el => el.hidden = type !== 'status');
+        root.querySelectorAll('.f-goal').forEach(el => el.hidden = type === 'status');
+      };
+      root.querySelectorAll('.mng-fl-seg-btn').forEach(b => {
+        b.addEventListener('click', () => {
+          root.querySelectorAll('.mng-fl-seg-btn').forEach(x => x.classList.remove('is-on'));
+          b.classList.add('is-on');
+          type = b.dataset.t;
+          applyType();
+        });
+      });
+      applyType();
+
+      root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
+      root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
+        const payload = { id: get('id').value.trim(), type, mode: get('mode').value };
+        if (type === 'cron')   payload.schedule = get('schedule').value.trim();
+        if (type === 'watch')  payload.path = get('path').value.trim();
+        if (type === 'status') {
+          payload.check = get('check').value.trim();
+          const iv = parseInt(get('interval').value, 10);
+          if (iv > 0) payload.interval = iv;
+        }
+        if (type !== 'status') payload.goal = get('goal').value.trim();
+
+        e.target.disabled = true;
+        status.className = 'mng-fl-status';
+        status.textContent = 'Creating\u2026';
+        try {
+          await jfetch('/api/daemon/trigger', { method:'POST', body: JSON.stringify(payload) });
+          closeCompose();
+          drawCron();
+        } catch (err) {
+          e.target.disabled = false;
+          status.textContent = err.message;
+          status.className = 'mng-fl-status is-err';
+        }
+      });
+    }
+
+    // ---- lane plumbing ----
+    function draw(){ return view === 'wf' ? drawWorkflows() : drawCron(); }
+    function setView(v){
+      view = v;
+      const { tabWf, tabCron } = els();
+      if (tabWf) tabWf.classList.toggle('is-on', v === 'wf');
+      if (tabCron) tabCron.classList.toggle('is-on', v === 'cron');
+      if (composing) closeCompose();
+      if (timer) { clearInterval(timer); timer = null; }
+      draw();
+    }
+    function show(){ const { lane } = els(); if (lane) { lane.hidden = false; draw(); } }
+    function hide(){
+      const { lane } = els(); if (lane) lane.hidden = true;
+      if (timer) { clearInterval(timer); timer = null; }
+      closeCompose();
+    }
+    (function wire(){
+      const btn = document.getElementById('mngBtnFlows');
+      if (btn) btn.addEventListener('click', () => {
+        const { lane } = els(); if (!lane) return;
+        if (lane.hidden) show(); else hide();
+      });
+      const tw = document.getElementById('mngFlowsTabWf');
+      const tc = document.getElementById('mngFlowsTabCron');
+      if (tw) tw.addEventListener('click', () => setView('wf'));
+      if (tc) tc.addEventListener('click', () => setView('cron'));
+      const nw = document.getElementById('mngFlowsNew');
+      if (nw) nw.addEventListener('click', openCompose);
+      const rf = document.getElementById('mngFlowsRefresh');
+      if (rf) rf.addEventListener('click', draw);
+      const cx = document.getElementById('mngFlowsClose');
+      if (cx) cx.addEventListener('click', hide);
+    })();
+
+    return { show, hide, draw, setView };
+  })();
+  window.MuxFlows = MuxFlows;
 
   window.MuxNodeGraph = {
     open: openPanel,

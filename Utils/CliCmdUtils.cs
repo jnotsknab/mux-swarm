@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -629,7 +629,9 @@ public static class CliCmdUtils
 
     /// <summary>Client for authoring dynamic driver scripts: the single-agent model, else the
     /// Orchestrator's. Mirrors ResolveDecomposeClient's graceful-null contract.</summary>
-    private static (Microsoft.Extensions.AI.IChatClient? client, Microsoft.Extensions.AI.ChatOptions? opts) ResolveWorkflowAuthorClient()
+    /// <summary>Resolve the chat client used to author dynamic workflow driver scripts.
+    /// Internal so the serve-mode API can launch a run through the same path as /workflow.</summary>
+    internal static (Microsoft.Extensions.AI.IChatClient? client, Microsoft.Extensions.AI.ChatOptions? opts) ResolveWorkflowAuthorClient()
     {
         try
         {

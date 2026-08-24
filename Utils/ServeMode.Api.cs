@@ -28,6 +28,9 @@ namespace MuxSwarm.Utils;
 ///   GET  /api/daemon                 daemon state + trigger catalog with next fire times
 ///   POST /api/daemon                 { enabled } -> toggle the daemon
 ///   POST /api/daemon/{id}/toggle     enable/disable a single trigger
+///   POST /api/daemon/trigger         create a cron/watch/status trigger (persisted)
+///   DELETE /api/daemon/{id}          remove a trigger (persisted)
+///   POST /api/workflows              { name, goal, mode } -> launch a workflow run
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
@@ -61,6 +64,9 @@ public static partial class ServeMode
         app.MapGet("/api/daemon", HandleDaemon);
         app.MapPost("/api/daemon", HandleDaemonToggle);
         app.MapPost("/api/daemon/{id}/toggle", HandleTriggerToggle);
+        app.MapPost("/api/daemon/trigger", HandleTriggerCreate);
+        app.MapDelete("/api/daemon/{id}", HandleTriggerDelete);
+        app.MapPost("/api/workflows", HandleWorkflowStart);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
@@ -1023,6 +1029,235 @@ public static partial class ServeMode
         else DisabledTriggers.Add(trigger.Id);
 
         await WriteJson(context, 200, TriggerView(trigger));
+    }
+
+    /// <summary>
+    /// Persist the current in-memory daemon config back to Config.json. Trigger
+    /// create/delete are durable operations (unlike the session-scoped mute), so the
+    /// file is the source of truth and must be rewritten. Reads the file fresh and
+    /// replaces only the daemon block, so unrelated concurrent edits are preserved.
+    /// </summary>
+    private static async Task<string?> PersistDaemonAsync(CancellationToken ct)
+    {
+        try
+        {
+            var cfg = JsonSerializer.Deserialize<AppConfig>(
+                          await File.ReadAllTextAsync(PlatformContext.ConfigPath, ct), Setup.Setup.CfgSerialOpts)
+                      ?? new AppConfig();
+            cfg.Daemon = App.Config.Daemon;
+            await File.WriteAllTextAsync(PlatformContext.ConfigPath,
+                JsonSerializer.Serialize(cfg, Setup.Setup.CfgSerialOpts), ct);
+            return null;
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return ex.Message;
+        }
+    }
+
+    // POST /api/daemon/trigger
+    // body: { id, type, goal?, schedule?, path?, check?, command?, mode?, agent?, interval? }
+    // Creates a trigger and persists it. Validation mirrors what the daemon loop
+    // actually requires per type, so a trigger created here can never be inert.
+    private static async Task HandleTriggerCreate(HttpContext context)
+    {
+        JsonElement root;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            root = doc.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        string Str(string name) => root.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String
+            ? el.GetString()!.Trim() : "";
+
+        var id = Str("id");
+        var type = Str("type").ToLowerInvariant();
+
+        if (string.IsNullOrWhiteSpace(id))
+        {
+            await WriteJson(context, 400, new { error = "'id' is required" });
+            return;
+        }
+        // Ids address the trigger in URLs and log lanes; keep them boring.
+        if (!id.All(c => char.IsLetterOrDigit(c) || c is '-' or '_'))
+        {
+            await WriteJson(context, 400, new { error = "'id' may only contain letters, digits, '-' and '_'" });
+            return;
+        }
+
+        string[] known = ["cron", "watch", "status", "webhook"];
+        if (!known.Contains(type))
+        {
+            await WriteJson(context, 400, new { error = $"'type' must be one of: {string.Join(", ", known)}" });
+            return;
+        }
+
+        App.Config.Daemon ??= new DaemonConfig();
+        if (App.Config.Daemon.Triggers.Any(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase)))
+        {
+            await WriteJson(context, 409, new { error = $"A trigger named '{id}' already exists" });
+            return;
+        }
+
+        var trigger = new DaemonTrigger
+        {
+            Id = id,
+            Type = type,
+            Goal = Str("goal") is { Length: > 0 } g ? g : null,
+            Schedule = Str("schedule") is { Length: > 0 } s ? s : null,
+            Path = Str("path") is { Length: > 0 } p ? p : null,
+            Check = Str("check") is { Length: > 0 } c ? c : null,
+            Command = Str("command") is { Length: > 0 } cmd ? cmd : null,
+            Agent = Str("agent") is { Length: > 0 } a ? a : null,
+            Mode = Str("mode") is { Length: > 0 } m ? m : "agent",
+        };
+        if (root.TryGetProperty("interval", out var iv) && iv.TryGetUInt32(out var ivv) && ivv > 0)
+            trigger.Interval = ivv;
+
+        // Per-type requirements. Without these the daemon would register the trigger
+        // and then never be able to act on it.
+        switch (type)
+        {
+            case "cron":
+                if (string.IsNullOrWhiteSpace(trigger.Schedule))
+                {
+                    await WriteJson(context, 400, new { error = "cron triggers need a 'schedule'" });
+                    return;
+                }
+                if (CronExpression.Parse(trigger.Schedule!) is null)
+                {
+                    await WriteJson(context, 400, new { error = $"Unparseable cron schedule: {trigger.Schedule}" });
+                    return;
+                }
+                break;
+            case "watch":
+                if (string.IsNullOrWhiteSpace(trigger.Path))
+                {
+                    await WriteJson(context, 400, new { error = "watch triggers need a 'path' glob" });
+                    return;
+                }
+                break;
+            case "status":
+                if (string.IsNullOrWhiteSpace(trigger.Check))
+                {
+                    await WriteJson(context, 400, new { error = "status triggers need a 'check' (http://, process:, or tcp:)" });
+                    return;
+                }
+                break;
+        }
+
+        if (type is "cron" or "watch" && string.IsNullOrWhiteSpace(trigger.Goal))
+        {
+            await WriteJson(context, 400, new { error = $"{type} triggers need a 'goal'" });
+            return;
+        }
+
+        App.Config.Daemon.Triggers.Add(trigger);
+
+        if (await PersistDaemonAsync(context.RequestAborted) is { } err)
+        {
+            App.Config.Daemon.Triggers.Remove(trigger);   // keep memory and disk in step
+            await WriteJson(context, 500, new { error = "Could not write Config.json: " + err });
+            return;
+        }
+
+        await WriteJson(context, 201, TriggerView(trigger));
+    }
+
+    // DELETE /api/daemon/{id}
+    private static async Task HandleTriggerDelete(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        var trigger = (App.Config.Daemon?.Triggers ?? []).FirstOrDefault(t =>
+            string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase));
+        if (trigger is null)
+        {
+            await WriteJson(context, 404, new { error = $"No such trigger: {id}" });
+            return;
+        }
+
+        var index = App.Config.Daemon!.Triggers.IndexOf(trigger);
+        App.Config.Daemon.Triggers.Remove(trigger);
+
+        if (await PersistDaemonAsync(context.RequestAborted) is { } err)
+        {
+            App.Config.Daemon.Triggers.Insert(index, trigger);
+            await WriteJson(context, 500, new { error = "Could not write Config.json: " + err });
+            return;
+        }
+
+        DisabledTriggers.Remove(trigger.Id);
+        await WriteJson(context, 200, new { id = trigger.Id, deleted = true });
+    }
+
+    // POST /api/workflows   body: { name, goal, mode }
+    // Launches a workflow run without the interactive /workflow picker. Dynamic runs
+    // author + spawn a driver script; static runs are handed to the agent loop as a
+    // goal, which is what the REPL path does once its prompts are answered.
+    private static async Task HandleWorkflowStart(HttpContext context)
+    {
+        string name, goal, mode;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            name = doc.RootElement.TryGetProperty("name", out var n) ? (n.GetString() ?? "").Trim() : "";
+            goal = doc.RootElement.TryGetProperty("goal", out var g) ? (g.GetString() ?? "").Trim() : "";
+            mode = doc.RootElement.TryGetProperty("mode", out var m) ? (m.GetString() ?? "").Trim().ToLowerInvariant() : "dynamic";
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(goal))
+        {
+            await WriteJson(context, 400, new { error = "'goal' is required" });
+            return;
+        }
+        if (mode is not ("dynamic" or "static"))
+        {
+            await WriteJson(context, 400, new { error = "'mode' must be 'dynamic' or 'static'" });
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(name)) name = "workflow";
+
+        if (mode == "static")
+        {
+            // Static workflows run inside the agent loop; the web app drives that the
+            // same way it sends any other goal.
+            await WriteJson(context, 202, new
+            {
+                mode,
+                name,
+                dispatch = "goal",
+                message = "Static workflows run in-session; send the goal on the socket.",
+            });
+            return;
+        }
+
+        // Same authoring client the REPL path uses, so a run started from the web
+        // app is identical to one started with /workflow dynamic.
+        var (client, opts) = CliCmdUtils.ResolveWorkflowAuthorClient();
+        if (client is null)
+        {
+            await WriteJson(context, 503, new
+            {
+                error = "No model available to author the driver script (configure an Orchestrator/singleAgent model).",
+            });
+            return;
+        }
+
+        var result = await State.DynamicWorkflow.GenerateAndLaunchAsync(
+            name, goal, client, opts, context.RequestAborted);
+
+        await WriteJson(context, 202, new { mode, name, message = result });
     }
 
     // B5d -- GET /api/status
