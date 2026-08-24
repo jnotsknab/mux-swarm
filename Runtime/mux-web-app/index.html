@@ -9155,7 +9155,8 @@ const icons = {
     fontSans: 'IBM Plex Sans',
     customFonts: [],
     warnSessionSwitch: true,
-    editorTheme: 'auto'
+    editorTheme: 'auto',
+    flowsAutoActivity: true
   };
   function loadState(){
     try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
@@ -9230,6 +9231,7 @@ const icons = {
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
     b.dataset.toolGroupCollapseAt = String(state.toolGroupCollapseAt || 1);
     b.classList.toggle('hide-capability-hints', !!state.hideCapabilityHints);
+    b.dataset.flowsAutoActivity = state.flowsAutoActivity === false ? '0' : '1';
     b.dataset.showReasoning = state.showReasoning || 'show';
     b.classList.toggle('hide-reasoning', state.showReasoning === 'hide');
     b.dataset.reasoningCollapseAt = String(state.reasoningCollapseAt || 600);
@@ -9491,6 +9493,8 @@ const icons = {
         (v) => v + ' chars'),
       toggleRow('showTokens',       'Show tokens-in-context badge'),
       toggleRow('showSavedBanner',  'Show session-saved banner'),
+      toggleRow('flowsAutoActivity', 'Auto-open Activity on workflow start',
+        'When you start a workflow from the Flows panel, jump to Activity \u2192 Workflows so you see it run immediately. Off: stay on the current tab.'),
     ]);
     section('Paths & Privacy', [
       segRow('pathMode', 'Session path display',
@@ -10252,6 +10256,41 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-fl-view::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
 .mng-fl-view:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
 
+/* Activity view: its own two sub-tabs (Workflow runs / Daemon jobs), each its own
+   scroll body, so the run graphs and daemon output never share a surface. */
+.mng-fl-activity { padding: 0; overflow: hidden; }   /* the sub-bodies scroll, not this */
+.mng-act-subtabs { display: flex; gap: 2px; padding: 6px 8px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.08)); }
+.mng-act-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent; }
+.mng-act-body[hidden] { display: none; }
+.mng-act-body::-webkit-scrollbar { width: 4px; }
+.mng-act-body::-webkit-scrollbar-track { background: transparent; }
+.mng-act-body::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-act-body:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
+/* Collapsible + removable sub-panel chrome (saved defs, run/job cards, activity output).
+   A header strip carries a collapse chevron and a hide (x) button. */
+.mng-panelctl { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.mng-panelctl .mng-iconbtn {
+  background: transparent; border: none; cursor: pointer; color: var(--muted);
+  width: 20px; height: 20px; border-radius: 4px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: calc(12px * var(--ui-font-scale, 1)); padding: 0;
+}
+.mng-panelctl .mng-iconbtn:hover { color: var(--text); background: rgba(255,255,255,.06); }
+.mng-panelctl .mng-iconbtn.mng-hide:hover { color: var(--red, #ef4444); }
+.mng-collapse-chev { transition: transform .15s ease; display: inline-block; }
+.is-collapsed .mng-collapse-chev { transform: rotate(-90deg); }
+/* When collapsed, hide everything in the panel except its header row. */
+.mng-fl-run.is-collapsed > :not(.mng-wf-actions),
+.mng-fl-saved.is-collapsed > :not(.mng-fl-saved-head),
+.mng-dl-row.is-collapsed .mng-dl-body { display: none; }
+.mng-fl-saved-head { display: flex; align-items: center; gap: 6px; }
+.mng-fl-saved-head h5 { margin: 0; }
+
+
 /* Per-run action bar */
 .mng-wf-actions { display: flex; align-items: center; gap: 6px; padding: 5px 10px 8px; flex-wrap: wrap; }
 .mng-wf-actions .mng-btn { font-size: calc(10.5px * var(--ui-font-scale, 1)); padding: 3px 9px; }
@@ -10775,34 +10814,48 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       <!-- Daemon activity lane: collapsed per-trigger rows for background daemon
            goals, kept out of the main viewport. Populated via window.MuxDaemonLane
            from origin:'daemon' WS frames. -->
-      <!-- Flows lane: the scheduling/graph plane. Two sub-views (Workflows and
-           Schedules) share one lane so the panel keeps a single docked surface,
-           mirroring how the Daemon Activity lane behaves. Both can CREATE, not
-           just visualize: the composers below post to the runtime API. -->
+      <!-- Flows lane: three TOP-LEVEL tabs, each a fully separate embedded view
+           (full DOM swap, no shared containers):
+             • Workflows       — the workflows that are SET UP (saved definitions)
+             • Scheduled Tasks — the triggers that are SET UP (+ daemon on/off)
+             • Activity        — where everything RUNS/renders, with its own two
+                                  sub-tabs (Workflow runs / Daemon jobs).
+           Composers post to the runtime API. -->
       <div class="mng-flows-lane" id="mngFlowsLane" hidden>
         <div class="mng-daemon-lane-bar">
           <span class="mng-daemon-lane-title">Flows</span>
           <span class="mng-flows-tabs">
             <button class="mng-flows-tab is-on" id="mngFlowsTabWf" type="button">Workflows</button>
-            <button class="mng-flows-tab" id="mngFlowsTabCron" type="button">Schedules</button>
+            <button class="mng-flows-tab" id="mngFlowsTabCron" type="button">Scheduled Tasks</button>
             <button class="mng-flows-tab" id="mngFlowsTabAct" type="button">Activity
               <span class="mng-daemon-badge" id="mngFlowsActBadge" hidden>0</span></button>
           </span>
           <span class="mng-daemon-lane-spacer"></span>
           <button class="mng-btn" id="mngFlowsNew" title="Create">+ New</button>
-          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes" hidden>Clear</button>
-          <button class="mng-btn" id="mngFlowsRefresh" title="Refresh">↻</button>
-          <button class="mng-btn" id="mngFlowsClose" title="Hide">×</button>
+          <button class="mng-btn" id="mngDaemonClear" title="Clear finished output" hidden>Clear</button>
+          <button class="mng-btn" id="mngFlowsRefresh" title="Refresh">⟳</button>
+          <button class="mng-btn" id="mngFlowsClose" title="Hide">✕</button>
         </div>
         <div class="mng-flows-compose" id="mngFlowsCompose" hidden></div>
-        <!-- Mutually-exclusive VIEWS. Exactly one is visible at a time; each owns
-             its own scroll context so Workflows / Schedules / Activity never bleed
-             into one another (previous bug: two lane bodies shared flow + could
-             both show, producing the "lanes leak" + dead-space artifacts). -->
-        <div class="mng-fl-view" id="mngFlowsBody"></div>
+
+        <!-- (1) WORKFLOWS: only the workflows that are set up (saved definitions). -->
+        <div class="mng-fl-view" id="mngWfDefsView"></div>
+
+        <!-- (2) SCHEDULED TASKS: only the triggers that are set up + daemon toggle. -->
         <div class="mng-fl-view" id="mngSchedBody" hidden></div>
-        <!-- Live daemon goal activity. Same element MuxDaemonLane streams into. -->
-        <div class="mng-fl-view" id="mngDaemonLaneBody" hidden></div>
+
+        <!-- (3) ACTIVITY: the run/output plane, with its OWN two sub-tabs. -->
+        <div class="mng-fl-view mng-fl-activity" id="mngActivityView" hidden>
+          <div class="mng-act-subtabs">
+            <button class="mng-flows-tab is-on" id="mngActTabWf" type="button">Workflow runs</button>
+            <button class="mng-flows-tab" id="mngActTabDaemon" type="button">Daemon jobs
+              <span class="mng-daemon-badge" id="mngActDaemonBadge" hidden>0</span></button>
+          </div>
+          <!-- Activity → Workflow runs: live node graphs. -->
+          <div class="mng-act-body" id="mngActWfBody"></div>
+          <!-- Activity → Daemon jobs: the element MuxDaemonLane streams into. -->
+          <div class="mng-act-body" id="mngDaemonLaneBody" hidden></div>
+        </div>
       </div>
       <!-- Dynamic-workflow driver-script editor (Monaco with a textarea fallback). -->
       <div class="mng-script-modal" id="mngScriptModal">
@@ -12282,8 +12335,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         // Activity is a VIEW of the Flows lane now; there is no separate lane element.
         lane:  document.getElementById('mngFlowsLane'),
         body:  document.getElementById('mngDaemonLaneBody'),
-        badge: document.getElementById('mngDaemonBadge'),
-        tabBadge: document.getElementById('mngFlowsActBadge'),
+        badge: document.getElementById('mngActDaemonBadge'),   // Activity > Daemon sub-tab badge
+        tabBadge: document.getElementById('mngFlowsActBadge'),  // top-level Activity tab badge
+
       };
     }
     function refreshBadge(){
@@ -12297,7 +12351,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       }
     }
     // Reveal the Activity view; never force-opens the panel itself (non-invasive).
-    function show(){ try { window.MuxFlows && window.MuxFlows.show('act'); } catch (_) {} }
+    function show(){ try { window.MuxFlows && window.MuxFlows.showActivity && window.MuxFlows.showActivity('daemon'); } catch (_) {} }
     function ensureRow(lane, label){
       let r = rows.get(lane);
       if (r && r.el.isConnected) return r;
@@ -12311,9 +12365,20 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           '<span class="mng-dl-status"></span>' +
           '<span class="mng-dl-spacer"></span>' +
           '<span class="mng-dl-chev">\u25be</span>' +
+          '<span class="mng-panelctl">' +
+            '<button class="mng-iconbtn mng-hide mng-dl-hide" title="Remove this job">\u2715</button>' +
+          '</span>' +
         '</div>' +
         '<div class="mng-dl-body"></div>';
       el.querySelector('.mng-dl-head').addEventListener('click', () => el.classList.toggle('dl-collapsed'));
+      el.querySelector('.mng-dl-hide').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const laneKey = lane;
+        try { el.remove(); } catch(_){}
+        rows.delete(laneKey);
+        if (activeCount > 0 && !r._finished) { activeCount--; }
+        refreshBadge();
+      });
       el.querySelector('.mng-dl-label').textContent = label || lane;
       body.appendChild(el);
       r = { el, body: el.querySelector('.mng-dl-body'), statusEl: el.querySelector('.mng-dl-status'), text: '' };
@@ -12362,7 +12427,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const lane = String(ev.lane || 'daemon');
       const label = lane.replace(/^daemon:/, '');
       const r = ensureRow(lane, label); if (!r) return;
-      show();
+      // Do NOT force-open the panel on every frame -- the badge + start toast signal
+      // activity; yanking the user into the Daemon sub-tab mid-task is hostile.
       switch (ev.type) {
         case 'agent_turn_start':
           r._finished = false;
@@ -12447,20 +12513,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   // MuxDaemonLane's shape (lane + bar + body) so both docked surfaces behave
   // identically. Everything here drives the runtime API -- no slash commands.
   const MuxFlows = (function(){
-    let view = 'wf';          // 'wf' | 'cron' | 'act'
+    let view = 'wf';          // 'wf' | 'cron' | 'act' (top-level tabs)
+    let actView = 'wf';       // 'wf' | 'daemon' (Activity sub-tabs)
     let timer = null;
     let composing = null;     // null | 'wf' | 'cron'
 
     function els(){
       return {
         lane:    document.getElementById('mngFlowsLane'),
-        body:    document.getElementById('mngFlowsBody'),      // Workflows view
-        sched:   document.getElementById('mngSchedBody'),      // Schedules view (own scroll ctx)
+        wfdefs:  document.getElementById('mngWfDefsView'),   // (1) Workflows: saved defs
+        sched:   document.getElementById('mngSchedBody'),    // (2) Scheduled Tasks: triggers
+        activity:document.getElementById('mngActivityView'), // (3) Activity: run/output plane
+        actWf:   document.getElementById('mngActWfBody'),    //     Activity > Workflow runs
+        actDaemon:document.getElementById('mngDaemonLaneBody'), //  Activity > Daemon jobs
         compose: document.getElementById('mngFlowsCompose'),
         tabWf:   document.getElementById('mngFlowsTabWf'),
         tabCron: document.getElementById('mngFlowsTabCron'),
         tabAct:  document.getElementById('mngFlowsTabAct'),
-        act:     document.getElementById('mngDaemonLaneBody'), // Activity view
+        actTabWf: document.getElementById('mngActTabWf'),
+        actTabDaemon: document.getElementById('mngActTabDaemon'),
       };
     }
     function api(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
@@ -12539,9 +12610,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           '<button class="mng-btn mng-wf-save" data-id="' + esc(run.id) + '">Save</button>' +
           '<button class="mng-btn mng-wf-script" data-id="' + esc(run.id) + '">Script</button>';
       }
+      actions += '<span class="mng-panelctl">' +
+          '<button class="mng-iconbtn mng-run-collapse" data-id="' + esc(run.id) + '" title="Collapse">' + (collapsedRuns.has(run.id) ? '\u25b8' : '\u25be') + '</button>' +
+          '<button class="mng-iconbtn mng-hide mng-run-hide" data-id="' + esc(run.id) + '" title="Hide this run">\u2715</button>' +
+        '</span>';
       actions += '</div>';
 
-      let h = '<div class="mng-fl-run wf-' + esc(run.state) + '">' + actions +
+      const collapsed = collapsedRuns.has(run.id);
+      let h = '<div class="mng-fl-run wf-' + esc(run.state) + (collapsed ? ' is-collapsed' : '') + '">' + actions +
               '<div class="mng-fl-bar"><span style="width:' + pct + '%"></span></div>';
       if (run.error) h += '<div class="mng-fl-err">' + esc(run.error) + '</div>';
 
@@ -12576,95 +12652,135 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return h + '</div>';
     }
 
-    async function drawWorkflows(){
-      const { body } = els(); if (!body) return;
+    // Session-only dismiss sets: hide a run card or saved def until refresh (no disk delete).
+    const dismissedRuns = new Set();
+    const dismissedSaved = new Set();
+    const collapsedRuns = new Set();   // run ids whose graph is collapsed
+    const collapsedSaved = { v: false }; // saved-definitions panel collapse
+
+    // (1) WORKFLOWS TAB -- only the workflows that are SET UP (saved definitions).
+    async function drawWfDefs(){
+      const { wfdefs: body } = els(); if (!body) return;
       let data;
       try { data = await jfetch('/api/workflows'); }
       catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load workflows: ' + esc(e.message) + '</div>'; return; }
       if (view !== 'wf') return;
 
+      const saved = (data.saved || []).filter(s => !dismissedSaved.has(s));
       let h = '';
-      if (!data.items.length) {
-        h += '<div class="mng-fl-empty">No workflow runs. Use <strong>+ New</strong> to start one.</div>';
+      if (!saved.length) {
+        h += '<div class="mng-fl-empty">No saved workflows. Start one with <strong>+ New</strong>, then <strong>Save</strong> a run from Activity to reuse it here.</div>';
       } else {
-        h += data.items.map(runHtml).join('');
-      }
-      if (data.saved && data.saved.length) {
-        h += '<div class="mng-fl-saved"><h5>Saved definitions</h5>' +
-             data.saved.map(s => '<div class="mng-fl-saved-row">' +
-               '<span>' + esc(s) + '</span>' +
-               '<span class="mng-fl-spacer"></span>' +
-               '<button class="mng-btn mng-wf-runsaved" data-name="' + esc(s) + '">Run</button>' +
-             '</div>').join('') +
+        h += '<div class="mng-fl-saved' + (collapsedSaved.v ? ' is-collapsed' : '') + '">' +
+               '<div class="mng-fl-saved-head">' +
+                 '<span class="mng-collapse-chev">\u25be</span>' +
+                 '<h5>Saved definitions</h5>' +
+                 '<span class="mng-panelctl">' +
+                   '<button class="mng-iconbtn mng-saved-collapse" title="Collapse">' + (collapsedSaved.v ? '\u25b8' : '\u25be') + '</button>' +
+                 '</span>' +
+               '</div>' +
+               saved.map(s => '<div class="mng-fl-saved-row">' +
+                 '<span class="wf-dot idle"></span>' +
+                 '<span>' + esc(s) + '</span>' +
+                 '<span class="mng-fl-spacer"></span>' +
+                 '<button class="mng-btn mng-wf-runsaved" data-name="' + esc(s) + '">Run</button>' +
+                 '<span class="mng-panelctl">' +
+                   '<button class="mng-iconbtn mng-hide mng-saved-del" data-name="' + esc(s) + '" title="Delete saved workflow">\u2715</button>' +
+                 '</span>' +
+               '</div>').join('') +
              '</div>';
       }
       body.innerHTML = h;
 
-      body.querySelectorAll('.mng-fl-cancel').forEach(b => {
-        b.addEventListener('click', async () => {
-          b.disabled = true;
-          try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/cancel', { method:'POST', body:'{}' }); }
-          catch (_) {}
-          drawWorkflows();
-        });
-      });
-      // Re-run a dynamic run from its saved script.
-      body.querySelectorAll('.mng-wf-rerun').forEach(b => {
-        b.addEventListener('click', async () => {
-          b.disabled = true; b.textContent = 'Re-running\u2026';
-          try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/rerun', { method:'POST', body:'{}' }); setView('wf'); }
-          catch (e) { b.disabled = false; b.textContent = 'Re-run'; try { showToast && showToast('Re-run failed: ' + e.message); } catch(_){} }
-          drawWorkflows();
-        });
-      });
-      // Save a run as a reusable named definition.
-      body.querySelectorAll('.mng-wf-save').forEach(b => {
-        b.addEventListener('click', async () => {
-          const name = (window.prompt('Save this workflow as:', b.dataset.id.replace(/^\d{8}-\d{6}-/, '')) || '').trim();
-          if (!name) return;
-          b.disabled = true;
-          try { const r = await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/save', { method:'POST', body: JSON.stringify({ name }) });
-                try { showToast && showToast('Saved as ' + r.saved); } catch(_){} }
-          catch (e) { try { showToast && showToast('Save failed: ' + e.message); } catch(_){} }
-          b.disabled = false;
-          drawWorkflows();
-        });
-      });
-      // View / edit the driver script.
-      body.querySelectorAll('.mng-wf-script').forEach(b => {
-        b.addEventListener('click', () => openScriptEditor(b.dataset.id));
-      });
-      // Launch a saved definition.
-      body.querySelectorAll('.mng-wf-runsaved').forEach(b => {
-        b.addEventListener('click', async () => {
-          b.disabled = true; b.textContent = 'Running\u2026';
-          try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name) + '/run', { method:'POST', body:'{}' }); setView('wf'); }
-          catch (e) { try { showToast && showToast('Run failed: ' + e.message); } catch(_){} }
-          drawWorkflows();
-        });
-      });
-      // Task node: click to expand its captured output (fetched lazily, cached).
+      const savedPanel = body.querySelector('.mng-fl-saved');
+      body.querySelectorAll('.mng-saved-collapse').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); collapsedSaved.v = !collapsedSaved.v; drawWfDefs();
+      }));
+      const head = body.querySelector('.mng-fl-saved-head');
+      if (head) head.addEventListener('click', () => { collapsedSaved.v = !collapsedSaved.v; drawWfDefs(); });
+      body.querySelectorAll('.mng-wf-runsaved').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true; b.textContent = 'Running\u2026';
+        try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name) + '/run', { method:'POST', body:'{}' }); maybeAutoActivity(); }
+        catch (err) { try { showToast && showToast('Run failed: ' + err.message); } catch(_){} b.disabled=false; b.textContent='Run'; }
+      }));
+      body.querySelectorAll('.mng-saved-del').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!window.confirm('Delete saved workflow "' + b.dataset.name + '"? This removes it from disk.')) return;
+        try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name), { method:'DELETE' }); }
+        catch (err) { try { showToast && showToast('Delete failed: ' + err.message); } catch(_){} }
+        drawWfDefs();
+      }));
+    }
+
+    // ACTIVITY > WORKFLOW RUNS -- the live node graphs (run/section/task).
+    async function drawActivityRuns(){
+      const { actWf: body } = els(); if (!body) return;
+      let data;
+      try { data = await jfetch('/api/workflows'); }
+      catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load runs: ' + esc(e.message) + '</div>'; return; }
+      if (!(view === 'act' && actView === 'wf')) return;
+
+      const items = (data.items || []).filter(r => !dismissedRuns.has(r.id));
+      let h = '';
+      if (!items.length) {
+        h += '<div class="mng-fl-empty">No workflow runs yet. Start one from the <strong>Workflows</strong> tab.</div>';
+      } else {
+        h += items.map(runHtml).join('');
+      }
+      body.innerHTML = h;
+
+      body.querySelectorAll('.mng-fl-cancel').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true;
+        try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/cancel', { method:'POST', body:'{}' }); } catch (_) {}
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-wf-rerun').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation(); b.disabled = true; b.textContent = 'Re-running\u2026';
+        try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/rerun', { method:'POST', body:'{}' }); }
+        catch (err) { b.disabled = false; b.textContent = 'Re-run'; try { showToast && showToast('Re-run failed: ' + err.message); } catch(_){} }
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-wf-save').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = (window.prompt('Save this workflow as:', b.dataset.id.replace(/^\d{8}-\d{6}-/, '')) || '').trim();
+        if (!name) return;
+        b.disabled = true;
+        try { const r = await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/save', { method:'POST', body: JSON.stringify({ name }) });
+              try { showToast && showToast('Saved as ' + r.saved); } catch(_){} }
+        catch (err) { try { showToast && showToast('Save failed: ' + err.message); } catch(_){} }
+        b.disabled = false;
+      }));
+      body.querySelectorAll('.mng-wf-script').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); openScriptEditor(b.dataset.id); }));
+      // Collapse / hide (dismiss) a whole run card.
+      body.querySelectorAll('.mng-run-collapse').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); const id = b.dataset.id;
+        if (collapsedRuns.has(id)) collapsedRuns.delete(id); else collapsedRuns.add(id);
+        drawActivityRuns();
+      }));
+      body.querySelectorAll('.mng-run-hide').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation(); dismissedRuns.add(b.dataset.id); drawActivityRuns();
+      }));
+      // Task node: click to expand its captured output.
       body.querySelectorAll('.mng-wfg-node').forEach(node => {
         node.addEventListener('click', () => toggleTaskOutput(node.dataset.run, node.dataset.task));
       });
 
-      // Poll only while something is live.
-      if (data.running && !timer) timer = setInterval(() => { if (view === 'wf') drawWorkflows(); }, 1500);
+      // Poll only while something is live and this sub-view is showing.
+      if (data.running && !timer) timer = setInterval(() => { if (view === 'act' && actView === 'wf') drawActivityRuns(); }, 1500);
       if (!data.running && timer) { clearInterval(timer); timer = null; }
     }
-
     // Toggle a task's output panel: lazy-fetch once, cache, keep open across polls.
     async function toggleTaskOutput(runId, taskId){
       if (!runId || !taskId) return;
       const key = runId + '::' + taskId;
-      if (openTasks.has(key)) { openTasks.delete(key); drawWorkflows(); return; }
+      if (openTasks.has(key)) { openTasks.delete(key); drawActivityRuns(); return; }
       openTasks.add(key);
-      drawWorkflows();
+      drawActivityRuns();
       if (!taskOutCache.has(key)) {
         try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/task/' + encodeURIComponent(taskId) + '/output');
               taskOutCache.set(key, r.output || ''); }
         catch (_) { taskOutCache.set(key, ''); }
-        if (openTasks.has(key) && view === 'wf') drawWorkflows();
+        if (openTasks.has(key) && view === 'act' && actView === 'wf') drawActivityRuns();
       }
     }
 
@@ -12751,6 +12867,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
     function openCompose(){
       const { compose } = els(); if (!compose) return;
+      if (view !== 'wf' && view !== 'cron') return;   // Activity has nothing to create
       if (composing) { closeCompose(); return; }
       composing = view;
       compose.hidden = false;
@@ -12837,7 +12954,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           // is exactly what the REPL does after its prompts.
           if (res.dispatch === 'goal' && typeof window.MuxSend === 'function') window.MuxSend(goal);
           closeCompose();
-          setView('wf');
+          maybeAutoActivity();
         } catch (err) {
           if (tick) clearInterval(tick);
           e.target.disabled = false;
@@ -13136,7 +13253,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         const rid = _scriptRunId;
         if (!(await saveScript())) return;
         try { await jfetch('/api/workflows/' + encodeURIComponent(rid) + '/rerun', { method: 'POST', body: '{}' });
-              closeScriptEditor(); setView('wf'); drawWorkflows(); }
+              closeScriptEditor(); setView('act'); setActView('wf'); }
         catch (e) { _scriptStatus('Re-run failed: ' + e.message, 'is-err'); }
       });
       if (m.modal) m.modal.addEventListener('mousedown', (e) => { if (e.target === m.modal) closeScriptEditor(); });
@@ -13144,8 +13261,26 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     })();
 
     function draw(){
-      if (view === 'act') return;          // live-streamed, nothing to fetch
-      return view === 'wf' ? drawWorkflows() : drawCron();
+      if (view === 'wf')   return drawWfDefs();
+      if (view === 'cron') return drawCron();
+      if (view === 'act')  return actView === 'wf' ? drawActivityRuns() : undefined; // daemon jobs stream in
+    }
+    // Apply the Activity sub-tab (Workflow runs / Daemon jobs) selection.
+    function applyActSub(){
+      const e = els();
+      if (e.actTabWf)     e.actTabWf.classList.toggle('is-on', actView === 'wf');
+      if (e.actTabDaemon) e.actTabDaemon.classList.toggle('is-on', actView === 'daemon');
+      if (e.actWf)     e.actWf.hidden     = actView !== 'wf';
+      if (e.actDaemon) e.actDaemon.hidden = actView !== 'daemon';
+      // Clear only makes sense on the streamed daemon output.
+      const cl = document.getElementById('mngDaemonClear');
+      if (cl) cl.hidden = !(view === 'act' && actView === 'daemon');
+    }
+    function setActView(v){
+      actView = v;
+      applyActSub();
+      if (timer) { clearInterval(timer); timer = null; }
+      if (v === 'wf') drawActivityRuns();
     }
     function setView(v){
       view = v;
@@ -13153,20 +13288,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       if (e.tabWf)   e.tabWf.classList.toggle('is-on', v === 'wf');
       if (e.tabCron) e.tabCron.classList.toggle('is-on', v === 'cron');
       if (e.tabAct)  e.tabAct.classList.toggle('is-on', v === 'act');
-      // Three mutually-exclusive VIEWS, each its own scroll context. Exactly one
-      // visible -> no cross-lane bleed. (Previously Workflows + Schedules shared one
-      // body and Activity overlaid, which is what leaked.)
-      if (e.body)  e.body.hidden  = v !== 'wf';
-      if (e.sched) e.sched.hidden = v !== 'cron';
-      if (e.act)   e.act.hidden   = v !== 'act';
+      // Three fully-separate top-level VIEWS (full swap). Exactly one visible.
+      if (e.wfdefs)   e.wfdefs.hidden   = v !== 'wf';
+      if (e.sched)    e.sched.hidden    = v !== 'cron';
+      if (e.activity) e.activity.hidden = v !== 'act';
+      // + New only makes sense where you CREATE (Workflows / Scheduled Tasks).
       const nw = document.getElementById('mngFlowsNew');
       if (nw) nw.hidden = v === 'act';
-      // Clear only applies to streamed activity rows.
-      const cl = document.getElementById('mngDaemonClear');
-      if (cl) cl.hidden = v !== 'act';
       if (composing) closeCompose();
       if (timer) { clearInterval(timer); timer = null; }
+      if (v === 'act') applyActSub();
+      else { const cl = document.getElementById('mngDaemonClear'); if (cl) cl.hidden = true; }
       draw();
+    }
+    // Auto-jump to Activity > Workflow runs when a workflow starts, unless the user
+    // disabled it in settings (body[data-flows-auto-activity=0]).
+    function maybeAutoActivity(){
+      const on = document.body.dataset.flowsAutoActivity !== '0';
+      if (on) { setView('act'); setActView('wf'); }
+      else if (view === 'act' && actView === 'wf') drawActivityRuns();
     }
     function show(v){ const { lane } = els(); if (lane) { lane.hidden = false; setView(v || view); } }
     function hide(){
@@ -13184,7 +13324,12 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const ta = document.getElementById('mngFlowsTabAct');
       if (tw) tw.addEventListener('click', () => setView('wf'));
       if (tc) tc.addEventListener('click', () => setView('cron'));
-      if (ta) ta.addEventListener('click', () => setView('act'));
+      if (ta) ta.addEventListener('click', () => { setView('act'); applyActSub(); if (actView === 'wf') drawActivityRuns(); });
+      // Activity sub-tabs.
+      const aw = document.getElementById('mngActTabWf');
+      const ad = document.getElementById('mngActTabDaemon');
+      if (aw) aw.addEventListener('click', () => setActView('wf'));
+      if (ad) ad.addEventListener('click', () => setActView('daemon'));
       const nw = document.getElementById('mngFlowsNew');
       if (nw) nw.addEventListener('click', openCompose);
       const rf = document.getElementById('mngFlowsRefresh');
@@ -13193,7 +13338,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       if (cx) cx.addEventListener('click', hide);
     })();
 
-    return { show, hide, draw, setView, isOpenOn };
+    // Open the lane directly on Activity + a chosen sub-tab (used by the daemon lane
+    // when a job starts streaming).
+    function showActivity(sub){
+      const { lane } = els(); if (lane) lane.hidden = false;
+      setView('act'); setActView(sub || 'daemon');
+    }
+    return { show, hide, draw, setView, isOpenOn, showActivity };
   })();
   window.MuxFlows = MuxFlows;
 
