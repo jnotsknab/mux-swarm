@@ -157,6 +157,50 @@ html, body,
   padding-bottom: .15rem; border-bottom: 1px solid var(--border, rgba(255,255,255,.08));
 }
 .stream-block[data-agent] { border-left: none; padding-left: 0; margin-top: .5rem; }
+
+    /* ── Reasoning blocks ──────────────────────────────────────────────────
+       Same chrome-less cluster shape as .tool-group/.event-group: the body is
+       revealed only by .open. Purple accent matches the session viewer's
+       reasoning styling so the two surfaces agree. */
+    .reasoning-block { margin: 4px 0; }
+    .reasoning-header {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; user-select: none;
+      padding: 2px 0;
+      font-size: calc(12px * var(--ui-font-scale, 1));
+      color: #c8a6ff;
+    }
+    .reasoning-header:hover { opacity: 0.85; }
+    .reasoning-block .rb-chev {
+      display: inline-flex; align-items: center; flex-shrink: 0;
+      transition: transform 0.15s ease; opacity: 0.7;
+    }
+    .reasoning-block.open .rb-chev { transform: rotate(0deg); }
+    .reasoning-block:not(.open) .rb-chev { transform: rotate(-90deg); }
+    .reasoning-block .rb-label { font-weight: 600; flex-shrink: 0; letter-spacing: 0.01em; }
+    .reasoning-block .rb-latest {
+      color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; min-width: 0; opacity: 0.8;
+      font-style: italic;
+    }
+    .reasoning-block.open .rb-latest { display: none; }
+    .reasoning-block .reasoning-body { display: none; }
+    .reasoning-block.open .reasoning-body {
+      display: block;
+      margin: 4px 0 6px 0;
+      padding-left: 12px;
+      border-left: 2px solid rgba(200,166,255,0.35);
+      color: var(--muted);
+      font-style: italic;
+      font-size: calc(12.5px * var(--ui-font-scale, 1));
+      line-height: var(--ui-line-height, 1.6);
+    }
+    /* Reasoning is secondary content: keep code/emphasis inside it quiet too. */
+    .reasoning-block .reasoning-body code { font-style: normal; opacity: 0.9; }
+    .reasoning-block .reasoning-body strong { color: var(--text); font-weight: 600; }
+    /* 'hide' mode is enforced in JS (chunks never enter the DOM); this is a
+       belt-and-braces guard for blocks already rendered when the user flips it. */
+    body.hide-reasoning .reasoning-block { display: none; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
   line-height: var(--ui-line-height) !important;
@@ -520,6 +564,9 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 
 /* ── Output ── */
 .output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
+/* Give #output a definite height so the splash's percentage min-height
+   resolves and the empty state optically centers. */
+.output { min-height: 0; }
 .output::-webkit-scrollbar { width: 4px; }
 .output::-webkit-scrollbar-track { background: transparent; }
 .output::-webkit-scrollbar-thumb { background: rgba(161, 161, 170, 0.2); border-radius: 3px; }
@@ -1337,82 +1384,74 @@ body.hide-all-pills .event-group { display: none !important; }
 .prompt-block button:hover { background: rgba(var(--accent-rgb), 0.15); color: var(--text); border-color: var(--accent); }
 .prompt-block button:active { transform: scale(0.96); }
 
-/* ── Welcome card ── */
-.welcome-card {
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 22px 24px; margin: 8px 0; max-width: 720px;
+/* ── Splash (empty state) ──
+   Centered wordmark, tagline and a live status strip. Fills the transcript
+   viewport so it optically centers, then is removed on first real content. */
+.mux-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Fill the scroll viewport minus the composer so the block sits centered
+     rather than pinned to the top of the transcript. */
+  min-height: calc(100% - 96px);
+  padding: 24px;
+  animation: fadeIn 0.25s ease;
+  text-align: center;
 }
-.welcome-card .welcome-head { margin-bottom: 16px; }
-.welcome-card h2 { color: var(--blue); font-size: calc(17px * var(--ui-font-scale, 1)); font-weight: 600; margin-bottom: 6px; letter-spacing: 0.02em; }
-.welcome-card p { color: var(--muted); font-size: calc(12.5px * var(--ui-font-scale, 1)); margin: 0; line-height: 1.55; }
-
-/* Starter cards (clickable) */
-.welcome-card .starter-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-  margin-bottom: 14px;
+.mux-splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 560px;
 }
-.welcome-card .starter-card {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
-  background: var(--bg-input, rgba(255,255,255,0.02));
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 14px 12px;
-  cursor: pointer; text-align: left;
-  color: var(--text);
+.mux-splash-mark {
   font-family: var(--font-sans, ui-sans-serif, system-ui);
-  transition: border-color 0.15s ease, background 0.15s ease, transform 0.08s ease;
+  font-weight: 800;
+  font-size: calc(42px * var(--ui-font-scale, 1));
+  line-height: 1.05;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: var(--text);
+  /* Subtle vertical sheen keeps the wordmark from reading as flat bold text. */
+  background: linear-gradient(180deg, var(--text) 0%, var(--muted) 165%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
-.welcome-card .starter-card:hover {
-  border-color: var(--accent, var(--blue));
-  background: rgba(255,255,255,0.04);
+.mux-splash-tagline {
+  color: var(--muted);
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  max-width: 46ch;
 }
-.welcome-card .starter-card:active { transform: translateY(1px); }
-.welcome-card .starter-icon { font-size: calc(20px * var(--ui-font-scale, 1)); line-height: 0; margin-bottom: 6px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent, #7dd3fc); opacity: 0.92; }
-.starter-icon svg { width: calc(22px * var(--ui-font-scale, 1)); height: calc(22px * var(--ui-font-scale, 1)); display: block; }
-.welcome-card .starter-title { font-weight: 600; font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--text); }
-.welcome-card .starter-sub { font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--muted); line-height: 1.45; }
-.welcome-card .starter-cmd {
-  margin-top: 6px;
+.mux-splash-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mux-splash-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-input, rgba(255,255,255,0.02));
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  color: var(--green);
-  background: rgba(0,0,0,0.18); padding: 2px 6px; border-radius: 4px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  line-height: 1.4;
 }
+.mux-splash-chip .k { color: var(--muted); opacity: 0.85; }
+.mux-splash-chip .v { color: var(--accent, #64b4dc); font-weight: 600; }
 
-/* "More commands" disclosure */
-.welcome-card .welcome-more { margin: 4px 0 0; }
-.welcome-card .welcome-more > summary {
-  cursor: pointer; user-select: none; list-style: none;
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 8px 0; color: var(--muted);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  border-top: 1px solid var(--border);
+@media (max-width: 640px) {
+  .mux-splash-mark { font-size: calc(30px * var(--ui-font-scale, 1)); letter-spacing: 0.07em; }
+  .mux-splash { min-height: calc(100% - 120px); padding: 16px; }
 }
-.welcome-card .welcome-more > summary::-webkit-details-marker { display: none; }
-.welcome-card .welcome-more > summary::before {
-  content: ''; width: 5px; height: 5px;
-  border-right: 1.5px solid var(--muted);
-  border-bottom: 1.5px solid var(--muted);
-  transform: rotate(-45deg); transition: transform 0.18s ease;
-  margin-right: 6px;
-}
-.welcome-card .welcome-more[open] > summary::before { transform: rotate(45deg); }
-.welcome-card .welcome-more > summary span:first-child { font-weight: 600; color: var(--text); flex: 1; }
-.welcome-card .welcome-more .more-hint { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
-.welcome-card .cmd-section { margin-top: 10px; }
-.welcome-card .cmd-section-head {
-  text-transform: uppercase; letter-spacing: 0.06em;
-  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
-  margin-bottom: 6px; font-weight: 600;
-}
-.welcome-card .cmd-grid { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.welcome-card .cmd { color: var(--green); font-weight: 500; font-family: var(--font-mono, ui-monospace, monospace); }
-.welcome-card .cmd[data-cmd] { cursor: pointer; border-radius: 3px; padding: 0 3px; margin: 0 -3px; transition: background 0.12s ease; }
-.welcome-card .cmd[data-cmd]:hover { background: rgba(var(--accent-rgb, 100,180,220), 0.12); }
-.welcome-card .desc { color: var(--muted); }
-
-.welcome-card .shortcut-row { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); }
-.welcome-card kbd { background: var(--bg-input); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--text); }
 
 /* ── Inline confirm card (session switch warning) ── */
 .mux-confirm-card {
@@ -1544,6 +1583,112 @@ body.hide-all-pills .event-group { display: none !important; }
   box-shadow: 0 10px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.25);
 }
 .input-area .btn-group { align-self: flex-end; }
+
+/* ── Model selector ── */
+.model-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.2;
+  cursor: pointer;
+  min-height: 32px;
+  max-width: 190px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.model-btn:hover { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+.model-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.model-btn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-btn svg { flex: 0 0 auto; opacity: 0.7; }
+
+.model-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 16px));
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+  animation: fadeIn 0.12s ease;
+}
+.model-menu-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+}
+.model-menu-loading { padding: 14px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.model-menu-list { max-height: 320px; overflow-y: auto; }
+.model-menu-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  width: 100%; text-align: left;
+  background: transparent; border: none;
+  border-bottom: 1px solid rgba(127,127,127,0.10);
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text);
+}
+.model-menu-item:last-child { border-bottom: none; }
+.model-menu-item:hover { background: rgba(var(--accent-rgb), 0.10); }
+.model-menu-item .mm-agent {
+  font-family: var(--font-sans, system-ui);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 600;
+}
+.model-menu-item .mm-model {
+  color: var(--muted);
+  font-family: var(--font-mono, monospace);
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+  word-break: break-all;
+}
+.model-menu-form { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.model-menu-form .mm-current {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.model-menu-form .mm-current code {
+  color: var(--accent); font-family: var(--font-mono, monospace); word-break: break-all;
+}
+.model-menu-form .mm-input {
+  background: var(--bg-input, rgba(255,255,255,0.03));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  outline: none;
+}
+.model-menu-form .mm-input:focus { border-color: var(--accent); }
+.model-menu-form .mm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.model-menu-form button {
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--font-sans, system-ui);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+.model-menu-form .mm-cancel:hover { color: var(--text); }
+.model-menu-form .mm-apply {
+  background: var(--accent); border-color: var(--accent);
+  color: var(--bg); font-weight: 600;
+}
+.model-menu-form .mm-apply:hover { filter: brightness(1.1); }
+
+/* The composer is tight on phones: the model button keeps its own row. */
+@media (max-width: 640px) {
+  .model-btn { max-width: 120px; font-size: calc(10px * var(--ui-font-scale, 1)); padding: 5px 6px; }
+}
 /* Reserve space so the last transcript line isn't hidden behind the floating bar */
 .output { padding-bottom: 96px; }
 
@@ -1750,10 +1895,6 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
   .sidebar { padding-top: env(safe-area-inset-top, 0); padding-bottom: env(safe-area-inset-bottom, 0); }
-  .welcome-card { padding: 14px 16px; }
-  .welcome-card .starter-grid { grid-template-columns: 1fr; }
-  .welcome-card .cmd-grid { grid-template-columns: 1fr; gap: 2px; }
-  .welcome-card .shortcut-row { font-size: calc(10px * var(--ui-font-scale, 1)); }
   .tool-call { 
   font-size: calc(12px * var(--ui-font-scale, 1)); 
   padding: 6px 10px; 
@@ -2262,6 +2403,10 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
         <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
       <div class="btn-group">
+        <button class="model-btn" id="modelBtn" type="button" title="Model" aria-haspopup="listbox" aria-expanded="false">
+          <span class="model-btn-name" id="modelBtnName">model</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
         <button class="mic-btn" id="micBtn" title="Voice Input"><svg data-icon="mic" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg></button>
         <button class="upload-btn" id="uploadBtn" title="Upload file"><svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg></button>
         <input type="file" id="fileInput" />
@@ -2275,6 +2420,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
       <button class="sidebar-tab" data-tab="sessions">Sessions</button>
+      <button class="sidebar-tab" data-tab="skills">Skills</button>
+      <button class="sidebar-tab" data-tab="tools">Tools</button>
       <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
       <button class="sidebar-close" id="sidebarClose">×</button>
     </div>
@@ -2449,6 +2596,7 @@ const icons = {
   file: `<svg data-icon="file" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>`,
   download: `<svg data-icon="download" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>`,
   paperclip: `<svg data-icon="paperclip" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>`,
+  pin: `<svg data-icon="pin" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg>`,
   zap: `<svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
   arrowUpRight: `<svg data-icon="arrow-up-right" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"></line><polyline points="7 7 17 7 17 17"></polyline></svg>`,
   check: `<svg data-icon="check" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
@@ -2742,109 +2890,60 @@ const icons = {
     };
   }
 
-  // ─── Welcome card ───
+  // ─── Splash (empty state) ───
+  // Centered wordmark + tagline + a LIVE status strip. Everything shown here is
+  // read from /api/health and /api/status at render time, so it can never drift
+  // the way the old hand-maintained command tables did. The splash removes
+  // itself the moment real transcript content arrives.
   let welcomeShown = false;
   function showWelcome() {
     if (welcomeShown) return;
     welcomeShown = true;
-    const html = `<div class="welcome-card">
-      <div class="welcome-head">
-        <h2>Mux-Swarm</h2>
-        <p>CLI-native agentic swarm OS. Pick how you want to start — click a card or type a command.</p>
-      </div>
 
-      <div class="starter-grid">
-        <button class="starter-card" data-cmd="/agent" type="button">
-          <div class="starter-icon"><svg data-icon="user" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></div>
-          <div class="starter-title">Single agent</div>
-          <div class="starter-sub">Talk to one agent. Best for chat, code review, focused work.</div>
-          <div class="starter-cmd">/agent</div>
-        </button>
-        <button class="starter-card" data-cmd="/swarm" type="button">
-          <div class="starter-icon"><svg data-icon="network" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2.2"/><circle cx="5" cy="19" r="2.2"/><circle cx="19" cy="19" r="2.2"/><path d="M12 7.2 6.4 17"/><path d="M12 7.2 17.6 17"/><path d="M7.2 19h9.6"/></svg></div>
-          <div class="starter-title">Swarm</div>
-          <div class="starter-sub">Orchestrate multiple agents on a complex task end-to-end.</div>
-          <div class="starter-cmd">/swarm</div>
-        </button>
-        <button class="starter-card" data-cmd="/stateless" type="button">
-          <div class="starter-icon"><svg data-icon="zap" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></svg></div>
-          <div class="starter-title">One-off task</div>
-          <div class="starter-sub">Fire-and-forget. No session, no history — fastest path to an answer.</div>
-          <div class="starter-cmd">/stateless</div>
-        </button>
-      </div>
+    const el = document.createElement('div');
+    el.className = 'mux-splash';
+    el.id = 'muxSplash';
+    el.innerHTML =
+      '<div class="mux-splash-inner">' +
+        '<div class="mux-splash-mark">MUX&#8202;SWARM</div>' +
+        '<div class="mux-splash-tagline">Ask a question, paste an error, or point me at a repo. ' +
+        'I can read code, run tools, and orchestrate a swarm of agents.</div>' +
+        '<div class="mux-splash-meta" id="muxSplashMeta"></div>' +
+      '</div>';
+    output.appendChild(el);
 
-      <details class="welcome-more">
-        <summary><span>More commands</span><span class="more-hint">type <kbd>/</kbd> any time for the full palette</span></summary>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Modes</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/agent">/agent</span><span class="desc">Single-agent conversation</span>
-            <span class="cmd" data-cmd="/swarm">/swarm</span><span class="desc">Multi-agent orchestrated loop</span>
-            <span class="cmd" data-cmd="/pswarm">/pswarm</span><span class="desc">Parallel concurrent dispatch</span>
-            <span class="cmd" data-cmd="/stateless">/stateless</span><span class="desc">One-off stateless task</span>
-            <span class="cmd" data-cmd="/workflow">/workflow</span><span class="desc">Run a workflow file</span>
-            <span class="cmd" data-cmd="/resume">/resume</span><span class="desc">Resume a previous session</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Enhance a session</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/subagents">/subagents</span><span class="desc">Toggle sub-agent delegation (single-agent loop)</span>
-            <span class="cmd" data-cmd="/parasubagents">/parasubagents</span><span class="desc">Toggle parallel sub-agent delegation</span>
-            <span class="cmd" data-cmd="/plan">/plan</span><span class="desc">Toggle plan mode (confirm before executing)</span>
-            <span class="cmd" data-cmd="/continuous">/continuous</span><span class="desc">Toggle continuous autonomous execution</span>
-            <span class="cmd" data-cmd="/compact">/compact</span><span class="desc">Compact current session context</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Inspect</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/status">/status</span><span class="desc">Provider, models, tools, skills, sessions</span>
-            <span class="cmd" data-cmd="/tools">/tools</span><span class="desc">List available MCP tools</span>
-            <span class="cmd" data-cmd="/skills">/skills</span><span class="desc">List available local skills</span>
-            <span class="cmd" data-cmd="/memory">/memory</span><span class="desc">View knowledge graph</span>
-            <span class="cmd" data-cmd="/sessions">/sessions</span><span class="desc">List all saved sessions</span>
-            <span class="cmd" data-cmd="/model">/model</span><span class="desc">View current models</span>
-          </div>
-        </div>
-        <div class="cmd-section">
-          <div class="cmd-section-head">Setup</div>
-          <div class="cmd-grid">
-            <span class="cmd" data-cmd="/onboard">/onboard</span><span class="desc">Create or update operator profile</span>
-            <span class="cmd" data-cmd="/setup">/setup</span><span class="desc">Run initial setup / reconfigure</span>
-            <span class="cmd" data-cmd="/provider">/provider</span><span class="desc">View or switch the active LLM provider</span>
-            <span class="cmd" data-cmd="/refresh">/refresh</span><span class="desc">Full Mux refresh (config, MCP, skills)</span>
-            <span class="cmd" data-cmd="/help">/help</span><span class="desc">Full command reference</span>
-          </div>
-        </div>
-      </details>
+    // Live status strip. Best-effort: a failed fetch simply leaves the strip
+    // empty rather than blocking the splash or logging noise at the user.
+    (async () => {
+      const meta = document.getElementById('muxSplashMeta');
+      if (!meta) return;
+      const chips = [];
+      try {
+        const h = await fetch(_apiUrl('/api/health')).then(r => r.ok ? r.json() : null);
+        if (h) {
+          if (h.version) chips.push(['version', 'v' + h.version]);
+          if (h.agentCount) chips.push(['agents', String(h.agentCount)]);
+        }
+      } catch (_) {}
+      try {
+        const st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null);
+        if (st) {
+          if (st.provider) chips.push(['provider', st.provider]);
+          if (st.mode) chips.push(['mode', st.mode]);
+        }
+      } catch (_) {}
+      if (!chips.length) return;
+      meta.innerHTML = chips
+        .map(c => '<span class="mux-splash-chip"><span class="k">' + esc(c[0]) +
+                  '</span><span class="v">' + esc(c[1]) + '</span></span>')
+        .join('');
+    })();
+  }
 
-      <div class="shortcut-row">
-        <kbd>Enter</kbd> send &nbsp; <kbd>Shift+Enter</kbd> new line &nbsp; <kbd>Esc</kbd> cancel &nbsp; <kbd>Ctrl+V</kbd> paste file &nbsp; <kbd>📎</kbd> upload
-      </div>
-    </div>`;
-    appendHTML(html);
-
-    // Wire up clickable starter cards & cmd chips: click inserts the command
-    // into the input (user can edit / press Enter); shift-click sends immediately.
-    try {
-      const cards = document.querySelectorAll('.welcome-card [data-cmd]');
-      cards.forEach(el => {
-        el.addEventListener('click', (e) => {
-          const cmd = el.getAttribute('data-cmd');
-          if (!cmd) return;
-          if (e.shiftKey) {
-            send(cmd);
-          } else {
-            input.value = cmd;
-            input.focus();
-            try { input.setSelectionRange(cmd.length, cmd.length); } catch(_) {}
-            try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch(_) {}
-          }
-        });
-      });
-    } catch (_) {}
+  // The splash is an empty state: any real transcript content evicts it.
+  function dismissSplash() {
+    const s = document.getElementById('muxSplash');
+    if (s) s.remove();
   }
   // ─── Busy state ───
   function setBusy(busy) {
@@ -3371,6 +3470,7 @@ const icons = {
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'running', 'working'); break; }
         finalizeStream(ev.agent);
         breakToolGroup(); try { breakPillGroup(); } catch(_){}
+        try { breakReasoningBlock(); } catch(_){}
         setBusy(true);
         const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
         appendHTML(`<div class=\"agent-turn\"><span class=\"agent-badge\">${esc(ev.agent || 'Agent')}</span><span class=\"msg-time\" style=\"margin-top:0;margin-left:4px\">${time}</span></div>`);
@@ -3382,6 +3482,7 @@ const icons = {
         if (isSubAgent(ev.agent)) { setSubStatus(ev.agent, 'done', 'done'); break; }
         finalizeStream(ev.agent);
         breakToolGroup(); try { breakPillGroup(); } catch(_){}
+        try { breakReasoningBlock(); } catch(_){}
         setBusy(false);
         // Safety net: if a /compact placeholder is still showing when the turn
         // ends (compaction always wraps inside a turn), the real event matcher
@@ -3399,12 +3500,20 @@ const icons = {
         // absent => treat as prose (legacy-safe).
         if (!ev.reasoning) { breakToolGroup(); try { breakPillGroup(); } catch(_){} }
         const skey = String(ev.agent || '');
+        // Reasoning chunks never enter the answer buffer -- they accumulate in
+        // their own collapsible block so they can be styled, folded, or hidden
+        // independently of the final answer (TUI parity).
+        if (ev.reasoning) { appendReasoning(skey, ev.text || ''); break; }
+        // Answer prose closes any open reasoning block: the model stopped
+        // thinking and started answering.
+        breakReasoningBlock();
         // Sub-agent output folds into its persistent roster row (one row per
         // agent, appended in place) rather than spawning a new stream card per
         // stream/stop cycle. Lead/main output keeps the normal transcript block.
         if (isSubAgent(skey)) { appendSubStream(skey, ev.text || ''); break; }
         let st = _agentStreams.get(skey);
         if (!st) {
+          dismissSplash();
           st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
           output.appendChild(st.el);
@@ -3716,7 +3825,7 @@ const icons = {
           // NEVER overwrite the accumulated stream body. The engine emits the real
           // completion summary on this specialist event.
           const r = setSubStatus(ev.agent, 'done', 'completed');
-          const clean = stripSentinels(summary);
+          const clean = stripSentinels(summary).trim();
           // Engine sends the real summary here; a bare legacy 'sub-task' is ignored
           // (the row keeps its streamed body and the button simply marks completion).
           if (clean && !/^sub[-\s]?task$/i.test(clean)) setSubSummary(ev.agent, clean);
@@ -3758,8 +3867,15 @@ const icons = {
         input.focus();
         break;
 
-      case 'input_request':  setBusy(false); renderInputPrompt(ev); break;
-      case 'confirm_request': setBusy(false); renderConfirm(ev); break;
+      case 'input_request': {
+        setBusy(false);
+        // A queued model swap answers /setmodel's two prompts silently.
+        const auto = takeModelAnswer();
+        if (auto !== null) { sendRaw(auto); break; }
+        renderInputPrompt(ev);
+        break;
+      }
+      case 'confirm_request': setBusy(false); cancelModelSwap(); renderConfirm(ev); break;
       case 'select_request':  setBusy(false); renderSelect(ev); break;
       case 'multiselect_request': setBusy(false); renderSelect(ev, true); break;
 
@@ -3810,6 +3926,77 @@ const icons = {
           routePill(pillFromText(ev.message, 'event-info'));
         }
         break;
+    }
+    scrollToBottom();
+  }
+
+  // ─── Reasoning blocks ───
+  // Reasoning (muted) stream chunks accumulate into their own collapsible block
+  // instead of being merged into the answer prose. Deliberately the same shape
+  // as the tool-call / status-pill clusters above: a module-level singleton, a
+  // break() that ends the run, a header that toggles .open, and a userToggled
+  // latch so an explicit click always wins over auto-collapse.
+  //
+  // Visibility is a 3-way setting (body dataset, set by the settings module):
+  //   'show'     -- render, auto-collapse once it grows past the threshold
+  //   'collapsed'-- render, always start collapsed
+  //   'hide'     -- drop reasoning entirely (never enters the DOM)
+  let _reasoningBlock = null;
+  function breakReasoningBlock() {
+    // Trim the trailing edge once the block is final (chunks keep their spaces
+    // while streaming -- see stripSentinels).
+    if (_reasoningBlock && _reasoningBlock.el.isConnected) {
+      const g = _reasoningBlock;
+      const clean = g.text.trim();
+      if (!clean) { g.el.remove(); }
+      else if (clean !== g.text) { g.text = clean; g.body.innerHTML = renderMarkdown(clean); }
+    }
+    _reasoningBlock = null;
+  }
+  function reasoningMode() {
+    return document.body.dataset.showReasoning || 'show';
+  }
+  function ensureReasoningBlock(agent) {
+    if (_reasoningBlock && _reasoningBlock.el.isConnected) return _reasoningBlock;
+    const el = document.createElement('div');
+    el.className = 'reasoning-block open';
+    el.innerHTML =
+      '<div class="reasoning-header">' +
+        '<span class="rb-chev">' + icons.chevronDown + '</span>' +
+        '<span class="rb-label">Reasoning</span>' +
+        '<span class="rb-latest"></span>' +
+      '</div>' +
+      '<div class="reasoning-body"></div>';
+    const g = { el, body: el.querySelector('.reasoning-body'),
+                label: el.querySelector('.rb-label'),
+                latest: el.querySelector('.rb-latest'),
+                text: '', userToggled: false };
+    el.querySelector('.reasoning-header').addEventListener('click', () => {
+      g.userToggled = true;
+      el.classList.toggle('open');
+    });
+    if (reasoningMode() === 'collapsed') el.classList.remove('open');
+    output.appendChild(el);
+    _reasoningBlock = g;
+    return g;
+  }
+  function appendReasoning(agent, chunk) {
+    if (reasoningMode() === 'hide') return;   // never enters the DOM
+    if (!chunk) return;
+    // Sub-agent reasoning stays in the roster row, matching how its prose is
+    // handled -- it must not spawn a top-level block in the main column.
+    if (isSubAgent(agent)) return;
+    const g = ensureReasoningBlock(agent);
+    g.text += chunk;
+    g.body.innerHTML = renderMarkdown(g.text);
+    // Collapsed preview: last fragment of thought, flattened to one line.
+    const flat = g.text.replace(/\s+/g, ' ').trim();
+    g.latest.textContent = flat ? ('\u00b7 ' + flat.slice(-90)) : '';
+    // Auto-collapse once the block outgrows the threshold, mirroring the
+    // tool-group behaviour (explicit user toggle always wins).
+    if (reasoningMode() === 'show' && !g.userToggled) {
+      const limit = parseInt(document.body.dataset.reasoningCollapseAt || '600', 10) || 600;
+      if (g.text.length >= limit) g.el.classList.remove('open');
     }
     scrollToBottom();
   }
@@ -3907,6 +4094,7 @@ const icons = {
 
   // ─── Rendering helpers ───
   function appendText(text, cls) {
+    dismissSplash();
     const el = document.createElement('div');
     el.className = `event ${cls || ''}`;
     el.textContent = text || '';
@@ -3915,6 +4103,7 @@ const icons = {
   }
 
   function appendHTML(html) {
+    dismissSplash();
     const w = document.createElement('div');
     w.innerHTML = html;
     const added = [];
@@ -4141,7 +4330,12 @@ const icons = {
   function stripSentinels(s) {
     // Backend delegation sentinels (e.g. AGENT_DEMO_DONE) can fuse into the
     // stream with no delimiter; drop bare ALL-CAPS _DONE-style tokens.
-    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '').trimEnd();
+    // NOTE: deliberately does NOT trim. This runs over the WHOLE accumulated
+    // buffer after every chunk append, so a trailing trim here destroyed the
+    // space of any chunk that ended at a sentence boundary:
+    //   "... done. " + "Next" => "... done.Next"
+    // Callers needing clean edges trim at finalize/preview time instead.
+    return String(s || '').replace(/\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*_DONE\b/g, '');
   }
   function subPreview(text) {
     const flat = String(text || '').replace(/`{1,3}[^`]*`{1,3}/g, m => m.replace(/`/g,''))
@@ -4195,7 +4389,7 @@ const icons = {
   }
   function setSubSummary(name, text) {
     const r = ensureSubRow(name);
-    const clean = stripSentinels(text);
+    const clean = stripSentinels(text).trim();
     if (!clean) return;
     r.summary = clean;
     if (r.summaryTextEl) r.summaryTextEl.innerHTML = renderMarkdown(clean);
@@ -4614,6 +4808,188 @@ const icons = {
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(text);
   }
+
+  // ─── Model selector ───
+  // The engine's /setmodel is a two-prompt interactive flow (pick a slot, then
+  // type a model id). Rather than make the user drive that by hand, the picker
+  // queues both answers and satisfies the prompts as they arrive, so the whole
+  // exchange is invisible. The queue is strictly bounded: it only ever holds the
+  // two answers for one swap and is cleared on completion, cancel, or any error.
+  let _modelSlots = [];
+  let _modelAnswers = null;
+
+  async function queueModelSwap(slotLabel, modelId) {
+    // Arm the answers BEFORE dispatching so the first input_request is caught.
+    _modelAnswers = [slotLabel, modelId];
+    try { _suppressUserEchoOnce.add('/setmodel'); } catch (_) {}
+    try {
+      // send() (not sendRaw) so the in-session guard runs: /setmodel is
+      // ReplOnly, and issuing it inside a live session ends that session. The
+      // user gets the same confirmation they'd get for a typed command.
+      await send('/setmodel');
+    } catch (_) {
+      cancelModelSwap();
+      return;
+    }
+    // send() returns without dispatching when the user declines the
+    // session-switch confirmation; drop the queue after a grace period if no
+    // prompt ever arrived, so stale answers can't leak into a later prompt.
+    setTimeout(() => {
+      if (_modelAnswers && _modelAnswers.length === 2) cancelModelSwap();
+    }, 5000);
+  }
+  // Consumed by the input_request handler. Returns an answer when a swap is in
+  // flight, else null so normal prompts render as usual.
+  function takeModelAnswer() {
+    if (!_modelAnswers || !_modelAnswers.length) return null;
+    const v = _modelAnswers.shift();
+    if (!_modelAnswers.length) _modelAnswers = null;
+    return v;
+  }
+  function cancelModelSwap() { _modelAnswers = null; }
+
+  async function loadModelSlots(force) {
+    if (_modelSlots.length && !force) return _modelSlots;
+    try {
+      const r = await fetch(_apiUrl('/api/agents'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const agents = await r.json();
+      _modelSlots = Array.isArray(agents) ? agents : [];
+    } catch (_) {
+      _modelSlots = [];
+    }
+    return _modelSlots;
+  }
+
+  function refreshModelButton() {
+    const nameEl = document.getElementById('modelBtnName');
+    if (!nameEl) return;
+    // Prefer the single-agent slot's model as the headline; fall back to the
+    // most common model across the swarm so the button always says something real.
+    const counts = new Map();
+    for (const s of _modelSlots) {
+      if (!s || !s.model) continue;
+      counts.set(s.model, (counts.get(s.model) || 0) + 1);
+    }
+    let best = '', bestN = 0;
+    for (const [m, n] of counts) if (n > bestN) { best = m; bestN = n; }
+    nameEl.textContent = best ? shortModelName(best) : 'model';
+    nameEl.title = best || 'No model configured';
+  }
+
+  // Trim vendor prefixes/date suffixes so the composer button stays compact.
+  function shortModelName(m) {
+    let s = String(m || '');
+    const slash = s.lastIndexOf('/');
+    if (slash >= 0) s = s.slice(slash + 1);
+    return s.length > 22 ? s.slice(0, 21) + '\u2026' : s;
+  }
+
+  function closeModelMenu() {
+    const m = document.getElementById('modelMenu');
+    if (m) m.remove();
+    const b = document.getElementById('modelBtn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+
+  async function openModelMenu() {
+    closeModelMenu();
+    const btn = document.getElementById('modelBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', 'true');
+
+    const menu = document.createElement('div');
+    menu.className = 'model-menu';
+    menu.id = 'modelMenu';
+    menu.innerHTML = '<div class="model-menu-loading">Loading…</div>';
+    document.body.appendChild(menu);
+    positionModelMenu(menu, btn);
+
+    const slots = await loadModelSlots(true);
+    if (!document.getElementById('modelMenu')) return;   // closed while loading
+    if (!slots.length) {
+      menu.innerHTML = '<div class="model-menu-loading">No agents configured.</div>';
+      return;
+    }
+
+    menu.innerHTML =
+      '<div class="model-menu-head">Change model</div>' +
+      '<div class="model-menu-list">' +
+      slots.map((s, i) =>
+        '<button class="model-menu-item" type="button" data-i="' + i + '">' +
+          '<span class="mm-agent">' + esc(s.name || 'agent') + '</span>' +
+          '<span class="mm-model">' + esc(s.model || 'not set') + '</span>' +
+        '</button>').join('') +
+      '</div>';
+    positionModelMenu(menu, btn);
+
+    menu.querySelectorAll('.model-menu-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const slot = slots[parseInt(el.dataset.i, 10)];
+        if (slot) promptForModel(menu, slot);
+      });
+    });
+  }
+
+  // Second step: type the new model id for the chosen slot.
+  function promptForModel(menu, slot) {
+    menu.innerHTML =
+      '<div class="model-menu-head">' + esc(slot.name || 'agent') + '</div>' +
+      '<div class="model-menu-form">' +
+        '<div class="mm-current">current: <code>' + esc(slot.model || 'not set') + '</code></div>' +
+        '<input class="mm-input" type="text" spellcheck="false" autocomplete="off" ' +
+               'placeholder="model id" value="' + esc(slot.model || '') + '" aria-label="Model id">' +
+        '<div class="mm-actions">' +
+          '<button class="mm-cancel" type="button">Cancel</button>' +
+          '<button class="mm-apply" type="button">Apply</button>' +
+        '</div>' +
+      '</div>';
+
+    const inp = menu.querySelector('.mm-input');
+    const apply = () => {
+      const v = inp.value.trim();
+      if (!v || v === slot.model) { closeModelMenu(); return; }
+      // Close first: send() may await a confirmation card in the transcript.
+      closeModelMenu();
+      queueModelSwap(slot.name || '', v);
+    };
+    menu.querySelector('.mm-apply').addEventListener('click', apply);
+    menu.querySelector('.mm-cancel').addEventListener('click', closeModelMenu);
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); apply(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeModelMenu(); }
+    });
+    inp.focus();
+    inp.select();
+  }
+
+  function positionModelMenu(menu, btn) {
+    const r = btn.getBoundingClientRect();
+    menu.style.left = Math.max(8, r.left) + 'px';
+    // Anchor above the composer; flip below only if there is no room above.
+    const h = menu.offsetHeight || 220;
+    const top = r.top - h - 8;
+    menu.style.top = (top < 8 ? r.bottom + 8 : top) + 'px';
+  }
+
+  (function wireModelBtn(){
+    const btn = document.getElementById('modelBtn');
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (document.getElementById('modelMenu')) closeModelMenu();
+      else openModelMenu();
+    });
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('modelMenu');
+      if (m && !m.contains(e.target) && e.target !== btn) closeModelMenu();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModelMenu();
+    });
+    // Prime the label once the socket is up.
+    loadModelSlots(false).then(refreshModelButton);
+  })();
 
   
   // Slash commands that ARE safe to run while inside an agent session
@@ -5456,21 +5832,30 @@ const icons = {
   }
 
   // ─── Sidebar ───
+  // Single source of truth for what a tab renders. Previously this switch was
+  // duplicated in toggleSidebar() and the tab click handler, so a tab added to
+  // only one of them fell through to loadFileList() and 404'd.
+  function renderTab() {
+    if (currentTab === 'diffs') {
+      sidebarContent.innerHTML = '';
+      sidebarContent.appendChild(diffsArea);
+    } else if (currentTab === 'sessions') {
+      loadSessionsView();
+    } else if (currentTab === 'skills') {
+      loadCatalogView('skills');
+    } else if (currentTab === 'tools') {
+      loadCatalogView('tools');
+    } else {
+      loadFileList();
+    }
+  }
+
   function toggleSidebar() {
     sidebarOpen = !sidebarOpen;
     sidebar.classList.toggle('open', sidebarOpen);
     app.classList.toggle('sidebar-open', sidebarOpen);
     sidebarToggle.classList.toggle('active', sidebarOpen);
-    if (sidebarOpen) {
-      if (currentTab === 'diffs') {
-        sidebarContent.innerHTML = '';
-        sidebarContent.appendChild(diffsArea);
-      } else if (currentTab === 'sessions') {
-        loadSessionsView();
-      } else {
-        loadFileList();
-      }
-    }
+    if (sidebarOpen) renderTab();
   }
   sidebarToggle.addEventListener('click', toggleSidebar);
   sidebarClose.addEventListener('click', toggleSidebar);
@@ -5481,17 +5866,101 @@ const icons = {
       try { window.currentTab = currentTab; } catch(_) {}
       document.querySelectorAll('.sidebar-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      
-      if (currentTab === 'diffs') {
-        sidebarContent.innerHTML = '';
-        sidebarContent.appendChild(diffsArea);
-      } else if (currentTab === 'sessions') {
-        loadSessionsView();
-      } else {
-        loadFileList();
-      }
+      renderTab();
     });
   });
+
+  // ─── Skills / Tools catalog tabs ───
+  // Both read a plain {count, items:[{name, description, ...}]} payload, so one
+  // renderer serves both. Tools additionally carry a `server` field and are
+  // grouped by it (Native/Filesystem/Shell + one group per MCP server).
+  const _catalogCache = {};
+  async function loadCatalogView(kind) {
+    sidebarContent.innerHTML = '<div class="loading">Loading ' + kind + '…</div>';
+    let data = _catalogCache[kind];
+    if (!data) {
+      try {
+        const r = await fetch(_apiUrl('/api/' + kind), { headers: { 'Accept': 'application/json' } });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        data = await r.json();
+        _catalogCache[kind] = data;
+      } catch (e) {
+        sidebarContent.innerHTML =
+          '<div class="error-msg">Could not load ' + esc(kind) + ': ' + esc(e.message || String(e)) + '</div>';
+        return;
+      }
+    }
+    // Guard against a stale render if the user switched tabs mid-fetch.
+    if (currentTab !== kind) return;
+    renderCatalog(kind, data);
+  }
+
+  function renderCatalog(kind, data) {
+    const items = (data && data.items) || [];
+    if (!items.length) {
+      sidebarContent.innerHTML = '<div class="mux-cat-empty">No ' + esc(kind) + ' available.</div>';
+      return;
+    }
+
+    // Group: tools by server, skills into one implicit bucket.
+    const groups = new Map();
+    for (const it of items) {
+      const g = (kind === 'tools' ? (it.server || 'Other') : 'Skills');
+      if (!groups.has(g)) groups.set(g, []);
+      groups.get(g).push(it);
+    }
+
+    let html =
+      '<div class="mux-cat-root">' +
+        '<div class="mux-cat-head">' +
+          '<input class="mux-cat-search" type="search" placeholder="Filter ' + esc(kind) + '…" aria-label="Filter ' + esc(kind) + '">' +
+          '<span class="mux-cat-count">' + items.length + '</span>' +
+        '</div>' +
+        '<div class="mux-cat-body">';
+
+    for (const [group, rows] of groups) {
+      // Skills render as a flat list (one implicit group); tools get a header
+      // per server so MCP origin is visible at a glance.
+      const showHead = kind === 'tools';
+      html += '<div class="mux-cat-group">';
+      if (showHead) {
+        html += '<div class="mux-cat-group-head">' + esc(group) +
+                '<span class="mux-cat-group-n">' + rows.length + '</span></div>';
+      }
+      for (const it of rows) {
+        const desc = String(it.description || '').trim();
+        html +=
+          '<div class="mux-cat-item" data-name="' + esc(String(it.name || '').toLowerCase()) +
+               '" data-desc="' + esc(desc.toLowerCase()) + '">' +
+            '<div class="mux-cat-name">' + esc(it.name || '') +
+              (it.kind === 'native' ? '<span class="mux-cat-tag">built-in</span>' : '') +
+            '</div>' +
+            (desc ? '<div class="mux-cat-desc">' + esc(desc) + '</div>' : '') +
+          '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div></div>';
+    sidebarContent.innerHTML = html;
+
+    const search = sidebarContent.querySelector('.mux-cat-search');
+    if (search) {
+      search.addEventListener('input', () => {
+        const q = search.value.trim().toLowerCase();
+        sidebarContent.querySelectorAll('.mux-cat-item').forEach(el => {
+          const hit = !q ||
+            (el.dataset.name || '').includes(q) ||
+            (el.dataset.desc || '').includes(q);
+          el.classList.toggle('filtered-out', !hit);
+        });
+        // Hide a group whose rows were all filtered out.
+        sidebarContent.querySelectorAll('.mux-cat-group').forEach(g => {
+          const any = g.querySelector('.mux-cat-item:not(.filtered-out)');
+          g.classList.toggle('filtered-out', !any);
+        });
+      });
+    }
+  }
 
   async function loadFileList(subpath = '') {
     sidebarContent.innerHTML = '<div class="loading">Loading...</div>';
@@ -5694,6 +6163,28 @@ const icons = {
 
   // ─── Sessions tab: Claude-Desktop-style two-pane viewer ───
   const _sessionCache = new Map(); // folderName -> parsed agent_session.json
+
+  // ─── Session pinning ───
+  // Pins are a client-side preference: the engine has no pin concept, and the
+  // sessions directory is deliberately not writable through the API. Keyed by
+  // session folder name, which is stable for the life of the session.
+  const PIN_KEY = 'muxPinnedSessions.v1';
+  function loadPins() {
+    try {
+      const v = JSON.parse(localStorage.getItem(PIN_KEY) || '[]');
+      return new Set(Array.isArray(v) ? v : []);
+    } catch (_) { return new Set(); }
+  }
+  function savePins(set) {
+    try { localStorage.setItem(PIN_KEY, JSON.stringify([...set])); } catch (_) {}
+  }
+  function isPinned(name) { return loadPins().has(name); }
+  function togglePin(name) {
+    const pins = loadPins();
+    if (pins.has(name)) pins.delete(name); else pins.add(name);
+    savePins(pins);
+    return pins.has(name);
+  }
   let _selectedSession = null;
 
   function _fmtSessionDate(folderName) {
@@ -5758,6 +6249,17 @@ const icons = {
     return out;
   }
 
+  // Re-sort the rendered session rows so pinned ones sit at the top. Operates on
+  // the live DOM (no refetch) and preserves the existing relative order inside
+  // each band, which is already recency-sorted.
+  function reflowPinned(listEl) {
+    if (!listEl) return;
+    const rows = [...listEl.querySelectorAll('.mux-sess-row')];
+    const pinned = rows.filter(r => r.classList.contains('pinned'));
+    const rest = rows.filter(r => !r.classList.contains('pinned'));
+    for (const r of [...pinned, ...rest]) listEl.appendChild(r);
+  }
+
   async function loadSessionsView() {
     sidebarContent.innerHTML = '<div class="loading">Loading sessions…</div>';
     let listData;
@@ -5771,6 +6273,11 @@ const icons = {
     }
     const folders = (listData.items || []).filter(it => it.isDir).map(it => it.name);
     folders.sort((a,b) => a < b ? 1 : (a > b ? -1 : 0));
+    // Pinned sessions float to the top; recency order is preserved within each band.
+    {
+      const pins = loadPins();
+      folders.sort((a, b) => (pins.has(b) ? 1 : 0) - (pins.has(a) ? 1 : 0));
+    }
 
     sidebarContent.innerHTML = `
       <div class="mux-sess-root">
@@ -5796,15 +6303,25 @@ const icons = {
     const rowEls = new Map();
     for (const name of folders) {
       const row = document.createElement('div');
-      row.className = 'mux-sess-row';
+      row.className = 'mux-sess-row' + (isPinned(name) ? ' pinned' : '');
       row.dataset.folder = name;
       row.innerHTML = `
+        <button class="mux-sess-pin" type="button" aria-label="Pin session" title="Pin session">${icons.pin}</button>
         <div class="mux-sess-row-title">${esc(_fmtSessionDate(name))}</div>
         <div class="mux-sess-row-snippet"><span class="mux-sess-skel">loading…</span></div>
         <div class="mux-sess-row-meta">
           <span class="mux-sess-folder">${esc(name)}</span>
         </div>`;
       row.addEventListener('click', () => selectSession(name));
+      // Pin toggle must not also select the session.
+      row.querySelector('.mux-sess-pin').addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nowPinned = togglePin(name);
+        row.classList.toggle('pinned', nowPinned);
+        // Re-float the row without refetching: pinned rows go to the top of the
+        // list, unpinned ones return to their recency position.
+        reflowPinned(listEl);
+      });
       listEl.appendChild(row);
       rowEls.set(name, row);
     }
@@ -6204,6 +6721,82 @@ const icons = {
       }
       /* Container queries supported via the sidebar host */
       #sidebarContent { container-type: inline-size; container-name: muxSidebar; }
+
+      /* ── Skills / Tools catalog tabs ── */
+      .mux-cat-root { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .mux-cat-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border, #27272a);
+        flex: 0 0 auto;
+      }
+      .mux-cat-search {
+        flex: 1; min-width: 0;
+        background: var(--bg-input, rgba(255,255,255,0.03));
+        border: 1px solid var(--border, #27272a);
+        border-radius: 6px;
+        padding: 5px 9px;
+        color: var(--text);
+        font-family: var(--font-sans, system-ui);
+        font-size: calc(12px * var(--ui-font-scale, 1));
+        outline: none;
+      }
+      .mux-cat-search:focus { border-color: var(--accent, #64b4dc); }
+      .mux-cat-count {
+        color: var(--muted, #71717a);
+        font-family: var(--font-mono, monospace);
+        font-size: calc(11px * var(--ui-font-scale, 1));
+        flex: 0 0 auto;
+      }
+      .mux-cat-body { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding: 4px 0 12px; }
+      .mux-cat-group.filtered-out, .mux-cat-item.filtered-out { display: none; }
+      .mux-cat-group-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        position: sticky; top: 0; z-index: 1;
+        background: var(--bg, #0a0a0a);
+        padding: 7px 10px 5px;
+        color: var(--accent, #64b4dc);
+        font-size: calc(10.5px * var(--ui-font-scale, 1));
+        font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+      }
+      .mux-cat-group-n {
+        color: var(--muted, #71717a); font-weight: 500;
+        letter-spacing: 0; text-transform: none;
+        font-family: var(--font-mono, monospace);
+      }
+      .mux-cat-item {
+        padding: 6px 10px 7px;
+        border-bottom: 1px solid rgba(127,127,127,0.10);
+      }
+      .mux-cat-item:hover { background: rgba(255,255,255,0.025); }
+      .mux-cat-name {
+        display: flex; align-items: center; gap: 6px;
+        color: var(--text);
+        font-family: var(--font-mono, monospace);
+        font-size: calc(12px * var(--ui-font-scale, 1));
+        font-weight: 600;
+        word-break: break-word;
+      }
+      .mux-cat-tag {
+        flex: 0 0 auto;
+        padding: 1px 5px; border-radius: 4px;
+        background: rgba(var(--accent-rgb, 100,180,220), 0.15);
+        color: var(--accent, #64b4dc);
+        font-size: calc(9px * var(--ui-font-scale, 1));
+        font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      }
+      .mux-cat-desc {
+        margin-top: 2px;
+        color: var(--muted, #71717a);
+        font-family: var(--font-sans, system-ui);
+        font-size: calc(11.5px * var(--ui-font-scale, 1));
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      .mux-cat-empty {
+        padding: 16px; color: var(--muted, #71717a); font-style: italic;
+        font-size: calc(12.5px * var(--ui-font-scale, 1));
+      }
       /* Fallback if container queries unsupported: use media query on viewport */
       @supports not (container-type: inline-size) {
         @media (min-width: 900px) {
@@ -6227,6 +6820,36 @@ const icons = {
         transition: background 0.12s;
       }
       .mux-sess-row:hover { background: rgba(var(--accent-rgb),0.06); }
+
+      /* ── Session pinning ── */
+      .mux-sess-row { position: relative; }
+      /* Keep the title clear of the pin button. */
+      .mux-sess-row .mux-sess-row-title { padding-right: 22px; }
+      .mux-sess-pin {
+        position: absolute;
+        top: 6px; right: 6px;
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 20px; height: 20px;
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-radius: 4px;
+        color: var(--muted, #71717a);
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity .12s ease, color .12s ease, background .12s ease;
+      }
+      .mux-sess-row:hover .mux-sess-pin,
+      .mux-sess-pin:focus-visible { opacity: 0.65; }
+      .mux-sess-pin:hover { opacity: 1; color: var(--accent, #64b4dc); background: rgba(var(--accent-rgb),0.12); }
+      /* A pinned row keeps its marker visible at all times. */
+      .mux-sess-row.pinned .mux-sess-pin {
+        opacity: 1;
+        color: var(--accent, #64b4dc);
+      }
+      .mux-sess-row.pinned {
+        border-left: 2px solid var(--accent, #64b4dc);
+      }
       .mux-sess-row.active {
         background: rgba(var(--accent-rgb),0.1);
         box-shadow: inset 2px 0 0 var(--accent, #64b4dc);
@@ -8247,6 +8870,8 @@ const icons = {
     hideToolCalls: false,
     toolGroupAutoCollapse: true,
     toolGroupCollapseAt: 1,
+    showReasoning: 'show',
+    reasoningCollapseAt: 600,
     uiFontSize: 14,
     uiLineHeight: 1.6,
     uiSpacingScale: 1.0,
@@ -8329,6 +8954,9 @@ const icons = {
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
     b.dataset.toolGroupCollapseAt = String(state.toolGroupCollapseAt || 1);
+    b.dataset.showReasoning = state.showReasoning || 'show';
+    b.classList.toggle('hide-reasoning', state.showReasoning === 'hide');
+    b.dataset.reasoningCollapseAt = String(state.reasoningCollapseAt || 600);
     // Typography
     const root = document.documentElement;
     root.style.setProperty('--ui-font-size', (state.uiFontSize || 14) + 'px');
@@ -8577,6 +9205,12 @@ const icons = {
       sliderRow('toolGroupCollapseAt', 'Auto-collapse after', 1, 20, 1,
         'Number of tool calls before a group auto-collapses. 1 = always start collapsed.',
         (v) => v + (v === 1 ? ' call' : ' calls')),
+      segRow('showReasoning', 'Reasoning output',
+        [{label:'Show', value:'show'}, {label:'Collapsed', value:'collapsed'}, {label:'Hide', value:'hide'}],
+        'Model reasoning is streamed separately from the answer. Show: render and auto-collapse once long. Collapsed: always start folded. Hide: drop it entirely.'),
+      sliderRow('reasoningCollapseAt', 'Collapse reasoning after', 100, 4000, 100,
+        'Characters of reasoning before the block auto-collapses (Show mode only).',
+        (v) => v + ' chars'),
       toggleRow('showTokens',       'Show tokens-in-context badge'),
       toggleRow('showSavedBanner',  'Show session-saved banner'),
     ]);

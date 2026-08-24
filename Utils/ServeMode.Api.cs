@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.AI;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 
@@ -18,6 +19,7 @@ namespace MuxSwarm.Utils;
 ///   GET /api/config                  sanitized runtime config (secrets stripped)
 ///   GET /api/read/{type}/{**path}    file as text (size-capped, binary-guarded)
 ///   GET /api/skills                  loaded skill manifest (name, description)
+///   GET /api/tools                   native + MCP tool catalog (name, description, server)
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
@@ -42,6 +44,7 @@ public static partial class ServeMode
         app.MapGet("/api/config", HandleConfig);
         app.MapGet("/api/read/{type}/{**path}", HandleRead);
         app.MapGet("/api/skills", HandleSkills);
+        app.MapGet("/api/tools", HandleTools);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
@@ -612,6 +615,50 @@ public static partial class ServeMode
             .ToList();
 
         await WriteJson(context, 200, new { count = skills.Count, items = skills });
+    }
+
+    // GET /api/tools
+    // Built-in (native, in-process) tools plus every MCP server's tools, with
+    // descriptions. Mirrors HandleSkills: read-only, never touches the agent
+    // input stream. Native tools are grouped by their VIRTUAL server name so the
+    // grouping matches how the per-agent ToolFilter actually gates them.
+    private sealed record ToolInfo(string Name, string? Description, string Server, string Kind);
+
+    private static async Task HandleTools(HttpContext context)
+    {
+        var items = new List<ToolInfo>();
+
+        // Native/built-in pool. BuildPool already honours the global
+        // mcpServers[..].Enabled gate, so a disabled native server contributes nothing.
+        foreach (var tool in NativeTools.NativeToolRegistry.BuildPool(App.Config))
+        {
+            if (tool is not AIFunction fn) continue;
+            items.Add(new ToolInfo(
+                fn.Name,
+                fn.Description,
+                NativeTools.NativeToolRegistry.VirtualServer(fn.Name) ?? "Native",
+                "native"));
+        }
+
+        // MCP tools. Server name is the {Server}_ prefix the loader stamps on
+        // every tool it registers; anything unprefixed is reported as "MCP".
+        foreach (var tool in App.McpTools ?? [])
+        {
+            var underscore = tool.Name.IndexOf('_');
+            items.Add(new ToolInfo(
+                tool.Name,
+                tool.Description,
+                underscore > 0 ? tool.Name[..underscore] : "MCP",
+                "mcp"));
+        }
+
+        var ordered = items
+            .OrderBy(t => t.Server, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(t => new { name = t.Name, description = t.Description, server = t.Server, kind = t.Kind })
+            .ToList();
+
+        await WriteJson(context, 200, new { count = ordered.Count, items = ordered });
     }
 
     // B5d -- GET /api/status
