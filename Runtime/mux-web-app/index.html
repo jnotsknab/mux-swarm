@@ -10212,6 +10212,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-fl-cron-preview:empty { display: none; }
 .f-preset-args[hidden] { display: none; }
 .mng-fl-form .mng-row { gap: 8px; }
+/* Form action buttons: grouped to the right, not spread edge-to-edge. */
+.mng-fl-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 2px; }
 #mngFlowsBody::-webkit-scrollbar { width: 4px; }
 #mngFlowsBody::-webkit-scrollbar-track { background: transparent; }
 #mngFlowsBody::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
@@ -10233,6 +10235,107 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-canvas .mng-node-card { cursor: pointer; transition: filter 0.15s; }
 .mng-canvas .mng-node-card:hover { filter: brightness(1.15); }
 .mng-canvas .mng-node-card.selected rect.mng-node-bg { stroke: var(--accent); stroke-width: 2; }
+
+/* ============================================================================
+   Dynamic-workflow node graph + per-run controls + script editor.
+   Self-contained inside the Flows lane; uses the same neutral card/dot/rail
+   vocabulary (status dots as the only colour; no accent stripes).
+   ============================================================================ */
+/* Lane body containers are mutually exclusive VIEWS. Each owns its own scroll
+   context so Workflows / Schedules / Activity can never bleed into each other. */
+.mng-fl-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px;
+  display: flex; flex-direction: column; gap: 8px;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent; }
+.mng-fl-view[hidden] { display: none; }
+.mng-fl-view::-webkit-scrollbar { width: 4px; }
+.mng-fl-view::-webkit-scrollbar-track { background: transparent; }
+.mng-fl-view::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-fl-view:hover::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.4); }
+
+/* Per-run action bar */
+.mng-wf-actions { display: flex; align-items: center; gap: 6px; padding: 5px 10px 8px; flex-wrap: wrap; }
+.mng-wf-actions .mng-btn { font-size: calc(10.5px * var(--ui-font-scale, 1)); padding: 3px 9px; }
+.mng-wf-actions .mng-fl-spacer { flex: 1 1 auto; }
+
+/* Node graph: run -> section -> task, laid out as a flowing column of stages.
+   Running nodes/edges pulse; everything else is still. */
+.mng-wfg { padding: 4px 6px 8px; }
+.mng-wfg-stage { display: flex; align-items: stretch; gap: 10px; position: relative; }
+.mng-wfg-secwrap { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-width: 0;
+  border: 1px solid rgba(127,127,127,.12); border-radius: 10px; padding: 8px 10px 10px;
+  background: rgba(127,127,127,.035); }
+.mng-wfg-sec-label { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1));
+  text-transform: uppercase; letter-spacing: .06em; margin: 2px 0 0 2px; display:flex; align-items:center; gap:6px; }
+.mng-wfg-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.mng-wfg-node {
+  border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 9px;
+  background: var(--bg-card, rgba(24,24,27,.55)); padding: 8px 9px;
+  cursor: pointer; transition: border-color .15s, background .15s; position: relative;
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+}
+.mng-wfg-node:hover { border-color: rgba(255,255,255,.22); background: rgba(36,36,42,.6); }
+.mng-wfg-node.is-open { border-color: rgba(255,255,255,.28); }
+.mng-wfg-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.mng-wfg-node-title { color: var(--text); font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width:0; }
+.mng-wfg-node-meta { color: var(--muted); font-size: calc(9.5px * var(--ui-font-scale, 1));
+  font-family: var(--font-mono, monospace); display: flex; flex-wrap: wrap; gap: 6px; }
+.mng-wfg-node-out {
+  margin-top: 4px; border-top: 1px dashed rgba(127,127,127,.22); padding-top: 6px;
+  max-height: 240px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  font-family: var(--font-mono, monospace); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  color: var(--text); line-height: 1.45;
+  scrollbar-width: thin; scrollbar-color: rgba(161,161,170,0.2) transparent;
+}
+.mng-wfg-node-out::-webkit-scrollbar { width: 4px; height: 4px; }
+.mng-wfg-node-out::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
+.mng-wfg-node-out[hidden] { display: none; }
+.mng-wfg-node-out .muted { color: var(--muted); }
+
+/* The vertical connector rail between run head, sections and tasks. Neutral. */
+.mng-wfg-rail { width: 0; border-left: 1px solid rgba(127,127,127,.20); margin-left: 8px; }
+.mng-wfg-runhead { display: flex; align-items: center; gap: 8px; padding: 2px 2px 6px; }
+.mng-wfg-runname { font-weight: 700; color: var(--text); font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+
+/* Pulsing/flow indicators (running only). Respects reduced-motion. */
+@keyframes mngPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes mngFlow { to { background-position: 12px 0; } }
+.mng-wfg-node.is-running { border-color: rgba(120,180,220,.5); }
+.mng-wfg-node.is-running .wf-dot.run { animation: mngPulse 1.1s ease-in-out infinite; }
+.mng-wfg-node.is-running::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
+  background-image: linear-gradient(90deg, rgba(120,180,220,.65) 50%, transparent 0);
+  background-size: 12px 2px; animation: mngFlow .6s linear infinite;
+}
+.mng-wfg-rail.is-running { border-left-color: rgba(120,180,220,.5);
+  background-image: linear-gradient(180deg, rgba(120,180,220,.55) 50%, transparent 0);
+  background-size: 2px 10px; background-repeat: repeat-y; animation: mngFlow .6s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .mng-wfg-node.is-running .wf-dot.run,
+  .mng-wfg-node.is-running::after,
+  .mng-wfg-rail.is-running { animation: none; }
+}
+
+/* Script editor modal (Monaco, textarea fallback) */
+.mng-script-modal { position: fixed; inset: 0; z-index: 60; display: none;
+  background: rgba(0,0,0,.55); align-items: center; justify-content: center; }
+.mng-script-modal.open { display: flex; }
+.mng-script-box { width: min(920px, 92vw); height: min(78vh, 720px);
+  background: var(--bg, #0b0b0e); border: 1px solid var(--border, rgba(255,255,255,.12));
+  border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+.mng-script-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.10)); }
+.mng-script-title { font-weight: 600; color: var(--text); font-size: calc(12px * var(--ui-font-scale, 1)); }
+.mng-script-sub { color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.mng-script-host { flex: 1 1 auto; min-height: 0; }
+.mng-script-host textarea { width: 100%; height: 100%; box-sizing: border-box; resize: none;
+  background: var(--bg-input, #111); color: var(--text); border: none; outline: none;
+  font-family: var(--font-mono, monospace); font-size: 13px; padding: 10px; line-height: 1.5; }
+.mng-script-status { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+.mng-script-status.is-err { color: var(--red, #ef4444); }
+.mng-script-status.is-ok { color: var(--green, #10b981); }
+
 .mng-canvas .mng-node-card.active rect.mng-node-bg { stroke: var(--green); stroke-width: 2; }
 .mng-canvas .mng-node-card.main rect.mng-node-bg { stroke: var(--accent); stroke-width: 1.5; }
 .mng-canvas rect.mng-node-bg { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; rx: 8; ry: 8; }
@@ -10692,11 +10795,29 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           <button class="mng-btn" id="mngFlowsClose" title="Hide">×</button>
         </div>
         <div class="mng-flows-compose" id="mngFlowsCompose" hidden></div>
-        <div class="mng-daemon-lane-body" id="mngFlowsBody"></div>
-        <!-- Live daemon goal activity. Same element MuxDaemonLane has always
-             written into, now a view of the Flows lane instead of a second
-             overlay that could cover it. -->
-        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody" hidden></div>
+        <!-- Mutually-exclusive VIEWS. Exactly one is visible at a time; each owns
+             its own scroll context so Workflows / Schedules / Activity never bleed
+             into one another (previous bug: two lane bodies shared flow + could
+             both show, producing the "lanes leak" + dead-space artifacts). -->
+        <div class="mng-fl-view" id="mngFlowsBody"></div>
+        <div class="mng-fl-view" id="mngSchedBody" hidden></div>
+        <!-- Live daemon goal activity. Same element MuxDaemonLane streams into. -->
+        <div class="mng-fl-view" id="mngDaemonLaneBody" hidden></div>
+      </div>
+      <!-- Dynamic-workflow driver-script editor (Monaco with a textarea fallback). -->
+      <div class="mng-script-modal" id="mngScriptModal">
+        <div class="mng-script-box">
+          <div class="mng-script-bar">
+            <span class="mng-script-title" id="mngScriptTitle">Driver script</span>
+            <span class="mng-script-sub" id="mngScriptSub"></span>
+            <span class="mng-daemon-lane-spacer"></span>
+            <span class="mng-script-status" id="mngScriptStatus"></span>
+            <button class="mng-btn" id="mngScriptSave">Save</button>
+            <button class="mng-btn" id="mngScriptSaveRun">Save &amp; Re-run</button>
+            <button class="mng-btn" id="mngScriptClose">Close</button>
+          </div>
+          <div class="mng-script-host" id="mngScriptHost"></div>
+        </div>
       </div>
       <div class="mng-instance-view" id="mngInstanceView" hidden>
         <div class="mng-instance-bar">
@@ -12333,12 +12454,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     function els(){
       return {
         lane:    document.getElementById('mngFlowsLane'),
-        body:    document.getElementById('mngFlowsBody'),
+        body:    document.getElementById('mngFlowsBody'),      // Workflows view
+        sched:   document.getElementById('mngSchedBody'),      // Schedules view (own scroll ctx)
         compose: document.getElementById('mngFlowsCompose'),
         tabWf:   document.getElementById('mngFlowsTabWf'),
         tabCron: document.getElementById('mngFlowsTabCron'),
         tabAct:  document.getElementById('mngFlowsTabAct'),
-        act:     document.getElementById('mngDaemonLaneBody'),
+        act:     document.getElementById('mngDaemonLaneBody'), // Activity view
       };
     }
     function api(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
@@ -12358,54 +12480,99 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     const DOT = { done:'ok', failed:'err', running:'run', cancelled:'warn', pending:'idle' };
 
     // ---- workflow runs ----
+    // A dynamic run renders as a flowing NODE GRAPH: a run head, then per-section
+    // task nodes in a grid. Running nodes/edges pulse. Clicking a task node toggles
+    // its captured output inline (fetched lazily). A static run stays a compact row.
+    // 'openTasks' keeps expanded task-output panels open across the 1.5s poll rebuild.
+    const openTasks = new Set();          // key: runId + '::' + taskId
+    const taskOutCache = new Map();       // key -> output text (avoid refetch churn)
+
+    function metaFor(t){
+      const meta = [];
+      if (t.agent) meta.push(esc(t.agent));
+      if (t.model) meta.push(esc(t.model));
+      if (t.secs != null) meta.push(t.secs + 's');
+      if (t.tools != null) meta.push(t.tools + ' tools');
+      if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
+      return meta;
+    }
+
+    function taskNodeHtml(run, t){
+      const key = run.id + '::' + t.id;
+      const open = openTasks.has(key);
+      const cls = 'mng-wfg-node' + (t.status === 'running' ? ' is-running' : '') + (open ? ' is-open' : '');
+      const meta = metaFor(t);
+      const cached = taskOutCache.get(key);
+      const outInner = open
+        ? (cached != null
+            ? (cached.trim() ? esc(cached) : '<span class="muted">(no output captured)</span>')
+            : '<span class="muted">loading output\u2026</span>')
+        : '';
+      return '<div class="' + cls + '" data-run="' + esc(run.id) + '" data-task="' + esc(t.id) + '">' +
+               '<div class="mng-wfg-node-head">' +
+                 '<span class="wf-dot ' + (DOT[t.status] || 'idle') + '"></span>' +
+                 '<span class="mng-wfg-node-title">' + esc(t.label || t.id) + '</span>' +
+               '</div>' +
+               (meta.length ? '<div class="mng-wfg-node-meta">' + meta.map(m => '<span>' + m + '</span>').join('') + '</div>' : '') +
+               (t.detail ? '<div class="mng-wfg-node-meta"><span>' + esc(String(t.detail).slice(0,120)) + '</span></div>' : '') +
+               '<div class="mng-wfg-node-out"' + (open ? '' : ' hidden') + '>' + outInner + '</div>' +
+             '</div>';
+    }
+
     function runHtml(run){
       const tasks = run.sections.reduce((a,s) => a.concat(s.tasks), []);
       const done = tasks.filter(t => t.status === 'done').length;
       const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
-      let h =
-        '<div class="mng-fl-run wf-' + esc(run.state) + '">' +
-          '<div class="mng-fl-run-head">' +
-            '<span class="wf-dot ' + (DOT[run.state] || 'idle') + '"></span>' +
-            '<span class="mng-fl-name">' + esc(run.name || run.id) + '</span>' +
-            '<span class="mng-fl-chip">' + esc(run.mode) + '</span>' +
-            '<span class="mng-fl-spacer"></span>' +
-            '<span class="mng-fl-count">' + done + '/' + tasks.length + '</span>' +
-            (run.state === 'running'
-              ? '<button class="mng-btn mng-fl-cancel" data-id="' + esc(run.id) + '">Cancel</button>'
-              : '<span class="mng-fl-state">' + esc(run.state) + '</span>') +
-          '</div>' +
-          '<div class="mng-fl-bar"><span style="width:' + pct + '%"></span></div>';
-      if (run.error) h += '<div class="mng-fl-err">' + esc(run.error) + '</div>';
-      for (const sec of run.sections){
-        const sd = sec.tasks.filter(t => t.status === 'done').length;
-        const st = sec.tasks.some(t => t.status === 'failed') ? 'err'
-                 : sec.tasks.some(t => t.status === 'running') ? 'run'
-                 : (sec.tasks.length && sd === sec.tasks.length) ? 'ok' : 'idle';
-        h += '<div class="mng-fl-sec">' +
-               '<div class="mng-fl-sec-head">' +
-                 '<span class="wf-dot ' + st + '"></span>' +
-                 '<span class="mng-fl-sec-name">' + esc(sec.name) + '</span>' +
-                 '<span class="mng-fl-spacer"></span>' +
-                 '<span class="mng-fl-count">' + sd + '/' + sec.tasks.length + '</span>' +
-               '</div>';
-        for (const t of sec.tasks){
-          const meta = [];
-          if (t.agent) meta.push(esc(t.agent));
-          if (t.model) meta.push(esc(t.model));
-          if (t.secs != null) meta.push(t.secs + 's');
-          if (t.tools != null) meta.push(t.tools + ' tools');
-          if (t.tokens != null) meta.push(Number(t.tokens).toLocaleString() + ' tok');
-          h += '<div class="mng-fl-task">' +
-                 '<span class="wf-dot ' + (DOT[t.status] || 'idle') + '"></span>' +
-                 '<div class="mng-fl-task-body">' +
-                   '<div class="mng-fl-task-label">' + esc(t.label || t.id) + '</div>' +
-                   (meta.length ? '<div class="mng-fl-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
-                   (t.detail ? '<div class="mng-fl-task-meta">' + esc(t.detail) + '</div>' : '') +
-                 '</div>' +
-               '</div>';
-        }
-        h += '</div>';
+      const running = run.state === 'running';
+
+      // Action bar: cancel (while running), re-run, save, view/edit script (dynamic only).
+      let actions = '<div class="mng-wf-actions">' +
+        '<span class="wf-dot ' + (DOT[run.state] || 'idle') + '"></span>' +
+        '<span class="mng-wfg-runname">' + esc(run.name || run.id) + '</span>' +
+        '<span class="mng-fl-chip">' + esc(run.mode) + '</span>' +
+        '<span class="mng-fl-count">' + done + '/' + tasks.length + '</span>' +
+        '<span class="mng-fl-spacer"></span>' +
+        (running ? '<button class="mng-btn mng-fl-cancel" data-id="' + esc(run.id) + '">Cancel</button>' : '');
+      if (run.mode === 'dynamic') {
+        actions +=
+          '<button class="mng-btn mng-wf-rerun" data-id="' + esc(run.id) + '"' + (running ? ' disabled' : '') + '>Re-run</button>' +
+          '<button class="mng-btn mng-wf-save" data-id="' + esc(run.id) + '">Save</button>' +
+          '<button class="mng-btn mng-wf-script" data-id="' + esc(run.id) + '">Script</button>';
       }
+      actions += '</div>';
+
+      let h = '<div class="mng-fl-run wf-' + esc(run.state) + '">' + actions +
+              '<div class="mng-fl-bar"><span style="width:' + pct + '%"></span></div>';
+      if (run.error) h += '<div class="mng-fl-err">' + esc(run.error) + '</div>';
+
+      // Static runs (or dynamic with no manifest yet) get a light empty state instead
+      // of a big dead area.
+      if (!run.sections.length || !tasks.length) {
+        h += '<div class="mng-fl-empty" style="padding:10px">' +
+             (running ? 'Starting\u2026 the driver is authoring its task plan.' : 'No tasks recorded for this run.') +
+             '</div>';
+        return h + '</div>';
+      }
+
+      h += '<div class="mng-wfg">';
+      run.sections.forEach((sec, i) => {
+        const sd = sec.tasks.filter(t => t.status === 'done').length;
+        const secRunning = sec.tasks.some(t => t.status === 'running');
+        const st = sec.tasks.some(t => t.status === 'failed') ? 'err'
+                 : secRunning ? 'run'
+                 : (sec.tasks.length && sd === sec.tasks.length) ? 'ok' : 'idle';
+        h += '<div class="mng-wfg-stage">' +
+               '<div class="mng-wfg-rail' + (secRunning ? ' is-running' : '') + '"></div>' +
+               '<div class="mng-wfg-secwrap">' +
+                 '<div class="mng-wfg-sec-label"><span class="wf-dot ' + st + '"></span>' +
+                    esc(sec.name || ('Stage ' + (i+1))) + ' \u00b7 ' + sd + '/' + sec.tasks.length + '</div>' +
+                 '<div class="mng-wfg-tasks">' +
+                    sec.tasks.map(t => taskNodeHtml(run, t)).join('') +
+                 '</div>' +
+               '</div>' +
+             '</div>';
+      });
+      h += '</div>';
       return h + '</div>';
     }
 
@@ -12424,10 +12591,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       }
       if (data.saved && data.saved.length) {
         h += '<div class="mng-fl-saved"><h5>Saved definitions</h5>' +
-             data.saved.map(s => '<div class="mng-fl-saved-row"><span>' + esc(s) + '</span></div>').join('') +
+             data.saved.map(s => '<div class="mng-fl-saved-row">' +
+               '<span>' + esc(s) + '</span>' +
+               '<span class="mng-fl-spacer"></span>' +
+               '<button class="mng-btn mng-wf-runsaved" data-name="' + esc(s) + '">Run</button>' +
+             '</div>').join('') +
              '</div>';
       }
       body.innerHTML = h;
+
       body.querySelectorAll('.mng-fl-cancel').forEach(b => {
         b.addEventListener('click', async () => {
           b.disabled = true;
@@ -12436,14 +12608,69 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           drawWorkflows();
         });
       });
+      // Re-run a dynamic run from its saved script.
+      body.querySelectorAll('.mng-wf-rerun').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true; b.textContent = 'Re-running\u2026';
+          try { await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/rerun', { method:'POST', body:'{}' }); setView('wf'); }
+          catch (e) { b.disabled = false; b.textContent = 'Re-run'; try { showToast && showToast('Re-run failed: ' + e.message); } catch(_){} }
+          drawWorkflows();
+        });
+      });
+      // Save a run as a reusable named definition.
+      body.querySelectorAll('.mng-wf-save').forEach(b => {
+        b.addEventListener('click', async () => {
+          const name = (window.prompt('Save this workflow as:', b.dataset.id.replace(/^\d{8}-\d{6}-/, '')) || '').trim();
+          if (!name) return;
+          b.disabled = true;
+          try { const r = await jfetch('/api/workflows/' + encodeURIComponent(b.dataset.id) + '/save', { method:'POST', body: JSON.stringify({ name }) });
+                try { showToast && showToast('Saved as ' + r.saved); } catch(_){} }
+          catch (e) { try { showToast && showToast('Save failed: ' + e.message); } catch(_){} }
+          b.disabled = false;
+          drawWorkflows();
+        });
+      });
+      // View / edit the driver script.
+      body.querySelectorAll('.mng-wf-script').forEach(b => {
+        b.addEventListener('click', () => openScriptEditor(b.dataset.id));
+      });
+      // Launch a saved definition.
+      body.querySelectorAll('.mng-wf-runsaved').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true; b.textContent = 'Running\u2026';
+          try { await jfetch('/api/workflows/saved/' + encodeURIComponent(b.dataset.name) + '/run', { method:'POST', body:'{}' }); setView('wf'); }
+          catch (e) { try { showToast && showToast('Run failed: ' + e.message); } catch(_){} }
+          drawWorkflows();
+        });
+      });
+      // Task node: click to expand its captured output (fetched lazily, cached).
+      body.querySelectorAll('.mng-wfg-node').forEach(node => {
+        node.addEventListener('click', () => toggleTaskOutput(node.dataset.run, node.dataset.task));
+      });
+
       // Poll only while something is live.
       if (data.running && !timer) timer = setInterval(() => { if (view === 'wf') drawWorkflows(); }, 1500);
       if (!data.running && timer) { clearInterval(timer); timer = null; }
     }
 
+    // Toggle a task's output panel: lazy-fetch once, cache, keep open across polls.
+    async function toggleTaskOutput(runId, taskId){
+      if (!runId || !taskId) return;
+      const key = runId + '::' + taskId;
+      if (openTasks.has(key)) { openTasks.delete(key); drawWorkflows(); return; }
+      openTasks.add(key);
+      drawWorkflows();
+      if (!taskOutCache.has(key)) {
+        try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/task/' + encodeURIComponent(taskId) + '/output');
+              taskOutCache.set(key, r.output || ''); }
+        catch (_) { taskOutCache.set(key, ''); }
+        if (openTasks.has(key) && view === 'wf') drawWorkflows();
+      }
+    }
+
     // ---- daemon schedules ----
     async function drawCron(){
-      const { body } = els(); if (!body) return;
+      const { sched: body } = els(); if (!body) return;   // Schedules OWN view (not the Workflows body)
       let data;
       try { data = await jfetch('/api/daemon'); }
       catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load daemon: ' + esc(e.message) + '</div>'; return; }
@@ -12547,7 +12774,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
               '<option value="static">static \u2014 run as an in-session goal</option>' +
             '</select></label>' +
           '<div class="mng-fl-status"></div>' +
-          '<div class="mng-row">' +
+          '<div class="mng-fl-actions">' +
             '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
             '<button class="mng-btn mng-fl-submit" type="button">Start</button>' +
           '</div>' +
@@ -12688,7 +12915,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
               '<input class="mng-input" data-f="interval" type="number" min="5" value="30"></label>' +
           '</div>' +
           '<div class="mng-fl-status"></div>' +
-          '<div class="mng-row">' +
+          '<div class="mng-fl-actions">' +
             '<button class="mng-btn mng-fl-cancel-btn" type="button">Cancel</button>' +
             '<button class="mng-btn mng-fl-submit" type="button">Create</button>' +
           '</div>' +
@@ -12808,6 +13035,114 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     }
 
     // ---- lane plumbing ----
+    // ---- driver-script editor (Monaco, textarea fallback) ----
+    // Self-contained: loads Monaco off /monaco/vs/loader.js on first open; if that
+    // fails (assets absent / offline), falls back to a plain <textarea>. Editing then
+    // re-running is the "edit the underlying SDK script" flow.
+    let _scriptEd = null, _scriptRunId = null, _scriptModel = 'textarea';
+    function _sm(){
+      return {
+        modal: document.getElementById('mngScriptModal'),
+        host:  document.getElementById('mngScriptHost'),
+        title: document.getElementById('mngScriptTitle'),
+        sub:   document.getElementById('mngScriptSub'),
+        status:document.getElementById('mngScriptStatus'),
+        save:  document.getElementById('mngScriptSave'),
+        saverun: document.getElementById('mngScriptSaveRun'),
+        close: document.getElementById('mngScriptClose'),
+      };
+    }
+    function _scriptStatus(msg, cls){
+      const { status } = _sm(); if (!status) return;
+      status.textContent = msg || ''; status.className = 'mng-script-status' + (cls ? ' ' + cls : '');
+    }
+    function _scriptValue(){
+      if (_scriptModel === 'monaco' && _scriptEd) return _scriptEd.getValue();
+      const ta = document.querySelector('#mngScriptHost textarea');
+      return ta ? ta.value : '';
+    }
+    function _mountTextarea(host, content){
+      _scriptModel = 'textarea';
+      host.innerHTML = '';
+      const ta = document.createElement('textarea');
+      ta.spellcheck = false; ta.value = content;
+      host.appendChild(ta); ta.focus();
+    }
+    function _mountMonaco(host, content){
+      // Reuse the global loader if the file editor already pulled it in.
+      function build(){
+        try {
+          host.innerHTML = '';
+          _scriptModel = 'monaco';
+          _scriptEd = window.monaco.editor.create(host, {
+            value: content, language: 'python', automaticLayout: true,
+            theme: (document.body.dataset.themePreset && /light/i.test(document.body.dataset.themePreset)) ? 'vs' : 'vs-dark',
+            fontSize: 13, minimap: { enabled: true }, scrollBeyondLastLine: false,
+          });
+        } catch (_) { _mountTextarea(host, content); }
+      }
+      if (window.monaco && window.monaco.editor) { build(); return; }
+      if (!window.require) {
+        const sc = document.createElement('script'); sc.src = '/monaco/vs/loader.js';
+        sc.onload = () => {
+          try {
+            window.require.config({ paths: { vs: '/monaco/vs' } });
+            window.MonacoEnvironment = { getWorkerUrl: function(){
+              return URL.createObjectURL(new Blob([
+                "self.MonacoEnvironment={baseUrl:'" + location.origin + "/monaco/'};",
+                "importScripts('" + location.origin + "/monaco/vs/base/worker/workerMain.js');"
+              ], { type: 'text/javascript' })); } };
+            window.require(['vs/editor/editor.main'], build);
+          } catch (_) { _mountTextarea(host, content); }
+        };
+        sc.onerror = () => _mountTextarea(host, content);
+        document.head.appendChild(sc);
+      } else {
+        try { window.require(['vs/editor/editor.main'], build); } catch (_) { _mountTextarea(host, content); }
+      }
+    }
+    async function openScriptEditor(runId){
+      const m = _sm(); if (!m.modal) return;
+      _scriptRunId = runId;
+      m.title.textContent = 'Driver script';
+      m.sub.textContent = runId;
+      _scriptStatus('Loading\u2026');
+      m.modal.classList.add('open');
+      let content = '';
+      try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/script'); content = r.script || ''; _scriptStatus(''); }
+      catch (e) { _scriptStatus(e.message, 'is-err'); content = '# ' + e.message; }
+      _mountMonaco(m.host, content);
+    }
+    function closeScriptEditor(){
+      const m = _sm(); if (m.modal) m.modal.classList.remove('open');
+      if (_scriptEd) { try { _scriptEd.dispose(); } catch(_){} _scriptEd = null; }
+      _scriptRunId = null;
+    }
+    async function saveScript(){
+      if (!_scriptRunId) return false;
+      _scriptStatus('Saving\u2026');
+      try {
+        await jfetch('/api/workflows/' + encodeURIComponent(_scriptRunId) + '/script',
+          { method: 'PUT', body: JSON.stringify({ script: _scriptValue() }) });
+        _scriptStatus('Saved.', 'is-ok');
+        return true;
+      } catch (e) { _scriptStatus(e.message, 'is-err'); return false; }
+    }
+    (function wireScriptEditor(){
+      const m = _sm();
+      if (m.close) m.close.addEventListener('click', closeScriptEditor);
+      if (m.save)  m.save.addEventListener('click', saveScript);
+      if (m.saverun) m.saverun.addEventListener('click', async () => {
+        const rid = _scriptRunId;
+        if (!(await saveScript())) return;
+        try { await jfetch('/api/workflows/' + encodeURIComponent(rid) + '/rerun', { method: 'POST', body: '{}' });
+              closeScriptEditor(); setView('wf'); drawWorkflows(); }
+        catch (e) { _scriptStatus('Re-run failed: ' + e.message, 'is-err'); }
+      });
+      if (m.modal) m.modal.addEventListener('mousedown', (e) => { if (e.target === m.modal) closeScriptEditor(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && m.modal && m.modal.classList.contains('open')) closeScriptEditor(); });
+    })();
+
     function draw(){
       if (view === 'act') return;          // live-streamed, nothing to fetch
       return view === 'wf' ? drawWorkflows() : drawCron();
@@ -12818,9 +13153,12 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       if (e.tabWf)   e.tabWf.classList.toggle('is-on', v === 'wf');
       if (e.tabCron) e.tabCron.classList.toggle('is-on', v === 'cron');
       if (e.tabAct)  e.tabAct.classList.toggle('is-on', v === 'act');
-      // Activity streams into its own element; the other two share #mngFlowsBody.
-      if (e.body) e.body.hidden = v === 'act';
-      if (e.act)  e.act.hidden = v !== 'act';
+      // Three mutually-exclusive VIEWS, each its own scroll context. Exactly one
+      // visible -> no cross-lane bleed. (Previously Workflows + Schedules shared one
+      // body and Activity overlaid, which is what leaked.)
+      if (e.body)  e.body.hidden  = v !== 'wf';
+      if (e.sched) e.sched.hidden = v !== 'cron';
+      if (e.act)   e.act.hidden   = v !== 'act';
       const nw = document.getElementById('mngFlowsNew');
       if (nw) nw.hidden = v === 'act';
       // Clear only applies to streamed activity rows.
