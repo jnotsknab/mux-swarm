@@ -1050,6 +1050,7 @@ public static partial class ServeMode
             interval = t.EffectiveInterval,
             enabled = !DisabledTriggers.Contains(t.Id),
             nextFire = next,
+            lastFired = App.DaemonRunner?.LastFired(t.Id),
         };
     }
 
