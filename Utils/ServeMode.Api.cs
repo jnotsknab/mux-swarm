@@ -20,6 +20,9 @@ namespace MuxSwarm.Utils;
 ///   GET /api/read/{type}/{**path}    file as text (size-capped, binary-guarded)
 ///   GET /api/skills                  loaded skill manifest (name, description)
 ///   GET /api/tools                   native + MCP tool catalog (name, description, server)
+///   GET /api/models                  model ids advertised by the active provider endpoint
+///   POST /api/model                  { slot, model } -> persist a slot's model to Swarm.json
+///   POST /api/agent                  { name } -> swap the active single-agent definition
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
@@ -45,6 +48,9 @@ public static partial class ServeMode
         app.MapGet("/api/read/{type}/{**path}", HandleRead);
         app.MapGet("/api/skills", HandleSkills);
         app.MapGet("/api/tools", HandleTools);
+        app.MapGet("/api/models", HandleModels);
+        app.MapPost("/api/model", HandleSetModel);
+        app.MapPost("/api/agent", HandleSetAgent);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
@@ -659,6 +665,168 @@ public static partial class ServeMode
             .ToList();
 
         await WriteJson(context, 200, new { count = ordered.Count, items = ordered });
+    }
+
+    // GET /api/models
+    // Model ids the active provider endpoint actually advertises (OpenAI-compatible
+    // /v1/models). Best-effort by design: a provider that does not serve a catalog
+    // yields an empty list and the caller falls back to free-text entry, so this can
+    // never block a model change.
+    private static async Task HandleModels(HttpContext context)
+    {
+        IReadOnlyList<string> ids = [];
+        var source = "none";
+
+        // Subscription providers front their catalog through the local sidecar.
+        if (Proxy.CliProxyManager.IsRunning)
+        {
+            ids = await Proxy.CliProxyManager.ListModelsAsync(context.RequestAborted);
+            if (ids.Count > 0) source = "cliproxy";
+        }
+
+        // Plain OpenAI-compatible endpoint + key.
+        if (ids.Count == 0 && App.ActiveProvider is { Endpoint: { Length: > 0 } endpoint } p)
+        {
+            var key = string.IsNullOrEmpty(p.ApiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(p.ApiKeyEnvVar);
+            ids = await Proxy.CliProxyManager.ProbeEndpointModelsAsync(endpoint, key, context.RequestAborted);
+            if (ids.Count > 0) source = "endpoint";
+        }
+
+        await WriteJson(context, 200, new
+        {
+            provider = App.ActiveProvider?.Name,
+            source,
+            count = ids.Count,
+            items = ids.OrderBy(m => m, StringComparer.OrdinalIgnoreCase).ToList(),
+        });
+    }
+
+    // The set of assignable model slots in Swarm.json, in the same order and with the
+    // same labels the interactive /setmodel picker uses, so the web UI and the REPL
+    // always agree on what "CodeAgent" or "Orchestrator" means.
+    private static List<(string Label, string? Model, Action<string> Set)> ModelSlots(SwarmConfig config)
+    {
+        var slots = new List<(string, string?, Action<string>)>();
+        if (config.CompactionAgent != null)
+            slots.Add(("CompactionAgent", config.CompactionAgent.Model, v => config.CompactionAgent.Model = v));
+        if (config.SingleAgent != null)
+            slots.Add((config.SingleAgent.Name.Length > 0 ? config.SingleAgent.Name : "SingleAgent",
+                       config.SingleAgent.Model, v => config.SingleAgent.Model = v));
+        if (config.Orchestrator != null)
+            slots.Add(("Orchestrator", config.Orchestrator.Model, v => config.Orchestrator.Model = v));
+        foreach (var agent in config.Agents)
+            slots.Add((agent.Name, agent.Model, v => agent.Model = v));
+        return slots;
+    }
+
+    // POST /api/model   body: { slot, model }
+    // Non-interactive equivalent of /setmodel. Reads Swarm.json, assigns the model to
+    // the named slot, persists, and refreshes the in-memory config. Exists so the web
+    // UI never has to puppet the two-prompt REPL flow over the agent input stream.
+    private static async Task HandleSetModel(HttpContext context)
+    {
+        string slot, model;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            slot = doc.RootElement.TryGetProperty("slot", out var s) ? s.GetString() ?? "" : "";
+            model = doc.RootElement.TryGetProperty("model", out var m) ? m.GetString() ?? "" : "";
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(slot) || string.IsNullOrWhiteSpace(model))
+        {
+            await WriteJson(context, 400, new { error = "Both 'slot' and 'model' are required" });
+            return;
+        }
+
+        SwarmConfig config;
+        try
+        {
+            config = JsonSerializer.Deserialize<SwarmConfig>(await File.ReadAllTextAsync(PlatformContext.SwarmPath, context.RequestAborted))
+                     ?? throw new JsonException("null config");
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            await WriteJson(context, 500, new { error = "Could not read Swarm.json: " + ex.Message });
+            return;
+        }
+
+        var slots = ModelSlots(config);
+        var idx = slots.FindIndex(s => s.Label.Equals(slot.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (idx < 0)
+        {
+            await WriteJson(context, 404, new { error = $"No such slot: {slot}", slots = slots.Select(s => s.Label).ToList() });
+            return;
+        }
+
+        var target = slots[idx];
+        var previous = target.Model;
+        target.Set(model.Trim());
+
+        try
+        {
+            await File.WriteAllTextAsync(PlatformContext.SwarmPath,
+                JsonSerializer.Serialize(config, Setup.Setup.CfgSerialOpts), context.RequestAborted);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            await WriteJson(context, 500, new { error = "Could not write Swarm.json: " + ex.Message });
+            return;
+        }
+
+        // Keep the live config in step with what was just persisted, so the change
+        // applies to the next turn without a /refresh.
+        App.SwarmConfig = config;
+
+        await WriteJson(context, 200, new { slot = target.Label, model = model.Trim(), previous });
+    }
+
+    // POST /api/agent   body: { name }
+    // Non-interactive equivalent of /swap: rebinds single-agent mode to another
+    // configured agent definition. In-memory only, exactly like the REPL command --
+    // it does not rewrite Swarm.json's default agent.
+    private static async Task HandleSetAgent(HttpContext context)
+    {
+        string name;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            name = doc.RootElement.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+        }
+        catch (JsonException)
+        {
+            await WriteJson(context, 400, new { error = "Invalid JSON body" });
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            await WriteJson(context, 400, new { error = "'name' is required" });
+            return;
+        }
+
+        var defs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+        var current = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
+        var all = (current != null
+                ? new[] { current }.Concat(defs.Where(a => !a.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)))
+                : defs)
+            .DistinctBy(a => a.Name)
+            .ToList();
+
+        var matched = all.FirstOrDefault(a => a.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (matched == null)
+        {
+            await WriteJson(context, 404, new { error = $"No such agent: {name}", agents = all.Select(a => a.Name).ToList() });
+            return;
+        }
+
+        SingleAgentOrchestrator.AgentDef = matched;
+        await WriteJson(context, 200, new { agent = matched.Name, description = matched.Description });
     }
 
     // B5d -- GET /api/status

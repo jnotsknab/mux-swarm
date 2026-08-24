@@ -123,7 +123,7 @@
   --accent-fg: #09090b; /* Zinc 950 */
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
-  --sidebar-width: 320px;
+  --sidebar-width: 420px;
   --radius: 0.5rem;
   /* Typography & density (user-controllable from Settings → Typography) */
   --ui-font-size: 14px;
@@ -502,11 +502,19 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 .sidebar.open { transform: translateX(0); }
 
-.sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
+.sidebar-header {
+  padding: 16px; border-bottom: 1px solid var(--border);
+  display: flex; gap: 6px; align-items: center;
+  /* Tabs scroll rather than wrap: a wrapped tab row clipped 'Tool Output'
+     at narrow widths and hid the tab entirely. */
+  overflow-x: auto; scrollbar-width: none;
+}
+.sidebar-header::-webkit-scrollbar { display: none; }
 
 .sidebar-tab {
-  flex: 1; background: transparent; color: var(--muted); border: none;
-  border-radius: calc(var(--radius) - 2px); padding: 8px 12px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
+  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+  background: transparent; color: var(--muted); border: none;
+  border-radius: calc(var(--radius) - 2px); padding: 8px 10px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500; cursor: pointer; transition: all 0.2s ease;
 }
 .sidebar-tab:hover { color: var(--text); background: rgba(var(--accent-rgb), 0.1); }
@@ -1627,27 +1635,87 @@ body.hide-all-pills .event-group { display: none !important; }
 .model-menu-loading { padding: 14px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); }
 .model-menu-list { max-height: 320px; overflow-y: auto; }
 .model-menu-item {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  width: 100%; text-align: left;
-  background: transparent; border: none;
-  border-bottom: 1px solid rgba(127,127,127,0.10);
-  padding: 8px 12px;
-  cursor: pointer;
-  color: var(--text);
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 0 4px; border-bottom: 1px solid var(--border);
 }
 .model-menu-item:last-child { border-bottom: none; }
-.model-menu-item:hover { background: rgba(var(--accent-rgb), 0.10); }
+.model-menu-item.is-active { background: rgba(var(--accent-rgb), 0.07); }
+/* Agent and model are SEPARATE hit targets in one row: click the name to make
+   that agent active, click the model to change it. Avoids a second tab layer. */
+.model-menu-item .mm-agent-btn,
+.model-menu-item .mm-model-btn {
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 9px 8px; border-radius: 5px; font-family: inherit; min-width: 0;
+}
+.model-menu-item .mm-agent-btn { flex: 0 0 auto; max-width: 45%; }
+.model-menu-item .mm-model-btn { flex: 1 1 auto; overflow: hidden; }
+.model-menu-item .mm-agent-btn:hover,
+.model-menu-item .mm-model-btn:hover { background: rgba(var(--accent-rgb), 0.14); }
 .model-menu-item .mm-agent {
-  font-family: var(--font-sans, system-ui);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 600;
+  display: block; color: var(--text); font-weight: 600;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.model-menu-item.is-active .mm-agent::after {
+  content: 'active'; margin-left: 6px; font-size: 0.8em; font-weight: 500;
+  color: var(--accent, #64b4dc); opacity: 0.9;
 }
 .model-menu-item .mm-model {
-  color: var(--muted);
-  font-family: var(--font-mono, monospace);
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  word-break: break-all;
+  display: block; color: var(--muted); font-family: var(--font-mono);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.model-menu .mm-hint {
+  padding: 0 12px 8px; color: var(--muted); opacity: 0.75;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
+}
+/* Model catalog: scrolls inside the menu so a large provider list can't push
+   the Apply button off-screen. */
+.model-menu .mm-models { max-height: 220px; overflow-y: auto; scrollbar-width: thin; }
+.model-menu .mm-model-row {
+  display: block; width: 100%; text-align: left; background: transparent;
+  border: none; cursor: pointer; color: var(--text);
+  font-family: var(--font-mono); font-size: calc(11.5px * var(--ui-font-scale, 1));
+  padding: 6px 8px; border-radius: 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.model-menu .mm-model-row:hover { background: rgba(var(--accent-rgb), 0.14); }
+.model-menu .mm-model-row.is-current { color: var(--accent, #64b4dc); font-weight: 600; }
+.model-menu .mm-loading, .model-menu .mm-status {
+  padding: 6px 8px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1));
+}
+.model-menu .mm-status:empty { display: none; }
+.model-menu .mm-status.is-error { color: var(--red, #e06c75); }
+.model-menu-form .mm-back {
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+}
+.model-menu-form .mm-back:hover { color: var(--text); }
+
+/* --- Capability hint bar ---
+   The engine emits CLI guidance ("run /subagents to enable delegation") that is
+   correct in a terminal but dead prose in the web app. We intercept those lines
+   and re-render them as a quiet bar with real buttons, so the instruction
+   becomes a click. Dismissed state is per-session. */
+.mux-hint-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 6px 0; padding: 8px 12px;
+  border: 1px solid var(--border); border-left: 2px solid var(--accent, #64b4dc);
+  border-radius: 6px; background: rgba(var(--accent-rgb), 0.05);
+  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--muted);
+}
+.mux-hint-bar .hb-text { flex: 1 1 220px; min-width: 0; }
+.mux-hint-bar .hb-text b { color: var(--text); font-weight: 600; }
+.mux-hint-bar .hb-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.mux-hint-bar button {
+  background: var(--bg-input); color: var(--text);
+  border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 10px; cursor: pointer; font-family: inherit;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+}
+.mux-hint-bar button:hover { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
+.mux-hint-bar .hb-dismiss { background: transparent; border-color: transparent; color: var(--muted); }
+.mux-hint-bar .hb-dismiss:hover { color: var(--text); background: transparent; }
+body.hide-capability-hints .mux-hint-bar { display: none !important; }
 .model-menu-form { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .model-menu-form .mm-current {
   color: var(--muted);
@@ -1925,7 +1993,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 }
 
 @media (min-width: 1200px) {
-  :root { --sidebar-width: 360px; }
+  :root { --sidebar-width: 480px; }
 }
 
 /* ── Live Output / Diffs ── */
@@ -2940,6 +3008,47 @@ const icons = {
     })();
   }
 
+  // --- Capability hints ---
+  // The engine's delegation notice is a CLI instruction: "run /subagents (/sub)
+  // or /parasubagents (/psub)". In the web app we render it as a bar with real
+  // buttons and swallow the prose, so the user clicks instead of typing a slash
+  // command. Returns true when the message was consumed.
+  const _hintsShown = new Set();
+  function renderCapabilityHint(message) {
+    const t = String(message || '');
+    const m = t.match(/^\s*(?:\[AGENT\]\s*)?(\S+)\s+is configured with delegation capabilities/i);
+    if (!m) return false;
+    if (document.body.classList.contains('hide-capability-hints')) return true;
+    // One bar per agent per session: the engine re-emits this every turn.
+    const key = 'delegation:' + m[1].toLowerCase();
+    if (_hintsShown.has(key)) return true;
+    _hintsShown.add(key);
+
+    const el = document.createElement('div');
+    el.className = 'mux-hint-bar';
+    el.innerHTML =
+      '<span class="hb-text"><b>' + esc(m[1]) + '</b> can delegate to sub-agents. ' +
+        'Delegation is off in single-agent mode.</span>' +
+      '<span class="hb-actions">' +
+        '<button type="button" data-cmd="/subagents">Enable</button>' +
+        '<button type="button" data-cmd="/parasubagents">Enable parallel</button>' +
+        '<button type="button" class="hb-dismiss">Dismiss</button>' +
+      '</span>';
+    el.querySelectorAll('button[data-cmd]').forEach(b => {
+      b.addEventListener('click', () => {
+        const cmd = b.dataset.cmd;
+        try { _suppressUserEchoOnce.add(cmd); } catch (_) {}
+        send(cmd);
+        el.remove();
+      });
+    });
+    el.querySelector('.hb-dismiss').addEventListener('click', () => el.remove());
+    breakPillGroup();
+    output.appendChild(el);
+    scrollToBottom();
+    return true;
+  }
+
   // The splash is an empty state: any real transcript content evicts it.
   function dismissSplash() {
     const s = document.getElementById('muxSplash');
@@ -3450,6 +3559,8 @@ const icons = {
       }
       case 'body':
       case 'markup':
+        // Capability guidance -> actionable bar (see renderCapabilityHint).
+        if (ev.message && renderCapabilityHint(ev.message)) break;
         if (ev.message && /^Mux-Swarm — A Configurable, CLI-First Agent Swarm Runtime/m.test(ev.message)) {
           renderHelpPanel(ev.message);
         } else if (ev.message && ev.message.length > 200) {
@@ -3867,15 +3978,11 @@ const icons = {
         input.focus();
         break;
 
-      case 'input_request': {
+      case 'input_request':
         setBusy(false);
-        // A queued model swap answers /setmodel's two prompts silently.
-        const auto = takeModelAnswer();
-        if (auto !== null) { sendRaw(auto); break; }
         renderInputPrompt(ev);
         break;
-      }
-      case 'confirm_request': setBusy(false); cancelModelSwap(); renderConfirm(ev); break;
+      case 'confirm_request': setBusy(false); renderConfirm(ev); break;
       case 'select_request':  setBusy(false); renderSelect(ev); break;
       case 'multiselect_request': setBusy(false); renderSelect(ev, true); break;
 
@@ -4040,6 +4147,20 @@ const icons = {
   // session-saved). These render STANDALONE; only genuinely noisy status lines
   // (retries, daemon next-fire, MCP notices, step/rule banners, generic info)
   // fold into the collapsed cluster.
+  // Session-lifecycle chatter that the splash/status strip already conveys
+  // (agent counts, tool counts, exit acknowledgements, skill reloads). It is
+  // reassuring on a terminal but pure noise stacked in a transcript, so these
+  // never expand a cluster on their own -- they fold in and stay folded.
+  function isBootNoise(text) {
+    const t = String(text || '');
+    return (
+      /^Loaded \d+ agents? from swarm\.json/i.test(t) ||
+      /has \d+ tools? available/i.test(t) ||
+      /Exited from .* successfully/i.test(t) ||
+      /^Loaded \d+ skills?/i.test(t) ||
+      /^(Connected|Registered) \d+ MCP/i.test(t)
+    );
+  }
   function isImportantPill(text) {
     const t = String(text || '');
     return (
@@ -4077,7 +4198,10 @@ const icons = {
     g.latest.textContent = _prev ? ('\u00b7 ' + _prev.slice(0, 80)) : '';
     const limit = parseInt(document.body.dataset.toolGroupCollapseAt || '1', 10) || 1;
     const autoOff = document.body.classList.contains('tool-group-autocollapse-off');
-    if (!autoOff && g.count >= Math.max(limit, 3) && !g.userToggled) g.el.classList.remove('open');
+    // Boot/lifecycle noise folds on sight; ordinary status lines still get the
+    // usual grace of a few visible rows before the cluster closes.
+    const floor = isBootNoise(_prev) ? 1 : 3;
+    if (!autoOff && g.count >= Math.max(limit, floor) && !g.userToggled) g.el.classList.remove('open');
     scrollToBottom();
   }
   function pillFromText(text, cls) {
@@ -4809,44 +4933,13 @@ const icons = {
     ws.send(text);
   }
 
-  // ─── Model selector ───
-  // The engine's /setmodel is a two-prompt interactive flow (pick a slot, then
-  // type a model id). Rather than make the user drive that by hand, the picker
-  // queues both answers and satisfies the prompts as they arrive, so the whole
-  // exchange is invisible. The queue is strictly bounded: it only ever holds the
-  // two answers for one swap and is cleared on completion, cancel, or any error.
+  // --- Model / agent selector ---
+  // Backed by dedicated endpoints (GET /api/agents, GET /api/models,
+  // POST /api/model, POST /api/agent) rather than puppeting the interactive
+  // /setmodel + /swap prompts. Nothing here touches the agent input stream, so
+  // changing a model can never end or disturb a live session.
   let _modelSlots = [];
-  let _modelAnswers = null;
-
-  async function queueModelSwap(slotLabel, modelId) {
-    // Arm the answers BEFORE dispatching so the first input_request is caught.
-    _modelAnswers = [slotLabel, modelId];
-    try { _suppressUserEchoOnce.add('/setmodel'); } catch (_) {}
-    try {
-      // send() (not sendRaw) so the in-session guard runs: /setmodel is
-      // ReplOnly, and issuing it inside a live session ends that session. The
-      // user gets the same confirmation they'd get for a typed command.
-      await send('/setmodel');
-    } catch (_) {
-      cancelModelSwap();
-      return;
-    }
-    // send() returns without dispatching when the user declines the
-    // session-switch confirmation; drop the queue after a grace period if no
-    // prompt ever arrived, so stale answers can't leak into a later prompt.
-    setTimeout(() => {
-      if (_modelAnswers && _modelAnswers.length === 2) cancelModelSwap();
-    }, 5000);
-  }
-  // Consumed by the input_request handler. Returns an answer when a swap is in
-  // flight, else null so normal prompts render as usual.
-  function takeModelAnswer() {
-    if (!_modelAnswers || !_modelAnswers.length) return null;
-    const v = _modelAnswers.shift();
-    if (!_modelAnswers.length) _modelAnswers = null;
-    return v;
-  }
-  function cancelModelSwap() { _modelAnswers = null; }
+  let _modelCatalog = null;   // null = not fetched yet, [] = provider serves none
 
   async function loadModelSlots(force) {
     if (_modelSlots.length && !force) return _modelSlots;
@@ -4861,21 +4954,46 @@ const icons = {
     return _modelSlots;
   }
 
+  // Model ids advertised by the active provider. Best-effort: an empty list just
+  // means free-text entry, never an error state.
+  async function loadModelCatalog() {
+    if (_modelCatalog) return _modelCatalog;
+    try {
+      const r = await fetch(_apiUrl('/api/models'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      _modelCatalog = (data && Array.isArray(data.items)) ? data.items : [];
+    } catch (_) {
+      _modelCatalog = [];
+    }
+    return _modelCatalog;
+  }
+
   function refreshModelButton() {
     const nameEl = document.getElementById('modelBtnName');
     if (!nameEl) return;
-    // Prefer the single-agent slot's model as the headline; fall back to the
-    // most common model across the swarm so the button always says something real.
-    const counts = new Map();
-    for (const s of _modelSlots) {
-      if (!s || !s.model) continue;
-      counts.set(s.model, (counts.get(s.model) || 0) + 1);
-    }
+    // Headline the ACTIVE single agent's model when known; otherwise fall back to
+    // the most common model across the swarm so the button always says something real.
     let best = '', bestN = 0;
-    for (const [m, n] of counts) if (n > bestN) { best = m; bestN = n; }
+    const active = _activeAgentName &&
+      _modelSlots.find(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase());
+    if (active && active.model) {
+      best = active.model;
+    } else {
+      const counts = new Map();
+      for (const s of _modelSlots) {
+        if (!s || !s.model) continue;
+        counts.set(s.model, (counts.get(s.model) || 0) + 1);
+      }
+      for (const [m, n] of counts) if (n > bestN) { best = m; bestN = n; }
+    }
     nameEl.textContent = best ? shortModelName(best) : 'model';
-    nameEl.title = best || 'No model configured';
+    nameEl.title = (_activeAgentName ? _activeAgentName + ' \u2014 ' : '') + (best || 'No model configured');
   }
+
+  // Which agent single-agent mode is currently bound to. Set by a successful
+  // /api/agent swap; used only to headline the button.
+  let _activeAgentName = null;
 
   // Trim vendor prefixes/date suffixes so the composer button stays compact.
   function shortModelName(m) {
@@ -4892,6 +5010,8 @@ const icons = {
     if (b) b.setAttribute('aria-expanded', 'false');
   }
 
+  function modelMenuEl() { return document.getElementById('modelMenu'); }
+
   async function openModelMenu() {
     closeModelMenu();
     const btn = document.getElementById('modelBtn');
@@ -4901,75 +5021,174 @@ const icons = {
     const menu = document.createElement('div');
     menu.className = 'model-menu';
     menu.id = 'modelMenu';
-    menu.innerHTML = '<div class="model-menu-loading">Loading…</div>';
+    menu.innerHTML = '<div class="model-menu-loading">Loading\u2026</div>';
     document.body.appendChild(menu);
     positionModelMenu(menu, btn);
 
     const slots = await loadModelSlots(true);
-    if (!document.getElementById('modelMenu')) return;   // closed while loading
+    if (!modelMenuEl()) return;   // closed while loading
     if (!slots.length) {
       menu.innerHTML = '<div class="model-menu-loading">No agents configured.</div>';
       return;
     }
+    renderSlotList(menu, slots);
+  }
 
+  // Root view: one row per slot. Clicking the AGENT name swaps the active agent;
+  // clicking the MODEL opens the model picker for that slot. Two targets, one row
+  // -- no sub-tabs to maintain.
+  function renderSlotList(menu, slots) {
     menu.innerHTML =
-      '<div class="model-menu-head">Change model</div>' +
+      '<div class="model-menu-head">Agents &amp; models</div>' +
+      '<div class="mm-hint">Click an agent to make it active \u00b7 click its model to change</div>' +
       '<div class="model-menu-list">' +
-      slots.map((s, i) =>
-        '<button class="model-menu-item" type="button" data-i="' + i + '">' +
-          '<span class="mm-agent">' + esc(s.name || 'agent') + '</span>' +
-          '<span class="mm-model">' + esc(s.model || 'not set') + '</span>' +
-        '</button>').join('') +
+      slots.map((s, i) => {
+        const isActive = _activeAgentName &&
+          String(s.name || '').toLowerCase() === _activeAgentName.toLowerCase();
+        return '<div class="model-menu-item' + (isActive ? ' is-active' : '') + '">' +
+          '<button class="mm-agent-btn" type="button" data-i="' + i + '" ' +
+                  'title="Make ' + esc(s.name || 'agent') + ' the active agent">' +
+            '<span class="mm-agent">' + esc(s.name || 'agent') + '</span>' +
+          '</button>' +
+          '<button class="mm-model-btn" type="button" data-i="' + i + '" ' +
+                  'title="Change model for ' + esc(s.name || 'agent') + '">' +
+            '<span class="mm-model">' + esc(s.model || 'not set') + '</span>' +
+          '</button>' +
+        '</div>';
+      }).join('') +
       '</div>';
-    positionModelMenu(menu, btn);
+    positionModelMenu(menu, document.getElementById('modelBtn'));
 
-    menu.querySelectorAll('.model-menu-item').forEach(el => {
+    menu.querySelectorAll('.mm-agent-btn').forEach(el => {
       el.addEventListener('click', () => {
         const slot = slots[parseInt(el.dataset.i, 10)];
-        if (slot) promptForModel(menu, slot);
+        if (slot) swapAgent(menu, slot);
+      });
+    });
+    menu.querySelectorAll('.mm-model-btn').forEach(el => {
+      el.addEventListener('click', () => {
+        const slot = slots[parseInt(el.dataset.i, 10)];
+        if (slot) pickModel(menu, slot);
       });
     });
   }
 
-  // Second step: type the new model id for the chosen slot.
-  function promptForModel(menu, slot) {
+  function mmStatus(menu, text, kind) {
+    const el = menu.querySelector('.mm-status');
+    if (el) { el.textContent = text || ''; el.className = 'mm-status' + (kind ? ' ' + kind : ''); }
+  }
+
+  // POST /api/agent -- rebinds single-agent mode.
+  async function swapAgent(menu, slot) {
+    const name = slot.name || '';
     menu.innerHTML =
-      '<div class="model-menu-head">' + esc(slot.name || 'agent') + '</div>' +
+      '<div class="model-menu-head">' + esc(name) + '</div>' +
+      '<div class="model-menu-form"><div class="mm-status">Switching\u2026</div></div>';
+    try {
+      const r = await fetch(_apiUrl('/api/agent'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      const data = await r.json().catch(() => null);
+      if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+      _activeAgentName = (data && data.agent) || name;
+      refreshModelButton();
+      closeModelMenu();
+      routePill(pillFromText('Active agent: ' + _activeAgentName, 'event-success'));
+    } catch (e) {
+      if (!modelMenuEl()) return;
+      mmStatus(menu, 'Could not switch agent: ' + (e.message || e), 'is-error');
+    }
+  }
+
+  // Model picker for one slot: a filterable list of ids the provider actually
+  // advertises, plus free-text for anything not in the catalog.
+  async function pickModel(menu, slot) {
+    const name = slot.name || 'agent';
+    menu.innerHTML =
+      '<div class="model-menu-head">' + esc(name) + '</div>' +
       '<div class="model-menu-form">' +
         '<div class="mm-current">current: <code>' + esc(slot.model || 'not set') + '</code></div>' +
         '<input class="mm-input" type="text" spellcheck="false" autocomplete="off" ' +
-               'placeholder="model id" value="' + esc(slot.model || '') + '" aria-label="Model id">' +
+               'placeholder="Filter or type a model id\u2026" value="" aria-label="Model id">' +
+        '<div class="mm-models" role="listbox"><div class="mm-loading">Loading models\u2026</div></div>' +
+        '<div class="mm-status"></div>' +
         '<div class="mm-actions">' +
-          '<button class="mm-cancel" type="button">Cancel</button>' +
+          '<button class="mm-back" type="button">Back</button>' +
           '<button class="mm-apply" type="button">Apply</button>' +
         '</div>' +
       '</div>';
 
     const inp = menu.querySelector('.mm-input');
-    const apply = () => {
-      const v = inp.value.trim();
-      if (!v || v === slot.model) { closeModelMenu(); return; }
-      // Close first: send() may await a confirmation card in the transcript.
-      closeModelMenu();
-      queueModelSwap(slot.name || '', v);
+    const list = menu.querySelector('.mm-models');
+
+    const commit = async (value) => {
+      const v = String(value || '').trim();
+      if (!v) { mmStatus(menu, 'Enter a model id.', 'is-error'); return; }
+      if (v === slot.model) { closeModelMenu(); return; }
+      mmStatus(menu, 'Applying\u2026', '');
+      try {
+        const r = await fetch(_apiUrl('/api/model'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: JSON.stringify({ slot: name, model: v }),
+        });
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
+        slot.model = v;
+        const cached = _modelSlots.find(s => s && s.name === name);
+        if (cached) cached.model = v;
+        refreshModelButton();
+        closeModelMenu();
+        routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
+      } catch (e) {
+        if (!modelMenuEl()) return;
+        mmStatus(menu, 'Could not set model: ' + (e.message || e), 'is-error');
+      }
     };
-    menu.querySelector('.mm-apply').addEventListener('click', apply);
-    menu.querySelector('.mm-cancel').addEventListener('click', closeModelMenu);
+
+    menu.querySelector('.mm-apply').addEventListener('click', () => commit(inp.value));
+    menu.querySelector('.mm-back').addEventListener('click', () => renderSlotList(menu, _modelSlots));
     inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); apply(); }
+      if (e.key === 'Enter') { e.preventDefault(); commit(inp.value); }
       if (e.key === 'Escape') { e.preventDefault(); closeModelMenu(); }
     });
     inp.focus();
-    inp.select();
+
+    const models = await loadModelCatalog();
+    if (!modelMenuEl()) return;
+    const draw = () => {
+      const q = inp.value.trim().toLowerCase();
+      const hits = q ? models.filter(m => m.toLowerCase().includes(q)) : models;
+      if (!models.length) {
+        list.innerHTML = '<div class="mm-loading">Provider serves no model list \u2014 type an id above.</div>';
+        return;
+      }
+      if (!hits.length) {
+        list.innerHTML = '<div class="mm-loading">No match \u2014 press Enter to use it anyway.</div>';
+        return;
+      }
+      list.innerHTML = hits.slice(0, 200).map(m =>
+        '<button class="mm-model-row' + (m === slot.model ? ' is-current' : '') + '" type="button" ' +
+                'role="option" data-m="' + esc(m) + '">' + esc(m) + '</button>').join('');
+      list.querySelectorAll('.mm-model-row').forEach(el => {
+        el.addEventListener('click', () => commit(el.dataset.m));
+      });
+    };
+    draw();
+    inp.addEventListener('input', draw);
+    positionModelMenu(menu, document.getElementById('modelBtn'));
   }
 
   function positionModelMenu(menu, btn) {
+    if (!menu || !btn) return;
     const r = btn.getBoundingClientRect();
-    menu.style.left = Math.max(8, r.left) + 'px';
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
     // Anchor above the composer; flip below only if there is no room above.
     const h = menu.offsetHeight || 220;
     const top = r.top - h - 8;
-    menu.style.top = (top < 8 ? r.bottom + 8 : top) + 'px';
+    menu.style.top = (top < 8 ? Math.min(r.bottom + 8, window.innerHeight - h - 8) : top) + 'px';
   }
 
   (function wireModelBtn(){
@@ -5801,6 +6020,15 @@ const icons = {
   const sidebarResizer = $('sidebarResizer');
   let isResizing = false;
 
+  // Restore a user-chosen width. Clamped on read so a stale/absurd stored value
+  // (e.g. saved on a much wider monitor) can never wedge the sidebar off-screen.
+  try {
+    const _sw = parseInt(localStorage.getItem('muxSidebarWidth') || '', 10);
+    if (_sw >= 250 && _sw <= window.innerWidth * 0.8) {
+      document.documentElement.style.setProperty('--sidebar-width', _sw + 'px');
+    }
+  } catch (_) {}
+
   if (sidebarResizer) {
     sidebarResizer.addEventListener('mousedown', (e) => {
       if (window.innerWidth <= 768) return; // Disable on mobile
@@ -5819,6 +6047,7 @@ const icons = {
       if (newWidth > window.innerWidth * 0.8) newWidth = window.innerWidth * 0.8;
       
       document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
+      try { localStorage.setItem('muxSidebarWidth', String(newWidth)); } catch (_) {}
     });
 
     window.addEventListener('mouseup', () => {
@@ -8870,6 +9099,7 @@ const icons = {
     hideToolCalls: false,
     toolGroupAutoCollapse: true,
     toolGroupCollapseAt: 1,
+    hideCapabilityHints: false,
     showReasoning: 'show',
     reasoningCollapseAt: 600,
     uiFontSize: 14,
@@ -8954,6 +9184,7 @@ const icons = {
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
     b.dataset.toolGroupCollapseAt = String(state.toolGroupCollapseAt || 1);
+    b.classList.toggle('hide-capability-hints', !!state.hideCapabilityHints);
     b.dataset.showReasoning = state.showReasoning || 'show';
     b.classList.toggle('hide-reasoning', state.showReasoning === 'hide');
     b.dataset.reasoningCollapseAt = String(state.reasoningCollapseAt || 600);
@@ -9205,6 +9436,8 @@ const icons = {
       sliderRow('toolGroupCollapseAt', 'Auto-collapse after', 1, 20, 1,
         'Number of tool calls before a group auto-collapses. 1 = always start collapsed.',
         (v) => v + (v === 1 ? ' call' : ' calls')),
+      toggleRow('hideCapabilityHints', 'Hide capability hints',
+        'Suppress the delegation/capability bars the engine emits as CLI guidance.'),
       segRow('showReasoning', 'Reasoning output',
         [{label:'Show', value:'show'}, {label:'Collapsed', value:'collapsed'}, {label:'Hide', value:'hide'}],
         'Model reasoning is streamed separately from the answer. Show: render and auto-collapse once long. Collapsed: always start folded. Hide: drop it entirely.'),
