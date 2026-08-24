@@ -124,4 +124,16 @@ public class ExecutionLimits
     [JsonPropertyName("midTurnCompaction")]
     public bool MidTurnCompaction { get; set; } = true;
 
+    /// <summary>
+    /// When true (default), the resolved workspace root (the directory Mux was launched from - the
+    /// same dir the interactive "@" file index targets, see PlatformContext.WorkspaceRoot) is
+    /// automatically added to the native Filesystem tools' AllowedPaths at startup. This means the
+    /// project you launch in is immediately readable/writable by the file tools without hand-editing
+    /// filesystem.allowedPaths. Set false to require every allowed path to be declared explicitly in
+    /// config. A "--workspace"/"/workspace" override changes which dir is auto-allowed. Idempotent:
+    /// the path is only appended when not already present.
+    /// </summary>
+    [JsonPropertyName("autoAllowWorkspace")]
+    public bool AutoAllowWorkspace { get; set; } = true;
+
 }

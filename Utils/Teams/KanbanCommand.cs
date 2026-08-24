@@ -134,6 +134,47 @@ public static class KanbanCommand
         return sb.ToString();
     }
 
+    /// <summary>Theme role color for a status column (semantic, theme-aware \u2014 supersedes the
+    /// fixed-name <see cref="ColumnColor"/> for TUI output so /theme stays coherent).</summary>
+    private static string StatusRole(TeamTaskStatus s) => s switch
+    {
+        TeamTaskStatus.Pending => Theme.Active.Muted,
+        TeamTaskStatus.Blocked => Theme.Active.Warning,
+        TeamTaskStatus.InProgress => Theme.Active.Accent,
+        TeamTaskStatus.Done => Theme.Active.Success,
+        TeamTaskStatus.Failed => Theme.Active.Error,
+        _ => Theme.Active.Prompt,
+    };
+
+    /// <summary>Themed Spectre-markup mirror of <see cref="Render"/> for the interactive TUI: same
+    /// content and ordering, but status headers get a semantic color, counts stay dim, task IDs are
+    /// accented and dependency/artifact metadata is muted. The plain <see cref="Render"/> is left
+    /// untouched (unit tests + stdio fallback rely on it). No inner duplicated title line \u2014 the
+    /// panel header already shows "Kanban - &lt;team&gt;".</summary>
+    public static List<string> RenderMarkup(IReadOnlyList<TeamTask> tasks)
+    {
+        string E(string? v) => MuxConsole.EscapeMarkup(v ?? "");
+        var lines = new List<string>();
+        lines.Add($"[{Theme.Active.Muted}]{tasks.Count} task(s)[/]");
+        foreach (var (status, list) in Bucket(tasks))
+        {
+            lines.Add($"[{StatusRole(status)}]{ColumnTitle(status)}[/] [{Theme.Active.Muted}]({list.Count})[/]");
+            foreach (var t in list)
+            {
+                var who = t.Owner is not null ? $"@{t.Owner}" : t.Assignee is not null ? $"->{t.Assignee}" : "";
+                // Plain text here; E() does the single Spectre-escape pass (brackets -> [[ ]]).
+                var deps = t.BlockedBy.Count > 0 ? $" blockedBy=[{string.Join(",", t.BlockedBy)}]" : "";
+                var files = t.Artifacts.Count > 0 ? $" \U0001F4CE{t.Artifacts.Count}" : "";
+                string whoMk = who.Length > 0 ? $"[{Theme.Active.Agent}]{E(who)}[/] " : "";
+                string metaMk = (deps.Length > 0 || files.Length > 0)
+                    ? $"[{Theme.Active.Muted}]{E(deps + files)}[/]" : "";
+                lines.Add($"  [{Theme.Active.Accent}]{E(t.Id)}[/] {whoMk}[{Theme.Active.Prompt}]{E(t.Subject)}[/]{metaMk}"
+                    .Replace("  ", " ").TrimEnd());
+            }
+        }
+        return lines;
+    }
+
     private static readonly string[] HelpLines =
     {
         "/kanban - editable team board (taskboard teams).",
@@ -240,8 +281,10 @@ public static class KanbanCommand
                 break;
         }
 
-        // Every path ends by rendering the (possibly mutated) board.
-        MuxConsole.WritePanel($"Kanban - {board.Team}", Render(board.Team, board.Snapshot()));
+        // Every path ends by rendering the (possibly mutated) board. Render() stays plain (tests +
+        // stdio fallback); RenderMarkup() adds per-status semantic color for the interactive TUI.
+        var snap = board.Snapshot();
+        MuxConsole.WritePanelMarkup($"Kanban - {board.Team}", RenderMarkup(snap), Render(board.Team, snap));
     }
 
     private static void ApplyBlock(TaskBoard board, string id, string depsRaw)

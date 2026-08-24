@@ -111,7 +111,7 @@ Available inside a live single-agent session.
 | `/background` / `/bg` (+ jobs/cancel) | Run an agent goal in the background; watch via `\` |
 | `/detach` | Park the session in the background; re-enter with `/attach` |
 | `/voice [auto\|off\|vol <1-10>]` | Local speech-to-text dictation into the compose field (TUI only) |
-| `/hide <agent>` / `/unhide <agent>` | Hide/restore a live sub-agent from the viewport |
+| `/unhide <agent>` | Restore a hidden sub-agent to the viewport (hide via the `\` Agent View `h` key; `/background` lanes start hidden) |
 | `/qc` / `/qm` | Quit the session loop |
 | `!<command>` | Run a shell command and add its output to context |
 

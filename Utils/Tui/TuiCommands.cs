@@ -81,8 +81,7 @@ internal static class TuiCommands
         new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
-        new("/hide",         "Hide a live sub-agent from the viewport (kept in \\ Agent View; /hide <agent>)", Scope.SessionOnly),
-        new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>)", Scope.SessionOnly),
+        new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>; hide via \\ Agent View 'h')", Scope.SessionOnly),
         new("/qc",           "Quit the session loop", Scope.SessionOnly),
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
@@ -93,7 +92,15 @@ internal static class TuiCommands
         new("/stateless",    "Stateless single-agent loop (one-off tasks)", Scope.ReplOnly),
         new("/subagents",    "Enable sub-agent delegation (/sub)", Scope.ReplOnly),
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
-        new("/workflow",     "Run a deterministic workflow file", Scope.ReplOnly),
+        new("/workflow",     "Run a workflow - static (JSON steps) or dynamic (scripted mux processes)", Scope.ReplOnly),
+        new("/workflow static",  "Run a saved JSON step workflow over the engine repl (/workflow static [path])", Scope.ReplOnly),
+        new("/workflow dynamic", "Author + launch a Python driver script of separate mux processes (/workflow dynamic [goal])", Scope.ReplOnly),
+        new("/workflows",        "Live workflow-run viewer - panels per section w/ sub-agent status", Scope.Both),
+        new("/workflows saved",  "List saved workflow files", Scope.Both),
+        new("/workflows save",   "Save a run's driver script as a reusable definition (/workflows save <runId> [as <name>])", Scope.Both),
+        new("/workflows rerun",  "Re-launch a run from its driver script (/workflows rerun <runId>)", Scope.Both),
+        new("/workflows run",    "Launch a saved dynamic workflow (/workflows run <name>)", Scope.Both),
+        new("/workflows delete", "Delete a saved workflow file (/workflows delete <name>)", Scope.Both),
         new("/teams",        "List or launch a named team (/teams [name])", Scope.ReplOnly),
         new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
         new("/createhook",   "Guided wizard to scaffold a swarm hook (/createhook [id])", Scope.ReplOnly),
@@ -110,6 +117,7 @@ internal static class TuiCommands
         new("/setmodel",     "Change an agent/orchestrator model", Scope.ReplOnly),
         new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
+        new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons)", Scope.ReplOnly),
         new("/config",       "Show all current config settings", Scope.ReplOnly),
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
@@ -163,7 +171,7 @@ internal static class TuiCommands
         "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
-        "/compact", "/handoff", "/heal", "/reflect",
+        "/compact", "/handoff", "/heal", "/reflect", "/mouse",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
@@ -180,7 +188,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> InteractivePicker = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam",
+        "/set", "/swap", "/setmodel", "/provider", "/resume", "/editagent", "/delagent", "/addcontext", "/createteam", "/workflow",
     };
 
     /// <summary>True when <paramref name="line"/> is a bare command that opens an interactive picker
@@ -302,7 +310,7 @@ internal static class TuiCommands
         new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
-        new("Esc",         "Cancel the current turn", "turn"),
+        new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
         new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),

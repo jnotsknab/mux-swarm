@@ -20,6 +20,14 @@ internal interface ITuiTerminal
 /// </summary>
 internal sealed class ConsoleTuiTerminal : ITuiTerminal
 {
+    // Opt-in raw-output capture for diagnosing render artifacts (esp. WSL/ConPTY). When the env var
+    // MUX_TUI_CAPTURE names a writable path, EVERY string written to the terminal is also appended
+    // there verbatim (escape sequences included), so the exact byte stream can be replayed/inspected
+    // offline. Unset (the default) => null => zero overhead and byte-identical behaviour.
+    private static readonly string? CapturePath =
+        Environment.GetEnvironmentVariable("MUX_TUI_CAPTURE") is { Length: > 0 } p ? p : null;
+    private readonly object _capLock = new();
+
     public int Width
     {
         get { try { return Math.Max(1, Console.BufferWidth); } catch { return 80; } }
@@ -28,8 +36,19 @@ internal sealed class ConsoleTuiTerminal : ITuiTerminal
     {
         get { try { return Math.Max(1, Console.WindowHeight); } catch { return 24; } }
     }
-    public void Write(string s) => Console.Out.Write(s);
+    public void Write(string s)
+    {
+        Console.Out.Write(s);
+        if (CapturePath is not null) Capture(s);
+    }
     public void Flush() { try { Console.Out.Flush(); } catch { /* ignore */ } }
+
+    private void Capture(string s)
+    {
+        // Best-effort; a capture failure must never disturb rendering.
+        try { lock (_capLock) System.IO.File.AppendAllText(CapturePath!, s); }
+        catch { /* ignore */ }
+    }
 }
 
 /// <summary>
@@ -228,48 +247,53 @@ internal sealed class LiveRegion
         return disabled ? Ansi.AutoWrapOff : Ansi.AutoWrapOn;
     }
 
-    /// <summary>Hide the cursor for the duration of live painting (idempotent).</summary>
-    public void HideCursor()
+    /// <summary>Hide the cursor for the duration of live painting (idempotent). Buffered form
+    /// appends into a caller-supplied builder so a whole transaction is one Write+Flush.</summary>
+    public void HideCursor() { var sb = new StringBuilder(); if (HideCursorInto(sb)) { _term.Write(sb.ToString()); _term.Flush(); } }
+    private bool HideCursorInto(StringBuilder sb)
     {
-        if (_cursorHidden) return;
-        _term.Write(Ansi.HideCursor);
+        if (_cursorHidden) return false;
+        sb.Append(Ansi.HideCursor);
         _cursorHidden = true;
+        return true;
     }
 
     /// <summary>Show the cursor (idempotent). Always called on teardown.</summary>
-    public void ShowCursor()
+    public void ShowCursor() { var sb = new StringBuilder(); if (ShowCursorInto(sb)) { _term.Write(sb.ToString()); _term.Flush(); } }
+    private bool ShowCursorInto(StringBuilder sb)
     {
-        if (!_cursorHidden) return;
-        _term.Write(Ansi.ShowCursor);
+        if (!_cursorHidden) return false;
+        sb.Append(Ansi.ShowCursor);
         _cursorHidden = false;
+        return true;
     }
 
-    /// <summary>Erase the painted live region from the screen, leaving the cursor at its top.
+    /// <summary>Erase the painted live region, leaving the cursor at its top. Appends into
+    /// <paramref name="sb"/> so the erase + the following commit/repaint are ONE atomic write.
     /// Relies on live rows having been written with auto-wrap OFF (see <see cref="WrapEscape"/>),
     /// which prevents the emulator from reflowing them on resize - so <c>_paintedRows</c> stays
     /// the true on-screen row count and the erase is exact.</summary>
-    private void EraseLiveRegion()
+    private void EraseLiveRegionInto(StringBuilder sb)
     {
         if (_paintedRows <= 0) return;
         // Live rows were emitted with auto-wrap OFF, so the terminal cannot have soft-wrapped or
         // reflowed them - _paintedRows is still exactly the number of physical rows on screen,
         // even after a resize. Move up over them and erase down.
-        _term.Write(Ansi.CursorLeft);
-        _term.Write(Ansi.CursorUp(_paintedRows));
-        _term.Write(Ansi.EraseDown);
+        sb.Append(Ansi.CursorLeft);
+        sb.Append(Ansi.CursorUp(_paintedRows));
+        sb.Append(Ansi.EraseDown);
         _paintedRows = 0;
         _lastRows = new List<string>();
     }
 
-    /// <summary>Paint the current live lines, recording how many physical rows they took.</summary>
-    private void PaintLiveRegion() => PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
+    /// <summary>Append the current live lines to <paramref name="sb"/>, recording their row count.</summary>
+    private void PaintLiveRegionInto(StringBuilder sb) => PaintLiveRegionInto(sb, ClampRows(RenderPhysicalRows(_live)));
 
-    /// <summary>Paint the supplied physical rows, recording how many rows they took.
+    /// <summary>Append the supplied physical rows to <paramref name="sb"/>, recording their count.
     /// Overload lets callers pass rows they already rendered to avoid a second wrap pass.</summary>
-    private void PaintLiveRegion(List<string> rows)
+    private void PaintLiveRegionInto(StringBuilder sb, List<string> rows)
     {
         rows = ClampRows(rows);
-        var sb = new StringBuilder();
         sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them
         for (int i = 0; i < rows.Count; i++)
         {
@@ -277,7 +301,6 @@ internal sealed class LiveRegion
             sb.Append(rows[i]);
             sb.Append('\n'); // trailing newline keeps the cursor on a fresh line below
         }
-        _term.Write(sb.ToString());
         _paintedRows = rows.Count;
         _lastRows = rows;
         _lastWidth = Cols;
@@ -285,11 +308,14 @@ internal sealed class LiveRegion
 
     /// <summary>
     /// Replace the live region contents and repaint in place. Markup lines are pre-wrap;
-    /// wrapping to the current width happens here. Pass an empty list to clear it.
+    /// wrapping to the current width happens here. Pass an empty list to clear it. The whole
+    /// repaint is composed into ONE buffer and emitted with a single Write + Flush so the OS/
+    /// terminal never sees a partial frame (no per-escape auto-flush of Console.Out).
     /// </summary>
     public void SetLive(IReadOnlyList<string> markupLines)
     {
-        HideCursor();
+        var sb = new StringBuilder(256);
+        HideCursorInto(sb);
         _live = markupLines is List<string> l ? new List<string>(l) : markupLines.ToList();
 
         // Diff-based repaint: render the new physical rows and compare against what is
@@ -312,12 +338,12 @@ internal sealed class LiveRegion
                 if (!string.Equals(newRows[i], _lastRows[i], StringComparison.Ordinal))
                     changed.Add(i);
 
-            if (changed.Count == 0) { _term.Flush(); return; } // nothing to do - no paint, no flicker
+            // Nothing to do - no paint, no flicker. Still flush any pending cursor-hide.
+            if (changed.Count == 0) { if (sb.Length > 0) _term.Write(sb.ToString()); _term.Flush(); return; }
 
             // Cursor is on a fresh line just BELOW the last painted row. Row index r counts
             // from the top of the region; distance from the cursor up to row r is
             // (_paintedRows - r). Rewrite each changed row in place.
-            var sb = new StringBuilder();
             // Synchronized Output: batch the whole in-place rewrite into ONE atomic frame so
             // the spinner/timer tick never shows a half-erased row (the flicker source).
             sb.Append(Ansi.BeginSyncOutput);
@@ -331,8 +357,12 @@ internal sealed class LiveRegion
                 else if (delta < 0) sb.Append(Ansi.CursorDown(-delta));
                 cursorOffset = up;
                 sb.Append(Ansi.CursorLeft);
-                sb.Append(Ansi.EraseLine);
-                sb.Append(newRows[r]);
+                // Overwrite the full width instead of erasing first: EraseLine (CSI 2K) is a
+                // Background-Color-Erase that would paint the row to the DEFAULT bg before a shaded
+                // [on ...] band (input field / footer chips) repaints, flashing the band unshaded on
+                // every spinner/timer/keystroke tick (BCE flicker). Writing the row then a trailing
+                // default-bg pad overwrites every cell with no erase-to-default intermediate.
+                AppendRowOverwrite(sb, newRows[r]);
             }
             // Return the cursor to the home line (below the last row).
             if (cursorOffset > 0) sb.Append(Ansi.CursorDown(cursorOffset));
@@ -346,11 +376,12 @@ internal sealed class LiveRegion
 
         // Row count changed, width changed, or first paint: full erase + repaint. Reuse the
         // rows we already rendered above instead of wrapping the frame a second time. The
-        // erase+repaint is wrapped in Synchronized Output so it presents as one atomic frame.
-        _term.Write(Ansi.BeginSyncOutput);
-        EraseLiveRegion();
-        PaintLiveRegion(newRows);
-        _term.Write(Ansi.EndSyncOutput);
+        // erase+repaint is wrapped in Synchronized Output and emitted as one Write.
+        sb.Append(Ansi.BeginSyncOutput);
+        EraseLiveRegionInto(sb);
+        PaintLiveRegionInto(sb, newRows);
+        sb.Append(Ansi.EndSyncOutput);
+        _term.Write(sb.ToString());
         _term.Flush();
     }
 
@@ -365,7 +396,8 @@ internal sealed class LiveRegion
     /// </summary>
     public void ForceRepaint()
     {
-        HideCursor();
+        var sb = new StringBuilder(256);
+        HideCursorInto(sb);
         // Discard cached geometry: after a reflow neither _paintedRows nor _lastRows nor the wrap
         // cache describe what is actually on screen any more.
         _paintedRows = 0;
@@ -373,9 +405,71 @@ internal sealed class LiveRegion
         _rowCache.Clear();
         _rowCacheWidth = -1;
         _autoWrapDisabled = false; // force WrapEscape to re-emit the off sequence on repaint
-        _term.Write(Ansi.BeginSyncOutput + Ansi.ClearScreen + Ansi.Home);
-        PaintLiveRegion(ClampRows(RenderPhysicalRows(_live)));
-        _term.Write(Ansi.EndSyncOutput);
+        sb.Append(Ansi.BeginSyncOutput).Append(Ansi.ClearScreen).Append(Ansi.Home);
+        PaintLiveRegionInto(sb, ClampRows(RenderPhysicalRows(_live)));
+        sb.Append(Ansi.EndSyncOutput);
+        _term.Write(sb.ToString());
+        _term.Flush();
+    }
+
+    /// <summary>
+    /// v0.12.4 Option A - REFLOW repaint for a terminal RESIZE. Old committed rows already frozen in
+    /// native scrollback cannot be reflowed by any terminal (they are immutable cell data, not a
+    /// logical document - see Zellij/Codex/Claude-Code prior art). What we CAN reflow is the visible
+    /// content: the caller re-wraps a viewport-bounded window of the RETAINED logical transcript
+    /// (<paramref name="reflowRows"/>, already rendered to physical rows at the CURRENT width) plus
+    /// the live band (<paramref name="liveMarkup"/>). We clear the screen and repaint that whole
+    /// window as one bottom-anchored, atomic frame. Because the erase is a full ClearScreen (not a
+    /// cursor-up relative to a stale <c>_paintedRows</c>), nothing is stranded, and because the rows
+    /// were re-wrapped from the logical model at the new width, the on-screen text reflows cleanly
+    /// instead of keeping its old hard-wrap geometry. Content the user had already scrolled far past
+    /// stays in immutable native scrollback (unavoidable, and what every inline chat TUI does).
+    ///
+    /// The frame is bottom-anchored: if the reflowed window is shorter than the viewport it is
+    /// padded with leading blank rows so the footer/input stay docked at the bottom (fixes the
+    /// "huge gap + top-anchored footer" artifact of the old ForceRepaint, which painted only the
+    /// live band at the very top after a ClearScreen).
+    /// </summary>
+    public void ReflowRepaint(IReadOnlyList<string> reflowRows, IReadOnlyList<string> liveMarkup)
+    {
+        _live = liveMarkup is List<string> ll ? new List<string>(ll) : liveMarkup.ToList();
+        // Reset all cached geometry - after a reflow none of it describes the screen any more.
+        _paintedRows = 0;
+        _lastRows = new List<string>();
+        _rowCache.Clear();
+        _rowCacheWidth = -1;
+        _autoWrapDisabled = false;
+
+        int rows = Math.Max(1, Rows);
+        var live = ClampRows(RenderPhysicalRows(_live));
+        // The live band is always kept; the transcript window fills whatever viewport space is left
+        // above it (minus one headroom row for the trailing newline, matching ClampRows).
+        int transcriptRoom = Math.Max(0, rows - 1 - live.Count);
+        var window = new List<string>(reflowRows);
+        if (window.Count > transcriptRoom)
+            window = window.GetRange(window.Count - transcriptRoom, transcriptRoom); // keep the freshest
+
+        var frame = new List<string>(rows);
+        // Bottom-anchor: pad the top so the footer/input dock at the bottom instead of floating up.
+        for (int i = window.Count + live.Count; i < rows - 1; i++) frame.Add("");
+        frame.AddRange(window);
+        frame.AddRange(live);
+
+        var sb = new StringBuilder(1024);
+        HideCursorInto(sb);
+        sb.Append(Ansi.BeginSyncOutput).Append(Ansi.ClearScreen).Append(Ansi.Home);
+        sb.Append(WrapEscape(disabled: true)); // hard rows; never let the terminal reflow them again
+        for (int i = 0; i < frame.Count; i++)
+        {
+            sb.Append(Ansi.EraseLine);
+            sb.Append(frame[i]);
+            sb.Append('\n');
+        }
+        _paintedRows = frame.Count;
+        _lastRows = frame;
+        _lastWidth = Cols;
+        sb.Append(Ansi.EndSyncOutput);
+        _term.Write(sb.ToString());
         _term.Flush();
     }
 
@@ -392,12 +486,20 @@ internal sealed class LiveRegion
     /// Commit lines above the region and repaint the live region. When <paramref name="newLive"/>
     /// is supplied it replaces the live-region contents before repainting, so callers can
     /// commit + refresh the footer/input atomically (avoids repainting a stale frame).
+    ///
+    /// The ENTIRE transaction - erase live region, write committed scrollback lines, repaint the
+    /// live region below them - is composed into one buffer inside a single Synchronized Output
+    /// (DEC 2026) envelope and emitted with one Write + Flush. Previously this path issued several
+    /// un-synchronized <c>Console.Out.Write</c> calls (each auto-flushed), so a slow WSL/SSH/tmux
+    /// path could present the intermediate erased-but-not-yet-repainted state - the "stale live-tail
+    /// row / duplicate on commit" artifact. One atomic envelope removes that intermediate frame.
     /// </summary>
     public void CommitAbove(IReadOnlyList<string> markupLines, IReadOnlyList<string>? newLive)
     {
-        HideCursor();
-        EraseLiveRegion();
-        var sb = new StringBuilder();
+        var sb = new StringBuilder(512);
+        sb.Append(Ansi.BeginSyncOutput);
+        HideCursorInto(sb);
+        EraseLiveRegionInto(sb);
         sb.Append(WrapEscape(disabled: false)); // committed scrollback lines wrap normally
         foreach (var ml in markupLines)
             foreach (var row in RenderPhysicalRows(new[] { ml }))
@@ -406,10 +508,11 @@ internal sealed class LiveRegion
                 sb.Append(row);
                 sb.Append('\n');
             }
-        _term.Write(sb.ToString());
         if (newLive is not null)
             _live = newLive is List<string> l ? new List<string>(l) : newLive.ToList();
-        PaintLiveRegion();
+        PaintLiveRegionInto(sb);
+        sb.Append(Ansi.EndSyncOutput);
+        _term.Write(sb.ToString());
         _term.Flush();
     }
 
@@ -418,14 +521,33 @@ internal sealed class LiveRegion
 
     /// <summary>
     /// Erase the live region, drop its contents, and show the cursor. Call before handing
-    /// the terminal back (blocking ReadLine, mode switch, exit) so nothing is stranded.
+    /// the terminal back (blocking ReadLine, mode switch, exit) so nothing is stranded. Emitted
+    /// as one Write + Flush.
     /// </summary>
     public void Clear()
     {
-        EraseLiveRegion();
+        var sb = new StringBuilder(64);
+        EraseLiveRegionInto(sb);
         _live = new List<string>();
-        _term.Write(WrapEscape(disabled: false)); // restore auto-wrap before handing the terminal back
-        ShowCursor();
+        sb.Append(WrapEscape(disabled: false)); // restore auto-wrap before handing the terminal back
+        ShowCursorInto(sb);
+        _term.Write(sb.ToString());
         _term.Flush();
     }
+
+    // Rewrite one physical row by overwriting to the full terminal width rather than erasing first,
+    // so a shaded background band never flashes to the default bg before its repaint (BCE). The
+    // trailing pad is emitted AFTER the row's own SGR reset, so it is default-bg and clears residue
+    // from a previously-longer row.
+    private static readonly System.Text.RegularExpressions.Regex AnsiCsi =
+        new("\u001b\\[[0-9;?]*[A-Za-z]", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private void AppendRowOverwrite(System.Text.StringBuilder sb, string rowAnsi)
+    {
+        sb.Append(rowAnsi);
+        int vis = TuiMarkup.Width(AnsiCsi.Replace(rowAnsi, string.Empty));
+        int pad = Cols - vis;
+        if (pad > 0) sb.Append(Ansi.Reset).Append(new string(' ', pad));
+    }
+
 }

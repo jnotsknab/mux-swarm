@@ -226,6 +226,21 @@ public class ConsoleConfig
     public string RenderMode { get; set; } = "auto";
 
     /// <summary>
+    /// v0.12.4 opt-in live-render backend for the interactive TUI: <c>"inline"</c> (default -
+    /// the native-scrollback log-update live region; committed transcript flows into the terminal's
+    /// own scrollback with a cursor-relative bottom footer) or <c>"frame"</c> (a full-frame renderer
+    /// that takes the alternate screen and repaints the WHOLE viewport from retained state every
+    /// present, diffing changed rows). Frame mode removes the hybrid model's resize/reflow artifacts
+    /// - the transcript is always re-wrapped at the current width and there is no scrollback-relative
+    /// anchor to lose - at the cost of native terminal scrollback while the TUI is active (history
+    /// is paged with PgUp/PgDn and browsable via Ctrl+G NAV). Blocking sub-prompts suspend the alt
+    /// screen (?1049l) and resume after, so Spectre pickers render on the primary buffer. The
+    /// default stays <c>"inline"</c>. Ignored in stdio/serve mode and on non-capable terminals.
+    /// </summary>
+    [JsonPropertyName("renderEngine")]
+    public string RenderEngine { get; set; } = "inline";
+
+    /// <summary>
     /// Named TUI color theme (see <see cref="Theme"/>): one of default | dark | light | mono |
     /// solarized | dracula | gruvbox. Selected via <c>/theme &lt;name&gt;</c> or the <c>/setup</c>
     /// theme step. <c>"default"</c> (or any unknown value) yields the original hardcoded palette,
@@ -277,6 +292,16 @@ public class ConsoleConfig
     public int DelegationSpacing { get; set; } = 1;
 
     /// <summary>
+    /// Rows scrolled per Ctrl+U / Ctrl+D step while paging the frame-mode viewport at the idle
+    /// prompt. PgUp/PgDn and Ctrl+B/Ctrl+F always page a full viewport regardless of this value.
+    /// 1 = one row per step (default). Additive and non-invasive: absent in older configs
+    /// (defaults to 1); clamped to a minimum of 1. Adjusted live with
+    /// <c>/set scrollSpeedRows &lt;n&gt;</c>. Ignored outside the frame render engine.
+    /// </summary>
+    [JsonPropertyName("scrollSpeedRows")]
+    public int ScrollSpeedRows { get; set; } = 1;
+
+    /// <summary>
     /// When true (default), a delegated sub-agent's live output (streamed text, reasoning,
     /// and tool results) is collapsed into a single expandable transcript line instead of
     /// flowing inline, the way Claude Code collapses a launched Task. The sub-agent's thinking
@@ -311,6 +336,17 @@ public class ConsoleConfig
     public bool InputHighlight { get; set; } = true;
 
     /// <summary>
+    /// When true (default), tool/diff/code cards paint an opaque themed background fill (a solid
+    /// panel look). Set false to suppress card/diff/fenced-code/inline-code background fills so the
+    /// terminal's own (translucent/glassy) background shows through; foreground colors and layout
+    /// are unchanged. Does NOT affect the compose-field shade (see inputHighlight) or the cursor.
+    /// Additive and non-invasive: absent in older configs (defaults to true). Toggled live with
+    /// <c>/set contentBackgrounds false</c>. Ignored outside TUI render mode.
+    /// </summary>
+    [JsonPropertyName("contentBackgrounds")]
+    public bool ContentBackgrounds { get; set; } = true;
+
+    /// <summary>
     /// When true (default), the BODY of expanded tool-result / batch-summary cards renders
     /// as muted markdown (headings, bold, inline code styled but subordinate) instead of raw
     /// markdown source (literal <c>###</c>, <c>**</c>, backticks). Tool names and status stay
@@ -342,6 +378,18 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("bracketedPaste")]
     public bool BracketedPaste { get; set; } = true;
+
+    /// <summary>
+    /// Mouse reporting preset for the frame render engine (Hermes-style): <c>off</c> = no mouse
+    /// reporting (terminal selection/native behavior untouched); <c>wheel</c> (default) = SGR
+    /// reporting enabled, wheel events drive viewport scrollback (press/release/drag are parsed and
+    /// discarded); <c>buttons</c> = same reporting, but press/release/drag are also dispatched to
+    /// interactive sinks (click-to-interact groundwork; additive as those land). Additive and
+    /// non-invasive: absent in older configs (defaults to <c>wheel</c>). Adjusted live with
+    /// <c>/set mouseTracking off|wheel|buttons</c> or <c>/mouse</c>. Ignored outside the frame engine.
+    /// </summary>
+    [JsonPropertyName("mouseTracking")]
+    public string MouseTracking { get; set; } = "wheel";
 }
 
 /// <summary>

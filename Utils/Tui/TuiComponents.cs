@@ -33,12 +33,19 @@ internal static class TuiComponents
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
     // solid block distinct from the airy prose on the terminal's base background. Themed (v0.12.1).
-    public static string CardBg  => Theme.Active.CardBg;
-    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field
+    // Content background fills (card/diff/code). When ContentBackgrounds is false these resolve to
+    // "default" -> ResolveColor returns null -> NO background SGR is emitted, so the terminal's own
+    // (possibly translucent/glassy) background shows through. Foreground + layout are unchanged
+    // (bg tags are zero visible width). InputBg + cursor/badge fills are intentionally NOT gated
+    // here (input has its own inputHighlight toggle; cursor/mode fills are functional, not chrome).
+    public static bool ContentBackgrounds { get; set; } = true;
+    private static string Bg(string role) => ContentBackgrounds ? role : "default";
+    public static string CardBg  => Bg(Theme.Active.CardBg);
+    public static string InputBg => Theme.Active.InputBg;   // shade behind the compose field (gated by inputHighlight)
     // Diff line backgrounds: faint green/red bands + a neutral context fill on the card.
-    public static string DiffAddBg => Theme.Active.DiffAddBg;
-    public static string DiffDelBg => Theme.Active.DiffDelBg;
-    public static string DiffHunkBg => Theme.Active.DiffHunkBg;
+    public static string DiffAddBg => Bg(Theme.Active.DiffAddBg);
+    public static string DiffDelBg => Bg(Theme.Active.DiffDelBg);
+    public static string DiffHunkBg => Bg(Theme.Active.DiffHunkBg);
     public const string GutterFg = "#5A6675"; // line-number gutter (dim slate)
 
     /// <summary>
@@ -100,15 +107,30 @@ internal static class TuiComponents
     public static readonly string[] SubAgentFrames =
         { "\u25D0", "\u25D3", "\u25D1", "\u25D2" };   // half-circle: left, top, right, bottom
 
-    /// <summary>Pulsing dot used to mark the SINGLE in-flight tool per live lane: a dot that
-    /// "breathes" small-&gt;large-&gt;small. Same glyph vocabulary as the static result dots, so the
-    /// only signal is motion (alive) vs stillness (done). Rides the shared ~100ms ticker frame.</summary>
-    public static readonly string[] PulseFrames =
-        { "\u00b7", "\u2022", "\u25CF", "\u2022" };   // middot -> bullet -> big circle -> bullet
+    /// <summary>The single glyph used for BOTH the live pulsing dot and the static "done" dot, so
+    /// the only signal is motion (alive) vs stillness (done). One fixed width-1 glyph: the pulse is
+    /// a BRIGHTNESS animation (dim -> normal -> bold -> normal), never a glyph-shape change, so the
+    /// rendered row width can never oscillate (the earlier ·/•/● frames were East-Asian-Width
+    /// "Ambiguous" and rendered 1- or 2-cells inconsistently across terminals, leaving far-right
+    /// residue as the dot pulsed). Rides the shared ~100ms ticker frame.</summary>
+    public const string PulseGlyph = "\u25CF";   // ● - width-1 in our model AND the static done dot
 
-    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative).</summary>
-    public static string PulseDot(int frame)
-        => PulseFrames[((frame % PulseFrames.Length) + PulseFrames.Length) % PulseFrames.Length];
+    // Brightness cycle applied to the pulse glyph. Spectre decorations dim/bold change WEIGHT, not
+    // width, so every frame is exactly one cell wide regardless of terminal.
+    private static readonly string[] PulseDecos = { "dim", "", "bold", "" };
+
+    /// <summary>The pulsing-dot cell for <paramref name="frame"/> (safe for any int incl. negative):
+    /// the fixed glyph. Callers colour it; use <see cref="PulsingDot"/> for the breathing effect.</summary>
+    public static string PulseDot(int frame) => PulseGlyph;
+
+    /// <summary>Fully-styled pulsing dot in <paramref name="colorRole"/>: a fixed-width breathing dot
+    /// (dim/normal/bold cycle) for the live lane head. <paramref name="frame"/> is safe for any int.</summary>
+    public static string PulsingDot(int frame, string colorRole)
+    {
+        string deco = PulseDecos[((frame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
+        string style = string.IsNullOrEmpty(deco) ? colorRole : $"{colorRole} {deco}";
+        return $"[{style}]{PulseGlyph}[/]";
+    }
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
@@ -166,6 +188,10 @@ internal static class TuiComponents
     /// <summary>Coarse session-timer label: "12m", "1h 04m" (no seconds - it is a slow wall clock).</summary>
     private static string ClockHM(TimeSpan t)
         => t.TotalHours >= 1 ? $"{(int)t.TotalHours}h {t.Minutes:00}m" : $"{t.Minutes}m";
+
+    /// <summary>Short duration for the idle last-turn chip: "12s" under a minute, m:ss above.</summary>
+    private static string ShortDur(TimeSpan t)
+        => t.TotalSeconds < 60 ? $"{Math.Max(0, (int)Math.Round(t.TotalSeconds))}s" : ClockMS(t);
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
@@ -241,8 +267,8 @@ internal static class TuiComponents
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        string dot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        return new() { $"  [{Warn}]{dot}[/] [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        string dot = frame >= 0 ? PulsingDot(frame, Warn) : $"[{Warn}]{PulseGlyph}[/]";
+        return new() { $"  {dot} [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -308,8 +334,9 @@ internal static class TuiComponents
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
         // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
-        string okDot = frame >= 0 ? PulseDot(frame) : "\u25cf";
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]{okDot}[/]";
+        string glyph = error
+            ? $"[{Err}]\u2717[/]"
+            : (frame >= 0 ? PulsingDot(frame, Ok) : $"[{Ok}]{PulseGlyph}[/]");
         string failTag = error ? $" [{Err}]failed[/]" : "";
         string resultPart = first.Length > 0
             ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"
@@ -378,14 +405,14 @@ internal static class TuiComponents
         var outp = new List<string>(agents.Count);
         if (agents.Count == 0) return outp;
         // Pulsing dot marks the live lane head (motion = working); same dot vocabulary as static rows.
-        string spin = PulseDot(frame);
         foreach (var (agent, status, tint) in agents)
         {
             string st = string.IsNullOrWhiteSpace(status) ? "working" : CollapseWs(status);
             if (st.Length > 60) st = st[..59] + "\u2026";
+            string spin = PulsingDot(frame, tint);
             // The ctrl+e affordance is shown live (not just after completion) so the user knows the
             // still-running sub-agent's buffered output can be expanded inline at any time.
-            outp.Add($"  [{tint}]{spin}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
+            outp.Add($"  {spin} [{Agent}]{Esc(agent)}[/] [{Dim}]\u00b7[/] [{Think} italic]{Esc(st)}\u2026[/] [{Dim}](ctrl+e)[/]");
         }
         return outp;
     }
@@ -531,11 +558,14 @@ internal static class TuiComponents
                 string gOld = (wi == 0 ? oldS : "").PadLeft(gw);
                 string gNew = (wi == 0 ? newS : "").PadLeft(gw);
                 string mk = wi == 0 ? marker : " ";
-                string codeCell = (mk + wrapped[wi]).PadRight(codeW + 1);
-                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(codeCell)}[/]");
+                // Pad by DISPLAY width (not UTF-16 length) so wide/CJK/emoji glyphs do not push
+                // the shaded cell past codeW+1 and bleed the bg past the border.
+                string cellText = mk + wrapped[wi];
+                int cellPad = Math.Max(0, codeW + 1 - TuiMarkup.Width(cellText));
+                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
             }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 1)}[/]");
+        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
         return outp;
     }
 
@@ -545,7 +575,12 @@ internal static class TuiComponents
     /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
     /// keeps the card a single continuous rectangle with no left notch or ragged blank rows.</summary>
     private static string ShadedRow(string railCol, string content, string fg, string bg, int inner)
-        => $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content.PadRight(inner))}[/]";
+    {
+        // Pad by DISPLAY width so wide/CJK/emoji content keeps the shaded band exactly `inner` cells
+        // (UTF-16 PadRight overshoots for double-width glyphs and bleeds the bg past the card edge).
+        int pad = Math.Max(0, inner - TuiMarkup.Width(content));
+        return $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content)}{new string(' ', pad)}[/]";
+    }
 
     /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
     /// WrapMarkup). The base fill is Muted so the sub-agent transcript reads as subordinate to the
@@ -573,15 +608,17 @@ internal static class TuiComponents
     private static string MetaRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
     {
         string blank = new string(' ', gw);
-        string codeCell = Esc(Trunc(raw, codeW + 1).PadRight(codeW + 1));
-        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{codeCell}[/]";
+        string txt = Trunc(raw, codeW + 1);
+        int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
+        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
@@ -616,106 +653,107 @@ internal static class TuiComponents
     };
 
     /// <summary>
-    /// The pinned footer: mode badges + a context meter. Lives at the bottom of the live
-    /// region and is repainted every frame, so it never strands or scrolls away.
+    /// The pinned footer: mode badges + timers + a context meter. Lives at the bottom of the
+    /// live region and is repainted every frame, so it never strands or scrolls away.
+    /// Responsive: when <paramref name="width"/> is known, lower-value chips are dropped (and
+    /// the meter compacted) until the line fits on one row - it never wraps mid-chip. Drop
+    /// order: Shift+Tab hint, sys/tools breakdown, cached text, session timer + calls, model,
+    /// meter shrink, meter to bare percent, idle last-turn + effort chips.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, string? sessionId = null, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, TimeSpan? loopElapsed = null, bool giga = false)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, string? model = null, int width = 0, int pulseFrame = -1)
     {
-        // No standing "tui" badge - it is noise. Only show active modes.
-        // Ultra implies plan + max reasoning (and is typically run with psub), so when ultra is
-        // active the three mode badges are redundant noise - collapse them to a single "ultra"
-        // chip. Otherwise show whichever discrete modes are on.
-        // Giga is a SUPERSET of ultra (ultra reasoning + plan + dynamic team/workflow
-        // orchestration), so when giga is active it supersedes the ultra chip - one "giga" badge
-        // stands for the whole stack. Otherwise ultra collapses plan/psub/sub into one chip, and
-        // failing that the discrete modes show individually.
-        var badges = new List<string>();
-        if (giga)
+        // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
+        // discrete modes show individually. For a short window after activation the chip
+        // "breathes" (dim/normal/bold cycle - weight-only, same trick as PulsingDot, so the
+        // rendered width can never oscillate); pulseFrame < 0 renders it static.
+        string ModeStyle(string colour)
         {
-            badges.Add($"[{Giga}]giga[/]");
+            if (pulseFrame < 0) return colour;
+            string deco = PulseDecos[((pulseFrame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
+            return string.IsNullOrEmpty(deco) ? colour : $"{colour} {deco}";
         }
-        else if (ultra)
-        {
-            badges.Add($"[{Ultra}]ultra[/]");
-        }
+        var modeBadges = new List<string>();
+        if (giga) modeBadges.Add($"[{ModeStyle(Giga)}]giga[/]");
+        else if (ultra) modeBadges.Add($"[{ModeStyle(Ultra)}]ultra[/]");
         else
         {
-            if (plan) badges.Add($"[{Plan}]plan[/]");
-            if (psub) badges.Add($"[{Accent}]psub[/]");
-            if (sub) badges.Add($"[{Ok}]sub[/]");
+            if (plan) modeBadges.Add($"[{Plan}]plan[/]");
+            if (psub) modeBadges.Add($"[{Accent}]psub[/]");
+            if (sub) modeBadges.Add($"[{Ok}]sub[/]");
         }
 
-        // Loop clock: a live elapsed clock that runs the whole time the user is inside an agentic
-        // interface (/agent, /stateless, /swarm, /pswarm). Starts on loop entry and ticks
-        // continuously until the loop exits; cleared (null) at the top-level menu.
-        if (loopElapsed is { } le)
-            badges.Add($"[{Warn}]\u25cf {ClockMS(le)}[/]");
-        // Session timer badge: total wall-clock since the session opened. Hidden under a minute so a
+        // Turn timer: bright + ticking while the model works the current turn; between turns
+        // the LAST turn's duration shows dimmed (same glyph, dim = idle) so the cost of the
+        // previous exchange stays visible until the next send resets it.
+        string liveTurnChip = turnElapsed is { } te ? $"[{Warn}]\u25cf {ClockMS(te)}[/]" : "";
+        string idleTurnChip = turnElapsed is null && lastTurn is { } lt ? $"[{Dim}]\u25cf {ShortDur(lt)}[/]" : "";
+
+        // Session timer: total wall-clock since the session opened. Hidden under a minute so a
         // fresh session does not show a noisy "0m".
-        if (sessionElapsed is { } se && se.TotalSeconds >= 60)
-            badges.Add($"[{Dim}]{ClockHM(se)}[/]");
+        string sessChip = sessionElapsed is { } se && se.TotalSeconds >= 60 ? $"[{Dim}]{ClockHM(se)}[/]" : "";
 
-        // Context meter: full bar+percent when a threshold is known; a bare token count when
-        // tokens have accrued without a threshold; and NOTHING at all when idle (0 tokens, no
-        // threshold) so the footer never shows a noisy, meaningless "0 tokens".
-        // The meter plots TOTAL context (live + cached) against the threshold, because
-        // compaction fires on the total crossing it - so the bar reaching full genuinely
-        // means compaction is imminent. The filled span is split into a dim cached segment
-        // and a bright live segment so the user sees how much headroom is real (live) vs
-        // already-pinned (cached). `tokens` here is the live (uncached) count.
-        string meter;
-        if (threshold > 0)
+        // Context meter: bar+percent when a threshold is known (bar shrinks, then collapses to
+        // a bare percent+total, under width pressure); a bare token count when tokens have
+        // accrued without a threshold; nothing at all when idle so the footer never shows a
+        // noisy, meaningless "0 tokens". The bar plots TOTAL context (live + cached) against
+        // the threshold - compaction fires on the total crossing it - split into a dim cached
+        // segment and a bright live segment. `tokens` here is the live (uncached) count.
+        string Meter(int level)
         {
-            uint total = tokens + cached;
-            double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
-            const int width = 16;
-            int filled = (int)Math.Round(fracTotal * width);
-            int cachedCells = Math.Clamp((int)Math.Round((double)cached / threshold * width), 0, filled);
-            int liveCells = filled - cachedCells;
-            int empty = Math.Max(0, width - filled);
-            string liveColour = fracTotal < 0.6 ? Ok : fracTotal < 0.85 ? Warn : Err;
-            string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
-                         $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
-                         $"[{Dim}]" + new string('\u2501', empty) + "[/]";
-            string cachedHint = cached > 0 ? $"  [{Dim}]\u00b7[/]  [{Dim}]{Fmt(cached)} cached[/]" : "";
-            meter = $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]{cachedHint}";
-        }
-        else if (tokens > 0)
-        {
-            meter = $"[{Muted}]{Fmt(tokens)} tokens[/]";
-        }
-        else
-        {
-            meter = "";
+            if (threshold > 0)
+            {
+                uint total = tokens + cached;
+                double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
+                if (level >= 6)
+                    return $"[{Muted}]{fracTotal * 100:F0}% {Fmt(total)}[/]";
+                int barWidth = level >= 5 ? 10 : 16;
+                int filled = (int)Math.Round(fracTotal * barWidth);
+                int cachedCells = Math.Clamp((int)Math.Round((double)cached / threshold * barWidth), 0, filled);
+                int liveCells = filled - cachedCells;
+                int empty = Math.Max(0, barWidth - filled);
+                string liveColour = fracTotal < 0.6 ? Ok : fracTotal < 0.85 ? Warn : Err;
+                string bar = $"[{CacheFill}]" + new string('\u2501', cachedCells) + "[/]" +
+                             $"[{liveColour}]" + new string('\u2501', liveCells) + "[/]" +
+                             $"[{Dim}]" + new string('\u2501', empty) + "[/]";
+                return $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]";
+            }
+            return tokens > 0 ? $"[{Muted}]{Fmt(tokens)} tokens[/]" : "";
         }
 
-        // Static overhead breakdown: on a FRESH session the context is dominated by the system
-        // prompt + the serialized tool/MCP schemas, not the conversation. Surfacing "sys" and
-        // "tools" chips explains why a brand-new session already reads e.g. 30k tokens. Shown only
-        // when a breakdown is known and there is meaningful overhead to explain.
-        string breakdownChip = "";
-        if (sysTokens > 0 || toolTokens > 0)
+        // Compose the footer at a degradation level (0 = everything). Uniform middot
+        // separators throughout - no mixed double-space/triple-space seams.
+        string Compose(int level)
         {
-            var parts = new List<string>();
-            if (sysTokens > 0)  parts.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
-            if (toolTokens > 0) parts.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
-            breakdownChip = $"  [{Dim}]\u00b7[/]  " + string.Join($" [{Dim}]\u00b7[/] ", parts);
+            var chips = new List<string>(modeBadges);
+            if (liveTurnChip.Length > 0) chips.Add(liveTurnChip);
+            if (idleTurnChip.Length > 0 && level < 7) chips.Add(idleTurnChip);
+            if (sessChip.Length > 0 && level < 4) chips.Add(sessChip);
+            string meter = Meter(level);
+            if (meter.Length > 0) chips.Add(meter);
+            if (cached > 0 && threshold > 0 && level < 3) chips.Add($"[{Dim}]{Fmt(cached)} cached[/]");
+            if (sysTokens > 0 && level < 2) chips.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
+            if (toolTokens > 0 && level < 2) chips.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
+            if (toolCalls > 0 && level < 4) chips.Add($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]");
+            // Model chip: the resolved model id (path prefix stripped), high-value so it
+            // survives to mid tiers - after a provider fallback/pin this is the fastest way
+            // to see what the session is actually running on.
+            if (!string.IsNullOrEmpty(model) && level < 5)
+            {
+                string m = model!;
+                int slash = m.LastIndexOf('/');
+                if (slash >= 0 && slash < m.Length - 1) m = m[(slash + 1)..];
+                chips.Add($"[{Agent}]{Esc(m)}[/]");
+            }
+            if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add($"[{Warn}]\u25d0 {Esc(effort)}[/]");
+            if (modeCycleHint && level < 1) chips.Add($"[{Dim}]\u21e7\u21b9[/]");
+            return "  " + string.Join($" [{Dim}]\u00b7[/] ", chips);
         }
 
-        string left = string.Join($" [{Dim}]\u00b7[/] ", badges);
-        // The effort chip always gets a leading dot-separator so it never butts up against the
-        // meter / cached-tokens text (the "cached\u25d0" run-together bug).
-        string effortChip = string.IsNullOrEmpty(effort)
-            ? ""
-            : $"  [{Dim}]\u00b7[/]  [{Warn}]\u25d0 {Esc(effort)}[/] [{Dim}]/effort[/]";
-        // Shift+Tab discoverability hint, shown only when a mode-cycle is wired up.
-        string hint = modeCycleHint ? $"  [{Dim}]\u21e7\u21b9 cycle[/]" : "";
-        // Active-session id badge (Claude-Code style), shown beside the hint when present.
-        string sess = string.IsNullOrEmpty(sessionId) ? "" : $"  [{Dim}]\u00b7[/]  [{Agent}]session[/] [{Muted}]{Esc(sessionId!)}[/]";
-        string right = string.IsNullOrEmpty(meter) ? "" : $"   {meter}";
-        // Avoid a leading double-space when there are no badges at all.
-        string body = $"{left}{right}{breakdownChip}{effortChip}{hint}{sess}";
-        return $"  {body.TrimStart()}";
+        string line = Compose(0);
+        if (width > 8)
+            for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
+                line = Compose(lvl);
+        return line;
     }
 
     /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),
@@ -742,7 +780,7 @@ internal static class TuiComponents
         {
             Voice.VoiceState.Warming      => (ms / 600) % 2 == 0 ? $"[{Dim}]\u25cf[/]" : $"[{Dim}]\u00b7[/]",
             Voice.VoiceState.Listening    => $"[{Accent}]\u25cf[/]",
-            Voice.VoiceState.Hearing      => $"[{Accent}]{PulseDot((int)(ms / 120))}[/]",
+            Voice.VoiceState.Hearing      => PulsingDot((int)(ms / 120), Accent),
             Voice.VoiceState.Transcribing => $"[{Warn}]{Spinner[(int)(ms / 100) % Spinner.Length]}[/]",
             Voice.VoiceState.Error        => $"[{Err}]\u2717[/]",
             _ => null,
@@ -761,15 +799,7 @@ internal static class TuiComponents
     /// cell at the edit position (Claude-Code style) to show where typing lands.
     /// </summary>
     public static string InputRowWithCursor(string buffer, int cursor)
-        => InputRowWithCursor(buffer, cursor, EditorMode.Insert);
-
-    /// <summary>
-    /// Input row with a synthetic block cursor and a vim-mode prompt marker. Normal mode swaps
-    /// the cyan "\u203a" prompt for a distinct "-- NORMAL --" badge + bold block prompt so the
-    /// active mode is unmistakable; Insert mode is unchanged from the modeless renderer.
-    /// </summary>
-    public static string InputRowWithCursor(string buffer, int cursor, EditorMode mode)
-        => string.Join("\n", InputRowsWithCursor(buffer, cursor, mode));
+        => string.Join("\n", InputRowsWithCursor(buffer, cursor));
 
     /// <summary>
     /// Render the input/compose area as one or more markup lines. A buffer containing embedded
@@ -777,7 +807,7 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, EditorMode mode, int width = 0, bool highlight = false)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width = 0, bool highlight = false)
     {
         const string cur = "#E0E0E0";
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
@@ -802,9 +832,7 @@ internal static class TuiComponents
             }
             return outp;
         }
-        string prompt = mode == EditorMode.Normal
-            ? $"[{Warn}]\u25c6[/] [black on {Warn}] NORMAL [/]"
-            : VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
+        string prompt = VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
         string contGutter = $"[{Dim}]\u2502[/]";
         string promptLead = $"  {prompt} ";
@@ -817,9 +845,7 @@ internal static class TuiComponents
         if (string.IsNullOrEmpty(buffer))
             return Shade(new List<string>
             {
-                mode == EditorMode.Normal
-                    ? $"{promptLead}[black on {cur}] [/]"
-                    : $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             });
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);

@@ -29,6 +29,9 @@ internal sealed class AgentView
 
     private List<AgentRow> _rows = new();
     private string? _selectedAgent;   // tracked by NAME so selection survives snapshot updates
+    // Rows locally marked hidden via the dashboard's 'h' key (the registry already flipped the
+    // lane; this tag makes the just-pressed row repaint as hidden without waiting on a refresh).
+    private readonly HashSet<string> _locallyHidden = new(StringComparer.Ordinal);
     private bool _open;
 
     /// <summary>True while the dashboard is foregrounded (drawn into the live region).</summary>
@@ -38,7 +41,16 @@ internal sealed class AgentView
     public void Open() => _open = true;
 
     /// <summary>Close the dashboard. Idempotent.</summary>
-    public void Close() => _open = false;
+    public void Close() { _open = false; _locallyHidden.Clear(); }
+
+    /// <summary>Mark a row as hidden-from-viewport within this dashboard session (the 'h' key
+    /// flipped the lane in the registry; this only re-tags the local render). No-op for unknown
+    /// agent names.</summary>
+    public void MarkHidden(string agent, bool hidden)
+    {
+        if (hidden) _locallyHidden.Add(agent);
+        else _locallyHidden.Remove(agent);
+    }
 
     /// <summary>
     /// Replace the active-agent snapshot from the live registry. Each incoming entry is
@@ -148,14 +160,18 @@ internal sealed class AgentView
                 // A small pin tag on the foregrounded agent so it is obvious which one the live
                 // panel / Ctrl+E currently tracks - switching focus reads clearly.
                 string pin = isPinned ? $" [{TuiComponents.Ok}]\u2605 foreground[/]" : "";
+                // The registry tags hidden lanes in their status ("hidden · ..."); a lane just
+                // hidden via 'h' carries the same tag locally so the row flips on the same repaint.
+                string hid = (st.StartsWith("hidden", StringComparison.OrdinalIgnoreCase) || _locallyHidden.Contains(r.Agent))
+                    ? $" [{TuiComponents.Dim}][hidden][/]" : "";
                 rows.Add(isSel
-                    ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]{pin}"
-                    : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]{pin}");
+                    ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]{pin}{hid}"
+                    : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]{pin}{hid}");
             }
         }
         if (overflow > 0)
             rows.Add($"    [{TuiComponents.Dim}]\u2193 +{overflow} more[/]");
-        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 select \u00b7 enter foreground \u00b7 esc close[/]");
+        rows.Add($"  [{TuiComponents.Dim}]\u2191\u2193 select \u00b7 enter foreground \u00b7 h hide from viewport \u00b7 esc close[/]");
         return rows;
     }
 

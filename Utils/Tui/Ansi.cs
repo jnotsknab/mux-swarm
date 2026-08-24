@@ -71,6 +71,17 @@ internal static class Ansi
     /// <summary>Disable bracketed-paste mode, DECRST 2004 (CSI ?2004l).</summary>
     public const string BracketedPasteOff = CSI + "?2004l";
 
+    /// <summary>Enable SGR mouse reporting: button-event tracking (DECSET 1000) + SGR extended
+    /// coordinates (DECSET 1006). We only ACT on wheel reports (buttons 64/65) - clicks/drags/moves
+    /// are parsed and discarded - but 1000 is the mode that makes the terminal emit wheel events at
+    /// all, and 1006 gives the unambiguous <c>ESC[&lt;b;x;y(M|m)</c> framing the driver drains
+    /// synchronously (no fragile fixed-width legacy 1005/normal framing). Disabled with
+    /// <see cref="MouseTrackingOff"/> when the frame engine hands the terminal back.</summary>
+    public const string MouseTrackingOn = CSI + "?1000h" + CSI + "?1006h";
+
+    /// <summary>Disable SGR mouse reporting (DECRST 1006 then 1000).</summary>
+    public const string MouseTrackingOff = CSI + "?1006l" + CSI + "?1000l";
+
     /// <summary>
     /// Erase <paramref name="count"/> lines ending at (and including) the current line,
     /// leaving the cursor at column 1 of the topmost erased line. Mirrors the well-proven

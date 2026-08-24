@@ -56,7 +56,7 @@ public class TuiDriverTests
     {
         var f = TuiComponents.Footer(0, 0, false, false, false, effort: "high");
         Assert.Contains("high", f);
-        Assert.Contains("/effort", f);
+        Assert.Contains("\u25d0", f);   // effort glyph; the "/effort" tutorial literal is gone
     }
 
     [Fact]
@@ -263,13 +263,34 @@ public class TuiDriverTests
     }
 
     [Fact]
-    public void Footer_ShowsSessionIdBadge_AndCachedTokens()
+    public void Footer_ShowsToolCallsChip_AndCachedTokens()
     {
         var f = TuiComponents.Footer(50_000, 200_000, plan: false, ultra: false, psub: false,
-            sessionId: "2026-06-20_12-31-01", cached: 39_080);
-        Assert.Contains("2026-06-20_12-31-01", f);
-        Assert.Contains("session", f);
+            cached: 39_080, toolCalls: 23);
+        Assert.Contains("calls", f);
+        Assert.Contains("23", f);
         Assert.Contains("39.1k cached", f);
+    }
+
+    [Fact]
+    public void Footer_ModelChip_ShownAndPathPrefixStripped()
+    {
+        var f = TuiMarkup.Plain(TuiComponents.Footer(0, 0, false, false, false,
+            model: "anthropic/claude-opus-4-8"));
+        Assert.Contains("claude-opus-4-8", f);
+        Assert.DoesNotContain("anthropic/", f);
+
+        // Survives mid-tier width pressure (outlives sys/tools/cached/calls)...
+        var mid = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, false, true, false,
+            effort: "xhigh", cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+            toolCalls: 23, model: "claude-opus-4-8", width: 90));
+        Assert.Contains("claude-opus-4-8", mid);
+        Assert.DoesNotContain("sys", mid);
+
+        // ...but yields before the meter at narrow widths.
+        var narrow = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, false, true, false,
+            effort: "xhigh", model: "claude-opus-4-8", width: 45));
+        Assert.DoesNotContain("claude-opus-4-8", narrow);
     }
 
     [Fact]
@@ -278,7 +299,73 @@ public class TuiDriverTests
         var bare = TuiComponents.Footer(0, 0, false, false, false);
         Assert.DoesNotContain("tui", bare);
         var hinted = TuiComponents.Footer(0, 0, false, false, false, effort: "high", modeCycleHint: true);
-        Assert.Contains("cycle", hinted);
+        Assert.Contains("\u21e7\u21b9", hinted);   // glyph-only hint; the "cycle" literal is gone
+    }
+
+    [Fact]
+    public void Footer_TurnTimer_LiveTicksAndIdleShowsDimmedLastTurn()
+    {
+        // Live turn: bright dot + m:ss clock.
+        var live = TuiComponents.Footer(0, 0, false, false, false,
+            turnElapsed: TimeSpan.FromSeconds(7));
+        Assert.Contains("\u25cf 0:07", TuiMarkup.Plain(live));
+
+        // Idle with a recorded last turn: dimmed dot + short duration.
+        var idle = TuiComponents.Footer(0, 0, false, false, false,
+            lastTurn: TimeSpan.FromSeconds(12));
+        Assert.Contains("\u25cf 12s", TuiMarkup.Plain(idle));
+        Assert.Contains($"[{TuiComponents.Dim}]\u25cf", idle);
+
+        // Live turn suppresses the idle chip even when a last turn exists.
+        var both = TuiComponents.Footer(0, 0, false, false, false,
+            turnElapsed: TimeSpan.FromSeconds(3), lastTurn: TimeSpan.FromSeconds(12));
+        Assert.DoesNotContain("12s", TuiMarkup.Plain(both));
+    }
+
+    [Fact]
+    public void Footer_Responsive_NeverExceedsWidth_AndDropsChipsInOrder()
+    {
+        string Full() => TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+            effort: "xhigh", modeCycleHint: true, cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+            sessionElapsed: TimeSpan.FromHours(19), lastTurn: TimeSpan.FromSeconds(12), toolCalls: 23);
+
+        // Unbounded (width 0): everything renders.
+        var wide = TuiMarkup.Plain(Full());
+        Assert.Contains("sys", wide);
+        Assert.Contains("cached", wide);
+        Assert.Contains("calls", wide);
+
+        // Constrained: the composed line must fit, dropping lowest-value chips first.
+        foreach (int w in new[] { 200, 140, 100, 80, 60, 40, 25 })
+        {
+            var f = TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+                effort: "xhigh", modeCycleHint: true, cached: 126_700, sysTokens: 20_500, toolTokens: 26_200,
+                sessionElapsed: TimeSpan.FromHours(19), lastTurn: TimeSpan.FromSeconds(12), toolCalls: 23,
+                width: w);
+            Assert.True(TuiMarkup.MarkupWidth(f) <= w,
+                $"footer width {TuiMarkup.MarkupWidth(f)} exceeds terminal width {w}: '{TuiMarkup.Plain(f)}'");
+        }
+
+        // At a mid tier the breakdown chips are gone but the meter+mode survive.
+        var mid = TuiMarkup.Plain(TuiComponents.Footer(120_000, 500_000, plan: false, ultra: true, psub: false,
+            effort: "xhigh", cached: 126_700, sysTokens: 20_500, toolTokens: 26_200, toolCalls: 23, width: 80));
+        Assert.DoesNotContain("sys", mid);
+        Assert.Contains("ultra", mid);
+        Assert.Contains("%", mid);
+    }
+
+    [Fact]
+    public void Footer_ModePulse_ChangesStyleOnlyNeverWidth()
+    {
+        var frames = new[] { -1, 0, 1, 2, 3 }
+            .Select(fr => TuiComponents.Footer(0, 0, plan: false, ultra: true, psub: false, pulseFrame: fr))
+            .ToArray();
+        // Same plain text at every frame (weight-only animation - width can never oscillate)...
+        var plains = frames.Select(TuiMarkup.Plain).Distinct().ToArray();
+        Assert.Single(plains);
+        // ...but at least one pulsing frame styles the chip differently from the static render.
+        Assert.True(frames.Skip(1).Any(f => f != frames[0]),
+            "pulse frames should differ in markup from the static render");
     }
 
     [Fact]
@@ -665,7 +752,7 @@ public class TuiDriverTests
         // The whole point of the feature: Esc cancels mid-turn, and there is a secondary
         // (Ctrl+G) affordance to open/expand that does NOT cancel - documented in both the
         // prompt and turn contexts.
-        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Esc"
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Esc / q"
             && k.Desc.Contains("Cancel", System.StringComparison.OrdinalIgnoreCase));
         Assert.Contains(TuiCommands.Keys, k => k.Context == "turn" && k.Keys == "Ctrl+G");
         Assert.Contains(TuiCommands.Keys, k => k.Context == "prompt" && k.Keys == "Ctrl+G");
@@ -732,6 +819,54 @@ public class TuiDriverTests
 
         d.ForceRedraw(); // Ctrl+L
         Assert.Contains(Ansi.ClearScreen, term.Output);
+    }
+
+    [Fact]
+    public void PollResize_WidthChange_ReflowsCommittedTranscriptAtNewWidth()
+    {
+        // v0.12.4 Option A: on a width change the recent transcript is RE-WRAPPED from the retained
+        // logical model at the new width, so on-screen text re-lays-out instead of keeping its old
+        // hard-wrap geometry. Commit a long line at a wide width (1 physical row), then shrink: the
+        // reflow repaint must now contain that line broken across multiple physical rows.
+        var term = new FakeTerminal { Width = 80, Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: false, ultra: false, psub: false);
+        d.PollResize();   // baseline at width 80
+        // A ~70-col line: one physical row at width 80, must wrap at width 30.
+        string longLine = new string('x', 70);
+        d.CommitLine(longLine);
+        term.Clear();
+
+        term.Width = 30;
+        d.PollResize();   // width shrank => reflow repaint
+
+        Assert.Contains(Ansi.ClearScreen, term.Output);
+        // The line is re-wrapped at width 30: the FIRST physical slice is exactly 29 x's (width-1,
+        // never touching the last column), proving it was re-laid-out from the logical model rather
+        // than replayed at its original width-80 geometry.
+        Assert.Contains(new string('x', 29), term.Output);
+    }
+
+    [Fact]
+    public void PollResize_Reflow_RendersAnsiNotLiteralMarkup()
+    {
+        // Regression: the reflow window must render markup -> ANSI (via LiveRegion.WrapMarkupLine),
+        // NOT emit raw "[#RRGGBB]" / "[/]" markup tokens as literal text (which also bloated every
+        // row's width and broke the layout). Commit a styled line, resize, and assert the reflow
+        // output contains the visible text but none of the literal markup tags.
+        var term = new FakeTerminal { Width = 80, Height = 12 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, plan: false, ultra: false, psub: false);
+        d.PollResize();
+        d.CommitLine("[#8BE9FD]hello styled world[/]");
+        term.Clear();
+
+        term.Width = 40;
+        d.PollResize();
+
+        Assert.Contains("hello styled world", term.Output);
+        Assert.DoesNotContain("[#8BE9FD]", term.Output);   // no literal opening tag
+        Assert.DoesNotContain("[/]", term.Output);         // no literal closing tag
     }
 
     // --- meter semantics (dual-color total/threshold) -----------------------
@@ -1665,6 +1800,99 @@ public class TuiDriverTests
     }
 
     [Fact]
+    public void AgentView_HiddenStatus_RendersHiddenTag()
+    {
+        // A lane the registry has hidden carries a status prefixed "hidden" (see MuxConsole's
+        // Agent View snapshot) - the dashboard must surface the [hidden] tag on that row.
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        var snap = new System.Collections.Generic.List<(string, string, string)>
+        {
+            ("WebAgent", "working", TuiComponents.AgentTint("WebAgent")),
+            ("CodeAgent", "hidden \u00b7 working", TuiComponents.AgentTint("CodeAgent")),
+        };
+        av.SetRows(snap, now);
+        av.Open();
+        var rows = av.RenderDashboard(70, now, 0);
+        Assert.Contains(rows, r => r.Contains("CodeAgent") && r.Contains("[hidden]"));
+        Assert.Contains(rows, r => r.Contains("WebAgent") && !r.Contains("[hidden]"));
+    }
+
+    [Fact]
+    public void AgentView_MarkHidden_TagsRowLocally()
+    {
+        // The 'h' key flips the lane in the registry and locally tags the row so it repaints as
+        // hidden on the same frame (no refresh round-trip through the capture registry).
+        var av = new AgentView();
+        var now = System.DateTime.UtcNow;
+        av.SetRows(Snap("WebAgent", "CodeAgent"), now);
+        av.Open();
+        av.MarkHidden("CodeAgent", hidden: true);
+        var rows = av.RenderDashboard(70, now, 0);
+        Assert.Contains(rows, r => r.Contains("CodeAgent") && r.Contains("[hidden]"));
+        Assert.Contains(rows, r => r.Contains("WebAgent") && !r.Contains("[hidden]"));
+        // Closing the dashboard clears the local tags (the registry owns hidden state).
+        av.Close();
+        Assert.DoesNotContain(av.RenderDashboard(70, now, 0), r => r.Contains("[hidden]"));
+    }
+
+    // --- v0.12.4: /background jobs dashboard (JobView) -------------------------------------------
+
+    private static System.Collections.Generic.List<JobView.JobRow> JobSnap()
+    {
+        return new System.Collections.Generic.List<JobView.JobRow>
+        {
+            new("bg1", "WebAgent", "Done", "tail of the finished output", "research GPUs", 12, false, TuiComponents.AgentTint("WebAgent")),
+            new("bg2", "CodeAgent", "Running", "calling: read_file", "write a haiku", 5, true, TuiComponents.AgentTint("CodeAgent")),
+        };
+    }
+
+    [Fact]
+    public void JobView_RenderDashboard_ListsRunningAndFinished()
+    {
+        // The whole point of the view: finished bg jobs stay listed (the backslash Agent View drops
+        // them), so their output stays reachable.
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        jv.Open();
+        var rows = jv.RenderDashboard(90, 0);
+        string j = string.Join("\n", rows);
+        Assert.Contains("bg1", j);
+        Assert.Contains("bg2", j);
+        Assert.Contains("background jobs", j);
+        Assert.Contains("reopen", j);   // the key-hint footer row
+    }
+
+    [Fact]
+    public void JobView_Move_ClampsAndSelectsById()
+    {
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        Assert.Equal("bg1", jv.SelectedId());   // first selected by default
+        jv.Move(-1);
+        Assert.Equal("bg1", jv.SelectedId());   // clamp at top
+        jv.Move(+1);
+        Assert.Equal("bg2", jv.SelectedId());
+        jv.Move(+1);
+        Assert.Equal("bg2", jv.SelectedId());   // clamp at bottom
+        // Selection is tracked by id and survives a snapshot refresh.
+        jv.SetRows(JobSnap());
+        Assert.Equal("bg2", jv.SelectedId());
+    }
+
+    [Fact]
+    public void JobView_Selected_ReportsRunningFlag()
+    {
+        // Reopen applies only to finished rows; cancel only to running - the row's Running flag
+        // drives both, so verify it round-trips.
+        var jv = new JobView();
+        jv.SetRows(JobSnap());
+        Assert.False(jv.Selected()!.Value.Running);   // bg1 Done
+        jv.Move(+1);
+        Assert.True(jv.Selected()!.Value.Running);    // bg2 Running
+    }
+
+    [Fact]
     public void Driver_EnterAgentView_ForegroundsSelectedAgentByName()
     {
         var term = new FakeTerminal();
@@ -1797,5 +2025,84 @@ public class TuiDriverTests
         // opens the expandable panel - the held state never loses the expandable block.
         Assert.True(d.ExpandLatestInline());
         Assert.Contains("line 1", term.Output);
+    }
+
+    // ---- v0.12.4 shaded-card / diff background-width polish ----
+
+    // The bottom border of a diff card must span the SAME visible width as its shaded body rows,
+    // otherwise the body background reads as bleeding one cell past the border (the reported bug).
+    [Fact]
+    public void Diff_BottomBorder_MatchesShadedBodyWidth()
+    {
+        int width = 60;
+        var d = TuiComponents.Diff("file.cs", "@@ -1 +1 @@\n-old line\n+new line\n ctx", width);
+        var vis = d.Select(MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth).ToList();
+        // Body/border rows never exceed the requested width...
+        Assert.All(vis, w => Assert.True(w <= width, $"row width {w} exceeds {width}"));
+        // ...and the last row (the ╰─ border) is exactly as wide as the widest shaded body row.
+        int body = vis.Take(vis.Count - 1).Max();
+        Assert.Equal(body, vis[^1]);
+    }
+
+    // Wide/CJK glyphs in a diff line must not push the shaded cell past the card width (display-width
+    // padding, not UTF-16 length).
+    [Fact]
+    public void Diff_WideGlyphs_DoNotOverflowWidth()
+    {
+        int width = 40;
+        var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n+\u4f60\u597d\u4e16\u754c CJK line", width);
+        Assert.All(d, row => Assert.True(
+            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+    }
+
+    // Wide glyphs in a shaded tool-result card body must not overflow either.
+    [Fact]
+    public void ToolResultPanel_WideGlyphs_DoNotOverflowWidth()
+    {
+        int width = 40;
+        var rows = TuiComponents.ToolResultPanel("read", "\u3053\u3093\u306b\u3061\u306f wide body line here", error: false, width: width);
+        Assert.All(rows, row => Assert.True(
+            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+    }
+
+    // console.contentBackgrounds = false suppresses card/diff background fills so the terminal's own
+    // background shows through: the resolved markup must carry NO background SGR (48;2;...).
+    [Fact]
+    public void ContentBackgrounds_Off_EmitsNoBackgroundSgr()
+    {
+        bool prev = TuiComponents.ContentBackgrounds;
+        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        try
+        {
+            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            TuiComponents.ContentBackgrounds = false;
+            var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b\n c", 50);
+            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.DoesNotContain("\u001b[48;2;", ansi);
+
+            var card = TuiComponents.ToolResultPanel("read", "alpha\nbeta", error: false, width: 50);
+            string cardAnsi = string.Join("\n", card.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.DoesNotContain("\u001b[48;2;", cardAnsi);
+        }
+        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
+    }
+
+    // Sanity: with backgrounds ON (default), the diff DOES emit background SGR (guards the toggle).
+    [Fact]
+    public void ContentBackgrounds_On_EmitsBackgroundSgr()
+    {
+        bool prev = TuiComponents.ContentBackgrounds;
+        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        try
+        {
+            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            TuiComponents.ContentBackgrounds = true;
+            var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b", 50);
+            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            Assert.Contains("\u001b[48;2;", ansi);
+        }
+        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
     }
 }

@@ -56,33 +56,26 @@ internal static class MetaCommandDispatch
             case "/daemon":
             case "/da":
                 MuxSwarm.State.DaemonCommand.Run(line);
+                // Re-present the frame so the committed status panel paints before the next input
+                // line (no follow-up prompt does it, unlike /setmodel). No-op outside the TUI.
+                MuxConsole.TuiForceRedraw();
                 return Result.Handled;
 
             case "/kanban":
                 MuxSwarm.Utils.Teams.KanbanCommand.Run(line);
                 return Result.Handled;
 
+            case "/workflows":
+                // Live workflow-run viewer + saved/delete. Session-agnostic: the run registry
+                // and the TUI modal are process-level state, so it works identically at the
+                // menu, on turn one, and inside a live session.
+                CliCmdUtils.HandleWorkflowsCommand(
+                    line.Length > "/workflows".Length ? line.Substring("/workflows".Length).Trim() : "");
+                return Result.Handled;
+
             case "/voice":
                 CliCmdUtils.HandleVoice(line);
                 return Result.Handled;
-
-            case "/hide":
-            {
-                var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";
-                if (arg.Length == 0)
-                {
-                    var vis = MuxConsole.VisibleSubAgentLanes();
-                    MuxConsole.WriteMuted(vis.Count == 0
-                        ? "No live sub-agents to hide."
-                        : "Usage: /hide <agent>. Live: " + string.Join(", ", vis));
-                    return Result.Handled;
-                }
-                var hidden = MuxConsole.HideSubAgentLane(arg);
-                MuxConsole.WriteMuted(hidden is not null
-                    ? $"Hid '{hidden}' (still in the \\ Agent View; /unhide {hidden} to restore)."
-                    : $"No live sub-agent matching '{arg}'.");
-                return Result.Handled;
-            }
 
             case "/unhide":
             {

@@ -13,7 +13,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.12.3";
+    public static readonly string Version = "0.13.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -173,6 +173,12 @@ public class App
 
         Config = LoadConfig(ConfigPath);
 
+        // Activate the configured theme BEFORE the splash renders. WriteSplashScreen resolves its
+        // C.* color roles (Banner/Accent/Muted/...) against Theme.Active at emit time; the inline
+        // splash is printed here synchronously, so if the theme is still Default the splash ignores
+        // console.theme. (The frame splash is deferred via FrameSplashFactory and already resolved
+        // post-theme.) Re-asserted later alongside the other render config (idempotent).
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
 
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
@@ -273,6 +279,13 @@ public class App
         args = MergeStartupArgs(Config.StartupArgs, args);
         var parsed = ParseArgs(args);
 
+        // Auto-allow the workspace: add the resolved workspace root (the launch dir / @-index root,
+        // possibly set by --workspace above) to the native Filesystem tools' AllowedPaths so the
+        // project you launched in is usable by the file tools without hand-editing config. Gated by
+        // executionLimits.autoAllowWorkspace (default true); idempotent. Runs AFTER ParseArgs so a
+        // --workspace override is the dir that gets allowed.
+        MaybeAutoAllowWorkspace();
+
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
@@ -293,14 +306,18 @@ public class App
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         MuxConsole.ToolOutputCompact = !string.Equals(Config.Console.ToolOutput, "full", StringComparison.OrdinalIgnoreCase);
         MuxConsole.DockedFooterEnabled = Config.Console.DockedFooter;
+        MuxConsole.FrameEngineEnabled = string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.CollapseToolLines = Config.Console.CollapseToolLines;
         MuxConsole.DelegationSpacing = Config.Console.DelegationSpacing;
+        MuxConsole.ScrollSpeedRows = Config.Console.ScrollSpeedRows;
         MuxConsole.CollapseSubAgents = Config.Console.CollapseSubAgents;
         MuxConsole.CollapseDaemonOutput = Config.Console.CollapseDaemon;
         MuxConsole.InputHighlight = Config.Console.InputHighlight;
+        MuxConsole.ContentBackgrounds = Config.Console.ContentBackgrounds;
         MuxConsole.CardMarkdown = Config.Console.CardMarkdown;
         MuxConsole.CollapseDelegations = Config.Console.CollapseDelegations;
         MuxConsole.BracketedPaste = Config.Console.BracketedPaste;
+        MuxConsole.MouseTracking = Config.Console.MouseTracking;
         MuxConsole.ShowReasoning = Config.ShowReasoning;
 
         // Item 5: startup char-cap check for BRAIN.md / MEMORY.md (interactive only). Startup is
@@ -534,7 +551,7 @@ public class App
 
             // Back at the top-level menu (no agentic loop active): stop the loop clock. It is
             // (re)started on the next /agent | /stateless | /swarm | /pswarm via the session header.
-            if (pendingFromSession is null) MuxConsole.StopTuiLoopClock();
+            if (pendingFromSession is null) MuxConsole.ResetTuiTurnClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
             if (string.IsNullOrEmpty(userInput))
@@ -629,7 +646,7 @@ public class App
                         teamScope.LeadDef.Name, LoadSingleAgentModel());
 
                     ServeMode.ActiveMode = "teams";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(teamLeadModel),
@@ -655,7 +672,7 @@ public class App
                     var maCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "swarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await MultiAgentOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -676,7 +693,7 @@ public class App
                     var pCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "pswarm";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await ParallelSwarmOrchestrator.RunAsync(
                         chatClientFactory: modelId => CreateChatClient(modelId),
@@ -697,7 +714,7 @@ public class App
                     var agentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "agent";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
@@ -751,7 +768,7 @@ public class App
                     var statelessAgentCts = GetOrResetCts();
 
                     ServeMode.ActiveMode = "stateless";
-                    MuxConsole.StartTuiLoopClock();   // begin the loop clock for this agentic interface
+                    MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
                         "stateless", "stateless");
@@ -801,7 +818,7 @@ public class App
                         MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
                         break;
                     }
-                    MuxConsole.StartTuiLoopClock();
+                    MuxConsole.ResetTuiTurnClock();
                     ServeMode.ActiveMode = handle.Mode;
                     try {
                         handle.ReleaseAttach();             // resume the parked frame (it takes the console)
@@ -819,8 +836,15 @@ public class App
                     MinContDelay = CliCmdUtils.HandleContToggle(ContinuousExec);
                     break;
                 
-                case "/workflow":
-                    CliCmdUtils.HandleInteractiveWorkflow();
+                case var wfc when wfc == "/workflow" || wfc.StartsWith("/workflow ", StringComparison.Ordinal):
+                    // /workflow [static [path]] | [dynamic [goal]] - bare enters a mode picker.
+                    var wfArg = wfc.Length > "/workflow".Length ? wfc.Substring("/workflow".Length).Trim() : "";
+                    CliCmdUtils.HandleInteractiveWorkflow(wfArg);
+                    break;
+                case var wfsc when wfsc == "/workflows" || wfsc.StartsWith("/workflows ", StringComparison.Ordinal):
+                    // /workflows [saved | delete <name>] - bare opens the live run viewer.
+                    var wfsArg = wfsc.Length > "/workflows".Length ? wfsc.Substring("/workflows".Length).Trim() : "";
+                    CliCmdUtils.HandleWorkflowsCommand(wfsArg);
                     break;
                 case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
                     // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
@@ -1180,6 +1204,25 @@ public class App
                     break;
                 }
 
+                case var mc when mc == "/mouse" || mc.StartsWith("/mouse "):
+                {
+                    // Hermes-style mouse preset for the frame engine. Bare /mouse reports the current
+                    // preset; /mouse off|wheel|buttons routes through the mouseTracking /set key so
+                    // validation + persistence stay in one place. "toggle" flips off<->wheel.
+                    var mparts = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                    if (mparts.Length < 2)
+                    {
+                        MuxConsole.WriteInfo($"mouseTracking = {Config.Console.MouseTracking}  (set with /mouse off|wheel|buttons). Frame engine only; inline keeps native scrollback/selection.");
+                        break;
+                    }
+                    var mv = mparts[1].Trim().ToLowerInvariant();
+                    if (mv == "toggle") mv = Config.Console.MouseTracking == "off" ? "wheel" : "off";
+                    var mres = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set mouseTracking {mv}");
+                    if (mres.Ok) { MuxConsole.WriteSuccess(mres.Message); Config = LoadConfig(ConfigPath); }
+                    else MuxConsole.WriteWarning(mres.Message);
+                    break;
+                }
+
                 case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs "):
                 {
                     // Persist CLI args applied automatically at every startup (config.startupArgs).
@@ -1216,17 +1259,18 @@ public class App
                         var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
                                    $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
                                    "(overwrite the starter template). Keep it concise and operational.";
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
@@ -1247,17 +1291,18 @@ public class App
                     void SpawnHookScriptHelper(string scriptPath, string purpose)
                     {
                         var task = BuildHookHelperBrief(scriptPath, purpose);
-                        MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                        try
-                        {
-                            SingleAgentOrchestrator.ChatAgentAsync(
-                                client: CreateChatClient(helperModel),
-                                GetOrResetCts().Token,
-                                maxIterations: 4,
-                                mcpTools: McpTools,
-                                continuous: false).GetAwaiter().GetResult();
-                        }
-                        finally { MuxConsole.InputOverride = System.Console.In; }
+                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
+                        // directly, then the `incomingGoal != null && !continuous` break fires) and
+                        // control returns to the wizard in a single flow. Injecting via FallbackReader
+                        // instead left the helper reading stdin, blocking the wizard's next step and
+                        // swallowing the user's following input until a second invocation.
+                        SingleAgentOrchestrator.ChatAgentAsync(
+                            client: CreateChatClient(helperModel),
+                            GetOrResetCts().Token,
+                            maxIterations: 4,
+                            mcpTools: McpTools,
+                            incomingGoal: task,
+                            continuous: false).GetAwaiter().GetResult();
                     }
 
                     var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
@@ -1288,14 +1333,12 @@ public class App
                             void SpawnHookScriptHelper2(string scriptPath, string purpose)
                             {
                                 var task = BuildHookHelperBrief(scriptPath, purpose);
-                                MuxConsole.InputOverride = new MuxSwarm.Utils.FallbackReader(task, MuxConsole.InputOverride);
-                                try
-                                {
-                                    SingleAgentOrchestrator.ChatAgentAsync(
-                                        client: CreateChatClient(helperModel2), GetOrResetCts().Token,
-                                        maxIterations: 4, mcpTools: McpTools, continuous: false).GetAwaiter().GetResult();
-                                }
-                                finally { MuxConsole.InputOverride = System.Console.In; }
+                                // One-shot via incomingGoal (see /createhook above); previously the
+                                // FallbackReader injection left the helper reading stdin and blocked the wizard.
+                                SingleAgentOrchestrator.ChatAgentAsync(
+                                    client: CreateChatClient(helperModel2), GetOrResetCts().Token,
+                                    maxIterations: 4, mcpTools: McpTools,
+                                    incomingGoal: task, continuous: false).GetAwaiter().GetResult();
                             }
                             var cres = MuxSwarm.Utils.Tui.TuiConfigCommands.RunCreateHookWizard(
                                 new[] { "/createhook" }, SpawnHookScriptHelper2);
@@ -1373,6 +1416,10 @@ public class App
                     // landed yet at the menu, so make sure it's ready first (idempotent + cheap).
                     await EnsureMcpReadyAsync();
                     MuxSwarm.State.DaemonCommand.Run(userInput);
+                    // /daemon commits its status panel through the frame transcript but has no
+                    // follow-up prompt (unlike /setmodel), so nothing re-presents the frame before
+                    // the next input line. Force one present so the panel is painted, not swallowed.
+                    MuxConsole.TuiForceRedraw();
                     break;
                 }
 
@@ -1620,6 +1667,63 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         }
         if (sb.Length > 0) tokens.Add(sb.ToString());
         return tokens;
+    }
+
+    /// <summary>
+    /// Adds the resolved workspace root to the native Filesystem AllowedPaths when
+    /// executionLimits.autoAllowWorkspace is true (default). Idempotent + best-effort: the path is
+    /// canonicalized and only appended when not already present (case-insensitive on Windows). Skips
+    /// silently when disabled, when the workspace resolves to the install/base dir (nothing project-
+    /// specific to allow), or on any error. Keeps the interactive @-index root and the file tools'
+    /// writable root in sync so "launch in a project, edit it" works with zero config.
+    /// </summary>
+    private static void MaybeAutoAllowWorkspace()
+    {
+        try
+        {
+            Config.Filesystem ??= new FilesystemConfig();
+            Config.Filesystem.AllowedPaths ??= new List<string>();
+            ApplyAutoAllowWorkspace(
+                Config.Filesystem.AllowedPaths,
+                ExecutionLimits.Current.AutoAllowWorkspace,
+                PlatformContext.WorkspaceIsInstallDir,
+                PlatformContext.WorkspaceRoot,
+                Directory.Exists);
+        }
+        catch { /* best-effort; never block startup */ }
+    }
+
+    /// <summary>
+    /// Pure logic for <see cref="MaybeAutoAllowWorkspace"/> (seams injected for testing). Appends the
+    /// resolved workspace root to <paramref name="allowedPaths"/> when auto-allow is enabled, the
+    /// workspace is not the install/base dir, the dir exists, and it is not already present
+    /// (case-insensitive on Windows). Mutates the list in place; returns true if a path was added.
+    /// </summary>
+    internal static bool ApplyAutoAllowWorkspace(
+        List<string> allowedPaths, bool enabled, bool workspaceIsInstallDir,
+        string workspaceRoot, Func<string, bool> dirExists)
+    {
+        if (!enabled) return false;
+        if (workspaceIsInstallDir) return false; // nothing project-specific to grant
+
+        string ws;
+        try { ws = System.IO.Path.GetFullPath(workspaceRoot); }
+        catch { return false; }
+        if (!dirExists(ws)) return false;
+
+        var cmp = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        string Norm(string p)
+        {
+            try { return System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(p)); }
+            catch { return p; }
+        }
+        var target = Norm(ws);
+        if (allowedPaths.Any(p => string.Equals(Norm(p), target, cmp)))
+            return false; // already allowed
+
+        allowedPaths.Add(ws);
+        return true;
     }
 
     private static ParsedArgs ParseArgs(string[] args)
@@ -2013,6 +2117,21 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
+        // Dispose any previously-connected MCP clients before rebuilding. On a reload/refresh this method
+        // reconnects every enabled server and reassigns McpClients[name]; without disposing the old clients
+        // first, each refresh LEAKED the prior subprocess (e.g. repeated /refresh spawned a new npx server
+        // per call, orphaning the old ones). Dispose is best-effort per client so one hung disposal can't
+        // block the whole reconnect.
+        if (McpClients.Count > 0)
+        {
+            foreach (var (_, oldClient) in McpClients.ToArray())
+            {
+                try { await oldClient.DisposeAsync(); }
+                catch { /* best-effort: subprocess may already be dead */ }
+            }
+            McpClients.Clear();
+        }
+
         McpTools = new List<McpClientTool>();
 
         var baseDir = PlatformContext.BaseDirectory;
@@ -2161,7 +2280,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
                 var httpTransport = new HttpClientTransport(httpOptions);
                 using var httpCts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
-                var httpClient = await McpClient.CreateAsync(httpTransport, cancellationToken: httpCts.Token);
+                var httpClientOptions = string.IsNullOrWhiteSpace(serverConfig.ProtocolVersion)
+                    ? null
+                    : new McpClientOptions { ProtocolVersion = serverConfig.ProtocolVersion };
+                var httpClient = await McpClient.CreateAsync(httpTransport, httpClientOptions, cancellationToken: httpCts.Token);
 
                 var httpTools = await httpClient.ListToolsAsync(cancellationToken: httpCts.Token);
                 var namedHttpTools = httpTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
@@ -2200,7 +2322,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 }
 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(McpConnectTimeoutSeconds(config)));
-                var stdioClient = await McpClient.CreateAsync(stdioTransport, cancellationToken: cts.Token);
+                var stdioClientOptions = string.IsNullOrWhiteSpace(serverConfig.ProtocolVersion)
+                    ? null
+                    : new McpClientOptions { ProtocolVersion = serverConfig.ProtocolVersion };
+                var stdioClient = await McpClient.CreateAsync(stdioTransport, stdioClientOptions, cancellationToken: cts.Token);
 
                 var stdioTools = await stdioClient.ListToolsAsync(cancellationToken: cts.Token);
                 var namedStdioTools = stdioTools.Select(t => t.WithName($"{name}_{t.Name}")).ToList();
@@ -2418,6 +2543,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
             // instead of failing the turn. No-op unless ExtraHigh was actually requested.
             .Use(inner => new MuxSwarm.Utils.ReasoningEffortFallbackClient(inner, modelId))
+            // Innermost (closest to the wire): strip empty text parts from the outbound history so
+            // providers that reject them (e.g. Kimi/Moonshot: 400 "text content is empty") accept the
+            // replayed assistant turns. No-op on clean histories; harmless for tolerant providers.
+            .Use(inner => new MuxSwarm.Utils.EmptyContentSanitizerClient(inner))
             .Build();
 
         // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every

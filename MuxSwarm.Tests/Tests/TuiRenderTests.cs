@@ -177,15 +177,31 @@ public class TuiRenderTests
     public void SubAgentActivity_UsesPulsingDotHead_NotMainAgentBraille()
     {
         // g12.07: the live lane head is the PULSING dot (motion = working), not the main agent's
-        // Braille thinking dots - so concurrent sub-agent activity reads as its own lane. Use the
-        // frame whose pulse cell is the distinctive big circle to avoid the row's middot separator.
-        int bigFrame = System.Array.IndexOf(TuiComponents.PulseFrames, "\u25CF");
+        // Braille thinking dots - so concurrent sub-agent activity reads as its own lane. The pulse
+        // is now a fixed-width ● that breathes via brightness (dim/normal/bold), so every frame's
+        // glyph is the same big circle - no ambiguous-width glyph oscillation.
         var rows = TuiComponents.SubAgentActivity(
-            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: bigFrame);
+            new (string, string, string)[] { ("CodeAgent", "working", "#82C49B") }, frame: 2);
         var plain = TuiMarkup.Plain(rows[0]);
-        Assert.Contains("\u25CF", plain);                          // pulsing head dot present
+        Assert.Contains(TuiComponents.PulseGlyph, plain);           // pulsing head dot present
         foreach (var braille in TuiComponents.ThinkFrames)
             Assert.DoesNotContain(braille, plain);                  // no main-agent Braille frame
+    }
+
+    [Fact]
+    public void PulsingDot_IsWidthConstantAcrossAllFrames()
+    {
+        // Symptom-4 fix: the pulse must never change the rendered row width. Every frame is the
+        // SAME width-1 glyph (●), animated only by brightness (dim/normal/bold), so the visible
+        // width is identical for all frames - no ambiguous-width oscillation, no far-right residue.
+        int w0 = TuiMarkup.Width(TuiMarkup.Plain(TuiComponents.PulsingDot(0, "#82C49B")));
+        Assert.Equal(1, w0);
+        for (int f = -3; f < 12; f++)
+        {
+            var plain = TuiMarkup.Plain(TuiComponents.PulsingDot(f, "#82C49B"));
+            Assert.Equal(w0, TuiMarkup.Width(plain));       // same width every frame
+            Assert.Equal(TuiComponents.PulseGlyph, plain);  // same glyph every frame
+        }
     }
 
     [Fact]

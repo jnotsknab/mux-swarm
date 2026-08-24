@@ -19,6 +19,13 @@ public sealed class DaemonRunner : IAsyncDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly List<Task> _workers = [];
     private readonly ConcurrentDictionary<string, DateTime> _lastFired = new();
+    // Per-TRIGGER last-fired time (UTC), recorded on every FireGoal, so the web UI can
+    // show a "last fired" idle status. Distinct from _lastFired (which is cooldown-keyed).
+    private readonly ConcurrentDictionary<string, DateTime> _lastFiredByTrigger = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Last time a trigger fired its goal (UTC), or null if it never has this session.</summary>
+    public DateTime? LastFired(string id)
+        => _lastFiredByTrigger.TryGetValue(id ?? "", out var t) ? t : null;
     private readonly ConcurrentDictionary<string, int> _consecutiveFailures = new();
 
     // Inbound webhook triggers: each "webhook" loop registers a queue keyed by trigger id. The serve
@@ -266,7 +273,8 @@ public sealed class DaemonRunner : IAsyncDisposable
         watcher.Created += OnFileEvent;
         watcher.Changed += OnFileEvent;
 
-        MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Watching: {trigger.Path} (cooldown {trigger.EffectiveInterval}s)");
+        using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+            MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Watching: {trigger.Path} (cooldown {trigger.EffectiveInterval}s)");
 
         try
         {
@@ -338,7 +346,10 @@ public sealed class DaemonRunner : IAsyncDisposable
             return;
         }
 
-        MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Cron scheduled: {trigger.Schedule}");
+        // Tag scheduling chatter with origin=daemon so it routes to the web app's daemon
+        // lane (which filters it as noise) instead of leaking into the main transcript.
+        using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+            MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Cron scheduled: {trigger.Schedule}");
 
         try
         {
@@ -349,12 +360,14 @@ public sealed class DaemonRunner : IAsyncDisposable
 
                 if (next is null)
                 {
-                    MuxConsole.WriteWarning($"[Daemon:{trigger.Id}] No future occurrence found. Stopping.");
+                    using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+                        MuxConsole.WriteWarning($"[Daemon:{trigger.Id}] No future occurrence found. Stopping.");
                     break;
                 }
 
                 var delay = next.Value - now;
-                MuxConsole.WriteMuted($"[Daemon:{trigger.Id}] Next fire: {next.Value:HH:mm:ss} ({delay.TotalMinutes:F1}m)");
+                using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+                    MuxConsole.WriteMuted($"[Daemon:{trigger.Id}] Next fire: {next.Value:HH:mm:ss} ({delay.TotalMinutes:F1}m)");
 
                 await Task.Delay(delay, ct);
 
@@ -366,7 +379,8 @@ public sealed class DaemonRunner : IAsyncDisposable
                         ["{id}"] = trigger.Id
                     });
 
-                MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Cron fired: {trigger.Schedule}");
+                using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
+                    MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Cron fired: {trigger.Schedule}");
 
                 HookWorker.Enqueue(new HookEvent
                 {
@@ -676,6 +690,7 @@ public sealed class DaemonRunner : IAsyncDisposable
 
     private async Task FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct)
     {
+        _lastFiredByTrigger[trigger.Id] = DateTime.UtcNow;
         if (_chatClientFactory is null || _mcpTools is null || _agentModels is null)
         {
             MuxConsole.WriteWarning(

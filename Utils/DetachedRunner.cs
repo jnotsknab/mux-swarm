@@ -20,6 +20,15 @@ public sealed class DetachedJob
     public DateTimeOffset Started { get; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? Finished { get; set; }
     public string? Result { get; set; }
+    /// <summary>DelegationStore handle (d:Agent#N) once the finished result is spilled, so the lead
+    /// can pull detail on demand via read_delegation instead of carrying the blob in context.</summary>
+    public string? Handle { get; set; }
+    /// <summary>Concise live-activity text while running (e.g. "working", "calling: read_file").
+    /// Mirrored from the capture lane so /background jobs shows real progress, not bare "Running".</summary>
+    public string? LiveActivity { get; set; }
+    /// <summary>Rolling ~120-char tail of the streamed output, retained after finish so a completed
+    /// job's row still previews what it produced.</summary>
+    public string? Tail { get; set; }
     internal CancellationTokenSource Cts { get; init; } = new();
     internal Task? Task { get; set; }
 
@@ -121,13 +130,30 @@ public static class DetachedRunner
                 // AsyncLocal flows into RunSubAgentAsync's child tasks. Absent under classic TUI (no-op
                 // on the emit path when not serving); byte-identical legacy frames when untagged.
                 using var _originScope = MuxConsole.BeginServeOrigin("subagent", $"sub:{job.Agent}");
+                // Poll the capture lane's live activity onto the job each loop iteration so
+                // /background jobs shows real progress (tool calls, current action) not bare
+                // "Running". Best-effort: the lane may not exist outside TUI capture.
+                try
+                {
+                    var live = MuxConsole.GetLiveSubAgentDetail(job.Agent);
+                    if (live is { } d)
+                    {
+                        job.LiveActivity = string.IsNullOrWhiteSpace(d.LiveStatus) ? "working" : d.LiveStatus;
+                        if (!string.IsNullOrWhiteSpace(d.Tail)) job.Tail = d.Tail;
+                    }
+                }
+                catch { /* activity is best-effort */ }
                 var (raw, status, _, _) = await MultiAgentOrchestrator.RunSubAgentAsync(
-                    specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false);
+                    specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false, hiddenCapture: true);
                 lock (_gate)
                 {
                     job.Result = raw;
                     job.Status = status == "success" ? DetachedStatus.Done : DetachedStatus.Failed;
                     job.Finished = DateTimeOffset.UtcNow;
+                    // Spill the finished result into the delegation store so the lead can read it
+                    // surgically via read_delegation (d:Agent#N handle) instead of a giant inline dump.
+                    job.Handle = DelegationStore.Persist(
+                        DelegationStore.CurrentScope, job.Agent, raw ?? "", status, summary: null, artifacts: null)?.Handle;
                 }
             }
             catch (OperationCanceledException)
@@ -182,7 +208,12 @@ public static class DetachedRunner
         if (line.Length == 0 || line.Equals("jobs", StringComparison.OrdinalIgnoreCase)
             || line.Equals("list", StringComparison.OrdinalIgnoreCase))
         {
-            MuxConsole.WritePanel("Detached jobs", Render());
+            // TUI: open the interactive JobView (running AND finished; o reopen / c cancel), so a
+            // finished bg agent's output stays reachable after its lane leaves the backslash view.
+            // Offline (serve / stdio / non-TUI) the driver is inactive and this returns false, so
+            // we fall back to the static text panel.
+            if (!MuxConsole.TuiEnterJobView())
+                MuxConsole.WritePanel("Detached jobs", Render());
             return;
         }
 
@@ -223,7 +254,8 @@ public static class DetachedRunner
             MuxConsole.WriteSuccess($"[bg] {job.Id} launched: {job.Agent} (running in background; press \\ to view).");
     }
 
-    /// <summary>Render the job list for /detach jobs.</summary>
+    /// <summary>Render the job list for /detach jobs. Running jobs show their live activity;
+    /// finished show a short tail preview, so the text listing carries real status too.</summary>
     public static string Render()
     {
         var jobs = Jobs();
@@ -232,10 +264,17 @@ public static class DetachedRunner
         foreach (var j in jobs)
         {
             var dur = (j.Finished ?? DateTimeOffset.UtcNow) - j.Started;
+            string activity = j.Status == DetachedStatus.Running
+                ? (string.IsNullOrWhiteSpace(j.LiveActivity) ? "working" : j.LiveActivity!)
+                : (string.IsNullOrWhiteSpace(j.Tail) ? "" : j.Tail!);
+            if (activity.Length > 48) activity = activity[..47] + "...";
             sb.Append(j.Id).Append("  [").Append(j.Status).Append("]  ")
-              .Append(j.Agent).Append("  ").Append((int)dur.TotalSeconds).Append("s  ")
-              .AppendLine(j.Goal.Length > 60 ? j.Goal[..60] + "..." : j.Goal);
+              .Append(j.Agent).Append("  ").Append((int)dur.TotalSeconds).Append("s");
+            if (activity.Length > 0) sb.Append("  ").Append(activity);
+            sb.AppendLine();
+            sb.Append("     ").AppendLine(j.Goal.Length > 72 ? j.Goal[..71] + "..." : j.Goal);
         }
+        sb.Append("open the interactive viewer: /background jobs  (o reopen \u00b7 c cancel)");
         return sb.ToString();
     }
 }

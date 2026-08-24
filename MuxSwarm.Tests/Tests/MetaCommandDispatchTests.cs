@@ -38,12 +38,13 @@ public class MetaCommandDispatchTests
     }
 
     [Fact]
-    public async Task Hide_WithNoArg_IsHandled_NotAGoal()
+    public async Task Hide_IsRemoved_FallsThroughAsGoal()
     {
-        // /hide is a session-agnostic meta command: even with no live sub-agents it is Handled
-        // (prints usage), never falling through to the agent as a goal.
+        // /hide was removed: hiding moved into the backslash Agent View (the 'h' key). The old
+        // command is no longer registered, so it is NOT a meta command anymore and falls through
+        // (the caller then reports it as an unknown slash command).
         var r = await MetaCommandDispatch.TryHandleAsync("/hide", null, null, CancellationToken.None);
-        Assert.Equal(MetaCommandDispatch.Result.Handled, r);
+        Assert.Equal(MetaCommandDispatch.Result.NotHandled, r);
     }
 
     [Fact]
@@ -54,9 +55,9 @@ public class MetaCommandDispatchTests
     }
 
     [Fact]
-    public void HideUnhide_AreRegistered_AsSessionCommands()
+    public void Hide_IsNotRegistered_Unhide_IsRegistered()
     {
-        Assert.Contains(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/hide");
+        Assert.DoesNotContain(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/hide");
         Assert.Contains(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/unhide");
     }
 }

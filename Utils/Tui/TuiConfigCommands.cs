@@ -91,6 +91,18 @@ internal static class TuiConfigCommands
         },
         new Key
         {
+            Name = "renderEngine", Aliases = new[] { "engine" }, ValueHint = "inline|frame",
+            Get = () => Cfg.Console.RenderEngine,
+            Set = v =>
+            {
+                v = v.ToLowerInvariant();
+                if (v is not ("inline" or "frame")) return Bad($"renderEngine expects inline|frame (got '{v}').");
+                Cfg.Console.RenderEngine = v;
+                return Save($"renderEngine = {v}. Saved (applies on next launch).");
+            },
+        },
+        new Key
+        {
             Name = "toolOutput", Aliases = new[] { "verbose", "tool" }, ValueHint = "compact|full",
             Get = () => Cfg.Console.ToolOutput,
             Set = v =>
@@ -127,6 +139,32 @@ internal static class TuiConfigCommands
                 Cfg.Console.DelegationSpacing = n;
                 MuxConsole.SetTuiDelegationSpacing(n);           // live
                 return Save($"delegationSpacing = {n}{(n == 0 ? " (tight)" : " blank line(s) below each tool/delegation block")}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "mouseTracking", Aliases = new[] { "mouse", "mousetracking" }, ValueHint = "off|wheel|buttons",
+            Get = () => Cfg.Console.MouseTracking,
+            Set = v =>
+            {
+                var c = (v ?? "").Trim().ToLowerInvariant();
+                if (c is not ("off" or "wheel" or "buttons"))
+                    return Bad($"mouseTracking expects off|wheel|buttons (got '{v}').");
+                Cfg.Console.MouseTracking = c;
+                MuxConsole.SetTuiMouseTracking(c);                 // live (frame engine only)
+                return Save($"mouseTracking = {c}. Saved + applied live (frame engine; inline keeps native scrollback/selection).");
+            },
+        },
+        new Key
+        {
+            Name = "scrollSpeedRows", Aliases = new[] { "scrollspeed", "scroll_speed_rows" }, ValueHint = "<int>=1",
+            Get = () => Cfg.Console.ScrollSpeedRows.ToString(),
+            Set = v =>
+            {
+                if (!int.TryParse(v, out int n) || n < 1) return Bad($"scrollSpeedRows expects an integer >= 1 (got '{v}').");
+                Cfg.Console.ScrollSpeedRows = n;
+                MuxConsole.SetTuiScrollSpeedRows(n);             // live
+                return Save($"scrollSpeedRows = {n} row(s) per Ctrl+U/Ctrl+D step (frame mode). Saved + applied live.");
             },
         },
         new Key
@@ -268,6 +306,18 @@ internal static class TuiConfigCommands
                 Cfg.Console.InputHighlight = on;
                 MuxConsole.SetTuiInputHighlight(on);             // live
                 return Save($"inputHighlight = {on}. Saved + applied live.");
+            },
+        },
+        new Key
+        {
+            Name = "contentBackgrounds", Aliases = new[] { "cardbg", "cardbackground", "backgroundfills" }, ValueHint = "on|off",
+            Get = () => Cfg.Console.ContentBackgrounds.ToString(),
+            Set = v =>
+            {
+                if (!TryBool(v, out bool on)) return Bad($"contentBackgrounds expects a boolean (got '{v}').");
+                Cfg.Console.ContentBackgrounds = on;
+                MuxConsole.SetTuiContentBackgrounds(on);         // live
+                return Save($"contentBackgrounds = {on}{(on ? "" : " (card/diff/code fills off \u2014 terminal background shows through)")}. Saved + applied live.");
             },
         },
         new Key

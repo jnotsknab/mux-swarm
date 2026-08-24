@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -481,28 +481,196 @@ public static class CliCmdUtils
         }
     }
 
-    public static void HandleInteractiveWorkflow()
+    /// <summary>
+    /// /workflow [static [path]] | [dynamic [goal]]. Static = the existing JSON step file
+    /// replayed over the engine repl (unchanged behavior). Dynamic = an agent-authored Python
+    /// driver script (muxswarm SDK) that spawns separate headless mux processes per task and
+    /// reports into the run journal for /workflows. Bare -> mode picker.
+    /// </summary>
+    public static void HandleInteractiveWorkflow(string arg = "")
     {
-        string pathToLoad = MuxConsole.Prompt("Enter the path to your workflow file: ");
-
-        if (string.IsNullOrEmpty(pathToLoad))
+        var a = (arg ?? "").Trim();
+        string mode; string rest = "";
+        if (a.StartsWith("static", StringComparison.OrdinalIgnoreCase))
+        { mode = "static"; rest = a.Length > 6 ? a[6..].Trim() : ""; }
+        else if (a.StartsWith("dynamic", StringComparison.OrdinalIgnoreCase))
+        { mode = "dynamic"; rest = a.Length > 7 ? a[7..].Trim() : ""; }
+        else if (a.Length == 0)
         {
-            MuxConsole.WriteWarning("No workflow file path provided.");
+            var pick = MuxConsole.SelectChoice("Workflow mode", new[]
+            {
+                "static  - run a saved JSON step file over the engine repl",
+                "dynamic - author + launch a Python driver script (separate mux processes, watch via /workflows)",
+            });
+            if (pick.Cancelled) return;
+            mode = pick.Value.StartsWith("dynamic", StringComparison.OrdinalIgnoreCase) ? "dynamic" : "static";
+        }
+        else { mode = "static"; rest = a; }   // bare path arg keeps the old one-arg behavior
+
+        if (mode == "static")
+        {
+            string pathToLoad = string.IsNullOrEmpty(rest)
+                ? MuxConsole.Prompt("Enter the path to your workflow file: ")
+                : rest;
+            if (string.IsNullOrEmpty(pathToLoad))
+            {
+                MuxConsole.WriteWarning("No workflow file path provided.");
+                return;
+            }
+            Workflow workflow = WorkflowHelper.Load(pathToLoad);
+            if (string.IsNullOrEmpty(workflow.Name) || workflow.Steps.Count == 0)
+            {
+                MuxConsole.WriteWarning("The workflow you provided is invalid!");
+                return;
+            }
+            // Register the static run so it shows in /workflows alongside dynamic runs.
+            var (rid, rdir) = WorkflowRunRegistry.NewRunDir(workflow.Name);
+            var run = WorkflowRunRegistry.Register(new WorkflowRun
+            {
+                Id = rid, Name = workflow.Name, Mode = "static", RunDir = rdir,
+            });
+            run.Manifest = new WorkflowRunManifest
+            {
+                Id = rid, Name = workflow.Name, Mode = "static",
+                Sections = new List<WorkflowSection>
+                {
+                    new()
+                    {
+                        Name = "Steps",
+                        Tasks = workflow.Steps.Select((s, ix) => new WorkflowTask
+                        {
+                            Id = $"s{ix + 1}", Agent = "repl",
+                            Label = s.Length > 60 ? s[..59] + "\u2026" : s,
+                            Status = "pending",
+                        }).ToList(),
+                    },
+                },
+            };
+            MuxConsole.WriteSuccess($"Loaded {workflow.Name} ({workflow.Steps.Count} steps) - Running workflow in 3 seconds...");
+            Thread.Sleep(TimeSpan.FromSeconds(3));
+            WorkflowHelper.RunWorkflow(workflow);
             return;
         }
 
-        Workflow workflow = WorkflowHelper.Load(pathToLoad);
-
-        if (string.IsNullOrEmpty(workflow.Name) || workflow.Steps.Count == 0)
+        // dynamic
+        string goal = string.IsNullOrEmpty(rest)
+            ? MuxConsole.Prompt("Describe the workflow goal (the agent authors a driver script): ")
+            : rest;
+        if (string.IsNullOrWhiteSpace(goal))
         {
-            MuxConsole.WriteWarning("The workflow you provided is invalid!");
+            MuxConsole.WriteWarning("No goal provided.");
+            return;
+        }
+        var (client, opts) = ResolveWorkflowAuthorClient();
+        if (client is null)
+        {
+            MuxConsole.WriteWarning("No model available to author the driver script (configure an Orchestrator/singleAgent model).");
+            return;
+        }
+        string result = "";
+        MuxConsole.WithSpinner("Authoring driver script", () =>
+        {
+            result = DynamicWorkflow.GenerateAndLaunchAsync(
+                MakeWorkflowName(goal), goal, client, opts, CancellationToken.None).GetAwaiter().GetResult();
+        });
+        MuxConsole.WriteInfo(result);
+    }
+
+    /// <summary>/workflows [saved | delete &lt;name&gt;] - bare opens the live run viewer.</summary>
+    public static void HandleWorkflowsCommand(string arg = "")
+    {
+        var a = (arg ?? "").Trim();
+        if (a.StartsWith("delete", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = a.Length > 6 ? a[6..].Trim() : "";
+            if (name.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows delete <name>"); return; }
+            var file = Path.Combine(PlatformContext.TeamsDirectory,
+                name.EndsWith(".workflow.json", StringComparison.OrdinalIgnoreCase) ? name : $"{name}.workflow.json");
+            if (!File.Exists(file)) { MuxConsole.WriteWarning($"No saved workflow named '{name}'."); return; }
+            File.Delete(file);
+            MuxConsole.WriteSuccess($"Deleted saved workflow '{name}'.");
+            return;
+        }
+        if (a.StartsWith("save", StringComparison.OrdinalIgnoreCase) && !a.StartsWith("saved", StringComparison.OrdinalIgnoreCase))
+        {
+            // /workflows save <runId> [as <name>]  -- persist a run's driver script as a reusable definition.
+            var rest = a.Length > 4 ? a[4..].Trim() : "";
+            string runId = rest, asName = "";
+            var asIdx = rest.IndexOf(" as ", StringComparison.OrdinalIgnoreCase);
+            if (asIdx >= 0) { runId = rest[..asIdx].Trim(); asName = rest[(asIdx + 4)..].Trim(); }
+            if (runId.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows save <runId> [as <name>]"); return; }
+            var (saved, err) = DynamicWorkflow.SaveRunAsDefinition(runId, asName.Length > 0 ? asName : null);
+            MuxConsole.WriteMuted(saved is not null
+                ? $"Saved workflow '{saved}'. Re-run it with /workflows run {saved}."
+                : $"[workflows] Could not save: {err}");
+            return;
+        }
+        if (a.StartsWith("rerun", StringComparison.OrdinalIgnoreCase))
+        {
+            var runId = a.Length > 5 ? a[5..].Trim() : "";
+            if (runId.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows rerun <runId>"); return; }
+            MuxConsole.WriteMuted(DynamicWorkflow.RerunFromRun(runId));
+            return;
+        }
+        if (a.StartsWith("run ", StringComparison.OrdinalIgnoreCase))
+        {
+            var name = a[4..].Trim();
+            if (name.Length == 0) { MuxConsole.WriteWarning("Usage: /workflows run <savedName>"); return; }
+            MuxConsole.WriteMuted(DynamicWorkflow.LaunchSaved(name));
+            return;
+        }
+                if (a.StartsWith("saved", StringComparison.OrdinalIgnoreCase))
+        {
+            var files = Directory.Exists(PlatformContext.TeamsDirectory)
+                ? Directory.EnumerateFiles(PlatformContext.TeamsDirectory, "*.workflow.json")
+                    .Select(Path.GetFileNameWithoutExtension).Select(f => f!.Replace(".workflow", "")).ToList()
+                : new List<string>();
+            if (files.Count == 0) { MuxConsole.WriteMuted("No saved workflows."); return; }
+            MuxConsole.WritePanel("Saved workflows", string.Join(Environment.NewLine, files.Select(f => $"- {f}")));
             return;
         }
 
-        MuxConsole.WriteSuccess($"Loaded {workflow.Name} ({workflow.Steps.Count} steps) - Running workflow in 3 seconds...");
-        Thread.Sleep(TimeSpan.FromSeconds(3));
-        WorkflowHelper.RunWorkflow(workflow);
+        // Bare: live viewer (TUI), or a static text summary as the non-TUI fallback.
+        if (MuxConsole.TuiEnterWorkflowView()) return;
+        var runs = WorkflowRunRegistry.Snapshot();
+        if (runs.Count == 0) { MuxConsole.WriteMuted("No workflow runs. Start one with /workflow."); return; }
+        var sb = new System.Text.StringBuilder();
+        foreach (var r in runs)
+        {
+            sb.AppendLine($"{r.Id} [{r.State}] {r.Name} ({r.Mode})");
+            foreach (var sec in r.Manifest.Sections)
+            {
+                sb.AppendLine($"  {sec.Name}: {sec.Tasks.Count(t => t.Status == "done")}/{sec.Tasks.Count} done");
+                foreach (var t2 in sec.Tasks)
+                    sb.AppendLine($"    [{t2.Status}] {t2.Agent}: {t2.Label}");
+            }
+        }
+        MuxConsole.WritePanel("Workflow runs", sb.ToString());
+    }
 
+    private static string MakeWorkflowName(string goal)
+    {
+        var words = goal.Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(4);
+        var name = string.Join("-", words).ToLowerInvariant();
+        return name.Length > 32 ? name[..32] : (name.Length == 0 ? "workflow" : name);
+    }
+
+    /// <summary>Client for authoring dynamic driver scripts: the single-agent model, else the
+    /// Orchestrator's. Mirrors ResolveDecomposeClient's graceful-null contract.</summary>
+    /// <summary>Resolve the chat client used to author dynamic workflow driver scripts.
+    /// Internal so the serve-mode API can launch a run through the same path as /workflow.</summary>
+    internal static (Microsoft.Extensions.AI.IChatClient? client, Microsoft.Extensions.AI.ChatOptions? opts) ResolveWorkflowAuthorClient()
+    {
+        try
+        {
+            var models = Common.LoadAgentModels();
+            string? model = App.SwarmConfig?.SingleAgent?.Model;
+            if (string.IsNullOrWhiteSpace(model))
+                model = models.TryGetValue("Orchestrator", out var om) ? om : models.Values.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(model)) return (null, null);
+            return (App.CreateChatClient(model!), App.SwarmConfig?.SingleAgent?.ModelOpts?.ToChatOptions());
+        }
+        catch { return (null, null); }
     }
 
     /// <summary>
@@ -1108,11 +1276,22 @@ public static class CliCmdUtils
             {
                 var members = t.Members is { Count: > 0 } ? string.Join(", ", t.Members) : "(none)";
                 var lead = string.IsNullOrWhiteSpace(t.Lead) ? "Orchestrator" : t.Lead;
-                MuxConsole.WriteMuted($"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
+                string nm = MuxConsole.EscapeMarkup(t.Name);
+                string coord = MuxConsole.EscapeMarkup(t.Coordination);
+                string ld = MuxConsole.EscapeMarkup(lead);
+                string mem = MuxConsole.EscapeMarkup(members);
+                // Themed label/value contrast: team name accented, [mode] badge, dim labels + normal values.
+                MuxConsole.WriteMarkup(
+                    $"  [{Theme.Active.Accent}]{nm}[/]  [{Theme.Active.Muted}][[{coord}]][/]  " +
+                    $"[{Theme.Active.Muted}]lead[/] [{Theme.Active.Prompt}]{ld}[/]  " +
+                    $"[{Theme.Active.Muted}]members[/] [{Theme.Active.Prompt}]{mem}[/]",
+                    stdioFallback: $"  {t.Name}  [{t.Coordination}]  lead={lead}  members: {members}");
                 if (!string.IsNullOrWhiteSpace(t.Description))
-                    MuxConsole.WriteMuted($"      {t.Description}");
+                    MuxConsole.WriteMarkup($"      [{Theme.Active.Muted}]{MuxConsole.EscapeMarkup(t.Description)}[/]",
+                        stdioFallback: $"      {t.Description}");
             }
-            MuxConsole.WriteMuted("  Launch with: /teams <name>");
+            MuxConsole.WriteMarkup($"  [{Theme.Active.Muted}]Launch with[/] [{Theme.Active.Accent}]/teams <name>[/]",
+                stdioFallback: "  Launch with: /teams <name>");
         }
 
         var live = MuxSwarm.Utils.Teams.TeamState.LoadAll();
@@ -1120,7 +1299,23 @@ public static class CliCmdUtils
         {
             MuxConsole.WriteInfo($"Persisted/resumable teams ({live.Count}):");
             foreach (var s in live)
-                MuxConsole.WriteMuted($"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+            {
+                string nm = MuxConsole.EscapeMarkup(s.Name);
+                string coord = MuxConsole.EscapeMarkup(s.Coordination);
+                string statusRaw = s.Status ?? "";
+                // Semantic status color: active -> success, ended/failed -> error, else muted.
+                string statusColor = statusRaw.ToLowerInvariant() switch
+                {
+                    "active" or "running" => Theme.Active.Success,
+                    "failed" or "error" or "ended" or "stopped" => Theme.Active.Error,
+                    _ => Theme.Active.Warning,
+                };
+                MuxConsole.WriteMarkup(
+                    $"  [{Theme.Active.Accent}]{nm}[/]  [{Theme.Active.Muted}][[{coord}]][/]  " +
+                    $"[{Theme.Active.Muted}]status[/] [{statusColor}]{MuxConsole.EscapeMarkup(statusRaw)}[/]  " +
+                    $"[{Theme.Active.Muted}]last active {s.LastActive:yyyy-MM-dd HH:mm}[/]",
+                    stdioFallback: $"  {s.Name}  [{s.Coordination}]  status={s.Status}  last active {s.LastActive:yyyy-MM-dd HH:mm}");
+            }
         }
     }
 
