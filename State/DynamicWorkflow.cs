@@ -60,21 +60,85 @@ public static class DynamicWorkflow
     {
         if (ProbeSdk(py) is { Ready: true } hit) return hit;
 
-        // Auto-install from PyPI, best-effort and bounded.
-        try
-        {
-            var psi = new ProcessStartInfo(py, "-m pip install --quiet muxswarm")
-            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-            using var p = Process.Start(psi);
-            if (p is not null && p.WaitForExit(120_000) && p.ExitCode == 0 && ProbeImport(py, null))
-                return (true, null, null);
-        }
-        catch { /* fall through to the error */ }
+        // Auto-install from PyPI, best-effort and bounded. uv is tried FIRST because it is
+        // what the SDK is distributed with and what mux's own venvs use: uv-managed venvs
+        // commonly have NO pip module at all (uv installs without bootstrapping pip), so a
+        // raw `python -m pip` fails with "No module named pip" even though the environment
+        // is perfectly installable -- and uv installs in ~200ms. Order:
+        //   1. `uv pip install --python <py>` -- the fast, primary path (SDK ships with uv).
+        //   2. `python -m pip` -- for environments that have pip but not uv.
+        //   3. `python -m ensurepip` then pip -- last resort to bootstrap pip.
+        // NOTE: <py> is an ABSOLUTE interpreter path (see ResolvePython), so uv installs into
+        // the exact interpreter the import-probe and driver launch use -- no cross-interpreter
+        // mismatch that would install successfully yet fail the re-probe.
+        if (ResolveUv() is { } uv &&
+            TryInstall(py, uv, "pip", "install", "--python", py, "muxswarm"))
+            return (true, null, null);
+
+        if (TryInstall(py, py, "-m", "pip", "install", "--quiet", "muxswarm")) return (true, null, null);
+
+        if (TryInstall(py, py, "-m", "ensurepip", "--upgrade") &&
+            TryInstall(py, py, "-m", "pip", "install", "--quiet", "muxswarm"))
+            return (true, null, null);
 
         return (false, null,
-            "[workflow] The muxswarm SDK is not importable by the resolved python and auto-install failed. " +
-            "Fix one of: `pip install muxswarm`, set MUX_SDK_PATH to a local mux-swarm-sdk clone, " +
-            "or place the SDK under <install-dir>/sdk. Dynamic mode needs it; /workflow static does not.");
+            "[workflow] The muxswarm SDK is not importable by the resolved python and auto-install failed " +
+            "(tried pip, uv, and ensurepip). Fix one of: `pip install muxswarm`, `uv pip install muxswarm`, " +
+            "set MUX_SDK_PATH to a local mux-swarm-sdk clone, or place the SDK under <install-dir>/sdk. " +
+            "Dynamic mode needs it; /workflow static does not.");
+    }
+
+    /// <summary>Run an installer command and report whether the SDK imports afterwards. Args are
+    /// passed individually via ArgumentList so an embedded path (e.g. uv's --python "&lt;abs path&gt;")
+    /// is never re-split or quote-mangled -- the same class of bug that broke ProbeImport.</summary>
+    private static bool TryInstall(string py, string exe, params string[] args)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo(exe)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+            };
+            foreach (var a in args) psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi);
+            if (p is null) return false;
+            try { p.StandardInput.Close(); } catch { }
+            _ = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(120_000)) { try { p.Kill(true); } catch { } return false; }
+            if (p.ExitCode != 0) return false;
+        }
+        catch { return false; }
+        // ensurepip installs no package, so re-probing here also gates that step correctly.
+        return args.Any(a => a.Contains("ensurepip")) || ProbeImport(py, null);
+    }
+
+    /// <summary>Locate the uv launcher, or null when it is not installed.</summary>
+    internal static string? ResolveUv()
+    {
+        var exe = OperatingSystem.IsWindows() ? "uv.exe" : "uv";
+        // uv's default install location is not always on a service's PATH.
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        foreach (var cand in new[]
+                 {
+                     exe,
+                     Path.Combine(home, ".local", "bin", exe),
+                     Path.Combine(home, ".cargo", "bin", exe),
+                 })
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(cand, "--version")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using var p = Process.Start(psi);
+                if (p is not null && p.WaitForExit(10_000) && p.ExitCode == 0) return cand;
+            }
+            catch { /* try the next candidate */ }
+        }
+        return null;
     }
 
     /// <summary>True when <paramref name="dir"/> looks like an importable SDK root
@@ -87,8 +151,22 @@ public static class DynamicWorkflow
     {
         try
         {
-            var psi = new ProcessStartInfo(py, "-c \"import muxswarm\"")
-            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+            // Pass args via ArgumentList, NOT a quoted string. `-c "import muxswarm"` as a single
+            // raw argument gets its quotes mangled by .NET's argument round trip, so python never
+            // sees a valid -c program and drops into the interactive REPL, blocking on stdin until
+            // the 15s timeout kills it -- which reads as a FALSE "not importable" and defeats the
+            // whole SDK-auto-install ladder (each install's post-probe also hangs). ArgumentList
+            // quotes each element correctly; redirecting + closing stdin removes any residual
+            // possibility of an interpreter waiting on input.
+            var psi = new ProcessStartInfo(py)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                UseShellExecute = false,
+            };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add("import muxswarm");
             if (pythonPath is not null)
             {
                 var existing = Environment.GetEnvironmentVariable("PYTHONPATH");
@@ -97,12 +175,23 @@ public static class DynamicWorkflow
                     : pythonPath + Path.PathSeparator + existing;
             }
             using var p = Process.Start(psi);
-            return p is not null && p.WaitForExit(15_000) && p.ExitCode == 0;
+            if (p is null) return false;
+            try { p.StandardInput.Close(); } catch { }
+            _ = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(15_000)) { try { p.Kill(true); } catch { } return false; }
+            return p.ExitCode == 0;
         }
         catch { return false; }
     }
 
-    /// <summary>Resolve a python launcher, or null when none is on PATH.</summary>
+    /// <summary>Resolve a python launcher to an ABSOLUTE interpreter path, or null when none is on
+    /// PATH. Returning the absolute path (via sys.executable) rather than a bare launcher name is
+    /// essential: pip, uv (--python), the import probe, and the driver launch must all target the
+    /// SAME interpreter. A bare "python.exe" is re-resolved independently by each of those (PATH
+    /// order, uv's own discovery, the Windows Store app-execution alias), so uv can install the SDK
+    /// into one python while the probe checks another -- yielding a false "auto-install failed" even
+    /// though the install succeeded. Canonicalizing here removes that ambiguity entirely.</summary>
     public static string? ResolvePython()
     {
         foreach (var cand in OperatingSystem.IsWindows()
@@ -111,12 +200,34 @@ public static class DynamicWorkflow
         {
             try
             {
-                var psi = new ProcessStartInfo(cand, "--version")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                // Canonicalize to the real interpreter path in one shot. This also runs the
+                // candidate, so a non-functional alias is skipped rather than returned.
+                // Pass args via ArgumentList, NOT a single quoted string: the inner quotes of
+                // `-c "import sys; ..."` get mangled by .NET's arg-string round trip, so python
+                // never sees a valid -c program and drops into the interactive REPL, blocking on
+                // stdin until it is killed. ArgumentList quotes each element correctly. Also
+                // redirect stdin and close it, so even a misparse cannot wait on input.
+                var psi = new ProcessStartInfo(cand)
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    RedirectStandardInput = true,
+                    UseShellExecute = false,
+                };
+                psi.ArgumentList.Add("-c");
+                psi.ArgumentList.Add("import sys; print(sys.executable)");
                 using var p = Process.Start(psi);
                 if (p is null) continue;
-                p.WaitForExit(4000);
-                if (p.ExitCode == 0) return cand;
+                try { p.StandardInput.Close(); } catch { }
+                // Read stdout ASYNC and bound the wait: a bare "python.exe" can also resolve to the
+                // Windows Store app-execution stub, which may block without producing output. Drain
+                // both pipes async, wait with a hard ceiling, and kill + skip anything that overruns.
+                var outTask = p.StandardOutput.ReadToEndAsync();
+                _ = p.StandardError.ReadToEndAsync();   // drain so the child can never block on a full stderr pipe
+                if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } continue; }
+                if (p.ExitCode != 0) continue;
+                var exe = (outTask.Wait(1000) ? outTask.Result : "").Trim();
+                if (!string.IsNullOrEmpty(exe) && File.Exists(exe)) return exe;
             }
             catch { /* try next */ }
         }
