@@ -1603,6 +1603,104 @@ body.hide-all-pills .event-group { display: none !important; }
 }
 .input-area .btn-group { align-self: flex-end; }
 
+/* ── Session / mode selector ── (mirrors the model selector; abstracts the
+   /agent /swarm /pswarm /stateless session starters + /plan /ultra /giga /sub
+   /psub modifiers into a single clickable control, no slash commands typed). */
+.session-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.2;
+  cursor: pointer;
+  min-height: 32px;
+  max-width: 210px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.session-btn:hover { color: var(--text); border-color: var(--accent); background: rgba(var(--accent-rgb), 0.08); }
+.session-btn[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
+.session-btn-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-btn svg { flex: 0 0 auto; opacity: 0.7; }
+/* Status dot: dim when idle (interactive), green + pulsing while a session runs. */
+.session-btn-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--muted); opacity: 0.5; }
+.session-btn.is-live .session-btn-dot { background: var(--green, #10b981); opacity: 1;
+  animation: sessDotPulse 1.4s ease-in-out infinite; }
+@keyframes sessDotPulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+@media (prefers-reduced-motion: reduce) { .session-btn.is-live .session-btn-dot { animation: none; } }
+
+.session-menu {
+  position: fixed; z-index: 200;
+  min-width: 300px; max-width: min(420px, calc(100vw - 16px));
+  background: var(--bg-card, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+  animation: fadeIn 0.12s ease;
+}
+.session-menu-head {
+  padding: 8px 12px; border-bottom: 1px solid var(--border);
+  color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1));
+  font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em;
+}
+.session-sec { padding: 6px; border-bottom: 1px solid var(--border); }
+.session-sec:last-child { border-bottom: none; }
+.session-sec-title { padding: 4px 6px 6px; color: var(--muted);
+  font-size: calc(9.5px * var(--ui-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.07em; }
+/* Session-start rows: one active at a time (radio feel). */
+.session-opt {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 8px 8px; border-radius: 6px; font-family: inherit; color: var(--text);
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
+}
+.session-opt:hover { background: rgba(var(--accent-rgb), 0.12); }
+.session-opt.is-active { background: rgba(var(--accent-rgb), 0.10); }
+.session-opt .so-radio { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+  border: 1.5px solid var(--border); position: relative; }
+.session-opt.is-active .so-radio { border-color: var(--accent); }
+.session-opt.is-active .so-radio::after { content: ''; position: absolute; inset: 2.5px;
+  border-radius: 50%; background: var(--accent); }
+.session-opt .so-body { min-width: 0; flex: 1 1 auto; }
+.session-opt .so-name { display: block; font-weight: 600; }
+.session-opt .so-desc { display: block; color: var(--muted);
+  font-size: calc(10.5px * var(--ui-font-scale, 1)); line-height: 1.35; margin-top: 1px; }
+/* End-session button (destructive-ish accent). */
+.session-end { display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; padding: 9px; border-radius: 6px; cursor: pointer; font-family: inherit;
+  background: transparent; border: 1px solid var(--border); color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1)); }
+.session-end:hover { border-color: var(--red, #ef4444); color: var(--red, #ef4444);
+  background: rgba(239,68,68,0.08); }
+/* Modifier toggles. */
+.session-mod {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  background: transparent; border: none; cursor: pointer; text-align: left;
+  padding: 7px 8px; border-radius: 6px; font-family: inherit; color: var(--text);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+.session-mod:hover { background: rgba(var(--accent-rgb), 0.10); }
+.session-mod .sm-body { min-width: 0; flex: 1 1 auto; }
+.session-mod .sm-name { display: block; font-weight: 600; }
+.session-mod .sm-desc { display: block; color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.3; margin-top: 1px; }
+/* iOS-style switch. */
+.session-mod .sm-sw { width: 30px; height: 17px; border-radius: 999px; flex: 0 0 auto;
+  background: rgba(127,127,127,0.35); position: relative; transition: background 0.15s; }
+.session-mod .sm-sw::after { content: ''; position: absolute; top: 2px; left: 2px;
+  width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform 0.15s; }
+.session-mod.is-on .sm-sw { background: var(--accent); }
+.session-mod.is-on .sm-sw::after { transform: translateX(13px); }
+.session-mod.is-forced { opacity: 0.6; cursor: default; }
+.session-mod.is-forced:hover { background: transparent; }
+.session-foot { padding: 8px 12px; color: var(--muted);
+  font-size: calc(10px * var(--ui-font-scale, 1)); line-height: 1.4; border-top: 1px solid var(--border); }
+
 /* ── Model selector ── */
 .model-btn {
   display: inline-flex; align-items: center; gap: 5px;
@@ -2513,6 +2611,11 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
         <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
       <div class="btn-group">
+        <button class="session-btn" id="sessionBtn" type="button" title="Session &amp; mode" aria-haspopup="menu" aria-expanded="false">
+          <span class="session-btn-dot" id="sessionBtnDot" aria-hidden="true"></span>
+          <span class="session-btn-name" id="sessionBtnName">Interactive</span>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
         <button class="model-btn" id="modelBtn" type="button" title="Model" aria-haspopup="listbox" aria-expanded="false">
           <span class="model-btn-name" id="modelBtnName">model</span>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
@@ -5285,6 +5388,212 @@ const icons = {
   })();
 
   
+
+  // ─── Session / mode selector ───
+  // Abstracts the slash-command startup flow into a single composer control that
+  // mirrors the model selector. Starting/ending a session and toggling reasoning
+  // modifiers all dispatch the SAME existing commands a user would type (via send),
+  // so there is nothing new on the engine except the read-only /api/status flags we
+  // reflect here. State is seeded from /api/status on open + after each action, and
+  // the button label is kept honest by a light poll.
+  const SESSION_STARTERS = [
+    { cmd: '/agent',     name: 'Agent',          desc: 'Single agent, stateful conversation.' },
+    { cmd: '/swarm',     name: 'Swarm',          desc: 'Multi-agent orchestrator, one goal.' },
+    { cmd: '/pswarm',    name: 'Parallel Swarm', desc: 'Agents work in parallel on sub-goals.' },
+    { cmd: '/stateless', name: 'Stateless',      desc: 'Single agent, no memory between turns.' },
+  ];
+  const SESSION_MODS = [
+    { key: 'plan', cmd: '/plan',  name: 'Plan',      desc: 'Present a plan and wait for approval.' },
+    { key: 'ultra', cmd: '/ultra', name: 'Ultra',    desc: 'Max reasoning + plan + parallel delegation.' },
+    { key: 'giga', cmd: '/giga',  name: 'Giga',      desc: 'Ultra + dynamic orchestration (spawn/run teams).' },
+    { key: 'sub',  cmd: '/subagents', name: 'Sub-agents', desc: 'Let a single agent delegate to sub-agents.' },
+    { key: 'psub', cmd: '/psub',  name: 'Parallel sub-agents', desc: 'Delegate to sub-agents in parallel.' },
+  ];
+  // Last-known runtime flags. Seeded from /api/status; used to render toggle states.
+  let _sessStatus = { mode: 'interactive', inSession: false, plan: false, ultra: false, giga: false, sub: false, psub: false };
+
+  async function fetchSessionStatus() {
+    try {
+      const st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null);
+      if (st) {
+        _sessStatus = {
+          mode: st.mode || 'interactive',
+          inSession: !!st.inSession,
+          plan: !!st.plan, ultra: !!st.ultra, giga: !!st.giga,
+          sub: !!st.sub, psub: !!st.psub,
+        };
+      }
+    } catch (_) {}
+    return _sessStatus;
+  }
+
+  function _titleCase(s){ s = String(s || ''); return s ? s[0].toUpperCase() + s.slice(1) : s; }
+
+  function refreshSessionButton() {
+    const nameEl = document.getElementById('sessionBtnName');
+    const btn = document.getElementById('sessionBtn');
+    if (!nameEl || !btn) return;
+    const s = _sessStatus;
+    // Prefer the client's own tracked mode (activeSessionMode) when present -- it flips
+    // instantly on click, before the poll catches up.
+    let mode = s.mode;
+    if (activeSessionMode) mode = activeSessionMode.replace(/^\//, '');
+    const live = !!activeSessionMode || (s.inSession && s.mode !== 'interactive');
+    let label = live ? _titleCase(mode === 'pswarm' ? 'Parallel Swarm' : mode) : 'Interactive';
+    // Append the strongest active modifier so the button reads e.g. "Agent · Ultra".
+    const modBadge = s.giga ? 'Giga' : s.ultra ? 'Ultra' : s.plan ? 'Plan' : '';
+    if (modBadge) label += ' \u00b7 ' + modBadge;
+    nameEl.textContent = label;
+    btn.classList.toggle('is-live', live);
+  }
+
+  function closeSessionMenu() {
+    const m = document.getElementById('sessionMenu');
+    if (m) m.remove();
+    const b = document.getElementById('sessionBtn');
+    if (b) b.setAttribute('aria-expanded', 'false');
+  }
+
+  function positionSessionMenu(menu, btn) {
+    if (!menu || !btn) return;
+    const r = btn.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8)) + 'px';
+    const h = menu.offsetHeight || 260;
+    const top = r.top - h - 8;
+    menu.style.top = (top < 8 ? Math.min(r.bottom + 8, window.innerHeight - h - 8) : top) + 'px';
+  }
+
+  function renderSessionMenu(menu) {
+    const s = _sessStatus;
+    const live = !!activeSessionMode || (s.inSession && s.mode !== 'interactive');
+    const curCmd = activeSessionMode || (live ? '/' + s.mode : null);
+
+    // Section 1: start a session, or end the running one.
+    let startSec;
+    if (live) {
+      startSec =
+        '<div class="session-sec">' +
+          '<div class="session-sec-title">Active session</div>' +
+          '<button class="session-end" type="button" data-act="end">' +
+            '<span>End session</span>' +
+          '</button>' +
+        '</div>';
+    } else {
+      startSec =
+        '<div class="session-sec">' +
+          '<div class="session-sec-title">Start a session</div>' +
+          SESSION_STARTERS.map(o =>
+            '<button class="session-opt" type="button" data-start="' + o.cmd + '">' +
+              '<span class="so-radio"></span>' +
+              '<span class="so-body"><span class="so-name">' + esc(o.name) + '</span>' +
+                '<span class="so-desc">' + esc(o.desc) + '</span></span>' +
+            '</button>').join('') +
+        '</div>';
+    }
+
+    // Section 2: modifiers. Ultra forces plan; giga forces ultra+plan -> show those as
+    // forced-on (non-interactive) when a superset is active, so the cascade is legible.
+    // The engine only processes these at the top-level menu (between sessions), and
+    // send() would auto-/qc out of a live session for any non-safe command -- so while
+    // in-session we LOCK them (disabled, reflecting current state) to avoid a surprise
+    // session exit. They steer the next session; end the current one to change them.
+    const forcedPlan = s.ultra || s.giga;
+    const forcedUltra = s.giga;
+    const modSec =
+      '<div class="session-sec">' +
+        '<div class="session-sec-title">Modifiers</div>' +
+        SESSION_MODS.map(m => {
+          const on = !!s[m.key];
+          const cascade = (m.key === 'plan' && forcedPlan) || (m.key === 'ultra' && forcedUltra);
+          const locked = live || cascade;   // in-session OR forced-on by a superset
+          let note = '';
+          if (cascade) note = ' (on via ' + (s.giga ? 'Giga' : 'Ultra') + ')';
+          return '<button class="session-mod' + (on ? ' is-on' : '') + (locked ? ' is-forced' : '') + '" ' +
+                    'type="button" data-mod="' + m.cmd + '"' + (locked ? ' disabled' : '') + '>' +
+            '<span class="sm-body"><span class="sm-name">' + esc(m.name) + '</span>' +
+              '<span class="sm-desc">' + esc(m.desc) + note + '</span></span>' +
+            '<span class="sm-sw"></span>' +
+          '</button>';
+        }).join('') +
+      '</div>';
+
+    const foot = live
+      ? '<div class="session-foot">Modifiers are locked during a session \u2014 end it to change them.</div>'
+      : '<div class="session-foot">Modifiers steer the next session you start.</div>';
+
+    menu.innerHTML = '<div class="session-menu-head">Session &amp; mode</div>' + startSec + modSec + foot;
+
+    // Wire: start a session.
+    menu.querySelectorAll('[data-start]').forEach(el => el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cmd = el.dataset.start;
+      closeSessionMenu();
+      send(cmd);
+      // Optimistic: reflect immediately; the poll will confirm.
+      setTimeout(() => { fetchSessionStatus().then(refreshSessionButton); }, 400);
+    }));
+    // Wire: end the running session.
+    const endBtn = menu.querySelector('[data-act="end"]');
+    if (endBtn) endBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeSessionMenu();
+      send('/qc');
+      setTimeout(() => { fetchSessionStatus().then(refreshSessionButton); }, 400);
+    });
+    // Wire: toggle a modifier (re-render the menu in place to show the new state).
+    menu.querySelectorAll('[data-mod]').forEach(el => el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (el.disabled) return;
+      const cmd = el.dataset.mod;
+      send(cmd);
+      // Give the engine a beat, refetch true state, and re-render if still open.
+      await new Promise(r => setTimeout(r, 450));
+      await fetchSessionStatus();
+      refreshSessionButton();
+      if (document.getElementById('sessionMenu')) { renderSessionMenu(menu); positionSessionMenu(menu, document.getElementById('sessionBtn')); }
+    }));
+
+    positionSessionMenu(menu, document.getElementById('sessionBtn'));
+  }
+
+  async function openSessionMenu() {
+    closeSessionMenu();
+    const btn = document.getElementById('sessionBtn');
+    if (!btn) return;
+    btn.setAttribute('aria-expanded', 'true');
+    const menu = document.createElement('div');
+    menu.className = 'session-menu';
+    menu.id = 'sessionMenu';
+    menu.innerHTML = '<div class="session-menu-head">Session &amp; mode</div><div class="model-menu-loading">Loading\u2026</div>';
+    document.body.appendChild(menu);
+    positionSessionMenu(menu, btn);
+    await fetchSessionStatus();
+    if (!document.getElementById('sessionMenu')) return;  // closed while loading
+    renderSessionMenu(menu);
+    refreshSessionButton();
+  }
+
+  (function wireSessionBtn(){
+    const btn = document.getElementById('sessionBtn');
+    if (!btn) return;
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (document.getElementById('sessionMenu')) closeSessionMenu();
+      else openSessionMenu();
+    });
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('sessionMenu');
+      if (!m) return;
+      const path = (typeof e.composedPath === 'function') ? e.composedPath() : [];
+      if (path.includes(m) || path.includes(btn)) return;
+      closeSessionMenu();
+    });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSessionMenu(); });
+    // Prime the label once, then keep it honest with a light poll.
+    fetchSessionStatus().then(refreshSessionButton);
+    setInterval(() => { fetchSessionStatus().then(refreshSessionButton); }, 4000);
+  })();
+
   // Slash commands that ARE safe to run while inside an agent session
   // (they're handled by the in-session loop itself). Every other slash command
   // implies leaving the session, so we transparently /qc first. The server-side

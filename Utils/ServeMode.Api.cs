@@ -1497,6 +1497,8 @@ public static partial class ServeMode
             plan = App.PlanMode,
             ultra = App.UltraMode,
             giga = App.GigaMode,
+            sub = App.SubAgentsMode,
+            psub = App.ParallelSubAgentsMode,
         });
     }
 
