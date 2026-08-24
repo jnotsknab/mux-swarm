@@ -10184,6 +10184,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   border: 1px solid var(--border, rgba(255,255,255,.10));
   border-radius: 8px; background: var(--bg-card, rgba(24,24,27,.5));
   overflow: hidden;
+  /* In a flex-column scroll view (.mng-fl-view), children must NOT flex-shrink or
+     they compress to fit instead of overflowing -> the list would never scroll and
+     rows just squish as more are added. Keep natural height; let the column scroll. */
+  flex: 0 0 auto;
 }
 .mng-fl-trig { padding: 7px 10px 8px; }
 .mng-fl-trig.is-off { opacity: .55; }
