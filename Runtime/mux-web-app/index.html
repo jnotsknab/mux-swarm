@@ -10343,7 +10343,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   background: rgba(127,127,127,.035); }
 .mng-wfg-sec-label { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1));
   text-transform: uppercase; letter-spacing: .06em; margin: 2px 0 0 2px; display:flex; align-items:center; gap:6px; }
-.mng-wfg-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; }
+.mng-wfg-tasks { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; align-items: start; }
 .mng-wfg-node {
   border: 1px solid var(--border, rgba(255,255,255,.10)); border-radius: 9px;
   background: var(--bg-card, rgba(24,24,27,.55)); padding: 8px 9px;
@@ -12607,7 +12607,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     // its captured output inline (fetched lazily). A static run stays a compact row.
     // 'openTasks' keeps expanded task-output panels open across the 1.5s poll rebuild.
     const openTasks = new Set();          // key: runId + '::' + taskId
-    const taskOutCache = new Map();       // key -> output text (avoid refetch churn)
+    // key -> { text, final }. 'final' = captured while the task was in a terminal
+    // state, so it is the COMPLETE output and needn't be refetched. A non-final entry
+    // is a live/partial snapshot that the poll keeps refreshing until the task ends.
+    const taskOutCache = new Map();
+    const _lastRuns = new Map();          // runId -> run object from the last draw (for status lookups)
 
     function metaFor(t){
       const meta = [];
@@ -12625,9 +12629,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const cls = 'mng-wfg-node' + (t.status === 'running' ? ' is-running' : '') + (open ? ' is-open' : '');
       const meta = metaFor(t);
       const cached = taskOutCache.get(key);
+      const cachedText = cached ? cached.text : null;
       const outInner = open
-        ? (cached != null
-            ? (cached.trim() ? esc(cached) : '<span class="muted">(no output captured)</span>')
+        ? (cachedText != null
+            ? (cachedText.trim() ? esc(cachedText) : '<span class="muted">(no output captured)</span>')
             : '<span class="muted">loading output\u2026</span>')
         : '';
       return '<div class="' + cls + '" data-run="' + esc(run.id) + '" data-task="' + esc(t.id) + '">' +
@@ -12766,33 +12771,41 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     }
 
     // ACTIVITY > WORKFLOW RUNS -- the live node graphs (run/section/task).
+    // Re-entrancy + error guard: a throw inside the render (or two overlapping polls
+    // racing the same body) used to leave stale DOM with dead collapse/expand handlers,
+    // freezing the whole view until a hard refresh. The wrapper drops overlapping calls
+    // and never lets an exception escape the poll loop.
+    let _drawingRuns = false;
     async function drawActivityRuns(){
+      if (_drawingRuns) return;
+      _drawingRuns = true;
+      try { await _drawActivityRunsImpl(); }
+      catch (e) { try { console.error('drawActivityRuns failed', e); } catch (_) {} }
+      finally { _drawingRuns = false; }
+    }
+    async function _drawActivityRunsImpl(){
       const { actWf: body } = els(); if (!body) return;
       let data;
       try { data = await jfetch('/api/workflows'); }
       catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load runs: ' + esc(e.message) + '</div>'; return; }
       if (!(view === 'act' && actView === 'wf')) return;
 
-      // Fire a completion toast when a run transitions into a terminal state. Seed the
-      // map on the first draw so we don't toast for runs that were already finished.
-      for (const r of (data.items || [])) {
-        const prev = runStatePrev.get(r.id);
-        if (_runStateSeeded && prev && prev !== r.state && r.state !== 'running') {
-          const nm = r.name || r.id;
-          if (r.state === 'done')       showToast('Workflow done: ' + nm, 'success');
-          else if (r.state === 'failed') showToast('Workflow failed: ' + nm, 'error');
-          else if (r.state === 'cancelled') showToast('Workflow cancelled: ' + nm, 'info');
-        }
-        runStatePrev.set(r.id, r.state);
-      }
-      _runStateSeeded = true;
+      // Completion toasts are handled centrally by bgWatch (runs persistently regardless
+      // of tab), so we do NOT re-fire them here -- that would double-toast every finish.
+
+      // Snapshot runs for status lookups by open-output refresh.
+      _lastRuns.clear();
+      for (const r of (data.items || [])) _lastRuns.set(r.id, r);
 
       const items = (data.items || []).filter(r => !dismissedRuns.has(r.id));
       let h = '';
       if (!items.length) {
         h += '<div class="mng-fl-empty">No workflow runs yet. Start one from the <strong>Workflows</strong> tab.</div>';
       } else {
-        h += items.map(runHtml).join('');
+        h += items.map(r => { try { return runHtml(r); }
+          catch (e) { try { console.error('runHtml failed for', r && r.id, e); } catch (_) {}
+            return '<div class="mng-fl-run"><div class="mng-fl-err">Could not render run ' + esc((r && r.id) || '?') + '</div></div>'; }
+        }).join('');
       }
       body.innerHTML = h;
 
@@ -12832,23 +12845,78 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         node.addEventListener('click', () => toggleTaskOutput(node.dataset.run, node.dataset.task));
       });
 
+      // Refresh any open task-output panels whose text isn't final yet (live streaming).
+      refreshOpenOutputs();
+
       // Poll only while something is live and this sub-view is showing.
       if (data.running && !timer) timer = setInterval(() => { if (view === 'act' && actView === 'wf') drawActivityRuns(); }, 1500);
       if (!data.running && timer) { clearInterval(timer); timer = null; }
     }
-    // Toggle a task's output panel: lazy-fetch once, cache, keep open across polls.
+    // Toggle a task's output panel: fetch on open, keep open across polls. A running
+    // task's output is refetched by the poll (see refreshOpenOutputs) until it reaches
+    // a terminal state, so the panel streams instead of freezing on its first snapshot.
     async function toggleTaskOutput(runId, taskId){
       if (!runId || !taskId) return;
       const key = runId + '::' + taskId;
       if (openTasks.has(key)) { openTasks.delete(key); drawActivityRuns(); return; }
       openTasks.add(key);
       drawActivityRuns();
-      if (!taskOutCache.has(key)) {
-        try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/task/' + encodeURIComponent(taskId) + '/output');
-              taskOutCache.set(key, r.output || ''); }
-        catch (_) { taskOutCache.set(key, ''); }
+      const cached = taskOutCache.get(key);
+      if (!cached || !cached.final) {
+        await fetchTaskOutput(runId, taskId);
         if (openTasks.has(key) && view === 'act' && actView === 'wf') drawActivityRuns();
       }
+    }
+    // Fetch a single task's captured output and cache it, tagging whether it is final
+    // (the task is in a terminal state, so the text is complete and won't be refetched).
+    async function fetchTaskOutput(runId, taskId){
+      const key = runId + '::' + taskId;
+      const st = taskStatus(runId, taskId);
+      const final = st != null && st !== 'running' && st !== 'pending';
+      try { const r = await jfetch('/api/workflows/' + encodeURIComponent(runId) + '/task/' + encodeURIComponent(taskId) + '/output');
+            taskOutCache.set(key, { text: r.output || '', final }); }
+      catch (_) { if (!taskOutCache.has(key)) taskOutCache.set(key, { text: '', final: false }); }
+    }
+    // Look up a task's current status from the last-drawn run set (populated each draw).
+    function taskStatus(runId, taskId){
+      const run = _lastRuns.get(runId); if (!run) return null;
+      for (const s of run.sections) for (const t of s.tasks) if (t.id === taskId) return t.status;
+      return null;
+    }
+    // After a rebuild, refetch every OPEN task whose cached output isn't final yet, so
+    // live nodes keep streaming. Each refresh re-renders and tails the panel to the end.
+    async function refreshOpenOutputs(){
+      const pending = [];
+      for (const key of openTasks) {
+        const cached = taskOutCache.get(key);
+        if (cached && cached.final) continue;
+        const [runId, taskId] = key.split('::');
+        pending.push(fetchTaskOutput(runId, taskId).then(() => key));
+      }
+      if (!pending.length) return;
+      const keys = await Promise.all(pending);
+      if (!(view === 'act' && actView === 'wf')) return;
+      // Patch just the output panels in place (no full rebuild) to avoid clobbering
+      // scroll on unrelated cards; tail each panel so the newest streamed text shows.
+      for (const key of keys) {
+        const cached = taskOutCache.get(key); if (!cached) continue;
+        const [runId, taskId] = key.split('::');
+        const node = document.querySelector('.mng-wfg-node[data-run="' + cssq(runId) + '"][data-task="' + cssq(taskId) + '"]');
+        if (!node) continue;
+        const out = node.querySelector('.mng-wfg-node-out'); if (!out || out.hidden) continue;
+        const atBottom = out.scrollTop + out.clientHeight >= out.scrollHeight - 8;
+        out.textContent = cached.text.trim() ? cached.text : '';
+        if (!cached.text.trim()) out.innerHTML = '<span class="muted">(no output captured)</span>';
+        // Auto-follow the tail while streaming so completion output is never hidden.
+        if (!cached.final || atBottom) out.scrollTop = out.scrollHeight;
+      }
+    }
+    // Escape a value for use inside an attribute selector (runId/taskId are simple ids,
+    // but guard anyway). Uses native CSS.escape when present.
+    function cssq(s){
+      s = String(s);
+      if (window.CSS && CSS.escape) return CSS.escape(s);
+      return s.replace(/["'\\\]]/g, '\\$&');
     }
 
     // ---- daemon schedules ----
@@ -13382,13 +13450,18 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       ensureBgWatch();
     }
 
-    // Background completion watcher: fires workflow done/failed toasts even when the
-    // user is on another tab (the per-view poll only runs while Activity>Wf is open).
-    // Cheap: only polls while at least one run is active, self-stops when idle.
+    // Background completion watcher: fires workflow done/failed/cancelled toasts even
+    // when the user is on another tab (the per-view poll only runs while Activity>Wf is
+    // open). Previously this was only armed by UI-initiated starts (maybeAutoActivity)
+    // and self-STOPPED when idle -- so workflows started via cron / saved / slash, or any
+    // run that began while you were elsewhere, produced no notification. It now runs
+    // PERSISTENTLY from module init: fast cadence (2.5s) while any run is active, slow
+    // (10s) when idle, and never fully stops, so no completion is ever missed.
     let _bgTimer = null;
+    let _bgActive = false;   // true == polling at the fast cadence
     async function bgWatch(){
       let data;
-      try { data = await jfetch('/api/workflows'); } catch (_) { return; }
+      try { data = await jfetch('/api/workflows'); } catch (_) { scheduleBgWatch(false); return; }
       for (const r of (data.items || [])) {
         const prev = runStatePrev.get(r.id);
         if (_runStateSeeded && prev && prev !== r.state && r.state !== 'running') {
@@ -13403,9 +13476,18 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       // Keep the top-level Activity badge honest.
       const badge = document.getElementById('mngFlowsActBadge');
       if (badge) { const n = data.running || 0; badge.textContent = String(n); badge.hidden = n === 0; }
-      if (!data.running && _bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
+      scheduleBgWatch(!!data.running);
     }
-    function ensureBgWatch(){ if (!_bgTimer) { _runStateSeeded = _runStateSeeded || false; _bgTimer = setInterval(bgWatch, 2500); bgWatch(); } }
+    // Reschedule the next poll: fast while runs are active, slow when idle. Only resets
+    // the interval when the cadence actually changes, so we don't churn timers.
+    function scheduleBgWatch(active){
+      if (_bgTimer && _bgActive === active) return;
+      if (_bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
+      _bgActive = active;
+      _bgTimer = setInterval(bgWatch, active ? 2500 : 10000);
+    }
+    // Kept for callers that want to guarantee the watcher is live and poke it immediately.
+    function ensureBgWatch(){ if (!_bgTimer) scheduleBgWatch(false); bgWatch(); }
     function show(v){ const { lane } = els(); if (lane) { lane.hidden = false; setView(v || view); } }
     function hide(){
       const { lane } = els(); if (lane) lane.hidden = true;
@@ -13442,6 +13524,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const { lane } = els(); if (lane) lane.hidden = false;
       setView('act'); setActView(sub || 'daemon');
     }
+    // Arm the background completion watcher immediately so workflow notifications fire
+    // regardless of how a run was started (UI, cron, saved, slash) or which tab is open.
+    ensureBgWatch();
+
     return { show, hide, draw, setView, isOpenOn, showActivity };
   })();
   window.MuxFlows = MuxFlows;
