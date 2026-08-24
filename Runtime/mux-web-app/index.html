@@ -10110,10 +10110,12 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
    consistent surface vocabulary. Depth is carried by a neutral connector rail,
    never an accent stripe. */
 .mng-flows-lane {
-  border-top: 1px solid var(--border, rgba(255,255,255,.10));
-  background: var(--bg, #0a0a0a);
+  /* Overlay, not an in-flow block: .mng-canvas-wrap is height:100% with
+     overflow:hidden, so an in-flow lane unhides below the clip and is invisible.
+     Same treatment as .mng-daemon-lane. */
+  position: absolute; inset: 0; z-index: 7;
   display: flex; flex-direction: column;
-  flex: 0 0 auto; max-height: 46%; min-height: 190px;
+  background: var(--bg, #0b0b0e);
 }
 .mng-flows-lane[hidden] { display: none; }
 .mng-flows-tabs { display: inline-flex; gap: 2px; margin-left: 10px; }
@@ -10672,23 +10674,21 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           <span class="mng-flows-tabs">
             <button class="mng-flows-tab is-on" id="mngFlowsTabWf" type="button">Workflows</button>
             <button class="mng-flows-tab" id="mngFlowsTabCron" type="button">Schedules</button>
+            <button class="mng-flows-tab" id="mngFlowsTabAct" type="button">Activity
+              <span class="mng-daemon-badge" id="mngFlowsActBadge" hidden>0</span></button>
           </span>
           <span class="mng-daemon-lane-spacer"></span>
           <button class="mng-btn" id="mngFlowsNew" title="Create">+ New</button>
+          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes" hidden>Clear</button>
           <button class="mng-btn" id="mngFlowsRefresh" title="Refresh">↻</button>
           <button class="mng-btn" id="mngFlowsClose" title="Hide">×</button>
         </div>
         <div class="mng-flows-compose" id="mngFlowsCompose" hidden></div>
         <div class="mng-daemon-lane-body" id="mngFlowsBody"></div>
-      </div>
-      <div class="mng-daemon-lane" id="mngDaemonLane" hidden>
-        <div class="mng-daemon-lane-bar">
-          <span class="mng-daemon-lane-title">Daemon Activity</span>
-          <span class="mng-daemon-lane-spacer"></span>
-          <button class="mng-btn" id="mngDaemonClear" title="Clear finished lanes">Clear</button>
-          <button class="mng-btn" id="mngDaemonClose" title="Hide">×</button>
-        </div>
-        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody"></div>
+        <!-- Live daemon goal activity. Same element MuxDaemonLane has always
+             written into, now a view of the Flows lane instead of a second
+             overlay that could cover it. -->
+        <div class="mng-daemon-lane-body" id="mngDaemonLaneBody" hidden></div>
       </div>
       <div class="mng-instance-view" id="mngInstanceView" hidden>
         <div class="mng-instance-bar">
@@ -12150,18 +12150,25 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     let activeCount = 0;
     function els(){
       return {
-        lane:  document.getElementById('mngDaemonLane'),
+        // Activity is a VIEW of the Flows lane now; there is no separate lane element.
+        lane:  document.getElementById('mngFlowsLane'),
         body:  document.getElementById('mngDaemonLaneBody'),
         badge: document.getElementById('mngDaemonBadge'),
+        tabBadge: document.getElementById('mngFlowsActBadge'),
       };
     }
     function refreshBadge(){
-      const { badge } = els(); if (!badge) return;
+      const { badge, tabBadge } = els();
       const n = rows.size;
-      badge.textContent = String(activeCount || n);
-      badge.hidden = n === 0;
+      const label = String(activeCount || n);
+      for (const b of [badge, tabBadge]) {
+        if (!b) continue;
+        b.textContent = label;
+        b.hidden = n === 0;
+      }
     }
-    function show(){ const { lane } = els(); if (lane) lane.hidden = false; }  // reveal lane content; never force-opens the panel (non-invasive)
+    // Reveal the Activity view; never force-opens the panel itself (non-invasive).
+    function show(){ try { window.MuxFlows && window.MuxFlows.show('act'); } catch (_) {} }
     function ensureRow(lane, label){
       let r = rows.get(lane);
       if (r && r.el.isConnected) return r;
@@ -12292,14 +12299,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       }
       refreshBadge();
     }
-    function hide(){ const { lane } = els(); if (lane) lane.hidden = true; }
+    function hide(){ try { window.MuxFlows && window.MuxFlows.hide(); } catch (_) {} }
     (function wire(){
       const btn = document.getElementById('mngBtnDaemon');
       const cl  = document.getElementById('mngDaemonClear');
-      const cx  = document.getElementById('mngDaemonClose');
+
       if (btn) btn.addEventListener('click', () => { const { lane } = els(); if (!lane) return; if (lane.hidden) show(); else hide(); });
       if (cl)  cl.addEventListener('click', clearFinished);
-      if (cx)  cx.addEventListener('click', hide);
     })();
     return { push, clearFinished, show, hide };
   })();
@@ -12312,7 +12318,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   // MuxDaemonLane's shape (lane + bar + body) so both docked surfaces behave
   // identically. Everything here drives the runtime API -- no slash commands.
   const MuxFlows = (function(){
-    let view = 'wf';          // 'wf' | 'cron'
+    let view = 'wf';          // 'wf' | 'cron' | 'act'
     let timer = null;
     let composing = null;     // null | 'wf' | 'cron'
 
@@ -12323,6 +12329,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         compose: document.getElementById('mngFlowsCompose'),
         tabWf:   document.getElementById('mngFlowsTabWf'),
         tabCron: document.getElementById('mngFlowsTabCron'),
+        tabAct:  document.getElementById('mngFlowsTabAct'),
+        act:     document.getElementById('mngDaemonLaneBody'),
       };
     }
     function api(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
@@ -12653,32 +12661,52 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     }
 
     // ---- lane plumbing ----
-    function draw(){ return view === 'wf' ? drawWorkflows() : drawCron(); }
+    function draw(){
+      if (view === 'act') return;          // live-streamed, nothing to fetch
+      return view === 'wf' ? drawWorkflows() : drawCron();
+    }
     function setView(v){
       view = v;
-      const { tabWf, tabCron } = els();
-      if (tabWf) tabWf.classList.toggle('is-on', v === 'wf');
-      if (tabCron) tabCron.classList.toggle('is-on', v === 'cron');
+      const e = els();
+      if (e.tabWf)   e.tabWf.classList.toggle('is-on', v === 'wf');
+      if (e.tabCron) e.tabCron.classList.toggle('is-on', v === 'cron');
+      if (e.tabAct)  e.tabAct.classList.toggle('is-on', v === 'act');
+      // Activity streams into its own element; the other two share #mngFlowsBody.
+      if (e.body) e.body.hidden = v === 'act';
+      if (e.act)  e.act.hidden = v !== 'act';
+      const nw = document.getElementById('mngFlowsNew');
+      if (nw) nw.hidden = v === 'act';
+      // Clear only applies to streamed activity rows.
+      const cl = document.getElementById('mngDaemonClear');
+      if (cl) cl.hidden = v !== 'act';
       if (composing) closeCompose();
       if (timer) { clearInterval(timer); timer = null; }
       draw();
     }
-    function show(){ const { lane } = els(); if (lane) { lane.hidden = false; draw(); } }
+    function show(v){ const { lane } = els(); if (lane) { lane.hidden = false; setView(v || view); } }
     function hide(){
       const { lane } = els(); if (lane) lane.hidden = true;
       if (timer) { clearInterval(timer); timer = null; }
       closeCompose();
     }
+    function isOpenOn(v){
+      const { lane } = els();
+      return !!lane && !lane.hidden && view === v;
+    }
     (function wire(){
       const btn = document.getElementById('mngBtnFlows');
       if (btn) btn.addEventListener('click', () => {
         const { lane } = els(); if (!lane) return;
-        if (lane.hidden) show(); else hide();
+        if (lane.hidden) show('wf');
+        else if (view === 'act') setView('wf');   // Activity -> Flows, don't close
+        else hide();
       });
       const tw = document.getElementById('mngFlowsTabWf');
       const tc = document.getElementById('mngFlowsTabCron');
+      const ta = document.getElementById('mngFlowsTabAct');
       if (tw) tw.addEventListener('click', () => setView('wf'));
       if (tc) tc.addEventListener('click', () => setView('cron'));
+      if (ta) ta.addEventListener('click', () => setView('act'));
       const nw = document.getElementById('mngFlowsNew');
       if (nw) nw.addEventListener('click', openCompose);
       const rf = document.getElementById('mngFlowsRefresh');
@@ -12687,9 +12715,23 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       if (cx) cx.addEventListener('click', hide);
     })();
 
-    return { show, hide, draw, setView };
+    return { show, hide, draw, setView, isOpenOn };
   })();
   window.MuxFlows = MuxFlows;
+
+  // The old standalone Daemon button now opens the Flows lane on its Activity
+  // view, so there is exactly one docked surface for the whole plane.
+  (function reweaveDaemonBtn(){
+    const btn = document.getElementById('mngBtnDaemon');
+    if (!btn) return;
+    const fresh = btn.cloneNode(true);          // drop MuxDaemonLane's handler
+    btn.parentNode.replaceChild(fresh, btn);
+    fresh.title = 'Daemon activity';
+    fresh.addEventListener('click', () => {
+      if (MuxFlows.isOpenOn('act')) MuxFlows.hide();
+      else MuxFlows.show('act');
+    });
+  })();
 
   window.MuxNodeGraph = {
     open: openPanel,
