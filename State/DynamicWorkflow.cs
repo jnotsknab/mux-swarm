@@ -29,7 +29,13 @@ public static class DynamicWorkflow
     /// Returns (ready, pythonPathOverride, error): ready=false + error when nothing worked -
     /// the caller surfaces the error instead of launching a doomed driver.
     /// </summary>
-    public static (bool Ready, string? PythonPath, string? Error) EnsureSdk(string py)
+    /// <summary>
+    /// Non-mutating half of <see cref="EnsureSdk"/>: reports whether the SDK is already
+    /// importable (directly or via MUX_SDK_PATH / a sibling "sdk" folder) WITHOUT attempting
+    /// a pip install. Exists so readiness can be checked cheaply -- EnsureSdk's bounded
+    /// install can block for up to two minutes, which is far too slow for a UI probe.
+    /// </summary>
+    public static (bool Ready, string? PythonPath, string? Error) ProbeSdk(string py)
     {
         if (ProbeImport(py, null)) return (true, null, null);
 
@@ -43,6 +49,16 @@ public static class DynamicWorkflow
         {
             if (SdkPathIsUsable(cand) && ProbeImport(py, cand!)) return (true, cand, null);
         }
+
+        return (false, null,
+            "The muxswarm SDK is not importable by the resolved python. Install it with " +
+            "`pip install muxswarm`, set MUX_SDK_PATH to a local mux-swarm-sdk clone, or place " +
+            "the SDK under <install-dir>/sdk. Dynamic mode needs it; static mode does not.");
+    }
+
+    public static (bool Ready, string? PythonPath, string? Error) EnsureSdk(string py)
+    {
+        if (ProbeSdk(py) is { Ready: true } hit) return hit;
 
         // Auto-install from PyPI, best-effort and bounded.
         try

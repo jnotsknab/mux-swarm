@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.AI;
@@ -31,6 +31,7 @@ namespace MuxSwarm.Utils;
 ///   POST /api/daemon/trigger         create a cron/watch/status trigger (persisted)
 ///   DELETE /api/daemon/{id}          remove a trigger (persisted)
 ///   POST /api/workflows              { name, goal, mode } -> launch a workflow run
+///   GET  /api/workflows/preflight    dynamic-mode readiness (python + SDK)
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 /// </summary>
@@ -67,6 +68,7 @@ public static partial class ServeMode
         app.MapPost("/api/daemon/trigger", HandleTriggerCreate);
         app.MapDelete("/api/daemon/{id}", HandleTriggerDelete);
         app.MapPost("/api/workflows", HandleWorkflowStart);
+        app.MapGet("/api/workflows/preflight", HandleWorkflowPreflight);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
@@ -1196,6 +1198,36 @@ public static partial class ServeMode
         await WriteJson(context, 200, new { id = trigger.Id, deleted = true });
     }
 
+    // GET /api/workflows/preflight
+    // Dynamic mode needs python + the muxswarm SDK. Both were previously only
+    // discovered AFTER a full script-authoring round trip, so a missing SDK cost a
+    // multi-minute wait before failing. The UI calls this first and can refuse to
+    // start (or offer static mode) immediately.
+    private static async Task HandleWorkflowPreflight(HttpContext context)
+    {
+        var python = State.DynamicWorkflow.ResolvePython();
+        if (python is null)
+        {
+            await WriteJson(context, 200, new
+            {
+                ready = false,
+                reason = "python",
+                message = "Dynamic mode needs python 3.9+ on PATH. Static workflows do not.",
+            });
+            return;
+        }
+
+        // Probe only: never trigger a pip install from a readiness check.
+        var (sdkReady, _, sdkError) = State.DynamicWorkflow.ProbeSdk(python);
+        await WriteJson(context, 200, new
+        {
+            ready = sdkReady,
+            reason = sdkReady ? null : "sdk",
+            python,
+            message = sdkReady ? null : sdkError,
+        });
+    }
+
     // POST /api/workflows   body: { name, goal, mode }
     // Launches a workflow run without the interactive /workflow picker. Dynamic runs
     // author + spawn a driver script; static runs are handed to the agent loop as a
@@ -1242,6 +1274,27 @@ public static partial class ServeMode
             return;
         }
 
+        // Fail fast on a missing toolchain: authoring is a multi-minute model call,
+        // and discovering "no SDK" afterwards wastes all of it.
+        var python = State.DynamicWorkflow.ResolvePython();
+        if (python is null)
+        {
+            await WriteJson(context, 503, new
+            {
+                error = "Dynamic mode needs python 3.9+ on PATH. Use static mode instead.",
+                reason = "python",
+            });
+            return;
+        }
+        // Probe, do NOT EnsureSdk: the latter attempts a bounded pip install that can
+        // block the request for two minutes. A web caller gets an actionable error
+        // instead; the REPL path keeps its auto-install behaviour.
+        if (State.DynamicWorkflow.ProbeSdk(python) is { Ready: false } probe)
+        {
+            await WriteJson(context, 503, new { error = probe.Error, reason = "sdk" });
+            return;
+        }
+
         // Same authoring client the REPL path uses, so a run started from the web
         // app is identical to one started with /workflow dynamic.
         var (client, opts) = CliCmdUtils.ResolveWorkflowAuthorClient();
@@ -1250,12 +1303,24 @@ public static partial class ServeMode
             await WriteJson(context, 503, new
             {
                 error = "No model available to author the driver script (configure an Orchestrator/singleAgent model).",
+                reason = "model",
             });
             return;
         }
 
+        var before = State.WorkflowRunRegistry.Snapshot().Count;
         var result = await State.DynamicWorkflow.GenerateAndLaunchAsync(
             name, goal, client, opts, context.RequestAborted);
+
+        // GenerateAndLaunchAsync reports success and every failure as a plain string.
+        // A run actually appearing in the registry is the only unambiguous signal
+        // that a driver was spawned; anything else is a failure the caller must see.
+        var launched = State.WorkflowRunRegistry.Snapshot().Count > before;
+        if (!launched)
+        {
+            await WriteJson(context, 502, new { error = result, reason = "authoring" });
+            return;
+        }
 
         await WriteJson(context, 202, new { mode, name, message = result });
     }

@@ -10203,6 +10203,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-fl-status { color: var(--muted); font-size: calc(10.5px * var(--ui-font-scale, 1)); min-height: 1em; }
 .mng-fl-status:empty { display: none; }
 .mng-fl-status.is-err { color: var(--red, #ef4444); }
+/* Compiled cron for the chosen preset: the expression stays visible even
+   though the user never has to author one. */
+.mng-fl-cron-preview {
+  color: var(--muted); font-family: var(--font-mono, monospace);
+  font-size: calc(10px * var(--ui-font-scale, 1)); opacity: .85;
+}
+.mng-fl-cron-preview:empty { display: none; }
+.f-preset-args[hidden] { display: none; }
+.mng-fl-form .mng-row { gap: 8px; }
 #mngFlowsBody::-webkit-scrollbar { width: 4px; }
 #mngFlowsBody::-webkit-scrollbar-track { background: transparent; }
 #mngFlowsBody::-webkit-scrollbar-thumb { background: rgba(161,161,170,0.2); border-radius: 3px; }
@@ -10636,7 +10645,6 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     <button class="mng-btn" id="mngBtnAdd" title="Add a node">+ Add</button>
     <button class="mng-btn" id="mngBtnLayout" title="Auto-layout">Layout</button>
     <button class="mng-btn" id="mngBtnCenter" title="Center view">Center</button>
-    <button class="mng-btn" id="mngBtnFlows" title="Workflows &amp; schedules">◱ Flows</button>
     <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Daemon activity">⚙ Daemon <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
     <button class="mng-btn" id="mngBtnMax" title="Maximize">⛶</button>
     <button class="mng-btn" id="mngBtnClose" title="Close">×</button>
@@ -12549,30 +12557,95 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     function wireWfForm(root){
       const get = f => root.querySelector('[data-f="' + f + '"]');
       const status = root.querySelector('.mng-fl-status');
+      const setStatus = (msg, cls) => { status.textContent = msg || ''; status.className = 'mng-fl-status' + (cls ? ' ' + cls : ''); };
+
+      // Dynamic mode needs python + the muxswarm SDK, and authoring is a long model
+      // call. Probe readiness up front so a missing toolchain is reported in ~a
+      // second instead of after a multi-minute round trip that then fails.
+      const modeSel = get('mode');
+      const checkReady = async () => {
+        if (modeSel.value !== 'dynamic') { setStatus(''); return true; }
+        setStatus('Checking dynamic mode\u2026');
+        try {
+          const pf = await jfetch('/api/workflows/preflight');
+          if (pf.ready) { setStatus(''); return true; }
+          setStatus(pf.message || 'Dynamic mode unavailable.', 'is-err');
+          return false;
+        } catch (_) { setStatus(''); return true; }   // older binary: let the POST decide
+      };
+      modeSel.addEventListener('change', checkReady);
+      checkReady();
+
       root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
       root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
         const goal = get('goal').value.trim();
-        if (!goal) { status.textContent = 'A goal is required.'; status.className = 'mng-fl-status is-err'; return; }
-        const mode = get('mode').value;
+        if (!goal) { setStatus('A goal is required.', 'is-err'); return; }
+        const mode = modeSel.value;
+        if (!(await checkReady())) return;
+
         e.target.disabled = true;
-        status.className = 'mng-fl-status';
-        status.textContent = mode === 'dynamic' ? 'Authoring driver script\u2026' : 'Dispatching\u2026';
+        // Authoring can take minutes; say so and keep a live elapsed counter so the
+        // form never looks wedged.
+        const t0 = Date.now();
+        let tick = null;
+        if (mode === 'dynamic') {
+          const base = 'Authoring driver script';
+          setStatus(base + '\u2026 0s');
+          tick = setInterval(() => {
+            setStatus(base + '\u2026 ' + Math.round((Date.now() - t0) / 1000) + 's (this can take a few minutes)');
+          }, 1000);
+        } else {
+          setStatus('Dispatching\u2026');
+        }
         try {
           const res = await jfetch('/api/workflows', {
             method: 'POST',
             body: JSON.stringify({ name: get('name').value.trim(), goal, mode }),
           });
+          if (tick) clearInterval(tick);
           // Static workflows execute in-session: hand the goal to the socket, which
           // is exactly what the REPL does after its prompts.
           if (res.dispatch === 'goal' && typeof window.MuxSend === 'function') window.MuxSend(goal);
           closeCompose();
-          drawWorkflows();
+          setView('wf');
         } catch (err) {
+          if (tick) clearInterval(tick);
           e.target.disabled = false;
-          status.textContent = err.message;
-          status.className = 'mng-fl-status is-err';
+          setStatus(err.message, 'is-err');
         }
       });
+    }
+
+    // Plain-language schedules. Each preset renders its own small inputs and
+    // compiles to a 5-field cron expression, so the user never types cron unless
+    // they choose Custom. 'dom'/'dow' follow standard cron semantics.
+    const CRON_PRESETS = [
+      { label: 'Every N minutes', args: [{ k:'n', t:'number', d:15, min:1, max:59, lbl:'Minutes' }],
+        build: a => `*/${a.n} * * * *` },
+      { label: 'Every hour, at minute', args: [{ k:'m', t:'number', d:0, min:0, max:59, lbl:'Minute' }],
+        build: a => `${a.m} * * * *` },
+      { label: 'Every day at', args: [{ k:'t', t:'time', d:'03:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * *`; } },
+      { label: 'Every weekday (Mon-Fri) at', args: [{ k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * 1-5`; } },
+      { label: 'Every week on', args: [{ k:'d', t:'dow', d:'1', lbl:'Day' }, { k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} * * ${a.d}`; } },
+      { label: 'Every month on day', args: [{ k:'d', t:'number', d:1, min:1, max:28, lbl:'Day' }, { k:'t', t:'time', d:'09:00', lbl:'Time' }],
+        build: a => { const [h,m] = a.t.split(':'); return `${+m} ${+h} ${a.d} * *`; } },
+      { label: 'Custom cron expression\u2026', args: [], build: null },
+    ];
+    const DOW = [['0','Sunday'],['1','Monday'],['2','Tuesday'],['3','Wednesday'],['4','Thursday'],['5','Friday'],['6','Saturday']];
+
+    function presetArgsHtml(p){
+      return p.args.map(a => {
+        let ctl;
+        if (a.t === 'time') ctl = '<input class="mng-input" type="time" data-a="' + a.k + '" value="' + a.d + '">';
+        else if (a.t === 'dow') ctl = '<select class="mng-select" data-a="' + a.k + '">' +
+          DOW.map(d => '<option value="' + d[0] + '"' + (d[0] === a.d ? ' selected' : '') + '>' + d[1] + '</option>').join('') + '</select>';
+        else ctl = '<input class="mng-input" type="number" data-a="' + a.k + '" value="' + a.d +
+                   '" min="' + a.min + '" max="' + a.max + '">';
+        return '<label class="mng-fl-lbl">' + esc(a.lbl) + ctl + '</label>';
+      }).join('');
     }
 
     function cronFormHtml(){
@@ -12585,9 +12658,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
             '<button class="mng-fl-seg-btn" data-t="status">Status</button>' +
           '</div>' +
           '<label class="mng-fl-lbl">Id<input class="mng-input" data-f="id" placeholder="nightly-audit"></label>' +
-          '<label class="mng-fl-lbl f-cron">Schedule ' +
+          '<label class="mng-fl-lbl f-cron">When' +
+            '<select class="mng-select" data-f="preset">' +
+              CRON_PRESETS.map((p, i) => '<option value="' + i + '">' + esc(p.label) + '</option>').join('') +
+            '</select></label>' +
+          '<div class="mng-row f-cron f-preset-args"></div>' +
+          '<label class="mng-fl-lbl f-cron f-cron-raw" hidden>Cron expression ' +
             '<span class="mng-fl-hint">min hour dom mon dow</span>' +
             '<input class="mng-input" data-f="schedule" placeholder="0 3 * * *"></label>' +
+          '<div class="mng-fl-cron-preview f-cron"></div>' +
           '<label class="mng-fl-lbl f-watch" hidden>Path glob' +
             '<input class="mng-input" data-f="path" placeholder="C:\\src\\**\\*.cs"></label>' +
           '<label class="mng-fl-lbl f-status" hidden>Check ' +
@@ -12615,6 +12694,35 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       let type = 'cron';
       const get = f => root.querySelector('[data-f="' + f + '"]');
       const status = root.querySelector('.mng-fl-status');
+      const argsRow = root.querySelector('.f-preset-args');
+      const preview = root.querySelector('.mng-fl-cron-preview');
+      const rawWrap = root.querySelector('.f-cron-raw');
+
+      // Compile the active preset to cron and show the result, so the expression
+      // is always visible even though the user never has to write one.
+      function currentCron(){
+        const p = CRON_PRESETS[parseInt(get('preset').value, 10)];
+        if (!p || !p.build) return get('schedule').value.trim();
+        const a = {};
+        argsRow.querySelectorAll('[data-a]').forEach(el => { a[el.dataset.a] = el.value; });
+        try { return p.build(a); } catch (_) { return ''; }
+      }
+      function syncPreset(){
+        const p = CRON_PRESETS[parseInt(get('preset').value, 10)];
+        const custom = !p || !p.build;
+        argsRow.innerHTML = custom ? '' : presetArgsHtml(p);
+        argsRow.hidden = custom;
+        rawWrap.hidden = !custom;
+        argsRow.querySelectorAll('[data-a]').forEach(el => el.addEventListener('input', syncPreview));
+        syncPreview();
+      }
+      function syncPreview(){
+        const c = currentCron();
+        preview.textContent = c ? 'cron: ' + c : '';
+      }
+      get('preset').addEventListener('change', syncPreset);
+      get('schedule').addEventListener('input', syncPreview);
+      syncPreset();
       // Only the fields the chosen trigger type actually uses stay visible; the
       // API enforces the same per-type requirements server-side.
       const applyType = () => {
@@ -12636,7 +12744,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       root.querySelector('.mng-fl-cancel-btn').addEventListener('click', closeCompose);
       root.querySelector('.mng-fl-submit').addEventListener('click', async (e) => {
         const payload = { id: get('id').value.trim(), type, mode: get('mode').value };
-        if (type === 'cron')   payload.schedule = get('schedule').value.trim();
+        if (type === 'cron')   payload.schedule = currentCron();
         if (type === 'watch')  payload.path = get('path').value.trim();
         if (type === 'status') {
           payload.check = get('check').value.trim();
@@ -12694,13 +12802,6 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return !!lane && !lane.hidden && view === v;
     }
     (function wire(){
-      const btn = document.getElementById('mngBtnFlows');
-      if (btn) btn.addEventListener('click', () => {
-        const { lane } = els(); if (!lane) return;
-        if (lane.hidden) show('wf');
-        else if (view === 'act') setView('wf');   // Activity -> Flows, don't close
-        else hide();
-      });
       const tw = document.getElementById('mngFlowsTabWf');
       const tc = document.getElementById('mngFlowsTabCron');
       const ta = document.getElementById('mngFlowsTabAct');
@@ -12726,10 +12827,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if (!btn) return;
     const fresh = btn.cloneNode(true);          // drop MuxDaemonLane's handler
     btn.parentNode.replaceChild(fresh, btn);
-    fresh.title = 'Daemon activity';
+    fresh.title = 'Workflows, schedules & daemon activity';
+    // Sole entry point for the lane: it already owns Workflows / Schedules /
+    // Activity, so a second toolbar button was redundant.
     fresh.addEventListener('click', () => {
-      if (MuxFlows.isOpenOn('act')) MuxFlows.hide();
-      else MuxFlows.show('act');
+      const lane = document.getElementById('mngFlowsLane');
+      if (lane && !lane.hidden) MuxFlows.hide();
+      else MuxFlows.show();
     });
   })();
 
