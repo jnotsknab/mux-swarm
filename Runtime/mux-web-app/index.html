@@ -2390,12 +2390,29 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 /* ── Toasts ── */
 .toast-container { position: fixed; bottom: 80px; right: 24px; display: flex; flex-direction: column; gap: 8px; z-index: 200; pointer-events: none; }
 .toast {
-  background: var(--bg-card); border-left: 3px solid var(--border); border-radius: 6px; padding: 10px 14px;
-  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  position: relative; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 10px; padding: 9px 14px 9px 13px;
+  font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28); backdrop-filter: blur(6px);
   animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: auto;
+  overflow: hidden;
 }
-.toast.success { border-left-color: var(--green); }
-.toast.error { border-left-color: var(--red); }
+/* Elegant status: a soft glow ring around a small dot instead of a left bookmark. */
+.toast .toast-ico { display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; flex: 0 0 auto; }
+.toast .toast-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.toast.success .toast-dot { background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 22%, transparent); }
+.toast.error   .toast-dot { background: var(--red);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--red) 22%, transparent); }
+.toast.info    .toast-dot { background: var(--accent, #64b4dc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #64b4dc) 22%, transparent); }
+/* A faint top hairline accent (color-tinted) reads as premium without a stripe. */
+.toast::before { content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--fg-accent, var(--green)) 55%, transparent), transparent); opacity: .0; }
+.toast.success { --fg-accent: var(--green); }
+.toast.error   { --fg-accent: var(--red); }
+.toast.info    { --fg-accent: var(--accent, #64b4dc); }
+.toast::before { opacity: .5; }
+.toast .toast-time { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1));
+  font-family: var(--font-mono, monospace); margin-left: 6px; }
 @keyframes slideInRight { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes fadeOutRight { to { transform: translateX(100%); opacity: 0; } }
 
@@ -3410,30 +3427,43 @@ const icons = {
     // transcript or flip the composer busy state — route every such frame into
     // the Node Graph's daemon lane and stop. Absent tag => normal handling.
     try {
-      if (ev && ev.origin === 'daemon' && window.MuxDaemonLane) {
-        // Non-invasive: surface a toast when a daemon goal STARTS (once per lane
-        // per run) instead of yanking the user into the daemon tab. The lane fills
-        // in the background; the ⚙ Daemon badge count reflects active runs.
+      // Any frame the backend tagged origin:'daemon' belongs to the daemon lane and
+      // must NEVER reach the main transcript. Guard on the TAG alone (not on
+      // MuxDaemonLane being ready): if the lane module hasn't initialized yet, buffer
+      // the frame and drain it once it exists. Absent tag => normal handling below.
+      if (ev && ev.origin === 'daemon') {
         try {
           if (ev.type === 'agent_turn_start') {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             if (!_daemonToasted.has(lane)) {
               _daemonToasted.add(lane);
               if (typeof showToast === 'function')
-                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''));
+                showToast('Daemon running: ' + lane + (ev.agent ? ' \u00b7 ' + ev.agent : ''), 'info');
             }
           } else if (ev.type === 'success' && /Goal completed/i.test(ev.message || '')) {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             _daemonToasted.delete(lane);
-            if (typeof showToast === 'function') showToast('Daemon done: ' + lane);
+            if (typeof showToast === 'function') showToast('Daemon done: ' + lane, 'success');
           } else if (ev.type === 'error') {
             const lane = String(ev.lane || 'daemon').replace(/^daemon:/, '');
             _daemonToasted.delete(lane);
+            if (typeof showToast === 'function') showToast('Daemon failed: ' + lane, 'error');
           }
         } catch (_) {}
-        window.MuxDaemonLane.push(ev);
-        return;
+        if (window.MuxDaemonLane) {
+          if (window._daemonFrameBuffer) { for (const b of window._daemonFrameBuffer) { try { window.MuxDaemonLane.push(b); } catch(_){} } window._daemonFrameBuffer = null; }
+          try { window.MuxDaemonLane.push(ev); } catch (_) {}
+        } else {
+          (window._daemonFrameBuffer = window._daemonFrameBuffer || []).push(ev);
+        }
+        return;   // hard stop: never fall through to main-transcript rendering
       }
+    } catch (_) {}
+    // Safety net: a few daemon lifecycle lines (e.g. "[Daemon] Running in background.",
+    // "[Daemon] Starting N trigger(s)...") are emitted OUTSIDE any origin scope, so they
+    // arrive untagged and would otherwise render in the main transcript. Drop them.
+    try {
+      if (ev && typeof ev.message === 'string' && /^\[Daemon(:[^\]]+)?\]/.test(ev.message.trim())) return;
     } catch (_) {}
     // ─── Background sub-agent routing ───
     // Background delegations (delegate_parallel background:true, /background) are tagged
@@ -5943,7 +5973,12 @@ const icons = {
   function showToast(msg, type = 'success') {
     const t = document.createElement('div');
     t.className = `toast ${type}`;
-    t.innerHTML = `<span style="display:flex;align-items:center;gap:8px">${type === 'success' ? icons.check : icons.x} ${esc(msg)}</span>`;
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    t.innerHTML = `<span style="display:flex;align-items:center;gap:9px">` +
+      `<span class="toast-ico"><span class="toast-dot"></span></span>` +
+      `<span style="flex:1 1 auto">${esc(msg)}</span>` +
+      `<span class="toast-time">${esc(time)}</span>` +
+    `</span>`;
     toastContainer.appendChild(t);
     setTimeout(() => {
       t.style.animation = 'fadeOutRight 0.3s forwards';
@@ -10289,6 +10324,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-dl-row.is-collapsed .mng-dl-body { display: none; }
 .mng-fl-saved-head { display: flex; align-items: center; gap: 6px; }
 .mng-fl-saved-head h5 { margin: 0; }
+.mng-fl-substatus { color: var(--muted); font-family: var(--font-mono, monospace);
+  font-size: calc(9.5px * var(--ui-font-scale, 1)); opacity: .85; margin-right: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 
 
 /* Per-run action bar */
@@ -12398,7 +12436,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         /has \d+ tools available/i.test(m) ||
         /^\[GOAL\]/i.test(m) ||
         /^\[AGENT SESSION\]/i.test(m) ||
-        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired)/i.test(m) ||
+        /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired|Goal completed)/i.test(m) ||
+        /^\[Daemon\]\s*(Starting|Running)/i.test(m) ||
         /^Total Tokens:/i.test(m) ||
         /tokens used this goal/i.test(m) ||
         /^Press \[Esc\]/i.test(m) ||
@@ -12547,6 +12586,18 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
       return data;
     }
+    // Compact relative time: "3m ago", "2h ago", "just now".
+    function relTime(iso){
+      const then = new Date(iso).getTime(); if (!then) return '';
+      const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
+      if (secs < 45) return 'just now';
+      const mins = Math.round(secs / 60);
+      if (mins < 60) return mins + 'm ago';
+      const hrs = Math.round(mins / 60);
+      if (hrs < 24) return hrs + 'h ago';
+      const days = Math.round(hrs / 24);
+      return days + 'd ago';
+    }
 
     const DOT = { done:'ok', failed:'err', running:'run', cancelled:'warn', pending:'idle' };
 
@@ -12657,6 +12708,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     const dismissedSaved = new Set();
     const collapsedRuns = new Set();   // run ids whose graph is collapsed
     const collapsedSaved = { v: false }; // saved-definitions panel collapse
+    const runStatePrev = new Map();    // run id -> last-seen state, for completion toasts
+    let _runStateSeeded = false;       // don't toast for runs already finished on first load
 
     // (1) WORKFLOWS TAB -- only the workflows that are SET UP (saved definitions).
     async function drawWfDefs(){
@@ -12719,6 +12772,20 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       try { data = await jfetch('/api/workflows'); }
       catch (e) { body.innerHTML = '<div class="mng-fl-empty">Could not load runs: ' + esc(e.message) + '</div>'; return; }
       if (!(view === 'act' && actView === 'wf')) return;
+
+      // Fire a completion toast when a run transitions into a terminal state. Seed the
+      // map on the first draw so we don't toast for runs that were already finished.
+      for (const r of (data.items || [])) {
+        const prev = runStatePrev.get(r.id);
+        if (_runStateSeeded && prev && prev !== r.state && r.state !== 'running') {
+          const nm = r.name || r.id;
+          if (r.state === 'done')       showToast('Workflow done: ' + nm, 'success');
+          else if (r.state === 'failed') showToast('Workflow failed: ' + nm, 'error');
+          else if (r.state === 'cancelled') showToast('Workflow cancelled: ' + nm, 'info');
+        }
+        runStatePrev.set(r.id, r.state);
+      }
+      _runStateSeeded = true;
 
       const items = (data.items || []).filter(r => !dismissedRuns.has(r.id));
       let h = '';
@@ -12810,22 +12877,27 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         if (t.check) meta.push(esc(t.check));
         if (t.mode) meta.push(esc(t.mode));
         if (t.agent) meta.push(esc(t.agent));
-        const when = t.nextFire
-          ? new Date(t.nextFire).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })
-          : null;
+        const fmt = (iso) => new Date(iso).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+        const when = t.nextFire ? fmt(t.nextFire) : null;
+        // Idle status line: last fired (relative) + next fire, so a resting trigger still
+        // reads as "alive". Cron shows next; anything fired shows last.
+        const statusBits = [];
+        if (t.lastFired) statusBits.push('last fired ' + relTime(t.lastFired));
+        else statusBits.push('not fired yet');
+        if (when) statusBits.push('next ' + when);
         h += '<div class="mng-fl-trig' + (t.enabled ? '' : ' is-off') + '">' +
                '<div class="mng-fl-run-head">' +
                  '<span class="wf-dot ' + (t.enabled ? 'ok' : 'idle') + '"></span>' +
                  '<span class="mng-fl-name mono">' + esc(t.id) + '</span>' +
                  '<span class="mng-fl-chip">' + esc(t.type) + '</span>' +
                  '<span class="mng-fl-spacer"></span>' +
+                 '<span class="mng-fl-substatus">' + esc(statusBits.join('  \u00b7  ')) + '</span>' +
                  '<button class="mng-btn mng-fl-mute" data-id="' + esc(t.id) + '" data-on="' + (t.enabled?'1':'0') + '">' +
                    (t.enabled ? 'Mute' : 'Unmute') + '</button>' +
                  '<button class="mng-btn mng-fl-del" data-id="' + esc(t.id) + '" title="Delete trigger">\u00d7</button>' +
                '</div>' +
                (meta.length ? '<div class="mng-fl-task-meta">' + meta.join(' \u00b7 ') + '</div>' : '') +
                (t.goal ? '<div class="mng-fl-goal">' + esc(t.goal) + '</div>' : '') +
-               (when ? '<div class="mng-fl-task-meta">next \u00b7 ' + esc(when) + '</div>' : '') +
              '</div>';
       }
       body.innerHTML = h;
@@ -13307,7 +13379,33 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       const on = document.body.dataset.flowsAutoActivity !== '0';
       if (on) { setView('act'); setActView('wf'); }
       else if (view === 'act' && actView === 'wf') drawActivityRuns();
+      ensureBgWatch();
     }
+
+    // Background completion watcher: fires workflow done/failed toasts even when the
+    // user is on another tab (the per-view poll only runs while Activity>Wf is open).
+    // Cheap: only polls while at least one run is active, self-stops when idle.
+    let _bgTimer = null;
+    async function bgWatch(){
+      let data;
+      try { data = await jfetch('/api/workflows'); } catch (_) { return; }
+      for (const r of (data.items || [])) {
+        const prev = runStatePrev.get(r.id);
+        if (_runStateSeeded && prev && prev !== r.state && r.state !== 'running') {
+          const nm = r.name || r.id;
+          if (r.state === 'done')            showToast('Workflow done: ' + nm, 'success');
+          else if (r.state === 'failed')     showToast('Workflow failed: ' + nm, 'error');
+          else if (r.state === 'cancelled')  showToast('Workflow cancelled: ' + nm, 'info');
+        }
+        runStatePrev.set(r.id, r.state);
+      }
+      _runStateSeeded = true;
+      // Keep the top-level Activity badge honest.
+      const badge = document.getElementById('mngFlowsActBadge');
+      if (badge) { const n = data.running || 0; badge.textContent = String(n); badge.hidden = n === 0; }
+      if (!data.running && _bgTimer) { clearInterval(_bgTimer); _bgTimer = null; }
+    }
+    function ensureBgWatch(){ if (!_bgTimer) { _runStateSeeded = _runStateSeeded || false; _bgTimer = setInterval(bgWatch, 2500); bgWatch(); } }
     function show(v){ const { lane } = els(); if (lane) { lane.hidden = false; setView(v || view); } }
     function hide(){
       const { lane } = els(); if (lane) lane.hidden = true;
