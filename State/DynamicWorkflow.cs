@@ -465,6 +465,101 @@ public static class DynamicWorkflow
         return $"[workflow] Dynamic run '{name}' launched (id {id}, driver pid {proc.Id}, cap {maxPar}). Watch it with /workflows; script + journal in {dir}.";
     }
 
+    /// <summary>Absolute path to a run's authored driver script, or null when the run/dir is gone.</summary>
+    public static string? ScriptPath(string runId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run?.RunDir is null) return null;
+        var p = Path.Combine(run.RunDir, "driver.py");
+        return File.Exists(p) ? p : null;
+    }
+
+    /// <summary>Read a run's driver script, or null when unavailable.</summary>
+    public static string? ReadScript(string runId)
+        => ScriptPath(runId) is { } p ? File.ReadAllText(p) : null;
+
+    /// <summary>Overwrite a run's driver script (used by the web editor before a re-run). Returns
+    /// an error string on failure, else null. Contract-validated so a broken edit is rejected up
+    /// front rather than producing a dead run.</summary>
+    public static string? WriteScript(string runId, string script)
+    {
+        if (ScriptPath(runId) is not { } p) return "No script for this run.";
+        if (ValidateScript(script) is { } rejection) return rejection;
+        try { File.WriteAllText(p, script, new UTF8Encoding(false)); return null; }
+        catch (Exception ex) { return ex.Message; }
+    }
+
+    /// <summary>Read a task's captured output (task_&lt;id&gt;.out) for a run, or null.</summary>
+    public static string? ReadTaskOutput(string runId, string taskId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run?.RunDir is null) return null;
+        // taskId is caller-supplied; keep it to a bare file stem so it can never traverse.
+        var safe = new string(taskId.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_').ToArray());
+        if (safe.Length == 0) return null;
+        var p = Path.Combine(run.RunDir, $"task_{safe}.out");
+        return File.Exists(p) ? File.ReadAllText(p) : null;
+    }
+
+    /// <summary>Persist a run's driver script as a reusable saved definition
+    /// (&lt;name&gt;.workflow.json in the Teams dir, shape { name, mode:"dynamic", script }). Returns
+    /// (savedName, error). Shared by the web API and the TUI /workflows save verb.</summary>
+    public static (string? Saved, string? Error) SaveRunAsDefinition(string runId, string? asName = null)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run is null) return (null, $"No run '{runId}'.");
+        if (ReadScript(runId) is not { } script) return (null, "This run has no driver script to save.");
+        var name = SanitizeName(string.IsNullOrWhiteSpace(asName) ? run.Name : asName!);
+        try
+        {
+            Directory.CreateDirectory(PlatformContext.TeamsDirectory);
+            var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+            var payload = JsonSerializer.Serialize(new { name, mode = "dynamic", script },
+                new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(file, payload, new UTF8Encoding(false));
+            return (name, null);
+        }
+        catch (Exception ex) { return (null, ex.Message); }
+    }
+
+    /// <summary>Re-launch a run from its (optionally edited) driver script without re-authoring.
+    /// Returns the launch message (which the caller inspects for success like the initial POST).</summary>
+    public static string RerunFromRun(string runId)
+    {
+        var run = WorkflowRunRegistry.Find(runId);
+        if (run is null) return $"[workflow] No run '{runId}'.";
+        if (ReadScript(runId) is not { } script) return "[workflow] This run has no driver script to re-run.";
+        return Launch(run.Name, script, ResolvePython());
+    }
+
+    /// <summary>Launch a previously saved dynamic definition (&lt;name&gt;.workflow.json with a
+    /// "script" field). Returns the launch message. Saved STATIC step-workflows are not dynamic and
+    /// are handled by the existing static path, so this only accepts definitions carrying a script.</summary>
+    public static string LaunchSaved(string savedName)
+    {
+        var name = SanitizeName(savedName);
+        var file = Path.Combine(PlatformContext.TeamsDirectory, $"{name}.workflow.json");
+        if (!File.Exists(file)) return $"[workflow] No saved workflow '{name}'.";
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            if (!doc.RootElement.TryGetProperty("script", out var sc) || sc.ValueKind != JsonValueKind.String)
+                return $"[workflow] Saved workflow '{name}' has no dynamic script (it may be a static step workflow).";
+            return Launch(name, sc.GetString()!, ResolvePython());
+        }
+        catch (Exception ex) { return $"[workflow] Could not load saved workflow '{name}': {ex.Message}"; }
+    }
+
+    /// <summary>Reduce an arbitrary label to a safe file stem for a saved definition.</summary>
+    private static string SanitizeName(string raw)
+    {
+        var name = new string((raw ?? "").Trim()
+            .Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '-').ToArray())
+            .Trim('-');
+        if (name.Length == 0) name = "workflow";
+        return name.Length > 48 ? name[..48] : name;
+    }
+
     private static string StripFences(string s)
     {
         var t = (s ?? "").Trim();

@@ -62,6 +62,12 @@ public static partial class ServeMode
         app.MapPost("/api/agent", HandleSetAgent);
         app.MapGet("/api/workflows", HandleWorkflows);
         app.MapPost("/api/workflows/{id}/cancel", HandleWorkflowCancel);
+        app.MapGet("/api/workflows/{id}/script", HandleWorkflowGetScript);
+        app.MapPut("/api/workflows/{id}/script", HandleWorkflowPutScript);
+        app.MapGet("/api/workflows/{id}/task/{taskId}/output", HandleWorkflowTaskOutput);
+        app.MapPost("/api/workflows/{id}/rerun", HandleWorkflowRerun);
+        app.MapPost("/api/workflows/{id}/save", HandleWorkflowSave);
+        app.MapPost("/api/workflows/saved/{name}/run", HandleWorkflowRunSaved);
         app.MapGet("/api/daemon", HandleDaemon);
         app.MapPost("/api/daemon", HandleDaemonToggle);
         app.MapPost("/api/daemon/{id}/toggle", HandleTriggerToggle);
@@ -922,6 +928,91 @@ public static partial class ServeMode
             return;
         }
         await WriteJson(context, 200, new { id, state = "cancelled" });
+    }
+
+    // GET /api/workflows/{id}/script -> the authored driver.py source for a dynamic run.
+    private static async Task HandleWorkflowGetScript(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        if (State.DynamicWorkflow.ReadScript(id) is not { } script)
+        {
+            await WriteJson(context, 404, new { error = "No driver script for this run (static run, or dir removed)." });
+            return;
+        }
+        await WriteJson(context, 200, new { id, script });
+    }
+
+    // PUT /api/workflows/{id}/script   body: { script }
+    // Save edits to a run's driver script (for the edit-then-rerun flow). Contract-validated.
+    private static async Task HandleWorkflowPutScript(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        string script;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            script = doc.RootElement.TryGetProperty("script", out var s) ? (s.GetString() ?? "") : "";
+        }
+        catch (JsonException) { await WriteJson(context, 400, new { error = "Invalid JSON body" }); return; }
+
+        if (string.IsNullOrWhiteSpace(script)) { await WriteJson(context, 400, new { error = "'script' is required" }); return; }
+        if (State.DynamicWorkflow.WriteScript(id, script) is { } err)
+        {
+            await WriteJson(context, 400, new { error = err });
+            return;
+        }
+        await WriteJson(context, 200, new { id, saved = true });
+    }
+
+    // GET /api/workflows/{id}/task/{taskId}/output -> a task's captured output.
+    private static async Task HandleWorkflowTaskOutput(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        var taskId = context.Request.RouteValues["taskId"]?.ToString() ?? "";
+        if (State.DynamicWorkflow.ReadTaskOutput(id, taskId) is not { } output)
+        {
+            await WriteJson(context, 404, new { error = "No output for this task yet." });
+            return;
+        }
+        await WriteJson(context, 200, new { id, taskId, output });
+    }
+
+    // POST /api/workflows/{id}/rerun -> relaunch a dynamic run from its (possibly edited) script.
+    private static async Task HandleWorkflowRerun(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        var before = State.WorkflowRunRegistry.Snapshot().Count;
+        var result = await Task.Run(() => State.DynamicWorkflow.RerunFromRun(id), context.RequestAborted);
+        var launched = State.WorkflowRunRegistry.Snapshot().Count > before;
+        await WriteJson(context, launched ? 202 : 502, new { id, launched, message = result });
+    }
+
+    // POST /api/workflows/{id}/save   body: { name? }
+    // Persist a run's driver script as a reusable saved definition.
+    private static async Task HandleWorkflowSave(HttpContext context)
+    {
+        var id = context.Request.RouteValues["id"]?.ToString() ?? "";
+        string? asName = null;
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(context.Request.Body, cancellationToken: context.RequestAborted);
+            if (doc.RootElement.TryGetProperty("name", out var n)) asName = n.GetString();
+        }
+        catch (JsonException) { /* empty body is fine -> save under the run name */ }
+
+        var (saved, err) = State.DynamicWorkflow.SaveRunAsDefinition(id, asName);
+        if (saved is null) { await WriteJson(context, 400, new { error = err }); return; }
+        await WriteJson(context, 200, new { id, saved });
+    }
+
+    // POST /api/workflows/saved/{name}/run -> launch a saved dynamic definition.
+    private static async Task HandleWorkflowRunSaved(HttpContext context)
+    {
+        var name = context.Request.RouteValues["name"]?.ToString() ?? "";
+        var before = State.WorkflowRunRegistry.Snapshot().Count;
+        var result = await Task.Run(() => State.DynamicWorkflow.LaunchSaved(name), context.RequestAborted);
+        var launched = State.WorkflowRunRegistry.Snapshot().Count > before;
+        await WriteJson(context, launched ? 202 : 502, new { name, launched, message = result });
     }
 
     // Trigger summary shared by the daemon endpoints. NextFire is computed only for
