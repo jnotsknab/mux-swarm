@@ -170,6 +170,11 @@ public static partial class ServeMode
         var uptime = (long)(DateTime.UtcNow - _startedAtUtc).TotalSeconds;
         var agentCount = App.SwarmConfig?.Agents?.Count ?? 0;
 
+        // Same curated pool the TUI splash draws from (SplashMessages.Pick): a random
+        // quote/fact/tip/tagline so the web splash can show a fresh line per load instead
+        // of a static tagline. Additive; older clients simply ignore the field.
+        var (tipLabel, tipText) = SplashMessages.Pick();
+
         await WriteJson(context, 200, new
         {
             version = App.Version,
@@ -178,6 +183,7 @@ public static partial class ServeMode
             port = App.ServePort,
             mode = ActiveMode,
             agentCount,
+            tip = new { label = tipLabel, text = tipText },
         });
     }
 

@@ -1434,27 +1434,38 @@ body.hide-all-pills .event-group { display: none !important; }
   line-height: 1.6;
   max-width: 46ch;
 }
+/* Dynamic tip/quote line (same pool as the TUI splash). The optional label is a
+   dim author/category prefix rendered before the text. */
+.mux-splash-tip {
+  color: var(--muted);
+  font-family: var(--font-sans, ui-sans-serif, system-ui);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  max-width: 52ch;
+  font-style: italic;
+}
+.mux-splash-tip .lbl {
+  font-style: normal;
+  color: var(--muted);
+  opacity: 0.7;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+/* Minimal status line: plain, dot-separated, no pills. */
 .mux-splash-meta {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-.mux-splash-chip {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  padding: 3px 9px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-input, rgba(255,255,255,0.02));
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10.5px * var(--ui-font-scale, 1));
-  line-height: 1.4;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  color: var(--muted);
 }
-.mux-splash-chip .k { color: var(--muted); opacity: 0.85; }
-.mux-splash-chip .v { color: var(--accent, #64b4dc); font-weight: 600; }
+.mux-splash-meta .mi { white-space: nowrap; }
+.mux-splash-meta .mi .v { color: var(--text); }
+.mux-splash-meta .sep { opacity: 0.4; }
 
 @media (max-width: 640px) {
   .mux-splash-mark { font-size: calc(30px * var(--ui-font-scale, 1)); letter-spacing: 0.07em; }
@@ -3002,40 +3013,46 @@ const icons = {
     const el = document.createElement('div');
     el.className = 'mux-splash';
     el.id = 'muxSplash';
+    // Static fallback tagline: shown until (or unless) the dynamic tip loads, so the
+    // splash is never empty on a slow/failed fetch.
+    const fallbackTagline = 'Ask a question, paste an error, or point me at a repo. ' +
+      'I can read code, run tools, and orchestrate a swarm of agents.';
     el.innerHTML =
       '<div class="mux-splash-inner">' +
         '<div class="mux-splash-mark">MUX&#8202;SWARM</div>' +
-        '<div class="mux-splash-tagline">Ask a question, paste an error, or point me at a repo. ' +
-        'I can read code, run tools, and orchestrate a swarm of agents.</div>' +
+        '<div class="mux-splash-tip" id="muxSplashTip">' + esc(fallbackTagline) + '</div>' +
         '<div class="mux-splash-meta" id="muxSplashMeta"></div>' +
       '</div>';
     output.appendChild(el);
 
-    // Live status strip. Best-effort: a failed fetch simply leaves the strip
-    // empty rather than blocking the splash or logging noise at the user.
+    // Dynamic tip + minimal status line. Everything is read from the runtime at render
+    // time (best-effort): a failed fetch just leaves the fallback tagline and an empty
+    // meta line rather than blocking the splash.
     (async () => {
+      const tipEl = document.getElementById('muxSplashTip');
       const meta = document.getElementById('muxSplashMeta');
-      if (!meta) return;
-      const chips = [];
-      try {
-        const h = await fetch(_apiUrl('/api/health')).then(r => r.ok ? r.json() : null);
-        if (h) {
-          if (h.version) chips.push(['version', 'v' + h.version]);
-          if (h.agentCount) chips.push(['agents', String(h.agentCount)]);
-        }
-      } catch (_) {}
-      try {
-        const st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null);
-        if (st) {
-          if (st.provider) chips.push(['provider', st.provider]);
-          if (st.mode) chips.push(['mode', st.mode]);
-        }
-      } catch (_) {}
-      if (!chips.length) return;
-      meta.innerHTML = chips
-        .map(c => '<span class="mux-splash-chip"><span class="k">' + esc(c[0]) +
-                  '</span><span class="v">' + esc(c[1]) + '</span></span>')
-        .join('');
+      let h = null, st = null;
+      try { h = await fetch(_apiUrl('/api/health')).then(r => r.ok ? r.json() : null); } catch (_) {}
+      try { st = await fetch(_apiUrl('/api/status')).then(r => r.ok ? r.json() : null); } catch (_) {}
+
+      // Tip: same curated pool as the TUI splash (SplashMessages.Pick on the engine).
+      // Shape: { label, text }. label is an author (quotes) or category prefix; may be
+      // empty for bare facts. Render label dim + prefixed when present.
+      if (tipEl && h && h.tip && h.tip.text) {
+        const t = h.tip;
+        tipEl.innerHTML = t.label
+          ? esc(t.text) + ' <span class="lbl">\u2014 ' + esc(t.label) + '</span>'
+          : esc(t.text);
+      }
+
+      // Minimal meta: version · N agents · provider. No pills, no mode badge.
+      if (meta) {
+        const items = [];
+        if (h && h.version) items.push('<span class="mi"><span class="v">v' + esc(h.version) + '</span></span>');
+        if (h && h.agentCount) items.push('<span class="mi"><span class="v">' + esc(String(h.agentCount)) + '</span> agents</span>');
+        if (st && st.provider) items.push('<span class="mi">' + esc(st.provider) + '</span>');
+        meta.innerHTML = items.join('<span class="sep">\u00b7</span>');
+      }
     })();
   }
 
