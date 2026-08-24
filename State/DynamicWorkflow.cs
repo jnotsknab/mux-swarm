@@ -408,6 +408,14 @@ public static class DynamicWorkflow
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Redirect stdin too. When serve mode launches the driver, an un-redirected stdin is
+            // INHERITED from the serve process -- a pipe/handle with no console attached. CPython's
+            // startup (io/site init) can then block on that handle indefinitely: the driver stays
+            // alive but never reaches even its first line (manifest.json write), so the run shows
+            // 0/0 with an empty driver.log forever. Redirecting + closing stdin gives the child a
+            // clean, closed input stream so it starts normally. (The same inherited-stdin hang bit
+            // the SDK probe helpers.)
+            RedirectStandardInput = true,
             WorkingDirectory = dir,
         };
         psi.Environment["MUX_BINARY"] = Environment.ProcessPath ?? Path.Combine(PlatformContext.BaseDirectory, OperatingSystem.IsWindows() ? "MuxSwarm.exe" : "MuxSwarm");
@@ -432,6 +440,9 @@ public static class DynamicWorkflow
         try
         {
             proc = Process.Start(psi) ?? throw new InvalidOperationException("python did not start");
+            // Close the driver's stdin immediately: it never reads input, and leaving the pipe open
+            // is what lets a serve-launched child block in interpreter startup.
+            try { proc.StandardInput.Close(); } catch { /* already gone */ }
             // Drain child stdio to the run dir so a failing script leaves a readable log and the
             // pipes never fill (the TUI must NOT inherit them - see the /login reflex).
             var logPath = Path.Combine(dir, "driver.log");
