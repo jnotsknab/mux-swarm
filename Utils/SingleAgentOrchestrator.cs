@@ -1290,7 +1290,7 @@ public static class SingleAgentOrchestrator
                     return bg.ToString();
                 }
 
-                MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
+                if (App.VerboseInit) MuxConsole.WriteInfo($"Dispatching {assignmentList.Count} tasks concurrently...");
 
                 // Link the captured app/session token with the live PER-TURN token so Esc (which
                 // cancels turnCts) unwinds the whole parallel batch. Otherwise the lead blocks on
