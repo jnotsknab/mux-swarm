@@ -3,9 +3,10 @@
 namespace MuxSwarm.Utils.Tui;
 
 /// <summary>
-/// The /workflows live viewer model (v0.12.4). Follows the AgentView/JobView pattern: PURE -
-/// holds selection state and produces markup rows from a registry snapshot, no console I/O,
-/// fully unit-testable. Master/detail layout (mux-style, low density): the selected run
+/// The /workflows live viewer model (v0.12.4; rendered FULLSCREEN since v0.13.1). PURE - holds
+/// selection state and produces markup rows from a registry snapshot, no console I/O, fully
+/// unit-testable; the driver (TuiDriver.EnterWorkflowView) owns the screen and diff-paints these
+/// rows. Master/detail layout (mux-style, low density): the selected run
 /// expands into a linked pair of panels - LEFT lists the workflow's phases (sections) with
 /// done-fraction counters, RIGHT enumerates ONLY the selected phase's tasks with per-task
 /// telemetry (agent, status, model, tool count, duration). Up/Down selects the run,
