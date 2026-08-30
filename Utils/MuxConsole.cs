@@ -1734,6 +1734,22 @@ public static partial class MuxConsole
             return;
         }
 
+        // TUI: route the spinner into the driver's docked "thinking" line (pinged on a timer to
+        // animate) instead of Spectre's Status(), which paints at the raw cursor and z-fights the
+        // frame's docked footer/rule (the compaction-spinner artifact). Same seam as BeginThinking.
+        if (ViaDriver)
+        {
+            using var spinCts = new CancellationTokenSource();
+            var pinger = Task.Run(async () =>
+            {
+                try { while (!spinCts.Token.IsCancellationRequested) { TuiSetThinking(message); await Task.Delay(80, spinCts.Token); } }
+                catch (OperationCanceledException) { /* stopped */ }
+            });
+            try { work(); }
+            finally { spinCts.Cancel(); try { pinger.Wait(500); } catch { /* ignore */ } TuiSetThinking(null); }
+            return;
+        }
+
         AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .SpinnerStyle(new Style(Color.Grey))
@@ -1752,6 +1768,22 @@ public static partial class MuxConsole
             EmitJson("task_start", message);
             await work();
             EmitJson("task_done", message);
+            return;
+        }
+
+        // TUI: route the spinner into the driver's docked "thinking" line (pinged on a timer to
+        // animate) instead of Spectre's Status(), which paints at the raw cursor and z-fights the
+        // frame's docked footer/rule (the compaction-spinner artifact). Same seam as BeginThinking.
+        if (ViaDriver)
+        {
+            using var spinCts = new CancellationTokenSource();
+            var pinger = Task.Run(async () =>
+            {
+                try { while (!spinCts.Token.IsCancellationRequested) { TuiSetThinking(message); await Task.Delay(80, spinCts.Token); } }
+                catch (OperationCanceledException) { /* stopped */ }
+            });
+            try { await work(); }
+            finally { spinCts.Cancel(); try { await pinger; } catch { /* ignore */ } TuiSetThinking(null); }
             return;
         }
 
