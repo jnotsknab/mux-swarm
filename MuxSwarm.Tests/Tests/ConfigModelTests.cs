@@ -23,10 +23,11 @@ public class ConfigModelTests
     }
 
     [Fact]
-    public void AppConfig_Defaults_ServeAddressIsAllInterfaces()
+    public void AppConfig_Defaults_ServeAddressIsLoopback()
     {
+        // Secure-by-default: the serve control plane binds to loopback unless explicitly exposed.
         var config = new AppConfig();
-        Assert.Equal("0.0.0.0", config.ServeAddress);
+        Assert.Equal("127.0.0.1", config.ServeAddress);
     }
 
     [Fact]
