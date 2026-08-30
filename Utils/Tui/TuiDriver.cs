@@ -1790,7 +1790,8 @@ internal sealed class TuiDriver
             toolCalls: _toolCalls,
             model: _model,
             width: width,
-            pulseFrame: pulseFrame));
+            pulseFrame: pulseFrame,
+            activeMode: ServeMode.ActiveMode));
 
         if (_inInput)
         {
