@@ -187,11 +187,13 @@ internal sealed class WorkflowView
                 // Task window: bounded by MaxTaskRows, and further by the visible height when
                 // known (header + run rows + phase chrome + hint reserved) so the dashboard
                 // never composes more rows than the terminal can show.
+                // When the real screen height is known, let the task window use the full
+                // vertical space (fullscreen view) rather than the MaxTaskRows docked cap.
                 int maxTaskRows = MaxTaskRows;
                 if (height > 0)
                 {
                     int reserved = rows.Count + (stacked ? 2 : 1) + 3;   // phase strip/header + window hints + key hint
-                    maxTaskRows = Math.Clamp(height - reserved, 3, MaxTaskRows);
+                    maxTaskRows = Math.Max(3, height - reserved);
                 }
 
                 int ti = Math.Clamp(_taskIdx, 0, Math.Max(0, cur.Tasks.Count - 1));
@@ -241,7 +243,12 @@ internal sealed class WorkflowView
                         right.Add($"[{TuiComponents.Dim}]\u2193 {cur.Tasks.Count - off - maxTaskRows} more[/]");
 
                     // Compose two columns joined with a vertical rule; pad by PLAIN width.
+                    // FULLSCREEN: when the height is known, extend the divider down the full
+                    // content region (blank cells below the content) so the split-pane fills the
+                    // screen down to the bottom-docked key hint, instead of a small box + dead gap.
                     int n = Math.Max(left.Count, right.Count);
+                    if (height > 0)
+                        n = Math.Max(n, height - 1 - rows.Count - (run.Error is not null ? 1 : 0));
                     for (int i = 0; i < n; i++)
                     {
                         string lc = i < left.Count ? left[i] : "";
@@ -253,9 +260,21 @@ internal sealed class WorkflowView
             if (run.Error is not null)
                 rows.Add($"      [{TuiComponents.Err}]\u2717 {Esc(Trunc(run.Error, Math.Max(20, width - 12)))}[/]");
         }
-        rows.Add(width < 60
+        string keyHint = width < 60
             ? $"  [{TuiComponents.Dim}]\u2191\u2193 \u2190\u2192 \u21b5 \u21b9 \u00b7 esc close[/]"
-            : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]");
+            : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]";
+
+        // FULLSCREEN docking (v0.13.1): when the driver passes the real screen height, pad blank
+        // rows so the key hint pins to the BOTTOM row and the view fills the screen (mirrors the
+        // docked footer's variable sizing) instead of floating in the top-left. Reserve one row
+        // for the hint; if content already overflows, the driver clamps it and the hint rides just
+        // below (still Clamp-bounded).
+        if (height > 0)
+        {
+            int pad = height - rows.Count - 1;
+            for (int i = 0; i < pad; i++) rows.Add("");
+        }
+        rows.Add(keyHint);
         return Clamp(rows, width);
     }
 
