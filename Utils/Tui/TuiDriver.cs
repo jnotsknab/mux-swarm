@@ -1060,15 +1060,16 @@ internal sealed class TuiDriver
                     catch (InvalidOperationException) { break; }
                 }
 
-                // Up/Down scroll the selected phase's TASK window (the dense dimension);
-                // Left/Right switch phases; Tab cycles runs; 1-9 jump straight to a run.
+                // Up/Down move the task selection - or, when a task is expanded, scroll THROUGH
+                // its output buffer (handled inside MoveTask). Left/Right switch phases (suppressed
+                // while expanded); Tab cycles runs; 1-9 jump straight to a run.
                 if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
                     { _workflowView.MoveTask(-1); Paint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
                     { _workflowView.MoveTask(+1); Paint(); continue; }
-                if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H)
+                if (!_workflowView.IsTaskExpanded && (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H))
                     { _workflowView.MovePhase(-1); Paint(); continue; }
-                if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L)
+                if (!_workflowView.IsTaskExpanded && (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L))
                     { _workflowView.MovePhase(+1); Paint(); continue; }
                 if (key.Key == ConsoleKey.Tab)
                     { _workflowView.Move(+1); Paint(); continue; }
@@ -1077,6 +1078,9 @@ internal sealed class TuiDriver
                 if (key.Key == ConsoleKey.Enter || key.Key == ConsoleKey.O)
                     { _workflowView.ToggleTaskExpand(); Paint(); continue; }
 
+                // Esc collapses an expanded task first (vim-like); q always closes the view.
+                if (key.Key == ConsoleKey.Escape && _workflowView.IsTaskExpanded)
+                    { _workflowView.ToggleTaskExpand(); Paint(); continue; }
                 if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
                     break;
 

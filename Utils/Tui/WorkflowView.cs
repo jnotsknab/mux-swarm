@@ -19,6 +19,7 @@ internal sealed class WorkflowView
     private int _phaseIdx;
     private int _taskIdx;
     private bool _taskExpanded;
+    private int _taskScroll;   // lines scrolled up from the bottom (tail) of an expanded task's output
     private bool _open;
     private const int MaxTaskRows = 12;
     private const int PhaseColWidth = 30;
@@ -26,6 +27,10 @@ internal sealed class WorkflowView
     public bool IsOpen => _open;
     public void Open() => _open = true;
     public void Close() => _open = false;
+
+    /// <summary>True while the selected task is expanded (its output is being scrolled). The
+    /// driver routes Esc to collapse-first and suppresses phase switching in this state.</summary>
+    public bool IsTaskExpanded => _taskExpanded;
 
     /// <summary>Replace the run snapshot. Selection preserved by id; falls back to the newest
     /// RUNNING run (the interesting one), then the newest run.</summary>
@@ -38,6 +43,7 @@ internal sealed class WorkflowView
             _phaseIdx = 0;
             _taskIdx = 0;
             _taskExpanded = false;
+            _taskScroll = 0;
         }
     }
 
@@ -63,7 +69,7 @@ internal sealed class WorkflowView
         if (_runs.Count == 0) return;
         int idx = _runs.FindIndex(r => string.Equals(r.Id, SelectedId(), StringComparison.Ordinal));
         idx = ((idx + delta) % _runs.Count + _runs.Count) % _runs.Count;
-        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
+        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _selectedId = _runs[idx].Id;
     }
 
@@ -73,31 +79,41 @@ internal sealed class WorkflowView
         var run = SelectedRun();
         if (run is null || run.Manifest.Sections.Count == 0) return;
         int next = Math.Clamp(_phaseIdx + delta, 0, run.Manifest.Sections.Count - 1);
-        if (next != _phaseIdx) { _taskIdx = 0; _taskExpanded = false; }
+        if (next != _phaseIdx) { _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _phaseIdx = next;
     }
 
-    /// <summary>Move the task SELECTION within the selected phase (Up/Down); the visible
-    /// window follows the selection. Collapses any expansion on move.</summary>
+    /// <summary>Up/Down handler. When a task is EXPANDED, scrolls THROUGH that task's output
+    /// buffer (delta&lt;0 = toward older lines, delta&gt;0 = toward the tail); the scroll offset is
+    /// clamped to the buffer in the renderer. When NOT expanded, moves the task SELECTION within
+    /// the selected phase (the visible window follows the selection).</summary>
     public void MoveTask(int delta)
     {
         var run = SelectedRun();
         if (run is null || run.Manifest.Sections.Count == 0) return;
         var sec = run.Manifest.Sections[Math.Clamp(_phaseIdx, 0, run.Manifest.Sections.Count - 1)];
         if (sec.Tasks.Count == 0) return;
+        if (_taskExpanded)
+        {
+            // Scroll the expanded output: up (delta<0) reveals older lines by growing the
+            // offset-from-tail; down shrinks it back toward the live tail. Upper bound is
+            // clamped against the actual buffer height at render time.
+            _taskScroll = Math.Max(0, _taskScroll - delta);
+            return;
+        }
         _taskIdx = Math.Clamp(_taskIdx + delta, 0, sec.Tasks.Count - 1);
-        _taskExpanded = false;
     }
 
-    /// <summary>Toggle the selected task's expansion (full detail text, wrapped).</summary>
-    public void ToggleTaskExpand() => _taskExpanded = !_taskExpanded;
+    /// <summary>Toggle the selected task's expansion (full output, scrollable). Resets the
+    /// scroll to the live tail on each open/close.</summary>
+    public void ToggleTaskExpand() { _taskExpanded = !_taskExpanded; _taskScroll = 0; }
 
     /// <summary>Select a run by 1-based ordinal (number keys). No-op out of range.</summary>
     public void SelectRunAt(int ordinal)
     {
         if (ordinal < 1 || ordinal > _runs.Count) return;
         var id = _runs[ordinal - 1].Id;
-        if (!string.Equals(id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
+        if (!string.Equals(id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _selectedId = id;
     }
 
@@ -262,7 +278,9 @@ internal sealed class WorkflowView
         }
         string keyHint = width < 60
             ? $"  [{TuiComponents.Dim}]\u2191\u2193 \u2190\u2192 \u21b5 \u21b9 \u00b7 esc close[/]"
-            : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]";
+            : _taskExpanded
+                ? $"  [{TuiComponents.Dim}]\u2191\u2193 scroll output \u00b7 enter/esc collapse \u00b7 q close[/]"
+                : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]";
 
         // FULLSCREEN docking (v0.13.1): when the driver passes the real screen height, pad blank
         // rows so the key hint pins to the BOTTOM row and the view fills the screen (mirrors the
@@ -337,10 +355,18 @@ internal sealed class WorkflowView
             int wrapW = stacked ? Math.Max(20, width - indent.Length - 5)
                                 : Math.Max(24, width - PhaseColWidth - 14);
             var wrapped = TuiMarkup.WrapPlain(body, wrapW);
-            int skip = Math.Max(0, wrapped.Count - ExpandTailLines);
-            if (skip > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2191 {skip} earlier line(s)[/]");
-            foreach (var wl in wrapped.Skip(skip))
-                sink.Add($"{indent}   [{colour}]{Esc(wl)}[/]");
+            // Scrollable window: show ExpandTailLines lines, offset _taskScroll lines up from the
+            // bottom (tail). Clamp the offset to the buffer so it can never scroll past either end;
+            // arrows drive _taskScroll via MoveTask while expanded.
+            int maxScroll = Math.Max(0, wrapped.Count - ExpandTailLines);
+            if (_taskScroll > maxScroll) _taskScroll = maxScroll;
+            int end = wrapped.Count - _taskScroll;                 // exclusive; tail when scroll=0
+            int start = Math.Max(0, end - ExpandTailLines);
+            if (start > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2191 {start} earlier line(s)[/]");
+            for (int wi = start; wi < end; wi++)
+                sink.Add($"{indent}   [{colour}]{Esc(wrapped[wi])}[/]");
+            int below = wrapped.Count - end;
+            if (below > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2193 {below} more line(s) \u00b7 \u2191\u2193 scroll[/]");
         }
     }
 
