@@ -450,7 +450,7 @@ public static class ParallelSwarmOrchestrator
             ) =>
             {
                 var assignmentList = assignments.ToList();
-                MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
+                if (App.VerboseInit) MuxConsole.WriteInfo($"Dispatching {assignmentList.Count} tasks concurrently...");
 
                 var taskBatch = assignmentList.Select(async req =>
                 {
@@ -1658,7 +1658,7 @@ public static class ParallelSwarmOrchestrator
             if (iterToolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
                 MuxConsole.WriteTaskComplete(label, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary);
-                MuxConsole.WriteRule();
+                if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
                 string raw = fullResponseAccumulator.ToString();
                 return (raw, completionStatus, completionSummary, completionArtifacts);

@@ -1756,7 +1756,7 @@ public static class MultiAgentOrchestrator
             if (iterToolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
                 MuxConsole.WriteTaskComplete(specialist.Def.Name, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary);
-                MuxConsole.WriteRule();
+                if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
 
                 string raw = fullResponseAccumulator.ToString();
