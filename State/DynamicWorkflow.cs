@@ -236,6 +236,78 @@ public static class DynamicWorkflow
 
     /// <summary>The scripting contract + example fed to the model when it authors a driver
     /// script (giga run_dynamic_workflow and /workflow dynamic share it).</summary>
+    /// <summary>
+    /// Pre-flight guard for a dynamic-workflow launch: verifies the child engine can resolve config
+    /// and reach a provider BEFORE the driver is spawned, so a misconfigured/half-staged install
+    /// fails fast with a clear reason instead of producing a run full of empty-output tasks. Returns
+    /// null when the environment looks healthy, or a human-readable error string to surface instead
+    /// of launching. Runs one short headless smoke turn against the first agent named in the script's
+    /// manifest (falling back to a configured agent).
+    /// </summary>
+    private static string? PreflightConfigProbe(string binary, string? cfg, string? swarmcfg, string script)
+    {
+        // 1) Hard config-existence check. Children inherit MUX_CFG/MUX_SWARMCFG; if absent they drop
+        //    into first-run setup and die "No endpoint provided. Setup failed." on every task.
+        if (string.IsNullOrEmpty(cfg) || !File.Exists(cfg))
+            return $"[workflow] Pre-flight failed: config not found at '{cfg ?? PlatformContext.ConfigPath}'. " +
+                   "Child engines can't resolve a provider and every task would return empty. " +
+                   "Fix the install's Configs/ (Config.json + Swarm.json) and retry.";
+        if (string.IsNullOrEmpty(swarmcfg) || !File.Exists(swarmcfg))
+            return $"[workflow] Pre-flight failed: swarm config not found at '{swarmcfg ?? PlatformContext.SwarmPath}'. " +
+                   "Fix the install's Configs/Swarm.json and retry.";
+
+        // 2) One fast smoke turn: prove a child can actually reach the provider and stream output.
+        //    Cheap insurance (~a few seconds) against a whole pipeline of empty failures.
+        string probeAgent = FirstManifestAgent(script) ?? "WebAgent";
+        try
+        {
+            var ppsi = new ProcessStartInfo(binary,
+                $"--stdio --agent {probeAgent} \"Reply with the single word: ok\" --cfg \"{cfg}\" --swarmcfg \"{swarmcfg}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                WorkingDirectory = PlatformContext.BaseDirectory,
+            };
+            using var pp = Process.Start(ppsi);
+            if (pp is null) return null;   // can't probe; don't block the launch on our own failure
+            try { pp.StandardInput.Close(); } catch { /* already closed */ }
+            var stdoutTask = pp.StandardOutput.ReadToEndAsync();
+            _ = pp.StandardError.ReadToEndAsync();   // drain stderr so the child can't block on a full pipe
+            if (!pp.WaitForExit(45_000))
+            {
+                try { pp.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                return null;   // slow provider is not a hard failure; let the real run proceed
+            }
+            string outText = stdoutTask.GetAwaiter().GetResult() ?? "";
+            // --stdio emits NDJSON. A config/setup failure emits "No endpoint provided" / "Setup failed".
+            // Only BLOCK on an explicit provider/setup failure - the dominant, deterministic cause of
+            // whole-run empty cascades. A merely stream-less turn (odd agent, terse reply) is NOT
+            // treated as fatal, to avoid false positives that would wrongly refuse a healthy launch.
+            if (outText.Contains("No endpoint provided") || outText.Contains("Setup failed"))
+                return "[workflow] Pre-flight failed: a child engine could not reach a provider " +
+                       "(\"No endpoint provided / Setup failed\"). Check Config.json provider/endpoint " +
+                       "and retry - launching would otherwise produce a run of empty-output tasks.";
+        }
+        catch
+        {
+            // Probe infrastructure failure is not the workflow's fault - don't block the launch.
+            return null;
+        }
+        return null;
+    }
+
+    /// <summary>Best-effort extract of the first agent name from a driver script's manifest (the
+    /// first <c>"agent": "Name"</c> occurrence). Used to pick a representative pre-flight probe
+    /// agent; returns null when none is found.</summary>
+    private static string? FirstManifestAgent(string script)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(script, "\"agent\"\\s*:\\s*\"([^\"]+)\"");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
     public static string ScriptContract(int maxParallel) => $$"""
         ## Dynamic-workflow driver script contract (Python, muxswarm SDK)
         Author a COMPLETE Python script. It runs OUTSIDE your session and drives separate mux
@@ -475,6 +547,17 @@ public static class DynamicWorkflow
                 ? sdkPythonPath
                 : sdkPythonPath + Path.PathSeparator + existingPp;
         }
+
+        // PRE-FLIGHT (v0.13.1): child mux processes MUST be able to resolve config + reach a
+        // provider, or every task returns an empty RunResult and the whole run cascades into blank
+        // failures (live-diagnosed: a config-less/half-staged install nukes the entire pipeline).
+        // Catch it ONCE here, before launching a doomed driver, and surface a clear reason.
+        var binForProbe = psi.Environment["MUX_BINARY"]!;
+        psi.Environment.TryGetValue("MUX_CFG", out var cfgForProbe);
+        psi.Environment.TryGetValue("MUX_SWARMCFG", out var swarmForProbe);
+        var preflight = PreflightConfigProbe(binForProbe, cfgForProbe, swarmForProbe, script);
+        if (preflight is { } preflightError)
+            return preflightError;
 
         Process proc;
         try
