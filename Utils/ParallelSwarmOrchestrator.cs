@@ -356,7 +356,7 @@ public static class ParallelSwarmOrchestrator
 
                 if (filteredTools.Count == 0)
                     MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
-                else
+                else if (App.VerboseInit)
                     MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
@@ -437,6 +437,9 @@ public static class ParallelSwarmOrchestrator
                 specialists[def.Name] = (agent, session, def);
             }
         });
+
+        if (!App.VerboseInit)
+            MuxConsole.WriteSuccess($"{specialists.Count} specialists ready. (use /verbose for per-agent detail)");
 
         // ── 5. The Parallel "Assignment" Tool ────────────────────────────
 
@@ -553,7 +556,7 @@ public static class ParallelSwarmOrchestrator
 
         if (orchestratorFilteredTools.Count == 0)
             MuxConsole.WriteMuted("Orchestrator has 0 MCP tools. Using built-in tools only.");
-        else
+        else if (App.VerboseInit)
             MuxConsole.WriteSuccess($"Orchestrator has {orchestratorFilteredTools.Count} MCP tools available");
 
         var orchestratorTools = (IList<AITool>)[

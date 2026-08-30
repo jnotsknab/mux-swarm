@@ -25,7 +25,12 @@ public class App
     private static string? _cliModelOverride;
     private static bool _watchDogEnabled;
     private static bool _verboseToggle;
-    private static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// True when verbose diagnostic output is enabled, via the <c>/verbose</c> command,
+    /// the <c>--verbose</c> flag, an attached debugger, or the <c>MUXSWARM_VERBOSE=1</c>
+    /// environment variable. Gates non-essential init/orchestration console chatter.
+    /// </summary>
+    internal static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
