@@ -503,14 +503,41 @@ public static partial class ServeMode
         _ => null,
     };
 
-    /// <summary>Safely join root + subpath, preventing directory traversal.</summary>
-    private static string? SafeJoin(string root, string subpath)
+    /// <summary>
+    /// Safely join <paramref name="root"/> + <paramref name="subpath"/>, confining the result to
+    /// the root subtree. Returns <c>null</c> when the resolved path escapes the root.
+    /// </summary>
+    /// <param name="root">Containment root. Canonicalized before use.</param>
+    /// <param name="subpath">Untrusted relative path (query/route supplied).</param>
+    /// <returns>The canonical absolute path inside <paramref name="root"/>, or <c>null</c> if outside.</returns>
+    /// <remarks>
+    /// Containment requires a path-component boundary: the resolved path must equal the root, or
+    /// begin with root + <see cref="Path.DirectorySeparatorChar"/>. A bare prefix test is NOT
+    /// sufficient -- a sibling directory named <c>&lt;root&gt;_escape</c> string-prefix-matches the
+    /// root and would otherwise pass (CWE-22). Comparison is case-insensitive only on Windows;
+    /// on case-sensitive filesystems <c>/root</c> and <c>/ROOT</c> are distinct directories.
+    /// </remarks>
+    internal static string? SafeJoin(string root, string subpath)
     {
         try
         {
-            var full = Path.GetFullPath(Path.Combine(root, subpath));
             var rootFull = Path.GetFullPath(root);
-            return full.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase) ? full : null;
+            var full = Path.GetFullPath(Path.Combine(rootFull, subpath));
+
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            // TrimEndingDirectorySeparator intentionally does NOT trim a filesystem root
+            // ("C:\" and "/" come back unchanged), so only append a separator when one is absent.
+            var rootTrimmed = Path.TrimEndingDirectorySeparator(rootFull);
+            var rootWithSeparator = rootTrimmed.EndsWith(Path.DirectorySeparatorChar)
+                ? rootTrimmed
+                : rootTrimmed + Path.DirectorySeparatorChar;
+
+            return string.Equals(Path.TrimEndingDirectorySeparator(full), rootTrimmed, comparison)
+                   || full.StartsWith(rootWithSeparator, comparison)
+                ? full : null;
         }
         catch
         {
