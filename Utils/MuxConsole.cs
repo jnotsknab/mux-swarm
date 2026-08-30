@@ -1693,6 +1693,39 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>Like <see cref="WritePanel"/> but the body is Markdown: each line is rendered
+    /// through <see cref="Tui.TuiMarkdown.ToMarkup"/> so headings, bold, inline code, and list
+    /// bullets display as styled terminal text instead of literal "#" / "-" / "**". Use for command
+    /// output that is genuine Markdown (e.g. /doctor, /fix, /review); keep <see cref="WritePanel"/>
+    /// for raw text (diffs, shell output) that must NOT be markdown-parsed. Stdio/serve get the raw
+    /// Markdown payload (the web/SDK client renders it). Injection-safe: ToMarkup escapes brackets.</summary>
+    public static void WritePanelMarkdown(string title, string content)
+    {
+        WithConsole(() =>
+        {
+            if (StdioMode)
+            {
+                EmitJson("panel", D(("title", title), ("content", content)));
+                return;
+            }
+
+            var rendered = (content ?? "").Replace("\r\n", "\n").Split('\n')
+                .Select(l => Tui.TuiMarkdown.ToMarkup(l.TrimEnd()));
+
+            if (ViaDriver)
+            {
+                var detail = rendered.Select(m => $"  {m}");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+            }
+
+            AnsiConsole.Write(new Panel(string.Join("\n", rendered))
+                .Header($"[{C.Step}]{Esc(title)}[/]")
+                .Border(BoxBorder.Rounded)
+                .BorderStyle(new Style(Color.Grey35))
+                .Padding(1, 0));
+        });
+    }
+
     /// <summary>Like <see cref="WritePanel"/> but each body line is ALREADY themed Spectre markup
     /// (caller owns coloring + escaping of untrusted text). Used by command output that needs
     /// per-line semantic color (e.g. /kanban status columns) while keeping its plain-text model

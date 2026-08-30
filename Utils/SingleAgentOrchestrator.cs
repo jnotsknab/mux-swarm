@@ -507,7 +507,7 @@ public static class SingleAgentOrchestrator
             return;
         }
 
-        MuxConsole.WritePanel("/fix - diagnosis & repair plan", diagnosis);
+        MuxConsole.WritePanelMarkdown("/fix - diagnosis & repair plan", diagnosis);
     }
 
     // /diff: show the working-tree git diff (staged fallback) through the collapsible diff renderer.
@@ -581,7 +581,7 @@ public static class SingleAgentOrchestrator
             sb.Append($"WARN - {warns.Count} issue(s):\n");
             foreach (var w in warns) sb.Append("  - ").Append(w).Append('\n');
         }
-        MuxConsole.WritePanel("/doctor - runtime health", sb.ToString().TrimEnd());
+        MuxConsole.WritePanelMarkdown("/doctor - runtime health", sb.ToString().TrimEnd());
     }
 
     // /cost: session token usage + estimated $ for API providers. Subscription providers routed
@@ -789,7 +789,7 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteMuted("Review produced no findings.");
             return;
         }
-        MuxConsole.WritePanel("/review - diff findings", findings);
+        MuxConsole.WritePanelMarkdown("/review - diff findings", findings);
     }
 
     public static async Task ChatAgentAsync(
