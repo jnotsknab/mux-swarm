@@ -97,6 +97,7 @@ public struct Help
         "  Esc             Empty prompt: open transcript view; with text: enter vim Normal mode",
         "  Ctrl+E          Expand the most recent large/collapsed tool result in place",
         "  Ctrl+G          Open the transcript/expand view (secondary to Esc; never cancels the turn)",
+        "  Ctrl+N          Steer mid-turn: compose a \"by the way ...\" note; agent keeps working, note sent next",
         "  Ctrl+L          Clear resize/redraw artifacts and repaint (never cancels the turn)",
         "  Ctrl+R          Reverse-search command history (type to filter, Ctrl+R for older, Enter run, Esc edit)",
         "  Tab             Accept the top autocomplete (/command, @file, /skill, /resume)",

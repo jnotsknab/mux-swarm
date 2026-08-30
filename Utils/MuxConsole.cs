@@ -1693,6 +1693,39 @@ public static partial class MuxConsole
         });
     }
 
+    /// <summary>Like <see cref="WritePanel"/> but the body is Markdown: each line is rendered
+    /// through <see cref="Tui.TuiMarkdown.ToMarkup"/> so headings, bold, inline code, and list
+    /// bullets display as styled terminal text instead of literal "#" / "-" / "**". Use for command
+    /// output that is genuine Markdown (e.g. /doctor, /fix, /review); keep <see cref="WritePanel"/>
+    /// for raw text (diffs, shell output) that must NOT be markdown-parsed. Stdio/serve get the raw
+    /// Markdown payload (the web/SDK client renders it). Injection-safe: ToMarkup escapes brackets.</summary>
+    public static void WritePanelMarkdown(string title, string content)
+    {
+        WithConsole(() =>
+        {
+            if (StdioMode)
+            {
+                EmitJson("panel", D(("title", title), ("content", content)));
+                return;
+            }
+
+            var rendered = (content ?? "").Replace("\r\n", "\n").Split('\n')
+                .Select(l => Tui.TuiMarkdown.ToMarkup(l.TrimEnd()));
+
+            if (ViaDriver)
+            {
+                var detail = rendered.Select(m => $"  {m}");
+                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+            }
+
+            AnsiConsole.Write(new Panel(string.Join("\n", rendered))
+                .Header($"[{C.Step}]{Esc(title)}[/]")
+                .Border(BoxBorder.Rounded)
+                .BorderStyle(new Style(Color.Grey35))
+                .Padding(1, 0));
+        });
+    }
+
     /// <summary>Like <see cref="WritePanel"/> but each body line is ALREADY themed Spectre markup
     /// (caller owns coloring + escaping of untrusted text). Used by command output that needs
     /// per-line semantic color (e.g. /kanban status columns) while keeping its plain-text model
@@ -1734,6 +1767,22 @@ public static partial class MuxConsole
             return;
         }
 
+        // TUI: route the spinner into the driver's docked "thinking" line (pinged on a timer to
+        // animate) instead of Spectre's Status(), which paints at the raw cursor and z-fights the
+        // frame's docked footer/rule (the compaction-spinner artifact). Same seam as BeginThinking.
+        if (ViaDriver)
+        {
+            using var spinCts = new CancellationTokenSource();
+            var pinger = Task.Run(async () =>
+            {
+                try { while (!spinCts.Token.IsCancellationRequested) { TuiSetThinking(message); await Task.Delay(80, spinCts.Token); } }
+                catch (OperationCanceledException) { /* stopped */ }
+            });
+            try { work(); }
+            finally { spinCts.Cancel(); try { pinger.Wait(500); } catch { /* ignore */ } TuiSetThinking(null); }
+            return;
+        }
+
         AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .SpinnerStyle(new Style(Color.Grey))
@@ -1752,6 +1801,22 @@ public static partial class MuxConsole
             EmitJson("task_start", message);
             await work();
             EmitJson("task_done", message);
+            return;
+        }
+
+        // TUI: route the spinner into the driver's docked "thinking" line (pinged on a timer to
+        // animate) instead of Spectre's Status(), which paints at the raw cursor and z-fights the
+        // frame's docked footer/rule (the compaction-spinner artifact). Same seam as BeginThinking.
+        if (ViaDriver)
+        {
+            using var spinCts = new CancellationTokenSource();
+            var pinger = Task.Run(async () =>
+            {
+                try { while (!spinCts.Token.IsCancellationRequested) { TuiSetThinking(message); await Task.Delay(80, spinCts.Token); } }
+                catch (OperationCanceledException) { /* stopped */ }
+            });
+            try { await work(); }
+            finally { spinCts.Cancel(); try { await pinger; } catch { /* ignore */ } TuiSetThinking(null); }
             return;
         }
 

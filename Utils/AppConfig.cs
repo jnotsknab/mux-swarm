@@ -10,8 +10,13 @@ public class AppConfig
     [JsonPropertyName("isUsingDockerForExec")]
     public bool IsUsingDockerForExec { get; set; } = false;
 
+    /// <summary>Interface the <c>--serve</c> web/API listener binds to. Defaults to
+    /// <c>127.0.0.1</c> (loopback) so the control plane is not network-reachable out of the box -
+    /// the runtime has no auth by default, and the file APIs include destructive operations. Set to
+    /// <c>0.0.0.0</c> (or a specific interface IP) to expose it deliberately, ideally behind an
+    /// authenticating perimeter (nginx) or with <c>serve.auth.enabled</c> turned on.</summary>
     [JsonPropertyName("serveAddress")]
-    public string ServeAddress { get; set; } = "0.0.0.0";
+    public string ServeAddress { get; set; } = "127.0.0.1";
 
     [JsonPropertyName("mcpServers")]
     public Dictionary<string, McpServerConfig> McpServers { get; set; } = new();
