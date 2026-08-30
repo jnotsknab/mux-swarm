@@ -110,6 +110,13 @@ public sealed class EscapeKeyListener : IDisposable
     /// second concurrent key reader.
     /// </summary>
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents)
+        => Start(targetCts, outerToken, onExpand, onView, onAgents, onSteer: null);
+
+    /// <summary>Full overload adding <paramref name="onSteer"/> (Ctrl+N): open a mid-turn steer
+    /// compose box WITHOUT cancelling, so the user can queue a "by the way ..." follow-up while the
+    /// agent keeps working. Runs synchronously on the listener thread (same no-second-reader contract
+    /// as <paramref name="onView"/>/onExpand). No-op when null.</summary>
+    public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents, Action? onSteer)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
 
@@ -240,6 +247,18 @@ public sealed class EscapeKeyListener : IDisposable
                         if (ctrl && key.Key == ConsoleKey.T)
                         {
                             try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
+                            continue;
+                        }
+                        // Ctrl+N: open the mid-turn steer compose box ("by the way ...") WITHOUT
+                        // cancelling - the compose modal runs synchronously on THIS thread (same
+                        // no-second-reader contract as Ctrl+G), the agent keeps streaming above it,
+                        // and on submit the note is queued for the next turn boundary. Suppressed
+                        // while another modal owns the pump (an ask_user prompt is up) so two modal
+                        // loops never contend for the single input plane.
+                        if (ctrl && key.Key == ConsoleKey.N && onSteer is not null
+                            && !Tui.ConsoleInputPump.ModalActive)
+                        {
+                            try { onSteer(); } catch { /* steer compose is best-effort */ }
                             continue;
                         }
                         // Any OTHER key the listener read but does not act on (a typed char the user

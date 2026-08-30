@@ -1179,6 +1179,27 @@ public static partial class MuxConsole
         return res;
     }
 
+    /// <summary>Open a mid-turn steer compose box (Ctrl+N "by the way ..."): an in-frame text modal
+    /// rendered in the live band WHILE the agent keeps streaming above it, driven from the single
+    /// input plane (same seam as ask_user's <see cref="TuiPromptModal"/>). Returns the composed text
+    /// on submit, or null if the user cancelled (Esc), the box was empty, or the frame-modal path is
+    /// unavailable (inline/stdio/no pump/another modal open). Safe to call from the input-listener
+    /// thread mid-turn. On submit a dim trace line is committed to scrollback so the steer survives
+    /// in history.</summary>
+    internal static string? TuiSteerCompose()
+    {
+        if (!ViaDriver || !FrameEngineEnabled) return null;
+        if (InputOverride != Console.In) return null;   // scripted input owns the prompt
+        var res = _driver!.RunPromptModal(
+            PromptModalView.Kind.Text,
+            "Steer the agent (by the way ...) - it keeps working; your note is sent next.",
+            choices: null);
+        if (res is null || res.Cancelled || string.IsNullOrWhiteSpace(res.Text)) return null;
+        string trace = TuiMarkup.TruncatePlain(res.Text!.Replace("\r", " ").Replace("\n", " "), 60);
+        CommitToDriver($"  [{TC.Dim}]\u21b3 steer \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
+        return res.Text;
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
 

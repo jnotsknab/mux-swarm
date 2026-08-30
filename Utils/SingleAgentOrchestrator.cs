@@ -35,6 +35,37 @@ public static class SingleAgentOrchestrator
 
     private static bool _pendingCompaction;
 
+    // Mid-turn steering (Ctrl+N "by the way"): the user composes a follow-up WHILE the agent is
+    // working. It is queued here and spliced into the SAME turn's shared message list on the next
+    // model<->tool round-trip (see MidTurnSteerClient), so the agent sees it before finishing -
+    // exactly like the deep-memory ephemeral injection - rather than waiting for the turn to end.
+    // A ConcurrentQueue because the compose runs on the input-listener thread while the turn runs
+    // on the orchestrator/agent thread.
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> _pendingSteer = new();
+
+    /// <summary>Queue a mid-turn steer message ("by the way ...") to be injected INTO the current
+    /// turn on its next model round-trip (same session, turn not aborted). Enqueued from the TUI
+    /// input-listener thread (Ctrl+N compose). Blank/whitespace-only text is ignored. Thread-safe.</summary>
+    internal static void EnqueueSteer(string text)
+    {
+        if (!string.IsNullOrWhiteSpace(text)) _pendingSteer.Enqueue(text.Trim());
+    }
+
+    /// <summary>Drain all queued mid-turn steers into one combined user note (FIFO, blank-joined),
+    /// or null if none are pending. Called by <see cref="MidTurnSteerClient"/> on each round-trip to
+    /// splice the note into the live message list. Thread-safe.</summary>
+    internal static string? DrainSteer()
+    {
+        if (_pendingSteer.IsEmpty) return null;
+        var sb = new StringBuilder();
+        while (_pendingSteer.TryDequeue(out var s))
+        {
+            if (sb.Length > 0) sb.Append("\n\n");
+            sb.Append(s);
+        }
+        return sb.Length > 0 ? sb.ToString() : null;
+    }
+
     // Batch6: set after /undo or /retry rebuilds the provider session, so the next
     // turn replays the trimmed conversationHistory into the fresh session (one-shot).
     private static bool _pendingReseed;
@@ -1880,6 +1911,10 @@ public static class SingleAgentOrchestrator
             // payload is always just the new goal.
             List<ChatMessage> messages = [new(ChatRole.User, currentGoal)];
 
+            // Drop any steer left over from a previous (e.g. cancelled) turn so it cannot leak
+            // into this fresh goal; mid-turn steers are only meaningful within their own turn.
+            while (_pendingSteer.TryDequeue(out _)) { }
+
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
             // Deep memory: this turn's goal is the relevance query for injection, and a new turn is
@@ -1917,7 +1952,8 @@ public static class SingleAgentOrchestrator
         using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
             onExpand: () => MuxConsole.TuiExpandLatestInline(),
             onView: () => MuxConsole.TuiEnterViewMode(),
-            onAgents: () => MuxConsole.TuiEnterAgentView());
+            onAgents: () => MuxConsole.TuiEnterAgentView(),
+            onSteer: () => { var s = MuxConsole.TuiSteerCompose(); if (s is not null) EnqueueSteer(s); });
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
@@ -2283,6 +2319,22 @@ public static class SingleAgentOrchestrator
                         messages.Clear();
                         messages.Add(new ChatMessage(ChatRole.User,
                             "Your last response was empty. Please continue or summarize where you are."));
+                        continue;
+                    }
+
+                    // Steer fallback: the mid-turn client (MidTurnSteerClient) injects a queued steer
+                    // on the next model round-trip, which covers the common case. But a steer composed
+                    // during the agent's FINAL response has no further round-trip to land on, so if one
+                    // is still pending here, continue the turn on the same session with it as the next
+                    // user message rather than dropping it. (DrainSteer is queue-safe: if the client
+                    // already consumed it, this is null and we fall through to end the turn normally.)
+                    if (DrainSteer() is { } lateSteer)
+                    {
+                        if (!string.IsNullOrWhiteSpace(response))
+                            conversationHistory.Add(new ChatMessage(ChatRole.User, lateSteer));
+                        messages.Clear();
+                        messages.Add(new ChatMessage(ChatRole.User, lateSteer));
+                        stuckCount = 0;
                         continue;
                     }
 
