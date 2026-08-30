@@ -356,7 +356,7 @@ public static class ParallelSwarmOrchestrator
 
                 if (filteredTools.Count == 0)
                     MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
-                else
+                else if (App.VerboseInit)
                     MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
@@ -438,6 +438,9 @@ public static class ParallelSwarmOrchestrator
             }
         });
 
+        if (!App.VerboseInit)
+            MuxConsole.WriteSuccess($"{specialists.Count} specialists ready. (use /verbose for per-agent detail)");
+
         // ── 5. The Parallel "Assignment" Tool ────────────────────────────
 
         var delegateParallelTool = AIFunctionFactory.Create(
@@ -447,7 +450,7 @@ public static class ParallelSwarmOrchestrator
             ) =>
             {
                 var assignmentList = assignments.ToList();
-                MuxConsole.WriteInfo($"[CLASSROOM] Dispatching {assignmentList.Count} tasks concurrently...");
+                if (App.VerboseInit) MuxConsole.WriteInfo($"Dispatching {assignmentList.Count} tasks concurrently...");
 
                 var taskBatch = assignmentList.Select(async req =>
                 {
@@ -553,7 +556,7 @@ public static class ParallelSwarmOrchestrator
 
         if (orchestratorFilteredTools.Count == 0)
             MuxConsole.WriteMuted("Orchestrator has 0 MCP tools. Using built-in tools only.");
-        else
+        else if (App.VerboseInit)
             MuxConsole.WriteSuccess($"Orchestrator has {orchestratorFilteredTools.Count} MCP tools available");
 
         var orchestratorTools = (IList<AITool>)[
@@ -1655,7 +1658,7 @@ public static class ParallelSwarmOrchestrator
             if (iterToolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
                 MuxConsole.WriteTaskComplete(label, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary);
-                MuxConsole.WriteRule();
+                if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
                 string raw = fullResponseAccumulator.ToString();
                 return (raw, completionStatus, completionSummary, completionArtifacts);

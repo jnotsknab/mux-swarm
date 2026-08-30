@@ -659,8 +659,9 @@ internal static class TuiComponents
     /// the meter compacted) until the line fits on one row - it never wraps mid-chip. Drop
     /// order: Shift+Tab hint, sys/tools breakdown, cached text, session timer + calls, model,
     /// meter shrink, meter to bare percent, idle last-turn + effort chips.
+    /// <paramref name="activeMode"/> ("swarm"/"pswarm") adds a leftmost orchestration-mode chip.
     /// </summary>
-    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, string? model = null, int width = 0, int pulseFrame = -1)
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, string? model = null, int width = 0, int pulseFrame = -1, string? activeMode = null)
     {
         // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
         // discrete modes show individually. For a short window after activation the chip
@@ -681,6 +682,15 @@ internal static class TuiComponents
             if (psub) modeBadges.Add($"[{Accent}]psub[/]");
             if (sub) modeBadges.Add($"[{Ok}]sub[/]");
         }
+
+        // Orchestration-mode chip (leftmost): surfaces the active multi-agent mode set by the
+        // App loop (ServeMode.ActiveMode) - "swarm" (sequential orchestrator) or "pswarm"
+        // (parallel classroom). Static (never pulses) and always present so the user can tell
+        // at a glance which orchestration the session is running.
+        if (string.Equals(activeMode, "swarm", StringComparison.OrdinalIgnoreCase))
+            modeBadges.Insert(0, $"[{Accent}]swarm[/]");
+        else if (string.Equals(activeMode, "pswarm", StringComparison.OrdinalIgnoreCase))
+            modeBadges.Insert(0, $"[{Accent}]pswarm[/]");
 
         // Turn timer: bright + ticking while the model works the current turn; between turns
         // the LAST turn's duration shows dimmed (same glyph, dim = idle) so the cost of the

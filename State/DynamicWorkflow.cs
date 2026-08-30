@@ -236,6 +236,78 @@ public static class DynamicWorkflow
 
     /// <summary>The scripting contract + example fed to the model when it authors a driver
     /// script (giga run_dynamic_workflow and /workflow dynamic share it).</summary>
+    /// <summary>
+    /// Pre-flight guard for a dynamic-workflow launch: verifies the child engine can resolve config
+    /// and reach a provider BEFORE the driver is spawned, so a misconfigured/half-staged install
+    /// fails fast with a clear reason instead of producing a run full of empty-output tasks. Returns
+    /// null when the environment looks healthy, or a human-readable error string to surface instead
+    /// of launching. Runs one short headless smoke turn against the first agent named in the script's
+    /// manifest (falling back to a configured agent).
+    /// </summary>
+    private static string? PreflightConfigProbe(string binary, string? cfg, string? swarmcfg, string script)
+    {
+        // 1) Hard config-existence check. Children inherit MUX_CFG/MUX_SWARMCFG; if absent they drop
+        //    into first-run setup and die "No endpoint provided. Setup failed." on every task.
+        if (string.IsNullOrEmpty(cfg) || !File.Exists(cfg))
+            return $"[workflow] Pre-flight failed: config not found at '{cfg ?? PlatformContext.ConfigPath}'. " +
+                   "Child engines can't resolve a provider and every task would return empty. " +
+                   "Fix the install's Configs/ (Config.json + Swarm.json) and retry.";
+        if (string.IsNullOrEmpty(swarmcfg) || !File.Exists(swarmcfg))
+            return $"[workflow] Pre-flight failed: swarm config not found at '{swarmcfg ?? PlatformContext.SwarmPath}'. " +
+                   "Fix the install's Configs/Swarm.json and retry.";
+
+        // 2) One fast smoke turn: prove a child can actually reach the provider and stream output.
+        //    Cheap insurance (~a few seconds) against a whole pipeline of empty failures.
+        string probeAgent = FirstManifestAgent(script) ?? "WebAgent";
+        try
+        {
+            var ppsi = new ProcessStartInfo(binary,
+                $"--stdio --agent {probeAgent} \"Reply with the single word: ok\" --cfg \"{cfg}\" --swarmcfg \"{swarmcfg}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                WorkingDirectory = PlatformContext.BaseDirectory,
+            };
+            using var pp = Process.Start(ppsi);
+            if (pp is null) return null;   // can't probe; don't block the launch on our own failure
+            try { pp.StandardInput.Close(); } catch { /* already closed */ }
+            var stdoutTask = pp.StandardOutput.ReadToEndAsync();
+            _ = pp.StandardError.ReadToEndAsync();   // drain stderr so the child can't block on a full pipe
+            if (!pp.WaitForExit(45_000))
+            {
+                try { pp.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                return null;   // slow provider is not a hard failure; let the real run proceed
+            }
+            string outText = stdoutTask.GetAwaiter().GetResult() ?? "";
+            // --stdio emits NDJSON. A config/setup failure emits "No endpoint provided" / "Setup failed".
+            // Only BLOCK on an explicit provider/setup failure - the dominant, deterministic cause of
+            // whole-run empty cascades. A merely stream-less turn (odd agent, terse reply) is NOT
+            // treated as fatal, to avoid false positives that would wrongly refuse a healthy launch.
+            if (outText.Contains("No endpoint provided") || outText.Contains("Setup failed"))
+                return "[workflow] Pre-flight failed: a child engine could not reach a provider " +
+                       "(\"No endpoint provided / Setup failed\"). Check Config.json provider/endpoint " +
+                       "and retry - launching would otherwise produce a run of empty-output tasks.";
+        }
+        catch
+        {
+            // Probe infrastructure failure is not the workflow's fault - don't block the launch.
+            return null;
+        }
+        return null;
+    }
+
+    /// <summary>Best-effort extract of the first agent name from a driver script's manifest (the
+    /// first <c>"agent": "Name"</c> occurrence). Used to pick a representative pre-flight probe
+    /// agent; returns null when none is found.</summary>
+    private static string? FirstManifestAgent(string script)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(script, "\"agent\"\\s*:\\s*\"([^\"]+)\"");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
     public static string ScriptContract(int maxParallel) => $$"""
         ## Dynamic-workflow driver script contract (Python, muxswarm SDK)
         Author a COMPLETE Python script. It runs OUTSIDE your session and drives separate mux
@@ -254,8 +326,20 @@ public static class DynamicWorkflow
           `res = await mux.run_goal(goal, mode="agent", agent=<agent>, timeout=...)`, then append
           {"task":"<id>","status":"done","detail":"<short result>"} (or "failed").
           RunResult has NO `.text` attribute. The output is `res.final_summary or res.streamed_text`
-          (summary of the last task_complete, else the concatenated stream); `res.ok` / `res.errors`
-          for success checks. Using `res.text` raises AttributeError and fails the task.
+          (summary of the last task_complete, else the concatenated stream). `res.text` raises
+          AttributeError and fails the task.
+        - SUCCESS = `res.ok AND (res.final_summary or res.streamed_text).strip()` (MANDATORY). `res.ok`
+          alone is NOT enough: a child can exit 0 with NO output yet `res.ok` is still True. Treat
+          empty output as a FAILURE.
+        - ON FAILURE OR EMPTY (MANDATORY): never leave a black hole. Put `res.exit_code`, joined
+          `res.errors`, and any captured child-stderr tail into the failed status "detail" AND write
+          them to task_<id>.out, so the /workflows viewer shows a reason when the row is expanded.
+        - DEPENDENCY GATING (MANDATORY - no cascading run failures): a section that consumes an
+          upstream task’s output MUST check the upstream SUCCEEDED and produced non-empty output
+          first. If an upstream is empty/failed, do NOT feed blank text downstream: mark each
+          dependent {"status":"skipped","detail":"upstream <id> produced no output"} (or attempt a
+          recovery path) and keep going. One failed task must NEVER nuke the whole run - independent
+          branches continue, and every failure is surfaced on its own task, not as a wall of blanks.
         - LONG GOALS / FEEDING RESULTS FORWARD (MANDATORY): NEVER inline large text (prior phase
           results, corpora) into the goal string - on Windows the child argv limit is ~32k chars
           and exceeding it fails with [WinError 206]. Instead write the full prompt to a file in
@@ -273,7 +357,12 @@ public static class DynamicWorkflow
           what makes live progress and full output visible. The 160-char detail field is only the
           collapsed-row summary; the .out file is the real transcript.
         - Bound concurrency with asyncio.Semaphore(MUX_MAX_PARALLEL). Feed results forward between
-          sections through variables. Append {"run":"done"} (or {"run":"failed","error":...}) LAST.
+          sections through variables (gated per above).
+        - TERMINAL MARKER (MANDATORY): emit the run marker in a try/finally so an abort can never
+          leave the run stuck "running". In finally append {"run":"done"} on success, or
+          {"run":"failed","error":"<why>"} if a REQUIRED task failed. A run with some skipped/failed
+          branches but usable output should still end {"run":"done"} - reserve "failed" for when the
+          run’s primary deliverable could not be produced.
         - Deterministic + idempotent where possible; no interactive input; exit 0 on success.
         Skeleton:
         ```python
@@ -297,6 +386,9 @@ public static class DynamicWorkflow
                 p = os.path.join(RUN, f"goal_{tid}.txt")
                 with open(p, "w", encoding="utf-8") as f: f.write(text)
                 return p
+            def goal_from(upstream, tid="synth"):
+                # Build a downstream goal from upstream text; large text auto-routes through a file.
+                return goal_arg(tid, "Using this prior output:\n" + upstream + "\n\nNow do: ...")
             def out_write(tid, text):
                 with open(os.path.join(RUN, f"task_{tid}.out"), "a", encoding="utf-8") as f:
                     f.write(text)
@@ -311,7 +403,13 @@ public static class DynamicWorkflow
                     try:
                         res = await mux.run_goal(goal_arg(tid, goal), mode="agent", agent=agent,
                                                  on_event=on_ev, timeout=600)
-                        out = res.final_summary or res.streamed_text or ""
+                        out = (res.final_summary or res.streamed_text or "").strip()
+                        # SUCCESS = res.ok AND non-empty output. res.ok alone can be True with no output.
+                        if not (res.ok and out):
+                            why = ("; ".join(res.errors) if res.errors else "empty output") + f" (exit={res.exit_code})"
+                            out_write(tid, f"\n[TASK FAILED] {why}\n")   # never a black hole - reason lands in .out
+                            emit(task=tid, status="failed", detail=why[:160], secs=int(time.monotonic()-t0))
+                            return ""   # signal empty to dependents; do NOT raise (one fail must not nuke the run)
                         if res.final_summary and res.final_summary not in (res.streamed_text or ""):
                             out_write(tid, "\n" + res.final_summary)
                         tools = sum(1 for ev in res.events if getattr(ev.type, "value", "") == "tool_call")
@@ -323,10 +421,24 @@ public static class DynamicWorkflow
                              secs=int(time.monotonic() - t0), tools=tools, tokens=int(toks))
                         return out
                     except Exception as e:
-                        emit(task=tid, status="failed", detail=str(e)[:160],
-                             secs=int(time.monotonic() - t0)); raise
-            r1 = await run_task("t1", "WebAgent", "research X")
-            emit(run="done")
+                        out_write(tid, f"\n[TASK ERROR] {e}\n")
+                        emit(task=tid, status="failed", detail=str(e)[:160], secs=int(time.monotonic()-t0))
+                        return ""   # swallow: dependents gate on the empty return, the run continues
+            run_ok = True
+            try:
+                r1 = await run_task("t1", "WebAgent", "research X")
+                # DEPENDENCY GATING: only run the dependent if its upstream produced output.
+                if r1.strip():
+                    await run_task("t2", "DataAnalysisAgent", goal_from(r1))
+                else:
+                    emit(task="t2", status="skipped", detail="upstream t1 produced no output")
+                    run_ok = False   # a REQUIRED deliverable could not be produced
+            except Exception as e:
+                run_ok = False; emit(run="failed", error=str(e)[:200]); return
+            finally:
+                # TERMINAL MARKER always emitted (try/finally) so the run can never stick at "running".
+                if run_ok: emit(run="done")
+                else: emit(run="failed", error="a required task produced no output")
         asyncio.run(main())
         ```
         """;
@@ -435,6 +547,17 @@ public static class DynamicWorkflow
                 ? sdkPythonPath
                 : sdkPythonPath + Path.PathSeparator + existingPp;
         }
+
+        // PRE-FLIGHT (v0.13.1): child mux processes MUST be able to resolve config + reach a
+        // provider, or every task returns an empty RunResult and the whole run cascades into blank
+        // failures (live-diagnosed: a config-less/half-staged install nukes the entire pipeline).
+        // Catch it ONCE here, before launching a doomed driver, and surface a clear reason.
+        var binForProbe = psi.Environment["MUX_BINARY"]!;
+        psi.Environment.TryGetValue("MUX_CFG", out var cfgForProbe);
+        psi.Environment.TryGetValue("MUX_SWARMCFG", out var swarmForProbe);
+        var preflight = PreflightConfigProbe(binForProbe, cfgForProbe, swarmForProbe, script);
+        if (preflight is { } preflightError)
+            return preflightError;
 
         Process proc;
         try

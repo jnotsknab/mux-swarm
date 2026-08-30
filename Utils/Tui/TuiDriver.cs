@@ -956,12 +956,14 @@ internal sealed class TuiDriver
     }
 
     /// <summary>
-    /// Foreground the /workflows dashboard: a keyboard-navigable viewer over the workflow-run
-    /// registry with the selected run expanded into per-section panels (nested task rows +
-    /// recent journal events). Keys: arrows/j-k select; c cancels a RUNNING run (dynamic driver
-    /// tree killed); Esc/q closes. The registry snapshot is re-pulled on every repaint via
-    /// <paramref name="snapshotProvider"/> so live dynamic-run updates stream in while open.
-    /// Caller holds the console lock for the session.
+    /// Foreground the /workflows dashboard FULLSCREEN (v0.13.1): a blocking, keyboard-navigable
+    /// viewer that owns the whole terminal (like NAV) instead of docking above the footer, so a
+    /// deep run's phases/tasks get the full screen. The selected run expands into per-section
+    /// panels (task rows + telemetry). Keys: up/down select task, left/right switch phase, Tab
+    /// cycles runs, 1-9 jump to a run, Enter/o expand, c cancels a RUNNING run (dynamic driver
+    /// tree killed), Esc/q closes. The registry snapshot is re-pulled on the ~200ms input-poll
+    /// timeout via <paramref name="snapshotProvider"/> so live dynamic-run updates (and resizes)
+    /// stream in while open. Caller holds the console lock for the session.
     /// </summary>
     public bool EnterWorkflowView(
         Func<IReadOnlyList<MuxSwarm.State.WorkflowRun>> snapshotProvider,
@@ -972,9 +974,64 @@ internal sealed class TuiDriver
         _workflowView.SetRuns(snapshotProvider());
         _workflowView.Open();
         _workflowViewActive = true;
+        // FULLSCREEN view (v0.13.1): own the whole screen like NAV. _navActive latches so the
+        // ~100ms ticker (Repaint) and PollResize both defer while we paint (they early-return on
+        // _navActive), and ComposeFrameRows already suppresses the frame while _workflowViewActive.
+        _navActive = true;
+
+        // Last-painted physical rows for diff repaint - only changed rows are rewritten, so moving
+        // the selection does not clear+redraw the whole screen (kills flicker). null forces a full
+        // paint (first paint / geometry change).
+        List<string>? lastRows = null;
+
+        // Compose the viewer at full terminal height and diff-repaint it into the (shared) alt
+        // screen: RenderDashboard returns markup rows sized to the height; we convert to ANSI, pad
+        // to width so a rewrite fully overwrites the prior row, and blank-fill the rest of the screen.
+        void Paint()
+        {
+            int w = Width;
+            int screenH = Math.Max(1, _term.Height);
+            int cap = Math.Max(1, _term.Width - 1);   // never render into the last column (no wrap)
+            var markupRows = _workflowView.RenderDashboard(w, screenH);
+            var rows = new List<string>(screenH);
+            for (int i = 0; i < markupRows.Count && rows.Count < screenH; i++)
+            {
+                int plainW = TuiMarkup.MarkupWidth(markupRows[i]);
+                int pad = Math.Max(0, cap - plainW);
+                rows.Add(TuiMarkup.ToAnsi(markupRows[i]) + (pad > 0 ? new string(' ', pad) : ""));
+            }
+            while (rows.Count < screenH) rows.Add(new string(' ', cap));
+
+            var sb = new System.Text.StringBuilder();
+            if (lastRows is null || lastRows.Count != rows.Count)
+            {
+                sb.Append(Ansi.ClearScreen).Append(Ansi.Home);
+                for (int i = 0; i < rows.Count; i++)
+                    sb.Append(Ansi.MoveTo(i + 1, 1)).Append(rows[i]);
+            }
+            else
+            {
+                for (int i = 0; i < rows.Count; i++)
+                    if (!string.Equals(rows[i], lastRows[i], StringComparison.Ordinal))
+                        sb.Append(Ansi.MoveTo(i + 1, 1)).Append(Ansi.EraseLine).Append(rows[i]);
+            }
+            lastRows = rows;
+            if (sb.Length > 0) { _term.Write(sb.ToString()); _term.Flush(); }
+        }
+
+        bool prevCtrlC;
+        try { prevCtrlC = Console.TreatControlCAsInput; } catch { prevCtrlC = false; }
         try
         {
-            Repaint();
+            try { Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            _region.HideCursor();
+            // In frame mode the FrameRenderer already OWNS the alt screen, so do not nest another
+            // EnterAltScreen (?1049h is not a stack); just paint over it and Invalidate on exit.
+            // Inline mode enters/leaves the alt screen as usual.
+            if (!_engineFrame) _term.Write(Ansi.EnterAltScreen);
+            _term.Write(Ansi.AutoWrapOff);   // full-width rows must not wrap
+            _term.Write(Ansi.HideCursor);
+            Paint();
             while (true)
             {
                 ConsoleKeyInfo key;
@@ -988,9 +1045,9 @@ internal sealed class TuiDriver
                         if (!wvPump.TryTake(out var wv, 200))
                         {
                             // Poll timeout: refresh the snapshot so running dynamic runs stream
-                            // their journal updates into the open panels.
+                            // their journal updates into the open view (also picks up a resize).
                             _workflowView.SetRuns(snapshotProvider());
-                            Repaint();
+                            Paint();
                             continue;
                         }
                         if (wv.Kind != ConsoleInputPump.EventKind.Key) continue;
@@ -1003,23 +1060,27 @@ internal sealed class TuiDriver
                     catch (InvalidOperationException) { break; }
                 }
 
-                // Up/Down scroll the selected phase's TASK window (the dense dimension);
-                // Left/Right switch phases; Tab cycles runs; 1-9 jump straight to a run.
+                // Up/Down move the task selection - or, when a task is expanded, scroll THROUGH
+                // its output buffer (handled inside MoveTask). Left/Right switch phases (suppressed
+                // while expanded); Tab cycles runs; 1-9 jump straight to a run.
                 if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
-                    { _workflowView.MoveTask(-1); Repaint(); continue; }
+                    { _workflowView.MoveTask(-1); Paint(); continue; }
                 if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
-                    { _workflowView.MoveTask(+1); Repaint(); continue; }
-                if (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H)
-                    { _workflowView.MovePhase(-1); Repaint(); continue; }
-                if (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L)
-                    { _workflowView.MovePhase(+1); Repaint(); continue; }
+                    { _workflowView.MoveTask(+1); Paint(); continue; }
+                if (!_workflowView.IsTaskExpanded && (key.Key == ConsoleKey.LeftArrow || key.Key == ConsoleKey.H))
+                    { _workflowView.MovePhase(-1); Paint(); continue; }
+                if (!_workflowView.IsTaskExpanded && (key.Key == ConsoleKey.RightArrow || key.Key == ConsoleKey.L))
+                    { _workflowView.MovePhase(+1); Paint(); continue; }
                 if (key.Key == ConsoleKey.Tab)
-                    { _workflowView.Move(+1); Repaint(); continue; }
+                    { _workflowView.Move(+1); Paint(); continue; }
                 if (key.KeyChar is >= '1' and <= '9')
-                    { _workflowView.SelectRunAt(key.KeyChar - '0'); Repaint(); continue; }
+                    { _workflowView.SelectRunAt(key.KeyChar - '0'); Paint(); continue; }
                 if (key.Key == ConsoleKey.Enter || key.Key == ConsoleKey.O)
-                    { _workflowView.ToggleTaskExpand(); Repaint(); continue; }
+                    { _workflowView.ToggleTaskExpand(); Paint(); continue; }
 
+                // Esc collapses an expanded task first (vim-like); q always closes the view.
+                if (key.Key == ConsoleKey.Escape && _workflowView.IsTaskExpanded)
+                    { _workflowView.ToggleTaskExpand(); Paint(); continue; }
                 if (key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.Q)
                     break;
 
@@ -1029,7 +1090,7 @@ internal sealed class TuiDriver
                     if (id is not null && onCancel(id))
                     {
                         _workflowView.SetRuns(snapshotProvider());
-                        Repaint();
+                        Paint();
                     }
                     continue;
                 }
@@ -1037,6 +1098,14 @@ internal sealed class TuiDriver
         }
         finally
         {
+            _term.Write(Ansi.AutoWrapOn);
+            // Inline mode pops back to the primary buffer; frame mode STAYS on the shared alt screen
+            // (the frame renderer owns it) and force-invalidates so the transcript that streamed
+            // while the view was open is fully redrawn on the next present.
+            if (_engineFrame) _frame.Invalidate();
+            else _term.Write(Ansi.LeaveAltScreen);
+            try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
+            _navActive = false;
             _workflowViewActive = false;
             _workflowView.Close();
             Repaint();
@@ -1751,12 +1820,6 @@ internal sealed class TuiDriver
         if (_jobViewActive)
             lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
 
-        // /workflows dashboard: same inline-list pattern; off (the default) adds nothing.
-        // Width AND height flow in so the viewer can stack its panels / shrink its task
-        // window on small terminals instead of composing rows the renderer would soft-wrap.
-        if (_workflowViewActive)
-            lines.AddRange(_workflowView.RenderDashboard(width, Height));
-
         // v0.12.4 in-frame prompt modal (ask_user / confirm / select / text): rendered INSIDE
         // the live band so the alternate screen is never left - the transcript (e.g. the plan
         // body the agent just streamed) stays visible above, the footer stays pinned below.
@@ -1790,7 +1853,8 @@ internal sealed class TuiDriver
             toolCalls: _toolCalls,
             model: _model,
             width: width,
-            pulseFrame: pulseFrame));
+            pulseFrame: pulseFrame,
+            activeMode: ServeMode.ActiveMode));
 
         if (_inInput)
         {

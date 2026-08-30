@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 
 namespace MuxSwarm.Utils.Tui;
 
@@ -211,7 +211,7 @@ internal static class TuiMarkup
             (cp >= 0xFFE0 && cp <= 0xFFE6) ||
             (cp >= 0x1F300 && cp <= 0x1FAFF) || // emoji / pictographs (incl. 0x1F534 red, 0x1F7E1/E2 circles)
             (cp >= 0x1F000 && cp <= 0x1F2FF) || // mahjong/dominoes/playing cards/enclosed
-            (cp >= 0x2600 && cp <= 0x27BF) ||   // Misc Symbols + Dingbats (incl. 0x2705 check mark, 0x26A0 warn)
+            (cp >= 0x2600 && cp <= 0x27BF && !(cp >= 0x2713 && cp <= 0x2718)) ||   // Misc Symbols + Dingbats (incl. 0x2705 check mark, 0x26A0 warn); 0x2713-0x2718 (check/cross text dingbats) are East Asian Ambiguous -> width 1 (a VS16 variant still measures 2 via TextElementWidth)
             (cp == 0x2B50 || cp == 0x2B55) ||   // star, heavy circle (emoji)
             (cp >= 0x2300 && cp <= 0x23FF) ||   // Misc Technical (hourglass/watch/etc render wide as emoji)
             (cp >= 0x20000 && cp <= 0x3FFFD))   // CJK Ext B+

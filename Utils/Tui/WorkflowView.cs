@@ -3,9 +3,10 @@
 namespace MuxSwarm.Utils.Tui;
 
 /// <summary>
-/// The /workflows live viewer model (v0.12.4). Follows the AgentView/JobView pattern: PURE -
-/// holds selection state and produces markup rows from a registry snapshot, no console I/O,
-/// fully unit-testable. Master/detail layout (mux-style, low density): the selected run
+/// The /workflows live viewer model (v0.12.4; rendered FULLSCREEN since v0.13.1). PURE - holds
+/// selection state and produces markup rows from a registry snapshot, no console I/O, fully
+/// unit-testable; the driver (TuiDriver.EnterWorkflowView) owns the screen and diff-paints these
+/// rows. Master/detail layout (mux-style, low density): the selected run
 /// expands into a linked pair of panels - LEFT lists the workflow's phases (sections) with
 /// done-fraction counters, RIGHT enumerates ONLY the selected phase's tasks with per-task
 /// telemetry (agent, status, model, tool count, duration). Up/Down selects the run,
@@ -18,6 +19,7 @@ internal sealed class WorkflowView
     private int _phaseIdx;
     private int _taskIdx;
     private bool _taskExpanded;
+    private int _taskScroll;   // lines scrolled up from the bottom (tail) of an expanded task's output
     private bool _open;
     private const int MaxTaskRows = 12;
     private const int PhaseColWidth = 30;
@@ -25,6 +27,10 @@ internal sealed class WorkflowView
     public bool IsOpen => _open;
     public void Open() => _open = true;
     public void Close() => _open = false;
+
+    /// <summary>True while the selected task is expanded (its output is being scrolled). The
+    /// driver routes Esc to collapse-first and suppresses phase switching in this state.</summary>
+    public bool IsTaskExpanded => _taskExpanded;
 
     /// <summary>Replace the run snapshot. Selection preserved by id; falls back to the newest
     /// RUNNING run (the interesting one), then the newest run.</summary>
@@ -37,6 +43,7 @@ internal sealed class WorkflowView
             _phaseIdx = 0;
             _taskIdx = 0;
             _taskExpanded = false;
+            _taskScroll = 0;
         }
     }
 
@@ -62,7 +69,7 @@ internal sealed class WorkflowView
         if (_runs.Count == 0) return;
         int idx = _runs.FindIndex(r => string.Equals(r.Id, SelectedId(), StringComparison.Ordinal));
         idx = ((idx + delta) % _runs.Count + _runs.Count) % _runs.Count;
-        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
+        if (!string.Equals(_runs[idx].Id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _selectedId = _runs[idx].Id;
     }
 
@@ -72,31 +79,41 @@ internal sealed class WorkflowView
         var run = SelectedRun();
         if (run is null || run.Manifest.Sections.Count == 0) return;
         int next = Math.Clamp(_phaseIdx + delta, 0, run.Manifest.Sections.Count - 1);
-        if (next != _phaseIdx) { _taskIdx = 0; _taskExpanded = false; }
+        if (next != _phaseIdx) { _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _phaseIdx = next;
     }
 
-    /// <summary>Move the task SELECTION within the selected phase (Up/Down); the visible
-    /// window follows the selection. Collapses any expansion on move.</summary>
+    /// <summary>Up/Down handler. When a task is EXPANDED, scrolls THROUGH that task's output
+    /// buffer (delta&lt;0 = toward older lines, delta&gt;0 = toward the tail); the scroll offset is
+    /// clamped to the buffer in the renderer. When NOT expanded, moves the task SELECTION within
+    /// the selected phase (the visible window follows the selection).</summary>
     public void MoveTask(int delta)
     {
         var run = SelectedRun();
         if (run is null || run.Manifest.Sections.Count == 0) return;
         var sec = run.Manifest.Sections[Math.Clamp(_phaseIdx, 0, run.Manifest.Sections.Count - 1)];
         if (sec.Tasks.Count == 0) return;
+        if (_taskExpanded)
+        {
+            // Scroll the expanded output: up (delta<0) reveals older lines by growing the
+            // offset-from-tail; down shrinks it back toward the live tail. Upper bound is
+            // clamped against the actual buffer height at render time.
+            _taskScroll = Math.Max(0, _taskScroll - delta);
+            return;
+        }
         _taskIdx = Math.Clamp(_taskIdx + delta, 0, sec.Tasks.Count - 1);
-        _taskExpanded = false;
     }
 
-    /// <summary>Toggle the selected task's expansion (full detail text, wrapped).</summary>
-    public void ToggleTaskExpand() => _taskExpanded = !_taskExpanded;
+    /// <summary>Toggle the selected task's expansion (full output, scrollable). Resets the
+    /// scroll to the live tail on each open/close.</summary>
+    public void ToggleTaskExpand() { _taskExpanded = !_taskExpanded; _taskScroll = 0; }
 
     /// <summary>Select a run by 1-based ordinal (number keys). No-op out of range.</summary>
     public void SelectRunAt(int ordinal)
     {
         if (ordinal < 1 || ordinal > _runs.Count) return;
         var id = _runs[ordinal - 1].Id;
-        if (!string.Equals(id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; }
+        if (!string.Equals(id, _selectedId, StringComparison.Ordinal)) { _phaseIdx = 0; _taskIdx = 0; _taskExpanded = false; _taskScroll = 0; }
         _selectedId = id;
     }
 
@@ -186,11 +203,13 @@ internal sealed class WorkflowView
                 // Task window: bounded by MaxTaskRows, and further by the visible height when
                 // known (header + run rows + phase chrome + hint reserved) so the dashboard
                 // never composes more rows than the terminal can show.
+                // When the real screen height is known, let the task window use the full
+                // vertical space (fullscreen view) rather than the MaxTaskRows docked cap.
                 int maxTaskRows = MaxTaskRows;
                 if (height > 0)
                 {
                     int reserved = rows.Count + (stacked ? 2 : 1) + 3;   // phase strip/header + window hints + key hint
-                    maxTaskRows = Math.Clamp(height - reserved, 3, MaxTaskRows);
+                    maxTaskRows = Math.Max(3, height - reserved);
                 }
 
                 int ti = Math.Clamp(_taskIdx, 0, Math.Max(0, cur.Tasks.Count - 1));
@@ -240,7 +259,12 @@ internal sealed class WorkflowView
                         right.Add($"[{TuiComponents.Dim}]\u2193 {cur.Tasks.Count - off - maxTaskRows} more[/]");
 
                     // Compose two columns joined with a vertical rule; pad by PLAIN width.
+                    // FULLSCREEN: when the height is known, extend the divider down the full
+                    // content region (blank cells below the content) so the split-pane fills the
+                    // screen down to the bottom-docked key hint, instead of a small box + dead gap.
                     int n = Math.Max(left.Count, right.Count);
+                    if (height > 0)
+                        n = Math.Max(n, height - 1 - rows.Count - (run.Error is not null ? 1 : 0));
                     for (int i = 0; i < n; i++)
                     {
                         string lc = i < left.Count ? left[i] : "";
@@ -252,9 +276,23 @@ internal sealed class WorkflowView
             if (run.Error is not null)
                 rows.Add($"      [{TuiComponents.Err}]\u2717 {Esc(Trunc(run.Error, Math.Max(20, width - 12)))}[/]");
         }
-        rows.Add(width < 60
+        string keyHint = width < 60
             ? $"  [{TuiComponents.Dim}]\u2191\u2193 \u2190\u2192 \u21b5 \u21b9 \u00b7 esc close[/]"
-            : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]");
+            : _taskExpanded
+                ? $"  [{TuiComponents.Dim}]\u2191\u2193 scroll output \u00b7 enter/esc collapse \u00b7 q close[/]"
+                : $"  [{TuiComponents.Dim}]\u2191\u2193 tasks \u00b7 \u2190\u2192 phase \u00b7 enter expand \u00b7 tab run \u00b7 c cancel \u00b7 esc/q close[/]";
+
+        // FULLSCREEN docking (v0.13.1): when the driver passes the real screen height, pad blank
+        // rows so the key hint pins to the BOTTOM row and the view fills the screen (mirrors the
+        // docked footer's variable sizing) instead of floating in the top-left. Reserve one row
+        // for the hint; if content already overflows, the driver clamps it and the hint rides just
+        // below (still Clamp-bounded).
+        if (height > 0)
+        {
+            int pad = height - rows.Count - 1;
+            for (int i = 0; i < pad; i++) rows.Add("");
+        }
+        rows.Add(keyHint);
         return Clamp(rows, width);
     }
 
@@ -317,10 +355,18 @@ internal sealed class WorkflowView
             int wrapW = stacked ? Math.Max(20, width - indent.Length - 5)
                                 : Math.Max(24, width - PhaseColWidth - 14);
             var wrapped = TuiMarkup.WrapPlain(body, wrapW);
-            int skip = Math.Max(0, wrapped.Count - ExpandTailLines);
-            if (skip > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2191 {skip} earlier line(s)[/]");
-            foreach (var wl in wrapped.Skip(skip))
-                sink.Add($"{indent}   [{colour}]{Esc(wl)}[/]");
+            // Scrollable window: show ExpandTailLines lines, offset _taskScroll lines up from the
+            // bottom (tail). Clamp the offset to the buffer so it can never scroll past either end;
+            // arrows drive _taskScroll via MoveTask while expanded.
+            int maxScroll = Math.Max(0, wrapped.Count - ExpandTailLines);
+            if (_taskScroll > maxScroll) _taskScroll = maxScroll;
+            int end = wrapped.Count - _taskScroll;                 // exclusive; tail when scroll=0
+            int start = Math.Max(0, end - ExpandTailLines);
+            if (start > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2191 {start} earlier line(s)[/]");
+            for (int wi = start; wi < end; wi++)
+                sink.Add($"{indent}   [{colour}]{Esc(wrapped[wi])}[/]");
+            int below = wrapped.Count - end;
+            if (below > 0) sink.Add($"{indent}   [{TuiComponents.Dim}]\u2193 {below} more line(s) \u00b7 \u2191\u2193 scroll[/]");
         }
     }
 

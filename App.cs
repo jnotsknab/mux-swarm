@@ -13,7 +13,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.13.0";
+    public static readonly string Version = "0.13.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -25,7 +25,12 @@ public class App
     private static string? _cliModelOverride;
     private static bool _watchDogEnabled;
     private static bool _verboseToggle;
-    private static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// True when verbose diagnostic output is enabled, via the <c>/verbose</c> command,
+    /// the <c>--verbose</c> flag, an attached debugger, or the <c>MUXSWARM_VERBOSE=1</c>
+    /// environment variable. Gates non-essential init/orchestration console chatter.
+    /// </summary>
+    internal static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
     private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
@@ -2539,6 +2544,14 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .AsBuilder()
             .UseFunctionInvocation(configure: c =>
                 c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
+            // INSIDE function-invocation (lead single-agent only): splice a user's mid-turn steer
+            // ("by the way ...", Ctrl+N) into the live message list on the next model round-trip, so
+            // the agent sees it before finishing instead of at the turn boundary. Same in-place
+            // mechanism as the deep-memory MidTurnReflectionClient, but sourced from the user and
+            // re-checked each round-trip. Inert pass-through when no steer is queued (the common case).
+            .Use(inner => wrapMidTurnReflection
+                ? new MuxSwarm.Utils.Memory.MidTurnSteerClient(inner, MuxSwarm.Utils.SingleAgentOrchestrator.DrainSteer)
+                : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
             // instead of failing the turn. No-op unless ExtraHigh was actually requested.
