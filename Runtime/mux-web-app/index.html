@@ -4369,6 +4369,11 @@ const icons = {
   }
   // Route a status pill through the cluster. `node` is a ready DOM element.
   function appendPill(node) {
+    // 'Hide status updates' drops noisy status pills before they are rendered, so
+    // the transcript stays clean and the DOM does not grow with hidden nodes.
+    // Important pills (token/context usage, 'Ready for next input', compaction
+    // results) never reach here - routePill() renders those standalone.
+    if (document.body.classList.contains('hide-status-updates')) return;
     // Skip pills with no visible text (e.g. empty rules) — they add blank rows and
     // inflate the cluster count without conveying anything.
     if (!(node.textContent || '').trim() && !node.querySelector('img,svg,.mux-token-badge')) return;
@@ -9111,6 +9116,10 @@ const icons = {
      render in the roster. Point this toggle at the live roster so it does something. */
   body.hide-sub-roster .sub-roster { display: none !important; }
   body.hide-task-status-pills .event.no-default-icon { display: none !important; }
+  /* Master suppression for the coalesced status-update clusters. Covers rows
+     already in the DOM when the setting is toggled on mid-session; new pills
+     are dropped at the source in appendPill(). */
+  body.hide-status-updates .event-group { display: none !important; }
   body.hide-all-pills .mux-token-badge,
   body.hide-all-pills .mux-save-banner,
   body.hide-all-pills .mux-compact-row,
@@ -9522,6 +9531,7 @@ const icons = {
     hideSubRoster: false,
     rosterCollapsed: false,
     hideTaskStatusPills: false,
+    hideStatusUpdates: true,
     toolGrouping: true,
     hideToolCalls: false,
     toolGroupAutoCollapse: true,
@@ -9608,6 +9618,7 @@ const icons = {
     b.classList.toggle('hide-sub-roster',        !!state.hideSubRoster);
     b.classList.toggle('sub-roster-collapsed-default', !!state.rosterCollapsed);
     b.classList.toggle('hide-task-status-pills', !!state.hideTaskStatusPills);
+    b.classList.toggle('hide-status-updates',    !!state.hideStatusUpdates);
     b.classList.toggle('tool-grouping-off',       !state.toolGrouping);
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
@@ -9856,6 +9867,8 @@ const icons = {
         'New sub-agent rosters start collapsed (click to expand). Off: start expanded.'),
       toggleRow('hideTaskStatusPills',   'Hide task status rows',
         'Suppress generic task_start/task_done status rows (hourglass/check inline events).'),
+      toggleRow('hideStatusUpdates',     'Hide status updates',
+        'Suppress the collapsed "N status updates" clusters entirely (success/warning/info/debug/step/rule rows). On by default. Token counts, compaction results and \'Ready for next input\' still show.'),
       toggleRow('toolGrouping', 'Group tool calls',
         'Fold consecutive tool calls into a collapsible "N tool calls" cluster. Off: flat rows.'),
       toggleRow('hideToolCalls', 'Hide tool calls in chat',
