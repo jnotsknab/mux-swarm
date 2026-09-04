@@ -1636,7 +1636,12 @@ body.hide-all-pills .event-group { display: none !important; }
 .session-menu {
   position: fixed; z-index: 200;
   min-width: 300px; max-width: min(420px, calc(100vw - 16px));
-  background: var(--bg-card, var(--bg));
+  /* NOTE: --bg-card is itself semi-transparent in every theme (zinc is
+     rgba(24,24,27,0.6)), which is why these menus were hard to read over the
+     transcript. Composite over the OPAQUE --bg instead - same trick the command
+     palette uses - so 100% is genuinely solid. The slider drives BACKGROUND
+     alpha only, never element opacity, so the label text never dims. */
+  background: color-mix(in srgb, var(--bg) calc(var(--menu-opacity, 1) * 100%), transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -1727,7 +1732,8 @@ body.hide-all-pills .event-group { display: none !important; }
   z-index: 200;
   min-width: 280px;
   max-width: min(420px, calc(100vw - 16px));
-  background: var(--bg-card, var(--bg));
+  /* See .session-menu: opaque --bg base, alpha-only, text never dims. */
+  background: color-mix(in srgb, var(--bg) calc(var(--menu-opacity, 1) * 100%), transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -5207,6 +5213,11 @@ const icons = {
 
   async function openModelMenu() {
     closeModelMenu();
+    // Only one picker may be open: these menus are position:fixed at the same
+    // z-index and anchor to adjacent buttons, so leaving the other open makes
+    // them overlap. The per-button e.stopPropagation() also stops the other
+    // menu's outside-click handler from firing, so close it explicitly here.
+    closeSessionMenu();
     const btn = document.getElementById('modelBtn');
     if (!btn) return;
     btn.setAttribute('aria-expanded', 'true');
@@ -5584,6 +5595,9 @@ const icons = {
 
   async function openSessionMenu() {
     closeSessionMenu();
+    // Mirror of openModelMenu(): opening this picker closes the model picker so
+    // the two fixed-position menus can never overlap.
+    closeModelMenu();
     const btn = document.getElementById('sessionBtn');
     if (!btn) return;
     btn.setAttribute('aria-expanded', 'true');
@@ -9521,6 +9535,7 @@ const icons = {
     pathMode: 'full',
     cmdPaletteEnabled: true,
     cmdPaletteOpacity: 1.0,
+    menuOpacity: 1.0,
     composerOpacity: 0.62,
     collapseCardsByDefault: true,
     collapseThreshold: 200,
@@ -9608,6 +9623,7 @@ const icons = {
     b.dataset.sendOnEnter = state.sendOnEnter;
     b.classList.toggle('hide-cmd-palette',   !state.cmdPaletteEnabled);
     document.documentElement.style.setProperty('--cmd-palette-opacity', String(state.cmdPaletteOpacity));
+    document.documentElement.style.setProperty('--menu-opacity', String(state.menuOpacity != null ? state.menuOpacity : 1));
     document.documentElement.style.setProperty('--composer-opacity', String(state.composerOpacity != null ? state.composerOpacity : 0.62));
     b.classList.toggle('collapse-cards-default', !!state.collapseCardsByDefault);
     b.dataset.collapseThreshold = String(state.collapseThreshold || 200);
@@ -9840,6 +9856,9 @@ const icons = {
       fontUploadRow(),
     ]);
     section('Display', [
+      sliderRow('menuOpacity', 'Selector menu opacity', 0.6, 1.0, 0.05,
+        'Background opacity of the session and model selector menus. 100% = fully solid (easiest to read); lower lets the transcript show through.',
+        (v) => Math.round(v * 100) + '%'),
       sliderRow('composerOpacity', 'Composer opacity', 0.3, 1.0, 0.02,
         'Background opacity of the floating message bar. Lower = more translucent/glassy.',
         (v) => Math.round(v * 100) + '%'),
