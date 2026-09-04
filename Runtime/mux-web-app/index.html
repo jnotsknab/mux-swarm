@@ -2070,18 +2070,39 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   body.header-collapsed .header-toggle { top: calc(env(safe-area-inset-top, 0px) + 6px); }
   .stream-block { padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); word-break: break-word; overflow-wrap: anywhere; }
   .panel-body { word-break: break-word; overflow-wrap: anywhere; }
+  /* Composer becomes a two-row stack on phones. The single-row desktop layout
+     (textarea + 5 controls side by side) needs ~385px of controls alone, which
+     exceeds the ~328-358px of content width available at 360-390px viewports --
+     the textarea was being flexed to a negative basis and became unusable.
+     Row 1: the textarea, full width. Row 2: the pickers + actions. */
   .input-area {
     left: 8px; right: 8px;
     bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 8px);
     padding: 6px 8px; gap: 4px; border-radius: 14px;
+    flex-direction: column; align-items: stretch;
   }
   /* Sidebar is a full-width overlay on mobile, so no right inset needed */
   body:has(.app.sidebar-open) .input-area { --composer-right-inset: 0px; }
-  .output { padding-bottom: 88px; }
+  .output { padding-bottom: 148px; }
   .input-area textarea { font-size: calc(16px * var(--ui-font-scale, 1)); min-height: 44px; max-height: 280px; padding: 8px 10px; }
-  .btn-group { gap: 4px; }
-  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; }
+  /* Second row: pickers flex and truncate, action buttons keep their tap targets. */
+  .input-area .btn-group {
+    align-self: stretch;
+    width: 100%;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  .btn-group { gap: 6px; }
+  /* Pickers share the leftover width instead of forcing the row over the edge. */
+  .session-btn, .model-btn {
+    flex: 1 1 0; min-width: 0; max-width: none;
+    min-height: 44px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
+    padding: 6px 8px;
+    justify-content: center;
+  }
+  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); flex: 0 0 auto; }
+  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; flex: 0 0 auto; }
   .prompt-block button { min-height: 44px; padding: 8px 12px; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
