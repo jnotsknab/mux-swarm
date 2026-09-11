@@ -29,7 +29,7 @@ internal sealed class TuiDriver
     // breakdown in the footer so a fresh session\u0027s baseline context is explained.
     private uint _sysTokens, _toolTokens;
     private bool _plan, _ultra, _psub, _sub, _giga;
-    private string? _effort;   // reasoning-effort chip (low/med/high), null = hidden
+    private string? _effort;   // reasoning-effort chip (low/med/high/xhigh/max or custom), null = hidden
     private string? _sessionId; // active session id badge, null = hidden
 
     // streaming state - partial (un-newlined) tail shown live above the footer

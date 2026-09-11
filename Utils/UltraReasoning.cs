@@ -11,12 +11,12 @@ namespace MuxSwarm.Utils;
 public static class UltraReasoning
 {
     /// <summary>
-    /// Escalates reasoning on <paramref name="opts"/> to the maximum available: a provider-native
+    /// Escalates legacy reasoning on <paramref name="opts"/> to ExtraHigh plus a provider-native
     /// numeric thinking budget (honored by budget-capable providers e.g. Anthropic thinking.budget_tokens)
-    /// AND the top effort tier <see cref="ReasoningEffort.ExtraHigh"/>. ExtraHigh serializes to the wire
+    /// and the portable enum tier <see cref="ReasoningEffort.ExtraHigh"/>. ExtraHigh serializes to the wire
     /// value "xhigh", which some endpoints (CLIProxy/Claude path) reject; that no longer gates the mode,
     /// because <see cref="ReasoningEffortFallbackClient"/> (wired inside CreateChatClient) transparently
-    /// retries at High on rejection. Endpoints that accept ExtraHigh get it.
+    /// retries at High on rejection. Explicit max/custom efforts are preserved, not downgraded to ExtraHigh.
     /// </summary>
     public static void Apply(ChatOptions opts)
     {
@@ -35,12 +35,15 @@ public static class UltraReasoning
             };
         }
 
-        // Effort tier — request the top tier (ExtraHigh). ReasoningEffortFallbackClient degrades
-        // to High per-model if the endpoint rejects the "xhigh" wire value, so this never fails a run.
-        opts.Reasoning = new ReasoningOptions
+        // Keep the existing ExtraHigh escalation and rejection fallback for portable tiers.
+        // An explicit max/custom choice is authoritative and must not be replaced.
+        if (ReasoningEffortControl.GetExplicit(opts) is null)
         {
-            Effort = ReasoningEffort.ExtraHigh,
-            Output = opts.Reasoning?.Output
-        };
+            opts.Reasoning = new ReasoningOptions
+            {
+                Effort = ReasoningEffort.ExtraHigh,
+                Output = opts.Reasoning?.Output
+            };
+        }
     }
 }

@@ -61,17 +61,6 @@ public class ModelOpts
         {
             opts.Reasoning = new ReasoningOptions
             {
-                Effort = Reasoning.Effort?.ToLowerInvariant() switch
-                {
-                    "none" => ReasoningEffort.None,
-                    "low" => ReasoningEffort.Low,
-                    "med" => ReasoningEffort.Medium,
-                    "medium" => ReasoningEffort.Medium,
-                    "high" => ReasoningEffort.High,
-                    "extrahigh" => ReasoningEffort.ExtraHigh,
-                    "extra_high" => ReasoningEffort.ExtraHigh,
-                    _ => null
-                },
                 Output = Reasoning.Output?.ToLowerInvariant() switch
                 {
                     "none" => ReasoningOutput.None,
@@ -81,6 +70,8 @@ public class ModelOpts
                 }
 
             };
+            if (ReasoningEffortControl.TryParse(Reasoning.Effort, out var effort))
+                ReasoningEffortControl.Apply(opts, effort!);
         }
 
         if (AdditionalParams is { Count: > 0 })

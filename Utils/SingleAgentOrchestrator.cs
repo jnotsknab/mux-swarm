@@ -1588,8 +1588,8 @@ public static class SingleAgentOrchestrator
         // does NOT touch the native API reasoning level here. A per-agent swarm.json
         // modelOpts.reasoning.output still controls the API level where set.
 
-        // /ultra: escalate reasoning to the provider max (numeric budget + effort tier).
-        // Applied last so it wins over swarm.json modelOpts for this session only.
+        // /ultra: retain the legacy xhigh + numeric-budget escalation, but preserve
+        // explicit max/custom selections from swarm.json for this session.
         if (App.UltraMode)
             UltraReasoning.Apply(agentChatOptions);
 
@@ -1826,73 +1826,10 @@ public static class SingleAgentOrchestrator
                 App.PlanMode, App.UltraMode, App.ParallelSubAgentsMode, _cachedTokens, App.SubAgentsMode, App.GigaMode);
         }
 
-        // /effort + Shift+Tab: cycle the live reasoning-effort tier for this session. Mutates
-        // the already-built agentChatOptions.Reasoning in place so the next turn uses it,
-        // exactly like /ultra's escalation but user-cyclable. Order: low -> med -> high -> xhigh -> low.
-        // The same underlying state backs the typed /effort command and the Shift+Tab key, so
-        // they stay consistent. The footer chip reflects the current tier. "xhigh" (ExtraHigh) is the
-        // top tier the reasoning API exposes; ReasoningEffortFallbackClient degrades it to high per-model
-        // if the endpoint rejects the wire value, so cycling to it never fails a turn.
-        string[] effortTiers = { "low", "med", "high", "xhigh" };
-        int effortIdx = -1;   // -1 = unset (inherit config/model default), no chip shown
-        string ApplyEffortTier(string tier)
-        {
-            var eff = tier switch
-            {
-                "low"  => Microsoft.Extensions.AI.ReasoningEffort.Low,
-                "med"  => Microsoft.Extensions.AI.ReasoningEffort.Medium,
-                "high" => Microsoft.Extensions.AI.ReasoningEffort.High,
-                "xhigh" => Microsoft.Extensions.AI.ReasoningEffort.ExtraHigh,
-                _      => Microsoft.Extensions.AI.ReasoningEffort.Medium
-            };
-            agentChatOptions.Reasoning = new Microsoft.Extensions.AI.ReasoningOptions
-            {
-                Effort = eff,
-                Output = agentChatOptions.Reasoning?.Output
-            };
-            return tier;
-        }
-        string CycleEffort()
-        {
-            effortIdx = (effortIdx + 1) % effortTiers.Length;
-            var tier = effortTiers[effortIdx];
-            ApplyEffortTier(tier);
-            return tier;
-        }
-        void SetEffortByName(string name)
-        {
-            var n = name.Trim().ToLowerInvariant();
-            n = n switch { "medium" => "med", "m" => "med", "l" => "low", "h" => "high", "extrahigh" => "xhigh", "extra_high" => "xhigh", "xh" => "xhigh", "max" => "xhigh", _ => n };
-            int idx = Array.IndexOf(effortTiers, n);
-            if (idx < 0)
-            {
-                MuxConsole.WriteWarning($"Unknown effort '{name}'. Use low, med, high, or xhigh.");
-                return;
-            }
-            effortIdx = idx;
-            ApplyEffortTier(n);
-            MuxConsole.SetTuiEffort(n);
-            MuxConsole.WriteSuccess($"Reasoning effort set to {n}.");
-        }
-
-        // Seed the footer effort chip from the resolved reasoning config so it renders by
-        // default at session init (rather than only after a manual /effort). Maps the
-        // provider effort tier back to our low/med/high label; leaves it hidden if unset.
-        {
-            var seededEffort = agentChatOptions.Reasoning?.Effort;
-            string? seedTier =
-                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Low    ? "low"  :
-                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.Medium ? "med"  :
-                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.High   ? "high" :
-                seededEffort == Microsoft.Extensions.AI.ReasoningEffort.ExtraHigh ? "xhigh" : null;
-            if (seedTier is not null)
-            {
-                effortIdx = Array.IndexOf(effortTiers, seedTier);
-                MuxConsole.SetTuiEffort(seedTier);
-            }
-        }
-        // Register Shift+Tab to cycle effort and report the new chip label.
-        MuxConsole.SetTuiModeCycle(() => CycleEffort());
+        // Commands and Shift+Tab share one selection. Raw max/custom values survive option
+        // cloning and are applied at the client boundary, not through MEAI's ExtraHigh enum.
+        MuxConsole.SetTuiEffort(ReasoningEffortControl.GetLabel(agentChatOptions));
+        MuxConsole.SetTuiModeCycle(() => ReasoningEffortControl.Cycle(agentChatOptions));
 
         var lastPersistTime = DateTime.UtcNow;
         do
@@ -2577,17 +2514,13 @@ public static class SingleAgentOrchestrator
                         break;
                     }
                 }
-                else if (metaCmd.Equals("/effort", StringComparison.OrdinalIgnoreCase)
-                      || metaCmd.StartsWith("/effort ", StringComparison.OrdinalIgnoreCase))
+                else if (ReasoningEffortControl.TryHandleCommand(agentChatOptions, metaCmd, out var effortLabel, out var effortError))
                 {
-                    // "/effort" with no arg cycles; "/effort <tier>" sets explicitly.
-                    var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length > 1) SetEffortByName(parts[1]);
+                    if (effortError is not null) MuxConsole.WriteWarning(effortError);
                     else
                     {
-                        var tier = CycleEffort();
-                        MuxConsole.SetTuiEffort(tier);
-                        MuxConsole.WriteSuccess($"Reasoning effort set to {tier}.");
+                        MuxConsole.SetTuiEffort(effortLabel);
+                        MuxConsole.WriteSuccess($"Reasoning effort set to {effortLabel}.");
                     }
                 }
                 else if (metaCmd.Equals("/tag", StringComparison.OrdinalIgnoreCase)

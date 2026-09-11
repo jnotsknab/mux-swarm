@@ -105,7 +105,10 @@ Available inside a live single-agent session.
 | `/wipe` | Clear session history, keep the session |
 | `/undo` | Drop the last exchange |
 | `/retry` / `/redo` | Re-run the last turn |
-| `/effort` | Cycle reasoning effort (also Shift+Tab) |
+| `/effort` | Cycle `low → med → high → xhigh → max → low` (also Shift+Tab) |
+| `/effort <tier>` | Select `low`, `med`/`medium`, `high`, `xhigh`, or `max`; `xhigh` and `max` are distinct |
+| `/max` | Shortcut for `/effort max`; sends the literal provider `max` value |
+| `/effort custom <raw-value>` | Send a provider-specific effort string; preserve casing/interior spaces, trim surrounding whitespace, reject control characters |
 | `/tag <text>` | Tag the live session for resume/search |
 | `/kanban` (+ add/assign/block/ready/move/remove/peer) | Editable team task board |
 | `/background` / `/bg` (+ jobs/cancel) | Run an agent goal in the background; watch via `\` |
@@ -208,3 +211,17 @@ Available at the top-level REPL.
 
 ---
 [Back to docs index](README.md) | [Main README](../README.md)
+
+
+### Explicit reasoning effort
+
+`/effort xhigh` uses the existing extra-high tier. `/effort max` (or `/max`) requests the
+separate provider `max` tier; it is not an alias for `xhigh`. Max and custom selections use
+OpenAI-compatible native request options and surface provider rejections without silently
+retrying at a lower effort. The footer shows `max` or `custom <raw-value>` as selected.
+The next Shift+Tab or bare `/effort` after a custom selection returns to `low`.
+
+Selections affect the next model request in the active single-agent session; commands do not
+rewrite Swarm.json. To configure a startup selection, set `modelOpts.reasoning.effort` to
+`"max"` or `"custom <raw-value>"`. Ultra/giga retain their existing xhigh + numeric-budget
+default, but do not overwrite an explicit max/custom setting.

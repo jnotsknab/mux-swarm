@@ -43,6 +43,7 @@
 - **An OS for agents, in one binary.** TUI, web server, scheduling daemon, native tools, and sandbox drivers ship in a single static binary. Built in C#. No Python, no `node_modules`, no venv, nothing to install.
 - **Agents that operate the real machine.** Native in-process REPL, shell, and file tools with per-sub-agent scope isolation, no MCP subprocess forked per call.
 - **Agents in every gear.** One agent interactively, on-demand delegation with `/ultra`, persistent `/giga` teams with a shared task board, or a [`/swarm`](docs/cli.md) for batch and whole-codebase work.
+- **Explicit reasoning effort.** Shift+Tab cycles `low → med → high → xhigh → max`. Use `/effort xhigh`, `/effort max` (or `/max`), or `/effort custom <raw-value>` for a provider-specific value. Max/custom are sent literally, without silent fallback. See the [command reference](docs/cli.md#explicit-reasoning-effort).
 - **Pick your blast radius.** A pluggable sandbox runs commands bare, in [Docker or Podman, or behind gVisor and Kata microVMs](docs/sandbox.md), switchable per session with `/sandbox` and a deny-by-default network allowlist.
 - **Memory that compounds.** [Layered memory](docs/memory.md) (behavioral, factual, knowledge graph, vector) plus an opt-in deep-reflection mode that distills each session and injects it back, mid-turn and across runs.
 - **Sign in with the subscriptions you already have.** A bundled proxy signs into Claude, Codex, Kimi, xAI, or Antigravity with `/login`, no API keys in config. Any OpenAI-compatible provider works too.

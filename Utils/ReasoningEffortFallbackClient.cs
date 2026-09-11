@@ -4,7 +4,7 @@ using Microsoft.Extensions.AI;
 namespace MuxSwarm.Utils;
 
 /// <summary>
-/// Delegating chat client that lets the HIGHEST reasoning tier (<see cref="ReasoningEffort.ExtraHigh"/>)
+/// Delegating chat client that lets the legacy extra-high tier (<see cref="ReasoningEffort.ExtraHigh"/>)
 /// be requested safely against ANY endpoint. ExtraHigh serializes to the wire value "xhigh" via the
 /// Microsoft.Extensions.AI.OpenAI adapter, which some OpenAI-compatible endpoints (notably the CLIProxy
 /// Claude path, and OpenRouter models whose upstream does not accept xhigh) reject with a 400. Rather than
@@ -15,6 +15,7 @@ namespace MuxSwarm.Utils;
 /// reject the top tier (Claude, which has no reasoning_effort param) are downgraded PROACTIVELY by model id,
 /// skipping even the first doomed attempt. Endpoints that accept ExtraHigh are unaffected. It sits INSIDE the
 /// function-invocation middleware, so a downgrade retries a single model call, never the whole turn.
+/// Explicit max/custom selections instead use native OpenAI options and propagate errors without fallback.
 /// </summary>
 public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
 {
@@ -45,6 +46,10 @@ public sealed class ReasoningEffortFallbackClient : DelegatingChatClient
     // plus whether a top-tier attempt is in flight (so a rejection can trigger the one-shot retry).
     private (ChatOptions? opts, bool attemptingTop) Prepare(ChatOptions? options)
     {
+        // Explicit max/custom values are authoritative: never coerce them or latch a downgrade.
+        if (ReasoningEffortControl.GetExplicit(options) is { } explicitEffort)
+            return (ReasoningEffortControl.PrepareExplicit(options!, explicitEffort), false);
+
         if (options?.Reasoning?.Effort != ReasoningEffort.ExtraHigh)
             return (options, false);
 

@@ -525,7 +525,7 @@ Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `r
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `effort` | `none`, `low`, `medium`, `high`, `extra_high` | Controls how much computational effort the model puts into reasoning before responding. |
+| `effort` | `none`, `low`, `med`/`medium`, `high`, `xhigh`/`extra_high`, `max`, `custom <raw-value>` | `xhigh` and literal provider `max` are distinct. Max/custom bypass silent fallback; custom preserves casing/interior spaces, trims surrounding whitespace, and rejects control characters. |
 | `output` | `none`, `summary`, `full` | Controls whether reasoning traces are included in the response. |
 
 **Tuning guidelines:**

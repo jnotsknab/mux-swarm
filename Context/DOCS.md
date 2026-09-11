@@ -647,7 +647,11 @@ Optional reasoning control:
 }
 ```
 
-Effort: `none`, `low`, `medium`, `high`, `extra_high`
+Effort: `none`, `low`, `med`/`medium`, `high`, `xhigh`/`extra_high`, `max`, or `custom <raw-value>`.
+`xhigh` sends the extra-high tier; `max` sends the distinct literal `max` value using the OpenAI-compatible client.
+`custom <raw-value>` preserves casing and interior spaces (leading/trailing whitespace is trimmed; control characters are rejected).
+Max/custom values are provider-specific: unsupported values surface an error without the legacy xhigh-to-high fallback.
+Ultra/giga retain their legacy xhigh + numeric-budget default, but preserve an explicit max/custom selection.
 Output: `none`, `summary`, `full`
 
 ### additionalParams
@@ -759,7 +763,11 @@ Flags can be combined. Common stacks:
 !<command>      Run a shell command and inject its output into the conversation context
 /tokens         Show the current token / context breakdown
 /tokens all     Per-model matrixed cost/token breakdown (alias of /cost all)
-/effort         Cycle the live reasoning-effort tier (also Shift+Tab)
+/effort         Cycle live effort: low -> med -> high -> xhigh -> max -> low (also Shift+Tab)
+/effort xhigh   Select extra-high reasoning, distinct from provider max
+/effort max     Select real provider max (no silent fallback)
+/max            Shortcut for /effort max
+/effort custom <raw-value>  Send a literal provider effort (no silent fallback); next cycle returns to low
 /undo           Drop the last exchange from history
 /retry          Re-run the last turn
 /wipe           Clear the session history

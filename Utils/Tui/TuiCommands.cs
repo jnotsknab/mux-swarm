@@ -10,7 +10,7 @@
 ///
 /// GROUND TRUTH (verified against the handlers, not guessed):
 ///   - In-session meta-loop (SingleAgentOrchestrator): /compact /wipe /tokens /context
-///     /undo /retry /redo /effort, plus the quit aliases /qc /qm and the bare "/" palette.
+///     /undo /retry /redo /effort /max, plus the quit aliases /qc /qm and the bare "/" palette.
 ///     These are the ONLY commands that act inside a live session.
 ///   - Everything else is handled by the App.cs top-level switch and is REPL-only: typing
 ///     it inside a session does NOT work today (it would be sent to the agent as text), so
@@ -58,7 +58,11 @@ internal static class TuiCommands
         new("/undo",         "Undo the last exchange", Scope.SessionOnly),
         new("/retry",        "Retry the last message", Scope.SessionOnly),
         new("/redo",         "Retry the last message", Scope.SessionOnly),
-        new("/effort",       "Cycle reasoning effort (low/med/high)", Scope.SessionOnly),
+        new("/effort",       "Cycle or set effort (low/med/high/xhigh/max)", Scope.SessionOnly),
+        new("/effort xhigh", "Select extra-high effort (wire xhigh, not max)", Scope.SessionOnly),
+        new("/effort max",   "Select real provider max (no silent fallback)", Scope.SessionOnly),
+        new("/effort custom", "Send a raw provider effort (/effort custom <raw-value>)", Scope.SessionOnly),
+        new("/max",          "Select real max reasoning (alias /effort max)", Scope.SessionOnly),
         new("/tag",          "Tag this session for easy resume/search (/tag <text>)", Scope.SessionOnly),
         new("/kanban",        "Editable team board (taskboard teams) - shows the board", Scope.SessionOnly),
         new("/kanban add",    "Add a TODO task to the team board (/kanban add <subject>)", Scope.SessionOnly),
@@ -171,7 +175,7 @@ internal static class TuiCommands
         "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
-        "/compact", "/handoff", "/heal", "/reflect", "/mouse",
+        "/compact", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>
@@ -296,7 +300,7 @@ internal static class TuiCommands
         new("Alt+Enter",   "Insert a newline (multi-line compose) without submitting", "prompt"),
         new("Ctrl+J",      "Insert a newline (alias for Alt+Enter)", "prompt"),
         new("Tab",         "Accept the top autocomplete (/command, @file, /skill, /resume)", "prompt"),
-        new("Shift+Tab",   "Cycle reasoning effort (low/med/high)", "prompt"),
+        new("Shift+Tab",   "Cycle effort (low/med/high/xhigh/max; custom returns to low)", "prompt"),
         new("Up/Down",     "Browse command history (or move the autocomplete selection)", "prompt"),
         new("Ctrl+A",      "Move cursor to start of line", "prompt"),
         new("Ctrl+E",      "Move cursor to end of line (or expand latest tool result if collapsible)", "prompt"),
