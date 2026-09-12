@@ -58,6 +58,7 @@ internal static class TuiCommands
         new("/undo",         "Undo the last exchange", Scope.SessionOnly),
         new("/retry",        "Retry the last message", Scope.SessionOnly),
         new("/redo",         "Retry the last message", Scope.SessionOnly),
+        new("/paste",        "Paste clipboard text or screenshot into the TUI draft", Scope.Both),
         new("/effort",       "Cycle or set effort (low/med/high/xhigh/max)", Scope.SessionOnly),
         new("/effort xhigh", "Select extra-high effort (wire xhigh, not max)", Scope.SessionOnly),
         new("/effort max",   "Select real provider max (no silent fallback)", Scope.SessionOnly),
@@ -297,6 +298,9 @@ internal static class TuiCommands
     {
         // --- prompt (input line) ---
         new("Enter",       "Submit the current message", "prompt"),
+        new("Ctrl+V / Alt+V", "Paste clipboard text or screenshot (terminal-dependent; /paste fallback)", "prompt"),
+        new("Ctrl+Z",      "Undo the last attachment insertion/removal before any further text edit", "prompt"),
+        new("F2",          "Focus paste cards; arrows select, Enter preview, Delete detach, Esc return", "prompt"),
         new("Alt+Enter",   "Insert a newline (multi-line compose) without submitting", "prompt"),
         new("Ctrl+J",      "Insert a newline (alias for Alt+Enter)", "prompt"),
         new("Tab",         "Accept the top autocomplete (/command, @file, /skill, /resume)", "prompt"),

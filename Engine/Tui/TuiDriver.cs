@@ -17,7 +17,7 @@ namespace MuxSwarm.Engine.Tui;
 /// re-shows the cursor, restores Ctrl-C handling, and clears the live region. It is wired
 /// to AppDomain.ProcessExit / Console.CancelKeyPress by the installer.
 /// </summary>
-internal sealed class TuiDriver
+internal sealed partial class TuiDriver
 {
     private readonly ITuiTerminal _term;
     private readonly LiveRegion _region;
@@ -1175,6 +1175,7 @@ internal sealed class TuiDriver
                         { _promptModal.InputAppend(pt); Repaint(); }
                     continue;
                 }
+                if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
                 var key = ev.Key;
 
                 // Cancel carries the CURSOR position so legacy-contract callers (no cancel
@@ -1868,7 +1869,7 @@ internal sealed class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            lines.AddRange(TuiComponents.InputRowsWithCursor(_editor.Buffer, _editor.Cursor, width, highlight: _inputHighlight));
+            RenderCompose(lines, width);
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
@@ -2328,16 +2329,18 @@ internal sealed class TuiDriver
     /// loop). Returns the submitted text, or null on EOF/cancel (caller treats like Ctrl-C).
     /// The submitted line is echoed into scrollback so history reads naturally.
     /// </summary>
-    public string? ReadLine()
+    public string? ReadLine() => ReadLineCore(ConsoleInputPump.Current);
+
+    internal string? ReadLineCore(ConsoleInputPump? pump)
     {
         _editor.Reset();
+        _pasteStatus = null; _pasteDeferred.Clear();
         _paletteSel = -1;
         _inInput = true;
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
         // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
         // the shared input pump (the single input plane) so they are the next events this loop
         // sees; on the legacy path they go to the local unget queue as before.
-        var pump = ConsoleInputPump.Current;
         if (pump is not null)
         {
             var replayQ = new Queue<ConsoleKeyInfo>();
@@ -2385,23 +2388,61 @@ internal sealed class TuiDriver
         {
             // The pump owns TreatControlCAsInput for its lifetime; only the legacy path manages it here.
             try { if (pump is null) Console.TreatControlCAsInput = true; } catch { /* ignore */ }
+            if (pump is not null)
+            {
+                _terminalPaste = new TerminalPasteProtocol(s => { _term.Write(s); _term.Flush(); }, ReceiveTerminalPayload);
+                _terminalPaste.Start();
+            }
             Repaint();
 
             while (true)
             {
+                bool fromDeferred = false;
+                if (PastePending)
+                {
+                    FinishPasteIfReady();
+                    if (PastePending)
+                    {
+                        ConsoleInputPump.InputEvent pending = default;
+                        bool got = _pasteTask is null && TakeDeferred(out pending, protocolOnly: true);
+                        if (!got && pump is not null) got = pump.TryTake(out pending, 40);
+                        if (pump is null)
+                        {
+                            pending = default;
+                            if (Console.KeyAvailable) { pending = ConsoleInputPump.InputEvent.OfKey(Console.ReadKey(true)); got = true; }
+                            else Thread.Sleep(20);
+                        }
+                        if (got)
+                        {
+                            if (pending.Kind == ConsoleInputPump.EventKind.Terminal && _pasteTask is null)
+                                HandleTerminalPaste(pending.PasteText ?? "");
+                            else if (pending.Kind == ConsoleInputPump.EventKind.Key &&
+                                (pending.Key.Key == ConsoleKey.Escape || (pending.Key.Key == ConsoleKey.C && pending.Key.Modifiers.HasFlag(ConsoleModifiers.Control))))
+                                CancelPendingPaste();
+                            else if (_pasteDeferred.Count < 65536) _pasteDeferred.AddLast(pending);
+                            else { CancelPendingPaste(); _pasteStatus = "Paste backlog limit reached; paste again in smaller chunks."; }
+                        }
+                        if (pump?.Disposed == true) return null;
+                        Repaint(); continue;
+                    }
+                    Repaint();
+                }
+                if (carry is null && TakeDeferred(out var deferred)) { carry = deferred; fromDeferred = true; }
                 ConsoleKeyInfo key;
                 if (carry is not null)
                 {
                     // A non-wheel event stashed while coalescing a wheel burst / draining a paste.
                     var cv = carry.Value; carry = null;
+                    if (cv.Kind == ConsoleInputPump.EventKind.Terminal) { HandleTerminalPaste(cv.PasteText ?? ""); continue; }
                     if (cv.Kind == ConsoleInputPump.EventKind.Wheel)
                     {
-                        if (_engineFrame && cv.WheelDir != 0 && OnWheelScroll(cv.WheelDir)) Repaint();
+                        if (_editor.Attachments.Focused) { _editor.Attachments.ScrollBy(-cv.WheelDir * 3); Repaint(); }
+                        else if (_engineFrame && cv.WheelDir != 0 && OnWheelScroll(cv.WheelDir)) Repaint();
                         continue;
                     }
                     if (cv.Kind == ConsoleInputPump.EventKind.Paste)
                     {
-                        if (!string.IsNullOrEmpty(cv.PasteText)) { _editor.InsertText(cv.PasteText); _paletteSel = -1; Repaint(); }
+                        BeginTextPaste(cv.PasteText ?? ""); Repaint();
                         continue;
                     }
                     key = cv.Key;
@@ -2445,6 +2486,8 @@ internal sealed class TuiDriver
                     }
                     switch (ev.Kind)
                     {
+                        case ConsoleInputPump.EventKind.Terminal:
+                            HandleTerminalPaste(ev.PasteText ?? ""); Repaint(); continue;
                         case ConsoleInputPump.EventKind.Wheel:
                         {
                             // Coalesce a wheel burst into ONE net scroll + ONE repaint.
@@ -2454,18 +2497,15 @@ internal sealed class TuiDriver
                                 if (nx.Kind == ConsoleInputPump.EventKind.Wheel) { net += nx.WheelDir; continue; }
                                 carry = nx; break;
                             }
-                            if (_engineFrame && net != 0 && OnWheelScroll(net)) Repaint();
+                            if (_editor.Attachments.Focused) { _editor.Attachments.ScrollBy(-net * 3); Repaint(); }
+                            else if (_engineFrame && net != 0 && OnWheelScroll(net)) Repaint();
                             continue;
                         }
                         case ConsoleInputPump.EventKind.Paste:
                         {
                             string pasted = ev.PasteText ?? string.Empty;
-                            if (pasted.Length > 0)
-                            {
-                                _editor.InsertText(pasted);
-                                _paletteSel = -1;
-                                if (pump.PendingCount == 0) Repaint();
-                            }
+                            BeginTextPaste(pasted);
+                            Repaint();
                             continue;
                         }
                     }
@@ -2552,12 +2592,8 @@ internal sealed class TuiDriver
                 if (pump is null && _bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
                 {
                     string pasted = DrainBracketedPaste();
-                    if (pasted.Length > 0)
-                    {
-                        _editor.InsertText(pasted);
-                        _paletteSel = -1;
-                        if (!KeyQueued() && _ungetq.Count == 0) Repaint();
-                    }
+                    BeginTextPaste(pasted);
+                    Repaint();
                     continue;
                 }
 
@@ -2568,13 +2604,13 @@ internal sealed class TuiDriver
                 // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
                 // active when bracketedPaste is enabled and the editor is in plain Insert mode.
                 bool moreQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
-                if (_bracketedPaste && key.Key == ConsoleKey.Enter
+                if (!fromDeferred && _bracketedPaste && key.Key == ConsoleKey.Enter
                     && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
                     && !_editor.IsSearching
                     && _ungetq.Count == 0 && moreQueued)
                 {
                     string burst = pump is not null ? DrainBurstFromPump(pump, ref carry) : DrainBurstPaste();
-                    _editor.InsertText("\n" + burst);
+                    _editor.InsertPaste("\n" + burst);
                     _paletteSel = -1;
                     bool stillQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
                     if (!stillQueued) Repaint();
@@ -2595,8 +2631,7 @@ internal sealed class TuiDriver
                             _editor.Remember(line);
                             _inInput = false;
                             _pendingGap = false;
-                            if (!TuiCommands.OpensInteractivePrompt(line))
-                                CommitMirrored(TuiComponents.UserEcho(line));
+                            EchoDraft(line);
                             return line;
                         }
                         case ReverseSearchSignal.Accept:
@@ -2610,6 +2645,16 @@ internal sealed class TuiDriver
                             continue;
                     }
                 }
+
+                if ((key.Key == ConsoleKey.V && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) != 0)
+                    || (key.Key == ConsoleKey.Enter && _editor.Buffer.Trim().Equals("/paste", StringComparison.OrdinalIgnoreCase)))
+                {
+                    if (key.Key == ConsoleKey.Enter) _editor.SetBuffer("");
+                    BeginClipboardPaste(); Repaint(); continue;
+                }
+                if (key.Key == ConsoleKey.Z && key.Modifiers.HasFlag(ConsoleModifiers.Control) && _editor.UndoAttachment())
+                { Repaint(); continue; }
+                if (_editor.Attachments.HandleKey(key, _editor.RemoveRange)) { Repaint(); continue; }
 
                 // Ctrl+R at the prompt: enter reverse-incremental history search. No-op (falls
                 // through) when there is no history yet, so the key is never silently swallowed.
@@ -2777,8 +2822,7 @@ internal sealed class TuiDriver
                         // picker (e.g. /set, /swap): the picker draws its own UI and the handler
                         // prints a confirmation, so echoing the bare command line just leaves
                         // residue above the prompt. All other lines echo normally.
-                        if (!TuiCommands.OpensInteractivePrompt(line))
-                            CommitMirrored(TuiComponents.UserEcho(line));
+                        EchoDraft(line);
                         return line;
                     }
                     case LineEditSignal.Cancel:
@@ -2831,6 +2875,8 @@ internal sealed class TuiDriver
         }
         finally
         {
+            CancelPendingPaste(discardQueued: true);
+            _terminalPaste?.Stop(); _terminalPaste = null;
             _inInput = false;
             if (pump is not null) ConsoleInputPump.PromptActive = false;
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
@@ -2865,8 +2911,7 @@ internal sealed class TuiDriver
                 _editor.Remember(line);
                 _inInput = false;
                 _pendingGap = false;
-                if (!TuiCommands.OpensInteractivePrompt(line))
-                    CommitMirrored(TuiComponents.UserEcho(line));
+                EchoDraft(line);
                 submitted = line;
                 return true;
             }
@@ -3330,6 +3375,8 @@ internal sealed class TuiDriver
     {
         if (_shuttingDown) return;
         _shuttingDown = true;
+        _pasteCancellation?.Cancel();
+        try { _terminalPaste?.Stop(); } catch { }
         try { if (_bracketedPaste) { _term.Write(Ansi.BracketedPasteOff); _term.Flush(); } } catch { /* ignore */ }
         try { HandBack(); } catch { /* ignore */ }
     }

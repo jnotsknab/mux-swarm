@@ -16,7 +16,7 @@ namespace MuxSwarm.Engine.Tui;
 /// </summary>
 internal sealed class ConsoleInputPump : IDisposable
 {
-    internal enum EventKind { Key, Wheel, Paste }
+    internal enum EventKind { Key, Wheel, Paste, Terminal }
 
     /// <summary>One typed input event. Key: a console key (including a classified bare/Alt ESC).
     /// Wheel: net wheel notches (positive = up/back into history). Paste: full pasted text with
@@ -26,6 +26,7 @@ internal sealed class ConsoleInputPump : IDisposable
         public static InputEvent OfKey(ConsoleKeyInfo k) => new(EventKind.Key, k, 0, null);
         public static InputEvent OfWheel(int dir) => new(EventKind.Wheel, default, dir, null);
         public static InputEvent OfPaste(string text) => new(EventKind.Paste, default, 0, text);
+        internal static InputEvent OfTerminal(string packet) => new(EventKind.Terminal, default, 0, packet);
     }
 
     private static readonly object _currentGate = new();
@@ -271,7 +272,7 @@ internal sealed class ConsoleInputPump : IDisposable
 /// </summary>
 internal sealed class SgrInputAssembler
 {
-    private enum State { Ground, Esc, EscBracket, PasteOpen, PasteBody, PasteClose, MouseBody, MouseBodyDiscard }
+    private enum State { Ground, Esc, EscBracket, PasteOpen, PasteBody, PasteClose, MouseBody, MouseBodyDiscard, Osc, OscEscape, OscDiscard, OscDiscardEscape, ModeReply, ModeDiscard }
 
     private readonly bool _mouseTracking;
     private readonly bool _bracketedPaste;
@@ -296,7 +297,8 @@ internal sealed class SgrInputAssembler
     /// <paramref name="idleMs"/> since the last fed key - i.e. the classification window has
     /// expired and <see cref="FlushTimeout"/> may run without tearing an in-flight sequence.</summary>
     internal bool PendingExpired(int idleMs)
-        => HasPending && Environment.TickCount64 - _lastFeedTick >= idleMs;
+        => HasPending && Environment.TickCount64 - _lastFeedTick >=
+            (_state is State.Osc or State.OscEscape or State.OscDiscard or State.OscDiscardEscape or State.ModeReply ? 2000 : idleMs);
 
     internal IEnumerable<ConsoleInputPump.InputEvent> Feed(ConsoleKeyInfo key)
     {
@@ -312,6 +314,8 @@ internal sealed class SgrInputAssembler
                 break;
 
             case State.Esc:
+                if (c is 'v' or 'V') { outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo(c, ConsoleKey.V, c == 'V', true, false))); _state = State.Ground; break; }
+                if (c == ']') { _acc.Clear(); _acc.Append("\x1b]"); _state = State.Osc; break; }
                 if (c == '[') { _state = State.EscBracket; break; }
                 // Alt-chord (ESC+char) or a second ESC: emit the held ESC, reprocess this key.
                 outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
@@ -320,6 +324,7 @@ internal sealed class SgrInputAssembler
                 break;
 
             case State.EscBracket:
+                if (c == '?') { _acc.Clear(); _acc.Append("\x1b[?"); _state = State.ModeReply; break; }
                 if (c == '<' && _mouseTracking) { _state = State.MouseBody; _acc.Clear(); break; }
                 if (c == '2' && _bracketedPaste) { _state = State.PasteOpen; _openMatched = 2; break; }   // "[2" matched
                 // Not a sequence we own: emit ESC + '[' + this char.
@@ -367,6 +372,34 @@ internal sealed class SgrInputAssembler
                 outp.AddRange(Feed(key));
                 break;
 
+            case State.ModeReply:
+                _acc.Append(c);
+                if (c >= '@' && c <= '~') { outp.Add(ConsoleInputPump.InputEvent.OfTerminal(_acc.ToString())); _state = State.Ground; }
+                else if (_acc.Length > 64) { _acc.Clear(); _state = State.ModeDiscard; }
+                break;
+            case State.ModeDiscard:
+                if (c >= '@' && c <= '~') _state = State.Ground;
+                break;
+            case State.Osc:
+                if (c == '\a') { _acc.Append(c); outp.Add(ConsoleInputPump.InputEvent.OfTerminal(_acc.ToString())); _state = State.Ground; }
+                else if (c == '\x1b') _state = State.OscEscape;
+                else if (_acc.Length >= TerminalPasteProtocol.MaxPacketChars) { _acc.Clear(); _state = State.OscDiscard; }
+                else _acc.Append(c);
+                break;
+            case State.OscEscape:
+                if (c == '\\') { _acc.Append("\x1b\\"); outp.Add(ConsoleInputPump.InputEvent.OfTerminal(_acc.ToString())); _state = State.Ground; }
+                else { _acc.Append('\x1b').Append(c); _state = State.Osc; }
+                break;
+            case State.OscDiscard:
+                if (c == '\a') _state = State.Ground;
+                else if (c == '\x1b') _state = State.OscDiscardEscape;
+                else if (c == '\x03') { _state = State.Ground; outp.Add(ConsoleInputPump.InputEvent.OfKey(key)); }
+                break;
+            case State.OscDiscardEscape:
+                if (c == '\\') _state = State.Ground;
+                else if (c is '[' or ']') { _state = State.Esc; outp.AddRange(Feed(key)); }
+                else _state = State.OscDiscard;
+                break;
             case State.MouseBody:
                 if (c is 'M' or 'm')
                 {
@@ -432,6 +465,17 @@ internal sealed class SgrInputAssembler
                 for (int i = 0; i < _openMatched; i++) _acc.Append(PasteCloseTail[i]);
                 outp.Add(ConsoleInputPump.InputEvent.OfPaste(NormalizePaste(_acc.ToString())));
                 _state = State.Ground;
+                break;
+            case State.ModeReply:
+            case State.ModeDiscard:
+                _state = State.Ground; _acc.Clear();
+                break;
+            case State.Osc:
+            case State.OscEscape:
+                _state = State.OscDiscard; _acc.Clear();
+                break;
+            case State.OscDiscard:
+            case State.OscDiscardEscape:
                 break;
             case State.MouseBody:
             case State.MouseBodyDiscard:

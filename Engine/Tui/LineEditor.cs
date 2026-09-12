@@ -54,9 +54,13 @@ internal enum ReverseSearchSignal
 internal sealed class LineEditor
 {
     private readonly StringBuilder _buf = new();
+    internal ComposeAttachments Attachments { get; } = new();
     private int _cursor;                       // index into _buf (0.._buf.Length)
     private readonly List<string> _history = new();
     private int _historyIndex;                 // == _history.Count means "current/new line"
+    private readonly Dictionary<string, ComposeAttachments.Item[]> _historyCards = new();
+    private (string Text, int Cursor, ComposeAttachments.Item[] Items, string After)? _attachmentUndo;
+    private ComposeAttachments.Item[] _stashCards = [], _searchStashCards = [];
     private string _stash = "";                // in-progress line stashed while browsing history
 
     // History-recall tracking. RecalledFromHistory is true while the buffer still holds an
@@ -92,7 +96,7 @@ internal sealed class LineEditor
     /// True when the buffer is an as-you-type slash command (starts with '/', no spaces yet),
     /// which the renderer uses to show the live command palette beneath the input.
     /// </summary>
-    public bool IsSlashFilter => _buf.Length > 0 && _buf[0] == '/' && !Buffer.Contains(' ');
+    public bool IsSlashFilter => !Attachments.HidesCursor(_cursor) && _buf.Length > 0 && _buf[0] == '/' && !Buffer.Contains(' ');
 
     /// <summary>The slash filter token (e.g. "/he" while typing "/help"), or null.</summary>
     public string? SlashFilter => IsSlashFilter ? Buffer : null;
@@ -105,7 +109,7 @@ internal sealed class LineEditor
     {
         get
         {
-            if (_buf.Length == 0 || _buf[0] != '/') return false;
+            if (Attachments.HidesCursor(_cursor) || _buf.Length == 0 || _buf[0] != '/') return false;
             var head = Buffer.Split(' ', 2)[0].ToLowerInvariant();
             return head is "/skill" or "/skills";
         }
@@ -127,7 +131,7 @@ internal sealed class LineEditor
     {
         get
         {
-            if (_buf.Length == 0 || _buf[0] != '/') return false;
+            if (Attachments.HidesCursor(_cursor) || _buf.Length == 0 || _buf[0] != '/') return false;
             return Buffer.Split(' ', 2)[0].ToLowerInvariant() == "/resume";
         }
     }
@@ -149,7 +153,7 @@ internal sealed class LineEditor
     {
         get
         {
-            if (_buf.Length == 0 || _buf[0] != '/') return false;
+            if (Attachments.HidesCursor(_cursor) || _buf.Length == 0 || _buf[0] != '/') return false;
             return Buffer.Split(' ', 2)[0].ToLowerInvariant() == "/tools";
         }
     }
@@ -186,6 +190,7 @@ internal sealed class LineEditor
     {
         get
         {
+            if (Attachments.HidesCursor(_cursor)) return false;
             var (start, end) = CurrentToken();
             return end > start && _buf[start] == '@';
         }
@@ -212,8 +217,14 @@ internal sealed class LineEditor
     public void ReplaceCurrentToken(string replacement, bool addTrailingSpace = true)
     {
         var (start, end) = CurrentToken();
-        _buf.Remove(start, end - start);
+        if (end > start)
+        {
+            var atomic = Attachments.AtomicRange(start, end - start);
+            start = atomic.Start; end = start + atomic.Length;
+        }
+        RemoveRange(start, end - start);
         string ins = replacement + (addTrailingSpace ? " " : "");
+        Attachments.Edited(start, 0, ins.Length);
         _buf.Insert(start, ins);
         _cursor = start + ins.Length;
     }
@@ -226,13 +237,51 @@ internal sealed class LineEditor
     {
         if (string.IsNullOrEmpty(text)) return;
         string norm = text.Replace("\r\n", "\n").Replace("\r", "\n");
+        Attachments.Edited(_cursor, 0, norm.Length);
         _buf.Insert(_cursor, norm);
         _cursor += norm.Length;
         _historyActive = false;
     }
 
+    /// <summary>Insert a complete paste, collapsing large text only in its presentation.</summary>
+    internal void InsertPaste(string text, string? imageName = null)
+    {
+        var before = (Text: Buffer, Cursor: _cursor, Items: Attachments.Snapshot());
+        int start = _cursor;
+        InsertText(text);
+        string inserted = _buf.ToString(start, _cursor - start);
+        if (inserted.Length > 0 && (imageName is not null || ComposeAttachments.IsLarge(inserted)))
+        {
+            Attachments.Add(start, inserted, imageName);
+            _attachmentUndo = (before.Text, before.Cursor, before.Items, Buffer);
+        }
+    }
+
+    internal void RemoveRange(int start, int length)
+    {
+        if (length <= 0) return;
+        var before = (Text: Buffer, Cursor: _cursor, Items: Attachments.Snapshot());
+        var range = Attachments.AtomicRange(start, length);
+        bool removesCard = before.Items.Any(x => range.Start < x.Start + x.Length && range.Start + range.Length > x.Start);
+        Attachments.Edited(range.Start, range.Length, 0);
+        _buf.Remove(range.Start, range.Length);
+        _cursor = Math.Clamp(_cursor > range.Start ? _cursor - Math.Min(_cursor - range.Start, range.Length) : _cursor, 0, _buf.Length);
+        if (removesCard) _attachmentUndo = (before.Text, before.Cursor, before.Items, Buffer);
+    }
+
+    /// <summary>Undo the most recent attachment insertion/removal only while no later text edit intervened.</summary>
+    internal bool UndoAttachment()
+    {
+        if (_attachmentUndo is not { } undo || Buffer != undo.After) return false;
+        SetBuffer(undo.Text, undo.Cursor); Attachments.Restore(undo.Items); _attachmentUndo = null;
+        return true;
+    }
+
+    internal (string Text, int Cursor) Display => Attachments.Display(Buffer, _cursor);
+
     public void SetBuffer(string text, int? cursor = null)
     {
+        Attachments.Clear();
         _buf.Clear();
         _buf.Append(text ?? "");
         _cursor = cursor ?? _buf.Length;
@@ -243,10 +292,11 @@ internal sealed class LineEditor
     /// <summary>Reset the buffer and cursor for a fresh prompt (history is retained).</summary>
     public void Reset()
     {
+        Attachments.Clear();
         _buf.Clear();
         _cursor = 0;
         _historyIndex = _history.Count;
-        _stash = "";
+        _stash = ""; _stashCards = []; _searchStashCards = []; _attachmentUndo = null;
         _historyActive = false;
         _historyBuf = "";
         _searching = false;
@@ -259,6 +309,7 @@ internal sealed class LineEditor
     public void Remember(string line)
     {
         if (string.IsNullOrWhiteSpace(line)) return;
+        _historyCards[line] = line == Buffer ? Attachments.Snapshot() : [];
         if (_history.Count > 0 && _history[^1] == line) { _historyIndex = _history.Count; return; }
         _history.Add(line);
         _historyIndex = _history.Count;
@@ -289,6 +340,7 @@ internal sealed class LineEditor
         if (_history.Count == 0) return;
         _searching = true;
         _searchStash = _buf.ToString();
+        _searchStashCards = Attachments.Snapshot();
         _search.Clear();
         _searchPos = -1;
     }
@@ -304,7 +356,7 @@ internal sealed class LineEditor
         if (ctrl && (key.Key == ConsoleKey.G || key.Key == ConsoleKey.C))
         {
             _searching = false;
-            SetBuffer(_searchStash);
+            SetBuffer(_searchStash); Attachments.Restore(_searchStashCards);
             _search.Clear(); _searchPos = -1;
             return ReverseSearchSignal.Cancel;
         }
@@ -333,8 +385,12 @@ internal sealed class LineEditor
     private void AcceptSearchMatch()
     {
         _searching = false;
-        if (_searchPos >= 0 && _searchPos < _history.Count) SetBuffer(_history[_searchPos]);
-        else SetBuffer(_searchStash);
+        if (_searchPos >= 0 && _searchPos < _history.Count)
+        {
+            SetBuffer(_history[_searchPos]);
+            Attachments.Restore(_historyCards.GetValueOrDefault(Buffer) ?? []);
+        }
+        else { SetBuffer(_searchStash); Attachments.Restore(_searchStashCards); }
         _search.Clear(); _searchPos = -1;
     }
 
@@ -399,34 +455,32 @@ internal sealed class LineEditor
                 // mode. Plain Enter still submits.
                 if (alt)
                 {
-                    _buf.Insert(_cursor, '\n');
-                    _cursor++;
+                    InsertText("\n");
                     return LineEditSignal.Continue;
                 }
                 return LineEditSignal.Submit;
 
             // Ctrl+J: newline alias (terminals that can\u0027t signal Alt+Enter still get multiline).
             case ConsoleKey.J when ctrl:
-                _buf.Insert(_cursor, '\n');
-                _cursor++;
+                InsertText("\n");
                 return LineEditSignal.Continue;
 
             case ConsoleKey.Backspace:
-                if (_cursor > 0) { _buf.Remove(_cursor - 1, 1); _cursor--; return LineEditSignal.Continue; }
+                if (_cursor > 0) { RemoveRange(_cursor - 1, 1); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
 
             case ConsoleKey.Delete:
-                if (_cursor < _buf.Length) { _buf.Remove(_cursor, 1); return LineEditSignal.Continue; }
+                if (_cursor < _buf.Length) { RemoveRange(_cursor, 1); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
 
             case ConsoleKey.LeftArrow:
-                if (ctrl) { _cursor = PrevWord(_cursor); return LineEditSignal.Continue; }
-                if (_cursor > 0) { _cursor--; return LineEditSignal.Continue; }
+                if (ctrl) { _cursor = Attachments.SnapCursor(PrevWord(_cursor), false); return LineEditSignal.Continue; }
+                if (_cursor > 0) { _cursor = Attachments.SnapCursor(_cursor - 1, false); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
 
             case ConsoleKey.RightArrow:
-                if (ctrl) { _cursor = NextWord(_cursor); return LineEditSignal.Continue; }
-                if (_cursor < _buf.Length) { _cursor++; return LineEditSignal.Continue; }
+                if (ctrl) { _cursor = Attachments.SnapCursor(NextWord(_cursor), true); return LineEditSignal.Continue; }
+                if (_cursor < _buf.Length) { _cursor = Attachments.SnapCursor(_cursor + 1, true); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
 
             case ConsoleKey.Home: _cursor = 0; return LineEditSignal.Continue;
@@ -438,15 +492,15 @@ internal sealed class LineEditor
             case ConsoleKey.A when ctrl: _cursor = 0; return LineEditSignal.Continue;
             case ConsoleKey.E when ctrl: _cursor = _buf.Length; return LineEditSignal.Continue;
             case ConsoleKey.U when ctrl: // kill to start of line
-                if (_cursor > 0) { _buf.Remove(0, _cursor); _cursor = 0; return LineEditSignal.Continue; }
+                if (_cursor > 0) { RemoveRange(0, _cursor); _cursor = 0; return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
             case ConsoleKey.K when ctrl: // kill to end of line
-                if (_cursor < _buf.Length) { _buf.Remove(_cursor, _buf.Length - _cursor); return LineEditSignal.Continue; }
+                if (_cursor < _buf.Length) { RemoveRange(_cursor, _buf.Length - _cursor); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
             case ConsoleKey.W when ctrl: // delete previous word
             {
                 int p = PrevWord(_cursor);
-                if (p < _cursor) { _buf.Remove(p, _cursor - p); _cursor = p; return LineEditSignal.Continue; }
+                if (p < _cursor) { RemoveRange(p, _cursor - p); return LineEditSignal.Continue; }
                 return LineEditSignal.Ignored;
             }
         }
@@ -454,8 +508,7 @@ internal sealed class LineEditor
         // Printable character insertion (ignore remaining control chars).
         if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
         {
-            _buf.Insert(_cursor, key.KeyChar);
-            _cursor++;
+            InsertText(key.KeyChar.ToString());
             return LineEditSignal.Continue;
         }
 
@@ -474,7 +527,7 @@ internal sealed class LineEditor
     private LineEditSignal HistoryPrev()
     {
         if (_history.Count == 0) return LineEditSignal.Ignored;
-        if (_historyIndex == _history.Count) _stash = Buffer; // stash the in-progress line
+        if (_historyIndex == _history.Count) { _stash = Buffer; _stashCards = Attachments.Snapshot(); } // stash the in-progress line
         if (_historyIndex > 0)
         {
             _historyIndex--;
@@ -490,7 +543,8 @@ internal sealed class LineEditor
         _historyIndex++;
         if (_historyIndex == _history.Count)
         {
-            _buf.Clear(); _buf.Append(_stash); _cursor = _buf.Length;
+            SetBuffer(_stash);
+            Attachments.Restore(_stashCards);
             _historyActive = true; _historyBuf = _buf.ToString();
         }
         else LoadFromHistory();
@@ -499,9 +553,8 @@ internal sealed class LineEditor
 
     private void LoadFromHistory()
     {
-        _buf.Clear();
-        _buf.Append(_history[_historyIndex]);
-        _cursor = _buf.Length;
+        SetBuffer(_history[_historyIndex]);
+        Attachments.Restore(_historyCards.GetValueOrDefault(Buffer) ?? []);
         _historyActive = true;
         _historyBuf = _buf.ToString();
     }

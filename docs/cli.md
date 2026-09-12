@@ -225,3 +225,18 @@ Selections affect the next model request in the active single-agent session; com
 rewrite Swarm.json. To configure a startup selection, set `modelOpts.reasoning.effort` to
 `"max"` or `"custom <raw-value>"`. Ultra/giga retain their existing xhigh + numeric-budget
 default, but do not overwrite an explicit max/custom setting.
+
+
+## Clipboard screenshots and paste cards (TUI)
+
+- Paste normally for text. In the draft, **Ctrl+V** (when forwarded by the terminal), **Alt+V**, or **`/paste` + Enter** reads clipboard text or a screenshot. Pasting does not send a model request.
+- Images are saved with unique names under the configured sandbox's **`captures/`** directory. The draft shows an image card; submitting includes its absolute file path, not an automatic vision payload. Detaching a card does not delete its saved image. Captures are not automatically cleaned up.
+- Recognized PNG/JPEG/GIF/WebP/BMP image paths inside allowed directories can also be pasted. Images are limited to 16 MiB; extension follows detected format. An unavailable or disallowed file path remains ordinary text.
+- Text pastes over **10 lines or 1,000 characters** collapse visually. Full text remains in the draft for submission and history; code indentation is not rewritten. Short text pastes remain ordinary editable text.
+- **F2** focuses cards. **Up/Down or Left/Right** selects; **Enter** opens/closes a preview; **Up/Down, PageUp/PageDown, Home/End, or mouse wheel** scrolls its contents. **Left/Right** changes cards while previewing. **Delete/Backspace** detaches the selected item; **Esc** closes the preview, then returns to editing. Deleting a folded item from the edit line removes its whole range.
+- **Ctrl+Z** restores the last attachment insertion/removal if no subsequent text edit intervened; this is attachment undo, not a full text-editor undo stack.
+- Pending paste is serialized before later typing/Enter. **Esc** cancels that pending paste without clearing the existing draft. An unsuccessful save never inserts a nonexistent capture path.
+
+**Portability:** native Windows registered-PNG clipboard reads have a bounded PowerShell STA bitmap fallback. macOS uses built-in osascript/AppKit; Linux uses available `wl-paste` (Wayland) or `xclip` (X11), and WSL can use the Windows PowerShell bridge. No clipboard utilities are installed automatically. Direct clipboard access needs a local desktop session.
+
+The full-frame TUI negotiates **OSC 5522** with capable terminals; supported terminal-originated image pastes can work over SSH. Plain bracketed paste is text-only. If the terminal consumes a paste gesture and sends no event, use the alternate key or `/paste`. In SSH sessions without enhanced paste, upload the image and paste a path readable by Mux; Mux does not inspect an unrelated remote desktop clipboard. Clipboard images are not accepted by ask-user modals or transcript viewers.

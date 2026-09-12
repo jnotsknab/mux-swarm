@@ -177,6 +177,7 @@ public sealed class EscapeKeyListener : IDisposable
                                 ReplayKey(new ConsoleKeyInfo(pc, ConsoleKey.NoName, false, false, false));
                             continue;
                         }
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Terminal) continue;
                         key = pev.Key;
                     }
                     else

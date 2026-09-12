@@ -1637,9 +1637,6 @@ public static class SingleAgentOrchestrator
             ? Common.ExtractMessagesFromSession(resumedSession.Value)
             : new List<ChatMessage>();
 
-        if (resumedSession.HasValue)
-            MuxConsole.WriteSuccess($" Extracted {conversationHistory.Count} messages from resumed session");
-
         // Deep memory (reflectionAgent.mode == "deep"): expose this session's history to the
         // background gatherer and start its activity-gated loop. Inert in standard mode; interactive
         // only (the gatherer makes its own LLM calls, never in serve/acp/stdio - gated by caller).
