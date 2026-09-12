@@ -559,6 +559,8 @@ Prompt files define the **behavioral contract** for each role - how an agent rea
 
 Skills are reusable operational modules agents discover and load at runtime via `list_skills` and `read_skill`. They keep core prompts lean while giving agents access to structured instructions when needed. Prompts define the **role**; skills provide the **task-specific playbooks**.
 
+**Using skills efficiently** - Skill discovery is conditional, not a mandatory first action. If a task may need a skill and its name is not already in context, use `list_skills`. A known name is enough to call `read_skill` directly. Reuse skill definitions already in context rather than reloading them every turn; reload only when missing (such as after compaction), changed, or explicitly requested. When no skill is relevant, skip both tools. Delegated agents apply this rule to their own context. This is prompting guidance, not a tool-call restriction or runtime cache.
+
 **Installing skills** - `/installskill` pulls [Agent Skills](https://agentskills.io) (the `SKILL.md`-per-directory format) from public GitHub sources and normalizes them to mux conventions:
 
 - `/installskill` (bare) - list installable skills across the curated registry (Anthropic, obra/superpowers, dotnet, Vercel Labs, tech-leads-club, ComposioHQ, OpenAI).

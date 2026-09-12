@@ -4,8 +4,14 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Acp;
+using MuxSwarm.Engine.Memory;
+using MuxSwarm.Engine.NativeTools;
+using MuxSwarm.Engine.Proxy;
+using MuxSwarm.Engine.Teams;
+using MuxSwarm.Engine.Tui;
 using MuxSwarm.State;
-using MuxSwarm.Utils;
 using OpenAI;
 using static MuxSwarm.Setup.Setup;
 
@@ -13,7 +19,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.13.1";
+    public static readonly string Version = "0.13.2";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -97,14 +103,14 @@ public class App
     /// console reader at all times: this method only returns once the parked frame has stopped
     /// reading (it is blocked on the attach gate) or the task has completed.
     /// </summary>
-    private static async Task<bool> PumpSessionAsync(MuxSwarm.Utils.InteractiveSession handle)
+    private static async Task<bool> PumpSessionAsync(InteractiveSession handle)
     {
         var winner = await Task.WhenAny(handle.ChatTask!, handle.WaitForDetachAsync());
         if (winner == handle.ChatTask)
         {
             try { await handle.ChatTask!; }
             catch (OperationCanceledException) { /* quit/cancel is a normal session end */ }
-            MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+            InteractiveSessionRegistry.Remove(handle);
             return true;
         }
         // Parked: the frame is blocked on its attach gate; the menu owns the console again.
@@ -224,7 +230,7 @@ public class App
 
         // Startup prune of spilled sub-agent delegation raw older than the retention window
         // (size-tiered context passing). Best-effort; never blocks startup.
-        try { MuxSwarm.Utils.DelegationStore.PruneOldRetention(limits.DelegationRetentionDays); } catch { }
+        try { DelegationStore.PruneOldRetention(limits.DelegationRetentionDays); } catch { }
 
         InitLlmProvider();
         SkillLoader.LoadSkills();
@@ -404,7 +410,7 @@ public class App
                 Backend = sbxBackend, Image = Config.Sandbox.Image, Network = Config.Sandbox.Network,
                 AllowedDomains = Config.Sandbox.AllowedDomains, Command = Config.Sandbox.Command,
             };
-            var sbxErr = MuxSwarm.Utils.NativeTools.SandboxBackend.Validate(candidate);
+            var sbxErr = SandboxBackend.Validate(candidate);
             if (sbxErr is null)
             {
                 Config.Sandbox = candidate;
@@ -420,7 +426,7 @@ public class App
 
         // Resolve the authoritative sandbox state ONCE after all startup overrides (--sandbox,
         // --dockerexec, config) have settled, so the preamble's ACTIVE block tracks the real backend.
-        MuxSwarm.Utils.NativeTools.SandboxRuntime.Refresh();
+        SandboxRuntime.Refresh();
 
         if (parsed.McpStrictOverride.HasValue)
         {
@@ -634,7 +640,7 @@ public class App
                         break;
                     }
 
-                    var teamCfg = MuxSwarm.Utils.Teams.TeamController.Find(SwarmConfig, teamsArg);
+                    var teamCfg = TeamController.Find(SwarmConfig, teamsArg);
                     if (teamCfg is null)
                     {
                         MuxConsole.WriteWarning($"No team named '{teamsArg}' in swarm.json. Run /teams to list configured teams.");
@@ -642,7 +648,7 @@ public class App
                     }
 
                     var teamsCts = GetOrResetCts();
-                    var teamScope = MuxSwarm.Utils.Teams.TeamController.Build(
+                    var teamScope = TeamController.Build(
                         teamCfg, SwarmConfig ?? new SwarmConfig(),
                         modelId => CreateChatClient(modelId), teamsModels, teamsCts.Token);
                     if (teamScope is null) break;
@@ -666,7 +672,7 @@ public class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         teamScope: teamScope
                     );
-                    } finally { ServeMode.ActiveMode = "interactive"; MuxSwarm.Utils.Teams.TeamController.Clear(); }
+                    } finally { ServeMode.ActiveMode = "interactive"; TeamController.Clear(); }
                     break;
                 }
 
@@ -721,7 +727,7 @@ public class App
                     ServeMode.ActiveMode = "agent";
                     MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
-                    var agentHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                    var agentHandle = InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
                     agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(singleAgentModel, null,
@@ -775,7 +781,7 @@ public class App
                     ServeMode.ActiveMode = "stateless";
                     MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
-                    var statelessHandle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                    var statelessHandle = InteractiveSessionRegistry.Create(
                         "stateless", "stateless");
                     statelessHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
                         client: CreateChatClient(statelessAgent),
@@ -803,7 +809,7 @@ public class App
                     // <id>" releases that frame's attach gate (handing the console back to it) and
                     // pumps it again until it re-parks or finishes. Single console reader throughout:
                     // the menu stops reading the moment it releases the gate.
-                    var parked = MuxSwarm.Utils.InteractiveSessionRegistry.ListParked();
+                    var parked = InteractiveSessionRegistry.ListParked();
                     var attachArg = atc.Length > "/attach".Length ? atc.Substring("/attach".Length).Trim() : "";
                     if (parked.Count == 0)
                     {
@@ -817,7 +823,7 @@ public class App
                             MuxConsole.WriteMuted($"  {pid}  {plabel} ({pmode}) ~{ptok:N0} tok  - /attach {pid}");
                         break;
                     }
-                    var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Find(attachArg);
+                    var handle = InteractiveSessionRegistry.Find(attachArg);
                     if (handle is null || handle.Status != "parked")
                     {
                         MuxConsole.WriteWarning($"No detached session '{attachArg}'. Type /attach to list them.");
@@ -1010,7 +1016,7 @@ public class App
                         ShouldPlan = _gigaPriorPlan;
                         AllowParallelSubAgents = _gigaPriorParaSub;
                         UltraMode = _gigaPriorUltra;
-                        MuxSwarm.Utils.Teams.GigaMode.Reset();
+                        Engine.Teams.GigaMode.Reset();
                         MuxConsole.WriteSuccess("Giga Mode disabled");
                         MuxConsole.WriteMuted($"Orchestration tools removed; reasoning/plan flags restored (Ultra: {(UltraMode ? "on" : "off")}, Plan: {(ShouldPlan ? "on" : "off")}).");
                     }
@@ -1109,7 +1115,7 @@ public class App
                 case var tg when tg == "/taskgraph" || tg.StartsWith("/taskgraph "):
                     {
                         var tgArg = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                        var msg = MuxSwarm.Utils.Teams.TeamController.ToggleDecompose(
+                        var msg = TeamController.ToggleDecompose(
                             tgArg.Length > 1 ? tgArg[1] : "status");
                         MuxConsole.WriteInfo(msg);
                     }
@@ -1174,7 +1180,7 @@ public class App
 
                 case var cfgCmd when cfgCmd.StartsWith("/config "):
                 {
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    var res = TuiConfigCommands.Handle(userInput);
                     if (res.Ok) MuxConsole.WriteInfo(res.Message);
                     else MuxConsole.WriteWarning(res.Message);
                     break;
@@ -1182,9 +1188,9 @@ public class App
 
                 case var setCmd when setCmd == "/set" || setCmd.StartsWith("/set "):
                 {
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.NeedsInteractive(userInput)
-                        ? MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput)
-                        : MuxSwarm.Utils.Tui.TuiConfigCommands.Handle(userInput);
+                    var res = TuiConfigCommands.NeedsInteractive(userInput)
+                        ? TuiConfigCommands.RunInteractive(userInput)
+                        : TuiConfigCommands.Handle(userInput);
                     if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); }
                     else MuxConsole.WriteWarning(res.Message);
                     break;
@@ -1203,7 +1209,7 @@ public class App
                         MuxConsole.WriteInfo($"showReasoning = {Config.ShowReasoning}  (set with /showreasoning <full|summary|none>).");
                         break;
                     }
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set showReasoning {rparts[1].Trim()}");
+                    var res = TuiConfigCommands.Handle($"/set showReasoning {rparts[1].Trim()}");
                     if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); MuxConsole.ShowReasoning = Config.ShowReasoning; }
                     else MuxConsole.WriteWarning(res.Message);
                     break;
@@ -1222,7 +1228,7 @@ public class App
                     }
                     var mv = mparts[1].Trim().ToLowerInvariant();
                     if (mv == "toggle") mv = Config.Console.MouseTracking == "off" ? "wheel" : "off";
-                    var mres = MuxSwarm.Utils.Tui.TuiConfigCommands.Handle($"/set mouseTracking {mv}");
+                    var mres = TuiConfigCommands.Handle($"/set mouseTracking {mv}");
                     if (mres.Ok) { MuxConsole.WriteSuccess(mres.Message); Config = LoadConfig(ConfigPath); }
                     else MuxConsole.WriteWarning(mres.Message);
                     break;
@@ -1259,7 +1265,7 @@ public class App
                     var helperModel = LoadSingleAgentModel();
                     void SpawnPromptHelper(string agentName, string desc)
                     {
-                        var promptDir = MuxSwarm.Utils.PlatformContext.PromptsDirectory;
+                        var promptDir = PlatformContext.PromptsDirectory;
                         var promptAbs = System.IO.Path.Combine(promptDir, $"{agentName}.md");
                         var task = $"Help me write a high-quality system prompt for a new Mux-Swarm agent named '{agentName}'. " +
                                    $"Its purpose: {desc}. Ask me a few focused questions, then write the finished prompt to the file at {promptAbs} " +
@@ -1278,7 +1284,7 @@ public class App
                             continuous: false).GetAwaiter().GetResult();
                     }
 
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
+                    var res = TuiConfigCommands.RunInteractive(userInput, SpawnPromptHelper);
                     if (res.Ok)
                     {
                         MuxConsole.WriteSuccess(res.Message);
@@ -1310,7 +1316,7 @@ public class App
                             continuous: false).GetAwaiter().GetResult();
                     }
 
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
+                    var res = TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
                     if (res.Ok) { MuxConsole.WriteSuccess(res.Message); SwarmConfig = LoadSwarm(); }
                     else MuxConsole.WriteWarning(res.Message);
                     break;
@@ -1345,7 +1351,7 @@ public class App
                                     maxIterations: 4, mcpTools: McpTools,
                                     incomingGoal: task, continuous: false).GetAwaiter().GetResult();
                             }
-                            var cres = MuxSwarm.Utils.Tui.TuiConfigCommands.RunCreateHookWizard(
+                            var cres = TuiConfigCommands.RunCreateHookWizard(
                                 new[] { "/createhook" }, SpawnHookScriptHelper2);
                             if (cres.Ok) { MuxConsole.WriteSuccess(cres.Message); SwarmConfig = LoadSwarm(); }
                             else MuxConsole.WriteWarning(cres.Message);
@@ -1371,7 +1377,7 @@ public class App
 
                 case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam "):
                 {
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
+                    var res = TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
                     {
                         MuxConsole.WriteSuccess(res.Message);
@@ -1385,7 +1391,7 @@ public class App
                                  || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ")
                                  || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent "):
                 {
-                    var res = MuxSwarm.Utils.Tui.TuiConfigCommands.RunInteractive(userInput);
+                    var res = TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
                     {
                         MuxConsole.WriteSuccess(res.Message);
@@ -1435,7 +1441,7 @@ public class App
                         // no live session to act on. Warn that it needs an active session instead
                         // of the generic "unknown command", so the user knows to launch one first.
                         var menuCmd = userInput.Split(' ', 2)[0];
-                        if (MuxSwarm.Utils.Tui.TuiCommands.IsSessionNative(menuCmd))
+                        if (TuiCommands.IsSessionNative(menuCmd))
                             MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
                         else
                             MuxConsole.WriteWarning("Unknown command. Type /help.");
@@ -1539,13 +1545,13 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     /// <summary>
     /// Run the ACP (Zed Agent Client Protocol) adapter. Each ACP session maps to one
-    /// interactive single-agent loop, fed by an <see cref="MuxSwarm.Utils.Acp.AcpInputReader"/>
+    /// interactive single-agent loop, fed by an <see cref="AcpInputReader"/>
     /// (installed as InputOverride) and observed via MuxConsole.AcpSink. Blocks until the
     /// client closes stdin.
     /// </summary>
     private async Task<int> RunAcpAsync()
     {
-        var server = new MuxSwarm.Utils.Acp.AcpServer(
+        var server = new AcpServer(
             version: Version,
             // Model selector for ACP clients' /models: current = the resolved single-agent
             // model, available = the distinct model ids configured across swarm.json. Setting
@@ -1568,7 +1574,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 var model = LoadSingleAgentModel();
                 var acpCts = GetOrResetCts();
                 ServeMode.ActiveMode = "agent";
-                var handle = MuxSwarm.Utils.InteractiveSessionRegistry.Create(
+                var handle = InteractiveSessionRegistry.Create(
                     "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
                 try
                 {
@@ -1593,7 +1599,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 finally
                 {
                     ServeMode.ActiveMode = "interactive";
-                    MuxSwarm.Utils.InteractiveSessionRegistry.Remove(handle);
+                    InteractiveSessionRegistry.Remove(handle);
                 }
             });
         await server.RunAsync();
@@ -2190,8 +2196,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         // old mcp-async-repl. This removes default subprocesses (faster startup) without losing surface.
         bool SkipBecauseNative(McpServerConfig c) =>
             IsNativeReplShellServer(c)
-            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(c)
-            || MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsLegacyFilesystemEntry(c);
+            || NativeToolRegistry.IsNativeEntry(c)
+            || NativeToolRegistry.IsLegacyFilesystemEntry(c);
 
         var enabledServers = config.McpServers
             .Where(kvp => kvp.Value.Enabled && !SkipBecauseNative(kvp.Value))
@@ -2388,8 +2394,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         // the env var lazily at sidecar spawn. Export it from disk NOW (cheap, no spawn) so the
         // env-var check below passes - otherwise every launch after /login warns + prompts for a key
         // that is never user-supplied. The sidecar itself is still started lazily on first request.
-        if (string.Equals(provider.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
-            MuxSwarm.Utils.Proxy.CliProxyManager.ExportPersistedKey();
+        if (string.Equals(provider.ApiKeyEnvVar, CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+            CliProxyManager.ExportPersistedKey();
 
         if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
@@ -2504,7 +2510,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         // rejects and fold system/developer messages into the first user turn (else the bridge drops them
         // and the agent loses all system context). Gated to Claude/Opus models inside the policy; other
         // models + other providers are untouched.
-        if (string.Equals(provider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        if (string.Equals(provider?.ApiKeyEnvVar, CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
             opts.AddPolicy(new CliProxyClaudePolicy(), PipelinePosition.PerCall);
 
         return new OpenAIClient(new ApiKeyCredential(apiKey), opts);
@@ -2532,9 +2538,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         // (apiKeyEnvVar == the manager's key var), ensure the detached sidecar is up (lazy, reused across
         // sessions) and its api key is exported before building the byte-identical OpenAI client below.
         if (ActiveProvider == null) InitLlmProvider();
-        if (string.Equals(ActiveProvider?.ApiKeyEnvVar, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        if (string.Equals(ActiveProvider?.ApiKeyEnvVar, CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
         {
-            try { MuxSwarm.Utils.Proxy.CliProxyManager.EnsureRunningAsync().GetAwaiter().GetResult(); }
+            try { CliProxyManager.EnsureRunningAsync().GetAwaiter().GetResult(); }
             catch (Exception ex) { MuxConsole.WriteWarning($"CLIProxyAPI sidecar unavailable: {ex.Message}"); }
         }
 
@@ -2550,23 +2556,23 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // mechanism as the deep-memory MidTurnReflectionClient, but sourced from the user and
             // re-checked each round-trip. Inert pass-through when no steer is queued (the common case).
             .Use(inner => wrapMidTurnReflection
-                ? new MuxSwarm.Utils.Memory.MidTurnSteerClient(inner, MuxSwarm.Utils.SingleAgentOrchestrator.DrainSteer)
+                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
                 : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
             // instead of failing the turn. No-op unless ExtraHigh was actually requested.
-            .Use(inner => new MuxSwarm.Utils.ReasoningEffortFallbackClient(inner, modelId))
+            .Use(inner => new ReasoningEffortFallbackClient(inner, modelId))
             // Innermost (closest to the wire): strip empty text parts from the outbound history so
             // providers that reject them (e.g. Kimi/Moonshot: 400 "text content is empty") accept the
             // replayed assistant turns. No-op on clean histories; harmless for tolerant providers.
-            .Use(inner => new MuxSwarm.Utils.EmptyContentSanitizerClient(inner))
+            .Use(inner => new EmptyContentSanitizerClient(inner))
             .Build();
 
         // Lead-only: wrap so mid-turn (post-tool-result) reflection deltas reach the model on every
         // round-trip. The wrapper sits INSIDE the function-invocation loop (built above), so it is
         // invoked per tool round-trip. Inert in standard mode (BuildDelta returns empty).
         if (wrapMidTurnReflection)
-            client = new MuxSwarm.Utils.Memory.MidTurnReflectionClient(client, reflectionAgentName ?? "Agent");
+            client = new MidTurnReflectionClient(client, reflectionAgentName ?? "Agent");
 
         return client;
     }

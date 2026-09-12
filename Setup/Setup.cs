@@ -2,7 +2,9 @@ using System.Threading;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.NativeTools;
+using MuxSwarm.Engine.Proxy;
 
 namespace MuxSwarm.Setup;
 
@@ -476,7 +478,7 @@ public static class Setup
     /// </summary>
     private static bool StepSubscriptionLogin()
     {
-        var providers = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
+        var providers = CliProxyManager.LoginProviders.Keys.ToList();
         MuxConsole.WriteLine();
         MuxConsole.WriteBody("Log in to a subscription provider via OAuth.");
         MuxConsole.WriteMuted("(Reuses the official client id - same posture as other subscription tools.)");
@@ -492,7 +494,7 @@ public static class Setup
 
         // Pick browser vs headless login. Default follows the environment heuristic (SSH / no display
         // => headless), so a setup run on a remote / cloud VPS defaults to the URL-print flow.
-        bool guessHeadless = MuxSwarm.Utils.Proxy.CliProxyManager.LooksHeadless();
+        bool guessHeadless = CliProxyManager.LooksHeadless();
         var modeChoices = new System.Collections.Generic.List<string>
         {
             "browser - open a browser on this machine (local desktop)",
@@ -514,15 +516,15 @@ public static class Setup
                 MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
             }
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token, headless).GetAwaiter().GetResult();
+            bool ok = CliProxyManager.LoginAsync(pick, cts.Token, headless).GetAwaiter().GetResult();
             if (!ok)
             {
                 MuxConsole.WriteWarning($"Login for '{pick}' did not complete.");
                 return false;
             }
 
-            string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
-                ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+            string endpoint = CliProxyManager.OpenAiEndpoint
+                ?? $"http://127.0.0.1:{CliProxyManager.PreferredPort}/v1";
 
             _appConfig.LlmProviders ??= [];
             _appConfig.LlmProviders.Clear();
@@ -531,14 +533,14 @@ public static class Setup
                 Name = "cliproxy",
                 Enabled = true,
                 Endpoint = endpoint,
-                ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+                ApiKeyEnvVar = CliProxyManager.ClientKeyEnvVar,
             });
 
             MuxConsole.WriteSuccess($"Logged in. Provider 'cliproxy' configured -> {endpoint}.");
             MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /model.");
             MuxConsole.WriteMuted("Log in to additional providers anytime with /login - they join the same router.");
 
-            ResolveAndPickModels(endpoint, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, isSubscription: true);
+            ResolveAndPickModels(endpoint, CliProxyManager.ClientKeyEnvVar, isSubscription: true);
 
             return true;
         }
@@ -572,12 +574,12 @@ public static class Setup
             IReadOnlyList<string> models;
             if (isSubscription)
             {
-                models = MuxSwarm.Utils.Proxy.CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
+                models = CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
             }
             else
             {
                 var key = string.IsNullOrEmpty(apiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(apiKeyEnvVar);
-                models = MuxSwarm.Utils.Proxy.CliProxyManager
+                models = CliProxyManager
                     .ProbeEndpointModelsAsync(endpoint ?? "", key, cts.Token).GetAwaiter().GetResult();
             }
 
@@ -748,7 +750,7 @@ public static class Setup
         MuxConsole.WriteLine();
 
         // Swatch gallery so the user can SEE each theme before choosing.
-        foreach (var t in MuxSwarm.Utils.Theme.Presets)
+        foreach (var t in Theme.Presets)
         {
             string swatch =
                 $"[{t.Banner}]\u2588\u2588[/]" +
@@ -762,13 +764,13 @@ public static class Setup
         }
         MuxConsole.WriteLine();
 
-        var choice = MuxConsole.Select("Theme:", MuxSwarm.Utils.Theme.Presets
+        var choice = MuxConsole.Select("Theme:", Theme.Presets
             .Select(t => $"{t.Name}").ToList());
-        var picked = MuxSwarm.Utils.Theme.Find(choice) ?? MuxSwarm.Utils.Theme.Default;
+        var picked = Theme.Find(choice) ?? Theme.Default;
 
         _appConfig.Console ??= new ConsoleConfig();
         _appConfig.Console.Theme = picked.Name;
-        MuxSwarm.Utils.Theme.Set(picked);
+        Theme.Set(picked);
 
         // Live preview of the chosen theme's chrome so the choice is confirmed visually.
         MuxConsole.WriteLine();
@@ -869,7 +871,7 @@ public static class Setup
 
             // Native in-process toolsets (Filesystem + Shell) carry the native-runtime-tools marker
             // instead of a real binary - validating them against PATH would falsely warn. Show as native.
-            if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(server))
+            if (NativeToolRegistry.IsNativeEntry(server))
             {
                 MuxConsole.WriteSuccess($"{name} - native (in-process)");
                 continue;

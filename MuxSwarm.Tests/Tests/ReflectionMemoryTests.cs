@@ -1,6 +1,6 @@
 using System.Text.Json;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Memory;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Memory;
 
 namespace MuxSwarm.Tests.Tests;
 

@@ -3,9 +3,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.NativeTools;
 using Microsoft.Extensions.AI;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.NativeTools;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

@@ -1,6 +1,7 @@
 using System.Linq;
-using MuxSwarm.Utils.Teams;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Teams;
+using MuxSwarm.Engine.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -16,7 +17,7 @@ public class GigaModeTests
     public void Giga_IsRegistered_InCommandCatalogAndHelp()
     {
         Assert.Contains(TuiCommands.All, e => e.Cmd == "/giga" && e.Scope == TuiCommands.Scope.ReplOnly);
-        Assert.Contains("/giga", MuxSwarm.Utils.Help.HelpText);
+        Assert.Contains("/giga", Help.HelpText);
     }
 
     [Fact]

@@ -1,6 +1,6 @@
 using System.Linq;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -639,7 +639,7 @@ public class FrameRendererTests
         d.Commit(new[] { "Daemon", "  status: running", "  jobs: 3 active" });
 
         var rows = d.ComposeFrameRows();
-        string plain = string.Join("\n", rows.Select(MuxSwarm.Utils.Tui.TuiMarkup.Plain));
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
         Assert.Contains("Daemon", plain);
         Assert.Contains("status: running", plain);
         Assert.Contains("jobs: 3 active", plain);

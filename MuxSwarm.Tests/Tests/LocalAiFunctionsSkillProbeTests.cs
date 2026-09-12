@@ -1,8 +1,8 @@
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils;
 using Microsoft.Extensions.AI;
+using MuxSwarm.Engine;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

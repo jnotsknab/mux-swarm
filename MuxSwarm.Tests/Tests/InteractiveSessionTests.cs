@@ -1,6 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

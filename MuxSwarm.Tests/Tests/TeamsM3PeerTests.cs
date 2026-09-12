@@ -4,8 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Teams;
 using MuxSwarm.State;
-using MuxSwarm.Utils.Teams;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -29,7 +30,7 @@ public class TeamsM3PeerTests
     [Fact]
     public void TeamConfig_PeerDefaults_ArePersistentAndAssigned()
     {
-        var t = new MuxSwarm.Utils.TeamConfig();
+        var t = new TeamConfig();
         Assert.Equal("persistent", t.MemberContext);
         Assert.Equal("assigned", t.PickupPolicy);
     }
@@ -37,7 +38,7 @@ public class TeamsM3PeerTests
     [Fact]
     public void CompacterConfig_MemberThreshold_DefaultsToZero_FallsBackToDefault()
     {
-        var c = new MuxSwarm.Utils.CompacterConfig();
+        var c = new CompacterConfig();
         Assert.Equal(0, c.MemberAutoCompactTokenThreshold);
         // 0 -> the manager's bounded default, never "no limit".
         Assert.Equal(MemberContextManager.DefaultThresholdTokens,
@@ -253,7 +254,7 @@ public class TeamsM3PeerTests
         var scope = new TeamScope
         {
             DisplayName = "research-build",
-            LeadDef = new MuxSwarm.Utils.Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
+            LeadDef = new Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
             Members = new List<string> { "WebAgent", "CodeAgent" },
             Coordination = "taskboard",
             Board = TaskBoard.Open("research-build", TempRoot()),
@@ -275,7 +276,7 @@ public class TeamsM3PeerTests
         var scope = new TeamScope
         {
             DisplayName = "fan",
-            LeadDef = new MuxSwarm.Utils.Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
+            LeadDef = new Common.AgentDefinition("Orchestrator", "", "", false, tools => tools),
             Members = new List<string> { "WebAgent" },
             Coordination = "fanout",
             Board = null,

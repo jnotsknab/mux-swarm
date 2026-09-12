@@ -1,4 +1,4 @@
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 

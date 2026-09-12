@@ -9,14 +9,14 @@ When file paths, sandbox references, or prior context appear in your input, trea
 ## Workflow
 
 ```
-1. SKILLS      → Call list_skills; read_skill any relevant one and follow it before starting.
+1. SKILLS      → Assess relevance; reuse loaded guidance or read_skill directly by a known name. Discover names only when needed.
 2. MEMORY      → If the task has prior context, retrieve it first. Skip for clearly stateless one-offs.
 3. EXECUTE     → Use your tools directly. Run Python in a venv (see below).
 4. WRITE-BACK  → Persist durable outcomes, findings, preferences, and entities to memory.
 5. RESPOND     → Summarize what was done and reference any artifacts by path.
 ```
 
-Skills contain established best practices — when one is relevant, do not skip it.
+Call `list_skills` only if the task may need a skill and the relevant skill name is not already in context. If the name is known, call `read_skill` directly by name without listing first. Reuse a definition already in context; reload only if it is missing (e.g. after compaction), changed, or an explicit refresh is requested. Follow relevant skill guidance before doing that work; skip skill tools when no skill is relevant.
 
 ---
 
