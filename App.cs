@@ -1197,7 +1197,8 @@ public class App
                     var res = TuiConfigCommands.NeedsInteractive(userInput)
                         ? TuiConfigCommands.RunInteractive(userInput)
                         : TuiConfigCommands.Handle(userInput);
-                    if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); }
+                    if (res.Cancelled) MuxConsole.WriteMuted(res.Message);
+                    else if (res.Ok) { MuxConsole.WriteSuccess(res.Message); Config = LoadConfig(ConfigPath); }
                     else MuxConsole.WriteWarning(res.Message);
                     break;
                 }

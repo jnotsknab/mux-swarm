@@ -10,10 +10,14 @@
 /// (for /set, with validation + optional live apply). A bare <c>/set</c> with no args opens an
 /// interactive picker (scrollable key list -&gt; value prompt), command-preview style.
 /// </summary>
-internal static class TuiConfigCommands
+internal static partial class TuiConfigCommands
 {
     /// <summary>Result of handling a config command.</summary>
-    public readonly record struct Result(bool Handled, bool Ok, string Message);
+    public readonly record struct Result(bool Handled, bool Ok, string Message)
+    {
+        /// <summary>True only when the native settings view exits without an apply; caller must not reload config.</summary>
+        public bool Cancelled { get; init; }
+    }
 
     /// <summary>One editable configuration key: how to read it, how to set it, and a value hint.</summary>
     private sealed class Key
@@ -23,6 +27,7 @@ internal static class TuiConfigCommands
         public required System.Func<string> Get { get; init; }     // current value as string
         public required System.Func<string, Result> Set { get; init; } // validate + apply + persist
         public required string ValueHint { get; init; }            // e.g. "auto|tui|classic" or "<int>"
+        public Func<string, (bool ok, string msg)>? Validate { get; init; } // reflected read-only preflight
 
         public bool Matches(string k)
             => Name.Equals(k, System.StringComparison.OrdinalIgnoreCase)
@@ -473,6 +478,7 @@ internal static class TuiConfigCommands
             Name = leaf.Path,
             ValueHint = leaf.TypeHint,
             Get = leaf.Get,
+            Validate = leaf.Validate,
             Set = v =>
             {
                 var (ok, msg) = leaf.Set(v);
@@ -488,7 +494,7 @@ internal static class TuiConfigCommands
     /// <summary>All settable keys: explicit (priority, with live apply) + reflected leaves for
     /// every other scalar in config.json and swarm.json. Reflected keys whose dotted path is
     /// already owned by an explicit key are skipped so the explicit (live-apply) version wins.</summary>
-    private static List<Key> AllKeys()
+    private static List<Key> AllKeys(bool materializeNulls = true)
     {
         var all = new List<Key>(Keys);
         var owned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -497,10 +503,10 @@ internal static class TuiConfigCommands
             owned.Add(k.Name);
             foreach (var a in k.Aliases) owned.Add(a);
         }
-        foreach (var leaf in ConfigReflector.Walk(Cfg, ""))
+        foreach (var leaf in ConfigReflector.Walk(Cfg, "", materializeNulls))
             if (owned.Add(leaf.Path)) all.Add(ReflectedKey(leaf, swarm: false));
         if (App.SwarmConfig is not null)
-            foreach (var leaf in ConfigReflector.Walk(App.SwarmConfig, "swarm"))
+            foreach (var leaf in ConfigReflector.Walk(App.SwarmConfig, "swarm", materializeNulls))
                 if (owned.Add(leaf.Path)) all.Add(ReflectedKey(leaf, swarm: true));
         return all;
     }
@@ -611,6 +617,25 @@ internal static class TuiConfigCommands
 
     private static Result RunSetPicker(string[] parts)
     {
+        if (MuxConsole.CanUseSettingsPicker)
+        {
+            var view = new SettingsPickerView(GetSettingSnapshots(), parts.Length >= 2 ? parts[1] : null);
+            var baseline = CapturePickerBaseline();
+            bool opened = false, attemptedApply = false;
+            while (MuxConsole.TrySettingsPicker(view, out var selection))
+            {
+                opened = true;
+                if (selection is null) return new Result(true, false,
+                    attemptedApply ? "Settings view closed; previous Apply outcomes still stand." : "No changes made.") { Cancelled = true };
+                // Apply after modal teardown: live setters may change mouse/paste/render settings.
+                attemptedApply = true;
+                var result = ApplyPickerSelection(selection, baseline);
+                if (result.Ok) return result;
+                view.Message = result.Message;
+            }
+            if (opened) return new Result(true, false, "Settings view closed; no further changes made.") { Cancelled = true };
+        }
+
         // If a key was given (but no value), jump straight to its value prompt; otherwise show the
         // scrollable key list first.
         var keys = AllKeys();

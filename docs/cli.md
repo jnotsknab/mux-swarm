@@ -177,7 +177,7 @@ Available at the top-level REPL.
 | `/addcontext` | Configure what context each agent is injected with |
 | `/maxp` | Max agents running in parallel (default 4) |
 | `/setmodel` | Browse active-provider models and save a slot’s model and reasoning effort |
-| `/set <key> <value>` | Edit any config.json or swarm.json key by dotted path (bare `/set` opens a picker) |
+| `/set <key> <value>` | Edit an existing config/swarm key; bare `/set` opens native search/edit (F4 Apply, Esc cancel) |
 | `/showreasoning full\|summary\|none` | Show or hide streamed reasoning text |
 | `/config` | Show all configuration settings; every key is `/set`-editable |
 | `/newagent` | Guided wizard to create a swarm agent |
@@ -393,6 +393,53 @@ existing confirmation to end the session and return to the menu. Classic, stdio,
 paths retain the existing number-or-exact-name prompt. Paste only changes the search; it never
 confirms a choice. Tiny windows show resize/cancel guidance and cannot apply an unseen selection
 (minimum 20 usable columns and 10 rows). Long names/descriptions are clipped only for display.
+
+## Native settings picker (`/set`)
+
+In docked frame or inline TUI, `/set` opens a dedicated **Settings** view with the same theme,
+input pump, frame presenter and text-editor infrastructure as the other native views.
+Search canonical names, aliases or descriptions; the selected setting shows its current value,
+accepted value hint and application guidance. `/set <key>` opens that key/alias directly for editing.
+An unknown key starts a filtered search. Classic/stdio/scripted input retains the existing prompts;
+`/set <key> <value>` retains its existing direct validation/save behavior.
+
+| Control | Action |
+|---|---|
+| Type / Backspace in search | Fuzzy-match names/aliases and description terms |
+| Up/Down, PgUp/PgDn, Home/End in search | Move the selection |
+| Enter / Tab in search | Edit the selected setting |
+| Type / paste in editor | Replace the initial value, then insert at the caret |
+| Up/Down in editor | Cycle boolean/enum choices when advertised by the existing type hint |
+| Left/Right, Home/End, Backspace/Delete | Edit the draft; cursor follows the displayed text |
+| Ctrl+U | Clear search or draft |
+| **F4** | **Apply this one setting and close on success** |
+| Enter / Tab in editor | Discard draft and return to search |
+| Esc / Ctrl+Q / Ctrl+C | Cancel the view without applying the draft |
+
+Navigation/editing never invokes setters or reloads config; cancellation before Apply does not
+materialize missing config branches. Secret-like settings are masked in the list/current value,
+editor and success/error feedback. Their existing value is not loaded into the draft; type a
+replacement. Search does not index setting values. Arbitrary free text can still contain secrets
+that its key name does not identify—masking is not a universal credential detector.
+
+The view stages one setting, not a multi-key transaction. Empty drafts do not apply; use explicit
+`null` where the existing validator supports it. Invalid values stay editable. A changed file or
+config root while the picker is open requires reopening before Apply. Minimum viewport is 40
+usable columns by 14 rows; resize/cancel remains available below that. Paste is inserted as text
+with control characters converted to spaces; it never acts as Enter or Apply. Drafts are limited
+to 65,536 characters; oversize insertions are rejected, not silently truncated.
+
+Apply releases modal input/render ownership **before** invoking the existing registry setter.
+Curated aliases keep their validation and live effects; reflected dotted leaves keep their
+existing type-based validation and deferred behavior. Success retains the current top-level
+Config reload; Swarm settings still require `/refresh` where indicated. The picker does not
+change defaults, add settings, auto-refresh MCP, restart services, or hot-swap renderers.
+
+Existing `/set` persistence is not atomic/rollback-capable: some setters mutate live state before
+writing. If saving fails, the view reports that live effects may already have run rather than
+claiming rollback; cancelling afterward does not undo prior Apply attempts. The direct command
+and classic/stdio paths keep their prior input/echo semantics; use the masked native editor for
+sensitive values rather than putting them in a command line.
 
 ## Model and effort picker (`/setmodel`)
 

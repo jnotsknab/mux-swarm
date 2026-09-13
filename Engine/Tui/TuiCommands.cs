@@ -124,7 +124,7 @@ internal static class TuiCommands
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
         new("/setmodel",     "Browse provider models and save model/effort", Scope.ReplOnly),
-        new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
+        new("/set",          "Search/edit settings in a native view (F4 Apply), or /set key value", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
         new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons)", Scope.ReplOnly),
         new("/config",       "Show all current config settings", Scope.ReplOnly),

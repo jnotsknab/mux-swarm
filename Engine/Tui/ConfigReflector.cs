@@ -22,7 +22,11 @@ namespace MuxSwarm.Engine.Tui;
 /// </summary>
 internal static class ConfigReflector
 {
-    public sealed record Leaf(string Path, string TypeHint, Func<string> Get, Func<string, (bool ok, string msg)> Set);
+    public sealed record Leaf(string Path, string TypeHint, Func<string> Get, Func<string, (bool ok, string msg)> Set)
+    {
+        /// <summary>Run the identical conversion/writability checks without assigning any property.</summary>
+        internal Func<string, (bool ok, string msg)>? Validate { get; init; }
+    }
 
     private static bool IsScalar(Type t)
     {
@@ -50,6 +54,11 @@ internal static class ConfigReflector
 
     /// <summary>Enumerate every scalar leaf reachable from a root object, prefixing dotted paths.</summary>
     public static IEnumerable<Leaf> Walk(object? root, string prefix)
+        => Walk(root, prefix, materializeNulls: true);
+
+    /// <summary>Walk the same leaf catalog; read-only snapshots can inspect default null branches
+    /// without assigning them into the source graph. Setters from read-only walks must not be retained.</summary>
+    internal static IEnumerable<Leaf> Walk(object? root, string prefix, bool materializeNulls)
     {
         if (root is null) yield break;
         foreach (var p in root.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
@@ -71,7 +80,7 @@ internal static class ConfigReflector
                     path,
                     TypeHintOf(pt),
                     () => FormatValue(prop.GetValue(owner)),
-                    v => TrySet(owner, prop, v));
+                    v => TrySet(owner, prop, v)) { Validate = v => TrySet(owner, prop, v, apply: false) };
                 continue;
             }
 
@@ -90,7 +99,7 @@ internal static class ConfigReflector
                         var nameProp = item.GetType().GetProperty("Name");
                         var key = nameProp?.GetValue(item) as string;
                         if (string.IsNullOrWhiteSpace(key)) continue;
-                        foreach (var leaf in Walk(item, path + "." + key))
+                        foreach (var leaf in Walk(item, path + "." + key, materializeNulls))
                             yield return leaf;
                     }
                 }
@@ -103,10 +112,10 @@ internal static class ConfigReflector
             if (child is null)
             {
                 if (!p.CanWrite) continue;
-                try { child = Activator.CreateInstance(pt); p.SetValue(root, child); }
+                try { child = Activator.CreateInstance(pt); if (materializeNulls) p.SetValue(root, child); }
                 catch { continue; }
             }
-            foreach (var leaf in Walk(child, path))
+            foreach (var leaf in Walk(child, path, materializeNulls))
                 yield return leaf;
         }
     }
@@ -119,7 +128,7 @@ internal static class ConfigReflector
         return v.ToString() ?? "";
     }
 
-    private static (bool ok, string msg) TrySet(object owner, PropertyInfo prop, string raw)
+    private static (bool ok, string msg) TrySet(object owner, PropertyInfo prop, string raw, bool apply = true)
     {
         if (!prop.CanWrite) return (false, $"{JsonName(prop)} is read-only.");
         var t = prop.PropertyType;
@@ -131,7 +140,7 @@ internal static class ConfigReflector
         if (nullable && (raw.Equals("null", StringComparison.OrdinalIgnoreCase)
                          || raw.Equals("none", StringComparison.OrdinalIgnoreCase) || raw.Length == 0))
         {
-            prop.SetValue(owner, null);
+            if (apply) prop.SetValue(owner, null);
             return (true, $"{JsonName(prop)} = (null)");
         }
 
@@ -179,7 +188,7 @@ internal static class ConfigReflector
             }
             else return (false, $"{JsonName(prop)} has unsupported type {target.Name}.");
 
-            prop.SetValue(owner, val);
+            if (apply) prop.SetValue(owner, val);
             return (true, $"{JsonName(prop)} = {FormatValue(val)}");
         }
         catch (Exception ex)
