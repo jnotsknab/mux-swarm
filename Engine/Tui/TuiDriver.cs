@@ -1001,9 +1001,21 @@ internal sealed partial class TuiDriver
                 {
                     // Single input plane: consume the overlay's keys from the shared pump (the
                     // pump is the only stdin reader); wheel/paste events are swallowed here.
+                    // Job-row clicks select (the arrows alias); a double-click synthesizes the
+                    // SAME Enter the keyboard path handles below (reopen a finished job).
                     while (true)
                     {
                         if (!jvPump.TryTake(out var jv, 200)) continue;
+                        if (jv.Kind == ConsoleInputPump.EventKind.Mouse)
+                        {
+                            RouteMouse(jv);
+                            if (TakePendingJobActivate())
+                            {
+                                key = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false);
+                                break;
+                            }
+                            continue;
+                        }
                         if (jv.Kind != ConsoleInputPump.EventKind.Key) continue;
                         key = jv.Key; break;
                     }
@@ -1090,12 +1102,23 @@ internal sealed partial class TuiDriver
         // Compose the viewer at full terminal height and diff-repaint it into the (shared) alt
         // screen: RenderDashboard returns markup rows sized to the height; we convert to ANSI, pad
         // to width so a rewrite fully overwrites the prior row, and blank-fill the rest of the screen.
+        // Fullscreen view owns a PRIVATE hit map (like the modal pickers): run rows + the
+        // selected phase's task rows, rebuilt per paint from the same render that painted them.
+        var wfHits = new MouseHitMap();
+        var wfRunRows = new List<(int Row, int Ordinal)>();
+        var wfTaskRows = new List<(int Row, int Task)>();
+        var wfClicks = new MouseClickTracker();
         void Paint()
         {
             int w = Width;
             int screenH = Math.Max(1, _term.Height);
             int cap = Math.Max(1, _term.Width - 1);   // never render into the last column (no wrap)
-            var markupRows = _workflowView.RenderDashboard(w, screenH);
+            var markupRows = _workflowView.RenderDashboard(w, screenH, wfRunRows, wfTaskRows);
+            wfHits.Begin(_term.Width, screenH);
+            foreach (var (row, ordinal) in wfRunRows)
+                wfHits.Add(new HitRegion(row + 1, 1, 1, cap, MouseTargetKind.WorkflowRow, ordinal));
+            foreach (var (row, task) in wfTaskRows)
+                wfHits.Add(new HitRegion(row + 1, 1, 1, cap, MouseTargetKind.WorkflowRow, -(task + 1)));
             var rows = new List<string>(screenH);
             for (int i = 0; i < markupRows.Count && rows.Count < screenH; i++)
             {
@@ -1151,6 +1174,23 @@ internal sealed partial class TuiDriver
                             // their journal updates into the open view (also picks up a resize).
                             _workflowView.SetRuns(snapshotProvider());
                             Paint();
+                            continue;
+                        }
+                        if (wv.Kind == ConsoleInputPump.EventKind.Mouse)
+                        {
+                            // Run row click = the 1-9 jump alias; task row click = select that
+                            // task (the arrows alias); DOUBLE task click = the Enter expand.
+                            if (wfClicks.Feed(wv, wfHits, out var wfHit, out _, out _, out bool wfDouble)
+                                && wfHit.Kind == MouseTargetKind.WorkflowRow)
+                            {
+                                if (wfHit.Payload > 0) _workflowView.SelectRunAt(wfHit.Payload);
+                                else
+                                {
+                                    _workflowView.SelectTaskAt(-wfHit.Payload - 1);
+                                    if (wfDouble) _workflowView.ToggleTaskExpand();
+                                }
+                                Paint();
+                            }
                             continue;
                         }
                         if (wv.Kind != ConsoleInputPump.EventKind.Key) continue;
@@ -1938,6 +1978,7 @@ internal sealed partial class TuiDriver
         // When the backslash dashboard is foregrounded it becomes the SOLE session list, so the
         // compact strip is suppressed to avoid duplicate per-agent rows (issue #2).
         _liveLaneLines.Clear();   // cleared every paint: stale lane regions must not outlive their rows
+        _liveJobLines.Clear();
         if (_agentViewActive)
         {
             // dashboard owns the agent list this frame; no compact strip / thinking line.
@@ -1983,9 +2024,15 @@ internal sealed partial class TuiDriver
         }
 
         // /background jobs dashboard: same inline-list pattern as the Agent View above. Rendered in
-        // the live region so scrollback is preserved; off (the default) adds nothing.
+        // the live region so scrollback is preserved; off (the default) adds nothing. Job rows
+        // register JobRow hit regions (click = select, double = the o/Enter reopen alias).
         if (_jobViewActive)
-            lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame));
+        {
+            int jobBase = lines.Count;
+            lines.AddRange(_jobView.RenderDashboard(width, _subAgentFrame, _jobRowLines));
+            for (int i = 0; i < _jobRowLines.Count; i++)
+                _liveJobLines.Add((jobBase + _jobRowLines[i].Row, _jobRowLines[i].Id));
+        }
 
         // v0.12.4 in-frame prompt modal (ask_user / confirm / select / text): rendered INSIDE
         // the live band so the alternate screen is never left - the transcript (e.g. the plan
@@ -2020,18 +2067,20 @@ internal sealed partial class TuiDriver
         int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
             ? (int)(Environment.TickCount64 / 150)
             : -1;
+        _footerLine = lines.Count;
         lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
-            modeCycleHint: OnModeCycle is not null, cached: _cached,
-            sysTokens: _sysTokens, toolTokens: _toolTokens,
-            sessionElapsed: DateTime.UtcNow - _sessionStart,
-            giga: _giga,
-            turnElapsed: _turnStart is { } ts2 ? DateTime.UtcNow - ts2 : null,
-            lastTurn: _lastTurn,
-            toolCalls: _toolCalls,
-            model: _model,
-            width: width,
-            pulseFrame: pulseFrame,
-            activeMode: ServeMode.ActiveMode));
+            OnModeCycle is not null, _cached,
+            _sysTokens, _toolTokens,
+            DateTime.UtcNow - _sessionStart,
+            _giga,
+            _turnStart is { } ts2 ? DateTime.UtcNow - ts2 : null,
+            _lastTurn,
+            _toolCalls,
+            _model,
+            width,
+            pulseFrame,
+            ServeMode.ActiveMode,
+            _footerBadges));
 
         if (_inInput)
         {
@@ -2296,6 +2345,13 @@ internal sealed partial class TuiDriver
             if (MapLiveLine(line, out int top, out int height))
                 hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.AgentLane, 0, agent));
         }
+        // Job dashboard rows: click = select (the arrows alias); double = o/Enter reopen,
+        // dispatched by the job-view loop.
+        foreach (var (line, id) in _liveJobLines)
+        {
+            if (MapLiveLine(line, out int top, out int height))
+                hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.JobRow, 0, id));
+        }
         // Compose input rows: click = move the caret (the arrows alias). Payload = index into
         // _composeMeta for the clicked visual row; local column maps to a chunk offset.
         if (_inInput && !_editor.IsSearching)
@@ -2304,6 +2360,14 @@ internal sealed partial class TuiDriver
                 if (metaRow < _composeMeta.Count && MapLiveLine(line, out int top, out int height))
                     hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.ComposeArea, metaRow));
             }
+        // Footer badges with a command alias: model chip -> /setmodel, effort chip -> the
+        // Shift+Tab mode cycle. Extents were measured on the same composed footer string; the
+        // footer never wraps (Footer degrades to fit), so one physical row per badge.
+        if (_footerLine >= 0 && _footerBadges.Count > 0
+            && MapLiveLine(_footerLine, out int footTop, out _))
+            foreach (var (col, bw, id) in _footerBadges)
+                hits.Add(new HitRegion(footTop, col + 1, 1, bw,
+                    MouseTargetKind.FooterBadge, id == TuiComponents.BadgeModel ? 0 : 1, id));
         // Transcript entries with expandable payloads: click toggles expand/collapse (the NAV
         // Enter alias). Walk the visible window bottom-up mirroring the render walk, mapping each
         // entry's wrapped extent to physical rows; only expandable entries register.
@@ -2585,6 +2649,17 @@ internal sealed partial class TuiDriver
     private readonly List<TuiComponents.InputRowMeta> _composeMeta = new();
     private readonly List<(int Line, int MetaRow)> _composeVisible = new();
 
+    // Footer badge extents (visible column, width, id) on the footer's live-band line, captured
+    // by BuildLiveFrame from the same composition that painted the chips. Only badges with a
+    // command alias are reported (model -> /setmodel, effort -> the Shift+Tab cycle).
+    private readonly List<(int Col, int Width, string Id)> _footerBadges = new();
+    private int _footerLine = -1;
+
+    // Job dashboard rows, same per-paint lifecycle as the lane lines: view-relative rows from
+    // the render, then live-band line indices for region registration.
+    private readonly List<(int Row, string Id)> _jobRowLines = new();
+    private readonly List<(int Line, string Id)> _liveJobLines = new();
+
     /// <summary>Hit map of the last composed main frame (test hook; null before first compose /
     /// in inline mode, where no frame is composed).</summary>
     internal MouseHitMap? FrameHitMap => _frameHits;
@@ -2614,6 +2689,32 @@ internal sealed partial class TuiDriver
         bool activate = _pendingLaneActivate;
         _pendingLaneActivate = false;
         return activate;
+    }
+
+    // Set when a FooterBadge click resolves to a slash command (model chip -> "/setmodel"): the
+    // idle prompt loop consumes it and returns the command line through the normal dispatch,
+    // exactly like the backslash AttachPicker path. Mid-turn badge clicks are dropped.
+    private string? _pendingBadgeCommand;
+
+    // Set when a JobRow DOUBLE-click wants the o/Enter reopen action; the job-view loop consumes
+    // it and dispatches its existing Enter path.
+    private bool _pendingJobActivate;
+
+    /// <summary>Consume the pending job-activate request raised by a double-click on a job row
+    /// (the o/Enter alias).</summary>
+    internal bool TakePendingJobActivate()
+    {
+        bool activate = _pendingJobActivate;
+        _pendingJobActivate = false;
+        return activate;
+    }
+
+    /// <summary>Consume the pending badge command raised by a footer-badge click (null when none).</summary>
+    internal string? TakePendingBadgeCommand()
+    {
+        var cmd = _pendingBadgeCommand;
+        _pendingBadgeCommand = null;
+        return cmd;
     }
 
     // True while routing a MID-TURN mouse event (EscapeKeyListener consuming): ScrollBar*,
@@ -2732,6 +2833,31 @@ internal sealed partial class TuiDriver
                     Repaint();
                 }
                 else _pendingLaneOpen = lane;
+                break;
+
+            case MouseTargetKind.JobRow:
+                // Single click = select the job (the arrows alias); DOUBLE click = the o/Enter
+                // reopen, dispatched by the job-view loop (mirrors the Agent View lane contract).
+                if (captured.Tag is not { } jobId) break;
+                _jobView.Select(jobId);
+                if (isDouble) _pendingJobActivate = true;
+                Repaint();
+                break;
+
+            case MouseTargetKind.FooterBadge:
+                // Click = the badge's documented alias: model chip -> /setmodel (queued for the
+                // prompt loop to submit through normal dispatch), effort chip -> the SAME
+                // Shift+Tab mode cycle the keyboard uses. Mid-turn badge clicks are dropped
+                // (commands cannot dispatch mid-turn).
+                if (_mouseMidTurn) break;
+                if (string.Equals(captured.Tag, TuiComponents.BadgeModel, StringComparison.Ordinal))
+                    _pendingBadgeCommand = "/setmodel";
+                else if (string.Equals(captured.Tag, TuiComponents.BadgeEffort, StringComparison.Ordinal)
+                    && OnModeCycle is not null)
+                {
+                    try { SetEffort(OnModeCycle()); } catch { /* same guard as the keyboard path */ }
+                    Repaint();
+                }
                 break;
 
             case MouseTargetKind.ComposeArea:
@@ -2899,6 +3025,7 @@ internal sealed partial class TuiDriver
                     {
                         RouteMouse(cv);
                         if (TakePendingLaneOpen() is not null && AgentViewOpener is { } laneOpen1 && laneOpen1()) Repaint();
+                        if (TakePendingBadgeCommand() is { } badgeCmd1) { _inInput = false; return badgeCmd1; }
                         continue;
                     }
                     key = cv.Key;
@@ -2971,6 +3098,9 @@ internal sealed partial class TuiDriver
                             // A lane click at the idle prompt opens the Agent View on that lane
                             // (the backslash alias; the lane is already selected).
                             if (TakePendingLaneOpen() is not null && AgentViewOpener is { } laneOpen && laneOpen()) Repaint();
+                            // A model-badge click submits its command through normal dispatch
+                            // (the AttachPicker pattern - ReadLine returns the line).
+                            if (TakePendingBadgeCommand() is { } badgeCmd) { _inInput = false; return badgeCmd; }
                             continue;
                     }
                     key = ev.Key;

@@ -681,7 +681,19 @@ internal static class TuiComponents
     /// meter shrink, meter to bare percent, idle last-turn + effort chips.
     /// <paramref name="activeMode"/> ("swarm"/"pswarm") adds a leftmost orchestration-mode chip.
     /// </summary>
+    /// <summary>Badge id: the model chip (click alias = /setmodel).</summary>
+    public const string BadgeModel = "model";
+    /// <summary>Badge id: the reasoning-effort chip (click alias = the Shift+Tab mode cycle).</summary>
+    public const string BadgeEffort = "effort";
+
     public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub = false, string? effort = null, bool modeCycleHint = false, uint cached = 0, uint sysTokens = 0, uint toolTokens = 0, TimeSpan? sessionElapsed = null, bool giga = false, TimeSpan? turnElapsed = null, TimeSpan? lastTurn = null, uint toolCalls = 0, string? model = null, int width = 0, int pulseFrame = -1, string? activeMode = null)
+        => Footer(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached, sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, width, pulseFrame, activeMode, null);
+
+    /// <summary>Overload reporting clickable badge extents: (0-based visible column, visible
+    /// width, badge id) for each chip that has a keyboard/command alias, measured on the SAME
+    /// composed string that is returned (the final degradation level). Chips without an alias
+    /// report nothing.</summary>
+    public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub, string? effort, bool modeCycleHint, uint cached, uint sysTokens, uint toolTokens, TimeSpan? sessionElapsed, bool giga, TimeSpan? turnElapsed, TimeSpan? lastTurn, uint toolCalls, string? model, int width, int pulseFrame, string? activeMode, List<(int Col, int Width, string Id)>? badges)
     {
         // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
         // discrete modes show individually. For a short window after activation the chip
@@ -751,19 +763,21 @@ internal static class TuiComponents
         }
 
         // Compose the footer at a degradation level (0 = everything). Uniform middot
-        // separators throughout - no mixed double-space/triple-space seams.
-        string Compose(int level)
+        // separators throughout - no mixed double-space/triple-space seams. Chips carry an
+        // optional badge id so the overload can report clickable extents from the same
+        // composition that produced the returned string.
+        (string Line, List<(int Col, int Width, string Id)> Extents) Compose(int level)
         {
-            var chips = new List<string>(modeBadges);
-            if (liveTurnChip.Length > 0) chips.Add(liveTurnChip);
-            if (idleTurnChip.Length > 0 && level < 7) chips.Add(idleTurnChip);
-            if (sessChip.Length > 0 && level < 4) chips.Add(sessChip);
+            var chips = new List<(string Markup, string? Id)>(modeBadges.Select(b => (b, (string?)null)));
+            if (liveTurnChip.Length > 0) chips.Add((liveTurnChip, null));
+            if (idleTurnChip.Length > 0 && level < 7) chips.Add((idleTurnChip, null));
+            if (sessChip.Length > 0 && level < 4) chips.Add((sessChip, null));
             string meter = Meter(level);
-            if (meter.Length > 0) chips.Add(meter);
-            if (cached > 0 && threshold > 0 && level < 3) chips.Add($"[{Dim}]{Fmt(cached)} cached[/]");
-            if (sysTokens > 0 && level < 2) chips.Add($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]");
-            if (toolTokens > 0 && level < 2) chips.Add($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]");
-            if (toolCalls > 0 && level < 4) chips.Add($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]");
+            if (meter.Length > 0) chips.Add((meter, null));
+            if (cached > 0 && threshold > 0 && level < 3) chips.Add(($"[{Dim}]{Fmt(cached)} cached[/]", null));
+            if (sysTokens > 0 && level < 2) chips.Add(($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]", null));
+            if (toolTokens > 0 && level < 2) chips.Add(($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]", null));
+            if (toolCalls > 0 && level < 4) chips.Add(($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]", null));
             // Model chip: the resolved model id (path prefix stripped), high-value so it
             // survives to mid tiers - after a provider fallback/pin this is the fastest way
             // to see what the session is actually running on.
@@ -772,17 +786,26 @@ internal static class TuiComponents
                 string m = model!;
                 int slash = m.LastIndexOf('/');
                 if (slash >= 0 && slash < m.Length - 1) m = m[(slash + 1)..];
-                chips.Add($"[{Agent}]{Esc(m)}[/]");
+                chips.Add(($"[{Agent}]{Esc(m)}[/]", BadgeModel));
             }
-            if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add($"[{Warn}]\u25d0 {Esc(effort)}[/]");
-            if (modeCycleHint && level < 1) chips.Add($"[{Dim}]\u21e7\u21b9[/]");
-            return "  " + string.Join($" [{Dim}]\u00b7[/] ", chips);
+            if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add(($"[{Warn}]\u25d0 {Esc(effort)}[/]", BadgeEffort));
+            if (modeCycleHint && level < 1) chips.Add(($"[{Dim}]\u21e7\u21b9[/]", null));
+            var extents = new List<(int Col, int Width, string Id)>();
+            int col = 2;   // leading "  "
+            for (int i = 0; i < chips.Count; i++)
+            {
+                int w = TuiMarkup.MarkupWidth(chips[i].Markup);
+                if (chips[i].Id is { } id) extents.Add((col, w, id));
+                col += w + 3;   // " · " separator between chips
+            }
+            return ("  " + string.Join($" [{Dim}]\u00b7[/] ", chips.Select(c => c.Markup)), extents);
         }
 
-        string line = Compose(0);
+        var (line, chosen) = Compose(0);
         if (width > 8)
             for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
-                line = Compose(lvl);
+                (line, chosen) = Compose(lvl);
+        if (badges is not null) { badges.Clear(); badges.AddRange(chosen); }
         return line;
     }
 

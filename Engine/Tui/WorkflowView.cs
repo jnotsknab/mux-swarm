@@ -108,6 +108,18 @@ internal sealed class WorkflowView
     /// scroll to the live tail on each open/close.</summary>
     public void ToggleTaskExpand() { _taskExpanded = !_taskExpanded; _taskScroll = 0; }
 
+    /// <summary>Select a task of the current phase by absolute index (mouse click alias for
+    /// arrowing to it). Clamped; collapses an expanded task first so the selection is visible.</summary>
+    public void SelectTaskAt(int index)
+    {
+        var run = SelectedRun();
+        if (run is null || run.Manifest.Sections.Count == 0) return;
+        var sec = run.Manifest.Sections[Math.Clamp(_phaseIdx, 0, run.Manifest.Sections.Count - 1)];
+        if (sec.Tasks.Count == 0) return;
+        if (_taskExpanded) { _taskExpanded = false; _taskScroll = 0; }
+        _taskIdx = Math.Clamp(index, 0, sec.Tasks.Count - 1);
+    }
+
     /// <summary>Select a run by 1-based ordinal (number keys). No-op out of range.</summary>
     public void SelectRunAt(int ordinal)
     {
@@ -163,7 +175,16 @@ internal sealed class WorkflowView
     /// mess. When <paramref name="height"/> is known the task window shrinks to fit.
     /// </summary>
     public List<string> RenderDashboard(int width, int height = 0)
+        => RenderDashboard(width, height, null);
+
+    /// <summary>Overload reporting clickable row extents from the same emission that painted
+    /// them: run rows as (row, ordinal) and the selected phase's task rows as (row, task index),
+    /// both 0-based into the RETURNED list. Suppressed while a task is expanded (its output
+    /// pane owns those rows).</summary>
+    public List<string> RenderDashboard(int width, int height, List<(int Row, int Ordinal)>? runRows, List<(int Row, int Task)>? taskRows = null)
     {
+        runRows?.Clear();
+        taskRows?.Clear();
         var rows = new List<string>();
         int running = _runs.Count(r => r.State == WorkflowRunState.Running);
         rows.Add($"  [{TuiComponents.Accent}]\u25b8 workflows[/] [{TuiComponents.Dim}]\u00b7 {running} running \u00b7 {_runs.Count} total[/]");
@@ -176,13 +197,15 @@ internal sealed class WorkflowView
 
         bool stacked = width < StackWidth;
         string? sel = SelectedId();
-        foreach (var r in _runs)
+        for (int ri = 0; ri < _runs.Count; ri++)
         {
+            var r = _runs[ri];
             bool isSel = string.Equals(r.Id, sel, StringComparison.Ordinal);
             var dur = (r.Finished ?? DateTimeOffset.UtcNow) - r.Started;
             string durTxt = dur.TotalHours >= 1 ? $"{(int)dur.TotalHours}h{dur.Minutes:00}m" : $"{(int)dur.TotalMinutes}m{dur.Seconds:00}s";
             string line = $"[{TuiComponents.Agent}]{Esc(r.Name)}[/] {StateMarkup(r.State)} " +
                           $"[{TuiComponents.Dim}]{Esc(r.Mode)} \u00b7 {durTxt}[/]";
+            runRows?.Add((rows.Count, ri + 1));
             rows.Add(isSel ? $"  [{TuiComponents.Accent}]\u203a[/] {line}" : $"    {line}");
         }
 
@@ -232,7 +255,10 @@ internal sealed class WorkflowView
                     if (winHint.Length > 0 || off > 0)
                         rows.Add($"  [{TuiComponents.Dim}]{(off > 0 ? $"\u2191 {off} more" : "")}{Esc(winHint)}[/]");
                     for (int k = off; k < Math.Min(off + maxTaskRows, cur.Tasks.Count); k++)
+                    {
+                        if (!_taskExpanded) taskRows?.Add((rows.Count, k));
                         AppendTaskRow(rows, cur.Tasks[k], k == ti, width, stacked: true, indent: "  ");
+                    }
                     if (off + maxTaskRows < cur.Tasks.Count)
                         rows.Add($"  [{TuiComponents.Dim}]\u2193 {cur.Tasks.Count - off - maxTaskRows} more[/]");
                 }
@@ -253,8 +279,12 @@ internal sealed class WorkflowView
                     // with telemetry (tokens \u00b7 tools \u00b7 duration; running tasks tick live).
                     var right = new List<string> { $"[{TuiComponents.Muted}]{Esc(cur.Name)} \u00b7 {cur.Tasks.Count} task(s){Esc(winHint)}[/]" };
                     if (off > 0) right.Add($"[{TuiComponents.Dim}]\u2191 {off} more[/]");
+                    var rightTaskRows = taskRows is null || _taskExpanded ? null : new List<(int Row, int Task)>();
                     for (int k = off; k < Math.Min(off + maxTaskRows, cur.Tasks.Count); k++)
+                    {
+                        rightTaskRows?.Add((right.Count, k));
                         AppendTaskRow(right, cur.Tasks[k], k == ti, width, stacked: false, indent: "");
+                    }
                     if (off + maxTaskRows < cur.Tasks.Count)
                         right.Add($"[{TuiComponents.Dim}]\u2193 {cur.Tasks.Count - off - maxTaskRows} more[/]");
 
@@ -265,6 +295,10 @@ internal sealed class WorkflowView
                     int n = Math.Max(left.Count, right.Count);
                     if (height > 0)
                         n = Math.Max(n, height - 1 - rows.Count - (run.Error is not null ? 1 : 0));
+                    // Right-panel task rows land at composed row (rows.Count + their right index).
+                    if (rightTaskRows is not null)
+                        foreach (var (rr, task) in rightTaskRows)
+                            taskRows?.Add((rows.Count + rr, task));
                     for (int i = 0; i < n; i++)
                     {
                         string lc = i < left.Count ? left[i] : "";

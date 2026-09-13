@@ -72,6 +72,10 @@ internal sealed class JobView
         return null;
     }
 
+    /// <summary>Select a job by id (mouse click alias for arrowing to it). Unknown ids degrade
+    /// to the existing first-row fallback in <see cref="SelectedId"/>.</summary>
+    public void Select(string id) => _selectedId = id;
+
     /// <summary>Move the selection by <paramref name="delta"/> rows, clamped at the ends (no wrap).</summary>
     public void Move(int delta)
     {
@@ -88,7 +92,13 @@ internal sealed class JobView
     /// job list, and a one-line key hint. Pure given its inputs - unit-tested without a console.
     /// </summary>
     public List<string> RenderDashboard(int width, int frame)
+        => RenderDashboard(width, frame, null);
+
+    /// <summary>Overload reporting which emitted rows are job rows: (0-based row index into the
+    /// RETURNED list, job id) pairs, from the same emission that painted them.</summary>
+    public List<string> RenderDashboard(int width, int frame, List<(int Row, string Id)>? jobRows)
     {
+        jobRows?.Clear();
         var rows = new List<string>();
         int running = _rows.Count(r => r.Running);
         rows.Add($"  [{TuiComponents.Accent}]\u25b8 background jobs[/] [{TuiComponents.Dim}]\u00b7 {running} running \u00b7 {_rows.Count} total[/]");
@@ -110,6 +120,7 @@ internal sealed class JobView
                 string line =
                     $"[{r.Tint}]{Esc(r.Id)}[/] {stat} [{TuiComponents.Agent}]{Esc(r.Agent)}[/] " +
                     $"[{TuiComponents.Dim}]{r.DurationSeconds}s \u00b7 {Esc(act)} \u00b7[/] [{TuiComponents.Dim}]{Esc(goal)}[/]";
+                jobRows?.Add((rows.Count, r.Id));
                 rows.Add(isSel ? $"  [{TuiComponents.Accent}]\u203a[/] {line}" : $"    {line}");
             }
         }
