@@ -613,6 +613,10 @@ internal sealed partial class TuiDriver
         _frame = new FrameRenderer(_term);
         _engineFrame = frameEngine;
         _mouse = new MouseHandler(_term);
+        // Click-to-interact sinks (buttons preset only; MouseHandler.Dispatch gates them).
+        _mouse.OnPress = OnMousePress;
+        _mouse.OnRelease = OnMouseRelease;
+        _mouse.OnDrag = OnMouseDrag;
     }
 
     /// <summary>Initialize shared live-TUI input and paste negotiation; the factory seam avoids stdin in activation tests.</summary>
@@ -2165,6 +2169,23 @@ internal sealed partial class TuiDriver
 
         // Chrome never enters transcript/cache rows: the renderer addresses it independently.
         _frameScrollBar = FrameScrollBar.Create(_frameScroll, totalRows, transcriptRoom);
+
+        // Rebuild the mouse hit map from the SAME geometry that painted this frame and publish it
+        // whole (reference swap; readers never see a half-built map). Rebuilt per compose, so
+        // resize/scroll invalidation cannot exist by construction. The rail hit zone is the last
+        // TWO physical columns (a 1-cell rail is a hard pointer target and terminals differ by one
+        // in how they report the final column - the a358fde lesson); the thumb region sits on top
+        // of the rail (later Add wins the reverse containment scan).
+        var hits = new MouseHitMap();
+        hits.Begin(_term.Width, h);
+        if (_frameScrollBar.Visible)
+        {
+            int railLeft = Math.Max(1, _term.Width - 1);
+            int railWidth = _term.Width - railLeft + 1;
+            hits.Add(new HitRegion(1, railLeft, transcriptRoom, railWidth, MouseTargetKind.ScrollBarRail, 0));
+            hits.Add(new HitRegion(_frameScrollBar.Top + 1, railLeft, _frameScrollBar.Length, railWidth, MouseTargetKind.ScrollBarThumb, 0));
+        }
+        _frameHits = hits;
         return rows;
     }
 
@@ -2387,11 +2408,92 @@ internal sealed partial class TuiDriver
     /// press/drag/release sinks. Under the <c>wheel</c> preset the sinks are gated off, so routing
     /// is a no-op - reports are tracked and swallowed exactly as before. Runs on the consuming
     /// thread (prompt loop / modal loop), never the pump thread.</summary>
-    private void RouteMouse(in ConsoleInputPump.InputEvent ev)
+    internal void RouteMouse(in ConsoleInputPump.InputEvent ev)
     {
         if (ev.Kind != ConsoleInputPump.EventKind.Mouse) return;
         if (_mouse.Classify(ev.MouseButton, ev.MouseCol, ev.MouseRow, ev.MouseRelease) is { } mev)
             _mouse.Dispatch(mev);
+    }
+
+    // ---- main-frame mouse hit-testing (frame engine) -----------------------------------------
+    // The hit map is REBUILT by every ComposeFrameRows from the same geometry that painted the
+    // rows and published by reference swap; press/drag/release handlers below hit-test against
+    // the last published map. Capture semantics (hermes): press remembers the target, drag routes
+    // ONLY to the capture target, release-in-region is the click; release outside cancels.
+    private volatile MouseHitMap? _frameHits;
+
+    /// <summary>Hit map of the last composed main frame (test hook; null before first compose /
+    /// in inline mode, where no frame is composed).</summary>
+    internal MouseHitMap? FrameHitMap => _frameHits;
+
+    private HitRegion _mouseCapture;
+    private bool _mouseCaptured;
+    private int _mouseGrabOffset;   // thumb-local row at press (pi's grabOffset: no jump-center)
+
+    private void OnMousePress(MouseEvent ev)
+    {
+        if (!_engineFrame) return;
+        _mouseCaptured = false;
+        var hits = _frameHits;
+        if (hits is null || !hits.TryHit(ev.Row, ev.Col, out var hit, out int localRow, out _)) return;
+        _mouseCapture = hit;
+        _mouseCaptured = true;
+        _mouseGrabOffset = hit.Kind == MouseTargetKind.ScrollBarThumb ? localRow : 0;
+    }
+
+    private void OnMouseDrag(MouseEvent ev)
+    {
+        if (!_engineFrame || !_mouseCaptured) return;
+        // Drag routes ONLY to the capture target. The thumb tracks vertical position wherever the
+        // pointer drifts (standard scrollbar behavior); other targets do nothing until release.
+        if (_mouseCapture.Kind == MouseTargetKind.ScrollBarThumb && DragThumbTo(ev.Row)) Repaint();
+    }
+
+    private void OnMouseRelease(MouseEvent ev)
+    {
+        if (!_engineFrame || !_mouseCaptured) return;
+        var captured = _mouseCapture;
+        _mouseCaptured = false;
+        // Click = release INSIDE the capture region (a release elsewhere is a drag-cancel). The
+        // thumb's action already happened live during the drag.
+        bool inRegion = ev.Row >= captured.Top && ev.Row < captured.Top + captured.Height
+            && ev.Col >= captured.Left && ev.Col < captured.Left + captured.Width;
+        if (!inRegion) return;
+        switch (captured.Kind)
+        {
+            case MouseTargetKind.ScrollBarRail:
+                // Rail click outside the thumb: page one viewport toward the click - the same
+                // motion PgUp/PgDn dispatch (recovered 9466811 behavior, expressed as the
+                // keyboard alias). Above the thumb = older content (positive rows).
+                var sb = _frameScrollBar;
+                if (!sb.Visible) return;
+                int page = Math.Max(1, sb.TrackRows - 1);
+                if (FrameScrollBy(ev.Row - 1 < sb.Top ? page : ev.Row - 1 >= sb.Top + sb.Length ? -page : 0))
+                    Repaint();
+                break;
+        }
+    }
+
+    /// <summary>Absolute thumb drag: map the desired 0-based thumb top (pointer row minus the
+    /// grab offset) back to a scroll offset by inverting the proportional-thumb placement in
+    /// <see cref="FrameScrollBar.Create"/>, so the thumb lands under the pointer without
+    /// jump-centering on grab. Returns true when the offset changed (caller repaints).</summary>
+    private bool DragThumbTo(int termRow)
+    {
+        var sb = _frameScrollBar;
+        if (!sb.Visible) return false;
+        int travel = sb.TrackRows - sb.Length;
+        if (travel <= 0) return false;
+        int totalRows = GetFrameTotalRows(Width);
+        int maxScroll = Math.Max(0, totalRows - sb.TrackRows);
+        if (maxScroll == 0) return false;
+        int top = Math.Clamp(termRow - 1 - _mouseGrabOffset, 0, travel);
+        double fraction = 1.0 - (double)top / travel;
+        int target = (int)Math.Round(fraction * maxScroll);
+        if (target == _frameScroll) return false;
+        _frameScroll = Math.Clamp(target, 0, maxScroll);
+        if (_frameScroll > 0) _userScrolled = true;
+        return true;
     }
 
     // --- input ---------------------------------------------------------------
