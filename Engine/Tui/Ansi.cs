@@ -72,15 +72,23 @@ internal static class Ansi
     public const string BracketedPasteOff = CSI + "?2004l";
 
     /// <summary>Enable SGR mouse reporting: button-event tracking (DECSET 1000) + SGR extended
-    /// coordinates (DECSET 1006). We only ACT on wheel reports (buttons 64/65) - clicks/drags/moves
-    /// are parsed and discarded - but 1000 is the mode that makes the terminal emit wheel events at
-    /// all, and 1006 gives the unambiguous <c>ESC[&lt;b;x;y(M|m)</c> framing the driver drains
-    /// synchronously (no fragile fixed-width legacy 1005/normal framing). Disabled with
-    /// <see cref="MouseTrackingOff"/> when the frame engine hands the terminal back.</summary>
+    /// coordinates (DECSET 1006). 1000 is the mode that makes the terminal emit button + wheel
+    /// events at all, and 1006 gives the unambiguous <c>ESC[&lt;b;x;y(M|m)</c> framing the pump's
+    /// assembler reassembles (no fragile fixed-width legacy 1005/normal framing). The <c>wheel</c>
+    /// preset stops here; the <c>buttons</c> preset uses <see cref="MouseTrackingButtonsOn"/>.
+    /// Disabled with <see cref="MouseTrackingOff"/> when the frame engine hands the terminal back.</summary>
     public const string MouseTrackingOn = CSI + "?1000h" + CSI + "?1006h";
 
-    /// <summary>Disable SGR mouse reporting (DECRST 1006 then 1000).</summary>
-    public const string MouseTrackingOff = CSI + "?1006l" + CSI + "?1000l";
+    /// <summary>Enable SGR mouse reporting with BUTTON-MOTION tracking (DECSET 1002): press/release
+    /// plus motion only while a button is held (drag). Deliberately NOT any-motion tracking
+    /// (1003) - hover reporting is the documented noise/bandwidth hazard in every reference
+    /// implementation and nothing in the TUI needs hover.</summary>
+    public const string MouseTrackingButtonsOn = CSI + "?1000h" + CSI + "?1002h" + CSI + "?1006h";
+
+    /// <summary>Disable SGR mouse reporting (DECRST 1002, 1006, 1000 - reverse order, superset-safe:
+    /// resetting 1002 when only the wheel tier was set is harmless, so ONE off string covers every
+    /// tier on every exit/crash/suspend path).</summary>
+    public const string MouseTrackingOff = CSI + "?1002l" + CSI + "?1006l" + CSI + "?1000l";
 
     /// <summary>
     /// Erase <paramref name="count"/> lines ending at (and including) the current line,

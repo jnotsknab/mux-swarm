@@ -16,18 +16,28 @@ namespace MuxSwarm.Engine.Tui;
 /// </summary>
 internal sealed class ConsoleInputPump : IDisposable
 {
-    internal enum EventKind { Key, Wheel, Paste, Terminal, InferredPaste }
+    internal enum EventKind { Key, Wheel, Paste, Terminal, InferredPaste, Mouse }
 
     /// <summary>One typed input event. Key: a console key (including a classified bare/Alt ESC).
     /// Wheel: net wheel notches (positive = up/back into history). Paste: full pasted text with
-    /// newlines normalized to '\n' (an explicit paste transaction, already reassembled).</summary>
-    internal readonly record struct InputEvent(EventKind Kind, ConsoleKeyInfo Key, int WheelDir, string? PasteText)
+    /// newlines normalized to '\n' (an explicit paste transaction, already reassembled).
+    /// Mouse: a left-button press/drag/release report carrying the raw SGR button code plus 1-based
+    /// cell coordinates; consumers classify it via the driver's MouseHandler (the semantic seam) and
+    /// hit-test against the last presented frame. Wheel stays its own kind so burst coalescing is
+    /// untouched.</summary>
+    internal readonly record struct InputEvent(EventKind Kind, ConsoleKeyInfo Key, int WheelDir, string? PasteText,
+        int MouseButton = 0, int MouseCol = 0, int MouseRow = 0, bool MouseRelease = false)
     {
         public static InputEvent OfKey(ConsoleKeyInfo k) => new(EventKind.Key, k, 0, null);
         public static InputEvent OfWheel(int dir) => new(EventKind.Wheel, default, dir, null);
         public static InputEvent OfPaste(string text) => new(EventKind.Paste, default, 0, text);
         internal static InputEvent OfInferredPaste(string text) => new(EventKind.InferredPaste, default, 0, text);
         internal static InputEvent OfTerminal(string packet) => new(EventKind.Terminal, default, 0, packet);
+        /// <summary>A left-button press/drag/release report. <paramref name="button"/> is the RAW SGR
+        /// code (motion/modifier flags preserved so MouseHandler.Classify sees them); col/row are
+        /// 1-based terminal cells; <paramref name="release"/> mirrors the SGR final byte (m).</summary>
+        internal static InputEvent OfMouse(int button, int col, int row, bool release)
+            => new(EventKind.Mouse, default, 0, null, button, col, row, release);
     }
 
     private static readonly object _currentGate = new();
@@ -220,8 +230,10 @@ internal sealed class ConsoleInputPump : IDisposable
     }
 
     /// <summary>Windows slice: mouse arrives as console INPUT RECORDS that Console.ReadKey would
-    /// discard, so read the Win32 record queue. Mouse records classify to Wheel events (never
-    /// keys); keydowns flow through the same assembler as the Unix path.</summary>
+    /// discard, so read the Win32 record queue. Mouse records classify to typed Wheel/Mouse events
+    /// (never keys) - the adapter already synthesizes SGR-style codes with 1-based coords, so the
+    /// consumer-side dispatch is shared with the VT path; keydowns flow through the same assembler
+    /// as the Unix path. Hover moves are consumed inside the adapter and never surface.</summary>
     private void PumpWin32Slice()
     {
         if (!Win32ConsoleInput.TryReadEvent(out var wev))
@@ -239,6 +251,7 @@ internal sealed class ConsoleInputPump : IDisposable
         {
             int dir = MouseSgrParser.WheelDirection(wev.Button);
             if (dir != 0) ClassifyUnframed(InputEvent.OfWheel(dir));
+            else ClassifyUnframed(InputEvent.OfMouse(wev.Button, wev.X, wev.Y, wev.Release));
         }
     }
 
@@ -306,7 +319,6 @@ internal sealed class SgrInputAssembler
 {
     private enum State { Ground, Esc, EscBracket, PasteOpen, PasteBody, PasteClose, MouseBody, MouseBodyDiscard, Osc, OscEscape, OscDiscard, OscDiscardEscape, ModeReply, ModeDiscard, CsiKey, Ss3Key }
 
-    private readonly bool _mouseTracking;
     private State _state = State.Ground;
     private readonly StringBuilder _acc = new(32);     // paste text or mouse body
     private int _openMatched;                          // "[200~" / "[201~" match progress
@@ -322,9 +334,11 @@ internal sealed class SgrInputAssembler
     {
         _clock = clock ?? (() => Environment.TickCount64);
         _lastFeedTick = _clock();
-        _mouseTracking = mouseTracking;
         // Negotiation controls what we ask the terminal to send, not whether a received
-        // delimiter is valid. Always recognize in-flight paste frames across live toggles.
+        // delimiter is valid. Always recognize in-flight paste frames across live toggles,
+        // and always classify ESC[< as a mouse report: a stray report arriving while
+        // tracking is off (terminal race, dirty prior state) is classified-and-dropped,
+        // which is strictly safer than letting its bytes fall through as keys.
     }
 
     internal bool HasPending => _state != State.Ground;
@@ -372,7 +386,7 @@ internal sealed class SgrInputAssembler
 
             case State.EscBracket:
                 if (c == '?') { _acc.Clear(); _acc.Append("\x1b[?"); _state = State.ModeReply; break; }
-                if (c == '<' && _mouseTracking) { _state = State.MouseBody; _acc.Clear(); break; }
+                if (c == '<') { _state = State.MouseBody; _acc.Clear(); break; }
                 if (c == '2') { _state = State.PasteOpen; _openMatched = 2; break; }   // "[2" matched
                 _acc.Clear(); _state = State.CsiKey;
                 outp.AddRange(Feed(key));
@@ -459,11 +473,15 @@ internal sealed class SgrInputAssembler
             case State.MouseBody:
                 if (c is 'M' or 'm')
                 {
-                    if (MouseSgrParser.TryParseBody(_acc.ToString(), out int button, out _, out _))
+                    if (MouseSgrParser.TryParseBody(_acc.ToString(), out int button, out int mx, out int my))
                     {
                         int dir = MouseSgrParser.WheelDirection(button);
                         if (dir != 0) outp.Add(ConsoleInputPump.InputEvent.OfWheel(dir));
-                        // Non-wheel mouse events are swallowed by design (press/drag sinks unwired).
+                        else if ((button & 0x03) == 0)
+                            // Left-button press/drag/release (motion+modifier flags preserved in the
+                            // raw code; the m final byte marks release). Middle/right/no-button
+                            // reports stay swallowed - only left + wheel are modeled.
+                            outp.Add(ConsoleInputPump.InputEvent.OfMouse(button, mx, my, c == 'm'));
                     }
                     // Malformed body: drop the report; NEVER emit its bytes as keys.
                     _state = State.Ground;

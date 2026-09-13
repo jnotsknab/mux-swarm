@@ -99,21 +99,61 @@ public class SgrInputAssemblerTests
     }
 
     [Fact]
-    public void NonWheelMouseReport_IsSwallowed()
+    public void LeftPressAndRelease_EmitTypedMouseEvents_NeverKeys()
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
         var evs = Feed(asm, "\u001b[<0;10;5M\u001b[<0;10;5m");   // press + release
+        Assert.Equal(2, evs.Count);
+        Assert.All(evs, e => Assert.Equal(ConsoleInputPump.EventKind.Mouse, e.Kind));
+        Assert.Equal((0, 10, 5, false), (evs[0].MouseButton, evs[0].MouseCol, evs[0].MouseRow, evs[0].MouseRelease));
+        Assert.Equal((0, 10, 5, true), (evs[1].MouseButton, evs[1].MouseCol, evs[1].MouseRow, evs[1].MouseRelease));
+    }
+
+    [Fact]
+    public void LeftDragMotion_EmitsMouseEvent_WithRawMotionFlag()
+    {
+        var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
+        var evs = Feed(asm, "\u001b[<32;11;6M");   // motion with left held (0x20 | 0)
+        var ev = Assert.Single(evs);
+        Assert.Equal(ConsoleInputPump.EventKind.Mouse, ev.Kind);
+        Assert.Equal(32, ev.MouseButton);           // motion flag preserved for MouseHandler.Classify
+        Assert.Equal((11, 6, false), (ev.MouseCol, ev.MouseRow, ev.MouseRelease));
+    }
+
+    [Fact]
+    public void ModifiedLeftPress_KeepsModifierBits()
+    {
+        var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
+        var evs = Feed(asm, "\u001b[<16;3;4M");    // ctrl+left press (0x10 | 0)
+        var ev = Assert.Single(evs);
+        Assert.Equal(ConsoleInputPump.EventKind.Mouse, ev.Kind);
+        Assert.Equal(16, ev.MouseButton);
+    }
+
+    [Fact]
+    public void MiddleAndRightButtonReports_AreSwallowed()
+    {
+        var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
+        var evs = Feed(asm, "\u001b[<1;10;5M\u001b[<2;10;5M\u001b[<35;7;7M");   // middle, right, no-button motion
         Assert.Empty(evs);
     }
 
     [Fact]
-    public void MouseTrackingOff_SgrPrefixIsNotSpecial()
+    public void MouseClassification_IsAlwaysOn_StrayReportNeverLeaksAsKeys()
     {
-        // With tracking off the terminal never sends reports; ESC [ < must pass through as keys.
+        // VT-side ENABLEMENT is what is scoped by the preset; the assembler always classifies
+        // ESC [ < as a mouse report so a stray report arriving while tracking is off (terminal
+        // race, dirty prior state) surfaces as a TYPED event - never as key events.
         var asm = new SgrInputAssembler(mouseTracking: false, bracketedPaste: true);
-        var evs = Feed(asm, "\u001b[<");
-        evs.AddRange(asm.FlushTimeout());
-        Assert.Empty(evs); // Unknown/incomplete control sequences are not draft text.
+        var evs = Feed(asm, "\u001b[<0;10;5M");
+        var ev = Assert.Single(evs);
+        Assert.Equal(ConsoleInputPump.EventKind.Mouse, ev.Kind);
+
+        // An incomplete prefix still classifies + drops on flush (torn report, not draft text).
+        var torn = new SgrInputAssembler(mouseTracking: false, bracketedPaste: true);
+        var tornEvs = Feed(torn, "\u001b[<");
+        tornEvs.AddRange(torn.FlushTimeout());
+        Assert.Empty(tornEvs);
     }
 
     [Fact]

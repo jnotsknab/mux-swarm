@@ -2368,13 +2368,31 @@ internal sealed partial class TuiDriver
                     foreach (var ev in assembler.FlushTimeout()) return ev;
                 Thread.Sleep(2); continue;
             }
-            foreach (var ev in assembler.Feed(key)) return ev;
+            foreach (var ev in assembler.Feed(key))
+            {
+                // A mouse report interleaved with the legacy drain is typed, not a transaction
+                // result - returning it would surface a default key to the editor. Skip it.
+                if (ev.Kind == ConsoleInputPump.EventKind.Mouse) continue;
+                return ev;
+            }
         }
     }
 
     // Wheel -> scrollback bridge: step console.scrollSpeedRows rows per net notch through the SAME
     // FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when the offset changed (caller repaints).
     private bool OnWheelScroll(int netWheelDir) => FrameScrollBy(netWheelDir * _scrollSpeedRows);
+
+    /// <summary>Consumer-side mouse routing: classify a pump Mouse event through the MouseHandler
+    /// seam (which owns held-button state and the ButtonsEnabled gate) and dispatch it to the
+    /// press/drag/release sinks. Under the <c>wheel</c> preset the sinks are gated off, so routing
+    /// is a no-op - reports are tracked and swallowed exactly as before. Runs on the consuming
+    /// thread (prompt loop / modal loop), never the pump thread.</summary>
+    private void RouteMouse(in ConsoleInputPump.InputEvent ev)
+    {
+        if (ev.Kind != ConsoleInputPump.EventKind.Mouse) return;
+        if (_mouse.Classify(ev.MouseButton, ev.MouseCol, ev.MouseRow, ev.MouseRelease) is { } mev)
+            _mouse.Dispatch(mev);
+    }
 
     // --- input ---------------------------------------------------------------
 
@@ -2466,6 +2484,7 @@ internal sealed partial class TuiDriver
                             else if (pending.Kind == ConsoleInputPump.EventKind.Key &&
                                 (pending.Key.Key == ConsoleKey.Escape || (pending.Key.Key == ConsoleKey.C && pending.Key.Modifiers.HasFlag(ConsoleModifiers.Control))))
                                 CancelPendingPaste();
+                            else if (pending.Kind == ConsoleInputPump.EventKind.Mouse) { /* stale click during a paste transaction: drop, never replay */ }
                             else if (_pasteDeferred.Count < 65536) _pasteDeferred.AddLast(pending);
                             else { CancelPendingPaste(); _pasteStatus = "Paste backlog limit reached; paste again in smaller chunks."; }
                         }
@@ -2494,6 +2513,7 @@ internal sealed partial class TuiDriver
                         BeginTextPaste(cv.PasteText ?? ""); Repaint();
                         continue;
                     }
+                    if (cv.Kind == ConsoleInputPump.EventKind.Mouse) { RouteMouse(cv); continue; }
                     key = cv.Key;
                 }
                 else if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
@@ -2559,6 +2579,8 @@ internal sealed partial class TuiDriver
                             Repaint();
                             continue;
                         }
+                        case ConsoleInputPump.EventKind.Mouse:
+                            RouteMouse(ev); continue;
                     }
                     key = ev.Key;
                 }

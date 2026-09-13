@@ -36,6 +36,53 @@ public class MouseHandlerTests
         Assert.Contains(Ansi.MouseTrackingOff, t.Output);
     }
 
+    [Fact]
+    public void SetEnabled_WritesDisableAllBeforeEnable()
+    {
+        // hermes discipline: a dirty prior tracking state must never stack under the new one, so
+        // every enable is prefixed by the full superset off string.
+        var t = new FakeTerm();
+        var h = new MouseHandler(t);
+        h.SetEnabled(true);
+        int off = t.Output.IndexOf(Ansi.MouseTrackingOff, StringComparison.Ordinal);
+        int on = t.Output.IndexOf(Ansi.MouseTrackingOn, StringComparison.Ordinal);
+        Assert.True(off >= 0 && on > off, "off-before-on ordering violated");
+    }
+
+    [Fact]
+    public void SetEnabled_ButtonsTier_WritesButtonMotionTracking_Never1003()
+    {
+        var t = new FakeTerm();
+        var h = new MouseHandler(t) { ButtonsEnabled = true };
+        h.SetEnabled(true);
+        Assert.Contains(Ansi.MouseTrackingButtonsOn, t.Output);
+        Assert.Contains("?1002h", t.Output);
+        Assert.DoesNotContain("?1003", t.Output);   // any-motion hover tracking is a non-goal
+    }
+
+    [Fact]
+    public void SetEnabled_TierChangeWhileEnabled_RewritesMode()
+    {
+        // /mouse wheel -> /mouse buttons while reporting is live must rewrite at the new tier
+        // (ApplyMouseMode sets ButtonsEnabled before SetEnabled).
+        var t = new FakeTerm();
+        var h = new MouseHandler(t);
+        h.SetEnabled(true);                          // wheel tier
+        Assert.DoesNotContain("?1002h", t.Output);
+        h.ButtonsEnabled = true;
+        h.SetEnabled(true);                          // same on-state, new tier -> rewrite
+        Assert.Contains("?1002h", t.Output);
+    }
+
+    [Fact]
+    public void MouseTrackingOff_IsSupersetSafe_Resets1002()
+    {
+        // ONE off string covers every tier on every exit/crash/suspend path.
+        Assert.Contains("?1002l", Ansi.MouseTrackingOff);
+        Assert.Contains("?1006l", Ansi.MouseTrackingOff);
+        Assert.Contains("?1000l", Ansi.MouseTrackingOff);
+    }
+
     [Theory]
     [InlineData(64, +1)]   // wheel up
     [InlineData(65, -1)]   // wheel down

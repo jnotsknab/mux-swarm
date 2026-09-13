@@ -191,6 +191,10 @@ public sealed class EscapeKeyListener : IDisposable
                             continue;
                         }
                         if (pev.Kind == Tui.ConsoleInputPump.EventKind.Terminal) continue;
+                        // Mid-turn press/drag/release: DROPPED, not replayed - replaying a stale
+                        // click into the next prompt would be the mouse version of the queued-Enter
+                        // burst bug. (Batch 4 will honor scrollbar/lane targets here explicitly.)
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Mouse) continue;
                         key = pev.Key;
                     }
                     else

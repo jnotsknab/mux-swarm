@@ -33,6 +33,7 @@ internal sealed class MouseHandler
 {
     private readonly ITuiTerminal _term;
     private bool _enabled;
+    private bool _writtenButtons;   // tier of the last mode string written (wheel vs buttons)
 
     // Tracks whether a button is currently held so a motion report classifies as Drag vs Move, and
     // so a future Press+Release on the same cell can be recognized as a click. Button id of the
@@ -53,13 +54,24 @@ internal sealed class MouseHandler
     public System.Action<MouseEvent>? OnRelease { get; set; }
     public System.Action<MouseEvent>? OnDrag { get; set; }
 
-    /// <summary>Enable/disable SGR mouse reporting (idempotent). Writing the mode is best-effort;
-    /// terminals that do not support it ignore the private-mode set/reset harmlessly.</summary>
+    /// <summary>Enable/disable SGR mouse reporting (idempotent per tier: re-enabling after
+    /// <see cref="ButtonsEnabled"/> changed rewrites the mode at the new tier). Enabling always
+    /// writes the FULL off string first so a dirty prior state (crash, suspend race, stacked
+    /// enables) can never leave a stale tracking mode latched underneath the new one. Writing the
+    /// mode is best-effort; terminals that do not support it ignore the private-mode set/reset
+    /// harmlessly.</summary>
     public void SetEnabled(bool on)
     {
-        if (_enabled == on) return;
+        bool tier = ButtonsEnabled;
+        if (_enabled == on && (!on || _writtenButtons == tier)) return;
         _enabled = on;
-        try { _term.Write(on ? Ansi.MouseTrackingOn : Ansi.MouseTrackingOff); _term.Flush(); }
+        _writtenButtons = on && tier;
+        try
+        {
+            _term.Write(on ? Ansi.MouseTrackingOff + (tier ? Ansi.MouseTrackingButtonsOn : Ansi.MouseTrackingOn)
+                           : Ansi.MouseTrackingOff);
+            _term.Flush();
+        }
         catch { /* handing modes to the terminal must never throw */ }
     }
 
