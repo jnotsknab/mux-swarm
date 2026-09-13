@@ -255,6 +255,16 @@ internal static class TuiMarkup
     /// <summary>Visible width of the plain text underlying a markup string.</summary>
     public static int MarkupWidth(string markup) => Width(Plain(markup));
 
+    // CSI sequences (colors/moves) plus BEL-terminated OSC sequences (titles, OSC 52).
+    private static readonly System.Text.RegularExpressions.Regex AnsiSeq =
+        new("\u001b\\[[0-9;?]*[A-Za-z]|\u001b\\][^\u0007]*\u0007",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Strip ANSI control sequences (CSI + BEL-terminated OSC) from an already-rendered
+    /// row, leaving the visible text. The inverse concern of <see cref="Plain"/>, which strips
+    /// MARKUP tags from a not-yet-rendered line.</summary>
+    public static string StripAnsi(string ansi) => AnsiSeq.Replace(ansi ?? "", "");
+
     /// <summary>
     /// Hard-truncate plain text to a maximum display width, appending an ellipsis when
     /// truncation occurs (the ellipsis is included within <paramref name="maxWidth"/>).

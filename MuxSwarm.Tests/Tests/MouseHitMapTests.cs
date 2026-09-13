@@ -101,7 +101,10 @@ public class MouseHitMapTests
         Assert.Equal(MouseTargetKind.ScrollBarRail, rail.Kind);
         Assert.True(map.TryHit(1, term.Width - 1, out rail, out _, out _));
         Assert.Equal(MouseTargetKind.ScrollBarRail, rail.Kind);
-        Assert.False(map.TryHit(1, term.Width - 2, out _, out _, out _));
+        // Width-2 is OUTSIDE the rail: since batch 8 it belongs to the transcript backdrop
+        // (drag-selection surface), never to a scrollbar region.
+        Assert.True(map.TryHit(1, term.Width - 2, out var backdrop, out _, out _));
+        Assert.Equal(MouseTargetKind.ExpandedPanel, backdrop.Kind);
         // Thumb region overlays the rail at the composed thumb rows and wins the scan.
         Assert.True(map.TryHit(sb.Top + 1, term.Width, out var thumb, out _, out _));
         Assert.Equal(MouseTargetKind.ScrollBarThumb, thumb.Kind);
