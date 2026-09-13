@@ -161,10 +161,27 @@ internal sealed class ModelPickerView
         return starts.Length == 0 ? "" : text[..starts[^1]];
     }
 
-    /// <summary>Exactly height bounded markup rows, with a single active pane at narrow widths.</summary>
-    internal List<string> Render(int width, int height)
+    /// <summary>Move the ACTIVE pane's selection to a clicked item (region payload from the last
+    /// render). Clicking is an alias for arrowing to the item; the caller then dispatches Enter
+    /// through <see cref="Handle"/> so apply/advance semantics stay keyboard-identical.</summary>
+    internal void ClickItem(int index)
+    {
+        if (_pane == Pane.Slots && _slots.Count > 0)
+        {
+            _slotIndex = Math.Clamp(index, 0, _slots.Count - 1);
+            SelectSlot();
+        }
+        else if (_pane == Pane.Models && !_manual)
+            _modelIndex = Math.Clamp(index, 0, Math.Max(0, Matches().Count - 1));
+    }
+
+    /// <summary>Exactly height bounded markup rows, with a single active pane at narrow widths.
+    /// When <paramref name="hits"/> is supplied, the ACTIVE pane's list rows register PickerItem
+    /// regions (payload = item index) from the same emission that painted them.</summary>
+    internal List<string> Render(int width, int height, MouseHitMap? hits = null)
     {
         width = Math.Max(1, width); height = Math.Max(1, height);
+        hits?.Begin(width, height);
         string Esc(string s) => Spectre.Console.Markup.Escape(s);
         string Clip(string s) => TuiMarkup.TruncateMarkup(s, width, "");
         var rows = new List<string>
@@ -191,7 +208,10 @@ internal sealed class ModelPickerView
         {
             int start = Math.Clamp(_slotIndex - room / 2, 0, Math.Max(0, _slots.Count - room));
             for (int i = start; i < Math.Min(_slots.Count, start + room); i++)
+            {
+                hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
                 rows.Add($"[{(i == _slotIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _slotIndex ? "›" : " ")} {Esc(_slots[i].Label)} · {Esc(_slots[i].Model ?? "unset")}[/]");
+            }
         }
         else if (_pane == Pane.Models)
         {
@@ -201,7 +221,10 @@ internal sealed class ModelPickerView
             int start = Math.Clamp(_modelIndex - modelRoom / 2, 0, Math.Max(0, matches.Count - modelRoom));
             if (!_manual)
                 for (int i = start; i < Math.Min(matches.Count, start + modelRoom); i++)
+                {
+                    hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
                     rows.Add($"[{(i == _modelIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _modelIndex ? "›" : " ")} {Esc(matches[i])}{(matches[i] == Slot?.Model ? " (current)" : "")}[/]");
+                }
             if (!_manual && matches.Count == 0) rows.Add($"[{TuiComponents.Muted}] {(Loading ? "Loading models…" : "No matches. F2: enter model manually.")}[/]");
         }
         else

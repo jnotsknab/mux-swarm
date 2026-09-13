@@ -182,10 +182,21 @@ internal sealed class SettingsPickerView
         return (start > 0 ? "…" : "") + before[start..] + "▏" + after;
     }
 
-    /// <summary>Style-compatible bounded list and value pane; values never appear in searchable metadata.</summary>
-    internal List<string> Render(int width, int height)
+    /// <summary>Move the browser selection to a clicked list item (region payload from the last
+    /// render). Only meaningful while browsing; the caller dispatches Enter so edit entry stays
+    /// keyboard-identical. Editing mode registers no regions, so clicks are inert there.</summary>
+    internal void ClickItem(int index)
+    {
+        if (!Editing) _index = Math.Clamp(index, 0, Math.Max(0, _matches.Count - 1));
+    }
+
+    /// <summary>Style-compatible bounded list and value pane; values never appear in searchable metadata.
+    /// When <paramref name="hits"/> is supplied and the view is browsing (not editing), list rows
+    /// register PickerItem regions (payload = match index) from the same emission that painted them.</summary>
+    internal List<string> Render(int width, int height, MouseHitMap? hits = null)
     {
         width = Math.Max(1, width); height = Math.Max(1, height);
+        hits?.Begin(width, height);
         string Esc(string text) => Spectre.Console.Markup.Escape(Clean(text));
         string Clip(string text) => TuiMarkup.TruncateMarkup(text, width, "");
         if (width < MinWidth || height < MinHeight)
@@ -202,6 +213,7 @@ internal sealed class SettingsPickerView
         for (int i = start; i < Math.Min(_matches.Count, start + room); i++)
         {
             var item = _settings[_matches[i]];
+            if (!Editing) hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
             rows.Add($"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? "›" : " ")} {Esc(item.Name)}[/]");
         }
         if (_matches.Count == 0) rows.Add($"[{TuiComponents.Muted}] No matches. Ctrl+U clears search.[/]");

@@ -300,12 +300,20 @@ internal sealed partial class TuiDriver
         ApplyMouseMode();
     }
 
+    // True while a full-screen modal picker (setmodel / set / swap) is presenting. Under the
+    // frame engine this changes nothing (tracking is already on per the preset); under INLINE the
+    // pickers go alt-screen through a temporary FrameRenderer, so mouse tracking is scoped to the
+    // modal's lifetime exactly like that presenter - the normal inline prompt keeps tracking OFF
+    // to preserve the terminal's native selection/scrollback.
+    private volatile bool _modalPresenting;
+
     // Recompute + apply the terminal mouse mode from the current preset + lifecycle state. Only
-    // meaningful under the frame engine; enabling 1000/1006 inline would only steal the terminal's
-    // own copy/paste selection, so it is disabled there regardless of preset.
+    // meaningful under the frame engine or a presenting modal; enabling 1000/1006 at the normal
+    // inline prompt would only steal the terminal's own copy/paste selection, so it stays
+    // disabled there regardless of preset.
     private void ApplyMouseMode()
     {
-        bool want = _engineFrame && !_suspended && _mousePreset != "off";
+        bool want = (_engineFrame || _modalPresenting) && !_suspended && _mousePreset != "off";
         _mouse.ButtonsEnabled = _mousePreset == "buttons";
         _mouse.SetEnabled(want);
         // Windows console hosts translate VT mouse reports into MOUSE_EVENT input records that
@@ -1246,6 +1254,10 @@ internal sealed partial class TuiDriver
         bool prevPromptActive = ConsoleInputPump.PromptActive;
         ConsoleInputPump.PromptActive = true;
         ConsoleInputPump.ModalActive = true;
+        // The in-frame modal hit-tests against the MAIN frame map (it renders in the live band,
+        // so ComposeFrameRows registered its option rows); a private tracker keeps press/release
+        // pairing local to this loop.
+        var modalClicks = new MouseClickTracker();
         try
         {
             Repaint();
@@ -1268,6 +1280,20 @@ internal sealed partial class TuiDriver
                 {
                     if (kind == PromptModalView.Kind.Text && ev.PasteText is { } pt)
                         { _promptModal.InputAppend(pt); Repaint(); }
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
+                {
+                    // Click on an option row = move the cursor there + the SAME accept the
+                    // keyboard path dispatches (Enter for Select, Space-toggle for MultiSelect -
+                    // multi keeps Enter as the explicit accept, so a click only toggles).
+                    if (_frameHits is { } fh && modalClicks.Feed(ev, fh, out var mHit, out _, out _)
+                        && mHit.Kind == MouseTargetKind.PromptModalOption)
+                    {
+                        _promptModal.SetSel(mHit.Payload);
+                        if (kind == PromptModalView.Kind.MultiSelect) { _promptModal.ToggleChecked(); Repaint(); }
+                        else return new PromptModalResult(false, null, _promptModal.Sel, null);
+                    }
                     continue;
                 }
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
@@ -1930,7 +1956,16 @@ internal sealed partial class TuiDriver
         // Replaces the jarring Suspend->primary-buffer->Spectre->Resume flip on the frame
         // engine; inline mode and non-TTY paths keep the legacy prompt path.
         if (_promptModalActive)
-            lines.AddRange(_promptModal.Render(width, Height));
+        {
+            // Record which live-band lines are option rows so ComposeFrameRows can register
+            // PromptModalOption hit regions at their final physical rows (the modal is rendered
+            // INSIDE the live band, so its geometry is only known after band placement).
+            _promptModalOptionLines.Clear();
+            int modalBase = lines.Count;
+            lines.AddRange(_promptModal.Render(width, Height, _promptModalOptionRows));
+            foreach (var (row, opt) in _promptModalOptionRows)
+                _promptModalOptionLines.Add((modalBase + row, opt));
+        }
 
         // v0.12.0 M2: the team TaskBoard strip (Ctrl+T). Renders below the agent activity/dashboard
         // and above the rule when toggled on AND a board snapshot is available. Off (or no team) it
@@ -2113,12 +2148,22 @@ internal sealed partial class TuiDriver
         // fragments at the left margin).
         int wrapW = Width;
 
-        // Live band (bottom): built and wrapped at the same width.
+        // Live band (bottom): built and wrapped at the same width. Per-line wrap extents are
+        // tracked so live-band components (the prompt modal) can be mapped to physical rows.
         var liveRows = new List<string>();
+        var liveLineStarts = new List<(int Start, int Count)>();
         foreach (var ml in BuildLiveFrame(wrapW))
-            liveRows.AddRange(LiveRegion.WrapMarkupLine(ml, wrapW));
+        {
+            var wrapped = LiveRegion.WrapMarkupLine(ml, wrapW);
+            liveLineStarts.Add((liveRows.Count, wrapped.Count));
+            liveRows.AddRange(wrapped);
+        }
+        int liveTrimmed = 0;
         if (liveRows.Count > h)
-            liveRows = liveRows.GetRange(liveRows.Count - h, h);  // keep the freshest tail on screen
+        {
+            liveTrimmed = liveRows.Count - h;                     // keep the freshest tail on screen
+            liveRows = liveRows.GetRange(liveTrimmed, h);
+        }
 
         int transcriptRoom = h - liveRows.Count;
         var transcriptRows = new List<string>();
@@ -2184,6 +2229,22 @@ internal sealed partial class TuiDriver
             int railWidth = _term.Width - railLeft + 1;
             hits.Add(new HitRegion(1, railLeft, transcriptRoom, railWidth, MouseTargetKind.ScrollBarRail, 0));
             hits.Add(new HitRegion(_frameScrollBar.Top + 1, railLeft, _frameScrollBar.Length, railWidth, MouseTargetKind.ScrollBarThumb, 0));
+        }
+        // Prompt-modal options: map each recorded live-band line through its wrap extents to the
+        // band's final physical rows (band is bottom-anchored; liveRows[k] sits at physical row
+        // h - liveRows.Count + 1 + k, 1-based).
+        if (_promptModalActive && _promptModalOptionLines.Count > 0)
+        {
+            int liveTopPhys = h - liveRows.Count + 1;
+            foreach (var (line, opt) in _promptModalOptionLines)
+            {
+                if (line >= liveLineStarts.Count) continue;
+                var (start, count) = liveLineStarts[line];
+                int first = start - liveTrimmed, last = first + count - 1;
+                if (last < 0) continue;                            // fully trimmed off the top
+                first = Math.Max(0, first);
+                hits.Add(new HitRegion(liveTopPhys + first, 1, last - first + 1, wrapW, MouseTargetKind.PromptModalOption, opt));
+            }
         }
         _frameHits = hits;
         return rows;
@@ -2421,6 +2482,12 @@ internal sealed partial class TuiDriver
     // the last published map. Capture semantics (hermes): press remembers the target, drag routes
     // ONLY to the capture target, release-in-region is the click; release outside cancels.
     private volatile MouseHitMap? _frameHits;
+
+    // Prompt-modal option rows, as (live-band line index, option index) resolved per paint:
+    // filled by BuildLiveFrame from the view's render, consumed by ComposeFrameRows when
+    // registering hit regions. Single-threaded with painting (ConsoleLock).
+    private readonly List<(int Row, int Option)> _promptModalOptionRows = new();
+    private readonly List<(int Line, int Option)> _promptModalOptionLines = new();
 
     /// <summary>Hit map of the last composed main frame (test hook; null before first compose /
     /// in inline mode, where no frame is composed).</summary>

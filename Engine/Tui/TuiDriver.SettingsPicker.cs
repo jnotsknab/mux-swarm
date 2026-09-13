@@ -26,13 +26,17 @@ internal sealed partial class TuiDriver
             ConsoleInputPump.IsComposing = () => true;
             ConsoleInputPump.PromptActive = true;
             ConsoleInputPump.ModalActive = true;
+            _modalPresenting = true;
+            ApplyMouseMode();   // inline: scope mouse tracking to the alt-screen modal
         }
+        var hits = new MouseHitMap();
+        var clicks = new MouseClickTracker();
         try
         {
             while (!cancellationToken.IsCancellationRequested && !pump.Disposed && !_shuttingDown)
             {
                 int width = Math.Max(1, _term.Width - 1), height = Math.Max(1, _term.Height);
-                var rows = view.Render(width, height).Select(TuiMarkup.ToAnsi).ToList();
+                var rows = view.Render(width, height, hits).Select(TuiMarkup.ToAnsi).ToList();
                 lock (MuxConsole.ConsoleLock) presenter.Present(rows);
                 if (!pump.TryTake(out var ev, 100)) continue;
                 if (ev.Kind == ConsoleInputPump.EventKind.Key &&
@@ -53,6 +57,17 @@ internal sealed partial class TuiDriver
                         view.Handle(new ConsoleKeyInfo('\0', ev.WheelDir > 0 ? ConsoleKey.UpArrow : ConsoleKey.DownArrow, false, false, false), 1);
                     continue;
                 }
+                if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
+                {
+                    // Click on a setting = select it + the SAME Enter the keyboard path uses to
+                    // begin editing. Regions only exist while browsing, so edit mode is inert.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _) && hit.Kind == MouseTargetKind.PickerItem)
+                    {
+                        view.ClickItem(hit.Payload);
+                        view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
+                    }
+                    continue;
+                }
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
                 var action = view.Handle(ev.Key, Math.Max(1, height - 11));
                 if (action == SettingsPickerView.Action.Cancel) break;
@@ -66,6 +81,8 @@ internal sealed partial class TuiDriver
         {
             lock (MuxConsole.ConsoleLock)
             {
+                _modalPresenting = false;
+                ApplyMouseMode();   // inline: hand native selection back with the alt screen
                 // Restore ownership even if output fails during the alternate-screen handback.
                 try { if (!_engineFrame) presenter.Leave(); }
                 finally

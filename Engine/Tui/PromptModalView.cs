@@ -60,6 +60,14 @@ internal sealed class PromptModalView
         _sel = Math.Clamp(_sel + delta, 0, _choices.Count - 1);
     }
 
+    /// <summary>Set the cursor to an absolute option index (mouse click alias for arrowing to
+    /// it). Clamped; no-op for Text prompts.</summary>
+    public void SetSel(int index)
+    {
+        if (_choices.Count == 0) return;
+        _sel = Math.Clamp(index, 0, _choices.Count - 1);
+    }
+
     public void ToggleChecked()
     {
         if (_choices.Count == 0) return;
@@ -83,8 +91,15 @@ internal sealed class PromptModalView
     /// kind-appropriate key hint. Bounded to the visible height so the footer below never
     /// leaves the screen; every row is clamped to the width so nothing soft-wraps.
     /// </summary>
-    public List<string> Render(int width, int height)
+    public List<string> Render(int width, int height) => Render(width, height, null);
+
+    /// <summary>Render overload that also reports which emitted rows are choice rows:
+    /// <paramref name="optionRows"/> receives (0-based row index into the RETURNED list, option
+    /// index) pairs, so the driver can register mouse hit regions from the same emission that
+    /// painted them. Text-kind prompts report nothing (the input row is keyboard-only).</summary>
+    public List<string> Render(int width, int height, List<(int Row, int Option)>? optionRows)
     {
+        optionRows?.Clear();
         var rows = new List<string>();
         int w = Math.Max(20, width);
 
@@ -135,6 +150,7 @@ internal sealed class PromptModalView
                 string box = _kind == Kind.MultiSelect
                     ? (_checked.Contains(i) ? $"[{TuiComponents.Ok}]\u25c9[/] " : $"[{TuiComponents.Dim}]\u25cb[/] ")
                     : "";
+                optionRows?.Add((rows.Count, i));
                 rows.Add($"  {chev} {box}[{(isSel ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(_choices[i])}[/]");
             }
             if (_choices.Count > winN)

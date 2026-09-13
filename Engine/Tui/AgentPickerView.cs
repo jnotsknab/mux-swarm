@@ -117,10 +117,18 @@ internal sealed class AgentPickerView
         return Action.None;
     }
 
-    /// <summary>Bounded rows with a visible selection at any supported size; controls remain inert markup.</summary>
-    internal List<string> Render(int width, int height)
+    /// <summary>Move the cursor to a clicked list item (region payload from the last render). The
+    /// caller dispatches Enter so selection intent stays keyboard-identical.</summary>
+    internal void ClickItem(int index)
+        => _index = Math.Clamp(index, 0, Math.Max(0, _matches.Count - 1));
+
+    /// <summary>Bounded rows with a visible selection at any supported size; controls remain inert markup.
+    /// When <paramref name="hits"/> is supplied, roster rows register PickerItem regions
+    /// (payload = match index) from the same emission that painted them.</summary>
+    internal List<string> Render(int width, int height, MouseHitMap? hits = null)
     {
         width = Math.Max(1, width); height = Math.Max(1, height);
+        hits?.Begin(width, height);
         string Esc(string s) => Spectre.Console.Markup.Escape(Display(s));
         string Clip(string s) => TuiMarkup.TruncateMarkup(s, width, "");
         if (width < MinWidth || height < MinHeight)
@@ -141,6 +149,7 @@ internal sealed class AgentPickerView
         {
             var agent = _agents[_matches[i]];
             string active = agent.Name.Equals(CurrentName, StringComparison.Ordinal) ? " (current)" : "";
+            hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
             rows.Add($"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? "›" : " ")} {Esc(agent.Name)}{active}[/]");
         }
         while (rows.Count < height - 4) rows.Add("");

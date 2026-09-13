@@ -85,3 +85,38 @@ internal sealed class MouseHitMap
         return false;
     }
 }
+
+/// <summary>
+/// Minimal press-to-release click recognition for single-consumer modal loops, working directly on
+/// pump <see cref="ConsoleInputPump.InputEvent"/> Mouse events: a left press captures the region
+/// under the pointer, a release inside that same region is a CLICK (hermes capture semantics -
+/// release elsewhere is a drag-cancel), motion never clicks. Modal loops own one tracker plus one
+/// private <see cref="MouseHitMap"/> each, so modal clicks can never leak to the main frame's map.
+/// </summary>
+internal sealed class MouseClickTracker
+{
+    private bool _captured;
+    private HitRegion _capture;
+
+    /// <summary>Feed one pump event. Returns true exactly when a click completed, with the clicked
+    /// region and 0-based region-local coordinates of the RELEASE point.</summary>
+    public bool Feed(in ConsoleInputPump.InputEvent ev, MouseHitMap map, out HitRegion clicked, out int localRow, out int localCol)
+    {
+        clicked = default; localRow = localCol = 0;
+        if (ev.Kind != ConsoleInputPump.EventKind.Mouse) return false;
+        if (ev.MouseRelease)
+        {
+            if (!_captured) return false;
+            _captured = false;
+            if (ev.MouseRow < _capture.Top || ev.MouseRow >= _capture.Top + _capture.Height) return false;
+            if (ev.MouseCol < _capture.Left || ev.MouseCol >= _capture.Left + _capture.Width) return false;
+            clicked = _capture;
+            localRow = ev.MouseRow - _capture.Top;
+            localCol = ev.MouseCol - _capture.Left;
+            return true;
+        }
+        if ((ev.MouseButton & 0x20) != 0) return false;   // motion while held: not a new capture
+        _captured = map.TryHit(ev.MouseRow, ev.MouseCol, out _capture, out _, out _);
+        return false;
+    }
+}

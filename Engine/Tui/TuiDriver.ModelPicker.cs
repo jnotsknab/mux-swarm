@@ -26,6 +26,8 @@ internal sealed partial class TuiDriver
             _navActive = true;
             ConsoleInputPump.PromptActive = true;
             ConsoleInputPump.ModalActive = true;
+            _modalPresenting = true;
+            ApplyMouseMode();   // inline: scope mouse tracking to the alt-screen modal
         }
         void Refresh()
         {
@@ -39,10 +41,12 @@ internal sealed partial class TuiDriver
             // Catalog implementations capture errors; cancelled older requests are observed below.
             loading = load(request.Token);
         }
+        var hits = new MouseHitMap();
+        var clicks = new MouseClickTracker();
         void Paint()
         {
             int width = Math.Max(1, _term.Width - 1);
-            var rows = view.Render(width, Math.Max(1, _term.Height)).Select(TuiMarkup.ToAnsi).ToList();
+            var rows = view.Render(width, Math.Max(1, _term.Height), hits).Select(TuiMarkup.ToAnsi).ToList();
             lock (MuxConsole.ConsoleLock) presenter.Present(rows);
         }
         try
@@ -71,6 +75,19 @@ internal sealed partial class TuiDriver
                 if (ev.Kind == ConsoleInputPump.EventKind.Wheel)
                 {
                     view.Handle(new ConsoleKeyInfo('\0', ev.WheelDir > 0 ? ConsoleKey.UpArrow : ConsoleKey.DownArrow, false, false, false), 1);
+                    continue;
+                }
+                if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
+                {
+                    // Click on a list item = move the selection there + the SAME Enter the
+                    // keyboard path dispatches (advance pane / choose). Alias layer only.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _) && hit.Kind == MouseTargetKind.PickerItem)
+                    {
+                        view.ClickItem(hit.Payload);
+                        var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
+                        if (clickAction == ModelPickerView.Action.Cancel) break;
+                        if (clickAction == ModelPickerView.Action.Refresh) Refresh();
+                    }
                     continue;
                 }
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
@@ -106,6 +123,8 @@ internal sealed partial class TuiDriver
             ConsoleInputPump.PromptActive = previousPrompt;
             lock (MuxConsole.ConsoleLock)
             {
+                _modalPresenting = false;
+                ApplyMouseMode();   // inline: hand native selection back with the alt screen
                 if (!_engineFrame) presenter.Leave();
                 _frame.Invalidate();
                 _navActive = false;
