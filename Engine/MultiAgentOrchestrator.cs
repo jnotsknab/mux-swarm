@@ -627,6 +627,14 @@ public static class MultiAgentOrchestrator
         // REPL hand-off are discoverable here, not just the top-level mode-launch set. The App
         // menu re-asserts top-level scope when control returns, so this is self-restoring.
         MuxConsole.EnableDockedFooter(topLevel: false);
+        var toolsCatalog = ToolCatalog.FromTools(orchestratorTools, "Orchestrator tools");
+        MuxConsole.SetToolBrowserCatalog(toolsCatalog);
+        MuxConsole.SetTuiModel(_orchestratorModelId);
+        MuxConsole.SetTuiEffort(null);
+        MuxConsole.SetTuiTokenBreakdown(0, 0);
+        MuxConsole.SetTuiToolCalls(0);
+        MuxConsole.ResetTuiTurnClock();
+        MuxConsole.UpdateDockedFooter(0, 0, shouldPlan, App.UltraMode, false, giga: App.GigaMode);
 
         //Main loop 
         while (!cancellationToken.IsCancellationRequested)
@@ -654,7 +662,7 @@ public static class MultiAgentOrchestrator
                 // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
                 // the top-level menu runs it. Non-meta input falls through as a goal.
                 var disp = await MetaCommandDispatch.TryHandleAsync(
-                    input, chatClientFactory, agentModels, cancellationToken);
+                    input, chatClientFactory, agentModels, cancellationToken, toolsCatalog);
                 if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
                 if (disp == MetaCommandDispatch.Result.Handled) continue;
 
@@ -690,6 +698,7 @@ public static class MultiAgentOrchestrator
 
             //reset upon new goal
             _swarmTokens = 0;
+            MuxConsole.UpdateDockedFooter(0, 0, shouldPlan, App.UltraMode, false, giga: App.GigaMode);
 
             currentIterationSessionDir = Path.Combine(SessionDir, DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss"));
             if (state != null)
@@ -711,6 +720,7 @@ public static class MultiAgentOrchestrator
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
             bool wasInterrupted = false;
+            MuxConsole.StartTuiTurnClock();
 
             try
             {
@@ -738,6 +748,9 @@ public static class MultiAgentOrchestrator
             finally
             {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
+                MuxConsole.StopTuiTurnClock();
+                // Goal usage is cumulative work, not a single-agent context-window percentage.
+                MuxConsole.UpdateDockedFooter(_swarmTokens, 0, shouldPlan, App.UltraMode, false, giga: App.GigaMode);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -774,7 +787,8 @@ public static class MultiAgentOrchestrator
                 break;
             }
 
-            MuxConsole.WriteRule();
+            // The docked footer already owns this separator; a terminal-width rule can wrap in frame mode.
+            if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
             if (continuous)
             {
@@ -797,6 +811,9 @@ public static class MultiAgentOrchestrator
                 }
             }
         }
+
+        MuxConsole.SetTuiModel(null);
+        MuxConsole.ResetTuiTurnClock();
 
         // Graceful shutdown
         if (continuous && state != null)
@@ -1353,7 +1370,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.OrchestratorIterations.Add(1);
             }
 
-            MuxConsole.WriteLine();
+            if (!MuxConsole.IsTui) MuxConsole.WriteLine();
             string response = responseText.ToString();
 
             for (int r = resultsCountBefore; r < delegationResults.Count; r++)
@@ -1383,7 +1400,8 @@ public static class MultiAgentOrchestrator
 
             if (toolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
-                MuxConsole.WriteSuccess("Orchestrator reports task complete.");
+                // The task-complete summary already acknowledges this in TUI; retain legacy/JSON output.
+                if (!MuxConsole.IsTui) MuxConsole.WriteSuccess("Orchestrator reports task complete.");
                 goalComplete = true;
                 break;
             }

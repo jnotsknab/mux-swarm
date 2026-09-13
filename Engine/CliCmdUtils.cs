@@ -353,13 +353,28 @@ public static class CliCmdUtils
     /// This method reads the swarm configuration from the Swarm.json file, displays a list of available
     /// agents and components (CompactionAgent, SingleAgent, Orchestrator, and any configured Agents),
     /// prompts the user to select one, and then allows the user to specify a new model identifier.
-    /// The updated configuration is persisted back to the file.
+    /// Docked TUI uses a dedicated provider-backed model/effort view with explicit Apply and cancel.
+    /// Classic/stdio retain the manual model prompt. Saved TUI edits refresh in-memory configuration
+    /// for subsequent runs without rebinding already-constructed agents.
     /// </remarks>
     /// <exception cref="InvalidOperationException">
     /// Thrown when the swarm configuration file cannot be deserialized.
     /// </exception>
     public static void HandleModelSwap()
     {
+        if (MuxConsole.TuiDriverActive)
+        {
+            try
+            {
+                var snapshot = ModelSelectionStore.Load(PlatformContext.SwarmPath);
+                if (MuxConsole.TryModelPicker(snapshot)) return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
+            {
+                MuxConsole.WriteError("Could not open model settings. Check Swarm.json and its permissions.");
+                return;
+            }
+        }
         var json = File.ReadAllText(PlatformContext.SwarmPath);
         var config = JsonSerializer.Deserialize<SwarmConfig>(json)
             ?? throw new InvalidOperationException("Failed to deserialize Swarm.json");

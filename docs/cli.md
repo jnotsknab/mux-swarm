@@ -158,7 +158,7 @@ Available at the top-level REPL.
 | `/continuous` (`/cont`) | Toggle continued autonomous execution |
 | `/addcontext` | Configure what context each agent is injected with |
 | `/maxp` | Max agents running in parallel (default 4) |
-| `/setmodel` | Change the model for any agent, orchestrator, or compaction agent |
+| `/setmodel` | Browse active-provider models and save a slot’s model and reasoning effort |
 | `/set <key> <value>` | Edit any config.json or swarm.json key by dotted path (bare `/set` opens a picker) |
 | `/showreasoning full\|summary\|none` | Show or hide streamed reasoning text |
 | `/config` | Show all configuration settings; every key is `/set`-editable |
@@ -188,7 +188,7 @@ Available at the top-level REPL.
 | `/provider` | View or switch the active LLM provider |
 | `/workspace [path]` | Set or view the @-file workspace root |
 | `/limits` | Display current execution limits for orchestration and agents |
-| `/tools` | List available MCP tools across enabled servers |
+| `/tools [query]` | Fuzzy-find and inspect tools in the current scope, grouped by native/MCP/runtime source |
 | `/skills` / `/skill` | List available local skills / inspect one |
 | `/memory [deep\|standard\|show\|set <k> <v>]` | Toggle deep memory + status and tuning |
 | `/deep [off]` | Shortcut to enable (or disable) deep memory mode |
@@ -232,11 +232,148 @@ default, but do not overwrite an explicit max/custom setting.
 - Paste normally for text. In the draft, **Ctrl+V** (when forwarded by the terminal), **Alt+V**, or **`/paste` + Enter** reads clipboard text or a screenshot. Pasting does not send a model request.
 - Images are saved with unique names under the configured sandbox's **`captures/`** directory. The draft shows an image card; submitting includes its absolute file path, not an automatic vision payload. Detaching a card does not delete its saved image. Captures are not automatically cleaned up.
 - Recognized PNG/JPEG/GIF/WebP/BMP image paths inside allowed directories can also be pasted. Images are limited to 16 MiB; extension follows detected format. An unavailable or disallowed file path remains ordinary text.
-- Text pastes over **10 lines or 1,000 characters** collapse visually. Full text remains in the draft for submission and history; code indentation is not rewritten. Short text pastes remain ordinary editable text.
-- **F2** focuses cards. **Up/Down or Left/Right** selects; **Enter** opens/closes a preview; **Up/Down, PageUp/PageDown, Home/End, or mouse wheel** scrolls its contents. **Left/Right** changes cards while previewing. **Delete/Backspace** detaches the selected item; **Esc** closes the preview, then returns to editing. Deleting a folded item from the edit line removes its whole range.
+- Text pastes with **at least 10 newline separators or more than 1,000 characters** collapse to compact numbered `[≡ N]` chips; images use `[▧ N]`. Full text remains in the draft for submission and history; code indentation is not rewritten. Short text pastes remain ordinary editable text.
+- **F2** focuses cards. **Up/Down or Left/Right** selects; **Enter** opens/closes a preview; **Up/Down, Home/End, or mouse wheel** scrolls its contents. **PageUp/PageDown** stays with the outer viewport (Mux transcript in frame mode; host-terminal bindings in inline mode), without dismissing the preview. **Left/Right** changes cards while previewing. **Delete/Backspace** detaches the selected item; **Esc** closes the preview, then returns to editing. Ordinary typing leaves the preview and edits the draft. Deleting a folded item from the edit line removes its whole range.
 - **Ctrl+Z** restores the last attachment insertion/removal if no subsequent text edit intervened; this is attachment undo, not a full text-editor undo stack.
 - Pending paste is serialized before later typing/Enter. **Esc** cancels that pending paste without clearing the existing draft. An unsuccessful save never inserts a nonexistent capture path.
 
 **Portability:** native Windows registered-PNG clipboard reads have a bounded PowerShell STA bitmap fallback. macOS uses built-in osascript/AppKit; Linux uses available `wl-paste` (Wayland) or `xclip` (X11), and WSL can use the Windows PowerShell bridge. No clipboard utilities are installed automatically. Direct clipboard access needs a local desktop session.
 
-The full-frame TUI negotiates **OSC 5522** with capable terminals; supported terminal-originated image pastes can work over SSH. Plain bracketed paste is text-only. If the terminal consumes a paste gesture and sends no event, use the alternate key or `/paste`. In SSH sessions without enhanced paste, upload the image and paste a path readable by Mux; Mux does not inspect an unrelated remote desktop clipboard. Clipboard images are not accepted by ask-user modals or transcript viewers.
+Both docked TUI renderers (frame and inline) use the same input pump and paste transaction path. On Windows that input owner requests **VT input** as well as bracketed-paste output negotiation. CSI/SS3 navigation, function keys, and mouse reports are decoded before editor dispatch; older consoles can retain the native-record fallback. Recognized paste frames preserve embedded newlines and tabs as payload, and async clipboard work is bound to its initiating draft.
+
+For unframed compose input in either docked renderer, a bounded capture-layer compatibility classifier stages likely batched text rather than immediately executing embedded Enter keys. **An inferred paste shows “F4 sends (or Ctrl+Enter)”: plain Enter adds a newline; F4 or a distinguishable Ctrl+Enter explicitly sends.** This guard is used only for uncertain capture; normal framed/clipboard paste retains ordinary Enter submission. Fast typing can be misclassified and sufficiently slow unframed paste can evade inference—this is mitigation, not perfect provenance. Prefer framed or explicit clipboard paste when available.
+
+The classifier uses a short candidate window, a separate paste-idle window, and bounded chunks; none of these timers submits a draft. Application Ctrl+V/Alt+V works only when the terminal forwards the chord. Mux does not globally intercept keys or monitor clipboard contents to guess completion. Incomplete recognized paste bodies recover after a separate two-second inactivity watchdog as guarded text, never replayed commands; abandoned prefixes are discarded. Native Ctrl+C can cancel pending capture, but raw control bytes inside framed payload remain literal. Bare Escape retains its separate ambiguity window. Inline keeps primary-screen/native scrollback presentation and does not enable terminal mouse reporting; its Windows acquisition preserves the saved QuickEdit setting. The non-docked/non-TUI fallback remains separate.
+
+Both docked TUI renderers negotiate **OSC 5522** with capable terminals; supported terminal-originated image pastes can work over SSH. Plain bracketed paste is text-only. If the terminal consumes a paste gesture and sends no event, use the alternate key or `/paste`. In SSH sessions without enhanced paste, upload the image and paste a path readable by Mux; Mux does not inspect an unrelated remote desktop clipboard. Clipboard images are not accepted by ask-user modals or transcript viewers.
+
+
+## Submitted input and agent headers
+
+Submitted user text keeps the same two-column body alignment on explicit multiline and
+soft-wrapped continuation rows. Literal markup and indentation stay readable; compact pasted
+text/image labels remain display-only and do not change the submitted payload.
+
+User echoes and agent-name rules are retained as width-aware layouts. Frame history, inline
+resize/Ctrl+L redraw, and opening NAV rebuild them at the current width rather than wrapping an
+old full-width rule. Long agent names are clipped for display so the name and rule stay on one
+row. Inline history outside the repainted viewport remains terminal-owned.
+
+## Frame transcript scrollbar
+
+The frame renderer reserves the rightmost terminal column for a passive scrollbar. A muted
+track and solid proportional thumb show the viewport's position in retained transcript history;
+the thumb has a two-cell minimum where space permits. The rail appears whenever history
+exceeds the transcript pane, including at the live tail, and stops above the pinned live/footer area.
+
+The footer divider stays a plain horizontal rule; scroll position is conveyed by the rail alone.
+**PgUp/PgDn** scroll the transcript; after user-initiated scrolling, **End/Esc** returns to
+latest when no higher-priority editor or attachment action consumes the key. The scrollbar does
+not add click/drag targets or change mouse bindings. Inline rendering keeps host-terminal scrollback.
+
+The startup title card uses shared bounded column sizing in both render paths. Frame-mode resize
+rebuilds its retained layout at the current width rather than wrapping old panel borders.
+
+
+## Swarm completion display (TUI)
+
+Swarm and pswarm show one compact completion row instead of a completion summary followed by
+another generic success acknowledgment. Redundant end-of-turn spacing and the per-goal separator
+are omitted because the docked footer already provides the boundary. Short summaries remain readable inline; long or multiline
+summaries show an expansion hint and retain their complete text for the existing **Ctrl+E** / **Ctrl+G**
+views. A TUI without a docked driver prints the full summary because it has no retained expansion view.
+
+Completion status does not change the current agent's lane color. Failure/partial messages,
+artifact paths, unique summaries, and the per-goal token report are preserved. Classic and stdio
+completion output/events are unchanged.
+
+Both modes populate the existing footer with the orchestrator model and goal duration. At goal end,
+the footer shows cumulative goal token usage, **not a context-window percentage**. Token accounting
+itself is unchanged, and no context threshold or aggregate sys/tool breakdown is inferred.
+
+
+## Model and effort picker (`/setmodel`)
+
+With a docked TUI (frame or inline), `/setmodel` opens a dedicated full-screen view rather than
+printing model-selection cards into the transcript. It edits the same slots as before: the configured
+single agent, orchestrator, compaction agent, and entries in `agents`. Duplicate display names are
+disambiguated by the displayed slot ID. Each Apply updates one slot; switching slots reloads its saved
+values, so Apply before moving to another slot if you want to keep an edit.
+
+| Control | Action |
+|---|---|
+| Tab / Shift+Tab | Switch Slots, Models, and Effort panes |
+| Up/Down, PgUp/PgDn, Home/End | Navigate the focused list |
+| Type / Backspace in Models | Filter the active provider’s advertised IDs |
+| Enter | Choose the slot or highlighted model and advance; does not save |
+| Left/Right in Effort | Cycle default (no override), none, low, med, high, xhigh, max |
+| F2 in Models | Toggle manual model-ID entry, including when discovery fails |
+| F2 in Effort | Toggle a custom effort value; type the provider-specific value |
+| F5 | Refresh the active provider catalog, cancelling the previous request |
+| F4 | Explicitly Apply model + effort to the selected slot and close |
+| Esc / Ctrl+Q | Cancel without writing configuration |
+
+Discovery queries only the active provider’s normalized OpenAI-compatible `{endpoint}/models`
+endpoint, with its configured bearer key and custom headers. A running but unrelated CLIProxy does
+not replace that provider’s catalog. Errors/timeouts remain visible; manual model entry is always
+available. This requests the catalog, not test completions: an advertised ID does not guarantee
+account access, and `/models` generally does not describe supported effort values.
+
+Apply writes `.model` and `.modelOpts.reasoning.effort` in the selected slot of the resolved
+`Swarm.json`. “Default (no override)” removes only the effort override; existing runtime inheritance and ultra/giga
+policies still apply. Other model options, reasoning
+output, and unknown JSON properties remain intact. The file is replaced via a same-directory
+staged write; a detected concurrent edit rejects the save rather than overwriting it. Saving refreshes
+`App.SwarmConfig` for subsequent runs; it does **not** rebind an already-created agent or override a
+CLI `--model` selection. Existing `/setmodel` session-to-main-menu routing is unchanged. Classic,
+stdio, and non-docked TUI retain the prior manual model prompt; `/effort` remains session-local.
+
+Use at least 12 terminal rows to browse. Smaller windows show a resize/cancel message. Long IDs
+are clipped for display, never changed in the catalog; the header shows the staged model.
+
+
+## Native tools in `/doctor` and `/fix`
+
+The health snapshot distinguishes configured **external MCP connections** from native in-process
+**Filesystem** and **Shell** tool groups. Entries intentionally replaced by native tools are not
+reported as disconnected MCP servers. Startup and diagnostics share the same command/argument
+recognition: the `native-runtime-tools` marker, legacy `server-filesystem`, or legacy
+`mcp-async-repl` (case-insensitive substring matching).
+
+The native-groups section reports global enablement from the canonical `Filesystem` / `Shell`
+config entries; absent entries retain the runtime's default-on behavior. Disabled entries stay
+explicitly disabled. This is not an execution probe or a grant of agent access: per-agent
+`mcpServers` / `toolPatterns` and filesystem/shell security gates still apply.
+
+Entry names alone do not suppress external-server checks. An ordinary external MCP definition,
+even if named `Shell` or `Filesystem`, still requires its own connection. A legacy definition under
+a different name is skipped under the existing replacement rule but does not create a new native
+alias; native tool identities remain `Filesystem` and `Shell`.
+
+
+## Scoped tool browser (`/tools [query]`)
+
+`/tools` is read-only and works **in place** at the menu and in single-agent, swarm, and pswarm sessions;
+it no longer ends a session to display global tools. The submitted listing and live TUI preview use
+the same scope and fuzzy ranking. Matching searches tool name, native/MCP group, and description;
+multiple words must all match, and names also support in-order subsequences (for example `fsrtf`).
+
+At the main menu, **Global availability** contains enabled native Filesystem/Shell tools and connected
+external MCP tools, not a permission grant to every agent. While MCP startup is loading, the preview
+says so and updates when the catalog arrives. During a session it shows only the supplied agent or
+orchestrator toolset, including local runtime/delegation tools. Before a single agent's first goal,
+only its already-filtered native/MCP tools exist; the browser labels this bootstrap scope and adds
+session-local tools once construction completes. Reattach restores the session's own catalog.
+
+- Type `/tools <query>` to filter. **Up/Down** navigates; **Tab** or **Enter on a highlighted row**
+  inserts `/tools <exact-name>`. Press Enter again to inspect it. This never calls the tool.
+- Preview rows show source groups alongside names when space permits; narrow layouts prioritize
+  the name and show the selected item's group/description below. Rows and height stay bounded.
+- Submitted output has separate **MCP · server**, **Native · Filesystem/Shell**, and **Local · Runtime**
+  headings with counts and concise descriptions. An exact name shows its full description.
+- MCP grouping records the exact connected server at registration, so names containing underscores
+  and external/native tools sharing a name are not conflated. A filtered scope never expands to a
+  global list merely because it is empty. Unknown provenance is labeled rather than guessed.
+
+Browsing changes no config, tool arguments, agent permissions, or tool-execution behavior. Existing
+`/disabletools` removals and MCP refresh republish the global catalog so the menu does not list removed tools.

@@ -1022,8 +1022,8 @@ public class App
                     }
                     MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
                     break;
-                case "/tools":
-                    if (McpTools != null) Common.LogAvailableTools(McpTools);
+                case var toolsCommand when ToolCatalog.TryQuery(toolsCommand, out var toolsQuery):
+                    MuxConsole.WriteToolsCatalog(toolsQuery, ToolCatalog.Global());
                     break;
 
                 case "/model":
@@ -2144,6 +2144,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         }
 
         McpTools = new List<McpClientTool>();
+        ToolCatalog.PublishExternal(Array.Empty<AITool>(), loading: true);
 
         var baseDir = PlatformContext.BaseDirectory;
 
@@ -2175,32 +2176,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             }
         }
 
-        // The native in-house REPL/shell tools (ReplShellTools) replace the mcp-async-repl server,
-        // which used ONE shared worker/connection across all agents and clashed under parallel
-        // sub-agents. Skip connecting any stdio server that launches it (by command or args) so
-        // existing configs that still list it do not double-register the same tool names. This is
-        // a runtime safety net; the bundled template no longer ships the entry.
-        static bool IsNativeReplShellServer(McpServerConfig c)
-        {
-            bool Has(string? s) => s is not null && s.Contains("mcp-async-repl", StringComparison.OrdinalIgnoreCase);
-            if (Has(c.Command)) return true;
-            if (c.Args is not null)
-                foreach (var a in c.Args) if (Has(a)) return true;
-            return false;
-        }
-
-        // Native in-house toolsets (Filesystem + shell/REPL) are bound in-process via NativeToolRegistry,
-        // NOT spawned as MCP subprocesses. Skip connecting any server that (a) carries the
-        // native-runtime-tools marker, (b) is the legacy npx @modelcontextprotocol/server-filesystem
-        // entry (now satisfied natively - existing configs upgrade transparently), or (c) launches the
-        // old mcp-async-repl. This removes default subprocesses (faster startup) without losing surface.
-        bool SkipBecauseNative(McpServerConfig c) =>
-            IsNativeReplShellServer(c)
-            || NativeToolRegistry.IsNativeEntry(c)
-            || NativeToolRegistry.IsLegacyFilesystemEntry(c);
-
+        // Native markers and legacy Filesystem/REPL definitions are intentionally not MCP
+        // connections. Keep startup and diagnostics on the same replacement predicate.
         var enabledServers = config.McpServers
-            .Where(kvp => kvp.Value.Enabled && !SkipBecauseNative(kvp.Value))
+            .Where(kvp => kvp.Value.Enabled && !NativeToolRegistry.ReplacesMcpEntry(kvp.Value))
             .ToList();
         int enabledCount = enabledServers.Count;
 
@@ -2231,11 +2210,16 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             McpClients[result.Name] = result.Client;
             foreach (var tool in result.Tools)
+            {
+                ToolCatalog.RegisterExternal(tool, result.Name);
                 McpTools?.Add(tool);
+            }
 
             successCount++;
             OtelLogger.Info($"Loaded {result.Tools.Count} tools from {result.Name}{(result.IsHttp ? " (HTTP)" : "")}");
         }
+
+        ToolCatalog.PublishExternal(McpTools ?? new List<McpClientTool>(), loading: false);
 
         if (VerboseInit)
         {
@@ -2669,6 +2653,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             {
                 for (int i = 0; i < count; i++)
                     McpTools.RemoveAt(start);
+                ToolCatalog.PublishExternal(McpTools, loading: false);
 
                 MuxConsole.WriteSuccess($"Disabled tools {start} through {end}.");
                 return;

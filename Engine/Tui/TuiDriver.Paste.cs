@@ -4,9 +4,30 @@ internal sealed partial class TuiDriver
 {
     private TerminalPasteProtocol? _terminalPaste;
     private CancellationTokenSource? _pasteCancellation;
+    private long _draftGeneration, _pasteGeneration;
     private Task<ClipboardCapture.Payload>? _pasteTask;
     private readonly LinkedList<ConsoleInputPump.InputEvent> _pasteDeferred = new();
     private string? _pasteStatus;
+    private bool _inferredPasteGuard;
+    private int _inferredStart = -1, _inferredEnd;
+
+    private void ApplyInferredPaste(string text)
+    {
+        if (text.Length == 0) return;
+        if (_editor.IsSearching)
+        {
+            foreach (char c in text)
+                if (!char.IsControl(c)) _editor.SearchFeed(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false));
+            return;
+        }
+        bool append = _inferredPasteGuard && _editor.Cursor == _inferredEnd;
+        if (!append) _inferredStart = _editor.Cursor;
+        _editor.InsertInferredPaste(text);
+        _inferredEnd = _editor.Cursor;
+        _editor.CollapsePasteRange(_inferredStart, _inferredEnd - _inferredStart);
+        _inferredPasteGuard = true;
+        _pasteStatus = "Unframed paste staged; F4 sends (or Ctrl+Enter).";
+    }
     internal Func<CancellationToken, Task<ClipboardCapture.Payload>> ClipboardReader { get; set; } = ClipboardCapture.ReadAsync;
     internal Func<byte[], string> CaptureWriter { get; set; } = bytes => ClipboardCapture.Save(bytes,
         App.Config.Filesystem.SandboxPath ?? "", App.Config.Filesystem.AllowedPaths ?? []);
@@ -18,6 +39,7 @@ internal sealed partial class TuiDriver
         _pasteCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         _pasteStatus = "Reading clipboard… Esc cancels paste";
         var token = _pasteCancellation.Token;
+        _pasteGeneration = _draftGeneration;
         _pasteTask = Task.Run(() => ClipboardReader(token), token);
     }
 
@@ -30,12 +52,12 @@ internal sealed partial class TuiDriver
             {
                 string path = CaptureWriter(payload.Image);
                 _editor.InsertPaste("\n[Attached screenshot: " + path + "]\n", Path.GetFileName(path));
-                _pasteStatus = "Saved to captures; the path is included when you send.";
+                if (!_inferredPasteGuard) _pasteStatus = null; // Keep an inferred-draft send hint visible.
             }
             else if (!string.IsNullOrEmpty(payload.Text))
             {
                 _editor.InsertPaste(payload.Text);
-                _pasteStatus = null;
+                if (!_inferredPasteGuard) _pasteStatus = null;
             }
             else _pasteStatus = "Clipboard is empty.";
             _paletteSel = -1;
@@ -49,6 +71,7 @@ internal sealed partial class TuiDriver
         _pasteCancellation?.Dispose();
         _pasteCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(12));
         var token = _pasteCancellation.Token;
+        _pasteGeneration = _draftGeneration;
         _pasteTask = Task.Run(async () =>
         {
             try
@@ -77,7 +100,11 @@ internal sealed partial class TuiDriver
     {
         _terminalPaste?.Tick();
         if (_pasteTask?.IsCompleted != true) return;
-        try { ApplyPastePayload(_pasteTask.GetAwaiter().GetResult()); }
+        try
+        {
+            var payload = _pasteTask.GetAwaiter().GetResult();
+            if (_pasteGeneration == _draftGeneration) ApplyPastePayload(payload);
+        }
         catch (OperationCanceledException) { _pasteStatus = "Paste cancelled or timed out; draft retained."; }
         catch (Exception ex) { _pasteStatus = "Paste failed: " + ex.Message; }
         finally { _pasteTask = null; _pasteCancellation?.Dispose(); _pasteCancellation = null; }
@@ -106,15 +133,17 @@ internal sealed partial class TuiDriver
         else ApplyPastePayload(payload);
     }
 
-    private void RenderCompose(List<string> lines, int width)
+    private void RenderCompose(List<string> lines, int width, int availableRows)
     {
         var display = _editor.Display;
         var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, width, highlight: _inputHighlight);
         // Keep the cursor neighborhood visible when ordinary composed text itself spans many rows.
-        int maxInput = Math.Max(2, Math.Min(6, Height / 3));
+        int statusRows = _pasteStatus is null ? 0 : 1;
+        int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;
+        int maxInput = Math.Max(1, Math.Min(Math.Min(6, Height / 3), availableRows - statusRows - minCardRows));
         int caret = input.FindIndex(r => r.Contains("[black on #E0E0E0]", StringComparison.Ordinal));
         int start = Math.Clamp(caret - maxInput + 1, 0, Math.Max(0, input.Count - maxInput));
-        int cardBudget = Math.Max(2, Math.Min(10, Height - Math.Min(input.Count, maxInput) - 5));
+        int cardBudget = Math.Max(0, Math.Min(10, availableRows - Math.Min(input.Count, maxInput) - statusRows));
         lines.AddRange(_editor.Attachments.Render(_editor.Buffer, width, cardBudget));
         if (_pasteStatus is not null)
             lines.Add($"  [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(ComposeAttachments.SafeText(_pasteStatus), width - 3))}[/]");
@@ -125,6 +154,6 @@ internal sealed partial class TuiDriver
     {
         if (TuiCommands.OpensInteractivePrompt(fullText)) return;
         var display = _editor.Display.Text;
-        CommitMirrored(TuiComponents.UserEcho(display));
+        CommitLayout(width => TuiComponents.UserEcho(display, width));
     }
 }

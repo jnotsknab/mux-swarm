@@ -632,56 +632,25 @@ public static partial class MuxConsole
             FrameSplashFactory = terminalWidth => BuildFrameSplashLines(
                 version, debugTag, splashLabel, splashText, terminalWidth, recentSessions);
 
-            if (AnsiConsole.Profile.Width < 56)
-            {
-                AnsiConsole.Write(new Rule(SplashTitleMarkup(version, debugTag))
-                    .RuleStyle(Style.Parse(C.Muted))
-                    .LeftJustified());
-            }
-            else if (AnsiConsole.Profile.Width < 180)
-            {
-                var panel = new Panel(new Markup(string.Join("\n", BuildSplashBrandMarkup(
-                        version, debugTag, splashLabel, splashText, includeHelp: true))))
-                    .Border(BoxBorder.Rounded)
-                    .BorderStyle(Style.Parse(C.Muted))
-                    .Padding(1, 1)
-                    .Expand();
-
-                AnsiConsole.Write(panel);
-            }
-            else
-            {
-                var left = new Markup(string.Join("\n", BuildSplashBrandMarkup(
-                    version, debugTag, splashLabel, splashText, includeHelp: false)));
-                var middle = new Markup(string.Join("\n", BuildSplashGettingStartedMarkup()));
-                var right = new Markup(string.Join("\n", BuildSplashRecentSessionsMarkup(recentSessions)));
-
-                var grid = new Grid();
-                grid.AddColumn(new GridColumn().NoWrap().PadRight(4));
-                grid.AddColumn(new GridColumn().Width(1).NoWrap());
-                grid.AddColumn(new GridColumn().PadLeft(3).PadRight(3));
-                grid.AddColumn(new GridColumn().Width(1).NoWrap());
-                grid.AddColumn(new GridColumn().PadLeft(3));
-                grid.AddRow(
-                    left,
-                    new Markup($"[{C.Muted}]{string.Join("\n", Enumerable.Repeat("│", 18))}[/]"),
-                    middle,
-                    new Markup($"[{C.Muted}]{string.Join("\n", Enumerable.Repeat("│", 18))}[/]"),
-                    right);
-
-                var panel = new Panel(grid)
-                    .Border(BoxBorder.Rounded)
-                    .BorderStyle(Style.Parse(C.Muted))
-                    .Padding(1, 1)
-                    .Expand();
-
-                AnsiConsole.Write(panel);
-            }
+            AnsiConsole.Write(BuildSplashRenderable(version, debugTag, splashLabel, splashText,
+                AnsiConsole.Profile.Width, recentSessions));
 
             AnsiConsole.WriteLine();
             AnsiConsole.Write(new Rule().RuleStyle(Style.Parse(C.Muted)));
             AnsiConsole.WriteLine();
         });
+    }
+
+    /// <summary>Build the primary-screen card from the same bounded rows as the frame renderer.</summary>
+    internal static Spectre.Console.Rendering.IRenderable BuildSplashRenderable(
+        string version, string debugTag, string splashLabel, string splashText, int width,
+        IReadOnlyList<SplashSession> recentSessions)
+    {
+        var rows = BuildFrameSplashLines(version, debugTag, splashLabel, splashText, width, recentSessions);
+        // Keep the primary-screen hyperlink; the custom frame renderer intentionally emits text only.
+        string markup = string.Join("\n", rows).Replace("Check Out The Repo Here!",
+            "[link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/]", StringComparison.Ordinal);
+        return new Markup(markup);
     }
 
     private static readonly string[] SplashMuxArt =
@@ -795,7 +764,7 @@ public static partial class MuxConsole
                             && !raw.Contains("Context restoration", StringComparison.OrdinalIgnoreCase)
                             && !raw.Contains("Filesystem Write Rules", StringComparison.OrdinalIgnoreCase))
                         {
-                            preview = raw.Length > 40 ? raw[..40] + "..." : raw;
+                            preview = TuiMarkup.TruncatePlain(NormalizeSplashText(raw), 40);
                         }
                     }
                     catch { /* preview optional */ }
@@ -805,6 +774,12 @@ public static partial class MuxConsole
         }
         catch { /* startup splash is best-effort */ }
         return sessions;
+    }
+
+    private static string NormalizeSplashText(string text)
+    {
+        string inert = new(text.Select(c => char.IsControl(c) ? ' ' : c).ToArray());
+        return System.Text.RegularExpressions.Regex.Replace(inert, @"\s+", " ").Trim();
     }
 
     private static List<string> BuildSplashRecentSessionsMarkup(IReadOnlyList<SplashSession> sessions)
@@ -819,8 +794,8 @@ public static partial class MuxConsole
         else
             foreach (var session in sessions)
             {
-                lines.Add($"  [{C.Prompt}]{Esc(session.Id)}[/]");
-                lines.Add($"    [{C.Muted}]{Esc(session.Type)} · {Esc(session.Preview)}[/]");
+                lines.Add($"  [{C.Prompt}]{Esc(NormalizeSplashText(session.Id))}[/]");
+                lines.Add($"    [{C.Muted}]{Esc(NormalizeSplashText(session.Type))} · {Esc(NormalizeSplashText(session.Preview))}[/]");
             }
         lines.Add("");
         lines.Add($"[{C.Muted}]────────────────────────────────[/]");
@@ -829,6 +804,7 @@ public static partial class MuxConsole
         return lines;
     }
 
+    /// <summary>Responsive physical markup rows with fixed column budgets independent of content length.</summary>
     internal static List<string> BuildFrameSplashLines(
         string version, string debugTag, string splashLabel, string splashText, int width,
         IReadOnlyList<SplashSession>? recentSessions = null)
@@ -863,7 +839,7 @@ public static partial class MuxConsole
         int inner = Math.Max(20, w - 4);
         int leftW = Math.Min(86, Math.Max(64, (inner * 46) / 100));
         int middleW = Math.Min(52, Math.Max(44, (inner * 28) / 100));
-        int rightW = Math.Max(28, inner - leftW - middleW - 6);
+        int rightW = inner - leftW - middleW - 6;
         var body = ComposeFrameSplashColumns(brand, middle, right, leftW, middleW, rightW);
         var widePanel = BuildFramePanel(body, w);
         widePanel.Add("");
@@ -893,7 +869,13 @@ public static partial class MuxConsole
     private static List<string> WrapSplashColumn(IReadOnlyList<string> lines, int width)
     {
         var rows = new List<string>();
-        foreach (var line in lines) rows.AddRange(Tui.TuiMarkup.WrapMarkup(line, Math.Max(1, width)));
+        foreach (var line in lines)
+        {
+            int indent = Math.Min(line.TakeWhile(c => c == ' ').Count(), Math.Max(0, width - 1));
+            string prefix = new(' ', indent);
+            foreach (var row in TuiMarkup.WrapMarkup(line[indent..], Math.Max(1, width - indent)))
+                rows.Add(prefix + row);
+        }
         return rows;
     }
 

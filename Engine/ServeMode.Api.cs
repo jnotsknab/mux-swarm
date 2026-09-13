@@ -705,30 +705,20 @@ public static partial class ServeMode
     // never block a model change.
     private static async Task HandleModels(HttpContext context)
     {
-        IReadOnlyList<string> ids = [];
-        var source = "none";
-
-        // Subscription providers front their catalog through the local sidecar.
-        if (Proxy.CliProxyManager.IsRunning)
-        {
-            ids = await Proxy.CliProxyManager.ListModelsAsync(context.RequestAborted);
-            if (ids.Count > 0) source = "cliproxy";
-        }
-
-        // Plain OpenAI-compatible endpoint + key.
-        if (ids.Count == 0 && App.ActiveProvider is { Endpoint: { Length: > 0 } endpoint } p)
-        {
-            var key = string.IsNullOrEmpty(p.ApiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(p.ApiKeyEnvVar);
-            ids = await Proxy.CliProxyManager.ProbeEndpointModelsAsync(endpoint, key, context.RequestAborted);
-            if (ids.Count > 0) source = "endpoint";
-        }
+        var provider = App.ActiveProvider;
+        var result = await ProviderModelCatalog.LoadAsync(provider, context.RequestAborted);
+        var ids = result.Models;
+        var source = ids.Count == 0 ? "none"
+            : string.Equals(provider?.ApiKeyEnvVar, Proxy.CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal)
+                ? "cliproxy" : "endpoint";
 
         await WriteJson(context, 200, new
         {
-            provider = App.ActiveProvider?.Name,
+            provider = provider?.Name,
             source,
             count = ids.Count,
             items = ids.OrderBy(m => m, StringComparer.OrdinalIgnoreCase).ToList(),
+            error = result.Error,
         });
     }
 

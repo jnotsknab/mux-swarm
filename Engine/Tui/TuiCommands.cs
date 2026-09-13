@@ -119,7 +119,7 @@ internal static class TuiCommands
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
-        new("/setmodel",     "Change an agent/orchestrator model", Scope.ReplOnly),
+        new("/setmodel",     "Browse provider models and save model/effort", Scope.ReplOnly),
         new("/set",          "Set a config value (e.g. /set collapse 10)", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
         new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons)", Scope.ReplOnly),
@@ -147,7 +147,7 @@ internal static class TuiCommands
         new("/provider",     "View or switch the active LLM provider", Scope.ReplOnly),
         new("/workspace",    "Show or set the @-file workspace root (/workspace <path>)", Scope.ReplOnly),
         new("/limits",       "Display current execution limits", Scope.ReplOnly),
-        new("/tools",        "List available MCP tools", Scope.ReplOnly),
+        new("/tools",        "Find tools by name, group, or description (read-only)", Scope.Both),
         new("/skills",       "List available local skills", Scope.ReplOnly),
         new("/memory",       "Deep-memory status/toggle (/memory [deep|standard|show])", Scope.ReplOnly),
         new("/deep",         "Toggle deep memory on/off (/deep [off])", Scope.ReplOnly),
@@ -173,7 +173,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
         "/compact", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom",

@@ -4,7 +4,7 @@ using System.Text;
 namespace MuxSwarm.Engine.Tui;
 
 /// <summary>
-/// THE single input plane for the frame engine: one dedicated thread is the ONLY caller of
+/// THE single input plane for both live TUI renderers: one dedicated thread is the ONLY caller of
 /// Console.ReadKey (and, on Windows, the Win32 record reader) in interactive TUI mode. Every
 /// consumer — the idle prompt loop (TuiDriver.ReadLine), the mid-turn EscapeKeyListener, and the
 /// modal overlays (NAV / Agent View) — reads typed events out of the pump's queue instead of
@@ -16,24 +16,25 @@ namespace MuxSwarm.Engine.Tui;
 /// </summary>
 internal sealed class ConsoleInputPump : IDisposable
 {
-    internal enum EventKind { Key, Wheel, Paste, Terminal }
+    internal enum EventKind { Key, Wheel, Paste, Terminal, InferredPaste }
 
     /// <summary>One typed input event. Key: a console key (including a classified bare/Alt ESC).
     /// Wheel: net wheel notches (positive = up/back into history). Paste: full pasted text with
-    /// newlines normalized to '\n' (bracketed paste or burst paste, already reassembled).</summary>
+    /// newlines normalized to '\n' (an explicit paste transaction, already reassembled).</summary>
     internal readonly record struct InputEvent(EventKind Kind, ConsoleKeyInfo Key, int WheelDir, string? PasteText)
     {
         public static InputEvent OfKey(ConsoleKeyInfo k) => new(EventKind.Key, k, 0, null);
         public static InputEvent OfWheel(int dir) => new(EventKind.Wheel, default, dir, null);
         public static InputEvent OfPaste(string text) => new(EventKind.Paste, default, 0, text);
+        internal static InputEvent OfInferredPaste(string text) => new(EventKind.InferredPaste, default, 0, text);
         internal static InputEvent OfTerminal(string packet) => new(EventKind.Terminal, default, 0, packet);
     }
 
     private static readonly object _currentGate = new();
     private static ConsoleInputPump? _current;
 
-    /// <summary>The running pump, or null when the frame engine is not active. Consumers check
-    /// this to choose the pump path vs. their legacy (non-frame) read path.</summary>
+    /// <summary>The running live-TUI pump, or null outside either docked renderer. Consumers
+    /// use this to choose shared capture vs. the non-TUI/legacy input fallback.</summary>
     internal static ConsoleInputPump? Current { get { lock (_currentGate) return _current; } }
 
     private static volatile bool _promptActive;
@@ -77,12 +78,18 @@ internal sealed class ConsoleInputPump : IDisposable
     private readonly Queue<InputEvent> _front = new();   // PushFront replay (replay wins FIFO)
     private readonly object _frontGate = new();
     private readonly SgrInputAssembler _asm;
+    private readonly UnframedPasteBuffer _unframed = new();
+    internal static Func<bool>? IsComposing;
     private readonly Thread _thread;
     private readonly CancellationTokenSource _cts = new();
     private int _disposed;
+    private readonly bool _originalCtrlC;
+    private readonly bool _captureMouse;
 
-    private ConsoleInputPump(bool mouseTracking, bool bracketedPaste)
+    private ConsoleInputPump(bool mouseTracking, bool bracketedPaste, bool captureMouse = true)
     {
+        try { _originalCtrlC = Console.TreatControlCAsInput; } catch { }
+        _captureMouse = captureMouse;
         _asm = new SgrInputAssembler(mouseTracking, bracketedPaste);
         _thread = new Thread(PumpMain) { IsBackground = true, Name = "ConsoleInputPump" };
     }
@@ -92,21 +99,23 @@ internal sealed class ConsoleInputPump : IDisposable
     internal static ConsoleInputPump CreateUnstartedForTest(bool mouseTracking = true, bool bracketedPaste = true)
         => new(mouseTracking, bracketedPaste);
 
-    /// <summary>Start THE pump (idempotent: an existing pump is returned). One per process; the
-    /// frame engine starts it at activation and stops it at teardown.</summary>
-    internal static ConsoleInputPump Start(bool mouseTracking, bool bracketedPaste)
+    /// <summary>Start THE pump (idempotent: an existing pump is returned). One per process;
+    /// both renderers start it at activation and stop it at teardown. Native mouse capture is
+    /// disabled for inline presentation and retained for frame presentation.</summary>
+    internal static ConsoleInputPump Start(bool mouseTracking, bool bracketedPaste, bool captureMouse = true)
     {
         lock (_currentGate)
         {
             if (_current is { _disposed: 0 }) return _current;
-            _current = new ConsoleInputPump(mouseTracking, bracketedPaste);
+            _current = new ConsoleInputPump(mouseTracking, bracketedPaste, captureMouse);
+            if (OperatingSystem.IsWindows()) Win32ConsoleInput.EnableInput(mouse: _current._captureMouse, virtualTerminal: true);
             _current._thread.Start();
             return _current;
         }
     }
 
-    /// <summary>Number of events buffered and ready to take (burst-paste heuristic, repaint
-    /// coalescing). Includes the PushFront replay lane.</summary>
+    /// <summary>Number of classified events ready to take, used only for repaint coalescing.
+    /// Includes the PushFront replay lane; queue occupancy never defines paste boundaries.</summary>
     internal int PendingCount
     {
         get { lock (_frontGate) return _front.Count + _queue.Count; }
@@ -146,9 +155,10 @@ internal sealed class ConsoleInputPump : IDisposable
         // The pump reads Ctrl+C as a key (the editor's Cancel signal) for its whole lifetime;
         // restored on Dispose. Spectre prompts during suspension get ^C as text instead of a
         // CancelKeyPress - accepted trade for a single owner (prompts have their own cancel keys).
-        bool prevCtrlC = false;
-        try { prevCtrlC = Console.TreatControlCAsInput; Console.TreatControlCAsInput = true; } catch { }
+        bool prevCtrlC = _originalCtrlC;
+        try { Console.TreatControlCAsInput = true; } catch { }
 
+        bool nativeOwned = Win32ConsoleInput.Active;
         try
         {
             while (!_cts.IsCancellationRequested)
@@ -158,6 +168,7 @@ internal sealed class ConsoleInputPump : IDisposable
                 // it is the prompt, and starving it here deadlocks ask_user on the frame engine.
                 if (EscapeKeyListener.IsInputSuspended && !_modalActive)
                 {
+                    if (nativeOwned) { Win32ConsoleInput.DisableMouse(); nativeOwned = false; }
                     FlushAssemblerTimeout();
                     Thread.Sleep(20);
                     continue;
@@ -170,6 +181,8 @@ internal sealed class ConsoleInputPump : IDisposable
                 lock (EscapeKeyListener.ReadGate)
                 {
                     if (EscapeKeyListener.IsInputSuspended && !_modalActive) { Thread.Sleep(20); continue; }
+                    if ((!nativeOwned || !Win32ConsoleInput.Active) && OperatingSystem.IsWindows())
+                        nativeOwned = Win32ConsoleInput.EnableInput(mouse: _captureMouse, virtualTerminal: true);
                     if (Win32ConsoleInput.Active)
                         PumpWin32Slice();
                     else
@@ -180,6 +193,7 @@ internal sealed class ConsoleInputPump : IDisposable
         catch (Exception) { /* the pump must never take the process down; consumers fall back */ }
         finally
         {
+            if (nativeOwned) Win32ConsoleInput.DisableMouse();
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { }
         }
     }
@@ -202,7 +216,7 @@ internal sealed class ConsoleInputPump : IDisposable
         }
         catch (InvalidOperationException) { Thread.Sleep(50); return; }   // stdin redirected
 
-        foreach (var e in _asm.Feed(key)) Enqueue(e);
+        FeedRawKey(key);
     }
 
     /// <summary>Windows slice: mouse arrives as console INPUT RECORDS that Console.ReadKey would
@@ -218,18 +232,18 @@ internal sealed class ConsoleInputPump : IDisposable
         }
         if (wev.HasKey)
         {
-            foreach (var e in _asm.Feed(wev.Key)) Enqueue(e);
+            FeedRawKey(wev.Key);
             return;
         }
         if (wev.IsMouse)
         {
             int dir = MouseSgrParser.WheelDirection(wev.Button);
-            if (dir != 0) Enqueue(InputEvent.OfWheel(dir));
+            if (dir != 0) ClassifyUnframed(InputEvent.OfWheel(dir));
         }
     }
 
     /// <summary>How long the raw stream must be idle before a pending ESC sequence gives up
-    /// waiting for more bytes and classifies as-is (bare Esc / partial paste). Long enough to
+    /// waiting for more bytes and emits a bare Esc. Recognized protocol prefixes never use this timeout. Long enough to
     /// bridge chunked delivery (a ConPTY/SSH paste chunk boundary inside the ESC[200~ opener),
     /// short enough that a human Esc press still feels instant.</summary>
     private const int EscClassifyWindowMs = 50;
@@ -237,10 +251,28 @@ internal sealed class ConsoleInputPump : IDisposable
     /// <summary>Classification-window flush. The old behavior flushed on the FIRST empty poll,
     /// which tore any sequence whose bytes arrived in chunks - a paste chunk boundary inside the
     /// ESC[200~ opener leaked "[200~" into the editor as literal text.</summary>
-    private void FlushAssemblerTimeout()
+    private void ClassifyUnframed(InputEvent ev)
     {
+        if (IsComposing?.Invoke() != true)
+        {
+            foreach (var pending in _unframed.Flush(long.MaxValue)) Enqueue(pending);
+            Enqueue(ev); return;
+        }
+        foreach (var classified in _unframed.Feed(ev, Environment.TickCount64)) Enqueue(classified);
+    }
+
+    /// <summary>Feed a captured key through framing and compatibility classification, in producer order.</summary>
+    internal void FeedRawKey(ConsoleKeyInfo key)
+    {
+        foreach (var ev in _asm.Feed(key)) ClassifyUnframed(ev);
+    }
+
+    /// <summary>Flush pending producer classification/recovery only when its corresponding deadline expires.</summary>
+    internal void FlushAssemblerTimeout()
+    {
+        foreach (var e in _unframed.Flush(Environment.TickCount64)) Enqueue(e);
         if (!_asm.PendingExpired(EscClassifyWindowMs)) return;
-        foreach (var e in _asm.FlushTimeout()) Enqueue(e);
+        foreach (var e in _asm.FlushTimeout()) ClassifyUnframed(e);
     }
 
     internal void Enqueue(InputEvent ev)
@@ -266,45 +298,59 @@ internal sealed class ConsoleInputPump : IDisposable
 /// Pure state machine reassembling the raw key stream into typed events. Fed one ConsoleKeyInfo at
 /// a time; emits keys, wheel events, and whole-paste events. ESC is held in a pending state until
 /// the following bytes classify the sequence (SGR mouse report / bracketed paste / Alt-chord /
-/// bare Esc); <see cref="FlushTimeout"/> emits a bare Esc (or a partial paste) when the
+/// bare Esc); <see cref="FlushTimeout"/> emits a bare Esc when the
 /// classification window (~50ms of stream idle, gated by the pump via <see cref="PendingExpired"/>) expires. A torn report is DROPPED in
 /// the machine — it can never surface as key events, at any split point.
 /// </summary>
 internal sealed class SgrInputAssembler
 {
-    private enum State { Ground, Esc, EscBracket, PasteOpen, PasteBody, PasteClose, MouseBody, MouseBodyDiscard, Osc, OscEscape, OscDiscard, OscDiscardEscape, ModeReply, ModeDiscard }
+    private enum State { Ground, Esc, EscBracket, PasteOpen, PasteBody, PasteClose, MouseBody, MouseBodyDiscard, Osc, OscEscape, OscDiscard, OscDiscardEscape, ModeReply, ModeDiscard, CsiKey, Ss3Key }
 
     private readonly bool _mouseTracking;
-    private readonly bool _bracketedPaste;
     private State _state = State.Ground;
     private readonly StringBuilder _acc = new(32);     // paste text or mouse body
     private int _openMatched;                          // "[200~" / "[201~" match progress
-    private long _lastFeedTick = Environment.TickCount64;
+    private readonly Func<long> _clock;
+    private long _lastFeedTick;
+    private const int PasteRecoveryMs = 2000;
 
     private static readonly char[] PasteOpenTail = { '[', '2', '0', '0', '~' };
     private static readonly char[] PasteCloseTail = { '[', '2', '0', '1', '~' };
     private static readonly ConsoleKeyInfo EscKey = new('\u001b', ConsoleKey.Escape, false, false, false);
 
-    internal SgrInputAssembler(bool mouseTracking, bool bracketedPaste)
+    internal SgrInputAssembler(bool mouseTracking, bool bracketedPaste, Func<long>? clock = null)
     {
+        _clock = clock ?? (() => Environment.TickCount64);
+        _lastFeedTick = _clock();
         _mouseTracking = mouseTracking;
-        _bracketedPaste = bracketedPaste;
+        // Negotiation controls what we ask the terminal to send, not whether a received
+        // delimiter is valid. Always recognize in-flight paste frames across live toggles.
     }
 
     internal bool HasPending => _state != State.Ground;
 
     /// <summary>True when a sequence is pending AND the stream has been idle for at least
-    /// <paramref name="idleMs"/> since the last fed key - i.e. the classification window has
-    /// expired and <see cref="FlushTimeout"/> may run without tearing an in-flight sequence.</summary>
+    /// <paramref name="idleMs"/> since the last fed key. Recognized protocol prefixes and paste bodies/closers do not
+    /// expire: only the end marker or explicit Ctrl+C ends that transaction.</summary>
     internal bool PendingExpired(int idleMs)
-        => HasPending && Environment.TickCount64 - _lastFeedTick >=
-            (_state is State.Osc or State.OscEscape or State.OscDiscard or State.OscDiscardEscape or State.ModeReply ? 2000 : idleMs);
+        => HasPending && _clock() - _lastFeedTick >=
+            (_state is State.EscBracket or State.PasteOpen or State.PasteBody or State.PasteClose
+                or State.CsiKey or State.Ss3Key or State.Osc or State.OscEscape or State.OscDiscard
+                or State.OscDiscardEscape or State.ModeReply ? PasteRecoveryMs : idleMs);
 
     internal IEnumerable<ConsoleInputPump.InputEvent> Feed(ConsoleKeyInfo key)
     {
-        _lastFeedTick = Environment.TickCount64;
+        _lastFeedTick = _clock();
         var outp = new List<ConsoleInputPump.InputEvent>(2);
         char c = key.KeyChar;
+        if (_state is not (State.PasteBody or State.PasteClose)) key = VtKeyboard.Normalize(key);
+        if (_state is State.EscBracket or State.PasteOpen or State.PasteBody or State.PasteClose
+            && key.Key == ConsoleKey.C && key.Modifiers.HasFlag(ConsoleModifiers.Control))
+        {
+            _acc.Clear(); _state = State.Ground; _openMatched = 0;
+            outp.Add(ConsoleInputPump.InputEvent.OfKey(key));
+            return outp;
+        }
 
         switch (_state)
         {
@@ -317,6 +363,7 @@ internal sealed class SgrInputAssembler
                 if (c is 'v' or 'V') { outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo(c, ConsoleKey.V, c == 'V', true, false))); _state = State.Ground; break; }
                 if (c == ']') { _acc.Clear(); _acc.Append("\x1b]"); _state = State.Osc; break; }
                 if (c == '[') { _state = State.EscBracket; break; }
+                if (c == 'O') { _acc.Clear(); _state = State.Ss3Key; break; }
                 // Alt-chord (ESC+char) or a second ESC: emit the held ESC, reprocess this key.
                 outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
                 _state = State.Ground;
@@ -326,11 +373,8 @@ internal sealed class SgrInputAssembler
             case State.EscBracket:
                 if (c == '?') { _acc.Clear(); _acc.Append("\x1b[?"); _state = State.ModeReply; break; }
                 if (c == '<' && _mouseTracking) { _state = State.MouseBody; _acc.Clear(); break; }
-                if (c == '2' && _bracketedPaste) { _state = State.PasteOpen; _openMatched = 2; break; }   // "[2" matched
-                // Not a sequence we own: emit ESC + '[' + this char.
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('[', ConsoleKey.Oem4, false, false, false)));
-                _state = State.Ground;
+                if (c == '2') { _state = State.PasteOpen; _openMatched = 2; break; }   // "[2" matched
+                _acc.Clear(); _state = State.CsiKey;
                 outp.AddRange(Feed(key));
                 break;
 
@@ -341,11 +385,10 @@ internal sealed class SgrInputAssembler
                     if (_openMatched == PasteOpenTail.Length) { _state = State.PasteBody; _acc.Clear(); }
                     break;
                 }
-                // False alarm: emit ESC + matched prefix + this char as literal keys.
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
-                for (int i = 0; i < _openMatched; i++)
-                    outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo(PasteOpenTail[i], ConsoleKey.NoName, false, false, false)));
-                _state = State.Ground;
+                // Could be a keyboard CSI beginning with 2 (Insert/F9/...). Decode as one sequence.
+                _acc.Clear();
+                for (int i = 1; i < _openMatched; i++) _acc.Append(PasteOpenTail[i]);
+                _state = State.CsiKey;
                 outp.AddRange(Feed(key));
                 break;
 
@@ -370,6 +413,19 @@ internal sealed class SgrInputAssembler
                 for (int i = 0; i < _openMatched; i++) _acc.Append(PasteCloseTail[i]);
                 _state = State.PasteBody;
                 outp.AddRange(Feed(key));
+                break;
+
+            case State.CsiKey:
+            case State.Ss3Key:
+                _acc.Append(c);
+                if (c is >= '@' and <= '~')
+                {
+                    if (VtKeyboard.TryDecode(_acc.ToString(), out var decoded))
+                        outp.Add(ConsoleInputPump.InputEvent.OfKey(decoded));
+                    // Unknown control sequences are not draft text. Never leak a partial command.
+                    _acc.Clear(); _state = State.Ground;
+                }
+                else if (_acc.Length > 64) { _acc.Clear(); _state = State.ModeDiscard; }
                 break;
 
             case State.ModeReply:
@@ -434,8 +490,8 @@ internal sealed class SgrInputAssembler
     }
 
     /// <summary>The classification window expired (pump idle ~10ms with a pending sequence).
-    /// A bare ESC is emitted as a key; a partial paste is flushed as a paste (never lose pasted
-    /// text); a partial mouse report is DROPPED (torn - its bytes must never become keys).</summary>
+    /// A bare ESC is emitted as a key; a recognized paste waits for its closing marker;
+    /// a partial mouse report is DROPPED (torn - its bytes must never become keys).</summary>
     internal IEnumerable<ConsoleInputPump.InputEvent> FlushTimeout()
     {
         var outp = new List<ConsoleInputPump.InputEvent>(2);
@@ -446,26 +502,24 @@ internal sealed class SgrInputAssembler
                 _state = State.Ground;
                 break;
             case State.EscBracket:
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('[', ConsoleKey.Oem4, false, false, false)));
-                _state = State.Ground;
-                break;
             case State.PasteOpen:
-                outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
-                for (int i = 0; i < _openMatched; i++)
-                    outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo(PasteOpenTail[i], ConsoleKey.NoName, false, false, false)));
-                _state = State.Ground;
+                if (_clock() - _lastFeedTick < PasteRecoveryMs) break;
+                // Abandoned control prefix is not executable text.
+                _state = State.Ground; _acc.Clear();
                 break;
             case State.PasteBody:
-                outp.Add(ConsoleInputPump.InputEvent.OfPaste(NormalizePaste(_acc.ToString())));
-                _state = State.Ground;
-                break;
             case State.PasteClose:
-                _acc.Append('\u001b');
-                for (int i = 0; i < _openMatched; i++) _acc.Append(PasteCloseTail[i]);
-                outp.Add(ConsoleInputPump.InputEvent.OfPaste(NormalizePaste(_acc.ToString())));
-                _state = State.Ground;
+                if (_clock() - _lastFeedTick < PasteRecoveryMs) break;
+                if (_state == State.PasteClose)
+                {
+                    _acc.Append('\x1b');
+                    for (int i = 0; i < _openMatched; i++) _acc.Append(PasteCloseTail[i]);
+                }
+                outp.Add(ConsoleInputPump.InputEvent.OfInferredPaste(NormalizePaste(_acc.ToString())));
+                _acc.Clear(); _state = State.Ground;
                 break;
+            case State.CsiKey:
+            case State.Ss3Key:
             case State.ModeReply:
             case State.ModeDiscard:
                 _state = State.Ground; _acc.Clear();

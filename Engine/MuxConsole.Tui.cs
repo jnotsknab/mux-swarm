@@ -619,21 +619,12 @@ public static partial class MuxConsole
                 if (_driver is null)
                 {
                     _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
-                    if (FrameEngineEnabled)
-                    {
-                        // SINGLE INPUT PLANE: the pump becomes the only stdin reader for the frame
-                        // engine (prompt loop, mid-turn listener, and overlays all consume its
-                        // typed events). It reassembles SGR mouse reports + bracketed pastes
-                        // upstream, so torn "[<64;…" fragments can never reach the editor.
-                        Tui.ConsoleInputPump.Start(
-                            mouseTracking: !string.Equals(MouseTracking, "off", StringComparison.OrdinalIgnoreCase),
-                            bracketedPaste: BracketedPaste);
-                    }
+                    _driver.InitializeInput(BracketedPaste, MouseTracking);
                     // Frame mode: seed the transcript with the retained splash so the first frame
                     // opens on the banner (the primary-buffer splash is hidden by the alt screen).
                     if (FrameEngineEnabled && FrameSplashFactory is { } splashFactory)
                     {
-                        _driver.CommitStartup(splashFactory(_driver.Width + 1));
+                        _driver.CommitStartup(splashFactory);
                         FrameSplashFactory = null;
                     }
                     _tuiActive = true;
@@ -663,6 +654,8 @@ public static partial class MuxConsole
                 _fTokens = 0; _fThreshold = 0;
                 _driver.SetLaneTint(null);   // never inherit a prior session's sub-agent gutter
                 _driver.SetPaletteScope(topLevel);
+                if (topLevel) _driver.SetToolsCatalogProvider(ToolCatalog.Global);
+                else _driver.SetToolsCatalog(new ToolCatalog.Snapshot("Current session", Array.Empty<ToolCatalog.Entry>(), false));
                 // Seed the live "/skill" autocomplete with the loaded skill catalog.
                 try { _driver.SetSkillsCatalog(SkillLoader.GetSkillMetadata().Select(sk => (sk.Name, sk.Description)).ToList()); }
                 catch { /* skills optional */ }
@@ -1425,7 +1418,7 @@ public static partial class MuxConsole
     /// <summary>G2/G8 - agent turn header.</summary>
     public static void RenderTuiTurnHeader(string agentName)
     {
-        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agentName); _driver!.Commit(TuiComponents.TurnHeader(agentName, _driver.Width)); } return; }
+        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agentName); _driver!.CommitTurnHeader(agentName); } return; }
         WithConsole(() =>
         {
             AnsiConsole.WriteLine();
@@ -1438,10 +1431,14 @@ public static partial class MuxConsole
     /// <summary>G4 - task-complete line with an ok glyph.</summary>
     public static void RenderTuiTaskComplete(string agent, string summary)
     {
-        if (ViaDriver) { lock (ConsoleLock) { ApplyLaneTint(agent); _driver!.Commit(TuiComponents.TaskComplete(agent, summary)); } return; }
+        if (ViaDriver)
+        {
+            lock (ConsoleLock) { _driver!.CommitTaskComplete(agent, summary); }
+            return;
+        }
         WithConsole(() =>
         {
-            AnsiConsole.MarkupLine($"  [{TC.Ok}]\u2714[/] [{TC.Agent}]{Esc(agent)}[/] [{TC.Dim}]completed[/]  [{TC.Muted}]{Esc(Trunc(summary, 120))}[/]");
+            foreach (string line in TuiComponents.TaskComplete(agent, summary)) AnsiConsole.MarkupLine(line);
         });
     }
 

@@ -113,8 +113,7 @@ public class SgrInputAssemblerTests
         var asm = new SgrInputAssembler(mouseTracking: false, bracketedPaste: true);
         var evs = Feed(asm, "\u001b[<");
         evs.AddRange(asm.FlushTimeout());
-        Assert.Equal(3, evs.Count);
-        Assert.All(evs, e => Assert.Equal(ConsoleInputPump.EventKind.Key, e.Kind));
+        Assert.Empty(evs); // Unknown/incomplete control sequences are not draft text.
     }
 
     [Fact]
@@ -129,15 +128,18 @@ public class SgrInputAssemblerTests
         Assert.Equal(ConsoleKey.Escape, esc.Key.Key);
     }
 
-    [Fact]
-    public void EscBracket_TimeoutEmitsEscAndBracket()
+    [Theory]
+    [InlineData("\u001b[")]
+    [InlineData("\u001b[2")]
+    public void EscBracket_TimeoutKeepsPrefix_ExplicitCancelRecovers(string prefix)
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
-        var evs = Feed(asm, "\u001b[");
+        var evs = Feed(asm, prefix);
         evs.AddRange(asm.FlushTimeout());
-        Assert.Equal(2, evs.Count);
-        Assert.Equal(ConsoleKey.Escape, evs[0].Key.Key);
-        Assert.Equal('[', evs[1].Key.KeyChar);
+        Assert.Empty(evs);
+        var cancel = Assert.Single(asm.Feed(new ConsoleKeyInfo('\x03', ConsoleKey.C, false, false, true)));
+        Assert.Equal(ConsoleKey.C, cancel.Key.Key);
+        Assert.False(asm.HasPending);
     }
 
     [Fact]
@@ -175,15 +177,63 @@ public class SgrInputAssemblerTests
         Assert.Equal("ab\ncd", paste.PasteText);
     }
 
-    [Fact]
-    public void BracketedPaste_NoCloser_FlushStillDeliversText()
+    /// <summary>A transport pause inside framed paste must not turn the remaining newlines into submits.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BracketedPaste_IdleInsideBodyOrCloser_WaitsForEndMarker(bool splitCloser)
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
-        var evs = Feed(asm, "\u001b[200~partial paste");
+        var evs = Feed(asm, "\u001b[200~partial paste\r");
+        if (splitCloser) evs.AddRange(Feed(asm, "\u001b[20"));
+        Assert.False(asm.PendingExpired(idleMs: 0));
         evs.AddRange(asm.FlushTimeout());
+        Assert.Empty(evs);
+        evs.AddRange(Feed(asm, splitCloser ? "1~" : "tail\r\u001b[201~"));
         var paste = Assert.Single(evs);
         Assert.Equal(ConsoleInputPump.EventKind.Paste, paste.Kind);
-        Assert.Equal("partial paste", paste.PasteText);
+        Assert.Equal(splitCloser ? "partial paste\n" : "partial paste\ntail\n", paste.PasteText);
+        Assert.False(asm.HasPending);
+    }
+
+
+    /// <summary>Explicit Ctrl+C recovers a missing paste end marker without submitting retained or late text.</summary>
+    [Fact]
+    public void BracketedPaste_CtrlC_CancelsIncompleteTransaction()
+    {
+        var asm = new SgrInputAssembler(true, true);
+        Assert.Empty(Feed(asm, "\x1b[200~incomplete\r"));
+        var cancel = Assert.Single(asm.Feed(new ConsoleKeyInfo('\x03', ConsoleKey.C, false, false, true)));
+        Assert.Equal(ConsoleInputPump.EventKind.Key, cancel.Kind);
+        Assert.Equal(ConsoleKey.C, cancel.Key.Key);
+        Assert.False(asm.HasPending);
+        Assert.Equal("ok", string.Concat(Feed(asm, "ok").Select(e => e.Key.KeyChar)));
+    }
+
+
+    /// <summary>The inline reader must keep framed text literal across an empty poll, just like frame mode.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InlineBracketedPaste_GapDoesNotEndTransaction_ExplicitCancelRecovers(bool cancel)
+    {
+        var input = new Queue<ConsoleKeyInfo?>();
+        foreach (char c in "first\r") input.Enqueue(K(c));
+        input.Enqueue(null); // transport chunk boundary, not the end of the paste
+        if (cancel) input.Enqueue(new ConsoleKeyInfo('\x03', ConsoleKey.C, false, false, true));
+        else foreach (char c in "last\r\x1b[201~") input.Enqueue(K(c));
+        var result = TuiDriver.ReadBracketedPaste(() => input.Dequeue());
+        Assert.Empty(input);
+        if (cancel)
+        {
+            Assert.Equal(ConsoleInputPump.EventKind.Key, result.Kind);
+            Assert.Equal(ConsoleKey.C, result.Key.Key);
+        }
+        else
+        {
+            Assert.Equal(ConsoleInputPump.EventKind.Paste, result.Kind);
+            Assert.Equal("first\nlast\n", result.PasteText);
+        }
     }
 
     [Fact]
@@ -194,7 +244,7 @@ public class SgrInputAssemblerTests
         // this is what stops a chunked paste (ESC[2 | 00~text...) from tearing at the chunk
         // boundary and leaking "[200~" into the editor as literal text.
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
-        Feed(asm, "\u001b[2");                      // paste opener torn mid-marker
+        Feed(asm, "\u001b");                        // only bare ESC has an ambiguity window
         Assert.True(asm.HasPending);
         Assert.False(asm.PendingExpired(idleMs: 50));   // just fed: window still open
         Assert.True(asm.PendingExpired(idleMs: 0));     // zero window: expired at once
@@ -248,16 +298,34 @@ public class SgrInputAssemblerTests
         Assert.False(ConsoleInputPump.PromptActive);
     }
 
+
+    /// <summary>Negotiation and transport chunking cannot invalidate recognized protocol delimiters.</summary>
+    [Theory]
+    [InlineData(true, 2)]
+    [InlineData(true, 3)]
+    [InlineData(true, 4)]
+    [InlineData(true, 5)]
+    [InlineData(false, 3)]
+    public void PasteOpener_GapsAndDisabledNegotiation_StillFrameEntirePayload(bool negotiate, int split)
+    {
+        const string sequence = "\x1b[200~first\rlast\x1b[201~";
+        var asm = new SgrInputAssembler(true, negotiate);
+        var events = Feed(asm, sequence[..split]);
+        events.AddRange(asm.FlushTimeout());
+        Assert.Empty(events);
+        events.AddRange(Feed(asm, sequence[split..]));
+        var paste = Assert.Single(events);
+        Assert.Equal(ConsoleInputPump.EventKind.Paste, paste.Kind);
+        Assert.Equal("first\nlast", paste.PasteText);
+        Assert.Equal(ConsoleKey.Enter, Assert.Single(Feed(asm, "\r")).Key.Key);
+    }
+
     [Fact]
     public void FalsePasteOpener_PassesThroughAsKeys()
     {
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
         var evs = Feed(asm, "\u001b[2x");
-        Assert.Equal(4, evs.Count);   // ESC, '[', '2', 'x' - nothing is lost
-        Assert.Equal(ConsoleKey.Escape, evs[0].Key.Key);
-        Assert.Equal('[', evs[1].Key.KeyChar);
-        Assert.Equal('2', evs[2].Key.KeyChar);
-        Assert.Equal('x', evs[3].Key.KeyChar);
+        Assert.Empty(evs); // A malformed CSI must not replay control syntax into the draft.
     }
 
     [Fact]
@@ -275,5 +343,86 @@ public class SgrInputAssemblerTests
         var asm = new SgrInputAssembler(mouseTracking: true, bracketedPaste: true);
         var evs = Feed(asm, "\u001b[<64;1;1M\u001b[<64;1;1M");
         Assert.Equal(2, evs.Count(e => e.Kind == ConsoleInputPump.EventKind.Wheel));
+    }
+
+    /// <summary>VT input preserves paste framing and changes navigation into CSI/SS3 sequences.</summary>
+    [Theory]
+    [InlineData("\x1b[A", ConsoleKey.UpArrow, 0)]
+    [InlineData("\x1bOQ", ConsoleKey.F2, 0)]
+    [InlineData("\x1b[3~", ConsoleKey.Delete, 0)]
+    [InlineData("\x1b[5~", ConsoleKey.PageUp, 0)]
+    [InlineData("\x1b[6~", ConsoleKey.PageDown, 0)]
+    [InlineData("\x1b[1;5D", ConsoleKey.LeftArrow, 4)]
+    [InlineData("\x1b[Z", ConsoleKey.Tab, 2)]
+    [InlineData("\x1b[13;2u", ConsoleKey.Enter, 2)]
+    public void VtKeyboard_DecodesBeforeEditor(string sequence, ConsoleKey expected, int modifiers)
+    {
+        var asm = new SgrInputAssembler(true, true);
+        var events = Feed(asm, sequence);
+        var key = Assert.Single(events);
+        Assert.Equal(ConsoleInputPump.EventKind.Key, key.Kind);
+        Assert.Equal(expected, key.Key.Key);
+        Assert.Equal((ConsoleModifiers)modifiers, key.Key.Modifiers);
+    }
+
+    /// <summary>Captured ConPTY-style Unicode records retain framed payload and decode subsequent navigation.</summary>
+    [Fact]
+    public void ConPtyVtRecords_PreservePasteBeforeKeyboardAndMouse()
+    {
+        var asm = new SgrInputAssembler(true, true);
+        const string payload = "first\rsecond\tUNICODE漢字";
+        var events = new List<ConsoleInputPump.InputEvent>();
+        foreach (char c in "\x1b[200~" + payload + "\x1b[201~\x1b[A\x1bOQ\x1b[<64;3;3M")
+        {
+            Assert.True(Win32ConsoleInput.TryTranslateKey(true, 0, c, 0, out var key));
+            events.AddRange(asm.Feed(key));
+        }
+        Assert.Equal(4, events.Count);
+        Assert.Equal("first\nsecond\tUNICODE漢字", events[0].PasteText);
+        Assert.Equal(ConsoleKey.UpArrow, events[1].Key.Key);
+        Assert.Equal(ConsoleKey.F2, events[2].Key.Key);
+        Assert.Equal(ConsoleInputPump.EventKind.Wheel, events[3].Kind);
+    }
+
+    /// <summary>VT passthrough records have virtual-key zero even for Enter and Ctrl+V.</summary>
+    [Theory]
+    [InlineData('\r', ConsoleKey.Enter, false)]
+    [InlineData('\t', ConsoleKey.Tab, false)]
+    [InlineData('\x16', ConsoleKey.V, true)]
+    [InlineData('\x03', ConsoleKey.C, true)]
+    [InlineData('\x04', ConsoleKey.D, true)]
+    public void VtControlBytes_WithNoVirtualKey_RetainEditorMeaning(char c, ConsoleKey expected, bool control)
+    {
+        var asm = new SgrInputAssembler(true, true);
+        var ev = Assert.Single(asm.Feed(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false)));
+        Assert.Equal(expected, ev.Key.Key);
+        Assert.Equal(control, ev.Key.Modifiers.HasFlag(ConsoleModifiers.Control));
+    }
+
+    /// <summary>Canonicalizing raw VT control keys must not reinterpret literal bytes inside a framed paste.</summary>
+    [Fact]
+    public void FramedControlPayload_IsNotReclassifiedAsShortcut()
+    {
+        var asm = new SgrInputAssembler(true, true);
+        var events = Feed(asm, "\x1b[200~a\u0003b\u0016c\x1b[201~");
+        var paste = Assert.Single(events);
+        Assert.Equal(ConsoleInputPump.EventKind.Paste, paste.Kind);
+        Assert.Equal("a\u0003b\u0016c", paste.PasteText);
+    }
+
+    /// <summary>Lost end markers recover into guarded literal draft content, not executable key events.</summary>
+    [Fact]
+    public void IncompleteFramedPaste_WatchdogStagesGuardedText()
+    {
+        long now = 0;
+        var asm = new SgrInputAssembler(true, true, () => now);
+        Assert.Empty(Feed(asm, "\x1b[200~first\rsecond"));
+        now = 100; Assert.False(asm.PendingExpired(50));
+        Assert.Empty(asm.FlushTimeout());
+        now = 2000; Assert.True(asm.PendingExpired(50));
+        var paste = Assert.Single(asm.FlushTimeout());
+        Assert.Equal(ConsoleInputPump.EventKind.InferredPaste, paste.Kind);
+        Assert.Equal("first\nsecond", paste.PasteText);
+        Assert.False(asm.HasPending);
     }
 }

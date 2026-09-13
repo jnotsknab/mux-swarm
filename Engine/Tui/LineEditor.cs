@@ -153,8 +153,8 @@ internal sealed class LineEditor
     {
         get
         {
-            if (Attachments.HidesCursor(_cursor) || _buf.Length == 0 || _buf[0] != '/') return false;
-            return Buffer.Split(' ', 2)[0].ToLowerInvariant() == "/tools";
+            if (Attachments.HidesCursor(_cursor)) return false;
+            return ToolCatalog.TryQuery(Buffer, out _);
         }
     }
 
@@ -163,9 +163,7 @@ internal sealed class LineEditor
     {
         get
         {
-            if (!IsToolsFilter) return "";
-            var parts = Buffer.Split(' ', 2);
-            return parts.Length > 1 ? parts[1] : "";
+            return IsToolsFilter && ToolCatalog.TryQuery(Buffer, out var query) ? query : "";
         }
     }
 
@@ -255,6 +253,25 @@ internal sealed class LineEditor
             Attachments.Add(start, inserted, imageName);
             _attachmentUndo = (before.Text, before.Cursor, before.Items, Buffer);
         }
+    }
+
+    /// <summary>Stage an inferred chunk as one undoable edit before optional display-range consolidation.</summary>
+    internal void InsertInferredPaste(string text)
+    {
+        var before = (Text: Buffer, Cursor: _cursor, Items: Attachments.Snapshot());
+        InsertPaste(text);
+        _attachmentUndo = (before.Text, before.Cursor, before.Items, Buffer);
+    }
+
+    /// <summary>Merge inferred transport chunks into one display range without rewriting draft payload.</summary>
+    internal void CollapsePasteRange(int start, int length)
+    {
+        if (length <= 0 || start < 0 || start + length > _buf.Length) return;
+        string text = _buf.ToString(start, length);
+        if (!ComposeAttachments.IsLarge(text)) return;
+        var keep = Attachments.Snapshot().Where(x => x.Start + x.Length <= start || x.Start >= start + length).ToArray();
+        Attachments.Restore(keep);
+        Attachments.Add(start, text);
     }
 
     internal void RemoveRange(int start, int length)

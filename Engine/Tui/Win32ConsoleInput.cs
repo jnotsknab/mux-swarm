@@ -18,6 +18,7 @@ internal static class Win32ConsoleInput
     private const ushort KEY_EVENT = 0x0001;
     private const ushort MOUSE_EVENT_TYPE = 0x0002;
     private const uint ENABLE_MOUSE_INPUT = 0x0010;
+    private const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
     private const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
     private const uint ENABLE_EXTENDED_FLAGS = 0x0080;
     private const uint MOUSE_MOVED = 0x0001;
@@ -63,8 +64,6 @@ internal static class Win32ConsoleInput
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetConsoleMode(nint hConsoleHandle, uint dwMode);
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern bool PeekConsoleInputW(nint hConsoleInput, [Out] INPUT_RECORD[] lpBuffer, uint nLength, out uint lpNumberOfEventsRead);
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool ReadConsoleInputW(nint hConsoleInput, [Out] INPUT_RECORD[] lpBuffer, uint nLength, out uint lpNumberOfEventsRead);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetNumberOfConsoleInputEvents(nint hConsoleInput, out uint lpcNumberOfEvents);
@@ -72,6 +71,8 @@ internal static class Win32ConsoleInput
     private static nint _hIn;
     private static uint _savedMode;
     private static bool _active;
+    private static ConsoleKeyInfo _repeatKey;
+    private static int _repeatRemaining;
 
     /// <summary>True after a successful <see cref="EnableMouse"/> - the read loop may use
     /// <see cref="TryReadEvent"/>. False on non-Windows, redirected stdin, or mode failure.</summary>
@@ -79,20 +80,37 @@ internal static class Win32ConsoleInput
 
     /// <summary>Turn on mouse input records: save the input mode, then set ENABLE_MOUSE_INPUT and
     /// clear QuickEdit (via ENABLE_EXTENDED_FLAGS). Returns false (inactive) on any failure.</summary>
-    public static bool EnableMouse()
+    public static bool EnableMouse() => EnableInput(true, virtualTerminal: false);
+
+    /// <summary>Claim native input records, optionally preserving VT framing; restore the original mode on release.</summary>
+    internal static bool EnableInput(bool mouse, bool virtualTerminal)
     {
         if (!OperatingSystem.IsWindows()) return false;
         try
         {
             _hIn = GetStdHandle(STD_INPUT_HANDLE);
             if (_hIn == nint.Zero || _hIn == -1) return false;
-            if (!GetConsoleMode(_hIn, out _savedMode)) return false;
-            uint mode = (_savedMode | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS) & ~ENABLE_QUICK_EDIT_MODE;
-            if (!SetConsoleMode(_hIn, mode)) return false;
+            if (!_active && !GetConsoleMode(_hIn, out _savedMode)) return false;
+            uint mode = InputMode(_savedMode, mouse, virtualTerminal);
+            if (!SetConsoleMode(_hIn, mode))
+            {
+                // Older/non-VT consoles retain native records and the compatibility classifier.
+                if (!virtualTerminal || !SetConsoleMode(_hIn, mode & ~ENABLE_VIRTUAL_TERMINAL_INPUT)) return false;
+            }
             _active = true;
             return true;
         }
         catch { return false; }
+    }
+
+    /// <summary>Build the acquired mode from the saved console state; input parsing and mouse capture are separate.</summary>
+    internal static uint InputMode(uint savedMode, bool mouse, bool virtualTerminal)
+    {
+        uint mode = savedMode | ENABLE_EXTENDED_FLAGS;
+        if (mouse) mode &= ~ENABLE_QUICK_EDIT_MODE; // Inline retains native text selection.
+        mode = mouse ? mode | ENABLE_MOUSE_INPUT : mode & ~ENABLE_MOUSE_INPUT;
+        if (virtualTerminal) mode = (mode | ENABLE_VIRTUAL_TERMINAL_INPUT) & ~0x0007u;
+        return mode;
     }
 
     /// <summary>Restore the saved console mode. Idempotent, never throws.</summary>
@@ -100,6 +118,7 @@ internal static class Win32ConsoleInput
     {
         if (!_active) return;
         _active = false;
+        _repeatRemaining = 0; // Do not replay pre-transition held keys into a different input owner.
         try { SetConsoleMode(_hIn, _savedMode); } catch { /* ignore */ }
     }
 
@@ -107,32 +126,65 @@ internal static class Win32ConsoleInput
     /// One event from the console input queue, translated: <c>IsMouse</c> carries SGR-style button
     /// codes (0 = left, 32 = drag-motion with left held, 64/65 = wheel up/down) + 1-based cell
     /// coords, mirroring the VT path so the caller's dispatch is shared. <c>HasKey</c> carries an
-    /// ordinary keydown. Neither flag = an event was consumed that needs no action (focus, resize,
+    /// ordinary keydown or synthesized Unicode release. Neither flag = an event consumed that needs no action (focus, resize,
     /// key-up, uninteresting button) - caller just loops.
     /// </summary>
     public readonly record struct InputEvent(bool IsMouse, int Button, int X, int Y, bool Release, bool HasKey, ConsoleKeyInfo Key);
 
-    /// <summary>Non-blocking: false when the queue is empty. When true, exactly one record was
-    /// consumed and translated into <paramref name="ev"/>.</summary>
+
+    /// <summary>Translate native keys with the Console.ReadKey filtering contract, without its hidden queue.</summary>
+    internal static bool TryTranslateKey(bool down, ushort virtualKey, char character, uint modifiers, out ConsoleKeyInfo key)
+    {
+        key = default;
+        // Alt key-up may carry synthesized Alt+Numpad, IME, or pasted Unicode. Other releases are not keys.
+        if (!down)
+        {
+            if (virtualKey != 0x12 || character == '\0') return false;
+        }
+        else
+        {
+            if (virtualKey is >= 0x10 and <= 0x12 or 0x14 or 0x90 or 0x91) return false;
+            if ((modifiers & 0x0003) != 0)
+            {
+                if (virtualKey is >= 0x60 and <= 0x69) return false; // Alt+Numpad digits
+                if ((modifiers & 0x0100) == 0 && (virtualKey is 0x0C or 0x2D or >= 0x21 and <= 0x28)) return false;
+            }
+        }
+        // ConsoleKeyInfo stores UTF-16 code units, including surrogate pairs across records.
+        key = new ConsoleKeyInfo(character, (ConsoleKey)virtualKey,
+            (modifiers & 0x0010) != 0, (modifiers & 0x0003) != 0, (modifiers & 0x000C) != 0);
+        return true;
+    }
+
+    /// <summary>Non-blocking: consume one native record or one owned key repeat. False only when
+    /// no event is available; ignored records return true with no key/mouse flag.</summary>
     public static bool TryReadEvent(out InputEvent ev)
     {
         ev = default;
         if (!_active) return false;
         try
         {
-            if (!GetNumberOfConsoleInputEvents(_hIn, out uint pending) || pending == 0) return false;
-            var buf = new INPUT_RECORD[1];
-            // Peek first: a pending KEY_EVENT keydown is consumed through Console.ReadKey so .NET's
-            // own decoder handles surrogates/alt-numpad exactly as the rest of the editor expects.
-            if (!PeekConsoleInputW(_hIn, buf, 1, out uint got) || got == 0) return false;
-            if (buf[0].EventType == KEY_EVENT && buf[0].KeyEvent.bKeyDown != 0)
+            if (_repeatRemaining > 0)
             {
-                var ki = Console.ReadKey(intercept: true);
-                ev = new InputEvent(false, 0, 0, 0, false, true, ki);
+                _repeatRemaining--;
+                ev = new InputEvent(false, 0, 0, 0, false, true, _repeatKey);
                 return true;
             }
-            // Everything else (mouse, key-up, focus, resize records) we consume directly.
-            if (!ReadConsoleInputW(_hIn, buf, 1, out got) || got == 0) return false;
+            if (!GetNumberOfConsoleInputEvents(_hIn, out uint pending) || pending == 0) return false;
+            var buf = new INPUT_RECORD[1];
+            // Own the same native queue we poll. Console.ReadKey has a separate repeat cache and
+            // can block past modifier-only records, starving both paste assembly and bare Esc.
+            if (!ReadConsoleInputW(_hIn, buf, 1, out uint got) || got == 0) return false;
+            if (buf[0].EventType == KEY_EVENT)
+            {
+                var record = buf[0].KeyEvent;
+                if (!TryTranslateKey(record.bKeyDown != 0, record.wVirtualKeyCode, record.UnicodeChar,
+                    record.dwControlKeyState, out var key)) return true;
+                _repeatKey = key;
+                _repeatRemaining = Math.Max(1, (int)record.wRepeatCount) - 1;
+                ev = new InputEvent(false, 0, 0, 0, false, true, key);
+                return true;
+            }
             if (buf[0].EventType != MOUSE_EVENT_TYPE) return true;   // consumed, nothing to do
 
             var m = buf[0].MouseEvent;

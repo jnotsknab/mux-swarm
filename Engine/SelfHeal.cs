@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 
 namespace MuxSwarm.Engine;
@@ -7,15 +8,19 @@ namespace MuxSwarm.Engine;
 /// Drives /heal and /reflect: a self-examination pass over the CURRENT session (normal mode)
 /// using the ACTIVE session model. It reviews recent turns for repeated errors, missed memory
 /// write-backs, useful reflexes, and anti-patterns, then proposes concise BRAIN.md / MEMORY.md
-/// stub entries for the user to approve (MultiSelect) before anything is written.
+/// entries and complete skills for the user to approve (MultiSelect) before anything is written.
 ///
 /// Deep mode is a heavier variant the caller may route to a swarm; this helper exposes the
 /// single-pass analysis + the apply step, which deep mode reuses after its own consolidation.
 /// </summary>
 public static class SelfHeal
 {
-    /// <summary>A proposed memory write-back. Type is "BRAIN" or "MEMORY".</summary>
-    public readonly record struct Proposal(string Type, string Key, string Content)
+    /// <summary>A BRAIN/MEMORY write-back or a complete SKILL proposal.</summary>
+    /// <param name="Type">BRAIN, MEMORY, or SKILL.</param>
+    /// <param name="Key">Short memory key or skill name.</param>
+    /// <param name="Content">Concise one-line memory entry or skill description; never the skill body.</param>
+    /// <param name="SkillBody">Complete Markdown body for SKILL; null for memory proposals.</param>
+    public readonly record struct Proposal(string Type, string Key, string Content, string? SkillBody = null)
     {
         /// <summary>One-line label for the MultiSelect picker.</summary>
         public string Label => $"[{Type}] {Key}: {Content}";
@@ -57,16 +62,24 @@ public static class SelfHeal
         system.AppendLine("Route each finding to the right layer:");
         system.AppendLine("  BRAIN  = behavioral: how to act, reflexes, anti-patterns, conventions");
         system.AppendLine("  MEMORY = factual: durable facts about the user, project, or environment");
+        system.AppendLine("  SKILL  = a reusable procedure demonstrated in this session, ready to use");
         system.AppendLine();
-        system.AppendLine("Output ONE proposal per line, EXACTLY in this pipe format, nothing else:");
-        system.AppendLine("  BRAIN|<short key>|<concise one-line content>");
-        system.AppendLine("  MEMORY|<short key>|<concise one-line content>");
-        system.AppendLine("  SKILL|<skill-name>|<one-line what-it-does>   (ONLY if a reusable");
-        system.AppendLine("        procedure emerged worth codifying as a standing skill)");
-        system.AppendLine();
-        system.AppendLine("Keep each proposal a single line. Propose only HIGH-VALUE, durable items");
-        system.AppendLine("(skip transient noise, secrets, and anything already obvious). If there is");
-        system.AppendLine("nothing worth persisting, output nothing.");
+        system.AppendLine("Output only a valid JSON array, with no Markdown fences or surrounding prose:");
+        system.AppendLine("""
+            [
+              {"type":"BRAIN","key":"short key","content":"concise one-line lesson","skillBody":null},
+              {"type":"MEMORY","key":"short key","content":"concise one-line fact","skillBody":null},
+              {"type":"SKILL","key":"skill-name","content":"one-line description","skillBody":"# Skill title\n\n## When to use\nDescribe the trigger.\n\n## Steps\n1. Explain the complete reusable procedure.\n\n## Verification\nExplain how to check the result.\n"}
+            ]
+            """);
+        system.AppendLine("Keys and content must be nonempty, single-line strings. Keep content concise.");
+        system.AppendLine("For SKILL, skillBody must contain complete, actionable Markdown instructions,");
+        system.AppendLine("including appropriate steps, prerequisites, and verification. No TODOs or stubs.");
+        system.AppendLine("Do not include YAML frontmatter in skillBody; the runtime supplies name/description.");
+        system.AppendLine("Encode body newlines and quotes as JSON string escapes; preserve code indentation and pipes.");
+        system.AppendLine("For BRAIN/MEMORY, omit skillBody or set it to null.");
+        system.AppendLine("Propose only HIGH-VALUE durable items; skip noise, secrets, and obvious facts.");
+        system.AppendLine("If nothing is worth persisting, output [].");
 
         if (deep)
         {
@@ -97,35 +110,42 @@ public static class SelfHeal
         }
     }
 
-    /// <summary>Parse the pipe-delimited proposal lines from the model output.</summary>
+    /// <summary>Parse one JSON array, skipping invalid entries; malformed JSON yields no proposals.</summary>
     public static List<Proposal> ParseProposals(string text)
     {
         var results = new List<Proposal>();
         if (string.IsNullOrWhiteSpace(text)) return results;
-
-        foreach (var rawLine in text.Split('\n'))
+        try
         {
-            var line = rawLine.Trim();
-            if (line.Length == 0) continue;
-
-            var parts = line.Split('|');
-            if (parts.Length < 3) continue;
-
-            var type = parts[0].Trim().ToUpperInvariant();
-            if (type != "BRAIN" && type != "MEMORY" && type != "SKILL") continue;
-
-            var key = parts[1].Trim();
-            var content = string.Join("|", parts.Skip(2)).Trim();
-            if (key.Length == 0 || content.Length == 0) continue;
-
-            results.Add(new Proposal(type, key, content));
+            using var document = JsonDocument.Parse(text);
+            if (document.RootElement.ValueKind != JsonValueKind.Array) return results;
+            foreach (var item in document.RootElement.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) continue;
+                string? Field(string name) => item.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                    ? value.GetString() : null;
+                var type = Field("type")?.Trim().ToUpperInvariant();
+                var key = Field("key")?.Trim();
+                var content = Field("content")?.Trim();
+                if (type is not ("BRAIN" or "MEMORY" or "SKILL") || !IsSingleLine(key) || !IsSingleLine(content)) continue;
+                var body = type == "SKILL" ? Field("skillBody") : null;
+                if (type == "SKILL" && !HasSkillBody(body)) continue;
+                results.Add(new Proposal(type, key!, content!, body));
+            }
         }
+        catch (JsonException) { /* Reject malformed model output; never guess at a partial proposal. */ }
         return results;
     }
 
+    private static bool IsSingleLine(string? value)
+        => !string.IsNullOrWhiteSpace(value) && !value.Any(char.IsControl);
+
+    private static bool HasSkillBody(string? body)
+        => !string.IsNullOrWhiteSpace(body) && !body.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t'));
+
     /// <summary>
-    /// Append the accepted proposals to BRAIN.md / MEMORY.md as concise stub entries under a dated
-    /// heading. Best-effort: never throws. Respects the configured char-cap afterward.
+    /// Append accepted memory entries under a dated heading and save complete skills without overwriting.
+    /// Invalid/incomplete skills are skipped. Respects the configured memory char-cap afterward.
     /// </summary>
     public static async Task ApplyAsync(
         IReadOnlyList<Proposal> accepted,
@@ -149,15 +169,13 @@ public static class SelfHeal
             accepted.Where(p => p.Type == "MEMORY").ToList(),
             $"## Heal {stamp}", ct);
 
-        // SKILL proposals scaffold a new SKILL.md under the skills dir and hot-reload the manifest
-        // (same path /installskill uses), so a reusable procedure becomes a standing skill without
-        // a separate curator step.
+        // Save complete accepted skills under the same root as /installskill, then refresh the manifest.
         var skillProps = accepted.Where(p => p.Type == "SKILL").ToList();
         if (skillProps.Count > 0)
         {
             bool any = false;
             foreach (var p in skillProps)
-                any |= ScaffoldSkill(p.Key, p.Content);
+                any |= SaveSkill(p.Key, p.Content, p.SkillBody);
             if (any)
             {
                 try { SkillLoader.LoadSkills(); }
@@ -170,18 +188,19 @@ public static class SelfHeal
         await ContextCap.CheckFileAsync(ContextCap.MemoryFile, chatClientFactory, model, ct);
     }
 
-    /// <summary>
-    /// Scaffold a new skill directory (<c>{SkillsDirectory}/{name}/SKILL.md</c>) following the
-    /// AgentSkills frontmatter convention. The proposal content seeds the description + a body stub.
-    /// Best-effort: returns false (and warns) on failure; never overwrites an existing skill.
-    /// </summary>
-    private static bool ScaffoldSkill(string rawName, string description)
+    /// <summary>Publish a complete SKILL.md with escaped metadata and the supplied Markdown body unchanged.</summary>
+    private static bool SaveSkill(string rawName, string description, string? body)
     {
+        // ApplyAsync can also be called directly; validate before creating any skill directory.
+        if (!IsSingleLine(rawName) || !IsSingleLine(description) || !HasSkillBody(body))
+        {
+            MuxConsole.WriteWarning("[heal] incomplete skill proposal skipped; name, description and body are required.");
+            return false;
+        }
         try
         {
             var name = SanitizeSkillName(rawName);
             if (name.Length == 0) return false;
-
             var dir = Path.Combine(PlatformContext.SkillsDirectory, name);
             var skillMd = Path.Combine(dir, "SKILL.md");
             if (File.Exists(skillMd))
@@ -189,26 +208,28 @@ public static class SelfHeal
                 MuxConsole.WriteWarning($"[heal] skill '{name}' already exists - skipped.");
                 return false;
             }
+            // JSON string quoting is a YAML-compatible double-quoted scalar; body stays out of metadata.
+            string document = $"---\nname: {name}\ndescription: {JsonSerializer.Serialize(description.Trim())}\n---\n\n{body}";
             Directory.CreateDirectory(dir);
-
-            var desc = description.Replace("\r", " ").Replace("\n", " ").Trim();
-            var sb = new StringBuilder();
-            sb.Append("---\n");
-            sb.Append($"name: {name}\n");
-            sb.Append($"description: {desc}\n");
-            sb.Append("---\n\n");
-            sb.Append($"# {name}\n\n");
-            sb.Append($"{desc}\n\n");
-            sb.Append("## Steps\n\n");
-            sb.Append("<!-- Seeded by /heal SelfHeal. Flesh out the reusable procedure here. -->\n");
-
-            File.WriteAllText(skillMd, sb.ToString());
-            MuxConsole.WriteSuccess($"[heal] scaffolded skill '{name}' -> {skillMd}");
+            string temporary = Path.Combine(dir, $".heal-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    var bytes = Encoding.UTF8.GetBytes(document);
+                    stream.Write(bytes);
+                    stream.Flush(flushToDisk: true);
+                }
+                // No-overwrite is enforced at publication, not just by the earlier existence check.
+                File.Move(temporary, skillMd, overwrite: false);
+            }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+            MuxConsole.WriteSuccess($"[heal] saved skill '{name}' -> {skillMd}");
             return true;
         }
         catch (Exception ex)
         {
-            MuxConsole.WriteWarning($"[heal] failed to scaffold skill '{rawName}': {ex.Message}");
+            MuxConsole.WriteWarning($"[heal] failed to save skill '{rawName}': {ex.Message}");
             return false;
         }
     }

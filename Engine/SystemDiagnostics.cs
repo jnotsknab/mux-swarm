@@ -58,20 +58,23 @@ public static class SystemDiagnostics
         var configured = App.Config?.McpServers ?? new();
         if (configured.Count == 0)
             sb.AppendLine("(no MCP servers configured)");
-        foreach (var (name, cfg) in configured)
-        {
-            bool nativeMarker = string.Equals(cfg.Command, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)
-                || (cfg.Args?.Any(a => string.Equals(a, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)) ?? false);
-            bool connected = App.McpClients.ContainsKey(name);
-            string state = nativeMarker ? "native (in-process)"
-                : !cfg.Enabled ? "disabled"
-                : connected ? "connected"
-                : "NOT CONNECTED";
-            sb.AppendLine($"- {name}: {state}{(nativeMarker ? "" : $" [{cfg.Type}]")}");
-        }
+        foreach (var server in ClassifyServers(configured, App.McpClients.Keys))
+            sb.AppendLine($"- {server.Name}: {server.State}");
         int toolCount = App.McpTools?.Count ?? 0;
         sb.AppendLine($"mcpConnectTimeoutSeconds: {App.Config?.McpConnectTimeoutSeconds ?? 90}");
         sb.AppendLine($"totalMcpTools: {toolCount}");
+        sb.AppendLine();
+
+        // Native groups are available independently of the external-MCP connection dictionary.
+        // Report global configuration only, not an execution probe or an agent's permission grant.
+        sb.AppendLine("## Native tool groups (in-process; no MCP connection)");
+        var nativeConfig = App.Config ?? new AppConfig();
+        foreach (string name in new[] { NativeToolRegistry.FilesystemServer, NativeToolRegistry.ShellServer })
+        {
+            bool enabled = NativeToolRegistry.ServerEnabled(nativeConfig, name);
+            sb.AppendLine($"- {name}: {(enabled ? "enabled" : "disabled")} (native, in-process)");
+        }
+        sb.AppendLine("Native group enablement is global; per-agent mcpServers/toolPatterns and filesystem/shell security gates still apply.");
         sb.AppendLine();
 
         // Skills
@@ -103,6 +106,30 @@ public static class SystemDiagnostics
         return sb.ToString();
     }
 
+    /// <summary>One configured entry's effective transport status, not per-agent tool access.</summary>
+    internal sealed record ServerStatus(string Name, string State, bool MissingConnection);
+
+    /// <summary>Classify entries using the same native-replacement policy as MCP startup.
+    /// Disabled entries never require a connection; only enabled external entries can be missing.</summary>
+    internal static IReadOnlyList<ServerStatus> ClassifyServers(
+        IReadOnlyDictionary<string, McpServerConfig> configured, IEnumerable<string> connectedNames)
+    {
+        // App.McpClients uses ordinal keys. Do not silently apply a different name policy here.
+        var connected = new HashSet<string>(connectedNames, StringComparer.Ordinal);
+        var states = new List<ServerStatus>(configured.Count);
+        foreach (var (name, config) in configured)
+        {
+            bool native = NativeToolRegistry.ReplacesMcpEntry(config);
+            bool missing = config.Enabled && !native && !connected.Contains(name);
+            string state = !config.Enabled ? "disabled"
+                : native ? "native replacement (no MCP connection; canonical groups below)"
+                : missing ? "NOT CONNECTED" : "connected";
+            if (!native) state += $" [{config.Type}]";
+            states.Add(new(name, state, missing));
+        }
+        return states;
+    }
+
     /// <summary>
     /// Run a diagnosis: snapshot + user symptom -> active model -> diagnosis + ordered repair steps.
     /// Returns the model's text (already streamed to the console by the caller is NOT done here; this
@@ -125,7 +152,9 @@ public static class SystemDiagnostics
         system.AppendLine("- Prefer Mux's own remediation commands over manual fixes: /refresh (reload config+MCP+skills),");
         system.AppendLine("  /reloadskills, /proxy status|update, /login <provider>, /ping, /provider, /setup, /sandbox,");
         system.AppendLine("  /setmodel, /set <key> <value>, /tools, /status.");
-        system.AppendLine("- If an MCP server shows NOT CONNECTED: likely a bad command/PATH, a missing env var, or a");
+        system.AppendLine("- Native replacements intentionally have no MCP connection. Use the Native tool groups section for");
+        system.AppendLine("  global enablement; per-agent filtering and security gates are separate from connectivity.");
+        system.AppendLine("- If an external MCP server shows NOT CONNECTED: likely a bad command/PATH, a missing env var, or a");
         system.AppendLine("  connect timeout -- suggest checking the command, raising mcpConnectTimeoutSeconds, then /refresh.");
         system.AppendLine("- If the active provider uses the CLIProxy sidecar: suggest /proxy status and /ping; a missing");
         system.AppendLine("  apiKeyEnvSet=false usually means the bearer key wasn't exported -- /login or /proxy update.");

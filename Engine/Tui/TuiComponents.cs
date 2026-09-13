@@ -83,17 +83,25 @@ internal static class TuiComponents
     }
 
     /// <summary>
-    /// The submitted user line echoed into scrollback. A leading blank line + a distinct
-    /// accent gutter bar visually delimits each turn so dense back-to-back commands and their
-    /// results don't run together.
+    /// Lay out submitted display text within usable columns. The first-row accent gutter and
+    /// every continuation align the body at column two, preserving explicit breaks and indentation.
+    /// A leading blank line separates turns; attachment labels remain display-only.
     /// </summary>
-    public static List<string> UserEcho(string line) => new()
+    public static List<string> UserEcho(string line, int width = int.MaxValue)
     {
-        "",
-        // Echo glyph at col 0 (like the live input bar and the turn-header dot), text at col 2 - so
-        // the submitted line aligns with the agent output column instead of sitting 2 cols deeper.
-        $"[{Accent}]\u258e[/] [{Text}]{Esc(line ?? "")}[/]"
-    };
+        int w = Math.Max(1, width);
+        int prefixWidth = w >= 4 ? 2 : 0; // leave room for a wide grapheme in tiny viewports
+        var rows = new List<string> { "" };
+        string display = ComposeAttachments.SafeText((line ?? "").Replace("\r\n", "\n").Replace('\r', '\n'));
+        foreach (string body in TuiMarkup.WrapPlain(display, Math.Max(1, w - prefixWidth)))
+        {
+            string prefix = prefixWidth == 0 ? "" : rows.Count == 1 ? $"[{Accent}]\u258e[/] " : "  ";
+            // A one-column viewport cannot represent a wide grapheme; clip only that display row.
+            string fitted = TuiMarkup.Width(body) <= w - prefixWidth ? body : Trunc(body, w - prefixWidth);
+            rows.Add($"{prefix}[{Text}]{Esc(fitted)}[/]");
+        }
+        return rows;
+    }
 
     /// <summary>Braille spinner frames for the live "thinking/working" indicator
     /// (Claude-Code feel): a single dot-wheel that pulses. Advanced by the driver each
@@ -242,17 +250,15 @@ internal static class TuiComponents
         };
     }
 
-    /// <summary>Agent turn header (a left rule with the agent name).</summary>
+    /// <summary>One width-bounded agent-name row with a trailing rule, plus a blank turn delimiter.</summary>
     public static List<string> TurnHeader(string agent, int width)
     {
-        int w = Math.Max(8, width);
-        string label = $"\u25b8 {agent}";
-        int dashes = Math.Max(0, w - TuiMarkup.Width(label) - 3);
-        return new()
-        {
-            "",
-            $"  [{Agent}]{Esc(label)}[/] [{Border}]{new string('\u2500', dashes)}[/]"
-        };
+        int w = Math.Max(1, width);
+        string indent = w >= 4 ? "  " : "";
+        string label = Trunc($"\u25b8 {CollapseWs(ComposeAttachments.SafeText(agent ?? ""))}", w - indent.Length);
+        int remaining = Math.Max(0, w - indent.Length - TuiMarkup.Width(label));
+        string rule = remaining > 0 ? $" [{Border}]{new string('\u2500', remaining - 1)}[/]" : "";
+        return new() { "", $"{indent}[{Agent}]{Esc(label)}[/]{rule}" };
     }
 
     /// <summary>Tool-call line: a running glyph, a human ACTION label (verb-derived from the tool
@@ -646,11 +652,25 @@ internal static class TuiComponents
         $"    [{Dim}]\u2514[/] [{Muted}]{Esc(Trunc(CollapseWs(task), truncLength))}[/]"
     };
 
-    /// <summary>Task-complete line with an ok glyph.</summary>
+    /// <summary>Full completion text for the non-docked TUI, where no expansion view is available.</summary>
     public static List<string> TaskComplete(string agent, string summary) => new()
     {
-        $"  [{Ok}]\u2714[/] [{Agent}]{Esc(agent)}[/] [{Dim}]completed[/]  [{Muted}]{Esc(Trunc(summary, 120))}[/]"
+        $"  [{Ok}]✓[/] [{Agent}]{Esc(agent)}[/] [{Dim}]completed[/]  [{Muted}]{Esc(summary)}[/]"
     };
+
+    /// <summary>A width-bounded completion row; the caller retains the original summary when expandable.</summary>
+    public static (string Markup, bool Expandable) TaskCompleteSummary(string agent, string summary, int width)
+    {
+        int room = Math.Max(1, width);
+        string body = CollapseWs(summary);
+        string label = string.Equals(agent, "Task", StringComparison.OrdinalIgnoreCase)
+            ? "Done" : CollapseWs(agent) + " done";
+        string plain = $"  ✓ {label}" + (body.Length > 0 ? $" · {body}" : "");
+        bool expandable = TuiMarkup.Width(plain) > room || summary.Contains('\n') || summary.Contains('\r');
+        string hint = expandable && room >= 16 ? (room >= 32 ? " (ctrl+e expand)" : " (ctrl+e)") : "";
+        string display = TuiMarkup.TruncatePlain(plain, Math.Max(1, room - TuiMarkup.Width(hint)));
+        return ($"[{Muted}]{Esc(display)}[/][{Dim}]{hint}[/]", expandable);
+    }
 
     /// <summary>
     /// The pinned footer: mode badges + timers + a context meter. Lives at the bottom of the
@@ -1040,58 +1060,82 @@ internal static class TuiComponents
         return rows;
     }
 
-    /// <summary>Tool names matching <paramref name="filter"/> (name or description), sorted.</summary>
+    /// <summary>Compatibility projection for callers with name/description-only tool metadata.</summary>
     public static List<string> RankTools(string? filter, IReadOnlyList<(string Name, string Desc)> tools)
+        => ToolCatalog.Rank(filter, tools.Select(t => new ToolCatalog.Entry(t.Name, t.Desc, "Runtime", "Local")).ToArray())
+            .Select(t => t.Name).ToList();
+
+    /// <summary>Width-bounded tool preview for the legacy name/description catalog shape.</summary>
+    public static List<string> ToolsPreview(string? filter, IReadOnlyList<(string Name, string Desc)> tools, int width, int selected = -1)
+        => ToolsPreview(filter, new ToolCatalog.Snapshot("Available tools",
+            tools.Select(t => new ToolCatalog.Entry(t.Name, t.Desc, "Runtime", "Local")).ToArray()), width, selected);
+
+    /// <summary>Grouped, fuzzy-ranked preview with one selectable row per tool, plus selected description.</summary>
+    internal static List<string> ToolsPreview(string? filter, ToolCatalog.Snapshot catalog, int width,
+        int selected = -1, int maxRows = 12)
     {
-        var f = (filter ?? "").Trim().ToLowerInvariant();
-        return tools
-            .Where(t => f.Length == 0 || t.Name.ToLowerInvariant().Contains(f) || (t.Desc ?? "").ToLowerInvariant().Contains(f))
-            .OrderBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(t => t.Name)
-            .ToList();
+        width = Math.Max(1, width); maxRows = Math.Max(1, maxRows);
+        string Clip(string text) => TuiMarkup.TruncateMarkup(text, width, "");
+        var matches = ToolCatalog.Rank(filter, catalog.Entries);
+        var rows = new List<string>
+        {
+            $"  [{Accent}]tools[/] [{Muted}]{Esc(catalog.Scope)}[/] [{Dim}]({matches.Count}/{catalog.Entries.Count})[/]"
+        };
+        if (!catalog.Initialized) rows.Add($"    [{Dim}]Tool catalog not initialized for this scope.[/]");
+        else if (matches.Count == 0)
+            rows.Add($"    [{Dim}]{(catalog.Entries.Count == 0 ? "No tools available in this scope." : "No tools match: " + Esc(filter ?? ""))}[/]");
+        else
+        {
+            int capacity = Math.Max(1, Math.Min(PreviewWindow, maxRows - 4));
+            int focus = Math.Clamp(selected < 0 ? 0 : selected, 0, matches.Count - 1);
+            int start = WindowStart(matches.Count, focus, capacity);
+            int end = Math.Min(matches.Count, start + capacity);
+            for (int i = start; i < end; i++)
+            {
+                var tool = matches[i];
+                string prefix = i == selected ? "› " : "  ";
+                string label = $"{tool.Kind} · {tool.Group}";
+                int groupWidth = Math.Min(24, Math.Max(8, width / 3));
+                string group = TuiMarkup.TruncatePlain(label, groupWidth);
+                group += new string(' ', Math.Max(0, groupWidth - TuiMarkup.Width(group)));
+                rows.Add(width < 60
+                    ? $"  [{(i == selected ? Accent : Dim)}]{prefix}[/][{(i == selected ? Text : Agent)}]{Esc(tool.Name)}[/]"
+                    : $"  [{(i == selected ? Accent : Dim)}]{prefix}{Esc(group)}[/] [{(i == selected ? Text : Agent)}]{Esc(tool.Name)}[/]");
+            }
+            rows.Add($"    [{Dim}]{start + 1}-{end}/{matches.Count} · ↑↓ select · Tab/Enter choose[/]");
+            if (selected >= 0)
+                rows.Add($"    [{Muted}]{Esc(matches[focus].Kind + " · " + matches[focus].Group + ": " + CollapseWs(matches[focus].Description))}[/]");
+        }
+        if (!string.IsNullOrWhiteSpace(catalog.Note)) rows.Add($"    [{Dim}]{Esc(catalog.Note)}[/]");
+        return rows.Take(maxRows).Select(Clip).ToList();
     }
 
-    /// <summary>
-    /// Live, scrollable tools catalog shown beneath the input box while typing "/tools".
-    /// Surfaces the available tool names (with a one-line description) in a paged window -
-    /// the expandable view behind the session-header tool badge, without dumping the whole
-    /// list inline. Arrow keys scroll the selection; pure/width-aware.
-    /// </summary>
-    public static List<string> ToolsPreview(string? filter, IReadOnlyList<(string Name, string Desc)> tools, int width, int selected = -1)
+    /// <summary>Readable grouped /tools output. Exact tool-name queries retain the full description.</summary>
+    internal static List<string> ToolsListing(string? filter, ToolCatalog.Snapshot catalog, int width)
     {
-        var f = (filter ?? "").Trim().ToLowerInvariant();
-        var rows = new List<string>();
-        if (tools.Count == 0)
+        int bodyWidth = Math.Max(1, width - 4);
+        var matches = ToolCatalog.Rank(filter, catalog.Entries);
+        var exact = matches.Where(t => t.Name.Equals(filter?.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+        if (exact.Count > 0) matches = exact;
+        var rows = new List<string> { $"[{Muted}]{Esc(catalog.Scope)} · {matches.Count}/{catalog.Entries.Count} tools[/]" };
+        if (!string.IsNullOrWhiteSpace(catalog.Note))
+            rows.AddRange(TuiMarkup.WrapMarkup($"[{Dim}]{Esc(catalog.Note)}[/]", bodyWidth));
+        if (!catalog.Initialized) rows.Add($"[{Dim}]Tool catalog not initialized for this scope.[/]");
+        else if (matches.Count == 0) rows.Add($"[{Dim}]No tools match in this scope.[/]");
+        foreach (var group in matches.GroupBy(t => (t.Kind, t.Group)))
         {
-            rows.Add($"    [{Dim}]no tools available[/]");
-            return rows;
+            rows.Add("");
+            rows.AddRange(TuiMarkup.WrapMarkup($"[{Accent} bold]{Esc(group.Key.Kind)} · {Esc(group.Key.Group)} ({group.Count()})[/]", bodyWidth));
+            foreach (var tool in group)
+            {
+                rows.AddRange(TuiMarkup.WrapMarkup($"[{Agent}]{Esc(tool.Name)}[/]", bodyWidth));
+                bool selectedTool = string.Equals(filter?.Trim(), tool.Name, StringComparison.OrdinalIgnoreCase);
+                string description = selectedTool ? tool.Description : TuiMarkup.TruncatePlain(CollapseWs(tool.Description), Math.Max(1, bodyWidth - 2));
+                if (description.Length > 0)
+                    foreach (string line in TuiMarkup.WrapMarkup($"[{Muted}]{Esc(description)}[/]", Math.Max(1, bodyWidth - 2)))
+                        rows.Add("  " + line);
+            }
         }
-
-        var names = RankTools(filter, tools);
-        var descOf = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var t in tools) descOf[t.Name] = t.Desc ?? "";
-
-        rows.Add($"  [{Accent}]\u2503[/] [{Accent}]tools[/] [{Dim}]({names.Count})[/]");
-        if (names.Count == 0)
-        {
-            rows.Add($"    [{Dim}]no tools match '{Esc(f)}'[/]");
-            return rows;
-        }
-
-        int nameW = names.Max(n => n.Length);
-        int descBudget = Math.Max(16, Math.Max(8, width) - 6 - nameW - 2);
-        int start = WindowStart(names.Count, selected);
-        int end = Math.Min(names.Count, start + PreviewWindow);
-        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
-        for (int i = start; i < end; i++)
-        {
-            string name = names[i];
-            string oneLine = Trunc(CollapseWs(descOf.GetValueOrDefault(name) ?? ""), descBudget);
-            rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(name.PadRight(nameW))}[/]  [{Text}]{Esc(oneLine)}[/]"
-                : $"    [{Agent}]{Esc(name.PadRight(nameW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
-        }
-        if (end < names.Count) rows.Add($"    [{Dim}]\u2193 {names.Count - end} more[/]");
         return rows;
     }
 

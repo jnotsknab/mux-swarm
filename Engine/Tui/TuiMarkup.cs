@@ -97,9 +97,11 @@ internal static class TuiMarkup
     }
 
     /// <summary>Render markup to an ANSI string (each span prefixed by its SGR, reset at end).</summary>
-    public static string ToAnsi(string markup)
+    public static string ToAnsi(string markup) => ToAnsi(Parse(markup));
+
+    /// <summary>Render already-parsed spans without parsing markup again during row layout.</summary>
+    internal static string ToAnsi(IReadOnlyList<Span> spans)
     {
-        var spans = Parse(markup);
         var sb = new StringBuilder();
         bool any = false;
         foreach (var s in spans)

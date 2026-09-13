@@ -84,6 +84,22 @@ public static class NativeToolRegistry
         return false;
     }
 
+    /// <summary>
+    /// True when MCP startup intentionally skips this entry because in-process tools replace it.
+    /// Uses the existing case-insensitive command/argument markers, independent of entry name or type.
+    /// Native group enablement and per-agent access are separate checks; this does not create aliases.
+    /// </summary>
+    public static bool ReplacesMcpEntry(McpServerConfig? config)
+    {
+        if (config is null) return false;
+        bool LegacyShell(string? value) => value is not null
+            && value.Contains("mcp-async-repl", StringComparison.OrdinalIgnoreCase);
+        return LegacyShell(config.Command)
+            || (config.Args?.Any(LegacyShell) ?? false)
+            || IsNativeEntry(config)
+            || IsLegacyFilesystemEntry(config);
+    }
+
     /// <summary>True when the named native server is globally enabled (absent entry -> enabled; native is default).</summary>
     public static bool ServerEnabled(AppConfig config, string serverName)
     {

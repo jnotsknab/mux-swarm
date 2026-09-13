@@ -462,13 +462,16 @@ public static class SingleAgentOrchestrator
 
         if (proposals.Count == 0)
         {
-            MuxConsole.WriteMuted("No memory write-backs proposed.");
+            MuxConsole.WriteMuted("No memory entries or skills proposed.");
             return;
         }
 
+        foreach (var proposal in proposals.Where(p => p.Type == "SKILL"))
+            MuxConsole.WritePanelMarkdown($"/heal - proposed skill: {proposal.Key}", proposal.SkillBody!);
+
         var labels = proposals.Select(pr => pr.Label).ToList();
         var picked = MuxConsole.MultiSelect(
-            "Select the memory write-backs to apply (space to toggle, enter to confirm):", labels);
+            "Select memory entries and skills to save (space to toggle, enter to confirm):", labels);
 
         if (picked.Count == 0)
         {
@@ -478,7 +481,7 @@ public static class SingleAgentOrchestrator
 
         var accepted = proposals.Where(pr => picked.Contains(pr.Label)).ToList();
         await SelfHeal.ApplyAsync(accepted, chatClientFactory, resolvedModelId, ct);
-        MuxConsole.WriteSuccess($"Applied {accepted.Count} memory write-back(s) to BRAIN/MEMORY.");
+        MuxConsole.WriteSuccess($"Processed {accepted.Count} selected /heal proposal(s).");
     }
 
     // /fix [symptom]: collect a live runtime snapshot and have the active model diagnose what is
@@ -564,14 +567,9 @@ public static class SingleAgentOrchestrator
         if (App.ActiveProvider is null)
             warns.Add("no active LLM provider (use /provider or /setup)");
         var configured = App.Config?.McpServers ?? new();
-        foreach (var (name, cfg) in configured)
-        {
-            bool nativeMarker = string.Equals(cfg.Command, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)
-                || (cfg.Args?.Any(a => string.Equals(a, "native-runtime-tools", StringComparison.OrdinalIgnoreCase)) ?? false);
-            if (nativeMarker || !cfg.Enabled) continue;
-            if (!App.McpClients.ContainsKey(name))
-                warns.Add($"MCP '{name}' NOT CONNECTED");
-        }
+        foreach (var server in SystemDiagnostics.ClassifyServers(configured, App.McpClients.Keys))
+            if (server.MissingConnection)
+                warns.Add($"MCP '{server.Name}' NOT CONNECTED");
         if (SkillLoader.GetSkillMetadata().Count == 0)
             warns.Add("no skills loaded");
 
@@ -903,6 +901,10 @@ public static class SingleAgentOrchestrator
         // Switch the (already-running) live-region driver into this session: in-session
         // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
         MuxConsole.EnableDockedFooter(topLevel: false);
+        var initialToolsCatalog = ToolCatalog.FromTools(filteredTools,
+            $"{singleAgentDef?.Name ?? "Agent"} tools before first goal",
+            "Filtered native/MCP tools. Session-local tools are added when the agent is constructed.");
+        MuxConsole.SetToolBrowserCatalog(initialToolsCatalog);
         // Project the FULL session tool count for the header badge. The live toolset is assembled
         // further down (var singleAgentTools = [...]) and adds far more than the MCP tools in
         // filteredTools: 4 always-on local tools, the native REPL/shell tools, and the flag-gated
@@ -958,7 +960,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 var firstDisp = await MetaCommandDispatch.TryHandleAsync(
-                    firstInput, chatClientFactory, Models, cancellationToken);
+                    firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
                 if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
 
@@ -1541,7 +1543,8 @@ public static class SingleAgentOrchestrator
 
         // Re-seed the live "/tools" palette with the FULLY-assembled toolset (the early seed only
         // had the MCP tools). Now the expandable badge view lists exactly what the agent holds.
-        MuxConsole.SetTuiToolsCatalog(singleAgentTools.Select(t => (t.Name, t.Description ?? "")).ToList());
+        var toolsCatalog = ToolCatalog.FromTools(singleAgentTools, $"{singleAgentDef.Name} tools");
+        MuxConsole.SetToolBrowserCatalog(toolsCatalog);
 
         // G11: static context-overhead breakdown for the footer. On a FRESH session the context
         // is dominated by the system prompt + the serialized tool/MCP schemas (names, descriptions,
@@ -2414,6 +2417,10 @@ public static class SingleAgentOrchestrator
                         break;
                     }
                 }
+                else if (ToolCatalog.TryQuery(metaCmd, out var toolsQuery))
+                {
+                    MuxConsole.WriteToolsCatalog(toolsQuery, toolsCatalog);
+                }
                 else if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/compact ", StringComparison.OrdinalIgnoreCase))
                 {
@@ -2605,6 +2612,7 @@ public static class SingleAgentOrchestrator
                         // --- resumed ---
                         MuxConsole.SetTuiSessionId(sessionTimestamp);
                         MuxConsole.SetTuiModel(resolvedModelId);
+                        MuxConsole.SetToolBrowserCatalog(toolsCatalog);
                         RenderStatusBar();
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
                     }

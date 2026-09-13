@@ -34,16 +34,27 @@ public sealed class EscapeKeyListener : IDisposable
     /// here instead of discarded. The prompt input loop (<see cref="Tui.TuiDriver.ReadLine"/>) drains
     /// this FIRST on entry, so a key is never lost regardless of which reader grabbed it. This is the
     /// fix for "typing during/after a turn feels laggy and misses chars".</summary>
-    private static readonly System.Collections.Concurrent.ConcurrentQueue<ConsoleKeyInfo> ReplayQueue = new();
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<Tui.ConsoleInputPump.InputEvent> ReplayQueue = new();
 
     /// <summary>Enqueue a key the listener consumed but does not act on, for the prompt loop to replay.</summary>
-    internal static void ReplayKey(ConsoleKeyInfo key) => ReplayQueue.Enqueue(key);
+    internal static void ReplayKey(ConsoleKeyInfo key) => ReplayQueue.Enqueue(Tui.ConsoleInputPump.InputEvent.OfKey(key));
+
+    internal static void ReplayEvent(Tui.ConsoleInputPump.InputEvent ev) => ReplayQueue.Enqueue(ev);
+
+    internal static void DrainReplayEventsTo(List<Tui.ConsoleInputPump.InputEvent> sink)
+    {
+        while (ReplayQueue.TryDequeue(out var ev)) sink.Add(ev);
+    }
 
     /// <summary>Move every queued replay key into <paramref name="sink"/> (in FIFO order). Called by
     /// the prompt input loop on entry so mid-turn typing is never dropped.</summary>
     internal static void DrainReplayTo(System.Collections.Generic.Queue<ConsoleKeyInfo> sink)
     {
-        while (ReplayQueue.TryDequeue(out var k)) sink.Enqueue(k);
+        while (ReplayQueue.TryDequeue(out var ev))
+        {
+            if (ev.Kind == Tui.ConsoleInputPump.EventKind.Key) sink.Enqueue(ev.Key);
+            else foreach (char c in ev.PasteText ?? "") sink.Enqueue(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false));
+        }
     }
 
     /// <summary>Optional hook: net wheel rows to scroll when the listener drains an SGR mouse report
@@ -80,7 +91,10 @@ public sealed class EscapeKeyListener : IDisposable
             Interlocked.Increment(ref _suspendCount);
             // Barrier: take + release the read gate so any in-flight ReadKey has completed and the
             // loop will observe _suspendCount before its next read.
-            lock (_readGate) { }
+            lock (_readGate)
+            {
+                if (!Tui.ConsoleInputPump.ModalActive) Tui.Win32ConsoleInput.DisableMouse();
+            }
         }
         public void Dispose()
         {
@@ -169,12 +183,11 @@ public sealed class EscapeKeyListener : IDisposable
                             }
                             continue;
                         }
-                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Paste)
+                        if (pev.Kind is Tui.ConsoleInputPump.EventKind.Paste or Tui.ConsoleInputPump.EventKind.InferredPaste)
                         {
                             // Mid-turn paste: replay the text as keys so it lands at the next
                             // prompt, exactly like mid-turn typing.
-                            foreach (char pc in pev.PasteText ?? string.Empty)
-                                ReplayKey(new ConsoleKeyInfo(pc, ConsoleKey.NoName, false, false, false));
+                            ReplayEvent(pev);
                             continue;
                         }
                         if (pev.Kind == Tui.ConsoleInputPump.EventKind.Terminal) continue;

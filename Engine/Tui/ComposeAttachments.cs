@@ -28,6 +28,9 @@ internal sealed class ComposeAttachments
         Expanded = false; Scroll = 0;
     }
 
+    // A single-cell BMP thumbnail avoids splitting an emoji surrogate pair in the input renderer.
+    private static string Label(Item item) => item.Image ? $"[▧ {item.Id}]" : $"[≡ {item.Id}]";
+
     internal Item[] Snapshot() => _items.ToArray();
     internal bool HidesCursor(int cursor) => _items.Any(x => cursor > x.Start && cursor <= x.Start + x.Length);
     internal void Restore(IEnumerable<Item> items)
@@ -80,7 +83,7 @@ internal sealed class ComposeAttachments
         {
             if (item.Start < pos || item.Start + item.Length > raw.Length) continue;
             result.Append(raw, pos, item.Start - pos);
-            var label = $"[{item.Title}]";
+            var label = Label(item);
             if (cursor >= item.Start + item.Length) mapped += label.Length - item.Length;
             else if (cursor > item.Start) mapped = result.Length;
             result.Append(label); pos = item.Start + item.Length;
@@ -96,6 +99,8 @@ internal sealed class ComposeAttachments
         if (!Focused || _items.Count == 0) return false;
         if (key.Key == ConsoleKey.Escape) { if (Expanded) Expanded = false; else Focused = false; return true; }
         if (key.Key == ConsoleKey.Enter) { Expanded = !Expanded; Scroll = 0; return true; }
+        // Page keys belong to the outer viewport; do not exit attachment focus on a pass-through.
+        if (key.Key is ConsoleKey.PageUp or ConsoleKey.PageDown) return false;
         if (key.Key is ConsoleKey.Delete or ConsoleKey.Backspace)
         { var item = _items[Selected]; remove(item.Start, item.Length); Expanded = false; Scroll = 0; return true; }
         if (key.Key is ConsoleKey.LeftArrow or ConsoleKey.RightArrow || (!Expanded && key.Key is ConsoleKey.UpArrow or ConsoleKey.DownArrow))
@@ -107,8 +112,8 @@ internal sealed class ComposeAttachments
         {
             if (key.Key == ConsoleKey.Home) Scroll = 0;
             else if (key.Key == ConsoleKey.End) Scroll = int.MaxValue;
-            else if (key.Key is ConsoleKey.UpArrow or ConsoleKey.PageUp) ScrollBy(key.Key == ConsoleKey.PageUp ? -8 : -1);
-            else if (key.Key is ConsoleKey.DownArrow or ConsoleKey.PageDown) ScrollBy(key.Key == ConsoleKey.PageDown ? 8 : 1);
+            else if (key.Key == ConsoleKey.UpArrow) ScrollBy(-1);
+            else if (key.Key == ConsoleKey.DownArrow) ScrollBy(1);
             else { Focused = Expanded = false; return false; }
             return true;
         }
@@ -125,6 +130,13 @@ internal sealed class ComposeAttachments
         if (_items.Count == 0 || maxRows < 2) return rows;
         string Row(string text, string color) => $"  [{color}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(SafeText(text), Math.Max(1, width - 3)))}[/]";
         var selected = _items[Math.Clamp(Selected, 0, _items.Count - 1)];
+        // Chips are already visible in the input; show the separate list only for navigation.
+        if (!Focused)
+        {
+            string kind = _items.All(item => item.Image) ? "images" : _items.All(item => !item.Image) ? "pastes" : "attachments";
+            rows.Add(Row($"F2 {kind}", TuiComponents.Dim));
+            return rows;
+        }
         if (Expanded && Focused)
         {
             rows.Add(Row($"╭ {selected.Title} · {Selected + 1}/{_items.Count}", TuiComponents.Accent));
@@ -138,14 +150,14 @@ internal sealed class ComposeAttachments
             int count = Math.Max(1, maxRows - 2);
             Scroll = Math.Clamp(Scroll, 0, Math.Max(0, wrapped.Count - count));
             foreach (var line in wrapped.Skip(Scroll).Take(count)) rows.Add(Row("│ " + line, TuiComponents.Text));
-            rows.Add(Row($"╰ {Scroll + 1}–{Math.Min(wrapped.Count, Scroll + count)}/{wrapped.Count} · ↑↓ PgUp/PgDn scroll · ←→ item · Esc close", TuiComponents.Muted));
+            rows.Add(Row($"╰ {Scroll + 1}–{Math.Min(wrapped.Count, Scroll + count)}/{wrapped.Count} · Esc close · ↑↓ scroll · ←→ item", TuiComponents.Muted));
         }
         else
         {
             int count = Math.Max(1, Math.Min(3, maxRows - 1));
             int offset = Math.Clamp(Selected - count + 1, 0, Math.Max(0, _items.Count - count));
             foreach (var item in _items.Skip(offset).Take(count))
-                rows.Add(Row($"{(Focused && item.Id == selected.Id ? '›' : '·')} [{item.Title}]", Focused && item.Id == selected.Id ? TuiComponents.Accent : TuiComponents.Muted));
+                rows.Add(Row($"{(Focused && item.Id == selected.Id ? '›' : '·')} {Label(item)}", Focused && item.Id == selected.Id ? TuiComponents.Accent : TuiComponents.Muted));
             rows.Add(Row($"{Selected + 1}/{_items.Count} · F2 {(Focused ? "edit" : "cards")} · {(Focused ? "↑↓ select · Enter preview · Delete detach · Esc edit" : "full content kept for submit")}", TuiComponents.Dim));
         }
         return rows;

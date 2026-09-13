@@ -23,8 +23,12 @@ internal sealed class FrameRenderer
 {
     private readonly ITuiTerminal _term;
     private List<string>? _lastRows;   // last-presented physical rows (ANSI); null forces a full redraw
+    private List<string>? _lastGutter; // chrome is independent of text width and row wrapping
     private int _lastCols = -1;        // terminal width at last present; a change forces full invalidation
     private bool _entered;             // true once the alternate screen has been entered
+
+    /// <summary>Configured input-framing mode, reasserted whenever this renderer takes screen ownership.</summary>
+    internal bool BracketedPaste { get; set; } = true;
 
     public FrameRenderer(ITuiTerminal term) => _term = term;
 
@@ -34,9 +38,14 @@ internal sealed class FrameRenderer
     /// alternate screen; a width change or an <see cref="Invalidate"/> forces a full clear+redraw,
     /// otherwise only changed rows are rewritten. The whole frame is wrapped in one Synchronized
     /// Output envelope and emitted as a single write+flush so the user never sees a half-paint.
+    /// Optional <paramref name="rightGutter"/> cells are addressed at the physical last column,
+    /// independently of the content width estimate, and must have the same height as the rows.
     /// </summary>
-    public void Present(IReadOnlyList<string> rows)
+    public void Present(IReadOnlyList<string> rows, IReadOnlyList<string>? rightGutter = null)
     {
+        int columns = Math.Max(1, _term.Width);
+        if (rightGutter is not null && rightGutter.Count != rows.Count)
+            throw new ArgumentException("Gutter and content must have identical height.", nameof(rightGutter));
         var sb = new StringBuilder(4096);
         // Open the DEC synchronized-output envelope BEFORE the alt-screen switch. On resume from a
         // Spectre prompt, Leave() reset _entered, so this Present re-enters the alt screen. If the
@@ -56,7 +65,7 @@ internal sealed class FrameRenderer
 
         bool full = _lastRows is null
             || _lastRows.Count != rows.Count
-            || _lastCols != _term.Width;
+            || _lastCols != columns;
 
         if (full)
         {
@@ -64,30 +73,51 @@ internal sealed class FrameRenderer
             // (auto-wrap off so a full-width row can never soft-wrap and strand a line; cursor
             // hidden - the input caret is a synthetic block cell in the composed rows), clear the
             // whole screen, and draw every row absolutely.
+            sb.Append(BracketedPaste ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff);
             sb.Append(Ansi.AutoWrapOff);
             sb.Append(Ansi.HideCursor);
             sb.Append(Ansi.ClearScreen);
             sb.Append(Ansi.Home);
             for (int i = 0; i < rows.Count; i++)
-                WriteRowInto(sb, i, rows[i]);
+            {
+                WriteRowInto(sb, i, rows[i], columns);
+                WriteGutterInto(sb, i, columns, rightGutter);
+            }
         }
         else
         {
-            // Steady state: rewrite only the rows whose ANSI changed. WriteRowInto OVERWRITES the
-            // full terminal width (content + default-bg pad) rather than erasing first, so a shaded
-            // [on ...] band never flashes to the default background before its repaint (BCE §4). A
+            // Steady state: rewrite only changed rows, then clear their suffix and repaint chrome.
+            // A shaded band is never erased before replacement (BCE §4). A
             // no-change frame emits zero row writes (spinner-idle stays O(changed rows), not O(viewport)).
             var last = _lastRows!;
             for (int i = 0; i < rows.Count; i++)
-                if (!string.Equals(rows[i], last[i], StringComparison.Ordinal))
-                    WriteRowInto(sb, i, rows[i]);
+            {
+                bool changed = !string.Equals(rows[i], last[i], StringComparison.Ordinal);
+                if (changed) WriteRowInto(sb, i, rows[i], columns);
+                string cell = rightGutter?[i] ?? " ";
+                string previous = _lastGutter?[i] ?? " ";
+                // A row rewrite clears its suffix, including the chrome. Reapply the cell even if
+                // its semantic state is unchanged. Removing a gutter explicitly blanks old cells.
+                if ((changed && rightGutter is not null) || cell != previous)
+                    sb.Append(Ansi.MoveTo(i + 1, columns)).Append(Ansi.Reset).Append(cell).Append(Ansi.Reset);
+            }
         }
         sb.Append(Ansi.EndSyncOutput);
 
-        _lastRows = rows is List<string> l ? l : new List<string>(rows);
-        _lastCols = _term.Width;
-        _term.Write(sb.ToString());
-        _term.Flush();
+        try
+        {
+            _term.Write(sb.ToString());
+            _term.Flush();
+            // Snapshot only successfully presented content. Caller-owned lists may be reused.
+            _lastRows = new List<string>(rows);
+            _lastGutter = rightGutter is null ? null : new List<string>(rightGutter);
+            _lastCols = columns;
+        }
+        catch
+        {
+            Invalidate(); // A partial write is not a valid diff baseline.
+            throw;
+        }
     }
 
     /// <summary>
@@ -124,16 +154,20 @@ internal sealed class FrameRenderer
     private static int VisibleWidth(string ansiRow) =>
         TuiMarkup.Width(AnsiCsi.Replace(ansiRow, string.Empty));
 
-    // Write one row by OVERWRITING every cell to the terminal width instead of erasing first. A
-    // trailing default-bg pad clears any residue from a longer previous row; because the row's own
-    // content (including a shaded [on ...] band) is written directly and never preceded by an
-    // erase-to-default, the shaded region can never flash unshaded (BCE §4). The pad spaces sit
-    // AFTER the row's own closing SGR reset, so they are default-bg and clear old cells cleanly.
-    private void WriteRowInto(System.Text.StringBuilder sb, int rowIndex, string rowAnsi)
+    // Paint before clearing: never erase a shaded band ahead of its replacement (BCE flash).
+    // EL uses the REAL cursor position, not our approximate Unicode width. Padding alone can leave
+    // the final cells untouched when a terminal renders a text symbol narrower than our estimator.
+    private static void WriteRowInto(StringBuilder sb, int rowIndex, string rowAnsi, int columns)
     {
-        sb.Append(Ansi.MoveTo(rowIndex + 1, 1)).Append(rowAnsi);
-        int pad = _term.Width - VisibleWidth(rowAnsi);
-        if (pad > 0) sb.Append(Ansi.Reset).Append(new string(' ', pad));
+        sb.Append(Ansi.MoveTo(rowIndex + 1, 1)).Append(Ansi.Reset).Append(rowAnsi).Append(Ansi.Reset);
+        // With DECAWM disabled, a full-width row leaves the cursor ON its last cell. Do not erase
+        // that cell. Driver content reserves the gutter, so normal frame rows always have a suffix.
+        if (VisibleWidth(rowAnsi) < columns) sb.Append("\u001b[0K");
     }
 
+    private static void WriteGutterInto(StringBuilder sb, int row, int columns, IReadOnlyList<string>? gutter)
+    {
+        if (gutter is not null)
+            sb.Append(Ansi.MoveTo(row + 1, columns)).Append(Ansi.Reset).Append(gutter[row]).Append(Ansi.Reset);
+    }
 }

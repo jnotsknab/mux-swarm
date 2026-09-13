@@ -29,16 +29,23 @@ internal static class MetaCommandDispatch
     /// Try to handle <paramref name="input"/> as a session-agnostic meta command. The factory and
     /// model map are only needed by /background; when omitted they default to the app-wide
     /// chat-client factory and the configured agent models, so swarm callers can pass nothing.
+    /// The optional tool snapshot is metadata for the caller's actual scope, never a global fallback.
     /// </summary>
     public static async Task<Result> TryHandleAsync(
         string? input,
         System.Func<string, IChatClient>? chatClientFactory = null,
         Dictionary<string, string>? agentModels = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ToolCatalog.Snapshot? tools = null)
     {
         var line = (input ?? string.Empty).Trim();
         if (line.Length == 0 || line[0] != '/') return Result.NotHandled;
 
+        if (ToolCatalog.TryQuery(line, out var query))
+        {
+            MuxConsole.WriteToolsCatalog(query, tools ?? new ToolCatalog.Snapshot("Current session", Array.Empty<ToolCatalog.Entry>(), false));
+            return Result.Handled;
+        }
         string cmd = line.Split(' ', 2)[0].ToLowerInvariant();
         switch (cmd)
         {

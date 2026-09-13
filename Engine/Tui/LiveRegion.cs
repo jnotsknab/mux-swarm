@@ -151,6 +151,11 @@ internal sealed class LiveRegion
     internal static List<string> WrapMarkupLine(string markup, int cols)
     {
         var spans = TuiMarkup.Parse(markup);
+        // Width-aware components already produced a physical row. Re-wrapping its individual
+        // styled spans with a hanging-indent budget can split a rule/body that fits as a whole.
+        string plain = string.Concat(spans.Select(span => span.Text));
+        if (!plain.Contains('\n') && !plain.Contains('\r') && TuiMarkup.Width(plain) <= cols)
+            return new List<string> { TuiMarkup.ToAnsi(spans) };
         var outRows = new List<string>();
         var cur = new StringBuilder();
         int curW = 0;

@@ -250,6 +250,7 @@ internal sealed partial class TuiDriver
     public void SetBracketedPaste(bool on)
     {
         _bracketedPaste = on;
+        _frame.BracketedPaste = on;
         try { _term.Write(on ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff); _term.Flush(); } catch { /* ignore */ }
     }
 
@@ -310,6 +311,7 @@ internal sealed partial class TuiDriver
         // Windows console hosts translate VT mouse reports into MOUSE_EVENT input records that
         // Console.ReadKey discards - enable the Win32 record reader as the delivery path there;
         // on Unix the VT parser path handles it. Off/inline/suspended -> restore the saved mode.
+        if (ConsoleInputPump.Current is not null) return; // The pump owns OS input mode, independent of mouse UI.
         if (want && OperatingSystem.IsWindows())
         {
             if (!_win32Mouse) _win32Mouse = Win32ConsoleInput.EnableMouse();
@@ -351,6 +353,8 @@ internal sealed partial class TuiDriver
     /// <summary>One retained transcript unit: collapsed markup line(s) plus optional expand data.</summary>
     private sealed class Entry
     {
+        /// <summary>Optional semantic layout, regenerated within the requested usable column count.</summary>
+        public Func<int, List<string>>? Layout;
         public required string Collapsed;                          // the normally-shown markup line
         public (string Tool, string Text, bool Error)? Expandable; // non-null => Ctrl+E expandable
         public bool Expanded;                                      // current toggle state in NAV
@@ -545,11 +549,32 @@ internal sealed partial class TuiDriver
         => _files = files ?? Array.Empty<string>();
 
     /// <summary>Tool catalog (name + description) backing the live "/tools" scrollable list.</summary>
-    private IReadOnlyList<(string Name, string Desc)> _tools = Array.Empty<(string, string)>();
+    private ToolCatalog.Snapshot _tools = new("Current scope", Array.Empty<ToolCatalog.Entry>(), false);
+    private Func<ToolCatalog.Snapshot>? _toolsProvider;
+    private int _toolsGeneration;
 
     /// <summary>Set the tools catalog backing the live "/tools" palette (expandable badge view).</summary>
     public void SetToolsCatalog(IReadOnlyList<(string Name, string Desc)> tools)
-        => _tools = tools ?? Array.Empty<(string, string)>();
+        => SetToolsCatalog(new ToolCatalog.Snapshot("Available tools",
+            tools.Select(t => new ToolCatalog.Entry(t.Name, t.Desc, "Runtime", "Local")).ToArray()));
+
+    /// <summary>Replace this scope's tool metadata; no tool function is invoked or granted.</summary>
+    internal void SetToolsCatalog(ToolCatalog.Snapshot catalog)
+    {
+        _tools = catalog;
+        _toolsProvider = null;
+        _paletteSel = -1;
+    }
+
+    /// <summary>Use a fresh immutable global catalog while startup MCP discovery finishes.</summary>
+    internal void SetToolsCatalogProvider(Func<ToolCatalog.Snapshot> provider)
+    {
+        _toolsProvider = provider;
+        _toolsGeneration = ToolCatalog.Generation;
+        _paletteSel = -1;
+    }
+
+    private ToolCatalog.Snapshot CurrentTools => _toolsProvider?.Invoke() ?? _tools;
 
     /// <summary>When true, the "@" picker is indexing the mux install dir (not a real project),
     /// so the preview surfaces a "--workspace" hint. Set by the console wiring at startup.</summary>
@@ -588,6 +613,16 @@ internal sealed partial class TuiDriver
         _frame = new FrameRenderer(_term);
         _engineFrame = frameEngine;
         _mouse = new MouseHandler(_term);
+    }
+
+    /// <summary>Initialize shared live-TUI input and paste negotiation; the factory seam avoids stdin in activation tests.</summary>
+    internal ConsoleInputPump InitializeInput(bool bracketedPaste, string mousePreset,
+        Func<bool, bool, bool, ConsoleInputPump>? startPump = null)
+    {
+        SetBracketedPaste(bracketedPaste);
+        startPump ??= (tracking, paste, nativeMouse) => ConsoleInputPump.Start(tracking, paste, nativeMouse);
+        return startPump(_engineFrame && !string.Equals(mousePreset, "off", StringComparison.OrdinalIgnoreCase),
+            bracketedPaste, _engineFrame);
     }
 
     /// <summary>True when the driver is running the v0.12.4 full-frame (alternate-screen) renderer
@@ -718,6 +753,46 @@ internal sealed partial class TuiDriver
         CommitPaint(markupLines);
     }
 
+    /// <summary>Retain a startup layout function so resize rebuilds the card, not its old borders.</summary>
+    public void CommitStartup(Func<int, List<string>> layout)
+    {
+        ArgumentNullException.ThrowIfNull(layout);
+        var initial = layout(Width + 1);
+        if (initial.Count == 0) return;
+        AddTranscriptEntry(new Entry
+        {
+            Collapsed = string.Join("\n", initial),
+            Layout = width => layout(width + 1),
+        });
+        TrimTranscript();
+        _frameScroll = int.MaxValue;
+        CommitPaint(initial);
+    }
+
+    /// <summary>Usable transcript columns; reserve the last terminal column in either renderer.</summary>
+    private int TranscriptWidth => _engineFrame ? Width : Math.Max(1, Width - 1);
+
+    /// <summary>Retain a width-dependent transcript component without freezing its physical rows.</summary>
+    private void CommitLayout(Func<int, List<string>> layout)
+    {
+        var initial = layout(TranscriptWidth);
+        AddTranscriptEntry(new Entry { Collapsed = string.Join("\n", initial), Layout = layout });
+        TrimTranscript();
+        if (!_navActive) CommitPaint(initial);
+    }
+
+    /// <summary>Commit an agent header whose rule is rebuilt on resize, retaining its original lane tint.</summary>
+    public void CommitTurnHeader(string agentName)
+    {
+        FlushTableBuffer();
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        _thinkingText = null;
+        string? tint = _laneTint;
+        CommitLayout(width => TuiComponents.TurnHeader(agentName, width)
+            .Select(line => TuiComponents.Gutter(line, tint)).ToList());
+    }
+
     /// <summary>Commit a single markup line above the region.</summary>
     public void CommitLine(string markupLine) => Commit(new[] { markupLine });
 
@@ -734,6 +809,22 @@ internal sealed partial class TuiDriver
         RetainExpandable(collapsedLine, agent, fullTranscript, error: false);
         if (!_navActive) CommitPaint(new[] { collapsedLine });
         _pendingGap = true;
+    }
+
+    /// <summary>Commit one compact completion row without changing agent-lane attribution.
+    /// The complete summary remains expandable when it cannot fit in the current viewport.</summary>
+    public void CommitTaskComplete(string agent, string summary)
+    {
+        FlushTableBuffer();
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        _thinkingText = null;
+        var row = TuiComponents.TaskCompleteSummary(agent, summary, Width);
+        if (row.Expandable)
+            RetainExpandable(row.Markup, agent + " completion", summary, error: false);
+        else
+            Retain(new[] { row.Markup });
+        if (!_navActive) CommitPaint(new[] { row.Markup });
     }
 
     // --- tool call/result merge ---------------------------------------------
@@ -1169,7 +1260,7 @@ internal sealed partial class TuiDriver
                     Repaint();
                     continue;
                 }
-                if (ev.Kind == ConsoleInputPump.EventKind.Paste)
+                if (ev.Kind is ConsoleInputPump.EventKind.Paste or ConsoleInputPump.EventKind.InferredPaste)
                 {
                     if (kind == PromptModalView.Kind.Text && ev.PasteText is { } pt)
                         { _promptModal.InputAppend(pt); Repaint(); }
@@ -1838,6 +1929,7 @@ internal sealed partial class TuiDriver
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
+        int footerStart = lines.Count;
         lines.Add(TuiComponents.FullRule(width));
         // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
         // short post-activation window; -1 renders the chip static and schedules nothing extra.
@@ -1869,20 +1961,31 @@ internal sealed partial class TuiDriver
                 lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
                 return lines;
             }
-            RenderCompose(lines, width);
+            int footerRows = lines.Skip(footerStart).Sum(row => LiveRegion.WrapMarkupLine(row, width).Count);
+            RenderCompose(lines, width, Math.Max(1, Height - footerRows));
             // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
             // gets the command palette. Skills check first so "/skills" isn't eaten by the
             // generic slash filter.
-            if (_editor.IsAtFilter)
+            if (!_editor.Attachments.Focused && _editor.IsAtFilter)
                 lines.AddRange(TuiComponents.FilesPreview(_editor.AtFilter, _files, width, _paletteSel, _filesAreInstallDir));
-            else if (_editor.IsSkillsFilter)
+            else if (!_editor.Attachments.Focused && _editor.IsSkillsFilter)
                 lines.AddRange(TuiComponents.SkillsPreview(_editor.SkillsFilter, _skills, width, _paletteSel));
-            else if (_editor.IsToolsFilter)
-                lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, _tools, width, _paletteSel));
-            else if (_editor.IsResumeFilter)
+            else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
+                lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
+            else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
                 lines.AddRange(TuiComponents.SessionsPreview(_editor.ResumeFilter, _sessions, width, _paletteSel));
-            else if (_editor.IsSlashFilter)
+            else if (!_editor.Attachments.Focused && _editor.IsSlashFilter)
                 lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries, _paletteSel));
+            if (_editor.Attachments.Items.Count > 0)
+            {
+                // Budget physical rows once for BOTH render engines. Preserve footer + compose;
+                // competing live activity gets only the remaining space, never another full viewport.
+                int rows = lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count);
+                int remove = 0;
+                while (rows > Height && remove < footerStart)
+                    rows -= LiveRegion.WrapMarkupLine(lines[remove++], width).Count;
+                if (remove > 0) lines.RemoveRange(0, remove);
+            }
         }
         return lines;
     }
@@ -1957,7 +2060,9 @@ internal sealed partial class TuiDriver
         // windows, and a single stray present paints the alt screen over a half-drawn Spectre
         // list (the "cut-off prompt" artifact).
         if (_suspended || _shuttingDown) return;
-        _frame.Present(ComposeFrameRows());
+        var rows = ComposeFrameRows();
+        var gutter = Enumerable.Range(0, rows.Count).Select(_frameScrollBar.Cell).ToList();
+        _frame.Present(rows, gutter);
     }
 
     /// <summary>
@@ -1990,7 +2095,7 @@ internal sealed partial class TuiDriver
     {
         int h = Math.Max(1, _term.Height);
         // Layout and wrap BOTH use the driver's Width, which in frame mode is already (cols - 1)
-        // with the last physical column reserved. Using one width for component layout AND the wrap
+        // with the last physical column reserved for independently addressed scrollbar chrome. Using one width for component layout AND the wrap
         // pass is what keeps full-width rules/panels to exactly one physical row each (the earlier
         // layout-at-cols/wrap-at-cols-1 mismatch split every full-width row and stranded "-"
         // fragments at the left margin).
@@ -2050,10 +2155,8 @@ internal sealed partial class TuiDriver
         if (rows.Count > h) rows = rows.GetRange(rows.Count - h, h);
         while (rows.Count < h) rows.Add("");
 
-        // Keyboard-only scrollback gets a tiny passive position marker in the reserved last
-        // column. It has a fixed one-cell size and only moves vertically; there is no full rail,
-        // dynamic thumb sizing, mouse hit target, or wheel/click/drag interaction.
-        PaintFrameScrollIndicator(rows, transcriptRoom, totalRows);
+        // Chrome never enters transcript/cache rows: the renderer addresses it independently.
+        _frameScrollBar = FrameScrollBar.Create(_frameScroll, totalRows, transcriptRoom);
         return rows;
     }
 
@@ -2062,6 +2165,8 @@ internal sealed partial class TuiDriver
     /// collapsed entries their one-line summary, wrapped.</summary>
     private List<string> RenderEntryRows(Entry ent, int wrapW)
     {
+        if (ent.Layout is { } layout)
+            return layout(wrapW).SelectMany(line => LiveRegion.WrapMarkupLine(line, wrapW)).ToList();
         if (ent.Expandable is { } x && ent.Expanded)
         {
             var panel = ent.DiffKind
@@ -2074,43 +2179,10 @@ internal sealed partial class TuiDriver
         return LiveRegion.WrapMarkupLine(ent.Collapsed, wrapW);
     }
 
-    private const int FrameScrollIndicatorSize = 1;
-    internal static string FrameScrollIndicatorCell()
-        => TuiMarkup.ToAnsi($"[{TuiComponents.Accent}]▏[/]");
+    private FrameScrollBar _frameScrollBar;
 
-    /// <summary>Pure placement math for the passive frame-scroll marker. Offset 0 is the live
-    /// tail (bottom); <paramref name="maxScroll"/> is the oldest retained position (top).</summary>
-    internal static (int Top, int Length) FrameScrollIndicatorPlacement(int scroll, int maxScroll, int trackRows)
-    {
-        int length = Math.Min(FrameScrollIndicatorSize, Math.Max(0, trackRows));
-        if (length == 0) return (0, 0);
-        int travel = Math.Max(0, trackRows - length);
-        double fraction = Math.Clamp((double)scroll / Math.Max(1, maxScroll), 0.0, 1.0);
-        int top = (int)Math.Round((1.0 - fraction) * travel);
-        return (top, length);
-    }
-
-    /// <summary>Paint a fixed-size passive marker in the reserved physical column. Every transcript
-    /// row is padded to the content width and receives an explicit final cell in both marker and
-    /// no-marker states, so moving/hiding the marker always overwrites its previous cells.</summary>
-    private void PaintFrameScrollIndicator(List<string> rows, int transcriptRoom, int totalRows)
-    {
-        int trackRows = Math.Min(transcriptRoom, rows.Count);
-        int maxScroll = Math.Max(0, totalRows - transcriptRoom);
-        bool visible = _userScrolled && _frameScroll > 0 && maxScroll > 0 && trackRows > 0;
-        var placement = FrameScrollIndicatorPlacement(_frameScroll, maxScroll, trackRows);
-
-        for (int i = 0; i < trackRows; i++)
-        {
-            string plain = System.Text.RegularExpressions.Regex.Replace(rows[i], "\u001b\\[[0-9;?]*[A-Za-z]", "");
-            int pad = Width - TuiMarkup.Width(plain);
-            if (pad > 0) rows[i] += new string(' ', pad);
-            if (pad < 0) continue;
-
-            bool marker = visible && i >= placement.Top && i < placement.Top + placement.Length;
-            rows[i] += marker ? FrameScrollIndicatorCell() : " ";
-        }
-    }
+    /// <summary>Geometry of the last composed transcript viewport, before any terminal writes.</summary>
+    internal FrameScrollBar ScrollBar => _frameScrollBar;
 
     // Frame-engine viewport scroll offset, in physical rows above the live tail (0 = pinned to the
     // newest content). PgUp/PgDn / Ctrl+U/Ctrl+D at the prompt adjust it; any commit/stream keeps
@@ -2119,8 +2191,8 @@ internal sealed partial class TuiDriver
     private int _frameScroll;
 
     // True once the user has actively paged the frame viewport (Ctrl+U/D, PgUp/Dn, Ctrl+B/F) this
-    // session. Gates the passive scroll marker and the Esc/End snap-to-tail so a seeded startup
-    // offset (a tall splash opened at its top) never lights the marker or swallows the first Esc.
+    // session. Gates the Esc/End snap-to-tail so a seeded startup
+    // offset (a tall splash opened at its top) never swallows the first Esc.
     // Reset when the viewport returns to the live tail (snap or submit).
     private bool _userScrolled;
 
@@ -2130,13 +2202,13 @@ internal sealed partial class TuiDriver
     {
         if (!_engineFrame) return false;
         int prev = _frameScroll;
-        _frameScroll = Math.Max(0, _frameScroll + rows);
+        _frameScroll = (int)Math.Clamp((long)_frameScroll + rows, 0, int.MaxValue);
         // Upper clamp happens in ComposeFrameRows (needs the wrapped row count). Return the actual
         // post-clamp movement so paging at the oldest boundary does not trigger redundant repaints.
         if (rows > 0) _ = ComposeFrameRows();
-        // A key-driven page into history arms the passive marker + Esc/End snap. A seeded startup
+        // A key-driven page into history arms the Esc/End snap. A seeded startup
         // offset (CommitStartup, which bypasses this method) never sets it, so a tall splash opened
-        // at its top shows no marker and does not swallow the first Esc.
+        // at its top does not swallow the first Esc.
         if (_frameScroll > 0 && _frameScroll != prev) _userScrolled = true;
         return _frameScroll != prev;
     }
@@ -2162,7 +2234,7 @@ internal sealed partial class TuiDriver
         // (TuiMarkup.WrapMarkup returns MARKUP slices for NAV, which re-parses them; writing those
         // straight to the terminal printed the raw tags and bloated every row's width.)
         for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
-            rows.InsertRange(0, LiveRegion.WrapMarkupLine(_transcript[e].Collapsed, wrapW));
+            rows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
         if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
         return rows;
     }
@@ -2190,6 +2262,15 @@ internal sealed partial class TuiDriver
     {
         if (_shuttingDown || _navActive) return;
         if (_engineFrame && _suspended) return;   // a blocking prompt owns the terminal; defer
+        // The global catalog can finish loading while the user is idle in /tools. Repaint only
+        // on metadata publication; session snapshots stay fixed to their actual supplied toolset.
+        if (_toolsProvider is not null && _inInput && _editor.IsToolsFilter
+            && _toolsGeneration != ToolCatalog.Generation)
+        {
+            _toolsGeneration = ToolCatalog.Generation;
+            _paletteSel = -1;
+            Repaint();
+        }
         // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
         // prompt, so it drives the short post-activation breathe of the ultra/giga chip.
         // Repaints ONLY inside the pulse window (plus one settle paint when it closes);
@@ -2226,7 +2307,6 @@ internal sealed partial class TuiDriver
     // --- bracketed paste -----------------------------------------------------
 
     private static readonly char[] _pasteOpenTail = { '[', '2', '0', '0', '~' };
-    private static readonly char[] _pasteCloseTail = { '[', '2', '0', '1', '~' };
 
     // Called right after an ESC was read. Probe the next queued chars for the "[200~" opener tail.
     // On a full match the chars are consumed (returns true). On any mismatch the probed keys are
@@ -2259,68 +2339,34 @@ internal sealed partial class TuiDriver
         return false;
     }
 
-    private string DrainBracketedPaste()
+    private ConsoleInputPump.InputEvent DrainBracketedPaste() => ReadBracketedPaste(() =>
     {
-        var sb = new System.Text.StringBuilder();
+        if (_ungetq.Count > 0) return _ungetq.Dequeue();
+        return TryReadKeyNonBlocking(out var key) ? key : null;
+    });
+
+    /// <summary>Read a recognized bracketed transaction using the frame pump's parser, not timing heuristics.</summary>
+    internal static ConsoleInputPump.InputEvent ReadBracketedPaste(Func<ConsoleKeyInfo?> read)
+    {
+        var assembler = new SgrInputAssembler(mouseTracking: false, bracketedPaste: true);
+        // The legacy reader already consumed the opener; seed the same transaction state.
+        foreach (char c in "\x1b[200~")
+            foreach (var ignored in assembler.Feed(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false))) { }
         while (true)
         {
-            ConsoleKeyInfo k;
-            if (_ungetq.Count > 0) k = _ungetq.Dequeue();
-            else if (!TryReadKeyNonBlocking(out k))
+            if (read() is not { } key)
             {
-                System.Threading.Thread.Sleep(2);   // settle wait for the rest of a large paste
-                if (!TryReadKeyNonBlocking(out k)) break;
+                if (assembler.PendingExpired(50))
+                    foreach (var ev in assembler.FlushTimeout()) return ev;
+                Thread.Sleep(2); continue;
             }
-            if (k.KeyChar == '\u001b' && MatchTail(_pasteCloseTail)) break;   // ESC[201~ terminator
-            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
-            if (k.KeyChar != '\0') sb.Append(k.KeyChar);
+            foreach (var ev in assembler.Feed(key)) return ev;
         }
-        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
     }
 
     // Wheel -> scrollback bridge: step console.scrollSpeedRows rows per net notch through the SAME
     // FrameScrollBy path Ctrl+U/Ctrl+D use. Returns true when the offset changed (caller repaints).
     private bool OnWheelScroll(int netWheelDir) => FrameScrollBy(netWheelDir * _scrollSpeedRows);
-
-    // Drain the remainder of a burst (raw-keystroke paste with no DECSET markers). Reads only what
-    // is ALREADY buffered - it never blocks waiting for a human - so it stops the instant the burst
-    // ends. Enters become literal newlines; printables append; control keys are dropped. A short
-    // settle wait bridges the tiny gap between chunks of a large paste still streaming in.
-    private string DrainBurstPaste()
-    {
-        var sb = new System.Text.StringBuilder();
-        while (true)
-        {
-            ConsoleKeyInfo k;
-            if (!TryReadKeyNonBlocking(out k))
-            {
-                System.Threading.Thread.Sleep(2);   // bridge inter-chunk gap of a large paste
-                if (!TryReadKeyNonBlocking(out k)) break;
-            }
-            if (k.Key == ConsoleKey.Enter || k.KeyChar == '\r' || k.KeyChar == '\n') { sb.Append('\n'); continue; }
-            if (k.KeyChar != '\0' && !char.IsControl(k.KeyChar)) sb.Append(k.KeyChar);
-        }
-        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
-    }
-
-    /// <summary>Burst-paste drain for the pump path: collect already-queued Key events (a fast
-    /// burst follows the Enter in the same instant) into literal text. A short 2ms settle bridges
-    /// inter-chunk gaps of a large paste still streaming in, mirroring <see cref="DrainBurstPaste"/>.
-    /// A non-Key event (wheel/paste) is stashed into <paramref name="carry"/> for the next loop
-    /// iteration rather than swallowed.</summary>
-    private static string DrainBurstFromPump(ConsoleInputPump pump, ref ConsoleInputPump.InputEvent? carry)
-    {
-        var sb = new System.Text.StringBuilder();
-        while (true)
-        {
-            if (!pump.TryTake(out var bev, 2)) break;
-            if (bev.Kind != ConsoleInputPump.EventKind.Key) { carry = bev; break; }
-            var bk = bev.Key;
-            if (bk.Key == ConsoleKey.Enter || bk.KeyChar is '\r' or '\n') { sb.Append('\n'); continue; }
-            if (bk.KeyChar != '\0' && !char.IsControl(bk.KeyChar)) sb.Append(bk.KeyChar);
-        }
-        return sb.ToString().Replace("\r\n", "\n").Replace("\r", "\n");
-    }
 
     // --- input ---------------------------------------------------------------
 
@@ -2334,7 +2380,11 @@ internal sealed partial class TuiDriver
     internal string? ReadLineCore(ConsoleInputPump? pump)
     {
         _editor.Reset();
+        _draftGeneration++;
+        ConsoleInputPump.IsComposing = () => _inInput && !_editor.IsSearching && !_navActive
+            && !_agentViewActive && !_jobViewActive && !_workflowViewActive && !_promptModalActive;
         _pasteStatus = null; _pasteDeferred.Clear();
+        _inferredPasteGuard = false; _inferredStart = -1;
         _paletteSel = -1;
         _inInput = true;
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
@@ -2343,14 +2393,9 @@ internal sealed partial class TuiDriver
         // sees; on the legacy path they go to the local unget queue as before.
         if (pump is not null)
         {
-            var replayQ = new Queue<ConsoleKeyInfo>();
-            EscapeKeyListener.DrainReplayTo(replayQ);
-            if (replayQ.Count > 0)
-            {
-                var evs = new List<ConsoleInputPump.InputEvent>(replayQ.Count);
-                while (replayQ.Count > 0) evs.Add(ConsoleInputPump.InputEvent.OfKey(replayQ.Dequeue()));
-                pump.PushFront(evs);
-            }
+            var replay = new List<ConsoleInputPump.InputEvent>();
+            EscapeKeyListener.DrainReplayEventsTo(replay);
+            if (replay.Count > 0) pump.PushFront(replay);
         }
         else
         {
@@ -2375,14 +2420,9 @@ internal sealed partial class TuiDriver
             // Close the entry race: a key the listener stole AFTER the replay-drain above but
             // BEFORE the claim landed would otherwise sit in its replay queue until the NEXT
             // prompt. Re-drain now that the listener is standing down.
-            var lateQ = new Queue<ConsoleKeyInfo>();
-            EscapeKeyListener.DrainReplayTo(lateQ);
-            if (lateQ.Count > 0)
-            {
-                var lateEvs = new List<ConsoleInputPump.InputEvent>(lateQ.Count);
-                while (lateQ.Count > 0) lateEvs.Add(ConsoleInputPump.InputEvent.OfKey(lateQ.Dequeue()));
-                pump.PushFront(lateEvs);
-            }
+            var replay = new List<ConsoleInputPump.InputEvent>();
+            EscapeKeyListener.DrainReplayEventsTo(replay);
+            if (replay.Count > 0) pump.PushFront(replay);
         }
         try
         {
@@ -2397,7 +2437,6 @@ internal sealed partial class TuiDriver
 
             while (true)
             {
-                bool fromDeferred = false;
                 if (PastePending)
                 {
                     FinishPasteIfReady();
@@ -2427,7 +2466,7 @@ internal sealed partial class TuiDriver
                     }
                     Repaint();
                 }
-                if (carry is null && TakeDeferred(out var deferred)) { carry = deferred; fromDeferred = true; }
+                if (carry is null && TakeDeferred(out var deferred)) { carry = deferred; }
                 ConsoleKeyInfo key;
                 if (carry is not null)
                 {
@@ -2440,6 +2479,8 @@ internal sealed partial class TuiDriver
                         else if (_engineFrame && cv.WheelDir != 0 && OnWheelScroll(cv.WheelDir)) Repaint();
                         continue;
                     }
+                    if (cv.Kind == ConsoleInputPump.EventKind.InferredPaste)
+                    { ApplyInferredPaste(cv.PasteText ?? ""); Repaint(); continue; }
                     if (cv.Kind == ConsoleInputPump.EventKind.Paste)
                     {
                         BeginTextPaste(cv.PasteText ?? ""); Repaint();
@@ -2452,7 +2493,7 @@ internal sealed partial class TuiDriver
                 {
                     // FRAME ENGINE - single input plane: the pump is the ONLY stdin reader; this
                     // loop consumes typed events. Mouse reports are reassembled upstream into Wheel
-                    // events (no byte of one can ever surface here as text), bracketed/burst pastes
+                    // events (no byte of one can ever surface here as text), explicit paste transactions
                     // arrive whole as Paste events, and a bare/Alt ESC is already classified.
                     ConsoleInputPump.InputEvent ev;
                     while (true)
@@ -2501,6 +2542,8 @@ internal sealed partial class TuiDriver
                             else if (_engineFrame && net != 0 && OnWheelScroll(net)) Repaint();
                             continue;
                         }
+                        case ConsoleInputPump.EventKind.InferredPaste:
+                            ApplyInferredPaste(ev.PasteText ?? ""); Repaint(); continue;
                         case ConsoleInputPump.EventKind.Paste:
                         {
                             string pasted = ev.PasteText ?? string.Empty;
@@ -2546,7 +2589,7 @@ internal sealed partial class TuiDriver
                     // Windows console host with mouse records active: a BLOCKING Console.ReadKey
                     // would discard mouse events while waiting, so poll the Win32 input queue
                     // instead - mouse records dispatch immediately, keydowns flow through
-                    // Console.ReadKey's decoder exactly as before. 10ms idle sleep keeps the poll
+                    // the adapter's own native-key translation. 10ms idle sleep keeps the poll
                     // negligible (same cadence as the voice loop). Mouse records are fed through the
                     // shared MouseHandler seam; wheel -> FrameScrollBy (scrollSpeedRows per notch).
                     ConsoleKeyInfo? gotKey = null;
@@ -2591,31 +2634,29 @@ internal sealed partial class TuiDriver
                 // reassembles pastes upstream and delivers them as Paste events above.
                 if (pump is null && _bracketedPaste && key.KeyChar == '\u001b' && TryConsumePasteOpen())
                 {
-                    string pasted = DrainBracketedPaste();
-                    BeginTextPaste(pasted);
-                    Repaint();
-                    continue;
+                    var pasted = DrainBracketedPaste();
+                    if (pasted.Kind == ConsoleInputPump.EventKind.InferredPaste)
+                    { ApplyInferredPaste(pasted.PasteText ?? ""); Repaint(); continue; }
+                    if (pasted.Kind == ConsoleInputPump.EventKind.Paste)
+                    {
+                        BeginTextPaste(pasted.PasteText ?? "");
+                        Repaint();
+                        continue;
+                    }
+                    key = pasted.Key; // Explicit cancellation keeps its normal editor meaning.
                 }
 
-                // Burst-paste heuristic (cross-platform fallback to DECSET 2004). When an Enter is
-                // read and more input is ALREADY buffered, it is the interior of a fast burst - a
-                // paste, not a human keystroke (a person cannot have the next key queued in the same
-                // instant). Treat it as a literal newline and absorb the rest of the burst into the
-                // compose buffer; a standalone Enter (nothing queued) still submits normally. Only
-                // active when bracketedPaste is enabled and the editor is in plain Insert mode.
-                bool moreQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
-                if (!fromDeferred && _bracketedPaste && key.Key == ConsoleKey.Enter
-                    && (key.Modifiers & (ConsoleModifiers.Alt | ConsoleModifiers.Control)) == 0
-                    && !_editor.IsSearching
-                    && _ungetq.Count == 0 && moreQueued)
+                // Uncertain legacy input may only stage a draft. An explicit non-newline chord sends;
+                // a delayed pasted newline cannot silently dispatch a paragraph.
+                if (_inferredPasteGuard && !_editor.Attachments.Focused && key.Key == ConsoleKey.Enter
+                    && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt | ConsoleModifiers.Shift)) == 0)
                 {
-                    string burst = pump is not null ? DrainBurstFromPump(pump, ref carry) : DrainBurstPaste();
-                    _editor.InsertPaste("\n" + burst);
-                    _paletteSel = -1;
-                    bool stillQueued = pump is not null ? pump.PendingCount > 0 : KeyQueued();
-                    if (!stillQueued) Repaint();
-                    continue;
+                    ApplyInferredPaste("\n"); // Plain Enter is literal while the uncertain transaction is guarded.
+                    Repaint(); continue;
                 }
+                if (_inferredPasteGuard && (key.Key == ConsoleKey.F4 || (key.Key == ConsoleKey.Enter && key.Modifiers.HasFlag(ConsoleModifiers.Control))))
+                { _inferredPasteGuard = false; key = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false); }
+
 
                 // Reverse-incremental history search (Ctrl+R, readline/bash style). While active it
                 // OWNS every keystroke: printable keys refine the query, Ctrl+R steps to older
@@ -2875,6 +2916,7 @@ internal sealed partial class TuiDriver
         }
         finally
         {
+            ConsoleInputPump.IsComposing = null;
             CancelPendingPaste(discardQueued: true);
             _terminalPaste?.Stop(); _terminalPaste = null;
             _inInput = false;
@@ -2952,7 +2994,7 @@ internal sealed partial class TuiDriver
     {
         if (_editor.IsAtFilter)    return TuiComponents.RankFiles(_editor.AtFilter, _files);
         if (_editor.IsSkillsFilter) return TuiComponents.RankSkills(_editor.SkillsFilter, _skills);
-        if (_editor.IsToolsFilter)  return TuiComponents.RankTools(_editor.ToolsFilter, _tools);
+        if (_editor.IsToolsFilter)  return ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
         if (_editor.IsResumeFilter) return TuiComponents.RankSessions(_editor.ResumeFilter, _sessions);
         if (_editor.IsSlashFilter)  return TuiComponents.RankCommands(_editor.SlashFilter, _paletteEntries).Select(e => e.Cmd).ToList();
         return Array.Empty<string>();
@@ -2999,6 +3041,14 @@ internal sealed partial class TuiDriver
             var cands = TuiComponents.RankSkills(_editor.SkillsFilter, _skills);
             var pick = Pick(cands, sel);
             if (pick is not null) _editor.SetBuffer($"/skill {pick}");
+            return;
+        }
+        // /tools <filter>: choose metadata for a follow-up listing, never invoke the tool.
+        if (_editor.IsToolsFilter)
+        {
+            var candidates = ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
+            var pick = Pick(candidates, sel);
+            if (pick is not null) _editor.SetBuffer($"/tools {pick}");
             return;
         }
         // /resume <filter>: complete to "/resume <id>".
@@ -3078,7 +3128,9 @@ internal sealed partial class TuiDriver
                     // Wrap long prose rows to the viewport so they are fully readable in NAV
                     // (expanded tool panels are already pre-wrapped to Width by ToolResultPanel;
                     // unexpandable prose was emitted as one long row and clipped at the edge).
-                    foreach (var wl in TuiMarkup.WrapMarkup(ent.Collapsed, Math.Max(1, Width - 1)))
+                    foreach (var wl in ent.Layout is { } layout
+                        ? layout(Math.Max(1, Width - 1)).SelectMany(line => TuiMarkup.WrapMarkup(line, Math.Max(1, Width - 1)))
+                        : TuiMarkup.WrapMarkup(ent.Collapsed, Math.Max(1, Width - 1)))
                     { disp.Add(wl); owner.Add(e); }
                 }
             }
@@ -3172,7 +3224,7 @@ internal sealed partial class TuiDriver
             };
             string help = $"{Ansi.Invert} NAV {Ansi.Reset} "
                 + $"{model.Row + 1}/{model.LineCount}  hjkl/arrows move  ctrl+d/u page  g/G ends  "
-                + expandHint + selHint + "q exit";
+                + expandHint + selHint + "ctrl+q close";
             rows.Add(help);
             rows.Add(status.Length > 0 ? status : "");
 

@@ -56,6 +56,7 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 | `/api/health` | Health probe | `serve.auth` |
 | `/api/status` | Runtime status | `serve.auth` |
 | `/api/agents` | List configured agents | `serve.auth` |
+| `/api/models` | Active-provider model catalog; shared discovery with TUI `/setmodel` | `serve.auth` |
 | `/api/sessions` | List session metadata | `serve.auth` |
 | `/api/sessions/{id}` | Single session metadata | `serve.auth` |
 | `/api/commands` | Available slash commands | `serve.auth` |
@@ -207,3 +208,16 @@ reference internal policy docs."`).
 
 ---
 [Back to docs index](README.md) | [Main README](../README.md)
+
+
+### Provider model catalog (`GET /api/models`)
+
+Returns `{ provider, source, count, items, error }`. `items` contains model IDs advertised by the
+active configured OpenAI-compatible provider; `source` remains `endpoint`, `cliproxy`, or `none`.
+The nullable `error` field is a safe diagnostic when discovery fails. Failed discovery returns an
+empty list with HTTP 200 as before, preserving clients’ manual-entry fallback.
+
+TUI and web use the same discovery service: active endpoint only, configured bearer/custom headers,
+10-second deadline, no redirect-following, and bounded response size. An unrelated running sidecar
+is no longer preferred over the selected provider. Provider errors do not expose response bodies or
+credentials. This change does not modify `POST /api/model` or add effort controls to the web UI.

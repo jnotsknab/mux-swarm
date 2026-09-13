@@ -151,12 +151,20 @@ public static class SkillLoader
         content = TokenInjector.InjectTokens(content);
 
         // Strip frontmatter if present (--- ... ---)
-        if (content.StartsWith("---"))
+        if (content.StartsWith("---\n", StringComparison.Ordinal) || content.StartsWith("---\r\n", StringComparison.Ordinal))
         {
-            var endIndex = content.IndexOf("---", 3);
-            if (endIndex > 0)
+            int offset = content.IndexOf('\n') + 1;
+            while (offset < content.Length)
             {
-                content = content[(endIndex + 3)..].TrimStart('\r', '\n');
+                int newline = content.IndexOf('\n', offset);
+                int end = newline < 0 ? content.Length : newline;
+                if (content.AsSpan(offset, end - offset).Trim().SequenceEqual("---"))
+                {
+                    content = content[end..].TrimStart('\r', '\n');
+                    break;
+                }
+                if (newline < 0) break;
+                offset = newline + 1;
             }
         }
 
@@ -194,6 +202,12 @@ public static class SkillLoader
                             entry.Name = value;
                             break;
                         case "description":
+                            // Self-heal writes a YAML-compatible JSON-quoted scalar. Legacy plain descriptions remain unchanged.
+                            if (value.StartsWith('"') && value.EndsWith('"'))
+                            {
+                                try { value = System.Text.Json.JsonSerializer.Deserialize<string>(value) ?? value; }
+                                catch (System.Text.Json.JsonException) { /* Preserve existing non-JSON YAML quoting. */ }
+                            }
                             entry.Description = value;
                             break;
                         case "agents":
