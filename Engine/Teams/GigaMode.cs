@@ -123,13 +123,16 @@ public static class GigaMode
         // Run one member task through the shared parallel-worker path (Agent View capture + retries).
         async Task<string> RunOne(string agent, string task)
         {
+            using var memberCancellation = ExecutionCancellation.Link(ct);
+            using var memberOwnership = ExecutionCancellation.Enter(memberCancellation.Token);
+            memberCancellation.Token.ThrowIfCancellationRequested();
             var delegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
             var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
             return await ParallelSwarmOrchestrator.ExecuteParallelWorker(
                 agent, task, LeadName,
                 MultiAgentOrchestrator.Specialists, delegationResults, retryRegistry,
                 chatClientFactory, agentModels, compactionClient: null, compactionChatOptions: null,
-                maxSubAgentIterations: maxSubIters, prodMode: false, ct: ct, cleanSession: false);
+                maxSubAgentIterations: maxSubIters, prodMode: false, ct: memberCancellation.Token, cleanSession: false);
         }
 
         // --- spawn_team: materialize a REAL team (board + mailbox + providers), not just a registry row.
@@ -138,8 +141,11 @@ public static class GigaMode
                 [Description("Short name for the ephemeral team.")] string name,
                 [Description("Comma-separated member agent names (must be defined agents).")] string members,
                 [Description("Coordination: 'fanout' (independent parallel) or 'taskboard' (dependency board). Default fanout.")] string? coordination,
-                [Description("When true, also persist this team to swarm.json teams[] so it survives a restart.")] bool persist) =>
+                [Description("When true, also persist this team to swarm.json teams[] so it survives a restart.")] bool persist,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var disp = "giga:" + (name ?? "team").Trim();
                 var mem = (members ?? string.Empty)
                     .Split(new[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries)
@@ -205,8 +211,11 @@ public static class GigaMode
                 [Description("JSON array of assignments: [{\"agent\":\"<member>\",\"task\":\"<instruction>\"}, ...]")] string assignments,
                 [Description("When true, fire the members into the BACKGROUND and return their job ids IMMEDIATELY " +
                              "(non-blocking) so you keep working; poll/collect later with check_delegations. " +
-                             "Default false blocks until the batch finishes and returns all results.")] bool background = false) =>
+                             "Default false blocks until the batch finishes and returns all results.")] bool background = false,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var disp = string.IsNullOrWhiteSpace(name) ? (ActiveTeamName ?? "") : name!.Trim();
                 List<string> roster;
                 lock (_gate)
@@ -237,6 +246,8 @@ public static class GigaMode
                     var failed = new List<string>();
                     foreach (var a in list)
                     {
+                        ct.ThrowIfCancellationRequested();
+                        ExecutionCancellation.Current.ThrowIfCancellationRequested();
                         var agent = (a.Agent ?? string.Empty).Trim();
                         if (!rosterSet.Contains(agent))
                         {
@@ -256,6 +267,10 @@ public static class GigaMode
                     return bg.ToString();
                 }
 
+                using var batchCancellation = ExecutionCancellation.Link(ct);
+                using var batchOwnership = ExecutionCancellation.Enter(batchCancellation.Token);
+                var batchToken = batchCancellation.Token;
+                batchToken.ThrowIfCancellationRequested();
                 // Bound concurrency so a giant batch does not blow past rate limits all at once.
                 int maxPar = App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4;
                 using var gate = new SemaphoreSlim(maxPar);
@@ -264,9 +279,9 @@ public static class GigaMode
                     var agent = (a.Agent ?? string.Empty).Trim();
                     if (!rosterSet.Contains(agent))
                         return $"[ERROR {agent}] Not a member of '{disp}'. Members: {string.Join(", ", roster)}";
-                    await gate.WaitAsync(ct);
+                    await gate.WaitAsync(batchToken);
                     try { return await RunOne(agent, a.Task ?? string.Empty); }
-                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
                     {
                         // Real turn cancellation unwinds the whole batch (same rule as delegate_parallel).
                         throw;
@@ -356,8 +371,11 @@ public static class GigaMode
 
         tools.Add(AIFunctionFactory.Create(
             method: async (
-                [Description("High-level goal to break down into a blockedBy task graph on the active board.")] string goal) =>
+                [Description("High-level goal to break down into a blockedBy task graph on the active board.")] string goal,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var board = TeamController.ActiveBoard;
                 if (board is null) return "[giga] The active team has no task board (spawn a 'taskboard' team).";
                 var (dclient, dopts) = ResolveDecomposeClient(chatClientFactory, agentModels);
@@ -401,8 +419,11 @@ public static class GigaMode
         tools.Add(AIFunctionFactory.Create(
             method: (
                 [Description("True to start the peer self-claim engine, false to stop it.")] bool enabled,
-                [Description("Optional poll interval seconds (default 15, floor 3).")] int? intervalSeconds) =>
+                [Description("Optional poll interval seconds (default 15, floor 3).")] int? intervalSeconds,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var peer = TeamController.ActivePeerRunner;
                 if (peer is null) return "[giga] The active team has no peer engine (spawn a 'taskboard' team).";
                 if (enabled) { peer.Start(intervalSeconds ?? 15); return $"[giga] Peer self-claim ON (every {peer.IntervalSeconds}s). Members run their own assigned board tasks."; }
@@ -437,8 +458,11 @@ public static class GigaMode
 
         tools.Add(AIFunctionFactory.Create(
             method: async (
-                [Description("Path to a .workflow.json file (absolute, or a name under the Teams directory).")] string path) =>
+                [Description("Path to a .workflow.json file (absolute, or a name under the Teams directory).")] string path,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var p = (path ?? string.Empty).Trim().Trim('"', '\'');
                 if (!File.Exists(p))
                 {
@@ -458,6 +482,8 @@ public static class GigaMode
                 string priorContext = "";
                 for (int i = 0; i < wf.Steps.Count; i++)
                 {
+                    ct.ThrowIfCancellationRequested();
+                    ExecutionCancellation.Current.ThrowIfCancellationRequested();
                     var raw = wf.Steps[i] ?? string.Empty;
                     string agent = "Orchestrator", instruction = raw;
                     int colon = raw.IndexOf(':');
@@ -497,8 +523,11 @@ public static class GigaMode
         tools.Add(AIFunctionFactory.Create(
             method: (
                 [Description("Short workflow name (labels the run in /workflows).")] string name,
-                [Description("COMPLETE Python driver script following the dynamic-workflow contract (muxswarm SDK, manifest.json + status.ndjson into MUX_RUN_DIR). Pass an empty string to get the contract + skeleton back without launching.")] string script) =>
+                [Description("COMPLETE Python driver script following the dynamic-workflow contract (muxswarm SDK, manifest.json + status.ndjson into MUX_RUN_DIR). Pass an empty string to get the contract + skeleton back without launching.")] string script,
+                CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 int maxPar = App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4;
                 if (string.IsNullOrWhiteSpace(script))
                     return DynamicWorkflow.ScriptContract(maxPar);

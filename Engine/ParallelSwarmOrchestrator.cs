@@ -297,9 +297,12 @@ public static class ParallelSwarmOrchestrator
         var subAgentDelegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
-                [Description("The specific sub-task or instruction for the specialist agent")] string task
+                [Description("The specific sub-task or instruction for the specialist agent")] string task,
+                CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 if (agentName == "Orchestrator")
                     return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
 
@@ -447,24 +450,31 @@ public static class ParallelSwarmOrchestrator
         var delegateParallelTool = AIFunctionFactory.Create(
             method: async (
                 [Description("A list of agent assignments to run simultaneously")]
-                IEnumerable<ParallelTaskRequest> assignments
+                IEnumerable<ParallelTaskRequest> assignments,
+                CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
+                using var batchCancellation = ExecutionCancellation.Link(cancellationToken);
+                using var batchOwnership = ExecutionCancellation.Enter(batchCancellation.Token);
+                var batchToken = batchCancellation.Token;
+                batchToken.ThrowIfCancellationRequested();
                 var assignmentList = assignments.ToList();
                 if (App.VerboseInit) MuxConsole.WriteInfo($"Dispatching {assignmentList.Count} tasks concurrently...");
 
                 var taskBatch = assignmentList.Select(async req =>
                 {
-                    await semaphore.WaitAsync(cancellationToken);
+                    await semaphore.WaitAsync(batchToken);
                     try
                     {
                         return await ExecuteParallelWorker(
                             req.AgentName, req.Task, "Orchestrator",
                             specialists, delegationResults, retryRegistry,
                             chatClientFactory, agentModels, compactionClient, compactionChatOptions,
-                            maxSubAgentIterations, prodMode, ct: cancellationToken);
+                            maxSubAgentIterations, prodMode, ct: batchToken);
                     }
-                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    catch (OperationCanceledException) when (batchToken.IsCancellationRequested)
                     {
                         // Real turn cancellation propagates and unwinds the batch.
                         throw;
@@ -739,6 +749,7 @@ public static class ParallelSwarmOrchestrator
 
             try
             {
+                using var goalOwnership = ExecutionCancellation.Enter(goalCts.Token);
                 await RunOrchestratedGoalAsync(
                     goal: goal,
                     orchestratorAgent: orchestratorAgent,
@@ -748,12 +759,13 @@ public static class ParallelSwarmOrchestrator
                     cancellationToken: goalCts.Token,
                     prodMode: prodMode,
                     continuous: continuous);
+                goalCts.Token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (goalCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 wasInterrupted = true;
                 MuxConsole.WriteLine();
-                MuxConsole.WriteWarning("Goal cancelled by user (Escape key pressed).");
+                MuxConsole.WriteWarning("Goal cancelled; cancellation sent to owned subagent work (Esc / Ctrl+Q).");
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
             finally
@@ -1145,6 +1157,7 @@ public static class ParallelSwarmOrchestrator
             }
 
             if (!MuxConsole.IsTui) MuxConsole.WriteLine();
+            cancellationToken.ThrowIfCancellationRequested();
             string response = responseText.ToString();
 
             lock (_stateLock)
@@ -1211,6 +1224,10 @@ public static class ParallelSwarmOrchestrator
         CancellationToken ct,
         bool cleanSession = false)
     {
+        using var invocation = ExecutionCancellation.Link(ct);
+        using var workerOwnership = ExecutionCancellation.Enter(invocation.Token);
+        ct = invocation.Token;
+        ct.ThrowIfCancellationRequested();
         if (!specialists.TryGetValue(agentName, out var specialist))
         {
             var available = string.Join(", ", specialists.Keys.Where(k => k != "Orchestrator"));
@@ -1368,9 +1385,12 @@ public static class ParallelSwarmOrchestrator
         // Per-child cancellation source registered under this lane, so a scoped Esc on the
         // foregrounded/expanded sub-agent cancels only this child (siblings keep their shared
         // batch token). Whole-turn cancel still flows through the linked token. Auto-deregisters.
-        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subCts = ExecutionCancellation.Link(cancellationToken);
+        using var childOwnership = ExecutionCancellation.Enter(_subCts.Token);
+        _subCts.Token.ThrowIfCancellationRequested();
         using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
         cancellationToken = _subCts.Token;
+        using var cancellationStatus = cancellationToken.Register(() => MuxConsole.SetCapturedStatus("cancelled"));
 
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
@@ -1658,6 +1678,7 @@ public static class ParallelSwarmOrchestrator
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             MuxConsole.WriteLine();
             fullResponseAccumulator.AppendLine(iterResponse.ToString());
 

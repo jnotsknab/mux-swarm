@@ -22,13 +22,18 @@ public static class TaskDecomposer
 
     /// <summary>
     /// Decompose <paramref name="goal"/> into subtasks on <paramref name="board"/>. Returns a short
-    /// human-readable summary (also suitable as a tool result). Never throws: on any failure it
-    /// returns an explanatory string and leaves the board untouched.
+    /// human-readable summary (also suitable as a tool result). Model/parse failures return an
+    /// explanatory string. Owned cancellation propagates and stops further board creation; already
+    /// created tasks are not rolled back.
     /// </summary>
     public static async Task<string> DecomposeAsync(
         TaskBoard board, string goal, IReadOnlyList<string> members,
         IChatClient? client, ChatOptions? options, int maxSubtasks, CancellationToken ct)
     {
+        using var cancellation = ExecutionCancellation.Link(ct);
+        using var ownership = ExecutionCancellation.Enter(cancellation.Token);
+        ct = cancellation.Token;
+        ct.ThrowIfCancellationRequested();
         if (board is null) return "[decompose] No active board to populate.";
         if (string.IsNullOrWhiteSpace(goal)) return "[decompose] Empty goal; nothing to decompose.";
         if (client is null) return "[decompose] No decomposition model available (set decompose.model or a compaction/orchestrator model).";
@@ -66,8 +71,10 @@ public static class TaskDecomposer
                 safe.ToolMode = ChatToolMode.None;
             }
             var resp = await client.GetResponseAsync(new[] { sys, usr }, safe, ct);
+            ct.ThrowIfCancellationRequested();
             raw = resp.Text ?? string.Empty;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { return "[decompose] Cancelled."; }
         catch (Exception ex) { return $"[decompose] Model call failed: {ex.Message}"; }
 
@@ -90,6 +97,7 @@ public static class TaskDecomposer
 
         foreach (var s in order)
         {
+            ct.ThrowIfCancellationRequested();
             var deps = s.DependsOn
                 .Where(localToRealId.ContainsKey)
                 .Select(d => localToRealId[d])

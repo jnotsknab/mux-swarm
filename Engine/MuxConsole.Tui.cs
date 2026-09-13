@@ -266,27 +266,6 @@ public static partial class MuxConsole
         }
     }
 
-    /// <summary>
-    /// Scoped cancellation entry point for Esc while sub-agents are live. If the user has
-    /// FOREGROUNDED a specific sub-agent (Enter in the backslash Agent View -> sticky
-    /// <c>TuiDriver.ForegroundAgent</c>) and that lane has a live CTS, cancel ONLY that child and
-    /// return true (siblings + the lead turn keep running). Otherwise return false so the caller
-    /// falls back to cancelling the whole turn. No sub-agents / none foregrounded -> false.
-    /// </summary>
-    public static bool TryCancelForegroundedSubAgent()
-    {
-        if (!ViaDriver) return false;
-        string? lane;
-        lock (ConsoleLock) { lane = _driver!.ForegroundAgent; }
-        if (string.IsNullOrEmpty(lane)) return false;
-        CancellationTokenSource? cts;
-        lock (_captureGate) { _laneCts.TryGetValue(lane, out cts); }
-        if (cts is null || cts.IsCancellationRequested) return false;
-        try { cts.Cancel(); } catch (ObjectDisposedException) { return false; }
-        WriteInfo($"Cancelled sub-agent: {lane}");
-        return true;
-    }
-
     /// <summary>Record the sub-agent's completion status (from signal_task_complete) on the
     /// active capture, so the collapsed line can show success/failure. No-op when not capturing.</summary>
     public static void SetCapturedStatus(string? status)

@@ -441,7 +441,10 @@ public static class TeamController
         // auto-compacts a warm session that grows past the member threshold.
         async Task<string> RunMember(string agent, string task)
         {
-            await semaphore.WaitAsync(ct);
+            using var memberCancellation = ExecutionCancellation.Link(ct);
+            using var memberOwnership = ExecutionCancellation.Enter(memberCancellation.Token);
+            var memberToken = memberCancellation.Token;
+            await semaphore.WaitAsync(memberToken);
             try
             {
                 state.LastActive = DateTimeOffset.UtcNow;
@@ -454,10 +457,10 @@ public static class TeamController
                         agent, brief, leadName,
                         MultiAgentOrchestrator.Specialists, delegationResults, retryRegistry,
                         chatClientFactory, agentModels, compactionClient: null, compactionChatOptions: null,
-                        maxSubAgentIterations: maxSubIters, prodMode: false, ct: ct, cleanSession: cleanSession),
-                    ct);
+                        maxSubAgentIterations: maxSubIters, prodMode: false, ct: memberToken, cleanSession: cleanSession),
+                    memberToken);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException) when (memberToken.IsCancellationRequested) { throw; }
             catch (Exception ex) { return $"[ERROR {agent}] {ex.Message}"; }
             finally { semaphore.Release(); }
         }
@@ -469,8 +472,10 @@ public static class TeamController
         tools.Add(AIFunctionFactory.Create(
             method: async (
                 [Description("Member assignments to run concurrently. Each has an Agent (a team member name) and a Task.")]
-                IEnumerable<TeamAssignment> assignments) =>
+                IEnumerable<TeamAssignment> assignments, CancellationToken invocationToken = default) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var list = (assignments ?? []).ToList();
                 if (list.Count == 0) return "[teams] No assignments provided.";
 
@@ -589,8 +594,11 @@ public static class TeamController
             // dispatcher (/taskgraph) is the opt-in periodic form.
             tools.Add(AIFunctionFactory.Create(
                 method: async (
-                    [Description("High-level goal to break down into a blockedBy task graph on this board.")] string goal) =>
+                    [Description("High-level goal to break down into a blockedBy task graph on this board.")] string goal,
+                    CancellationToken invocationToken = default) =>
                 {
+                    using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                    invocationToken.ThrowIfCancellationRequested();
                     var (dclient, dopts) = ResolveDecomposeClient(chatClientFactory, agentModels);
                     int cap = MultiAgentOrchestrator.SwarmConfig?.Decompose?.MaxSubtasks ?? 12;
                     return await TaskDecomposer.DecomposeAsync(board, goal, members, dclient, dopts, cap, ct);
@@ -606,8 +614,12 @@ public static class TeamController
             tools.Add(AIFunctionFactory.Create(
                 method: async (
                     [Description("The task id to assign (e.g. 't1').")] string taskId,
-                    [Description("The team member to assign/reassign it to.")] string agent) =>
+                    [Description("The team member to assign/reassign it to.")] string agent,
+                    CancellationToken invocationToken = default) =>
                 {
+                    using var assignmentCancellation = ExecutionCancellation.Link(ct, invocationToken);
+                    using var assignmentOwner = ExecutionCancellation.Enter(assignmentCancellation.Token);
+                    assignmentCancellation.Token.ThrowIfCancellationRequested();
                     var id = (taskId ?? string.Empty).Trim();
                     var who = (agent ?? string.Empty).Trim();
                     if (!memberSet.Contains(who))
@@ -622,7 +634,7 @@ public static class TeamController
                     if (!board.TryClaim(id, who, out var reason))
                         return $"[teams] Cannot assign {id} to {who}: {reason}";
 
-                    return await RunBoardTask(board, id, who, RunMember, state, ct);
+                    return await RunBoardTask(board, id, who, RunMember, state, assignmentCancellation.Token);
                 },
                 name: "task_assign",
                 description: "Assign (or reassign) a board task to a member: atomically claims it, runs the member on " +
@@ -781,8 +793,11 @@ public static class TeamController
             tools.Add(AIFunctionFactory.Create(
                 method: (
                     [Description("True to start the auto-runner, false to stop it.")] bool enabled,
-                    [Description("Optional poll interval in seconds (how often to scan for runnable tasks). Default 15, floor 3.")] int? intervalSeconds) =>
+                    [Description("Optional poll interval in seconds (how often to scan for runnable tasks). Default 15, floor 3.")] int? intervalSeconds,
+                    CancellationToken invocationToken = default) =>
                 {
+                    using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                    invocationToken.ThrowIfCancellationRequested();
                     if (enabled)
                     {
                         runner.Start(intervalSeconds ?? 15);
@@ -809,8 +824,11 @@ public static class TeamController
             tools.Add(AIFunctionFactory.Create(
                 method: (
                     [Description("True to start the peer self-claim engine, false to stop it.")] bool enabled,
-                    [Description("Optional poll interval in seconds (how often each idle member scans for claimable work). Default 15, floor 3.")] int? intervalSeconds) =>
+                    [Description("Optional poll interval in seconds (how often each idle member scans for claimable work). Default 15, floor 3.")] int? intervalSeconds,
+                    CancellationToken invocationToken = default) =>
                 {
+                    using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                    invocationToken.ThrowIfCancellationRequested();
                     if (enabled)
                     {
                         peer.Start(intervalSeconds ?? 15);
@@ -968,7 +986,9 @@ public static class TeamController
         string result;
         try
         {
+            ct.ThrowIfCancellationRequested();
             result = await runMember(who, BuildTaskBrief(board, id));
+            ct.ThrowIfCancellationRequested();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1039,8 +1059,12 @@ public sealed class AutoRunner
         lock (_gate)
         {
             if (IsRunning) return;
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCt);
-            _loop = Task.Run(() => RunLoopAsync(_cts.Token));
+            var generation = ExecutionCancellation.Link(_sessionCt);
+            var token = generation.Token;
+            var work = new List<Task>();
+            _cts = generation;
+            _loop = Task.Run(() => RunLoopAsync(token, work));
+            _ = DisposeGenerationAsync(generation, _loop, work);
         }
     }
 
@@ -1053,7 +1077,14 @@ public sealed class AutoRunner
         }
     }
 
-    private async Task RunLoopAsync(CancellationToken ct)
+    private static async Task DisposeGenerationAsync(CancellationTokenSource source, Task scheduler, List<Task> work)
+    {
+        try { await scheduler; await Task.WhenAll(work); }
+        catch { /* loop/member paths report their failures; disposal must still happen */ }
+        finally { source.Dispose(); }
+    }
+
+    private async Task RunLoopAsync(CancellationToken ct, List<Task> work)
     {
         try
         {
@@ -1079,7 +1110,8 @@ public sealed class AutoRunner
                     // Fire-and-forget the task; the busy-set serializes per member and the board's
                     // lock serializes status writes. We do NOT await here so independent members run
                     // concurrently up to the member set size.
-                    _ = RunOneAsync(next.Id, who, ct);
+                    work.RemoveAll(t => t.IsCompleted);
+                    work.Add(RunOneAsync(next.Id, who, ct));
                 }
 
                 try { await Task.Delay(TimeSpan.FromSeconds(IntervalSeconds), ct); }
@@ -1242,14 +1274,24 @@ public sealed class MemberRunner
         lock (_gate)
         {
             if (IsRunning) return;
-            _cts = CancellationTokenSource.CreateLinkedTokenSource(_sessionCt);
+            var generation = ExecutionCancellation.Link(_sessionCt);
+            var token = generation.Token;
+            _cts = generation;
             _loops.Clear();
             foreach (var m in _members)
             {
                 var who = m;
-                _loops[who] = Task.Run(() => RunMemberLoopAsync(who, _cts.Token));
+                _loops[who] = Task.Run(() => RunMemberLoopAsync(who, token));
             }
+            _ = DisposeGenerationAsync(generation, _loops.Values.ToArray());
         }
+    }
+
+    private static async Task DisposeGenerationAsync(CancellationTokenSource source, Task[] loops)
+    {
+        try { await Task.WhenAll(loops); }
+        catch { /* member loops report failures */ }
+        finally { source.Dispose(); }
     }
 
     /// <summary>Stop every member loop. A task already in flight finishes naturally.</summary>

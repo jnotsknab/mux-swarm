@@ -193,7 +193,7 @@ public class SwarmPresentationTests
         // Call-site contract without provider/session/filesystem execution. Driver methods are exercised above.
         string text = File.ReadAllText(Path.Combine(SourceRoot(), "Engine", name));
         Assert.Contains("if (!MuxConsole.IsTui) MuxConsole.WriteSuccess(\"Orchestrator reports task complete.\");", text);
-        Assert.Contains("if (!MuxConsole.IsTui) MuxConsole.WriteLine();\n            string response = responseText.ToString();", text.Replace("\r\n", "\n"));
+        Assert.Contains("if (!MuxConsole.IsTui) MuxConsole.WriteLine();\n            cancellationToken.ThrowIfCancellationRequested();\n            string response = responseText.ToString();", text.Replace("\r\n", "\n"));
         Assert.Contains("if (!MuxConsole.IsTui) MuxConsole.WriteRule();", text);
         Assert.Contains("goalComplete = true;", text);
         Assert.Contains("return \"Task marked as complete.\";", text);

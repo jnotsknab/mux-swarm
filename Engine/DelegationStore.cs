@@ -272,6 +272,7 @@ internal static class DelegationStore
         IChatClient? compactionClient,
         ChatOptions? chatOptions)
     {
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         rawResult ??= "";
         var scopeKey = Sanitize(scopeId);
         int used = _leadChars.GetValueOrDefault(scopeKey, 0);

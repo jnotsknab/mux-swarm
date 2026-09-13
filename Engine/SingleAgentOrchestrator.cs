@@ -1126,11 +1126,10 @@ public static class SingleAgentOrchestrator
 
 
             int attempts = 0;
-            // Children must observe the PER-TURN cancel token too: Esc cancels the lead's turnCts
-            // (registered on StdinCancelMonitor), not this captured app/session token. Linking them
-            // means pressing Esc tears the sub-agent down instead of wedging the lead on its await.
-            using var delLinked = CancellationTokenSource.CreateLinkedTokenSource(
-                cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
+            // Link to the invoking execution owner in every transport, including native TUI.
+            using var delLinked = ExecutionCancellation.Link(cancellationToken);
+            using var delegationOwnership = ExecutionCancellation.Enter(delLinked.Token);
+            delLinked.Token.ThrowIfCancellationRequested();
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
                 specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, delLinked.Token, prodMode: false, cleanSession: true);
 
@@ -1231,9 +1230,12 @@ public static class SingleAgentOrchestrator
         var subAgentDelegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
-                [Description("The specific sub-task or instruction for the specialist agent")] string task
+                [Description("The specific sub-task or instruction for the specialist agent")] string task,
+                CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 var specialists = MultiAgentOrchestrator.Specialists;
                 if (agentName == "Orchestrator")
                     return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
@@ -1260,9 +1262,11 @@ public static class SingleAgentOrchestrator
                 [Description("When true, fire the tasks into the BACKGROUND and return their job ids " +
                     "IMMEDIATELY (non-blocking) so you keep working; poll/collect later with check_delegations. " +
                     "Default false blocks until the whole batch finishes and returns all results.")]
-                bool background = false
+                bool background = false, CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 if (chatClientFactory == null)
                     return "[Error] Cannot create chat client for agent, chat client is null";
 
@@ -1279,9 +1283,10 @@ public static class SingleAgentOrchestrator
                     var failed = new List<string>();
                     foreach (var req in assignmentList)
                     {
+                        ExecutionCancellation.Current.ThrowIfCancellationRequested();
                         var job = await DetachedRunner.LaunchAsync(
                             req.AgentName, req.Task, chatClientFactory, Models,
-                            StdinCancelMonitor.Instance?.ActiveTurnToken ?? cancellationToken);
+                            cancellationToken);
                         if (job is null) failed.Add(req.AgentName);
                         else launched.Add($"{job.Id} <- {req.AgentName}");
                     }
@@ -1297,12 +1302,8 @@ public static class SingleAgentOrchestrator
 
                 if (App.VerboseInit) MuxConsole.WriteInfo($"Dispatching {assignmentList.Count} tasks concurrently...");
 
-                // Link the captured app/session token with the live PER-TURN token so Esc (which
-                // cancels turnCts) unwinds the whole parallel batch. Otherwise the lead blocks on
-                // Task.WhenAll while the children run on an un-cancelled token -> input deadlock
-                // that only a restart clears.
-                using var batchLinked = CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken, StdinCancelMonitor.Instance?.ActiveTurnToken ?? CancellationToken.None);
+                using var batchLinked = ExecutionCancellation.Link(cancellationToken);
+                using var batchOwnership = ExecutionCancellation.Enter(batchLinked.Token);
                 var batchCt = batchLinked.Token;
 
                 var taskBatch = assignmentList.Select(async req =>
@@ -1674,19 +1675,27 @@ public static class SingleAgentOrchestrator
 
             ServeMode.EmitEvent(new { type = "compaction_start" });
 
-            await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
+            try
             {
-                compactedMsg = await ResultCompactor.CompactConversationAsync(
-                    conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
-
-                session = await agent.CreateSessionAsync();
-                conversationHistory.Clear();
-
-                conversationHistory.Add(new ChatMessage(ChatRole.User, compactedMsg.Text));
-
-                conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
-                    "Context restored. Ready to continue."));
-            });
+                await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
+                {
+                    compactedMsg = await ResultCompactor.CompactConversationAsync(
+                        conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
+                    var replacement = await agent.CreateSessionAsync(cancellationToken: ExecutionCancellation.Current);
+                    ExecutionCancellation.Current.ThrowIfCancellationRequested();
+                    session = replacement;
+                    conversationHistory.Clear();
+                    conversationHistory.Add(new ChatMessage(ChatRole.User, compactedMsg.Text));
+                    conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
+                        "Context restored. Ready to continue."));
+                });
+            }
+            catch
+            {
+                // Close the existing progress lifecycle without claiming context savings.
+                ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = beforeTokens });
+                throw;
+            }
 
             compactSw.Stop();
             OtelMetrics.CompactionRuns.Add(1);
@@ -1900,6 +1909,7 @@ public static class SingleAgentOrchestrator
             StringBuilder responseText = new();
             try
             {
+                using var turnOwnership = ExecutionCancellation.Enter(turnCts.Token);
                 for (int i = 0; i < maxIterations; i++)
                 {
                     turnCts.Token.ThrowIfCancellationRequested();
@@ -1963,6 +1973,7 @@ public static class SingleAgentOrchestrator
                         bool midTurnCompactDisabled = false;
                         do
                         {
+                        turnCts.Token.ThrowIfCancellationRequested();
                         lastFinishReason = null;
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
@@ -2143,6 +2154,7 @@ public static class SingleAgentOrchestrator
                             }
                         }
 
+                        turnCts.Token.ThrowIfCancellationRequested();
                         // Mid-turn compaction service point: the stream was stopped because the token
                         // threshold was crossed mid-turn. Compact now (TryCompactAsync summarizes the
                         // conversation, creates a FRESH session, and resets conversationHistory to the
@@ -2217,7 +2229,6 @@ public static class SingleAgentOrchestrator
                             try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
                         }
 
-                        StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                         thinking?.Dispose();
 
                         HookWorker.Enqueue(new HookEvent
@@ -2238,6 +2249,7 @@ public static class SingleAgentOrchestrator
                         OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "assistant", responseText.ToString());
                     }
 
+                    turnCts.Token.ThrowIfCancellationRequested();
                     MuxConsole.WriteAgentTurnFooter();
 
                     string response = responseText.ToString();
@@ -2305,11 +2317,16 @@ public static class SingleAgentOrchestrator
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant, partial + "\r\n\r\n[interrupted by user]"));
 
                 MuxConsole.WriteLine();
-                MuxConsole.WriteWarning("Turn cancelled by user (Esc key pressed).");
+                MuxConsole.WriteWarning("Turn cancelled; cancellation sent to owned subagent work (Esc / Ctrl+Q).");
             }
             catch (Exception ex)
             {
                 MuxConsole.WriteError(ex.Message);
+            }
+            finally
+            {
+                StdinCancelMonitor.Instance?.ClearActiveTurnCts();
+                escapeListener.Dispose();
             }
 
             cancellationToken.ThrowIfCancellationRequested();

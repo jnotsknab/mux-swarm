@@ -218,6 +218,9 @@ public static class MultiAgentOrchestrator
             string callerName,
             bool restrictToSpecialists)
         {
+            using var delegationCancellation = ExecutionCancellation.Link(cancellationToken);
+            using var delegationOwnership = ExecutionCancellation.Enter(delegationCancellation.Token);
+            delegationCancellation.Token.ThrowIfCancellationRequested();
             if (restrictToSpecialists && agentName == "Orchestrator")
                 return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
 
@@ -260,7 +263,7 @@ public static class MultiAgentOrchestrator
             });
 
             var (rawResult, status, summary, artifacts) = await RunSubAgentAsync(
-                specialist, enrichedTask, maxSubAgentIterations, cancellationToken, prodMode: prodMode);
+                specialist, enrichedTask, maxSubAgentIterations, delegationCancellation.Token, prodMode: prodMode);
 
             bool succeeded = status == "success";
             if (!succeeded)
@@ -324,9 +327,12 @@ public static class MultiAgentOrchestrator
         var delegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to")] string agentName,
-                [Description("The specific sub-task or instruction for the agent")] string task
+                [Description("The specific sub-task or instruction for the agent")] string task,
+                CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 return await ExecuteDelegation(agentName, task, "Orchestrator", restrictToSpecialists: false);
             },
             name: "delegate_to_agent",
@@ -338,9 +344,12 @@ public static class MultiAgentOrchestrator
         var subAgentDelegateTool = AIFunctionFactory.Create(
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
-                [Description("The specific sub-task or instruction for the specialist agent")] string task
+                [Description("The specific sub-task or instruction for the specialist agent")] string task,
+                CancellationToken invocationToken = default
             ) =>
             {
+                using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
+                invocationToken.ThrowIfCancellationRequested();
                 return await ExecuteDelegation(agentName, task, "SubAgent", restrictToSpecialists: true);
             },
             name: "delegate_to_agent",
@@ -724,6 +733,7 @@ public static class MultiAgentOrchestrator
 
             try
             {
+                using var goalOwnership = ExecutionCancellation.Enter(goalCts.Token);
                 await RunOrchestratedGoalAsync(
                     goal: goal,
                     orchestratorAgent: orchestratorAgent,
@@ -737,17 +747,19 @@ public static class MultiAgentOrchestrator
                     prodMode: prodMode,
                     continuous: continuous
                 );
+                goalCts.Token.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (goalCts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
                 wasInterrupted = true;
                 MuxConsole.WriteLine();
-                MuxConsole.WriteWarning("Goal cancelled by user (Escape key pressed).");
+                MuxConsole.WriteWarning("Goal cancelled; cancellation sent to owned subagent work (Esc / Ctrl+Q).");
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
             finally
             {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
+                escapeListener?.Dispose();
                 MuxConsole.StopTuiTurnClock();
                 // Goal usage is cumulative work, not a single-agent context-window percentage.
                 MuxConsole.UpdateDockedFooter(_swarmTokens, 0, shouldPlan, App.UltraMode, false, giga: App.GigaMode);
@@ -1371,6 +1383,7 @@ public static class MultiAgentOrchestrator
             }
 
             if (!MuxConsole.IsTui) MuxConsole.WriteLine();
+            cancellationToken.ThrowIfCancellationRequested();
             string response = responseText.ToString();
 
             for (int r = resultsCountBefore; r < delegationResults.Count; r++)
@@ -1449,9 +1462,12 @@ public static class MultiAgentOrchestrator
         // sub-agent cancels just this child. The whole-turn cancel still flows through the linked
         // token. The IDisposable lane-deregistration + CTS dispose run when the scope exits (no
         // try/finally needed around the method body's many returns).
-        using var _subCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var _subCts = ExecutionCancellation.Link(cancellationToken);
+        using var childOwnership = ExecutionCancellation.Enter(_subCts.Token);
+        _subCts.Token.ThrowIfCancellationRequested();
         using var _subLaneScope = MuxConsole.ScopedLaneCts(_subCts);
         cancellationToken = _subCts.Token;
+        using var cancellationStatus = cancellationToken.Register(() => MuxConsole.SetCapturedStatus("cancelled"));
 
         using var subAgentSpan = OtelTracer.GetSource().StartActivity("agent_session");
         subAgentSpan?.SetTag("agent", specialist.Def.Name);
@@ -1753,6 +1769,7 @@ public static class MultiAgentOrchestrator
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             MuxConsole.WriteLine();
             fullResponseAccumulator.AppendLine(iterResponse.ToString());
 

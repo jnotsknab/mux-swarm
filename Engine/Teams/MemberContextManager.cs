@@ -114,19 +114,24 @@ public sealed class MemberContextManager
         // fresh => clean session each task; persistent => keep the warm session.
         bool cleanSession = !IsPersistent;
         string result;
+        bool completed = false;
         try
         {
+            ct.ThrowIfCancellationRequested();
             result = await runWorker(cleanSession);
+            ct.ThrowIfCancellationRequested();
+            completed = true;
         }
         finally
         {
             lock (_gate)
             {
-                st.CompletedTasks++;
+                if (completed) st.CompletedTasks++;
                 st.Status = "idle";
                 st.CurrentTask = null;
                 st.LastActive = DateTimeOffset.UtcNow;
             }
+            st.Save(_teamName);
         }
 
         if (IsPersistent)

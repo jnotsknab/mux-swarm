@@ -205,20 +205,14 @@ public sealed class EscapeKeyListener : IDisposable
                         }
                     }
                     {
-                        // Esc cancels. A BARE 'q'/'Q' is an alias: some terminals/apps capture Esc,
-                        // so q guarantees a working cancel. It mirrors Esc exactly - scoped cancel
-                        // first, else the whole turn - and only when unmodified (Ctrl/Alt+Q ignored).
+                        // Active-turn shortcuts are always turn-wide, even with a foregrounded lane.
+                        // Ctrl+Q survives hosts that reserve Escape. Retain the legacy bare native-Q alias.
+                        key = Tui.VtKeyboard.Normalize(key);
                         bool cancelKey = key.Key == ConsoleKey.Escape
-                            || (key.Key == ConsoleKey.Q
-                                && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0);
+                            || (key.Key == ConsoleKey.Q && !key.Modifiers.HasFlag(ConsoleModifiers.Alt)
+                                && (key.Modifiers & ~ConsoleModifiers.Shift) is 0 or ConsoleModifiers.Control);
                         if (cancelKey)
                         {
-                            // Scoped cancel: if the user foregrounded (expanded) a specific
-                            // sub-agent via the backslash Agent View, Esc/q cancels ONLY that child
-                            // and keeps listening (siblings + the lead turn continue). With no
-                            // sub-agents / none foregrounded, Esc/q cancels the whole turn as before.
-                            if (MuxConsole.TryCancelForegroundedSubAgent())
-                                continue;
                             targetCts.Cancel();
                             break;
                         }

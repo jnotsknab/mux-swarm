@@ -77,6 +77,8 @@ public static class DetachedRunner
         Dictionary<string, string> agentModels,
         CancellationToken sessionCt)
     {
+        sessionCt.ThrowIfCancellationRequested();
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         var who = (agent ?? string.Empty).Trim();
         if (who.Length == 0) { MuxConsole.WriteWarning("[detach] No agent specified."); return null; }
         if (string.IsNullOrWhiteSpace(goal)) { MuxConsole.WriteWarning("[detach] No goal specified."); return null; }
@@ -90,6 +92,7 @@ public static class DetachedRunner
                     agentModels, chatClientFactory,
                     (App.McpTools ?? throw new InvalidOperationException()).Cast<AITool>().ToList());
             }
+            catch (OperationCanceledException) when (sessionCt.IsCancellationRequested || ExecutionCancellation.Current.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 MuxConsole.WriteWarning($"[detach] Failed to build agents: {ex.Message}");
@@ -104,6 +107,8 @@ public static class DetachedRunner
             return null;
         }
 
+        sessionCt.ThrowIfCancellationRequested();
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         DetachedJob job;
         lock (_gate)
         {
@@ -112,7 +117,7 @@ public static class DetachedRunner
                 Id = $"bg{++_seq}",
                 Agent = who,
                 Goal = goal.Trim(),
-                Cts = CancellationTokenSource.CreateLinkedTokenSource(sessionCt),
+                Cts = ExecutionCancellation.Link(sessionCt),
             };
             _jobs.Add(job);
         }
@@ -124,6 +129,8 @@ public static class DetachedRunner
         {
             try
             {
+                using var jobOwnership = ExecutionCancellation.Enter(job.Cts.Token);
+                job.Cts.Token.ThrowIfCancellationRequested();
                 // Tag every NDJSON frame this background job emits with a serve origin+lane so the web
                 // app routes them into the job's own sub-agent card instead of interleaving them into
                 // the main viewport (mirrors how DaemonRunner tags its lane via BeginServeOrigin). The
@@ -145,8 +152,10 @@ public static class DetachedRunner
                 catch { /* activity is best-effort */ }
                 var (raw, status, _, _) = await MultiAgentOrchestrator.RunSubAgentAsync(
                     specialist, job.Goal, maxIters, job.Cts.Token, prodMode: false, hiddenCapture: true);
+                job.Cts.Token.ThrowIfCancellationRequested();
                 lock (_gate)
                 {
+                    job.Cts.Token.ThrowIfCancellationRequested();
                     job.Result = raw;
                     job.Status = status == "success" ? DetachedStatus.Done : DetachedStatus.Failed;
                     job.Finished = DateTimeOffset.UtcNow;
@@ -164,6 +173,7 @@ public static class DetachedRunner
             {
                 lock (_gate) { job.Status = DetachedStatus.Failed; job.Result = ex.Message; job.Finished = DateTimeOffset.UtcNow; }
             }
+            finally { job.Cts.Dispose(); }
         });
 
         return job;

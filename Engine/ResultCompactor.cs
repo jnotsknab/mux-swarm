@@ -85,6 +85,7 @@ public static class ResultCompactor
         IChatClient? chatClient = null,
         ChatOptions? chatOptions = null)
     {
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         // ── Tier 1: Structured prefix — prepend summary to rawResult, then fall through ──
         if (!string.IsNullOrWhiteSpace(completionSummary))
         {
@@ -142,6 +143,7 @@ public static class ResultCompactor
         ChatOptions? chatOptions = null,
         string? instruction = null)
     {
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         int charBudget = ExecutionLimits.Current.CompactionCharBudget;
         int? maxContentPassed = App.SwarmConfig?.CompactionAgent?.ModelOpts?.MaxOutputTokens;
 
@@ -207,13 +209,15 @@ public static class ResultCompactor
                 safeOptions.ToolMode = ChatToolMode.None;
             }
 
-            var response = await chatClient.GetResponseAsync(messages, safeOptions);
+            var response = await chatClient.GetResponseAsync(messages, safeOptions, ExecutionCancellation.Current);
+            ExecutionCancellation.Current.ThrowIfCancellationRequested();
             summary = response.Text ?? transcript.ToString();
 
             var extracted = ExtractTopLines(transcript.ToString(), charBudget / 2);
             summary += $"\n\n[EXTRACTED REFERENCES]\n{extracted}\n[END REFERENCES]";
 
         }
+        catch (OperationCanceledException) when (ExecutionCancellation.Current.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             MuxConsole.WriteMuted($"  [Compaction] LLM summary failed, using extractive fallback: {ex.Message}");
@@ -339,13 +343,15 @@ public static class ResultCompactor
                 new(ChatRole.User, input)
             };
 
-            var response = await chatClient.GetResponseAsync(messages, chatOptions);
+            var response = await chatClient.GetResponseAsync(messages, chatOptions, ExecutionCancellation.Current);
+            ExecutionCancellation.Current.ThrowIfCancellationRequested();
             string summary = response.Text ?? "";
 
             return string.IsNullOrWhiteSpace(summary)
                 ? ExtractTopLines(text, charBudget)
                 : summary;
         }
+        catch (OperationCanceledException) when (ExecutionCancellation.Current.IsCancellationRequested) { throw; }
         catch
         {
             return ExtractTopLines(text, charBudget);

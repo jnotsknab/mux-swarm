@@ -279,6 +279,19 @@ Esc, `\`, Q, or Ctrl+Q closes the dashboard. Letter shortcuts accept native key 
 character-only terminal input; Ctrl/Alt+H is not a hide action. Pasted text never invokes these
 shortcuts. Previously committed transcript entries are not erased by hiding a live lane.
 
+## Cancelling a turn (Esc / Ctrl+Q)
+
+During an active turn, **Esc, Ctrl+Q, or a bare native Q** cancels the **whole turn**: the lead
+and every delegated worker it owns — serial and parallel delegations, team/giga members, owned
+background jobs, and owned dynamic workflow drivers — observe the same cancellation, so the lead
+never deadlocks waiting on an un-cancelled child. Cancellation is turn-wide even when a specific
+lane is foregrounded in Agent View; use `\` + `h` to hide a lane without stopping it. Alt+Q is
+ignored. Independent background jobs launched by other turns are not cancelled.
+
+Inside a modal view (Agent View, `/set`, `/setmodel`, `/swap`), Esc/Ctrl+Q close that view; the
+mid-turn cancel listener does not consume keys while a modal or the idle prompt owns input.
+Partial output is preserved in the session as an interrupted exchange.
+
 ## Submitted input and agent headers
 
 Submitted user text keeps the same two-column body alignment on explicit multiline and
