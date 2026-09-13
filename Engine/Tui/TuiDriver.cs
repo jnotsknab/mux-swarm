@@ -1422,7 +1422,11 @@ internal sealed partial class TuiDriver
                     // pump is the only stdin reader); wheel/paste events are swallowed here.
                     while (true)
                     {
-                        if (!avPump.TryTake(out var av, 200)) continue;
+                        if (!avPump.TryTake(out var av, 200))
+                        {
+                            if (avPump.Disposed || _shuttingDown) return true;
+                            continue;
+                        }
                         if (av.Kind != ConsoleInputPump.EventKind.Key) continue;
                         key = av.Key; break;
                     }
@@ -1433,23 +1437,26 @@ internal sealed partial class TuiDriver
                     catch (InvalidOperationException) { break; }
                 }
 
-                if (key.Key == ConsoleKey.UpArrow || key.Key == ConsoleKey.K)
+                if (key.Key == ConsoleKey.UpArrow || AgentView.IsShortcut(key, 'k', ConsoleKey.K))
                     { _agentView.Move(-1, DateTime.UtcNow); Repaint(); continue; }
-                if (key.Key == ConsoleKey.DownArrow || key.Key == ConsoleKey.J)
+                if (key.Key == ConsoleKey.DownArrow || AgentView.IsShortcut(key, 'j', ConsoleKey.J))
                     { _agentView.Move(+1, DateTime.UtcNow); Repaint(); continue; }
 
                 // h: hide the selected lane from the main viewport (activity strip + expanded
                 // panel). It stays in this dashboard (tagged hidden), Enter unhides + attaches.
-                if (key.Key == ConsoleKey.H && onHide is not null)
+                if (AgentView.IsShortcut(key, 'h', ConsoleKey.H) && onHide is not null)
                 {
                     string? lane = _agentView.SelectedAgent(DateTime.UtcNow);
                     if (lane is not null)
                     {
                         string? resolved = onHide(lane);
-                        if (resolved is not null && IsSubAgentExpanded(resolved))
-                            ToggleSubAgentExpanded(resolved, bodyProvider(resolved) ?? "");  // close it
-                        _agentView.MarkHidden(resolved ?? lane, hidden: true);
-                        Repaint();
+                        if (resolved is not null)
+                        {
+                            if (IsSubAgentExpanded(resolved))
+                                ToggleSubAgentExpanded(resolved, bodyProvider(resolved) ?? "");  // close it
+                            _agentView.MarkHidden(resolved, hidden: true);
+                            Repaint();
+                        }
                     }
                     continue;
                 }
@@ -1457,7 +1464,7 @@ internal sealed partial class TuiDriver
                 // m: audit the selected agent's mailbox (M4). Commits its message-log rows to the
                 // transcript so cross-agent chatter is visible on demand (off by default - nothing
                 // shows until the user presses m). No-op when no team mailbox is active.
-                if ((key.Key == ConsoleKey.M || key.KeyChar == 'm') && MessageLogProvider is { } mlog)
+                if (AgentView.IsShortcut(key, 'm', ConsoleKey.M) && MessageLogProvider is { } mlog)
                 {
                     string? sel = _agentView.SelectedAgent(DateTime.UtcNow);
                     if (sel is not null)
@@ -1476,7 +1483,8 @@ internal sealed partial class TuiDriver
                 }
 
                 // Esc / backslash / q: close the dashboard and return to the foregrounded stream.
-                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || key.Key == ConsoleKey.Q)
+                if (key.Key == ConsoleKey.Escape || key.KeyChar == '\\' || AgentView.IsShortcut(key, 'q', ConsoleKey.Q)
+                    || (key.Key == ConsoleKey.Q && key.Modifiers == ConsoleModifiers.Control))
                     break;
 
                 // Enter: foreground (attach) the selected agent's buffered transcript. Reuses the

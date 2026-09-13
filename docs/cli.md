@@ -266,6 +266,19 @@ The classifier uses a short candidate window, a separate paste-idle window, and 
 Both docked TUI renderers negotiate **OSC 5522** with capable terminals; supported terminal-originated image pastes can work over SSH. Plain bracketed paste is text-only. If the terminal consumes a paste gesture and sends no event, use the alternate key or `/paste`. In SSH sessions without enhanced paste, upload the image and paste a path readable by Mux; Mux does not inspect an unrelated remote desktop clipboard. Clipboard images are not accepted by ask-user modals or transcript viewers.
 
 
+## Agent View visibility (`\`)
+
+Press `\` during a turn, or at an empty prompt, to open the live Agent View. Select a lane with
+Up/Down or bare J/K. **H hides the selected lane from the main activity strip and closes its expanded
+panel; it does not cancel the worker.** The lane stays selectable in Agent View with a visible
+`[hidden]` marker. Enter unhides and foregrounds the selected lane; `/unhide <lane>` restores its
+main-viewport visibility without deleting or restarting it. Duplicate agent names use distinct
+lane names (for example `WebAgent 2`).
+
+Esc, `\`, Q, or Ctrl+Q closes the dashboard. Letter shortcuts accept native key codes and
+character-only terminal input; Ctrl/Alt+H is not a hide action. Pasted text never invokes these
+shortcuts. Previously committed transcript entries are not erased by hiding a live lane.
+
 ## Submitted input and agent headers
 
 Submitted user text keeps the same two-column body alignment on explicit multiline and

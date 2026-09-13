@@ -32,6 +32,12 @@ internal sealed class AgentView
     private readonly HashSet<string> _locallyHidden = new(StringComparer.Ordinal);
     private bool _open;
 
+    /// <summary>Match a bare printable dashboard shortcut across native keys and character-only VT
+    /// records. Shift/case is allowed; Ctrl/Alt chords must not perform a printable action.</summary>
+    internal static bool IsShortcut(ConsoleKeyInfo key, char character, ConsoleKey nativeKey)
+        => (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0
+            && (char.ToUpperInvariant(key.KeyChar) == char.ToUpperInvariant(character) || key.Key == nativeKey);
+
     /// <summary>True while the dashboard is foregrounded (drawn into the live region).</summary>
     public bool IsOpen => _open;
 
@@ -161,7 +167,7 @@ internal sealed class AgentView
                 // The registry tags hidden lanes in their status ("hidden · ..."); a lane just
                 // hidden via 'h' carries the same tag locally so the row flips on the same repaint.
                 string hid = (st.StartsWith("hidden", StringComparison.OrdinalIgnoreCase) || _locallyHidden.Contains(r.Agent))
-                    ? $" [{TuiComponents.Dim}][hidden][/]" : "";
+                    ? $" [{TuiComponents.Dim}][[hidden]][/]" : "";
                 rows.Add(isSel
                     ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]{pin}{hid}"
                     : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]{pin}{hid}");
