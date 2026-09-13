@@ -296,6 +296,11 @@ internal sealed class LineEditor
 
     internal (string Text, int Cursor) Display => Attachments.Display(Buffer, _cursor);
 
+    /// <summary>Mouse click-to-position: move the caret to a raw buffer offset (clamped, snapped
+    /// outside attachment cards - the same snap the arrow keys apply).</summary>
+    internal void MoveCursorTo(int offset)
+        => _cursor = Attachments.SnapCursor(Math.Clamp(offset, 0, _buf.Length), forward: false);
+
     public void SetBuffer(string text, int? cursor = null)
     {
         Attachments.Clear();

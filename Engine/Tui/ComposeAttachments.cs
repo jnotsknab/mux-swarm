@@ -75,6 +75,26 @@ internal sealed class ComposeAttachments
         return item is null ? cursor : forward ? item.Start + item.Length : item.Start;
     }
 
+    /// <summary>Map a DISPLAY-text offset (as produced by <see cref="Display"/>) back to a raw
+    /// buffer offset - the inverse walk with the same guards. An offset inside a card label maps
+    /// to the card's start; the caller snaps further via <see cref="SnapCursor"/> as needed.
+    /// SafeText is 1:1 (per-char replacement), so no additional adjustment applies.</summary>
+    internal int DisplayToRaw(string raw, int displayOffset)
+    {
+        int rawPos = 0, dispPos = 0;
+        foreach (var item in _items)
+        {
+            if (item.Start < rawPos || item.Start + item.Length > raw.Length) continue;
+            int gap = item.Start - rawPos;
+            if (displayOffset <= dispPos + gap) return rawPos + (displayOffset - dispPos);
+            dispPos += gap; rawPos = item.Start;
+            int labelLen = Label(item).Length;
+            if (displayOffset < dispPos + labelLen) return item.Start;
+            dispPos += labelLen; rawPos = item.Start + item.Length;
+        }
+        return Math.Clamp(rawPos + (displayOffset - dispPos), 0, raw.Length);
+    }
+
     /// <summary>Build a compact safe display and map the raw cursor without rewriting the draft.</summary>
     internal (string Text, int Cursor) Display(string raw, int cursor)
     {

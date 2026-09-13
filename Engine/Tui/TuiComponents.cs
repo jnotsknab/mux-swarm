@@ -837,8 +837,20 @@ internal static class TuiComponents
     /// lines, each gutter-aligned under the prompt, with the synthetic block cursor placed on the
     /// correct visual line. Single-line buffers return exactly one row (unchanged behaviour).
     /// </summary>
+    /// <summary>Per-visual-row geometry of the compose input render: the lead's visible column
+    /// count and the (segment, offset, length) of the buffer chunk the row shows. Reported by
+    /// <see cref="InputRowsWithCursor"/> so mouse click-to-position maps a (row, column) back to
+    /// a buffer offset with the exact math that painted the row.</summary>
+    public readonly record struct InputRowMeta(int LeadCols, int Seg, int Pos, int Take);
+
     public static List<string> InputRowsWithCursor(string buffer, int cursor, int width = 0, bool highlight = false)
+        => InputRowsWithCursor(buffer, cursor, width, highlight, null);
+
+    /// <summary>Overload reporting per-row <see cref="InputRowMeta"/> (parallel to the returned
+    /// rows) from the same pass that painted them.</summary>
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width, bool highlight, List<InputRowMeta>? meta)
     {
+        meta?.Clear();
         const string cur = "#E0E0E0";
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
         // full width so the compose field reads as a contained region. Applied as a final pass over
@@ -873,10 +885,13 @@ internal static class TuiComponents
         int contLeadCols   = 2 + TuiMarkup.MarkupWidth(contGutter) + 1;
 
         if (string.IsNullOrEmpty(buffer))
+        {
+            meta?.Add(new InputRowMeta(promptLeadCols, 0, 0, 0));
             return Shade(new List<string>
             {
                 $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
             });
+        }
 
         cursor = Math.Clamp(cursor, 0, buffer.Length);
 
@@ -909,6 +924,7 @@ internal static class TuiComponents
                 int cap = width > 0 ? Math.Max(1, width - leadCols) : int.MaxValue;
                 int take = Math.Min(cap, seg.Length - pos);
                 string chunk = seg.Substring(pos, take);
+                meta?.Add(new InputRowMeta(leadCols, s, pos, take));
 
                 // Does the cursor fall on this visual chunk? A cursor sitting exactly at the chunk's
                 // trailing boundary belongs here only when it is also the segment end (append spot);

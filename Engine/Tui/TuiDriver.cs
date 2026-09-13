@@ -2281,6 +2281,14 @@ internal sealed partial class TuiDriver
             if (MapLiveLine(line, out int top, out int height))
                 hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.AgentLane, 0, agent));
         }
+        // Compose input rows: click = move the caret (the arrows alias). Payload = index into
+        // _composeMeta for the clicked visual row; local column maps to a chunk offset.
+        if (_inInput && !_editor.IsSearching)
+            foreach (var (line, metaRow) in _composeVisible)
+            {
+                if (metaRow < _composeMeta.Count && MapLiveLine(line, out int top, out int height))
+                    hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.ComposeArea, metaRow));
+            }
         // Transcript entries with expandable payloads: click toggles expand/collapse (the NAV
         // Enter alias). Walk the visible window bottom-up mirroring the render walk, mapping each
         // entry's wrapped extent to physical rows; only expandable entries register.
@@ -2556,6 +2564,12 @@ internal sealed partial class TuiDriver
     private readonly List<(int Row, string Agent)> _agentLaneRows = new();
     private readonly List<(int Line, string Agent)> _liveLaneLines = new();
 
+    // Compose input-row geometry (RenderCompose): per-visual-row lead/segment/offset metadata
+    // parallel to the full input render, plus which live-band lines show which meta rows.
+    // Click-to-position maps (region, localCol) back to a buffer offset with this.
+    private readonly List<TuiComponents.InputRowMeta> _composeMeta = new();
+    private readonly List<(int Line, int MetaRow)> _composeVisible = new();
+
     /// <summary>Hit map of the last composed main frame (test hook; null before first compose /
     /// in inline mode, where no frame is composed).</summary>
     internal MouseHitMap? FrameHitMap => _frameHits;
@@ -2660,6 +2674,24 @@ internal sealed partial class TuiDriver
                 _agentView.Select(lane);
                 if (_agentViewActive) Repaint();
                 else _pendingLaneOpen = lane;
+                break;
+
+            case MouseTargetKind.ComposeArea:
+                // Click-to-position: map (meta row, local column) back to a DISPLAY-text offset
+                // using the exact geometry that painted the row, then snap outside attachment
+                // cards via the editor's existing cursor API. Mid-turn compose clicks are dropped.
+                if (_mouseMidTurn) break;
+                if (captured.Payload < 0 || captured.Payload >= _composeMeta.Count) break;
+                var m = _composeMeta[captured.Payload];
+                var disp = _editor.Display;
+                // Column left of the lead = start of the chunk; beyond the chunk = its end.
+                int chunkCol = Math.Clamp((ev.Col - captured.Left + 1) - 1 - m.LeadCols, 0, m.Take);
+                int displayOffset = 0;
+                var segs = disp.Text.Split('\n');
+                for (int s = 0; s < m.Seg && s < segs.Length; s++) displayOffset += segs[s].Length + 1;
+                displayOffset += Math.Min(m.Pos + chunkCol, m.Seg < segs.Length ? segs[m.Seg].Length : 0);
+                _editor.MoveCursorTo(_editor.Attachments.DisplayToRaw(_editor.Buffer, displayOffset));
+                Repaint();
                 break;
         }
     }
@@ -3483,6 +3515,7 @@ internal sealed partial class TuiDriver
         else model.Bottom();
 
         int top = 0;
+        int navClickRow = -1;   // physical row of the last mouse press (press+release same row = click)
         string status = "";   // transient status line (e.g. "copied N chars")
         // Last-painted physical rows (ANSI) for diff repaint - only changed rows are rewritten,
         // so moving the cursor does NOT clear+redraw the whole screen (kills the flicker). null
@@ -3610,6 +3643,26 @@ internal sealed partial class TuiDriver
                         {
                             if (nv.WheelDir > 0) model.MoveUp(); else model.MoveDown();
                             Paint();
+                            continue;
+                        }
+                        if (nv.Kind == ConsoleInputPump.EventKind.Mouse)
+                        {
+                            // Click = SeekRow to the clicked transcript line (the hjkl alias).
+                            // NAV paints rows 1..viewH from `top`, so physical row r shows model
+                            // line top + r - 1; press+release on the same row is the click.
+                            if (!nv.MouseRelease && (nv.MouseButton & 0x20) == 0) navClickRow = nv.MouseRow;
+                            else if (nv.MouseRelease && navClickRow == nv.MouseRow)
+                            {
+                                navClickRow = -1;
+                                int navViewH = Math.Max(1, _term.Height - 2);
+                                int line = top + nv.MouseRow - 1;
+                                if (nv.MouseRow >= 1 && nv.MouseRow <= navViewH && line >= 0 && line < model.LineCount)
+                                {
+                                    model.SeekRow(line);
+                                    Paint();
+                                }
+                            }
+                            else if (nv.MouseRelease) navClickRow = -1;
                             continue;
                         }
                         if (nv.Kind != ConsoleInputPump.EventKind.Key) continue;

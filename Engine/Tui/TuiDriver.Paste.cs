@@ -136,7 +136,8 @@ internal sealed partial class TuiDriver
     private void RenderCompose(List<string> lines, int width, int availableRows)
     {
         var display = _editor.Display;
-        var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, width, highlight: _inputHighlight);
+        _composeMeta.Clear();
+        var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, width, _inputHighlight, _composeMeta);
         // Keep the cursor neighborhood visible when ordinary composed text itself spans many rows.
         int statusRows = _pasteStatus is null ? 0 : 1;
         int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;
@@ -147,6 +148,13 @@ internal sealed partial class TuiDriver
         lines.AddRange(_editor.Attachments.Render(_editor.Buffer, width, cardBudget));
         if (_pasteStatus is not null)
             lines.Add($"  [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(ComposeAttachments.SafeText(_pasteStatus), width - 3))}[/]");
+        // Record which live-band lines are visible input rows + their meta-window offset, so
+        // ComposeFrameRows can register ComposeArea regions (click-to-position). Meta rows are
+        // parallel to `input`; the visible window is input[start .. start+maxInput).
+        _composeVisible.Clear();
+        int shown = Math.Min(maxInput, Math.Max(0, input.Count - start));
+        for (int i = 0; i < shown; i++)
+            _composeVisible.Add((lines.Count + i, start + i));
         lines.AddRange(input.Skip(start).Take(maxInput));
     }
 
