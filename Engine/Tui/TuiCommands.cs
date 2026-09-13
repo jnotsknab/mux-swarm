@@ -127,7 +127,7 @@ internal static class TuiCommands
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
         new("/delagent",     "Remove a swarm agent (/delagent [name])", Scope.ReplOnly),
-        new("/swap",         "Swap the active single-agent model", Scope.ReplOnly),
+        new("/swap",         "Choose the single-agent definition with fuzzy search", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),

@@ -56,7 +56,7 @@ public struct Help
         "  /maxp           Maximum number of agents that can be running in parallel. (Default 4)",
         "  /model          View current models set for your swarm",
         "  /setmodel       Change the model for any agent, orchestrator, or compaction agent in your swarm config",
-        "  /swap           Swap the active agent for single-agent mode",
+        "  /swap           Fuzzy-search agents for the next single-agent run; Enter choose, Esc cancel (TUI)",
         "  /newagent       Guided wizard to create a swarm agent (name, MCP servers, model, prompt via helper agent or template)",
         "  /editagent      Edit a swarm agent (model, description, MCP servers, delegation) [/editagent <name>]",
         "  /delagent       Remove a swarm agent from Swarm.json (and optionally its prompt file) [/delagent <name>]",

@@ -267,31 +267,10 @@ public static class CliCmdUtils
         MuxConsole.WriteInfo($"{(parallel ? "Parallel " : "")}Sub-Agent Delegation for the standard /agent interface has been disabled.");
         return current;
     }
-    /// <summary>
-    /// Updates the single agent configuration by allowing the user to select from available agent definitions.
-    /// </summary>
-    /// <remarks>
-    /// This method retrieves all available agent definitions from the swarm configuration and combines them
-    /// with the currently configured single agent definition. It then displays a numbered list of distinct agents
-    /// and prompts the user to select one either by index number or by name. The selected agent becomes the new
-    /// active single agent configuration.
-    /// </remarks>/// <summary>
-    /// Swaps the current agent used in single agent mode with a different agent from the available definitions.
-    /// </summary>
-    /// <remarks>
-    /// This method retrieves all available agent definitions from the swarm configuration and combines them
-    /// with the currently configured single agent (if any), removing duplicates by name. It displays a numbered
-    /// list of available agents to the user and prompts for selection. The user can enter either the number
-    /// corresponding to an agent in the list or type the agent's name directly. Once a valid selection is made,
-    /// the method updates the <see cref="SingleAgentOrchestrator.AgentDef"/> property with the chosen agent.
-    /// If no matching agent is found, a warning message is displayed and the current agent configuration remains unchanged.
-    /// </remarks>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the agent definitions cannot be retrieved from the swarm configuration.
-    /// </exception>
-    /// <exception cref="InvalidOperationException">
-    /// Thrown when the current single agent definition cannot be loaded from configuration.
-    /// </exception>
+    /// <summary>Choose the agent definition for subsequent single-agent runs. Docked TUI offers fuzzy
+    /// search with explicit Enter/cancel; classic and stdio retain number-or-exact-name selection.</summary>
+    /// <remarks>Updates only the in-memory agent override. Does not save configuration or rebind a
+    /// running session; the existing session-to-menu confirmation remains required.</remarks>
     public static void HandleAgentSwap()
     {
         var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
@@ -300,29 +279,33 @@ public static class CliCmdUtils
         var allDefs = defaultDef != null
             ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
             : agentDefs;
-
         var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
-        var idxW = distinctDefs.Count.ToString().Length;
-        var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"{(i + 1).ToString().PadLeft(idxW)}  {a.Name}"));
-        MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
-
-        string choice = MuxConsole.Prompt("Agent: ");
-
-        Common.AgentDefinition? matched = null;
-        if (int.TryParse(choice, out var index) && index >= 1 && index <= distinctDefs.Count)
-            matched = distinctDefs[index - 1];
-        else
-            matched = distinctDefs.FirstOrDefault(d => d.Name.Equals(choice, StringComparison.OrdinalIgnoreCase));
-
-        if (matched != null)
+        if (distinctDefs.Count == 0)
         {
-            SingleAgentOrchestrator.AgentDef = matched;
-            MuxConsole.WriteSuccess($"Successfully updated singular agent mode to utilize: {matched.Name}");
+            MuxConsole.WriteWarning("No agents available to swap.");
+            return;
         }
-        else
+
+        Common.AgentDefinition? matched;
+        if (!MuxConsole.TryAgentPicker(distinctDefs, (SingleAgentOrchestrator.AgentDef ?? defaultDef)?.Name, out matched))
         {
-            MuxConsole.WriteWarning($"No agent found matching: {choice}");
+            var idxW = distinctDefs.Count.ToString().Length;
+            var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"{(i + 1).ToString().PadLeft(idxW)}  {a.Name}"));
+            MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
+            string choice = MuxConsole.Prompt("Agent: ");
+            if (int.TryParse(choice, out var index) && index >= 1 && index <= distinctDefs.Count)
+                matched = distinctDefs[index - 1];
+            else
+                matched = distinctDefs.FirstOrDefault(d => d.Name.Equals(choice, StringComparison.OrdinalIgnoreCase));
+            if (matched is null)
+            {
+                MuxConsole.WriteWarning($"No agent found matching: {choice}");
+                return;
+            }
         }
+        if (matched is null) return; // Picker cancel never falls through to another prompt or a switch.
+        SingleAgentOrchestrator.AgentDef = matched;
+        MuxConsole.WriteSuccess($"Single-agent mode now uses {matched.Name} on the next run.");
     }
 
     public static void HandleMaxP()

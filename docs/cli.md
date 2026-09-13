@@ -165,7 +165,7 @@ Available at the top-level REPL.
 | `/newagent` | Guided wizard to create a swarm agent |
 | `/editagent` | Edit a swarm agent (model, description, MCP servers, delegation) |
 | `/delagent` | Remove a swarm agent from swarm.json (and optionally its prompt file) |
-| `/swap` | Swap the active agent for single-agent mode |
+| `/swap` | Fuzzy-search and choose the agent for subsequent single-agent runs |
 | `/verbose` | Toggle TUI tool output between compact and full panels |
 | `/subagentview` (`/sav`) | Toggle collapsed/expanded delegated sub-agent output |
 | `/daemonview` (`/dv`) | Toggle the daemon output view |
@@ -291,6 +291,29 @@ Both modes populate the existing footer with the orchestrator model and goal dur
 the footer shows cumulative goal token usage, **not a context-window percentage**. Token accounting
 itself is unchanged, and no context threshold or aggregate sys/tool breakdown is inferred.
 
+
+## Agent picker (`/swap`)
+
+In docked TUI (frame or inline), `/swap` opens a dedicated searchable agent list. The current
+agent is marked and selected initially; the highlighted agent’s description appears below the list.
+Type a name, abbreviation (ordered-character fuzzy match), or description terms. Every search term
+must match; exact names rank first. The existing configured single-agent/default plus agent roster
+and duplicate handling are unchanged. Filtering or navigating does not switch anything.
+
+| Control | Action |
+|---|---|
+| Type / Backspace | Filter by fuzzy agent name or description terms |
+| Up/Down, PgUp/PgDn, Home/End | Move the highlight; the selection stays visible |
+| Ctrl+U | Clear the search |
+| Enter | Choose the highlighted agent and close |
+| Esc / Ctrl+Q / Ctrl+C | Cancel without changing the current agent |
+
+The change is an **in-memory override for subsequent single-agent runs**, not a saved configuration
+edit, model change, or hot-swap of a running agent. Invoking `/swap` inside a session retains the
+existing confirmation to end the session and return to the menu. Classic, stdio, and non-docked
+paths retain the existing number-or-exact-name prompt. Paste only changes the search; it never
+confirms a choice. Tiny windows show resize/cancel guidance and cannot apply an unseen selection
+(minimum 20 usable columns and 10 rows). Long names/descriptions are clipped only for display.
 
 ## Model and effort picker (`/setmodel`)
 
