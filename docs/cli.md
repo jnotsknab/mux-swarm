@@ -26,8 +26,8 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--mcp-strict <bool>` | Require all MCP servers to connect (default true) |
 | `--docker-exec <bool>` | Route execution through Docker skills |
 | `--sandbox [backend]` | Startup sandbox backend override (default argument `docker`); validated and synced to config |
-| `--agent <name>` | Pick an agent and boot into a single-agent session (or the agent for a goal/machine run) |
-| `--agent-mode` | Boot straight into a single-agent session (pair with `--agent`) |
+| `--agent <name>` | Pick the lead and boot into the main agentic interface (or the agent for a goal/machine run) |
+| `--agent-mode` | Boot straight into the main agentic interface (pair with `--agent`) |
 | `--plan` | Plan mode (approve before executing) |
 | `--ultra` / `--ultraplan` | Max-reasoning mode (plan + auto sub-agents per config) |
 | `--giga` | Dynamic team/workflow orchestration (parity with `/giga`) |
@@ -58,7 +58,7 @@ mux-swarm --goal "<goal>"
 mux-swarm --goal <goal.txt>
 ```
 
-### Single-Agent via CLI
+### Lead agent via CLI
 
 ```bash
 mux-swarm --agent CodeAgent --goal "<goal>"
@@ -82,13 +82,31 @@ mux-swarm --parallel --max-parallelism 6 --goal task.txt
 
 Parallel mode decomposes a goal into independent subtasks and dispatches them concurrently across agents. Use `--max-parallelism` to cap simultaneous agent tasks (default 4). Combines with `--continuous` for recurring parallel batch runs.
 
+## Choosing an interface and execution style
+
+**Start with `/agent`**, Mux's main agentic interface. One lead owns the ongoing conversation, but
+can work directly or enlist specialists when enabled. `/sub` and `/psub` enable delegation;
+`/ultra` combines planning/reasoning with parallel delegation when `ultra.autoSubAgents` is enabled.
+`/giga` adds dynamic team/workflow tools, and team leads receive their configured coordination tools.
+These launches can match or exceed `/pswarm` capability; the specialty modes are not upgrades.
+
+- `/swarm`: dedicated serial coordination—one specialist task at a time at the coordinator level.
+- `/pswarm`: dedicated coordination of independent tasks in concurrent batches.
+- `/workflow`: repeatable execution with an explicit saved sequence or a scripted driver. An
+  adaptive swarm coordinator is not a guarantee of a fixed A→B→C order.
+
+The chosen interface, enabled capabilities, and active worker count are different facts. `/status`
+shows selected next-launch `/agent` settings, not a promise that workers are running. Context
+commands act on the owning lead session; delegated sessions are unchanged. Existing command names,
+CLI defaults, config keys such as `singleAgent`, and protocol mode identifiers are unchanged.
+
 ## Interactive Commands
 
 Type `/help` at any time for the built-in reference, or `/` in the live TUI for a fuzzy command palette. Commands are scoped: some only work inside a live session, some only at the top-level REPL, and a few work in both.
 
 ### Session-native commands
 
-Available inside a live single-agent session.
+Available inside a live lead-agent session (including supported team-lead launches). Delegation does not change ownership of this context; context commands do not operate on delegated sessions.
 
 | Command | Description |
 |---|---|
@@ -135,11 +153,11 @@ Available at the top-level REPL.
 
 | Command | Description |
 |---|---|
-| `/swarm` | Launch the multi-agent orchestrated swarm loop |
-| `/pswarm` | Launch the parallel swarm (concurrent batch dispatch) |
-| `/agent` | Launch an interactive single-agent loop |
-| `/stateless` | Stateless single-agent loop for one-off tasks |
-| `/subagents` (`/sub`) | Enable ephemeral sub-agent delegation inside a single-agent loop |
+| `/agent` | Open the main agentic interface with the selected lead (start here) |
+| `/swarm` | Specialty: coordinator dispatches one specialist task at a time |
+| `/pswarm` | Specialty: coordinator dispatches independent specialist tasks in concurrent batches |
+| `/stateless` | Stateless agentic session for one-off tasks |
+| `/subagents` (`/sub`) | Enable specialist delegation from the lead |
 | `/parasubagents` (`/psub`) | Enable parallel ephemeral sub-agent delegation |
 | `/workflow <file>` | Run a deterministic workflow from a JSON file |
 | `/teams [name]` | List and launch named teams from swarm.json |
@@ -153,7 +171,7 @@ Available at the top-level REPL.
 | Command | Description |
 |---|---|
 | `/plan` | Toggle plan mode (agents present a plan and ask for approval before executing) |
-| `/ultra` (`/ultraplan`) | Interactive deep-reasoning mode inside the single-agent loop: plan + maximum reasoning budget + heavy sub-agent delegation |
+| `/ultra` (`/ultraplan`) | Planning and deep reasoning for the main interface; parallel delegation when `ultra.autoSubAgents` is enabled |
 | `/giga` | Interactive Giga mode: ultra plus the agent can spawn named teams and author/run workflows on the fly |
 | `/continuous` (`/cont`) | Toggle continued autonomous execution |
 | `/addcontext` | Configure what context each agent is injected with |
@@ -165,7 +183,7 @@ Available at the top-level REPL.
 | `/newagent` | Guided wizard to create a swarm agent |
 | `/editagent` | Edit a swarm agent (model, description, MCP servers, delegation) |
 | `/delagent` | Remove a swarm agent from swarm.json (and optionally its prompt file) |
-| `/swap` | Fuzzy-search and choose the agent for subsequent single-agent runs |
+| `/swap` | Fuzzy-search and choose the lead for subsequent `/agent` sessions |
 | `/verbose` | Toggle TUI tool output between compact and full panels |
 | `/subagentview` (`/sav`) | Toggle collapsed/expanded delegated sub-agent output |
 | `/daemonview` (`/dv`) | Toggle the daemon output view |
@@ -182,7 +200,7 @@ Available at the top-level REPL.
 |---|---|
 | `/classic` | Switch to the classic line-by-line renderer |
 | `/tui` | Switch to the live full-screen TUI renderer |
-| `/resume` | Resume a previous single-agent session (shows #tags) |
+| `/resume` | Resume a previous lead-agent session (shows #tags) |
 | `/attach [id]` | Re-attach a detached session |
 | `/model` | View current model assignments |
 | `/provider` | View or switch the active LLM provider |
@@ -221,7 +239,7 @@ OpenAI-compatible native request options and surface provider rejections without
 retrying at a lower effort. The footer shows `max` or `custom <raw-value>` as selected.
 The next Shift+Tab or bare `/effort` after a custom selection returns to `low`.
 
-Selections affect the next model request in the active single-agent session; commands do not
+Selections affect the next model request in the active lead session; commands do not
 rewrite Swarm.json. To configure a startup selection, set `modelOpts.reasoning.effort` to
 `"max"` or `"custom <raw-value>"`. Ultra/giga retain their existing xhigh + numeric-budget
 default, but do not overwrite an explicit max/custom setting.
@@ -295,8 +313,8 @@ itself is unchanged, and no context threshold or aggregate sys/tool breakdown is
 ## Local context pruning (`/prune`)
 
 `/prune` is the quick, **deterministic/no-model** alternative to `/compact`: it elides selected
-text without generating a summary and immediately returns to the idle single-agent prompt.
-It applies to the active single-agent/lead session only—not swarm orchestrators, workers, an
+text without generating a summary and immediately returns to the idle lead-session prompt.
+It applies to the active `/agent` or team-lead session only—not swarm orchestrators, workers, an
 in-flight turn, or a brand-new session before its first turn. Unsupported contexts explain this
 instead of sending the command to a model. Run a normal turn after `/compact`, `/undo`, or a
 reseed before pruning that pending context.
@@ -343,9 +361,9 @@ universal power-loss or adversarial filesystem-race guarantee.
 ## Agent picker (`/swap`)
 
 In docked TUI (frame or inline), `/swap` opens a dedicated searchable agent list. The current
-agent is marked and selected initially; the highlighted agent’s description appears below the list.
+lead is marked and selected initially; the highlighted agent’s description appears below the list.
 Type a name, abbreviation (ordered-character fuzzy match), or description terms. Every search term
-must match; exact names rank first. The existing configured single-agent/default plus agent roster
+must match; exact names rank first. The existing configured `singleAgent` default plus agent roster
 and duplicate handling are unchanged. Filtering or navigating does not switch anything.
 
 | Control | Action |
@@ -356,7 +374,7 @@ and duplicate handling are unchanged. Filtering or navigating does not switch an
 | Enter | Choose the highlighted agent and close |
 | Esc / Ctrl+Q / Ctrl+C | Cancel without changing the current agent |
 
-The change is an **in-memory override for subsequent single-agent runs**, not a saved configuration
+The change is an **in-memory lead override for subsequent `/agent` sessions**, not a saved configuration
 edit, model change, or hot-swap of a running agent. Invoking `/swap` inside a session retains the
 existing confirmation to end the session and return to the menu. Classic, stdio, and non-docked
 paths retain the existing number-or-exact-name prompt. Paste only changes the search; it never
@@ -367,7 +385,7 @@ confirms a choice. Tiny windows show resize/cancel guidance and cannot apply an 
 
 With a docked TUI (frame or inline), `/setmodel` opens a dedicated full-screen view rather than
 printing model-selection cards into the transcript. It edits the same slots as before: the configured
-single agent, orchestrator, compaction agent, and entries in `agents`. Duplicate display names are
+lead (`singleAgent`), orchestrator, compaction agent, and entries in `agents`. Duplicate display names are
 disambiguated by the displayed slot ID. Each Apply updates one slot; switching slots reloads its saved
 values, so Apply before moving to another slot if you want to keep an edit.
 
@@ -424,7 +442,7 @@ alias; native tool identities remain `Filesystem` and `Shell`.
 
 ## Scoped tool browser (`/tools [query]`)
 
-`/tools` is read-only and works **in place** at the menu and in single-agent, swarm, and pswarm sessions;
+`/tools` is read-only and works **in place** at the menu and in lead-agent, swarm, and pswarm sessions;
 it no longer ends a session to display global tools. The submitted listing and live TUI preview use
 the same scope and fuzzy ranking. Matching searches tool name, native/MCP group, and description;
 multiple words must all match, and names also support in-order subsequences (for example `fsrtf`).
@@ -432,7 +450,7 @@ multiple words must all match, and names also support in-order subsequences (for
 At the main menu, **Global availability** contains enabled native Filesystem/Shell tools and connected
 external MCP tools, not a permission grant to every agent. While MCP startup is loading, the preview
 says so and updates when the catalog arrives. During a session it shows only the supplied agent or
-orchestrator toolset, including local runtime/delegation tools. Before a single agent's first goal,
+orchestrator toolset, including local runtime/delegation tools. Before the lead's first goal,
 only its already-filtered native/MCP tools exist; the browser labels this bootstrap scope and adds
 session-local tools once construction completes. Reattach restores the session's own catalog.
 

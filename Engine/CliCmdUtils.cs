@@ -143,7 +143,7 @@ public static class CliCmdUtils
             $"    Max Sub-Agent Iterations:     {l.MaxSubAgentIterations}",
             $"    Max Sub-Task Retries:         {l.MaxSubTaskRetries}",
             "",
-            "  Single Agent",
+            "  Agent / Lead Session",
             $"    Compaction Char Budget:       {l.CompactionCharBudget:N0} chars",
             $"    Compaction Max Message Chars: {l.CompactionMaxMessageChars:N0} chars",
             $"    Max Tool Iterations / Turn:   {(l.MaxToolIterationsPerTurn > 0 ? l.MaxToolIterationsPerTurn.ToString() : "unlimited")}",
@@ -254,26 +254,26 @@ public static class CliCmdUtils
 
         if (current && parallel)
         {
-            MuxConsole.WriteInfo("Parallel Sub-Agent Delegation for the standard /agent interface has been enabled.");
+            MuxConsole.WriteInfo("Parallel specialist delegation enabled for /agent.");
             return current;
         }
 
         if (current && !parallel)
         {
-            MuxConsole.WriteInfo("Sub-Agent Delegation for the standard /agent interface has been enabled.");
+            MuxConsole.WriteInfo("Specialist delegation enabled for /agent.");
             return current;
         }
 
-        MuxConsole.WriteInfo($"{(parallel ? "Parallel " : "")}Sub-Agent Delegation for the standard /agent interface has been disabled.");
+        MuxConsole.WriteInfo($"{(parallel ? "Parallel specialist" : "Specialist")} delegation disabled for /agent.");
         return current;
     }
-    /// <summary>Choose the agent definition for subsequent single-agent runs. Docked TUI offers fuzzy
+    /// <summary>Choose the lead agent definition for subsequent /agent sessions. Docked TUI offers fuzzy
     /// search with explicit Enter/cancel; classic and stdio retain number-or-exact-name selection.</summary>
     /// <remarks>Updates only the in-memory agent override. Does not save configuration or rebind a
     /// running session; the existing session-to-menu confirmation remains required.</remarks>
     public static void HandleAgentSwap()
     {
-        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
         var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
 
         var allDefs = defaultDef != null
@@ -282,7 +282,7 @@ public static class CliCmdUtils
         var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
         if (distinctDefs.Count == 0)
         {
-            MuxConsole.WriteWarning("No agents available to swap.");
+            MuxConsole.WriteWarning("No lead agents available to select.");
             return;
         }
 
@@ -291,8 +291,8 @@ public static class CliCmdUtils
         {
             var idxW = distinctDefs.Count.ToString().Length;
             var agentNames = string.Join("\n", distinctDefs.Select((a, i) => $"{(i + 1).ToString().PadLeft(idxW)}  {a.Name}"));
-            MuxConsole.WritePanel("Enter a number or name of the agent to swap", agentNames);
-            string choice = MuxConsole.Prompt("Agent: ");
+            MuxConsole.WritePanel("Choose the lead agent for the next /agent run by number or name", agentNames);
+            string choice = MuxConsole.Prompt("Lead agent: ");
             if (int.TryParse(choice, out var index) && index >= 1 && index <= distinctDefs.Count)
                 matched = distinctDefs[index - 1];
             else
@@ -305,7 +305,7 @@ public static class CliCmdUtils
         }
         if (matched is null) return; // Picker cancel never falls through to another prompt or a switch.
         SingleAgentOrchestrator.AgentDef = matched;
-        MuxConsole.WriteSuccess($"Single-agent mode now uses {matched.Name} on the next run.");
+        MuxConsole.WriteSuccess($"Lead agent set to {matched.Name} for the next /agent session.");
     }
 
     public static void HandleMaxP()
@@ -728,7 +728,7 @@ public static class CliCmdUtils
 
         if (sessionDirs.Count == 0)
         {
-            MuxConsole.WriteWarning("No single-agent sessions found.");
+            MuxConsole.WriteWarning("No lead-agent sessions found.");
             return null;
         }
 
@@ -740,7 +740,7 @@ public static class CliCmdUtils
                 Path.GetFileName(d).Equals(sessionId.Trim(), StringComparison.OrdinalIgnoreCase));
             if (direct == null)
             {
-                MuxConsole.WriteWarning($"No resumable single-agent session found matching: {sessionId}");
+                MuxConsole.WriteWarning($"No resumable lead-agent session found matching: {sessionId}");
                 return null;
             }
             return LoadResumeSession(direct);
@@ -831,7 +831,8 @@ public static class CliCmdUtils
 
         var lines = string.Join("\n",
             $"Provider     {provider?.Name ?? "not set"} ({provider?.Endpoint ?? "no endpoint"})",
-            $"Agent        {agent?.Name ?? "default"}",
+            $"Selected lead {agent?.Name ?? "default"}",
+            DescribeLeadSettings(App.SubAgentsMode, App.ParallelSubAgentsMode, App.UltraMode, App.GigaMode),
             $"Models",
             modelLines,
             $"Tools        {toolCount}",
@@ -843,6 +844,12 @@ public static class CliCmdUtils
 
         MuxConsole.WritePanel("Mux-Swarm Status", lines);
     }
+
+    /// <summary>Describe next-launch /agent flags, not the current team configuration or running worker count.</summary>
+    internal static string DescribeLeadSettings(bool sequential, bool parallel, bool ultra, bool giga)
+        => $"Next /agent  delegation: serial {(sequential ? "on" : "off")}, parallel {(parallel ? "on" : "off")}\n"
+         + $"             presets: ultra {(ultra ? "on" : "off")}, giga {(giga ? "on" : "off")}\n"
+         + "             Team/workflow capabilities depend on launch and tools; flags are not active worker counts.";
 
     public static void ShowLoadedSkills()
     {

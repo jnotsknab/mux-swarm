@@ -43,7 +43,7 @@ internal static class MetaCommandDispatch
 
         if (ContextPruner.TryParse(line, out _, out var pruneError))
         {
-            MuxConsole.WriteMuted(pruneError ?? "/prune needs an idle single-agent session after its first turn; worker/swarm contexts are not pruned.");
+            MuxConsole.WriteMuted(pruneError ?? "/prune needs an idle lead session after its first turn. Delegated sessions and /swarm or /pswarm coordinator contexts are unchanged.");
             return Result.Handled;
         }
 

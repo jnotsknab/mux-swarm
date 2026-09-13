@@ -845,8 +845,8 @@ public static class SingleAgentOrchestrator
                 $"[{Theme.Active.Prompt}]is configured with delegation capabilities \u2014 run[/] " +
                 $"[{Theme.Active.Accent}]/subagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/sub[/][{Theme.Active.Muted}])[/] " +
                 $"[{Theme.Active.Prompt}]or[/] [{Theme.Active.Accent}]/parasubagents[/] [{Theme.Active.Muted}]([/][{Theme.Active.Accent}]/psub[/][{Theme.Active.Muted}])[/] " +
-                $"[{Theme.Active.Prompt}]to enable delegation in single-agent mode.[/]",
-                stdioFallback: $"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation in single agent mode.");
+                $"[{Theme.Active.Prompt}]to enable delegation for the /agent interface.[/]",
+                stdioFallback: $"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation for the /agent interface.");
         }
 
         var resolvedModelId = "";

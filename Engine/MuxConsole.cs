@@ -700,6 +700,7 @@ public static partial class MuxConsole
     {
         int muxW = SplashMuxArt.Max(l => l.Length);
         var lines = new List<string>();
+        if (includeHelp) lines.Add($"[{C.Prompt}]/agent to start[/] [{C.Muted}]· Type /help for commands[/]");
         for (int i = 0; i < SplashMuxArt.Length; i++)
         {
             string muxLine = SplashMuxArt[i].PadRight(muxW + 4);
@@ -714,23 +715,24 @@ public static partial class MuxConsole
         string repo = spectreHyperlink
             ? $"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]"
             : $"[{C.Muted}]Check Out The Repo Here![/]";
-        lines.Add(repo
-            + (includeHelp ? $"  [{C.Muted}]·[/]  [{C.Muted}]Type /help for commands[/]" : ""));
+        lines.Add(repo);
         return lines;
     }
 
     private static List<string> BuildSplashGettingStartedMarkup() => new()
     {
         $"[{C.Step}]Getting Started[/]",
-        $"[{C.Muted}]Pick a mode to begin, then enter your task[/]",
+        $"[{C.Muted}]Start here, then enter your task[/]",
         $"[{C.Muted}]────────────────────────────────────────────[/]",
+        $"  [{C.Prompt}]/agent[/]       [{C.Muted}]Main agentic interface[/]",
+        $"  [{C.Muted}]One lead; specialists when enabled[/]",
         "",
-        $"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Multi-agent orchestrated loop[/]",
-        $"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Parallel concurrent dispatch[/]",
-        $"  [{C.Prompt}]/agent[/]       [{C.Muted}]Single-agent conversation[/]",
-        $"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off stateless task[/]",
-        $"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your operator profile[/]",
-        $"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Run a workflow file[/]",
+        $"[{C.Step}]Specialized execution[/]",
+        $"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Serial specialists[/]",
+        $"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Concurrent batches[/]",
+        $"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Repeatable execution[/]",
+        $"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off agentic task[/]",
+        $"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your profile[/]",
         $"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]",
         "",
         $"[{C.Muted}]────────────────────────────────────────────[/]",
@@ -821,7 +823,7 @@ public static partial class MuxConsole
                 SplashTitleMarkup(version, debugTag),
                 SplashMessageMarkup(splashLabel, splashText),
                 $"[{C.Muted}]Check Out The Repo Here! · Type /help for commands[/]",
-                "",
+                $"[{C.Muted}]/agent to start[/]",
             };
         }
 

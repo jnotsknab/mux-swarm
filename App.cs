@@ -596,7 +596,7 @@ public class App
 
             if (ContextPruner.TryParse(userInput, out _, out var menuPruneError))
             {
-                MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle single-agent session after its first turn. Launch /agent or a team lead first.");
+                MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle lead session after its first turn. Launch /agent or a team lead; delegated sessions are unchanged.");
                 continue;
             }
 
@@ -911,7 +911,7 @@ public class App
                     {
                         MuxConsole.WriteSuccess("Plan Mode enabled");
                         MuxConsole.WriteMuted("Agents will present a plan and ask for approval before executing.");
-                        MuxConsole.WriteMuted("Applies to orchestrators and single agent mode only.");
+                        MuxConsole.WriteMuted("Applies to coordinators and agentic lead sessions.");
                     }
                     else
                     {
@@ -1034,7 +1034,7 @@ public class App
 
                 case "/model":
                     var currentModel = LoadSingleAgentModel();
-                    MuxConsole.WriteInfo($"Single agent model: {currentModel}");
+                    MuxConsole.WriteInfo($"Selected lead model: {currentModel}");
                     var models = Common.LoadAgentModels();
                     foreach (var kvp in models)
                         MuxConsole.WriteInfo($"  {kvp.Key} -> {kvp.Value}");
@@ -1545,7 +1545,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 return swarm.SingleAgent.Model;
         }
 
-        MuxConsole.WriteWarning("No model resolved for single agent. Check swarm.json configuration.");
+        MuxConsole.WriteWarning("No model resolved for the selected lead agent. Check swarm.json configuration.");
         return string.Empty;
     }
 

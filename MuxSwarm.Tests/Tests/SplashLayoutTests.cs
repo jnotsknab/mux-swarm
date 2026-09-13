@@ -26,7 +26,7 @@ public class SplashLayoutTests
         console.Write(MuxConsole.BuildSplashRenderable("0.13.2", "", "Quote",
             string.Join(" ", Enumerable.Repeat("a long but valid curated quote", 12)), width, sessions));
         string[] rows = output.ToString().Replace("\r", "").Split('\n');
-        Assert.Contains(rows, row => row.Contains("/swarm") && row.Contains("Multi-agent orchestrated loop"));
+        Assert.Contains(rows, row => row.Contains("/swarm") && row.Contains("Serial specialists"));
         Assert.Contains(rows, row => row.Contains("2026-09-12_08-00-00"));
         foreach (string row in rows.Where(row => row.Contains("│") && !string.IsNullOrWhiteSpace(row.Trim('│', ' '))))
             Assert.Equal(4, row.Count(c => c == '│'));

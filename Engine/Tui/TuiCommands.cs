@@ -95,10 +95,10 @@ internal static class TuiCommands
         new("/qm",           "Quit the session loop", Scope.SessionOnly),
 
         // --- mode launch (App.cs top-level menu) ---
-        new("/swarm",        "Launch interactive multi-agent swarm loop", Scope.ReplOnly),
-        new("/pswarm",       "Parallel swarm - concurrent batch dispatch", Scope.ReplOnly),
-        new("/agent",        "Launch interactive single-agent loop", Scope.ReplOnly),
-        new("/stateless",    "Stateless single-agent loop (one-off tasks)", Scope.ReplOnly),
+        new("/agent",        "Open the main agentic interface with the selected lead", Scope.ReplOnly),
+        new("/swarm",        "Specialty: serial specialist orchestration", Scope.ReplOnly),
+        new("/pswarm",       "Specialty: concurrent specialist batches", Scope.ReplOnly),
+        new("/stateless",    "Stateless agentic session (one-off tasks)", Scope.ReplOnly),
         new("/subagents",    "Enable sub-agent delegation (/sub)", Scope.ReplOnly),
         new("/parasubagents","Enable parallel sub-agent delegation (/psub)", Scope.ReplOnly),
         new("/workflow",     "Run a workflow - static (JSON steps) or dynamic (scripted mux processes)", Scope.ReplOnly),
@@ -118,7 +118,7 @@ internal static class TuiCommands
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
         new("/plan",         "Toggle plan mode (approve before exec)", Scope.ReplOnly),
-        new("/ultra",        "Toggle deep-reasoning mode (plan + max reasoning)", Scope.ReplOnly),
+        new("/ultra",        "Toggle ultra (plan + reasoning; delegation when configured)", Scope.ReplOnly),
         new("/giga",         "Toggle giga mode (ultra + dynamic team/workflow orchestration)", Scope.ReplOnly),
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
@@ -131,7 +131,7 @@ internal static class TuiCommands
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
         new("/delagent",     "Remove a swarm agent (/delagent [name])", Scope.ReplOnly),
-        new("/swap",         "Choose the single-agent definition with fuzzy search", Scope.ReplOnly),
+        new("/swap",         "Choose the lead agent with fuzzy search", Scope.ReplOnly),
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
@@ -145,9 +145,9 @@ internal static class TuiCommands
         // --- global utilities (App.cs menu) ---
         new("/classic",      "Switch to the classic line renderer", Scope.ReplOnly),
         new("/tui",          "Switch to the live TUI renderer", Scope.ReplOnly),
-        new("/resume",       "Resume a previous single-agent session", Scope.ReplOnly),
+        new("/resume",       "Resume a previous lead-agent session", Scope.ReplOnly),
         new("/attach",       "Re-enter a detached session (/attach [id])", Scope.ReplOnly),
-        new("/model",        "View current swarm models", Scope.ReplOnly),
+        new("/model",        "View selected lead and configured agent models", Scope.ReplOnly),
         new("/provider",     "View or switch the active LLM provider", Scope.ReplOnly),
         new("/workspace",    "Show or set the @-file workspace root (/workspace <path>)", Scope.ReplOnly),
         new("/limits",       "Display current execution limits", Scope.ReplOnly),

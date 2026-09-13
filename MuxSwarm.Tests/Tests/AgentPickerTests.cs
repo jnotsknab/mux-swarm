@@ -224,7 +224,7 @@ public class AgentPickerDriverTests
         var agents = Agents(); int paints = 0;
         scope.Term.OnWrite = output =>
         {
-            if (!output.Contains("SWAP AGENT")) return;
+            if (!output.Contains("CHOOSE LEAD AGENT")) return;
             if (++paints == 1) { scope.Term.Height = 3; scope.Pump.Enqueue(Key(ConsoleKey.Enter)); }
         };
         // Tiny repaint restores size only after an ignored Enter; enqueue cancel from its output.
@@ -256,7 +256,7 @@ public class AgentPickerDriverTests
         };
         Assert.True(scope.Driver.RunAgentPicker(new AgentPickerView(Agents(), "CodeAgent"), out var selected, input: scope.Pump));
         Assert.Null(selected);
-        Assert.Contains("SWAP AGENT", scope.Term.Output.ToString());
+        Assert.Contains("CHOOSE LEAD AGENT", scope.Term.Output.ToString());
         scope.AssertRestored();
     }
 
@@ -269,10 +269,10 @@ public class AgentPickerDriverTests
         using var cts = new CancellationTokenSource(); cts.Cancel();
         Assert.True(scope.Driver.RunAgentPicker(new AgentPickerView(Agents(), null), out var selected, cts.Token, scope.Pump));
         Assert.Null(selected); scope.AssertRestored();
-        scope.Term.OnWrite = text => { if (text.Contains("SWAP AGENT")) throw new IOException("synthetic terminal failure"); };
+        scope.Term.OnWrite = text => { if (text.Contains("CHOOSE LEAD AGENT")) throw new IOException("synthetic terminal failure"); };
         Assert.Throws<IOException>(() => scope.Driver.RunAgentPicker(new AgentPickerView(Agents(), null), out _, input: scope.Pump));
         scope.Term.OnWrite = null; scope.AssertRestored();
-        scope.Term.OnWrite = text => { if (text.Contains("SWAP AGENT")) scope.Pump.Dispose(); };
+        scope.Term.OnWrite = text => { if (text.Contains("CHOOSE LEAD AGENT")) scope.Pump.Dispose(); };
         Assert.True(scope.Driver.RunAgentPicker(new AgentPickerView(Agents(), null), out selected, input: scope.Pump));
         Assert.Null(selected); scope.Term.OnWrite = null; scope.AssertRestored();
     }
@@ -333,10 +333,62 @@ public class AgentPickerDriverTests
             CliCmdUtils.HandleAgentSwap();
             Assert.Equal(expected, SingleAgentOrchestrator.AgentDef!.Name);
             Assert.Contains("input_request", capture.ToString());
-            Assert.DoesNotContain("SWAP AGENT", scope.Term.Output.ToString());
+            Assert.DoesNotContain("Loaded 2 agents", capture.ToString());
+            if (expected == "WebAgent") Assert.Contains("Lead agent set to WebAgent", capture.ToString());
+            Assert.DoesNotContain("CHOOSE LEAD AGENT", scope.Term.Output.ToString());
             fixture.AssertUnchanged();
         }
         finally { Console.SetOut(output); }
+    }
+
+    [Fact]
+    public void QuietRosterLoad_KeepsDefinitionsAndWarningsWithoutChangingOtherCallers()
+    {
+        using var scope = new Scope(true);
+        using var fixture = new ConfigFixture();
+        MuxConsole.StdioMode = true;
+        var output = Console.Out;
+        using var capture = new StringWriter();
+        try
+        {
+            Console.SetOut(capture);
+            var normal = Common.GetAgentDefinitions(fixture.PathValue);
+            Assert.Contains("Loaded 2 agents", capture.ToString());
+            capture.GetStringBuilder().Clear();
+            var quiet = Common.GetAgentDefinitions(fixture.PathValue, logLoaded: false);
+            Assert.Equal(normal.Select(a => (a.Name, a.Description, a.SystemPromptPath, a.CanDelegate)),
+                quiet.Select(a => (a.Name, a.Description, a.SystemPromptPath, a.CanDelegate)));
+            Assert.Equal("", capture.ToString());
+            fixture.AssertUnchanged();
+            fixture.ReplaceForMalformedTest();
+            Assert.Empty(Common.GetAgentDefinitions(fixture.PathValue, logLoaded: false));
+            Assert.Contains("Failed to parse", capture.ToString());
+            capture.GetStringBuilder().Clear();
+            Assert.Empty(Common.GetAgentDefinitions(fixture.PathValue + ".missing", logLoaded: false));
+            Assert.Contains("swarm.json not found", capture.ToString());
+        }
+        finally { Console.SetOut(output); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RealSwap_PresentsLeadConfirmationAndOmitsOnlyLoadNotice(bool frame)
+    {
+        using var scope = new Scope(frame);
+        using var fixture = new ConfigFixture();
+        scope.Pump.PushFront(new[] { ConsoleInputPump.InputEvent.OfPaste("wba"), Key(ConsoleKey.Enter) });
+        CliCmdUtils.HandleAgentSwap();
+        var plain = System.Text.RegularExpressions.Regex.Replace(scope.Term.Output.ToString(), "\u001b\\[[0-9;?]*[A-Za-z]", "");
+        Assert.Contains("Lead agent set to WebAgent", plain);
+        Assert.DoesNotContain("Loaded 2 agents", plain);
+        Assert.DoesNotContain("Single-agent mode", plain);
+        Assert.Equal("WebAgent", SingleAgentOrchestrator.AgentDef!.Name);
+        fixture.AssertUnchanged();
+        scope.AssertRestored();
+        scope.Term.Output.Clear();
+        Common.GetAgentDefinitions(fixture.PathValue);
+        Assert.Contains("Loaded 2 agents", scope.Term.Output.ToString());
     }
 
     private sealed class ConfigFixture : IDisposable
@@ -362,6 +414,8 @@ public class AgentPickerDriverTests
             File.WriteAllBytes(_file, _bytes);
             _path.SetValue(null, _file);
         }
+        public string PathValue => _file;
+        public void ReplaceForMalformedTest() => File.WriteAllText(_file, "{invalid");
         public void AssertUnchanged() => Assert.Equal(_bytes, File.ReadAllBytes(_file));
         public void Dispose()
         {

@@ -124,12 +124,12 @@ internal sealed class AgentPickerView
         string Esc(string s) => Spectre.Console.Markup.Escape(Display(s));
         string Clip(string s) => TuiMarkup.TruncateMarkup(s, width, "");
         if (width < MinWidth || height < MinHeight)
-            return new[] { "Esc: cancel", $"Resize to {MinWidth} columns / {MinHeight} rows to choose an agent." }
+            return new[] { "Esc: cancel", $"Resize to {MinWidth} columns / {MinHeight} rows to choose a lead agent." }
                 .Concat(Enumerable.Repeat("", height)).Take(height).Select(Clip).ToList();
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] SWAP AGENT[/]",
-            $"[{TuiComponents.Muted}] Current: {Esc(CurrentName ?? "not selected")}[/]",
+            $"[{TuiComponents.Accent} bold] CHOOSE LEAD AGENT[/]",
+            $"[{TuiComponents.Muted}] Current lead: {Esc(CurrentName ?? "not selected")}[/]",
             $"[{TuiComponents.Accent}] Search: {Esc(_query)}▏[/]",
             TuiComponents.FullRule(width)
         };

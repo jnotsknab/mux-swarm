@@ -25,7 +25,13 @@ public static class Common
         Func<IList<AITool>, IList<AITool>> ToolFilter
     );
 
+    /// <summary>Load configured agent definitions, reporting successful loads and existing diagnostics.</summary>
     public static List<AgentDefinition> GetAgentDefinitions(string swarmConfPath)
+        => GetAgentDefinitions(swarmConfPath, logLoaded: true);
+
+    /// <summary>Load the same roster while optionally omitting only the successful-load notice.
+    /// Missing-file and parse warnings are always retained.</summary>
+    internal static List<AgentDefinition> GetAgentDefinitions(string swarmConfPath, bool logLoaded)
     {
         if (File.Exists(swarmConfPath))
         {
@@ -37,7 +43,7 @@ public static class Common
                 if (config?.Agents != null && config.Agents.Count > 0)
                 {
                     //HACK: compact agent is outside agents array we need to account for it too i.e. +1
-                    MuxConsole.WriteInfo($"Loaded {config.Agents.Count + 1} agents from swarm.json");
+                    if (logLoaded) MuxConsole.WriteInfo($"Loaded {config.Agents.Count + 1} agents from swarm.json");
                     return ParseAgentDefinitions(config);
                 }
             }

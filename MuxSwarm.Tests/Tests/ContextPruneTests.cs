@@ -406,7 +406,7 @@ public class ContextPruneScopeTests
             var result = await MetaCommandDispatch.TryHandleAsync(command);
             Assert.Equal(MetaCommandDispatch.Result.Handled, result);
             Assert.Equal(pending, SingleAgentOrchestrator.PendingReplCommand);
-            Assert.Contains("idle single-agent", capture.ToString());
+            Assert.Contains("idle lead session", capture.ToString());
         }
         finally { MuxConsole.StdioMode = stdio; Console.SetOut(output); }
     }
