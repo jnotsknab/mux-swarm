@@ -63,6 +63,12 @@ public sealed class EscapeKeyListener : IDisposable
     /// <c>[&lt;64;…</c> escape-fragment leak AND lets the user scroll during streaming.</summary>
     internal static Action<int>? OnWheelScroll { get; set; }
 
+    /// <summary>Optional hook: mid-turn press/drag/release routing (v0.14 mouse control). Set by
+    /// the console wiring alongside <see cref="OnWheelScroll"/>; null keeps mid-turn mouse events
+    /// dropped (never replayed). The handler filters targets to scrollbar + agent lanes and runs
+    /// under ConsoleLock on this listener thread.</summary>
+    internal static Action<Tui.ConsoleInputPump.InputEvent>? OnMouseEvent { get; set; }
+
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
@@ -191,10 +197,18 @@ public sealed class EscapeKeyListener : IDisposable
                             continue;
                         }
                         if (pev.Kind == Tui.ConsoleInputPump.EventKind.Terminal) continue;
-                        // Mid-turn press/drag/release: DROPPED, not replayed - replaying a stale
-                        // click into the next prompt would be the mouse version of the queued-Enter
-                        // burst bug. (Batch 4 will honor scrollbar/lane targets here explicitly.)
-                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Mouse) continue;
+                        if (pev.Kind == Tui.ConsoleInputPump.EventKind.Mouse)
+                        {
+                            // Mid-turn press/drag/release: routed to the driver's filtered
+                            // handler (scrollbar + agent lanes only) when wired; otherwise
+                            // DROPPED, never replayed - replaying a stale click into the next
+                            // prompt would be the mouse version of the queued-Enter burst bug.
+                            if (OnMouseEvent is { } onMouse)
+                            {
+                                try { onMouse(pev); } catch { /* mouse is best-effort */ }
+                            }
+                            continue;
+                        }
                         key = pev.Key;
                     }
                     else

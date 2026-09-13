@@ -1457,6 +1457,14 @@ internal sealed partial class TuiDriver
                             if (avPump.Disposed || _shuttingDown) return true;
                             continue;
                         }
+                        if (av.Kind == ConsoleInputPump.EventKind.Mouse)
+                        {
+                            // Click on a lane row = select it (the arrows alias); the dashboard
+                            // is already open, so any pending open request is just consumed.
+                            RouteMouse(av);
+                            _ = TakePendingLaneOpen();
+                            continue;
+                        }
                         if (av.Kind != ConsoleInputPump.EventKind.Key) continue;
                         key = av.Key; break;
                     }
@@ -1914,12 +1922,19 @@ internal sealed partial class TuiDriver
         // while one or more collapsed sub-agents run, show one animated line each (no flicker).
         // When the backslash dashboard is foregrounded it becomes the SOLE session list, so the
         // compact strip is suppressed to avoid duplicate per-agent rows (issue #2).
+        _liveLaneLines.Clear();   // cleared every paint: stale lane regions must not outlive their rows
         if (_agentViewActive)
         {
             // dashboard owns the agent list this frame; no compact strip / thinking line.
         }
         else if (_subAgents.Count > 0)
+        {
+            // Record each strip row's live-band line + lane identity so ComposeFrameRows can
+            // register AgentLane hit regions (click = the backslash-then-select alias).
+            for (int i = 0; i < _subAgents.Count; i++)
+                _liveLaneLines.Add((lines.Count + i, _subAgents[i].Agent));
             lines.AddRange(TuiComponents.SubAgentActivity(_subAgents, _subAgentFrame));
+        }
 
         // A pending (unresolved) tool call is shown live with a running glyph until its
         // result lands and the two merge into a single committed line.
@@ -1943,7 +1958,14 @@ internal sealed partial class TuiDriver
         // still shows, so the dashboard is an expansion of it rather than a replacement. Off (the
         // default) this adds nothing, keeping the frame byte-identical to today's.
         if (_agentViewActive)
-            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent));
+        {
+            // Dashboard lane rows register the same AgentLane regions (click = select that lane,
+            // the arrows alias) - resolved against the dashboard's own consumer loop.
+            int dashBase = lines.Count;
+            lines.AddRange(_agentView.RenderDashboard(width, DateTime.UtcNow, _subAgentFrame, _foregroundAgent, _agentLaneRows));
+            foreach (var (row, agent) in _agentLaneRows)
+                _liveLaneLines.Add((dashBase + row, agent));
+        }
 
         // /background jobs dashboard: same inline-list pattern as the Agent View above. Rendered in
         // the live region so scrollback is preserved; off (the default) adds nothing.
@@ -2230,20 +2252,60 @@ internal sealed partial class TuiDriver
             hits.Add(new HitRegion(1, railLeft, transcriptRoom, railWidth, MouseTargetKind.ScrollBarRail, 0));
             hits.Add(new HitRegion(_frameScrollBar.Top + 1, railLeft, _frameScrollBar.Length, railWidth, MouseTargetKind.ScrollBarThumb, 0));
         }
-        // Prompt-modal options: map each recorded live-band line through its wrap extents to the
-        // band's final physical rows (band is bottom-anchored; liveRows[k] sits at physical row
-        // h - liveRows.Count + 1 + k, 1-based).
-        if (_promptModalActive && _promptModalOptionLines.Count > 0)
+        // Live-band component regions: map recorded live-band LINE indices through the wrap
+        // extents to final physical rows (band is bottom-anchored; liveRows[k] sits at physical
+        // row h - liveRows.Count + 1 + k, 1-based).
+        int liveTopPhys = h - liveRows.Count + 1;
+        bool MapLiveLine(int line, out int top, out int height)
         {
-            int liveTopPhys = h - liveRows.Count + 1;
+            top = height = 0;
+            if (line < 0 || line >= liveLineStarts.Count) return false;
+            var (start, count) = liveLineStarts[line];
+            int first = start - liveTrimmed, last = first + count - 1;
+            if (last < 0) return false;                            // fully trimmed off the top
+            first = Math.Max(0, first);
+            top = liveTopPhys + first;
+            height = last - first + 1;
+            return true;
+        }
+        if (_promptModalActive)
             foreach (var (line, opt) in _promptModalOptionLines)
             {
-                if (line >= liveLineStarts.Count) continue;
-                var (start, count) = liveLineStarts[line];
-                int first = start - liveTrimmed, last = first + count - 1;
-                if (last < 0) continue;                            // fully trimmed off the top
-                first = Math.Max(0, first);
-                hits.Add(new HitRegion(liveTopPhys + first, 1, last - first + 1, wrapW, MouseTargetKind.PromptModalOption, opt));
+                if (MapLiveLine(line, out int top, out int height))
+                    hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.PromptModalOption, opt));
+            }
+        // Agent lanes (activity strip or dashboard rows): click = select/foreground that lane,
+        // the same action the backslash-then-arrows path dispatches.
+        foreach (var (line, agent) in _liveLaneLines)
+        {
+            if (MapLiveLine(line, out int top, out int height))
+                hits.Add(new HitRegion(top, 1, height, wrapW, MouseTargetKind.AgentLane, 0, agent));
+        }
+        // Transcript entries with expandable payloads: click toggles expand/collapse (the NAV
+        // Enter alias). Walk the visible window bottom-up mirroring the render walk, mapping each
+        // entry's wrapped extent to physical rows; only expandable entries register.
+        if (transcriptRoom > 0 && transcriptRows.Count > 0)
+        {
+            int transcriptTopPhys = 1 + (transcriptRoom - transcriptRows.Count);
+            int skipTail = Math.Max(0, _frameScroll);
+            int cursor = transcriptRows.Count + skipTail;   // rows below the current entry (window-relative bottom)
+            for (int e = _transcript.Count - 1; e >= 0 && cursor > 0; e--)
+            {
+                var entry = _transcript[e];
+                // GetFrameTotalRows(wrapW) above populated the per-entry count cache at this
+                // width; falling back to a render only on a miss keeps this walk O(window).
+                if (!_frameRowCountCache.TryGetValue(entry, out int count))
+                    count = RenderEntryRows(entry, wrapW).Count;
+                int entryBottom = cursor - 1;
+                int entryTop = cursor - count;
+                cursor -= count;
+                if (entry.Expandable is null) continue;
+                // Clip to the visible window [0, transcriptRows.Count).
+                int visTop = Math.Max(0, entryTop);
+                int visBottom = Math.Min(transcriptRows.Count - 1, entryBottom);
+                if (visTop > visBottom) continue;
+                hits.Add(new HitRegion(transcriptTopPhys + visTop, 1, visBottom - visTop + 1,
+                    wrapW, MouseTargetKind.TranscriptEntry, e));
             }
         }
         _frameHits = hits;
@@ -2489,6 +2551,11 @@ internal sealed partial class TuiDriver
     private readonly List<(int Row, int Option)> _promptModalOptionRows = new();
     private readonly List<(int Line, int Option)> _promptModalOptionLines = new();
 
+    // Agent-lane rows (activity strip OR Agent View dashboard - mutually exclusive per frame), as
+    // (live-band line index, agent name). Same per-paint lifecycle as the modal option lines.
+    private readonly List<(int Row, string Agent)> _agentLaneRows = new();
+    private readonly List<(int Line, string Agent)> _liveLaneLines = new();
+
     /// <summary>Hit map of the last composed main frame (test hook; null before first compose /
     /// in inline mode, where no frame is composed).</summary>
     internal MouseHitMap? FrameHitMap => _frameHits;
@@ -2496,6 +2563,41 @@ internal sealed partial class TuiDriver
     private HitRegion _mouseCapture;
     private bool _mouseCaptured;
     private int _mouseGrabOffset;   // thumb-local row at press (pi's grabOffset: no jump-center)
+
+    // True while routing a MID-TURN mouse event (EscapeKeyListener consuming): only ScrollBar*
+    // and AgentLane targets are honored there - transcript toggles and other targets are dropped,
+    // never deferred (replaying a stale click into the next prompt would be the mouse version of
+    // the queued-Enter burst bug).
+    private bool _mouseMidTurn;
+
+    // Set when an AgentLane release wants the Agent View opened (idle prompt: ReadLineCore calls
+    // AgentViewOpener; mid-turn: the listener calls its onAgents callback). The lane is already
+    // Select()ed, so the view opens on the clicked lane. Consumed via TakePendingLaneOpen.
+    private string? _pendingLaneOpen;
+
+    /// <summary>Consume the pending lane-open request raised by an AgentLane click (null when
+    /// none). The clicked lane is already selected on the Agent View.</summary>
+    internal string? TakePendingLaneOpen()
+    {
+        var lane = _pendingLaneOpen;
+        _pendingLaneOpen = null;
+        return lane;
+    }
+
+    /// <summary>Mid-turn mouse routing (EscapeKeyListener thread, under ConsoleLock): same
+    /// classify/dispatch seam as the idle path, but release actions are filtered to ScrollBar*
+    /// and AgentLane. Returns the lane name when a lane click wants the dashboard opened (the
+    /// caller owns that nested loop), else null.</summary>
+    internal string? RouteMouseMidTurn(in ConsoleInputPump.InputEvent ev)
+    {
+        _mouseMidTurn = true;
+        try
+        {
+            RouteMouse(ev);
+            return TakePendingLaneOpen();
+        }
+        finally { _mouseMidTurn = false; }
+    }
 
     private void OnMousePress(MouseEvent ev)
     {
@@ -2537,6 +2639,27 @@ internal sealed partial class TuiDriver
                 int page = Math.Max(1, sb.TrackRows - 1);
                 if (FrameScrollBy(ev.Row - 1 < sb.Top ? page : ev.Row - 1 >= sb.Top + sb.Length ? -page : 0))
                     Repaint();
+                break;
+
+            case MouseTargetKind.TranscriptEntry:
+                // Click = the NAV Enter alias: toggle the entry's expanded panel in place.
+                // Mid-turn transcript clicks are dropped (only scrollbar/lanes act there).
+                if (_mouseMidTurn) break;
+                if (captured.Payload < 0 || captured.Payload >= _transcript.Count) break;
+                var ent = _transcript[captured.Payload];
+                if (ent.Expandable is null) break;
+                ent.Expanded = !ent.Expanded;
+                InvalidateFrameRowCounts();
+                Repaint();
+                break;
+
+            case MouseTargetKind.AgentLane:
+                // Click = the backslash-then-select alias: select the lane; if the dashboard is
+                // not up yet, request it (the consumer loop owns opening the nested view).
+                if (captured.Tag is not { } lane) break;
+                _agentView.Select(lane);
+                if (_agentViewActive) Repaint();
+                else _pendingLaneOpen = lane;
                 break;
         }
     }
@@ -2682,7 +2805,12 @@ internal sealed partial class TuiDriver
                         BeginTextPaste(cv.PasteText ?? ""); Repaint();
                         continue;
                     }
-                    if (cv.Kind == ConsoleInputPump.EventKind.Mouse) { RouteMouse(cv); continue; }
+                    if (cv.Kind == ConsoleInputPump.EventKind.Mouse)
+                    {
+                        RouteMouse(cv);
+                        if (TakePendingLaneOpen() is not null && AgentViewOpener is { } laneOpen1 && laneOpen1()) Repaint();
+                        continue;
+                    }
                     key = cv.Key;
                 }
                 else if (_ungetq.Count > 0) { key = _ungetq.Dequeue(); }
@@ -2749,7 +2877,11 @@ internal sealed partial class TuiDriver
                             continue;
                         }
                         case ConsoleInputPump.EventKind.Mouse:
-                            RouteMouse(ev); continue;
+                            RouteMouse(ev);
+                            // A lane click at the idle prompt opens the Agent View on that lane
+                            // (the backslash alias; the lane is already selected).
+                            if (TakePendingLaneOpen() is not null && AgentViewOpener is { } laneOpen && laneOpen()) Repaint();
+                            continue;
                     }
                     key = ev.Key;
                 }

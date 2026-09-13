@@ -121,6 +121,11 @@ internal sealed class AgentView
         return vis[0].Agent;
     }
 
+    /// <summary>Select a lane by agent name (mouse click alias for arrowing to it). Resolution
+    /// against the visible rows happens in <see cref="SelectedAgent"/>, so an unknown/hidden name
+    /// degrades to the existing first-visible fallback.</summary>
+    public void Select(string agent) => _selectedAgent = agent;
+
     /// <summary>Move the selection by <paramref name="delta"/> rows within the visible list,
     /// clamped at the ends (no wrap). No-op when nothing is visible.</summary>
     public void Move(int delta, DateTime now)
@@ -141,7 +146,15 @@ internal sealed class AgentView
     /// advances the shared spinner so the rows animate in step with the activity strip.
     /// </summary>
     public List<string> RenderDashboard(int width, DateTime now, int frame, string? foregrounded = null)
+        => RenderDashboard(width, now, frame, foregrounded, null);
+
+    /// <summary>Render overload that also reports which emitted rows are agent-lane rows:
+    /// <paramref name="laneRows"/> receives (0-based row index into the RETURNED list, agent name)
+    /// pairs so the driver can register mouse hit regions from the same emission that painted
+    /// them.</summary>
+    public List<string> RenderDashboard(int width, DateTime now, int frame, string? foregrounded, List<(int Row, string Agent)>? laneRows)
     {
+        laneRows?.Clear();
         var rows = new List<string>();
         string spin = TuiComponents.SubAgentFrames[
             ((frame % TuiComponents.SubAgentFrames.Length) + TuiComponents.SubAgentFrames.Length) % TuiComponents.SubAgentFrames.Length];
@@ -168,6 +181,7 @@ internal sealed class AgentView
                 // hidden via 'h' carries the same tag locally so the row flips on the same repaint.
                 string hid = (st.StartsWith("hidden", StringComparison.OrdinalIgnoreCase) || _locallyHidden.Contains(r.Agent))
                     ? $" [{TuiComponents.Dim}][[hidden]][/]" : "";
+                laneRows?.Add((rows.Count, r.Agent));
                 rows.Add(isSel
                     ? $"  [{TuiComponents.Accent}]\u203a[/] [{r.Tint}]{spin}[/] [{TuiComponents.Text}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Text}]{Esc(st)}[/]{pin}{hid}"
                     : $"    [{r.Tint}]{spin}[/] [{TuiComponents.Agent}]{Esc(r.Agent)}[/] [{TuiComponents.Dim}]\u00b7[/] [{TuiComponents.Think} italic]{Esc(st)}[/]{pin}{hid}");

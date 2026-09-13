@@ -24,8 +24,10 @@ internal enum MouseTargetKind
 
 /// <summary>One rectangular hit region in PHYSICAL terminal cells: <paramref name="Top"/> /
 /// <paramref name="Left"/> are 1-based, the rectangle spans <paramref name="Height"/> rows and
-/// <paramref name="Width"/> columns inclusive of its origin.</summary>
-internal readonly record struct HitRegion(int Top, int Left, int Height, int Width, MouseTargetKind Kind, int Payload);
+/// <paramref name="Width"/> columns inclusive of its origin. <paramref name="Tag"/> carries an
+/// optional string identity (agent-lane name) so consumers never index a separately-published
+/// lookup that could tear against the map.</summary>
+internal readonly record struct HitRegion(int Top, int Left, int Height, int Width, MouseTargetKind Kind, int Payload, string? Tag = null);
 
 /// <summary>
 /// Per-present mouse hit-testing registry: a flat list of semantic regions REBUILT during every

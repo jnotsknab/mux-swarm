@@ -661,12 +661,24 @@ public static partial class MuxConsole
                 // Mid-turn wheel hook: the pump reassembles SGR reports and delivers Wheel events
                 // to the EscapeKeyListener, which forwards them here (scroll, never a cancel/leak).
                 EscapeKeyListener.OnWheelScroll = rows => TuiWheelScroll(rows);
+                // Mid-turn press/drag/release hook (v0.14 mouse control): scrollbar drag + lane
+                // clicks work while the agent streams. Target filtering happens in the driver
+                // (RouteMouseMidTurn honors only ScrollBar*/AgentLane); a lane click opens the
+                // Agent View through the same entry the backslash key uses.
+                EscapeKeyListener.OnMouseEvent = ev =>
+                {
+                    if (!ViaDriver) return;
+                    string? lane = null;
+                    lock (ConsoleLock) { lane = _driver!.RouteMouseMidTurn(ev); }
+                    if (lane is not null) TuiEnterAgentView();
+                };
             }
             catch
             {
                 _tuiActive = false;
                 _driver = null;
                 EscapeKeyListener.OnWheelScroll = null;
+                EscapeKeyListener.OnMouseEvent = null;
             }
         }
     }
