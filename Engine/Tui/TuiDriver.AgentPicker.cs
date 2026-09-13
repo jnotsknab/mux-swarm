@@ -57,10 +57,10 @@ internal sealed partial class TuiDriver
                 {
                     // GUI convention: single click = move the cursor there; DOUBLE click = the
                     // SAME Enter the keyboard path uses for selection intent.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out bool isDouble) && hit.Kind == MouseTargetKind.PickerItem)
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount) && hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        if (isDouble)
+                        if (clickCount >= 2)
                         {
                             var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 8));
                             if (clickAction == AgentPickerView.Action.Select) { selected = view.Selected; break; }

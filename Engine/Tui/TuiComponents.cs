@@ -681,6 +681,32 @@ internal static class TuiComponents
     /// meter shrink, meter to bare percent, idle last-turn + effort chips.
     /// <paramref name="activeMode"/> ("swarm"/"pswarm") adds a leftmost orchestration-mode chip.
     /// </summary>
+    // Rendered-chrome vocabulary for clipboard classification: leading gutter/indent bars, tree
+    // branch glyphs, and status/spinner dots that the TUI paints AROUND content. Content text
+    // (including table cell separators mid-row) is never touched.
+    private static readonly System.Text.RegularExpressions.Regex LeadingChrome =
+        new("^\\s{0,12}(?:[\u2502\u2503\u2514\u251c\u25b8\u221f\u258c\u258d\u258e\u258f]\\s+)*(?:[\u2713\u2717\u25cf\u25d0\u25d1\u25d2\u25d3\u25cb\u203a\u00b7]\\s+)?",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+    private static readonly System.Text.RegularExpressions.Regex TrailingHint =
+        new("\\s*\\((?:\\+\\d+ lines?, )?ctrl\\+e[^)]*\\)\\s*$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>Classify-and-strip rendered chrome from one PLAIN (ANSI-stripped) transcript row
+    /// for clipboard use: removes the leading lane gutter / indent guides / tree branches, one
+    /// leading status glyph (checkmark, spinner dot, bullet), and a trailing ctrl+e hint. Returns
+    /// null when the row is DECORATION-ONLY (borders, rules, spacer art - nothing alphanumeric),
+    /// so the copy path can drop it instead of pasting box-drawing runs. Interior text - including
+    /// table cell pipes - is preserved verbatim.</summary>
+    public static string? ClipboardText(string plainRow)
+    {
+        if (plainRow is null) return null;
+        string stripped = TrailingHint.Replace(LeadingChrome.Replace(plainRow, "", 1), "");
+        if (string.IsNullOrWhiteSpace(plainRow)) return "";   // genuine blank line: paragraph gap
+        foreach (char c in stripped)
+            if (char.IsLetterOrDigit(c)) return stripped.TrimEnd();
+        return null;   // decoration-only after stripping: borders / rules / stray glyph runs
+    }
+
     /// <summary>Badge id: the model chip (click alias = /setmodel).</summary>
     public const string BadgeModel = "model";
     /// <summary>Badge id: the reasoning-effort chip (click alias = the Shift+Tab mode cycle).</summary>

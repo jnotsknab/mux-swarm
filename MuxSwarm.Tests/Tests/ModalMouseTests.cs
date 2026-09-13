@@ -35,11 +35,11 @@ public class ModalMouseTests
         map.Add(new HitRegion(5, 1, 3, 80, MouseTargetKind.PickerItem, 7));
         var t = new MouseClickTracker();
         Assert.False(t.Feed(Press(10, 6), map, out _, out _, out _, out _));
-        Assert.True(t.Feed(Release(12, 7), map, out var hit, out int lr, out int lc, out bool dbl));
+        Assert.True(t.Feed(Release(12, 7), map, out var hit, out int lr, out int lc, out int dbl));
         Assert.Equal(7, hit.Payload);
         Assert.Equal(2, lr);
         Assert.Equal(11, lc);
-        Assert.False(dbl);
+        Assert.Equal(1, dbl);
     }
 
     [Fact]
@@ -69,7 +69,7 @@ public class ModalMouseTests
     }
 
     [Fact]
-    public void ClickTracker_SecondClickSameTargetInWindow_IsDouble_ThenChainResets()
+    public void ClickTracker_ChainCounts_SingleDoubleTriple_ThenResets()
     {
         var map = new MouseHitMap();
         map.Begin(80, 24);
@@ -78,16 +78,20 @@ public class ModalMouseTests
         long tick = 1000;
         var t = new MouseClickTracker(() => tick);
         Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
-        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d1));
-        Assert.False(d1);
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out int d1));
+        Assert.Equal(1, d1);
         tick += 200;   // inside the window
         Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
-        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d2));
-        Assert.True(d2);
-        tick += 200;   // a third click must NOT be another double (chain reset)
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out int d2));
+        Assert.Equal(2, d2);
+        tick += 200;   // third fast click = TRIPLE (the F4/apply alias)
         Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
-        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d3));
-        Assert.False(d3);
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out int d3));
+        Assert.Equal(3, d3);
+        tick += 200;   // a triple RESETS the chain: a fourth fast click starts fresh
+        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out int d4));
+        Assert.Equal(1, d4);
     }
 
     [Fact]
@@ -103,12 +107,12 @@ public class ModalMouseTests
         t.Feed(Release(10, 5), map, out _, out _, out _, out _);
         tick += 200;
         t.Feed(Press(10, 7), map, out _, out _, out _, out _);   // different payload
-        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out bool dOther));
-        Assert.False(dOther);
+        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out int dOther));
+        Assert.Equal(1, dOther);
         tick += MouseClickTracker.DoubleClickWindowMs + 1;        // expired
         t.Feed(Press(10, 7), map, out _, out _, out _, out _);
-        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out bool dLate));
-        Assert.False(dLate);
+        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out int dLate));
+        Assert.Equal(1, dLate);
     }
 
     // ---- view-level registration ----

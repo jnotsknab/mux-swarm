@@ -1180,14 +1180,14 @@ internal sealed partial class TuiDriver
                         {
                             // Run row click = the 1-9 jump alias; task row click = select that
                             // task (the arrows alias); DOUBLE task click = the Enter expand.
-                            if (wfClicks.Feed(wv, wfHits, out var wfHit, out _, out _, out bool wfDouble)
+                            if (wfClicks.Feed(wv, wfHits, out var wfHit, out _, out _, out int wfClickCount)
                                 && wfHit.Kind == MouseTargetKind.WorkflowRow)
                             {
                                 if (wfHit.Payload > 0) _workflowView.SelectRunAt(wfHit.Payload);
                                 else
                                 {
                                     _workflowView.SelectTaskAt(-wfHit.Payload - 1);
-                                    if (wfDouble) _workflowView.ToggleTaskExpand();
+                                    if (wfClickCount >= 2) _workflowView.ToggleTaskExpand();
                                 }
                                 Paint();
                             }
@@ -1327,18 +1327,18 @@ internal sealed partial class TuiDriver
                     // GUI convention: single click = move the cursor there (Select) or toggle the
                     // box (MultiSelect); DOUBLE click = the Enter the keyboard path dispatches
                     // (choose / accept). A single click never commits the modal.
-                    if (_frameHits is { } fh && modalClicks.Feed(ev, fh, out var mHit, out _, out _, out bool isDouble)
+                    if (_frameHits is { } fh && modalClicks.Feed(ev, fh, out var mHit, out _, out _, out int mClicks)
                         && mHit.Kind == MouseTargetKind.PromptModalOption)
                     {
                         _promptModal.SetSel(mHit.Payload);
                         if (kind == PromptModalView.Kind.MultiSelect)
                         {
-                            if (isDouble)
+                            if (mClicks >= 2)
                                 return new PromptModalResult(false, null, _promptModal.Sel,
                                     _promptModal.CheckedIndices.OrderBy(i => i).ToList());
                             _promptModal.ToggleChecked(); Repaint();
                         }
-                        else if (isDouble) return new PromptModalResult(false, null, _promptModal.Sel, null);
+                        else if (mClicks >= 2) return new PromptModalResult(false, null, _promptModal.Sel, null);
                         else Repaint();
                     }
                     continue;
@@ -2415,7 +2415,12 @@ internal sealed partial class TuiDriver
             int selTop = Math.Clamp(Math.Min(_dragAnchorRow, _dragLastRow), 1, rows.Count);
             int selBottom = Math.Clamp(Math.Max(_dragAnchorRow, _dragLastRow), 1, rows.Count);
             for (int r = selTop; r <= selBottom; r++)
-                rows[r - 1] = Ansi.Invert + rows[r - 1] + Ansi.Reset;
+                // Re-assert the invert after EVERY embedded SGR reset: transcript rows are full
+                // of [0m runs (per-span styling), and each one would otherwise terminate the
+                // inversion mid-row - leaving only the leading chrome highlighted.
+                rows[r - 1] = Ansi.Invert
+                    + rows[r - 1].Replace(Ansi.Reset, Ansi.Reset + Ansi.Invert)
+                    + Ansi.Reset;
         }
         // Transient copy chip: replace the footer row briefly (same slot the NAV status uses;
         // mapped through the SAME wrap-extent walk as the badge regions).
@@ -2702,7 +2707,7 @@ internal sealed partial class TuiDriver
     // on the same Kind+Payload+Tag within the window make the second a DOUBLE. Injectable clock
     // so tests can cross or stay inside the window deterministically.
     internal Func<long> MouseClock = () => Environment.TickCount64;
-    private bool _clickChainArmed;   // a prior single click is eligible as the first of a double
+    private int _clickChain;   // clicks so far in the active chain (0 = none; reset after a triple)
     private MouseTargetKind _lastClickKind;
     private int _lastClickPayload;
     private string? _lastClickTag;
@@ -2822,9 +2827,11 @@ internal sealed partial class TuiDriver
         if (_mouseCapture.Kind == MouseTargetKind.ScrollBarThumb) { if (DragThumbTo(ev.Row)) Repaint(); return; }
         // Transcript pane targets (backdrop, cards, lanes): vertical motion converts the gesture
         // into a LINE SELECTION - crossing a row boundary is the motion-vs-click discriminator,
-        // so a wobbly click never selects and a real drag never mis-fires a click. Mid-turn is
-        // excluded (the streaming ticker repaints ~100ms and would fight the overlay).
-        if (_mouseMidTurn) return;
+        // so a wobbly click never selects and a real drag never mis-fires a click. Works MID-TURN
+        // too: the overlay is STATE applied by every compose (ticker repaints re-apply it, they
+        // cannot erase it), and the copy reads the frozen row snapshot from the same compose the
+        // user saw - streaming may shift rows under a long-held selection, but the selection
+        // tracks physical rows exactly like every terminal's native selection does.
         bool paneTarget = _mouseCapture.Kind is MouseTargetKind.ExpandedPanel
             or MouseTargetKind.TranscriptEntry or MouseTargetKind.AgentLane;
         if (!paneTarget) return;
@@ -2858,16 +2865,18 @@ internal sealed partial class TuiDriver
         bool inRegion = ev.Row >= captured.Top && ev.Row < captured.Top + captured.Height
             && ev.Col >= captured.Left && ev.Col < captured.Left + captured.Width;
         if (!inRegion) return;
-        // Double-click = second click on the same semantic target inside the window (the Enter
-        // alias where selection and activation are distinct). A recognized double resets the
-        // chain so a triple is not two doubles.
+        // Click chain on the same semantic target inside the window: 1 = single (select/
+        // toggle), 2 = double (the Enter alias), 3 = triple (the Apply alias where one exists).
+        // Same contract as MouseClickTracker; a triple resets the chain.
         long now = MouseClock();
-        bool isDouble = _clickChainArmed && captured.Kind == _lastClickKind && captured.Payload == _lastClickPayload
+        bool chains = _clickChain > 0 && captured.Kind == _lastClickKind && captured.Payload == _lastClickPayload
             && string.Equals(captured.Tag, _lastClickTag, StringComparison.Ordinal)
             && now - _lastClickTick <= MouseClickTracker.DoubleClickWindowMs;
-        // A recognized double DISARMS the chain (a triple is not two doubles); a single arms it.
-        _clickChainArmed = !isDouble;
-        if (!isDouble) { _lastClickKind = captured.Kind; _lastClickPayload = captured.Payload; _lastClickTag = captured.Tag; _lastClickTick = now; }
+        _clickChain = chains ? _clickChain + 1 : 1;
+        int clickCount = _clickChain;
+        if (_clickChain >= 3) _clickChain = 0;
+        bool isDouble = clickCount >= 2;   // for targets where 2+ shares the double action
+        _lastClickKind = captured.Kind; _lastClickPayload = captured.Payload; _lastClickTag = captured.Tag; _lastClickTick = now;
         switch (captured.Kind)
         {
             case MouseTargetKind.ScrollBarRail:
@@ -2967,13 +2976,22 @@ internal sealed partial class TuiDriver
         if (snapshot is null || snapshot.Count == 0) return;
         int top = Math.Clamp(fromRow, Math.Max(1, _dragPaneTop), snapshot.Count);
         int bottom = Math.Clamp(toRow, top, Math.Min(snapshot.Count, Math.Max(top, _dragPaneBottom)));
-        var sb = new StringBuilder();
+        // Classify every selected row: strip leading gutter/tree/status chrome and trailing
+        // hints, DROP decoration-only rows (borders/rules), and collapse blank runs to one -
+        // the clipboard receives readable text, not a screen scrape of the frame art.
+        var kept = new List<string>();
+        bool lastBlank = false;
         for (int r = top; r <= bottom; r++)
         {
-            if (sb.Length > 0) sb.Append('\n');
-            sb.Append(TuiMarkup.StripAnsi(snapshot[r - 1]).TrimEnd());
+            string? line = TuiComponents.ClipboardText(TuiMarkup.StripAnsi(snapshot[r - 1]));
+            if (line is null) continue;                       // decoration-only: never paste it
+            bool blank = line.Length == 0;
+            if (blank && (lastBlank || kept.Count == 0)) continue;
+            kept.Add(line);
+            lastBlank = blank;
         }
-        string text = sb.ToString();
+        while (kept.Count > 0 && kept[^1].Length == 0) kept.RemoveAt(kept.Count - 1);
+        string text = string.Join('\n', kept);
         if (text.Length == 0 || string.IsNullOrWhiteSpace(text)) return;
         TuiClipboard.CopyViaTerminal(_term, text);   // OSC 52 -> local clipboard (SSH-safe)
         TuiClipboard.CopyViaShell(text);             // fallback -> OS clipboard
@@ -3942,10 +3960,37 @@ internal sealed partial class TuiDriver
                         {
                             // Single click = SeekRow to the clicked transcript line (the hjkl
                             // alias); DOUBLE click on the same line = the existing NAV Enter
-                            // (expand/collapse the card), synthesized as a real Enter key so the
-                            // two paths cannot drift. NAV paints rows 1..viewH from `top`, so
-                            // physical row r shows model line top + r - 1.
+                            // (expand/collapse the card); DRAG across rows = the Shift+V line
+                            // selection through the SAME NavCursorModel machinery (anchor at the
+                            // press row, cursor follows the pointer; release keeps the selection
+                            // so y copies it - or the next click clears it). Keyboard v/V and
+                            // mouse therefore share one selection model and cannot conflict.
+                            // NAV paints rows 1..viewH from `top`, so physical row r shows model
+                            // line top + r - 1.
+                            int navViewHNow = Math.Max(1, _term.Height - 2);
+                            int ModelLine(int mouseRow) => Math.Clamp(top + mouseRow - 1, 0, model.LineCount - 1);
+                            if (!nv.MouseRelease && (nv.MouseButton & 0x20) == 0x20 && navClickRow > 0
+                                && nv.MouseRow != navClickRow)
+                            {
+                                // Motion with the button held, off the press row: arm/extend a
+                                // LINE selection anchored at the press row.
+                                if (model.Select != NavSelect.Line)
+                                {
+                                    model.SeekRow(ModelLine(navClickRow));
+                                    model.ToggleSelect(NavSelect.Line);
+                                }
+                                model.SeekRow(ModelLine(Math.Clamp(nv.MouseRow, 1, navViewHNow)));
+                                Paint();
+                                continue;
+                            }
                             if (!nv.MouseRelease && (nv.MouseButton & 0x20) == 0) navClickRow = nv.MouseRow;
+                            else if (nv.MouseRelease && model.Select == NavSelect.Line && navClickRow > 0
+                                && nv.MouseRow != navClickRow)
+                            {
+                                // Drag release: selection stays active for y (or Esc to clear).
+                                navClickRow = -1;
+                                continue;
+                            }
                             else if (nv.MouseRelease && navClickRow == nv.MouseRow)
                             {
                                 navClickRow = -1;
@@ -3958,6 +4003,7 @@ internal sealed partial class TuiDriver
                                         && navNow - navLastClickTick <= MouseClickTracker.DoubleClickWindowMs;
                                     navChainArmed = !navDouble;
                                     if (!navDouble) { navLastClickLine = line; navLastClickTick = navNow; }
+                                    if (model.Select != NavSelect.None) model.ClearSelect();   // click = new position, drops a stale selection
                                     model.SeekRow(line);
                                     if (navDouble)
                                     {
@@ -4003,8 +4049,11 @@ internal sealed partial class TuiDriver
                 else if (key.Key == ConsoleKey.End)  model.LineEnd();
                 else if (key.Key == ConsoleKey.G && !shift) model.Top();
                 else if (key.Key == ConsoleKey.G && shift)  model.Bottom();
-                else if (key.Key == ConsoleKey.V && !shift) model.ToggleSelect(NavSelect.Char);
-                else if (key.Key == ConsoleKey.V && shift)  model.ToggleSelect(NavSelect.Line);
+                // Match by CHARACTER first: under the buttons preset the terminal delivers
+                // printables as VT text with VirtualKey 0 (the 2026-09-13 VT-printable reflex),
+                // so key.Key == ConsoleKey.V never fires there. KeyChar carries the case.
+                else if (key.KeyChar == 'v' || (key.Key == ConsoleKey.V && !shift)) model.ToggleSelect(NavSelect.Char);
+                else if (key.KeyChar == 'V' || (key.Key == ConsoleKey.V && shift))  model.ToggleSelect(NavSelect.Line);
                 else if (key.Key == ConsoleKey.Y)
                 {
                     string text = model.SelectedText();

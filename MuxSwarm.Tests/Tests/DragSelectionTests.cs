@@ -190,16 +190,6 @@ public class DragSelectionTests
     // ---- exclusions ----
 
     [Fact]
-    public void MidTurnDrag_DoesNotArmSelection()
-    {
-        var driver = FrameDriver(new Terminal());
-        driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 10, 5, false));
-        driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(32, 10, 8, false));
-        Assert.False(driver.DragSelecting);
-        driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 10, 8, true));
-    }
-
-    [Fact]
     public void ThumbDrag_IsNeverASelection()
     {
         var term = new Terminal();

@@ -60,13 +60,22 @@ internal sealed partial class TuiDriver
                 if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
                 {
                     // GUI convention: single click = select the setting; DOUBLE click = the SAME
-                    // Enter the keyboard path uses to begin editing. Regions only exist while
-                    // browsing, so edit mode is inert.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out bool isDouble) && hit.Kind == MouseTargetKind.PickerItem)
+                    // Enter the keyboard path uses to begin editing; TRIPLE click = the F4 Apply
+                    // alias (commit the staged edit). Regions only exist while browsing, so edit
+                    // mode stays keyboard-only for clicks on the list.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount) && hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        if (isDouble)
+                        if (clickCount == 2)
                             view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
+                        else if (clickCount == 3
+                            && view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, height - 11))
+                                == SettingsPickerView.Action.Apply)
+                        {
+                            // Same Apply exit as the keyboard path below.
+                            selected = view.Selection;
+                            return true;
+                        }
                     }
                     continue;
                 }
