@@ -292,6 +292,54 @@ the footer shows cumulative goal token usage, **not a context-window percentage*
 itself is unchanged, and no context threshold or aggregate sys/tool breakdown is inferred.
 
 
+## Local context pruning (`/prune`)
+
+`/prune` is the quick, **deterministic/no-model** alternative to `/compact`: it elides selected
+text without generating a summary and immediately returns to the idle single-agent prompt.
+It applies to the active single-agent/lead session only—not swarm orchestrators, workers, an
+in-flight turn, or a brand-new session before its first turn. Unsupported contexts explain this
+instead of sending the command to a model. Run a normal turn after `/compact`, `/undo`, or a
+reseed before pruning that pending context.
+
+| Command | Action |
+|---|---|
+| `/prune` | Apply dupes, stale, and tools together; count each elision once |
+| `/prune dupes` | Replace older exact duplicate text-content blocks of at least 1,000 characters; retain a complete copy |
+| `/prune tools` | Replace older completed tool-result text blocks of at least 4,000 characters |
+| `/prune stale` | Replace older successful observations superseded by a newer identical read-only call |
+
+All passes protect system/developer messages, the original user goal, the two latest user turns
+and at least approximately 4,000 recent context tokens, skill/instruction-file reads, errors,
+images and other non-text data. The initial stale allowlist is exactly `Filesystem_read_text_file`
+and `Filesystem_list_directory`; **all arguments**, including head/tail selectors, must match.
+Unknown tools/structured result shapes are not guessed or flattened. Age alone does not establish
+that prose is stale. Exact duplicate means ordinal text equality, not similar meaning; this does
+not deduplicate individual lines or parse arbitrary Markdown documents.
+
+Messages, tool calls, call IDs and result envelopes remain in place. Removed text becomes a short
+`[pruned:…]` notice. Copies retained as evidence for duplicate/stale notices remain protected on
+subsequent pruning. No eligible savings means no context mutation and no recovery-file write.
+Counts/characters and estimated tokens saved are shown; estimates are not provider billing usage.
+
+**Trade-off:** useful details may be removed, and changing historical prompt text can reduce prompt-cache
+reuse on the next request. Pruning is explicit, so it does not wait for cache expiry. No compaction
+model is called and no model-generated replacement facts are introduced. System/tool schema overhead
+and surviving protected context are not removed.
+
+Before a change, the original SDK session is serialized to a unique
+`<sandbox>/prune-recovery/pre-prune-*.muxprune` file, published without overwriting. The sandbox must
+be allowed and existing symlink/junction ancestors are rejected. If recovery storage fails, pruning
+is not applied. These snapshots contain the **full pre-prune conversation**: treat them as sensitive
+session records and retain/delete them deliberately; there is no automatic cleanup.
+
+The active context and auxiliary compaction/undo history are then updated consistently. The displayed
+transcript and existing artifacts are not deleted. Ordinary later session checkpoints serialize the
+reduced context; pruning is not an immediate forced session save. The `.muxprune` snapshot retains the
+original serialized session for manual recovery (copy it to `agent_session.json` in a separate session
+folder before resuming there; do not overwrite a session you want to keep). `/undo` still undoes an
+exchange, not the prune operation. Recovery publication is atomic on supported filesystems, not a
+universal power-loss or adversarial filesystem-race guarantee.
+
 ## Agent picker (`/swap`)
 
 In docked TUI (frame or inline), `/swap` opens a dedicated searchable agent list. The current

@@ -2421,6 +2421,42 @@ public static class SingleAgentOrchestrator
                 {
                     MuxConsole.WriteToolsCatalog(toolsQuery, toolsCatalog);
                 }
+                else if (ContextPruner.TryParse(metaCmd, out var pruneMode, out var pruneError))
+                {
+                    if (pruneError is not null) MuxConsole.WriteWarning(pruneError);
+                    else if (_pendingCompaction || _pendingReseed)
+                        MuxConsole.WriteMuted("Context was just compacted or rebuilt. Continue with a message before pruning again.");
+                    else
+                    {
+                        try
+                        {
+                            var filesystem = App.Config.Filesystem;
+                            var result = await ContextPruneSession.ApplyAsync(agent, session, pruneMode,
+                                filesystem?.SandboxPath ?? "", filesystem?.AllowedPaths ?? [], cancellationToken);
+                            if (result.Plan.Blocks == 0) MuxConsole.WriteMuted("Prune: no eligible blocks; context unchanged.");
+                            else
+                            {
+                                // The SDK history is authoritative and includes tool payloads. Keep the
+                                // auxiliary compaction/undo copy aligned rather than resurrecting elided text.
+                                conversationHistory.Clear();
+                                conversationHistory.AddRange(result.Plan.Messages);
+                                // Keep existing static prompt/schema overhead in the last reported
+                                // total; otherwise pruning would falsely claim that overhead vanished.
+                                long remainingText = (long)Math.Ceiling(ContextPruner.EstimateCharacters(result.Plan.Messages) / 2.5);
+                                long estimatedTotal = Math.Max(remainingText, (long)_sessionTokens - result.Plan.EstimatedTokensSaved);
+                                _sessionTokens = (uint)Math.Clamp(estimatedTotal, 0, uint.MaxValue);
+                                _cachedTokens = 0; // Last request's cache-hit figure is no longer applicable.
+                                MuxConsole.WriteSuccess($"Pruned {result.Plan.Blocks} blocks: dupes {result.Plan.Dupes}, tools {result.Plan.Tools}, stale {result.Plan.Stale}; {result.Plan.CharactersSaved:N0} characters (~{result.Plan.EstimatedTokensSaved:N0} tokens). No model call.");
+                                MuxConsole.WriteWarning("Pruned details are absent from future requests; prompt-cache reuse may decrease. Token savings are estimates.");
+                                MuxConsole.WriteInfo($"Pre-prune recovery snapshot: {result.RecoveryPath}");
+                            }
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
+                        {
+                            MuxConsole.WriteWarning("Prune could not complete safely. Check the session and recovery sandbox; no unprotected history reduction was applied.");
+                        }
+                    }
+                }
                 else if (metaCmd.Equals("/compact", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/compact ", StringComparison.OrdinalIgnoreCase))
                 {

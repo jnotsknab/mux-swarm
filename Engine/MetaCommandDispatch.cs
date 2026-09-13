@@ -41,6 +41,12 @@ internal static class MetaCommandDispatch
         var line = (input ?? string.Empty).Trim();
         if (line.Length == 0 || line[0] != '/') return Result.NotHandled;
 
+        if (ContextPruner.TryParse(line, out _, out var pruneError))
+        {
+            MuxConsole.WriteMuted(pruneError ?? "/prune needs an idle single-agent session after its first turn; worker/swarm contexts are not pruned.");
+            return Result.Handled;
+        }
+
         if (ToolCatalog.TryQuery(line, out var query))
         {
             MuxConsole.WriteToolsCatalog(query, tools ?? new ToolCatalog.Snapshot("Current session", Array.Empty<ToolCatalog.Entry>(), false));

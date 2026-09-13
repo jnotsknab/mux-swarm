@@ -43,6 +43,10 @@ internal static class TuiCommands
     {
         // --- in-session meta-loop (SingleAgentOrchestrator) ---
         new("/compact",      "Compact the live session context (/compact [steering])", Scope.SessionOnly),
+        new("/prune",        "Trim context locally (dupes|tools|stale; bare = all); cache may reset", Scope.SessionOnly),
+        new("/prune dupes",  "Elide older exact duplicate text blocks; keep an untouched copy", Scope.SessionOnly),
+        new("/prune tools",  "Elide older large completed tool-result text; protect recent context", Scope.SessionOnly),
+        new("/prune stale",  "Elide superseded known read-only results, not age-guessed prose", Scope.SessionOnly),
         new("/handoff",      "Write a cold-resume handoff doc (/handoff [steering|path.md])", Scope.SessionOnly),
         new("/heal",         "Review session, propose BRAIN/MEMORY write-backs (/heal [deep] [steering])", Scope.SessionOnly),
         new("/reflect",      "Alias of /heal - self-review + memory write-backs (/reflect [deep])", Scope.SessionOnly),
@@ -176,7 +180,7 @@ internal static class TuiCommands
         "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
-        "/compact", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom",
+        "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

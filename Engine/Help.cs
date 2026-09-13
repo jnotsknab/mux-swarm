@@ -31,6 +31,8 @@ public struct Help
         "  /resume         Resume a previous single-agent session (swarm uses memory layers for continuity)",
         "  /tag            (in-session) Tag the live session with free-form text for easy resume/search; optional MEMORY.md stub",
         "  /compact        Compact current session context now (optional steering: /compact <instruction>)",
+        "  /prune          Trim idle single-agent context without a model call: [dupes|tools|stale]; bare = all",
+        "                  Keeps recent context and a recovery snapshot; removes details and may reduce prompt-cache reuse",
         "  /handoff        Write a resume-from-cold handoff doc (active model) to the sandbox reports dir [/handoff <msg|path.md>]",
         "  /heal, /reflect Review the session + propose BRAIN/MEMORY self-heal entries to approve [/heal deep] [steering]",
         "  /fix            Diagnose + repair a misbehaving Mux subsystem (config, MCP, proxy, skills, sandbox) [/fix <what is wrong>]",

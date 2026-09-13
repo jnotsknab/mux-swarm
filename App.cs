@@ -594,6 +594,12 @@ public class App
             // // background. Idempotent after the first call.
             // await EnsureMcpReadyAsync();
 
+            if (ContextPruner.TryParse(userInput, out _, out var menuPruneError))
+            {
+                MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle single-agent session after its first turn. Launch /agent or a team lead first.");
+                continue;
+            }
+
             switch (userInput)
             {
                 case "/help":
