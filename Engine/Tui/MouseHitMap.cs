@@ -97,14 +97,28 @@ internal sealed class MouseHitMap
 /// </summary>
 internal sealed class MouseClickTracker
 {
+    /// <summary>Two clicks on the SAME semantic target within this window make the second a
+    /// double-click (the Enter alias). 450ms sits between the common 300-500ms defaults.</summary>
+    internal const int DoubleClickWindowMs = 450;
+
+    private readonly Func<long> _clock;
     private bool _captured;
     private HitRegion _capture;
+    private bool _chainArmed;   // a prior single click is eligible as the first of a double
+    private MouseTargetKind _lastKind;
+    private int _lastPayload;
+    private string? _lastTag;
+    private long _lastTick;
+
+    public MouseClickTracker(Func<long>? clock = null) => _clock = clock ?? (() => Environment.TickCount64);
 
     /// <summary>Feed one pump event. Returns true exactly when a click completed, with the clicked
-    /// region and 0-based region-local coordinates of the RELEASE point.</summary>
-    public bool Feed(in ConsoleInputPump.InputEvent ev, MouseHitMap map, out HitRegion clicked, out int localRow, out int localCol)
+    /// region, 0-based region-local coordinates of the RELEASE point, and whether this click is
+    /// the second of a DOUBLE (same Kind+Payload+Tag within <see cref="DoubleClickWindowMs"/>).
+    /// A recognized double resets the chain so a triple-click is not two doubles.</summary>
+    public bool Feed(in ConsoleInputPump.InputEvent ev, MouseHitMap map, out HitRegion clicked, out int localRow, out int localCol, out bool isDouble)
     {
-        clicked = default; localRow = localCol = 0;
+        clicked = default; localRow = localCol = 0; isDouble = false;
         if (ev.Kind != ConsoleInputPump.EventKind.Mouse) return false;
         if (ev.MouseRelease)
         {
@@ -115,6 +129,13 @@ internal sealed class MouseClickTracker
             clicked = _capture;
             localRow = ev.MouseRow - _capture.Top;
             localCol = ev.MouseCol - _capture.Left;
+            long now = _clock();
+            isDouble = _chainArmed && clicked.Kind == _lastKind && clicked.Payload == _lastPayload
+                && string.Equals(clicked.Tag, _lastTag, StringComparison.Ordinal)
+                && now - _lastTick <= DoubleClickWindowMs;
+            // A recognized double DISARMS the chain (a triple is not two doubles); a single arms it.
+            _chainArmed = !isDouble;
+            if (!isDouble) { _lastKind = clicked.Kind; _lastPayload = clicked.Payload; _lastTag = clicked.Tag; _lastTick = now; }
             return true;
         }
         if ((ev.MouseButton & 0x20) != 0) return false;   // motion while held: not a new capture

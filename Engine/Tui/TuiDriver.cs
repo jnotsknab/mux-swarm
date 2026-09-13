@@ -1284,15 +1284,22 @@ internal sealed partial class TuiDriver
                 }
                 if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
                 {
-                    // Click on an option row = move the cursor there + the SAME accept the
-                    // keyboard path dispatches (Enter for Select, Space-toggle for MultiSelect -
-                    // multi keeps Enter as the explicit accept, so a click only toggles).
-                    if (_frameHits is { } fh && modalClicks.Feed(ev, fh, out var mHit, out _, out _)
+                    // GUI convention: single click = move the cursor there (Select) or toggle the
+                    // box (MultiSelect); DOUBLE click = the Enter the keyboard path dispatches
+                    // (choose / accept). A single click never commits the modal.
+                    if (_frameHits is { } fh && modalClicks.Feed(ev, fh, out var mHit, out _, out _, out bool isDouble)
                         && mHit.Kind == MouseTargetKind.PromptModalOption)
                     {
                         _promptModal.SetSel(mHit.Payload);
-                        if (kind == PromptModalView.Kind.MultiSelect) { _promptModal.ToggleChecked(); Repaint(); }
-                        else return new PromptModalResult(false, null, _promptModal.Sel, null);
+                        if (kind == PromptModalView.Kind.MultiSelect)
+                        {
+                            if (isDouble)
+                                return new PromptModalResult(false, null, _promptModal.Sel,
+                                    _promptModal.CheckedIndices.OrderBy(i => i).ToList());
+                            _promptModal.ToggleChecked(); Repaint();
+                        }
+                        else if (isDouble) return new PromptModalResult(false, null, _promptModal.Sel, null);
+                        else Repaint();
                     }
                     continue;
                 }
@@ -1459,10 +1466,18 @@ internal sealed partial class TuiDriver
                         }
                         if (av.Kind == ConsoleInputPump.EventKind.Mouse)
                         {
-                            // Click on a lane row = select it (the arrows alias); the dashboard
-                            // is already open, so any pending open request is just consumed.
+                            // Single click on a lane row = select it (the arrows alias); a
+                            // DOUBLE click = the Enter alias (foreground the lane) - synthesized
+                            // as a real Enter key through the dashboard's own key handling below,
+                            // so the two paths cannot drift. Dashboard is already open, so any
+                            // pending open request is just consumed.
                             RouteMouse(av);
                             _ = TakePendingLaneOpen();
+                            if (TakePendingLaneActivate())
+                            {
+                                key = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false);
+                                break;
+                            }
                             continue;
                         }
                         if (av.Kind != ConsoleInputPump.EventKind.Key) continue;
@@ -2578,10 +2593,34 @@ internal sealed partial class TuiDriver
     private bool _mouseCaptured;
     private int _mouseGrabOffset;   // thumb-local row at press (pi's grabOffset: no jump-center)
 
-    // True while routing a MID-TURN mouse event (EscapeKeyListener consuming): only ScrollBar*
-    // and AgentLane targets are honored there - transcript toggles and other targets are dropped,
-    // never deferred (replaying a stale click into the next prompt would be the mouse version of
-    // the queued-Enter burst bug).
+    // Double-click chain on main-frame targets (same contract as MouseClickTracker): two clicks
+    // on the same Kind+Payload+Tag within the window make the second a DOUBLE. Injectable clock
+    // so tests can cross or stay inside the window deterministically.
+    internal Func<long> MouseClock = () => Environment.TickCount64;
+    private bool _clickChainArmed;   // a prior single click is eligible as the first of a double
+    private MouseTargetKind _lastClickKind;
+    private int _lastClickPayload;
+    private string? _lastClickTag;
+    private long _lastClickTick;
+
+    // Set when a dashboard-open AgentLane DOUBLE-click wants the Enter/foreground action; the
+    // Agent View loop consumes it and dispatches its existing Enter path.
+    private bool _pendingLaneActivate;
+
+    /// <summary>Consume the pending lane-activate request raised by a double-click on a lane row
+    /// while the Agent View dashboard is open (the Enter alias).</summary>
+    internal bool TakePendingLaneActivate()
+    {
+        bool activate = _pendingLaneActivate;
+        _pendingLaneActivate = false;
+        return activate;
+    }
+
+    // True while routing a MID-TURN mouse event (EscapeKeyListener consuming): ScrollBar*,
+    // AgentLane, and TranscriptEntry targets are honored there (scroll, lane select/open, and
+    // card expand/collapse are all mid-turn keyboard actions already - wheel, backslash, Ctrl+E).
+    // Compose and other targets are dropped, never deferred (replaying a stale click into the
+    // next prompt would be the mouse version of the queued-Enter burst bug).
     private bool _mouseMidTurn;
 
     // Set when an AgentLane release wants the Agent View opened (idle prompt: ReadLineCore calls
@@ -2599,9 +2638,10 @@ internal sealed partial class TuiDriver
     }
 
     /// <summary>Mid-turn mouse routing (EscapeKeyListener thread, under ConsoleLock): same
-    /// classify/dispatch seam as the idle path, but release actions are filtered to ScrollBar*
-    /// and AgentLane. Returns the lane name when a lane click wants the dashboard opened (the
-    /// caller owns that nested loop), else null.</summary>
+    /// classify/dispatch seam as the idle path, but release actions are filtered to ScrollBar*,
+    /// AgentLane, and TranscriptEntry (each already has a mid-turn keyboard twin). Returns the
+    /// lane name when a lane click wants the dashboard opened (the caller owns that nested
+    /// loop), else null.</summary>
     internal string? RouteMouseMidTurn(in ConsoleInputPump.InputEvent ev)
     {
         _mouseMidTurn = true;
@@ -2642,6 +2682,16 @@ internal sealed partial class TuiDriver
         bool inRegion = ev.Row >= captured.Top && ev.Row < captured.Top + captured.Height
             && ev.Col >= captured.Left && ev.Col < captured.Left + captured.Width;
         if (!inRegion) return;
+        // Double-click = second click on the same semantic target inside the window (the Enter
+        // alias where selection and activation are distinct). A recognized double resets the
+        // chain so a triple is not two doubles.
+        long now = MouseClock();
+        bool isDouble = _clickChainArmed && captured.Kind == _lastClickKind && captured.Payload == _lastClickPayload
+            && string.Equals(captured.Tag, _lastClickTag, StringComparison.Ordinal)
+            && now - _lastClickTick <= MouseClickTracker.DoubleClickWindowMs;
+        // A recognized double DISARMS the chain (a triple is not two doubles); a single arms it.
+        _clickChainArmed = !isDouble;
+        if (!isDouble) { _lastClickKind = captured.Kind; _lastClickPayload = captured.Payload; _lastClickTag = captured.Tag; _lastClickTick = now; }
         switch (captured.Kind)
         {
             case MouseTargetKind.ScrollBarRail:
@@ -2656,9 +2706,11 @@ internal sealed partial class TuiDriver
                 break;
 
             case MouseTargetKind.TranscriptEntry:
-                // Click = the NAV Enter alias: toggle the entry's expanded panel in place.
-                // Mid-turn transcript clicks are dropped (only scrollbar/lanes act there).
-                if (_mouseMidTurn) break;
+                // Click = the NAV Enter alias: toggle the entry's expanded panel in place. Works
+                // MID-TURN too - it is the Ctrl+E alias, which already acts during streaming.
+                // The second click of a double is SUPPRESSED so a double-click never
+                // opens-then-instantly-closes the card.
+                if (isDouble) break;
                 if (captured.Payload < 0 || captured.Payload >= _transcript.Count) break;
                 var ent = _transcript[captured.Payload];
                 if (ent.Expandable is null) break;
@@ -2668,11 +2720,17 @@ internal sealed partial class TuiDriver
                 break;
 
             case MouseTargetKind.AgentLane:
-                // Click = the backslash-then-select alias: select the lane; if the dashboard is
-                // not up yet, request it (the consumer loop owns opening the nested view).
+                // Single click = the backslash-then-select alias: select/highlight the lane
+                // (opens the dashboard when it is not up - a reversible view action). With the
+                // dashboard open, a DOUBLE click is the Enter alias: foreground the lane (the
+                // consumer loop dispatches its existing Enter path).
                 if (captured.Tag is not { } lane) break;
                 _agentView.Select(lane);
-                if (_agentViewActive) Repaint();
+                if (_agentViewActive)
+                {
+                    if (isDouble) _pendingLaneActivate = true;
+                    Repaint();
+                }
                 else _pendingLaneOpen = lane;
                 break;
 
@@ -3516,6 +3574,9 @@ internal sealed partial class TuiDriver
 
         int top = 0;
         int navClickRow = -1;   // physical row of the last mouse press (press+release same row = click)
+        int navLastClickLine = -1;      // model line of the last completed click (double-click chain)
+        bool navChainArmed = false;
+        long navLastClickTick = 0;
         string status = "";   // transient status line (e.g. "copied N chars")
         // Last-painted physical rows (ANSI) for diff repaint - only changed rows are rewritten,
         // so moving the cursor does NOT clear+redraw the whole screen (kills the flicker). null
@@ -3647,9 +3708,11 @@ internal sealed partial class TuiDriver
                         }
                         if (nv.Kind == ConsoleInputPump.EventKind.Mouse)
                         {
-                            // Click = SeekRow to the clicked transcript line (the hjkl alias).
-                            // NAV paints rows 1..viewH from `top`, so physical row r shows model
-                            // line top + r - 1; press+release on the same row is the click.
+                            // Single click = SeekRow to the clicked transcript line (the hjkl
+                            // alias); DOUBLE click on the same line = the existing NAV Enter
+                            // (expand/collapse the card), synthesized as a real Enter key so the
+                            // two paths cannot drift. NAV paints rows 1..viewH from `top`, so
+                            // physical row r shows model line top + r - 1.
                             if (!nv.MouseRelease && (nv.MouseButton & 0x20) == 0) navClickRow = nv.MouseRow;
                             else if (nv.MouseRelease && navClickRow == nv.MouseRow)
                             {
@@ -3658,7 +3721,17 @@ internal sealed partial class TuiDriver
                                 int line = top + nv.MouseRow - 1;
                                 if (nv.MouseRow >= 1 && nv.MouseRow <= navViewH && line >= 0 && line < model.LineCount)
                                 {
+                                    long navNow = MouseClock();
+                                    bool navDouble = navChainArmed && line == navLastClickLine
+                                        && navNow - navLastClickTick <= MouseClickTracker.DoubleClickWindowMs;
+                                    navChainArmed = !navDouble;
+                                    if (!navDouble) { navLastClickLine = line; navLastClickTick = navNow; }
                                     model.SeekRow(line);
+                                    if (navDouble)
+                                    {
+                                        key = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false);
+                                        break;
+                                    }
                                     Paint();
                                 }
                             }

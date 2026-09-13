@@ -34,11 +34,12 @@ public class ModalMouseTests
         map.Begin(80, 24);
         map.Add(new HitRegion(5, 1, 3, 80, MouseTargetKind.PickerItem, 7));
         var t = new MouseClickTracker();
-        Assert.False(t.Feed(Press(10, 6), map, out _, out _, out _));
-        Assert.True(t.Feed(Release(12, 7), map, out var hit, out int lr, out int lc));
+        Assert.False(t.Feed(Press(10, 6), map, out _, out _, out _, out _));
+        Assert.True(t.Feed(Release(12, 7), map, out var hit, out int lr, out int lc, out bool dbl));
         Assert.Equal(7, hit.Payload);
         Assert.Equal(2, lr);
         Assert.Equal(11, lc);
+        Assert.False(dbl);
     }
 
     [Fact]
@@ -48,10 +49,10 @@ public class ModalMouseTests
         map.Begin(80, 24);
         map.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
         var t = new MouseClickTracker();
-        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _));
-        Assert.False(t.Feed(Release(10, 9), map, out _, out _, out _));
+        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
+        Assert.False(t.Feed(Release(10, 9), map, out _, out _, out _, out _));
         // Capture cleared: a lone release later never clicks.
-        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _));
+        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _, out _));
     }
 
     [Fact]
@@ -61,10 +62,53 @@ public class ModalMouseTests
         map.Begin(80, 24);
         map.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
         var t = new MouseClickTracker();
-        Assert.False(t.Feed(ConsoleInputPump.InputEvent.OfMouse(0x20, 10, 5, false), map, out _, out _, out _));
-        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _));   // motion did not capture
-        Assert.False(t.Feed(Press(10, 20), map, out _, out _, out _));    // outside any region
-        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _));   // press missed: no capture
+        Assert.False(t.Feed(ConsoleInputPump.InputEvent.OfMouse(0x20, 10, 5, false), map, out _, out _, out _, out _));
+        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _, out _));   // motion did not capture
+        Assert.False(t.Feed(Press(10, 20), map, out _, out _, out _, out _));    // outside any region
+        Assert.False(t.Feed(Release(10, 5), map, out _, out _, out _, out _));   // press missed: no capture
+    }
+
+    [Fact]
+    public void ClickTracker_SecondClickSameTargetInWindow_IsDouble_ThenChainResets()
+    {
+        var map = new MouseHitMap();
+        map.Begin(80, 24);
+        map.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
+        map.Add(new HitRegion(7, 1, 1, 80, MouseTargetKind.PickerItem, 4));
+        long tick = 1000;
+        var t = new MouseClickTracker(() => tick);
+        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d1));
+        Assert.False(d1);
+        tick += 200;   // inside the window
+        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d2));
+        Assert.True(d2);
+        tick += 200;   // a third click must NOT be another double (chain reset)
+        Assert.False(t.Feed(Press(10, 5), map, out _, out _, out _, out _));
+        Assert.True(t.Feed(Release(10, 5), map, out _, out _, out _, out bool d3));
+        Assert.False(d3);
+    }
+
+    [Fact]
+    public void ClickTracker_DifferentTargetOrExpiredWindow_IsNotDouble()
+    {
+        var map = new MouseHitMap();
+        map.Begin(80, 24);
+        map.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
+        map.Add(new HitRegion(7, 1, 1, 80, MouseTargetKind.PickerItem, 4));
+        long tick = 1000;
+        var t = new MouseClickTracker(() => tick);
+        t.Feed(Press(10, 5), map, out _, out _, out _, out _);
+        t.Feed(Release(10, 5), map, out _, out _, out _, out _);
+        tick += 200;
+        t.Feed(Press(10, 7), map, out _, out _, out _, out _);   // different payload
+        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out bool dOther));
+        Assert.False(dOther);
+        tick += MouseClickTracker.DoubleClickWindowMs + 1;        // expired
+        t.Feed(Press(10, 7), map, out _, out _, out _, out _);
+        Assert.True(t.Feed(Release(10, 7), map, out _, out _, out _, out bool dLate));
+        Assert.False(dLate);
     }
 
     // ---- view-level registration ----
@@ -138,7 +182,7 @@ public class ModalMouseTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void AgentPicker_ClickOnRosterRow_SelectsThatAgent(bool frame)
+    public void AgentPicker_DoubleClickOnRosterRow_SelectsThatAgent(bool frame)
     {
         bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
         ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
@@ -150,7 +194,32 @@ public class ModalMouseTests
         driver.SetMouseTrackingPreset("buttons");
         using var pump = ConsoleInputPump.CreateUnstartedForTest();
         // Roster rows start after the 4 header rows: row 5 = index 0 ... row 7 = index 2.
-        pump.PushFront(new[] { Press(5, 7), Release(5, 7) });
+        // GUI convention: double-click commits (two click pairs inside the window).
+        pump.PushFront(new[] { Press(5, 7), Release(5, 7), Press(5, 7), Release(5, 7) });
+        try
+        {
+            Assert.True(driver.RunAgentPicker(view, out var selected, input: pump));
+            Assert.Equal("Agent2", selected!.Name);
+        }
+        finally { ConsoleInputPump.PromptActive = prompt; ConsoleInputPump.ModalActive = modal; }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AgentPicker_SingleClick_SelectsOnly_DoesNotCommit(bool frame)
+    {
+        bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
+        ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
+        var agents = Enumerable.Range(0, 4)
+            .Select(i => AgentPickerViewTests.Agent($"Agent{i}", "d")).ToList();
+        var view = new AgentPickerView(agents, "Agent0");
+        var driver = new TuiDriver(new Terminal(), frameEngine: frame);
+        driver.SetMouseTrackingPreset("buttons");
+        using var pump = ConsoleInputPump.CreateUnstartedForTest();
+        // Single click on row index 2, then Enter: the click must have moved the cursor there
+        // (Enter selects Agent2), but the click ALONE must not have closed the picker.
+        pump.PushFront(new[] { Press(5, 7), Release(5, 7), Key(ConsoleKey.Enter) });
         try
         {
             Assert.True(driver.RunAgentPicker(view, out var selected, input: pump));
@@ -184,7 +253,7 @@ public class ModalMouseTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void ModelPicker_ClickOnSlotRow_AdvancesPane_LikeEnter(bool frame)
+    public void ModelPicker_DoubleClickOnSlotRow_AdvancesPane_LikeEnter(bool frame)
     {
         bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
         ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
@@ -192,15 +261,14 @@ public class ModalMouseTests
         var driver = new TuiDriver(new Terminal(), frameEngine: frame);
         driver.SetMouseTrackingPreset("buttons");
         using var pump = ConsoleInputPump.CreateUnstartedForTest();
-        // Slots pane: single slot row at row 7 (6 header rows). Click it (= Enter -> Models pane),
-        // then Escape out. If the click did NOT advance the pane, the search row would not render.
-        pump.PushFront(new[] { Press(5, 7), Release(5, 7), Key(ConsoleKey.Escape) });
-        var term = new Terminal();
+        // Slots pane: single slot row at row 7 (6 header rows). Double-click it (= Enter ->
+        // Models pane), then Escape out. Neither click may Apply.
+        pump.PushFront(new[] { Press(5, 7), Release(5, 7), Press(5, 7), Release(5, 7), Key(ConsoleKey.Escape) });
         try
         {
             Assert.True(driver.RunModelPicker(view,
                 _ => Task.FromResult(new ProviderModelCatalog.Result(new[] { "m1" }, null)),
-                (_, _, _) => Assert.Fail("click alone must never apply"), input: pump));
+                (_, _, _) => Assert.Fail("clicks must never apply"), input: pump));
         }
         finally { ConsoleInputPump.PromptActive = prompt; ConsoleInputPump.ModalActive = modal; }
     }
@@ -231,7 +299,7 @@ public class ModalMouseTests
     }
 
     [Fact]
-    public void FramePromptModal_ClickOnOption_SelectsIt_LikeEnter()
+    public void FramePromptModal_DoubleClickOnOption_SelectsIt_LikeEnter()
     {
         bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
         ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
@@ -259,6 +327,8 @@ public class ModalMouseTests
                             {
                                 pump.Enqueue(Press(3, r));
                                 pump.Enqueue(Release(3, r));
+                                pump.Enqueue(Press(3, r));
+                                pump.Enqueue(Release(3, r));   // double-click = accept
                                 return;
                             }
                     Thread.Sleep(20);

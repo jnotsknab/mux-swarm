@@ -73,6 +73,8 @@ public class MainFrameMouseTests
         var term = new Terminal();
         var driver = new TuiDriver(term, frameEngine: true);
         driver.SetMouseTrackingPreset("buttons");
+        long tick = 1000;
+        driver.MouseClock = () => tick;   // separate the two toggles beyond the double window
         driver.CommitLine("plain line one");
         driver.CommitCollapsed("· CodeAgent finished (ctrl+e)", "CodeAgent", "full transcript body\nwith lines");
         driver.CommitLine("plain line two");
@@ -86,7 +88,8 @@ public class MainFrameMouseTests
         Mouse(driver, 0, 4, row);
         Mouse(driver, 0, 4, row, release: true);
         Assert.True((bool)expandedField.GetValue(entry)!);
-        // Click again (map was rebuilt by the repaint; find the region fresh) -> collapse.
+        // Click again OUTSIDE the double window (map was rebuilt by the repaint) -> collapse.
+        tick += MouseClickTracker.DoubleClickWindowMs + 1;
         var (hit2, row2) = FindRegion(driver, MouseTargetKind.TranscriptEntry);
         Assert.Equal(hit.Payload, hit2.Payload);
         Mouse(driver, 0, 4, row2);
@@ -108,7 +111,7 @@ public class MainFrameMouseTests
     }
 
     [Fact]
-    public void MidTurnRouting_HonorsLanes_DropsTranscriptToggles()
+    public void MidTurnRouting_HonorsLanesAndTranscriptToggles_DropsCompose()
     {
         var driver = new TuiDriver(new Terminal(), frameEngine: true);
         driver.SetMouseTrackingPreset("buttons");
@@ -116,19 +119,78 @@ public class MainFrameMouseTests
         driver.SetSubAgentActivity(new[] { ("WebAgent", "searching", "green") }, 0);
         Compose(driver);
 
-        // Transcript click mid-turn: dropped (no toggle).
+        // Transcript click MID-TURN: honored (the Ctrl+E alias already works during streaming).
         var (hit, row) = FindRegion(driver, MouseTargetKind.TranscriptEntry);
         var transcript = (System.Collections.IList)typeof(TuiDriver).GetField("_transcript", PrivateInstance)!.GetValue(driver)!;
         var entry = transcript[hit.Payload]!;
         var expandedField = entry.GetType().GetField("Expanded")!;
         Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 4, row, false)));
         Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 4, row, true)));
-        Assert.False((bool)expandedField.GetValue(entry)!);
+        Assert.True((bool)expandedField.GetValue(entry)!);
 
         // Lane click mid-turn: honored - returns the lane for the caller to open.
         var (_, laneRow) = FindRegion(driver, MouseTargetKind.AgentLane, "WebAgent");
         Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 3, laneRow, false)));
         Assert.Equal("WebAgent", driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 3, laneRow, true)));
+    }
+
+    [Fact]
+    public void TranscriptDoubleClick_SecondClickSuppressed_NoInstantReclose()
+    {
+        var driver = new TuiDriver(new Terminal(), frameEngine: true);
+        driver.SetMouseTrackingPreset("buttons");
+        long tick = 1000;
+        driver.MouseClock = () => tick;
+        driver.CommitCollapsed("· CodeAgent finished (ctrl+e)", "CodeAgent", "body");
+        Compose(driver);
+        var (hit, row) = FindRegion(driver, MouseTargetKind.TranscriptEntry);
+        var transcript = (System.Collections.IList)typeof(TuiDriver).GetField("_transcript", PrivateInstance)!.GetValue(driver)!;
+        var entry = transcript[hit.Payload]!;
+        var expandedField = entry.GetType().GetField("Expanded")!;
+        Mouse(driver, 0, 4, row);
+        Mouse(driver, 0, 4, row, release: true);
+        Assert.True((bool)expandedField.GetValue(entry)!);
+        // Second click of a rapid double: suppressed - the card must stay OPEN.
+        tick += 200;
+        var (hit2, row2) = FindRegion(driver, MouseTargetKind.TranscriptEntry);
+        Assert.Equal(hit.Payload, hit2.Payload);
+        Mouse(driver, 0, 4, row2);
+        Mouse(driver, 0, 4, row2, release: true);
+        Assert.True((bool)expandedField.GetValue(entry)!);
+        // A slow third click (outside the window) toggles it closed as a normal single.
+        tick += MouseClickTracker.DoubleClickWindowMs + 1;
+        var (hit3, row3) = FindRegion(driver, MouseTargetKind.TranscriptEntry);
+        Mouse(driver, 0, 4, row3);
+        Mouse(driver, 0, 4, row3, release: true);
+        Assert.False((bool)expandedField.GetValue(entry)!);
+    }
+
+    [Fact]
+    public void LaneDoubleClick_WithDashboardOpen_RequestsActivate()
+    {
+        var driver = new TuiDriver(new Terminal(), frameEngine: true);
+        driver.SetMouseTrackingPreset("buttons");
+        long tick = 1000;
+        driver.MouseClock = () => tick;
+        var view = (AgentView)typeof(TuiDriver).GetField("_agentView", PrivateInstance)!.GetValue(driver)!;
+        view.Open();
+        view.SetRows(new[] { ("CodeAgent", "building", "blue"), ("WebAgent", "searching", "green") }, DateTime.UtcNow);
+        typeof(TuiDriver).GetField("_agentViewActive", PrivateInstance)!.SetValue(driver, true);
+        driver.SetSubAgentActivity(new[] { ("CodeAgent", "building", "blue"), ("WebAgent", "searching", "green") }, 0);
+        Compose(driver);
+        var (_, laneRow) = FindRegion(driver, MouseTargetKind.AgentLane, "WebAgent");
+        // Single click: selects only.
+        Mouse(driver, 0, 3, laneRow);
+        Mouse(driver, 0, 3, laneRow, release: true);
+        Assert.False(driver.TakePendingLaneActivate());
+        Assert.Equal("WebAgent", view.SelectedAgent(DateTime.UtcNow));
+        // Double click: requests the Enter/foreground action.
+        tick += 200;
+        var (_, laneRow2) = FindRegion(driver, MouseTargetKind.AgentLane, "WebAgent");
+        Mouse(driver, 0, 3, laneRow2);
+        Mouse(driver, 0, 3, laneRow2, release: true);
+        Assert.True(driver.TakePendingLaneActivate());
+        Assert.False(driver.TakePendingLaneActivate());   // consumed
     }
 
     [Fact]

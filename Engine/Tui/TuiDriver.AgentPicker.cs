@@ -55,14 +55,17 @@ internal sealed partial class TuiDriver
                 }
                 if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
                 {
-                    // Click on an agent = move the cursor there + the SAME Enter the keyboard
-                    // path uses for selection intent.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _) && hit.Kind == MouseTargetKind.PickerItem)
+                    // GUI convention: single click = move the cursor there; DOUBLE click = the
+                    // SAME Enter the keyboard path uses for selection intent.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out bool isDouble) && hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 8));
-                        if (clickAction == AgentPickerView.Action.Select) { selected = view.Selected; break; }
-                        if (clickAction == AgentPickerView.Action.Cancel) break;
+                        if (isDouble)
+                        {
+                            var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 8));
+                            if (clickAction == AgentPickerView.Action.Select) { selected = view.Selected; break; }
+                            if (clickAction == AgentPickerView.Action.Cancel) break;
+                        }
                     }
                     continue;
                 }

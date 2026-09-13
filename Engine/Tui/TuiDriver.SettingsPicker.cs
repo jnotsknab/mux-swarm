@@ -59,12 +59,14 @@ internal sealed partial class TuiDriver
                 }
                 if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
                 {
-                    // Click on a setting = select it + the SAME Enter the keyboard path uses to
-                    // begin editing. Regions only exist while browsing, so edit mode is inert.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _) && hit.Kind == MouseTargetKind.PickerItem)
+                    // GUI convention: single click = select the setting; DOUBLE click = the SAME
+                    // Enter the keyboard path uses to begin editing. Regions only exist while
+                    // browsing, so edit mode is inert.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out bool isDouble) && hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
+                        if (isDouble)
+                            view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
                     }
                     continue;
                 }

@@ -79,14 +79,18 @@ internal sealed partial class TuiDriver
                 }
                 if (ev.Kind == ConsoleInputPump.EventKind.Mouse)
                 {
-                    // Click on a list item = move the selection there + the SAME Enter the
-                    // keyboard path dispatches (advance pane / choose). Alias layer only.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _) && hit.Kind == MouseTargetKind.PickerItem)
+                    // GUI convention: single click = move the selection there (the arrows alias);
+                    // DOUBLE click on the same item = the Enter the keyboard path dispatches
+                    // (advance pane / choose). A click alone never advances or applies.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out bool isDouble) && hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
-                        if (clickAction == ModelPickerView.Action.Cancel) break;
-                        if (clickAction == ModelPickerView.Action.Refresh) Refresh();
+                        if (isDouble)
+                        {
+                            var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
+                            if (clickAction == ModelPickerView.Action.Cancel) break;
+                            if (clickAction == ModelPickerView.Action.Refresh) Refresh();
+                        }
                     }
                     continue;
                 }
