@@ -1902,7 +1902,16 @@ internal sealed partial class TuiDriver
         // table; fall back to per-line markdown so we never swallow non-table content.
         bool looksTable = rows.Count >= 2 || rows.Exists(TuiTable.IsSeparatorRow);
         if (looksTable)
-            CommitMirrored(Lane(TuiTable.Render(rows, Width)));
+        {
+            // Commit as a width-parameterized LAYOUT, not frozen rows: a resize re-renders the
+            // table from its SOURCE at the new width (RenderEntryRows calls the layout). The old
+            // frozen-string commit re-WRAPPED box-drawing rows at the new width, which is exactly
+            // the mangled-borders corruption dogfooding caught. Lane tint is captured NOW - the
+            // layout re-runs long after the turn ends.
+            var tint = _laneTint;
+            CommitLayout(w => TuiTable.Render(rows, w)
+                .Select(l => TuiComponents.Gutter(l, tint)).ToList());
+        }
         else
             CommitMirrored(Lane(rows.Select(TuiMarkdown.ToMarkup).ToList()));
     }

@@ -84,7 +84,10 @@ internal static class TuiTable
         var outp = new List<string>();
 
         string topB = indent + $"[{Border}]\u256d" + string.Join("\u252c", colW.Select(w => new string('\u2500', w + 2))) + "\u256e[/]";
-        string midB = indent + $"[{Border}]\u251c" + string.Join("\u253c", colW.Select(w => new string('\u2500', w + 2))) + "\u2524[/]";
+        // Header rule uses DOUBLE-line fills with the matching double-to-single intersections
+        // (╞═╪═╡) so the header band reads clearly separated - the reference harnesses' tables
+        // all carry a visually heavier head rule than row borders.
+        string midB = indent + $"[{Border}]\u255e" + string.Join("\u256a", colW.Select(w => new string('\u2550', w + 2))) + "\u2561[/]";
         string botB = indent + $"[{Border}]\u2570" + string.Join("\u2534", colW.Select(w => new string('\u2500', w + 2))) + "\u256f[/]";
 
         outp.Add("");
@@ -142,9 +145,11 @@ internal static class TuiTable
                     ? $"[bold {Head}]{Esc(seg)}[/]"
                     : Esc(seg);
                 sb.Append(new string(' ', left)).Append(styled).Append(new string(' ', right));
-                sb.Append($" [{Border}]\u2502[/] ");
+                // Interior separator between columns; the CLOSING border (last column) must not
+                // carry a trailing space that a TrimEnd would need to eat - emit it exactly.
+                sb.Append(c < colW.Length - 1 ? $" [{Border}]\u2502[/] " : $" [{Border}]\u2502[/]");
             }
-            outLines.Add(sb.ToString().TrimEnd());
+            outLines.Add(sb.ToString());
         }
         return outLines;
     }

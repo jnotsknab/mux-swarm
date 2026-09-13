@@ -28,6 +28,7 @@ internal static class TuiMarkdown
     private static string DiffMeta => Theme.Active.Muted;   // diff file/meta headers
     private const string DiffCtx = "#A0A0A0";               // diff context line (fixed neutral grey)
 
+    private static readonly Regex BoldItalicStar = new(@"\*\*\*(.+?)\*\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldStar = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);
     private static readonly Regex ItalicStar = new(@"(?<![\*])\*(?!\s)(.+?)(?<!\s)\*(?![\*])", RegexOptions.Compiled);
@@ -35,6 +36,7 @@ internal static class TuiMarkdown
     private static readonly Regex Strike = new(@"~~(.+?)~~", RegexOptions.Compiled);
     // [text](url) and ![alt](url). Optional "title" after the url is tolerated and dropped.
     private static readonly Regex MdLink = new(@"(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
+    private static readonly Regex AutoLink = new(@"<(https?://[^>\s]+)>", RegexOptions.Compiled);
     // Fenced code delimiter: ``` or ~~~ (3+), optional info string (language).
     private static readonly Regex FenceRe = new(@"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+\-.#]*)\s*$", RegexOptions.Compiled);
 
@@ -157,11 +159,19 @@ internal static class TuiMarkdown
                 : $"{LB}{Link} underline{RB}{inner}{LB}/{RB}";           // link -> accent underline
         });
 
-        // 2) Bold then italic. Emit protected tags around escaped inner text.
+        // 1c) Autolinks <https://...> -> styled URL, angle brackets dropped.
+        s = AutoLink.Replace(s, m => $"{LB}{Link} underline{RB}{Escape(m.Groups[1].Value)}{LB}/{RB}");
+
+        // 2) Bold-italic (***text***) first - without it the bold pass eats two of the three
+        //    stars and the italic marker leaks as a literal. Then bold, italic, strike.
+        s = BoldItalicStar.Replace(s, m => Tag2("bold italic", Escape(m.Groups[1].Value)));
         s = BoldStar.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
         s = BoldUnder.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
         s = ItalicStar.Replace(s, m => Tag2("italic", Escape(m.Groups[1].Value)));
         s = Strike.Replace(s, m => Tag2("strikethrough", Escape(m.Groups[1].Value)));
+
+        // 2b) Escaped markers: \* \` \_ \~ render the character, not the backslash.
+        s = s.Replace("\\*", "*").Replace("\\`", "`").Replace("\\_", "_").Replace("\\~", "~");
 
         // 3) Escape any remaining literal Spectre brackets in the plain runs, then restore
         //    the protected sentinel brackets to real markup brackets.
@@ -181,10 +191,13 @@ internal static class TuiMarkdown
         if (string.IsNullOrEmpty(s)) return "";
         s = InlineCode.Replace(s, m => m.Groups[1].Value);
         s = MdLink.Replace(s, m => string.IsNullOrEmpty(m.Groups[2].Value) ? m.Groups[3].Value : m.Groups[2].Value);
+        s = AutoLink.Replace(s, m => m.Groups[1].Value);
+        s = BoldItalicStar.Replace(s, m => m.Groups[1].Value);
         s = BoldStar.Replace(s, m => m.Groups[1].Value);
         s = BoldUnder.Replace(s, m => m.Groups[1].Value);
         s = ItalicStar.Replace(s, m => m.Groups[1].Value);
         s = Strike.Replace(s, m => m.Groups[1].Value);
+        s = s.Replace("\\*", "*").Replace("\\`", "`").Replace("\\_", "_").Replace("\\~", "~");
         return s;
     }
 
