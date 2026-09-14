@@ -135,6 +135,76 @@ internal static class ProviderModelCatalog
 
     private static Result Fail(string error) => new(Array.Empty<string>(), error);
 
+    /// <summary>Context-length lookup outcome: null Tokens = the provider does not expose it.</summary>
+    internal sealed record ContextResult(int? Tokens, string? Error);
+
+    /// <summary>
+    /// Best-effort context-window lookup for one model from the provider's /models catalog.
+    /// Providers expose the window under different keys (OpenRouter: context_length /
+    /// top_provider.context_length; others: max_context_length, context_window,
+    /// max_input_tokens); the first plausible positive value wins. A missing model or a
+    /// catalog without the metadata returns null Tokens WITHOUT an error - callers treat
+    /// that as "provider does not expose it" (explicit no-op), never a failure.
+    /// </summary>
+    internal static async Task<ContextResult> LoadContextLengthAsync(
+        ProviderConfig? provider, string modelId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(modelId)) return new ContextResult(null, "No model selected.");
+        if (provider is null) return new ContextResult(null, "Select an active provider first.");
+        if (!TryModelsUri(provider.Endpoint, out var uri) || uri is null)
+            return new ContextResult(null, "Configure a valid HTTP(S) provider endpoint first.");
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
+            {
+                var key = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
+                if (!string.IsNullOrWhiteSpace(key))
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
+            }
+            using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
+                .ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return new ContextResult(null, $"Provider catalog returned HTTP {(int)response.StatusCode}.");
+            var body = await response.Content.ReadAsByteArrayAsync(deadline.Token).ConfigureAwait(false);
+            if (body.Length > MaxResponseBytes) return new ContextResult(null, "Catalog response too large.");
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return new ContextResult(null, null);   // not an OpenAI-shaped catalog: treat as not-exposed
+
+            foreach (var item in data.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object
+                    || !item.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String
+                    || !string.Equals(id.GetString(), modelId, StringComparison.Ordinal)) continue;
+                return new ContextResult(ExtractContextTokens(item), null);
+            }
+            return new ContextResult(null, null);       // model not listed: not exposed
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) { return new ContextResult(null, "Provider catalog request timed out."); }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException)
+        {
+            return new ContextResult(null, "Could not reach or parse the provider catalog.");
+        }
+    }
+
+    /// <summary>Probe the known context-window keys on a catalog model object (top-level, then nested).</summary>
+    internal static int? ExtractContextTokens(JsonElement model)
+    {
+        foreach (var key in new[] { "context_length", "max_context_length", "context_window", "max_input_tokens", "max_model_len" })
+            if (model.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.Number
+                && v.TryGetInt32(out var n) && n > 0) return n;
+        if (model.TryGetProperty("top_provider", out var tp) && tp.ValueKind == JsonValueKind.Object
+            && tp.TryGetProperty("context_length", out var tpl) && tpl.ValueKind == JsonValueKind.Number
+            && tpl.TryGetInt32(out var tn) && tn > 0) return tn;
+        return null;
+    }
+
     private static bool TryModelsUri(string? endpoint, out Uri? modelsUri)
     {
         modelsUri = null;

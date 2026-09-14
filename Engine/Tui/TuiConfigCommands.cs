@@ -12,6 +12,27 @@
 /// </summary>
 internal static partial class TuiConfigCommands
 {
+    /// <summary>
+    /// Parse a human token-count string: raw integers ("120000"), k-suffix thousands ("64k",
+    /// "200K"), and m-suffix millions ("1m", "1.5M"). Used by /context sizing.
+    /// </summary>
+    internal static bool TryParseTokenCount(string s, out int tokens)
+    {
+        tokens = 0;
+        s = (s ?? "").Trim();
+        if (s.Length == 0) return false;
+        double mult = 1;
+        char last = char.ToLowerInvariant(s[^1]);
+        if (last == 'k') { mult = 1_000; s = s[..^1]; }
+        else if (last == 'm') { mult = 1_000_000; s = s[..^1]; }
+        if (!double.TryParse(s, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double v) || v <= 0) return false;
+        double total = v * mult;
+        if (total is < 1 or > int.MaxValue) return false;
+        tokens = (int)Math.Round(total);
+        return tokens > 0;
+    }
+
     /// <summary>Result of handling a config command.</summary>
     public readonly record struct Result(bool Handled, bool Ok, string Message)
     {

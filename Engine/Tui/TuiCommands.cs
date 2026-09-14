@@ -58,7 +58,7 @@ internal static class TuiCommands
         new("/review",       "AI review of the working-tree diff (read-only findings)", Scope.SessionOnly),
         new("/wipe",         "Wipe session context, start fresh", Scope.SessionOnly),
         new("/tokens",       "Show context/token usage", Scope.SessionOnly),
-        new("/context",      "Show context/token usage", Scope.SessionOnly),
+        new("/context",      "Show usage, or set the context window: /context <n|64k|max> (max queries the provider)", Scope.SessionOnly),
         new("/undo",         "Undo the last exchange", Scope.SessionOnly),
         new("/retry",        "Retry the last message", Scope.SessionOnly),
         new("/redo",         "Retry the last message", Scope.SessionOnly),
@@ -117,6 +117,7 @@ internal static class TuiCommands
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
         new("/split",        "Arm optional lead-context sharing for delegated sub-agents (toggle)", Scope.ReplOnly),
         new("/history",      "Browse past sessions full-screen: fuzzy find, open, scroll, search", Scope.ReplOnly),
+        new("/telemetry",    "Start/stop the telemetry dashboard (tokens + cost, all-time): /telemetry [port|off]", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
         new("/plan",         "Toggle plan mode (approve before exec)", Scope.ReplOnly),

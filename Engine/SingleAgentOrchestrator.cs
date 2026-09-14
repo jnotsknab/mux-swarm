@@ -78,6 +78,9 @@ public static class SingleAgentOrchestrator
     internal static uint SessionTokens => _sessionTokens;
     internal static int AutoCompactThreshold { get; private set; } = 80_000;
 
+    /// <summary>/context &lt;size&gt;: adjust the live auto-compact threshold (session context window).</summary>
+    internal static void SetAutoCompactThreshold(int tokens) => AutoCompactThreshold = Math.Max(4_000, tokens);
+
     public static Common.AgentDefinition? GetCurrSingleAgentDef(bool fromCfg = false)
     {
         if (AgentDef != null && !fromCfg) return AgentDef;
@@ -1187,6 +1190,7 @@ public static class SingleAgentOrchestrator
             }
 
             delegationSw.Stop();
+            Telemetry.TelemetrySink.RecordDelegation(callerName, agentName, delegationSw.ElapsedMilliseconds);
             OtelMetrics.Delegations.Add(1,
                 new KeyValuePair<string, object?>("from", callerName),
                 new KeyValuePair<string, object?>("to", agentName));
@@ -2596,8 +2600,47 @@ public static class SingleAgentOrchestrator
                       || metaCmd.StartsWith("/context ", StringComparison.OrdinalIgnoreCase))
                 {
                     var tokArg = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                    if (tokArg.Length > 1 && tokArg[1].Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+                    string ctxSub = tokArg.Length > 1 ? tokArg[1].Trim() : "";
+                    if (ctxSub.Equals("all", StringComparison.OrdinalIgnoreCase))
                         HandleCostBreakdown(resolvedModelId);
+                    else if (ctxSub.Length > 0)
+                    {
+                        // /context <tokens|64k|200k|max>: SET the session context window (the
+                        // auto-compact threshold). "max" asks the provider catalog for the active
+                        // model's context length; when the provider does not expose it this is an
+                        // explicit no-op (no hardcoded per-model tables).
+                        int? target = null;
+                        if (ctxSub.Equals("max", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ProviderModelCatalog.ContextResult ctxRes = new(null, null);
+                            await MuxConsole.WithSpinnerAsync("Querying provider for model context length", async () =>
+                                ctxRes = await ProviderModelCatalog.LoadContextLengthAsync(
+                                    App.ActiveProvider, resolvedModelId, ExecutionCancellation.Current));
+                            if (ctxRes.Tokens is int found)
+                            {
+                                target = found;
+                                MuxConsole.WriteSuccess($"Provider reports {resolvedModelId}: {found:N0}-token context window.");
+                            }
+                            else
+                                MuxConsole.WriteMuted(ctxRes.Error is { } err
+                                    ? $"Context lookup failed ({err}). Window unchanged ({AutoCompactThreshold:N0})."
+                                    : $"Provider does not expose a context length for {resolvedModelId}. Window unchanged ({AutoCompactThreshold:N0}).");
+                        }
+                        else if (Tui.TuiConfigCommands.TryParseTokenCount(ctxSub, out int parsed))
+                            target = parsed;
+                        else
+                            MuxConsole.WriteWarning($"Unrecognized context size '{ctxSub}'. Use a token count (e.g. 120000 or 200k) or 'max'.");
+
+                        if (target is int t)
+                        {
+                            autoCompactTokenThreshold = t;
+                            SetAutoCompactThreshold(t);
+                            MuxConsole.UpdateDockedFooter(_sessionTokens, (uint)AutoCompactThreshold,
+                                App.PlanMode, App.UltraMode, allowParallelSubAgents, _cachedTokens, allowSubAgents, App.GigaMode);
+                            MuxConsole.WriteSuccess($"Session context window set to {AutoCompactThreshold:N0} tokens (auto-compact threshold; this session).");
+                            MuxConsole.WriteMuted("Persist a default with /set autoCompactTokenThreshold <n>.");
+                        }
+                    }
                     else
                         PrintTokenUsage();
                 }
