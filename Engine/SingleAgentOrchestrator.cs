@@ -1190,7 +1190,7 @@ public static class SingleAgentOrchestrator
             }
 
             delegationSw.Stop();
-            Telemetry.TelemetrySink.RecordDelegation(callerName, agentName, delegationSw.ElapsedMilliseconds);
+            Telemetry.TelemetrySink.RecordDelegation(callerName, agentName, delegationSw.ElapsedMilliseconds, succeeded);
             OtelMetrics.Delegations.Add(1,
                 new KeyValuePair<string, object?>("from", callerName),
                 new KeyValuePair<string, object?>("to", agentName));
@@ -1752,13 +1752,14 @@ public static class SingleAgentOrchestrator
 
             compactSw.Stop();
             OtelMetrics.CompactionRuns.Add(1);
-            CostLedger.RecordCompaction(resolvedModelId);
+            int afterTokens = Common.EstimateTokenCount(conversationHistory);
+            CostLedger.RecordCompaction(resolvedModelId, beforeTokens, afterTokens);
             OtelMetrics.CompactionDuration.Record(compactSw.ElapsedMilliseconds);
             if (beforeTokens > 0)
                 OtelMetrics.CompactionRatio.Record((double)_sessionTokens / beforeTokens);
 
             _pendingCompaction = true;
-            _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
+            _sessionTokens = (uint)afterTokens;
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
             ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = _sessionTokens });
             return _pendingCompaction;
@@ -2089,7 +2090,7 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
-                                    CostLedger.RecordToolCall(resolvedModelId);
+                                    CostLedger.RecordToolCall(resolvedModelId, singleAgentDef.Name, functionCall.Name);
                                     MuxConsole.SetTuiToolCalls(++_sessionToolCalls);
                                     // Stdio parity: the SDK event enum has TOOL_CALL but the engine
                                     // only ever emitted tool_result on this path; headless drivers
@@ -2186,7 +2187,7 @@ public static class SingleAgentOrchestrator
                                     CostLedger.RecordUsage(resolvedModelId,
                                         details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
                                         details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
-                                        details.TotalTokenCount ?? 0);
+                                        details.TotalTokenCount ?? 0, singleAgentDef.Name);
 
                                     // Mid-turn compaction: this UsageContent frame is the authoritative token
                                     // checkpoint, so it is the earliest safe point to notice the session has grown
@@ -2297,6 +2298,7 @@ public static class SingleAgentOrchestrator
                         OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                             new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
+                        Telemetry.TelemetrySink.RecordTurn(singleAgentDef.Name, resolvedModelId, turnSw.ElapsedMilliseconds);
 
                         // Only Fires In Verbose Path
                         OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "assistant", responseText.ToString());

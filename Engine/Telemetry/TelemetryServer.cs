@@ -7,7 +7,7 @@ namespace MuxSwarm.Engine.Telemetry;
 
 /// <summary>
 /// Standalone Kestrel dashboard for the persistent telemetry sink (/telemetry, --telemetry).
-/// Grafana-style stat tiles, canvas time-series charts, and per-model / per-agent tables over
+/// Grafana-style stat tiles, canvas time-series charts, and per-model / per-agent / per-tool tables over
 /// <see cref="TelemetryStore"/>, themed to match the main web UI (same Zinc palette, fonts,
 /// theme presets, and settings-panel conventions) so the two surfaces feel like one product.
 /// Zero external dependencies: one embedded HTML document, no chart library, no npm. Binds
@@ -54,6 +54,11 @@ public static class TelemetryServer
                 models = TelemetryStore.ByModel(events),
                 agents = TelemetryStore.ByAgent(events),
             });
+        });
+        app.MapGet("/api/telemetry/tools", (string? range) =>
+        {
+            var events = TelemetryStore.Load(ParseRange(range));
+            return Results.Json(TelemetryStore.ByTool(events));
         });
 
         await app.StartAsync();
@@ -168,8 +173,9 @@ td.name { font-family:var(--font-sans); }
   </div>
   <div class="grid2">
     <div class="card"><h2>By model</h2><div id="modelTable"></div></div>
-    <div class="card"><h2>Delegations by agent</h2><div id="agentTable"></div></div>
+    <div class="card"><h2>By agent</h2><div id="agentTable"></div></div>
   </div>
+  <div class="card"><h2>By tool</h2><div id="toolTable"></div></div>
 </main>
 <script>
 // Theme presets: same ids/palettes as the main web UI so the choice feels continuous.
@@ -203,7 +209,7 @@ document.addEventListener('click', e => {
 });
 
 let range = 'all';
-let series = [], summary = null, models = [], agents = [];
+let series = [], summary = null, models = [], agents = [], tools = [];
 document.getElementById('ranges').addEventListener('click', e => {
   const btn = e.target.closest('.range-btn'); if (!btn) return;
   range = btn.dataset.range;
@@ -217,12 +223,13 @@ const money = n => '$' + (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.to
 async function refresh() {
   const q = range === 'all' ? '' : ('?range=' + range);
   try {
-    [summary, series, modelsResp] = await Promise.all([
+    [summary, series, modelsResp, tools] = await Promise.all([
       fetch('/api/telemetry/summary' + q).then(r => r.json()),
       fetch('/api/telemetry/series' + q).then(r => r.json()),
       fetch('/api/telemetry/models' + q).then(r => r.json()),
+      fetch('/api/telemetry/tools' + q).then(r => r.json()),
     ]);
-    models = modelsResp.models || []; agents = modelsResp.agents || [];
+    models = modelsResp.models || []; agents = modelsResp.agents || []; tools = tools || [];
   } catch { return; }
   renderTiles(); renderTables(); draw();
 }
@@ -236,7 +243,8 @@ function renderTiles() {
     <div class="tile"><div class="label">Cached</div><div class="value">${fmt(summary.totalCached)}</div><div class="sub">prompt-cache reads</div></div>
     <div class="tile"><div class="label">Reasoning</div><div class="value">${fmt(summary.totalReason)}</div><div class="sub">thinking tokens</div></div>
     <div class="tile"><div class="label">Est. cost</div><div class="value">${money(summary.totalCost)}</div><div class="sub">API list prices; subscriptions bill separately</div></div>
-    <div class="tile"><div class="label">Tool calls</div><div class="value">${fmt(summary.toolCalls)}</div><div class="sub">${fmt(summary.compactions)} compactions</div></div>
+    <div class="tile"><div class="label">Tool calls</div><div class="value">${fmt(summary.toolCalls)}</div><div class="sub">${summary.toolErrors ? `<span style="color:var(--red)">${fmt(summary.toolErrors)} errors</span> - ` : ''}${fmt(summary.compactions)} compactions${summary.tokensSaved ? ` (${fmt(summary.tokensSaved)} tok saved)` : ''}</div></div>
+    <div class="tile"><div class="label">Turns</div><div class="value">${fmt(summary.turns || 0)}</div><div class="sub">${summary.turns ? 'avg ' + (summary.avgTurnMs/1000).toFixed(1) + 's per turn' : 'agent responses'}</div></div>
     <div class="tile"><div class="label">Delegations</div><div class="value">${fmt(summary.delegations)}</div><div class="sub">since ${summary.firstEvent ? new Date(summary.firstEvent).toLocaleDateString() : '-'}</div></div>`;
 }
 
@@ -247,9 +255,14 @@ function renderTables() {
       + models.map(m => `<tr><td class="name">${m.model}</td><td>${fmt(m.in)}</td><td>${fmt(m.out)}</td><td>${fmt(m.cached)}</td><td>${money(m.cost)}</td><td>${fmt(m.tools)}</td></tr>`).join('')
       + '</table>';
   const at = document.getElementById('agentTable');
-  at.innerHTML = agents.length === 0 ? '<div class="empty">No delegations recorded yet.</div>'
-    : '<table><tr><th>Agent</th><th>Delegations</th><th>Total time</th></tr>'
-      + agents.map(a => `<tr><td class="name">${a.agent}</td><td>${fmt(a.delegations)}</td><td>${(a.totalMs/1000).toFixed(1)}s</td></tr>`).join('')
+  at.innerHTML = agents.length === 0 ? '<div class="empty">No agent activity recorded yet.</div>'
+    : '<table><tr><th>Agent</th><th>Tokens</th><th>Cost</th><th>Turns</th><th>Deleg.</th><th>Time</th></tr>'
+      + agents.map(a => `<tr><td class="name">${a.agent}</td><td>${fmt((a.in|0)+(a.out|0))}</td><td>${money(a.cost||0)}</td><td>${fmt(a.turns||0)}</td><td>${fmt(a.delegations)}</td><td>${(a.totalMs/1000).toFixed(1)}s</td></tr>`).join('')
+      + '</table>';
+  const tt = document.getElementById('toolTable');
+  tt.innerHTML = tools.length === 0 ? '<div class="empty">No tool calls recorded yet.</div>'
+    : '<table><tr><th>Tool</th><th>Calls</th><th>Errors</th></tr>'
+      + tools.map(t => `<tr><td class="name">${t.tool}</td><td>${fmt(t.calls)}</td><td>${t.errors ? `<span style="color:var(--red)">${fmt(t.errors)}</span>` : '0'}</td></tr>`).join('')
       + '</table>';
 }
 

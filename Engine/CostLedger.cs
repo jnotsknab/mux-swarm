@@ -59,10 +59,11 @@ public static class CostLedger
     /// Record a provider usage checkpoint. The token counts are the provider's session-cumulative
     /// running totals (the same numbers fed to <see cref="OtelMetrics.RecordTokens"/>). Session
     /// totals snap to the snapshot; rolling totals advance by the positive delta vs the last
-    /// snapshot seen this session.
+    /// snapshot seen this session. <paramref name="agent"/> attributes the persisted telemetry
+    /// delta to the emitting agent (the in-memory ledger stays keyed by model).
     /// </summary>
     public static void RecordUsage(string model, long input, long output, long cached,
-        long reasoning, long total)
+        long reasoning, long total, string? agent = null)
     {
         lock (Gate)
         {
@@ -99,7 +100,8 @@ public static class CostLedger
             long dOut = s.HasBase ? Delta(output, s.BaseOutput) : Math.Max(0, output);
             long dCache = s.HasBase ? Delta(cached, s.BaseCached) : Math.Max(0, cached);
             long dReason = s.HasBase ? Delta(reasoning, s.BaseReasoning) : Math.Max(0, reasoning);
-            Telemetry.TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason);
+            long dTotal = s.HasBase ? Delta(total, s.BaseTotal) : Math.Max(0, total);
+            Telemetry.TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason, agent, dTotal);
 
             s.BaseInput = input;
             s.BaseOutput = output;
@@ -113,8 +115,11 @@ public static class CostLedger
     private static long Delta(long now, long baseline)
         => now >= baseline ? now - baseline : Math.Max(0, now);
 
-    /// <summary>Increment the tool-call count for a model (session + rolling).</summary>
-    public static void RecordToolCall(string model)
+    /// <summary>
+    /// Increment the tool-call count for a model (session + rolling). <paramref name="agent"/>
+    /// and <paramref name="tool"/> enrich the persisted telemetry event only.
+    /// </summary>
+    public static void RecordToolCall(string model, string? agent = null, string? tool = null)
     {
         lock (Gate)
         {
@@ -122,11 +127,14 @@ public static class CostLedger
             s.SessToolCalls++;
             s.RollToolCalls++;
         }
-        Telemetry.TelemetrySink.RecordToolCall(model);
+        Telemetry.TelemetrySink.RecordToolCall(model, agent, tool);
     }
 
-    /// <summary>Increment the compaction-run count for a model (session + rolling).</summary>
-    public static void RecordCompaction(string model)
+    /// <summary>
+    /// Increment the compaction-run count for a model (session + rolling). Before/after token
+    /// counts (when known) enrich the persisted telemetry event with the context savings.
+    /// </summary>
+    public static void RecordCompaction(string model, long beforeTokens = 0, long afterTokens = 0)
     {
         lock (Gate)
         {
@@ -134,7 +142,7 @@ public static class CostLedger
             s.SessCompactions++;
             s.RollCompactions++;
         }
-        Telemetry.TelemetrySink.RecordCompaction(model);
+        Telemetry.TelemetrySink.RecordCompaction(model, beforeTokens, afterTokens);
     }
 
     /// <summary>

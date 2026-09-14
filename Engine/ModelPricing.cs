@@ -78,4 +78,24 @@ public static class ModelPricing
         return inputTokens / 1_000_000.0 * p.InputPer1M
              + outputTokens / 1_000_000.0 * p.OutputPer1M;
     }
+
+    /// <summary>
+    /// Fraction of the input rate charged for a prompt-cache READ. Coarse cross-provider
+    /// approximation (Anthropic bills cache reads at 0.1x base input; other providers are in the
+    /// same order of magnitude).
+    /// </summary>
+    public const double CacheReadInputRateFraction = 0.1;
+
+    /// <summary>
+    /// Estimate USD cost including discounted prompt-cache reads. Reasoning/thinking tokens are
+    /// deliberately NOT a separate term: providers already include them in the output count, so
+    /// pricing them again would double-count. Returns null when the model price is unknown.
+    /// </summary>
+    public static double? EstimateFull(string? modelId, long inputTokens, long outputTokens, long cachedTokens)
+    {
+        if (Lookup(modelId) is not { } p) return null;
+        return inputTokens / 1_000_000.0 * p.InputPer1M
+             + outputTokens / 1_000_000.0 * p.OutputPer1M
+             + cachedTokens / 1_000_000.0 * p.InputPer1M * CacheReadInputRateFraction;
+    }
 }

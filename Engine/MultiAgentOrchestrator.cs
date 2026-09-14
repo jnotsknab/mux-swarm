@@ -310,6 +310,7 @@ public static class MultiAgentOrchestrator
             }
 
             delegationSw.Stop();
+            Telemetry.TelemetrySink.RecordDelegation(callerName, agentName, delegationSw.ElapsedMilliseconds, succeeded);
             OtelMetrics.Delegations.Add(1,
                 new KeyValuePair<string, object?>("from", callerName),
                 new KeyValuePair<string, object?>("to", agentName));
@@ -1260,6 +1261,7 @@ public static class MultiAgentOrchestrator
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
+                            Telemetry.TelemetrySink.RecordToolCall(_orchestratorModelId, "Orchestrator", fc.Name);
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -1334,6 +1336,9 @@ public static class MultiAgentOrchestrator
                                 "Orchestrator", _orchestratorModelId, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
                             );
+                            Telemetry.TelemetryUsageTracker.RecordCumulative(orchestratorSession, "Orchestrator", _orchestratorModelId,
+                                usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }
                     }
                 }
@@ -1379,6 +1384,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", "Orchestrator"));
                 OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", "Orchestrator"));
+                Telemetry.TelemetrySink.RecordTurn("Orchestrator", _orchestratorModelId, orchTurnSw.ElapsedMilliseconds);
                 OtelMetrics.OrchestratorIterations.Add(1);
             }
 
@@ -1642,6 +1648,7 @@ public static class MultiAgentOrchestrator
                         if (content is FunctionCallContent fc)
                         {
                             lastToolName = fc.Name;
+                            Telemetry.TelemetrySink.RecordToolCall(specialist.Agent.Id, specialist.Def.Name, fc.Name);
                             HookWorker.Enqueue(new HookEvent
                             {
                                 Event = "tool_call",
@@ -1729,6 +1736,9 @@ public static class MultiAgentOrchestrator
                                 specialist.Def.Name, specialist.Agent.Id, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
                             );
+                            Telemetry.TelemetryUsageTracker.RecordCumulative(specialist.Session, specialist.Def.Name, specialist.Agent.Id,
+                                usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
+                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }
                     }
                 }
@@ -1767,6 +1777,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurns.Add(1, new KeyValuePair<string, object?>("agent", specialist.Def.Name));
                 OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
+                Telemetry.TelemetrySink.RecordTurn(specialist.Def.Name, specialist.Agent.Id, turnSw.ElapsedMilliseconds);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
