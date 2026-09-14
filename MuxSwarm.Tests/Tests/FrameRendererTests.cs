@@ -303,6 +303,34 @@ public class FrameRendererTests
         Assert.DoesNotContain("\u001b[0K", terminal.Output);
     }
 
+    /// <summary>With a chrome gutter the suffix clear is unconditional: estimator-full rows can
+    /// render narrower on the real terminal (U+23BA class) and skipping the clear strands stale
+    /// cells in the scrollbar region. The gutter pass repaints the rail right after.</summary>
+    [Fact]
+    public void Present_FullWidthRowWithGutter_StillClearsSuffix()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { "seed" }, new[] { "|" });
+        terminal.Clear();
+        // Estimator says full-width; a narrower real render would leave stale cells before the rail.
+        renderer.Present(new[] { new string('x', 20) }, new[] { "|" });
+        Assert.Contains("\u001b[0K", terminal.Output);
+    }
+
+    /// <summary>Gutter-less presents keep the estimator guard (a genuinely full-width modal row
+    /// never erases its own last cell).</summary>
+    [Fact]
+    public void Present_FullWidthRowWithoutGutter_KeepsEstimatorGuard()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { "seed" });
+        terminal.Clear();
+        renderer.Present(new[] { new string('y', 20) });
+        Assert.DoesNotContain("\u001b[0K", terminal.Output);
+    }
+
     // --- independent proportional frame scrollbar ---------------------------
 
     [Theory]

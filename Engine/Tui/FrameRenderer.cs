@@ -80,7 +80,7 @@ internal sealed class FrameRenderer
             sb.Append(Ansi.Home);
             for (int i = 0; i < rows.Count; i++)
             {
-                WriteRowInto(sb, i, rows[i], columns);
+                WriteRowInto(sb, i, rows[i], columns, hasGutter: rightGutter is not null);
                 WriteGutterInto(sb, i, columns, rightGutter);
             }
         }
@@ -93,7 +93,7 @@ internal sealed class FrameRenderer
             for (int i = 0; i < rows.Count; i++)
             {
                 bool changed = !string.Equals(rows[i], last[i], StringComparison.Ordinal);
-                if (changed) WriteRowInto(sb, i, rows[i], columns);
+                if (changed) WriteRowInto(sb, i, rows[i], columns, hasGutter: rightGutter is not null);
                 string cell = rightGutter?[i] ?? " ";
                 string previous = _lastGutter?[i] ?? " ";
                 // A row rewrite clears its suffix, including the chrome. Reapply the cell even if
@@ -157,12 +157,16 @@ internal sealed class FrameRenderer
     // Paint before clearing: never erase a shaded band ahead of its replacement (BCE flash).
     // EL uses the REAL cursor position, not our approximate Unicode width. Padding alone can leave
     // the final cells untouched when a terminal renders a text symbol narrower than our estimator.
-    private static void WriteRowInto(StringBuilder sb, int rowIndex, string rowAnsi, int columns)
+    private static void WriteRowInto(StringBuilder sb, int rowIndex, string rowAnsi, int columns, bool hasGutter)
     {
         sb.Append(Ansi.MoveTo(rowIndex + 1, 1)).Append(Ansi.Reset).Append(rowAnsi).Append(Ansi.Reset);
-        // With DECAWM disabled, a full-width row leaves the cursor ON its last cell. Do not erase
-        // that cell. Driver content reserves the gutter, so normal frame rows always have a suffix.
-        if (VisibleWidth(rowAnsi) < columns) sb.Append("\u001b[0K");
+        // With a chrome gutter the suffix clear is UNCONDITIONAL: the estimator can call a row
+        // full-width while the terminal rendered it narrower (the U+23BA class), and skipping the
+        // clear strands stale cells between the real content end and the rail - the scrollbar-region
+        // artifact. The gutter pass repaints the final column right after, so nothing is lost even
+        // when the cursor sits on it. Gutter-less presents (modal pickers, content pre-clamped below
+        // full width) keep the estimator guard so a genuinely full-width row never erases its last cell.
+        if (hasGutter || VisibleWidth(rowAnsi) < columns) sb.Append("\u001b[0K");
     }
 
     private static void WriteGutterInto(StringBuilder sb, int row, int columns, IReadOnlyList<string>? gutter)

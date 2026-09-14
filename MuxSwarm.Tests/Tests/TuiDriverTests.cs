@@ -1218,6 +1218,55 @@ public class TuiDriverTests
         Assert.Contains("456 tokens", term.Output);
     }
 
+    private static string MergedPlain(System.Collections.Generic.List<string> rendered)
+        => string.Join("\n", rendered);
+
+    /// <summary>A long Command: line uses the width-aware budget (about two wrapped rows) instead
+    /// of the legacy fixed 90-char cap, so wide terminals show the whole command.</summary>
+    [Fact]
+    public void ToolCallResultMerged_WidthBudget_ShowsFullCommandOnWideTerminal()
+    {
+        string cmd = "Command: cd C:\\repo & git --no-optional-locks log -1 --pretty=full --stat & git status --porcelain=v1 -b && echo done-marker-at-the-very-end";
+        var legacy = MergedPlain(TuiComponents.ToolCallResultMerged("shell", null, cmd, error: false, expandable: false));
+        Assert.DoesNotContain("done-marker-at-the-very-end", legacy);
+
+        var wide = MergedPlain(TuiComponents.ToolCallResultMerged(
+            "shell", null, cmd, error: false, expandable: false, frame: -1, width: 200, out bool clipped));
+        Assert.Contains("done-marker-at-the-very-end", wide);
+        Assert.False(clipped);
+    }
+
+    /// <summary>When even the width budget cannot fit the command, the line is reported clipped and
+    /// carries the expand affordance instead of a dead ellipsis.</summary>
+    [Fact]
+    public void ToolCallResultMerged_StillClipped_ReportsClippedAndShowsExpandHint()
+    {
+        string cmd = "Command: " + new string('x', 600);
+        var narrow = MergedPlain(TuiComponents.ToolCallResultMerged(
+            "shell", null, cmd, error: false, expandable: false, frame: -1, width: 100, out bool clipped));
+        Assert.True(clipped);
+        Assert.Contains("ctrl+e expand", narrow);
+    }
+
+    /// <summary>Driver settle path: a single-line result whose command clips at the current width
+    /// is retained EXPANDABLE (Ctrl+E opens the full text) even though it is only one line.</summary>
+    [Fact]
+    public void Driver_ClippedSingleLineCommand_BecomesExpandable()
+    {
+        var term = new FakeTerminal { Width = 60, Height = 20 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(10);
+        d.BeginToolCall("shell", "long");
+        string cmd = "Command: " + new string('z', 500) + " END-SENTINEL";
+        d.ResolveMergedToolResult(cmd, error: false);
+        d.Commit(new[] { "next line" }); // flushes the settling result into the transcript
+        term.Clear();
+        bool open = d.ExpandLatestInline();
+        Assert.True(open);
+        Assert.Contains("END-SENTINEL", term.Output);
+    }
+
     [Fact]
     public void Driver_ErrorMerge_PaintsRedCrossInScrollback()
     {

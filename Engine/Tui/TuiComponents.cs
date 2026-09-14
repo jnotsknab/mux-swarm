@@ -289,11 +289,23 @@ internal static class TuiComponents
     /// <summary>As above; when <paramref name="frame"/> &gt;= 0 the OK head dot pulses (the most-
     /// recent completed call, held in the live region) - the red failure glyph never pulses.</summary>
     public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error, bool expandable, int frame)
+        => ToolCallResultMerged(tool, args, resultText, error, expandable, frame, 0, out _);
+
+    /// <summary>
+    /// As above with a width-aware result budget: when <paramref name="width"/> &gt; 0 the picked
+    /// result line (usually the "Command:" line) may use roughly two wrapped rows of the usable
+    /// columns before truncating, instead of the legacy fixed 90-char cap - so a long command is
+    /// fully readable on a wide terminal. <paramref name="clipped"/> reports whether the display
+    /// still had to truncate; callers use it to arm the Ctrl+E expandable card so the full text is
+    /// always reachable ("show the full cmd or be expandable"). Width 0 keeps the legacy cap.
+    /// </summary>
+    public static List<string> ToolCallResultMerged(string tool, string? args, string resultText, bool error, bool expandable, int frame, int width, out bool clipped)
     {
         var lines = (resultText ?? "").Replace("\r\n", "\n").Split('\n')
             .Where(l => l.Trim().Length > 0).ToArray();
         string first = "";
         int more = 0;
+        clipped = false;
         if (lines.Length > 0)
         {
             // For OK results prefer the "Command:" line (skip async "Job ID:" bookkeeping);
@@ -325,18 +337,24 @@ internal static class TuiComponents
                     l.TrimStart().StartsWith("Command:", StringComparison.OrdinalIgnoreCase));
             }
             if (pick < 0) pick = 0;
-            first = Trunc(CollapseWs(lines[pick]), 90);
+            // Result-line budget: legacy fixed 90 when no width is supplied; otherwise about two
+            // wrapped rows of the usable columns (never below 90). Downstream renderers wrap
+            // collapsed entries rather than clipping, so a budgeted line is fully visible.
+            int budget = width > 0 ? Math.Max(90, width * 2) : 90;
+            string full = CollapseWs(lines[pick]);
+            first = Trunc(full, budget);
+            clipped = TuiMarkup.Width(full) > budget;
             more = lines.Length - 1;
         }
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 48))})[/]";
-        // The line-count hint is shown ONLY when the result is large enough to be Ctrl+E-
-        // expandable; it doubles as the expand affordance (Claude Code's "(ctrl+o to expand)"
-        // pattern). Short, fully-shown results get no "(+N lines)" noise.
+        // The line-count hint doubles as the expand affordance (Claude Code's "(ctrl+o to
+        // expand)" pattern). It shows when the result is large enough to be expandable OR when
+        // the single result line had to be truncated (the caller arms the expandable card).
         string moreHint = (expandable && more > 0)
             ? $" [{Dim}](+{more} line{(more == 1 ? "" : "s")}, ctrl+e expand)[/]"
-            : "";
+            : (clipped ? $" [{Dim}](ctrl+e expand)[/]" : "");
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
         // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.

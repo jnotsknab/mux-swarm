@@ -1636,8 +1636,13 @@ internal sealed partial class TuiDriver
         if (_settling is not ( {} s)) return;
         _settling = null;
         string toolName = string.IsNullOrEmpty(s.Tool) ? "tool" : s.Tool;
-        var merged = Lane(TuiComponents.ToolCallResultMerged(s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1));
-        if (s.Expandable && merged.Count > 0)
+        // Width-aware result line: the full command is shown when it fits the current usable
+        // columns; when it still has to clip, the entry is armed expandable so Ctrl+E/NAV/click
+        // always reaches the complete text (never a dead "..." the user cannot open).
+        var merged = Lane(TuiComponents.ToolCallResultMerged(
+            s.Tool, s.Args, s.Result, s.Error, s.Expandable, -1, TranscriptWidth, out bool clippedLine));
+        bool retain = s.Expandable || clippedLine;
+        if (retain && merged.Count > 0)
         {
             RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
             for (int k = 1; k < merged.Count; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
@@ -2011,7 +2016,7 @@ internal sealed partial class TuiDriver
         // in-flight cadence). Flushed to static scrollback the instant anything else commits.
         if (!_streaming && _settling is { } sr)
             lines.AddRange(Lane(TuiComponents.ToolCallResultMerged(
-                sr.Tool, sr.Args, sr.Result, sr.Error, sr.Expandable, _thinkFrame / 3)));
+                sr.Tool, sr.Args, sr.Result, sr.Error, sr.Expandable, _thinkFrame / 3, TranscriptWidth, out _)));
 
         // The italic "thinking" indicator renders BELOW the live dot line(s) - the dot is the
         // primary action, the spinner+status is the running tail beneath it (rendering it above the
