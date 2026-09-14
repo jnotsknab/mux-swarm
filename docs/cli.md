@@ -179,6 +179,7 @@ Available at the top-level REPL.
 | `/setmodel` | Browse active-provider models and save a slot’s model and reasoning effort |
 | `/set <key> <value>` | Edit an existing config/swarm key; bare `/set` opens native search/edit (F4 Apply, Esc cancel) |
 | `/showreasoning full\|summary\|none` | Show or hide streamed reasoning text |
+| `/mouse [off\|wheel\|buttons]` | Mouse preset for the frame engine (default `buttons`) |
 | `/config` | Show all configuration settings; every key is `/set`-editable |
 | `/newagent` | Guided wizard to create a swarm agent |
 | `/editagent` | Edit a swarm agent (model, description, MCP servers, delegation) |
@@ -312,11 +313,38 @@ exceeds the transcript pane, including at the live tail, and stops above the pin
 
 The footer divider stays a plain horizontal rule; scroll position is conveyed by the rail alone.
 **PgUp/PgDn** scroll the transcript; after user-initiated scrolling, **End/Esc** returns to
-latest when no higher-priority editor or attachment action consumes the key. The scrollbar does
-not add click/drag targets or change mouse bindings. Inline rendering keeps host-terminal scrollback.
+latest when no higher-priority editor or attachment action consumes the key. Under the default
+`buttons` mouse preset the rail is interactive: clicking the track pages toward the click and
+dragging the thumb scrolls continuously; under `/mouse wheel` or `off` it is passive. Inline
+rendering keeps host-terminal scrollback.
 
 The startup title card uses shared bounded column sizing in both render paths. Frame-mode resize
 rebuilds its retained layout at the current width rather than wrapping old panel borders.
+
+## Mouse controls (frame TUI)
+
+Since v0.14.0 the frame engine with the `buttons` mouse preset is the default for new configs;
+existing configs that set `renderEngine` or `mouseTracking` keep their values. Opt out with
+`/set renderEngine inline`, `/mouse wheel`, or `/mouse off`. Every mouse action is an alias of
+an existing keyboard path - nothing is reachable only by mouse.
+
+- **Wheel** scrolls the transcript viewport (unchanged from the `wheel` preset).
+- **Click** selects: picker/modal rows highlight, transcript cards toggle expand/collapse,
+  compose clicks position the caret, NAV clicks seek the cursor row, Agent View lane rows select.
+- **Double-click** activates - the keyboard Enter for that surface (pickers advance/choose,
+  ask_user accepts, NAV/transcript expands, job rows reopen).
+- **Triple-click** applies (F4) in `/setmodel` and `/set`.
+- **Drag** over transcript rows selects whole lines; release copies them to the clipboard
+  (OSC 52 with a local shell fallback, so it works over SSH). Shift+drag bypasses tracking for
+  terminal-native selection in most terminals.
+- **Scrollbar**: clicking the track pages toward the click; dragging the thumb scrolls continuously.
+- **Footer chips**: the model chip opens `/setmodel`; the effort chip cycles mode (Shift+Tab alias).
+- **Mid-turn** (while an agent streams): scrollbar, agent-lane, and transcript-card clicks work;
+  compose and footer-chip clicks are ignored.
+
+The inline engine never enables mouse tracking at the normal prompt (the terminal keeps native
+selection/scrollback); pickers opened from inline enable it for the modal lifetime only.
+See `/shortcuts` for the live keybind + mouse reference.
 
 
 ## Swarm completion display (TUI)
