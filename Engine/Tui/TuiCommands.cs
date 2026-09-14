@@ -115,6 +115,7 @@ internal static class TuiCommands
         new("/createhook",   "Guided wizard to scaffold a swarm hook (/createhook [id])", Scope.ReplOnly),
         new("/hooks",        "Hooks status / toggle / create (/hooks on|off|create)", Scope.ReplOnly),
         new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
+        new("/split",        "Arm optional lead-context sharing for delegated sub-agents (toggle)", Scope.ReplOnly),
 
         // --- session/mode toggles (App.cs menu - applied to the NEXT launched session) ---
         new("/plan",         "Toggle plan mode (approve before exec)", Scope.ReplOnly),

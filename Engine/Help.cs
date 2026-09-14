@@ -14,6 +14,7 @@ public struct Help
         "  /stateless      Stateless agentic session for one-off tasks",
         "  /subagents      (/sub shorthand) Enable specialist delegation from the /agent lead",
         "  /parasubagents  (/psub shorthand) Enable concurrent specialist delegation from the /agent lead",
+        "  /split          Arm optional lead-context sharing: delegation tools gain inheritLeadContext (lead opts in per delegation)",
         "  /addcontext     Allows configuration of what context each agent is injected with (supports custom overrides)",
         "  /plan           Toggle plan mode, agents present a plan and ask for approval before executing",
         "  /ultra          Toggle ultra (plan + maximum reasoning; parallel delegation when configured)",

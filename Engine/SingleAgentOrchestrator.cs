@@ -1091,12 +1091,18 @@ public static class SingleAgentOrchestrator
 
         ChatOptions? compactChatOpts = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.ModelOpts?.ToChatOptions();
 
+        // /split context sharing: lazy provider for the lead's LIVE session history, assigned
+        // after the SDK session is created below. Delegation-tool closures read it at call time,
+        // so the shared block always reflects the lead's window at the moment of delegation.
+        Func<List<ChatMessage>?> leadHistoryProvider = () => null;
+
         async Task<string> ExecuteDelegation(
             string agentName,
             string task,
             string callerName,
             bool restrictToSpecialists,
-            bool parallel = false)
+            bool parallel = false,
+            bool inheritLeadContext = false)
         {
             if (restrictToSpecialists && agentName == "Orchestrator")
                 return "[ERROR] Sub-agents cannot delegate back to the Orchestrator.";
@@ -1116,6 +1122,11 @@ public static class SingleAgentOrchestrator
             if (agentName == callerName && callerName.Equals("Orchestrator", System.StringComparison.OrdinalIgnoreCase))
                 return $"[ERROR] The Orchestrator cannot delegate to itself.";
 
+
+            // Opt-in lead-context seeding (/split armed + inheritLeadContext:true): prepend the
+            // lead's window as a delimited block so the sub-agent skips redundant lookups.
+            if (inheritLeadContext)
+                task = LeadContextShare.WrapTask(task, LeadContextShare.BuildBlock(leadHistoryProvider()));
 
             using var delegationSpan = OtelTracer.GetSource().StartActivity("delegation");
             delegationSpan?.SetTag("from", callerName);
@@ -1231,6 +1242,11 @@ public static class SingleAgentOrchestrator
             method: async (
                 [Description("Name of the specialist agent to delegate to. Cannot delegate to Orchestrator.")] string agentName,
                 [Description("The specific sub-task or instruction for the specialist agent")] string task,
+                [Description("When true AND /split context sharing is armed, seed this sub-agent with " +
+                    "your (the lead's) current context window as a delimited block so it starts with " +
+                    "everything you know instead of re-running lookups. Use for tasks that build on " +
+                    "session state; leave false for independent tasks (a smaller prompt is faster and cheaper).")]
+                bool inheritLeadContext = false,
                 CancellationToken invocationToken = default
             ) =>
             {
@@ -1246,12 +1262,16 @@ public static class SingleAgentOrchestrator
                     return $"[ERROR] Unknown agent '{agentName}'. Available agents: {available}";
                 }
 
-                return await ExecuteDelegation(agentName, task, singleAgentDef.Name, restrictToSpecialists: true);
+                return await ExecuteDelegation(agentName, task, singleAgentDef.Name, restrictToSpecialists: true,
+                    inheritLeadContext: inheritLeadContext && App.SplitContextShare);
             },
             name: "delegate_to_agent_lite",
             description: "Delegate a sub-task to an agent by name. " +
                          "Use when a task would be better handled by another agent based on their specialization, or when offloading would improve efficiency. " +
                          "Cannot delegate to the Orchestrator. Note: Synchronous Version. " +
+                         (App.SplitContextShare
+                            ? "Context sharing is ARMED (/split): pass inheritLeadContext=true to seed the sub-agent with your current context window. "
+                            : "") +
                          Common.DelegableAgentNames()
         );
 
@@ -1262,7 +1282,13 @@ public static class SingleAgentOrchestrator
                 [Description("When true, fire the tasks into the BACKGROUND and return their job ids " +
                     "IMMEDIATELY (non-blocking) so you keep working; poll/collect later with check_delegations. " +
                     "Default false blocks until the whole batch finishes and returns all results.")]
-                bool background = false, CancellationToken invocationToken = default
+                bool background = false,
+                [Description("When true AND /split context sharing is armed, seed EVERY sub-agent in this " +
+                    "batch with your (the lead's) current context window as a delimited block, so they " +
+                    "start with what you know instead of re-running lookups. Leave false for independent " +
+                    "research-style tasks (smaller prompts are faster and cheaper).")]
+                bool inheritLeadContext = false,
+                CancellationToken invocationToken = default
             ) =>
             {
                 using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
@@ -1274,6 +1300,16 @@ public static class SingleAgentOrchestrator
                 var assignmentList = assignments?.ToList() ?? new();
                 if (assignmentList.Count == 0)
                     return "[delegate_parallel] No assignments given. Provide a list of {AgentName, Task}.";
+
+                // /split: one shared block snapshot for the whole batch (built once, prepended per task).
+                if (inheritLeadContext && App.SplitContextShare)
+                {
+                    string sharedBlock = LeadContextShare.BuildBlock(leadHistoryProvider());
+                    if (sharedBlock.Length > 0)
+                        assignmentList = assignmentList
+                            .Select(r => r with { Task = LeadContextShare.WrapTask(r.Task, sharedBlock) })
+                            .ToList();
+                }
 
                 // Non-blocking path: fire each task into the background via DetachedRunner and return
                 // job ids at once so the lead keeps working. Collect with check_delegations.
@@ -1357,6 +1393,9 @@ public static class SingleAgentOrchestrator
                          "an AgentName and a Task string. Blocks until all finish and returns their results. " +
                          "Pass background=true to instead launch them in the background and return job ids at once " +
                          "(poll with check_delegations) when you have other work to do meanwhile. " +
+                         (App.SplitContextShare
+                            ? "Context sharing is ARMED (/split): pass inheritLeadContext=true to seed every sub-agent in the batch with your current context window. "
+                            : "") +
                          Common.DelegableAgentNames()
         );
 
@@ -1640,6 +1679,16 @@ public static class SingleAgentOrchestrator
         var conversationHistory = resumedSession.HasValue
             ? Common.ExtractMessagesFromSession(resumedSession.Value)
             : new List<ChatMessage>();
+
+        // /split provider: prefer the SDK session's live in-memory history (includes tool
+        // calls/results); fall back to the lightweight conversation history. Snapshot copies -
+        // the shared block must not race the live list while a delegation renders it.
+        leadHistoryProvider = () =>
+        {
+            if (session.TryGetInMemoryChatHistory(out var live) && live is { Count: > 0 })
+                return live.ToList();
+            return conversationHistory.Count > 0 ? conversationHistory.ToList() : null;
+        };
 
         // Deep memory (reflectionAgent.mode == "deep"): expose this session's history to the
         // background gatherer and start its activity-gated loop. Inert in standard mode; interactive

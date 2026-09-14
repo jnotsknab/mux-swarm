@@ -75,6 +75,15 @@ public class App
     //Refers to single agent mode only for ephemeral sub-tasks, swarm and parallel swarm modes utilize multiple agents by default. 
     protected static bool AllowSubagents = false;
     protected static bool AllowParallelSubAgents = false;
+
+    /// <summary>
+    /// /split: arms OPTIONAL lead-context sharing on the delegation tools. When armed, the
+    /// delegation tools advertise an inheritLeadContext parameter the lead (or the user, by
+    /// asking) can set per delegation to seed sub-agents with the lead's current window as a
+    /// delimited block. Never forced - default parameter value stays false, so an armed session
+    /// with a lead that never opts in behaves identically. Session-scoped, off by default.
+    /// </summary>
+    public static bool SplitContextShare = false;
     
     // Background MCP server initialization; awaited lazily before first tool use.
     protected static Task<bool>? McpInitTask;
@@ -766,6 +775,19 @@ public class App
                     AllowParallelSubAgents = CliCmdUtils.HandleToggleSingleModeSubAgents(AllowParallelSubAgents, parallel: true);
                     // Reflect the psub badge in the docked footer immediately.
                     MuxConsole.RefreshDockedFooterModes(ShouldPlan, UltraMode, AllowParallelSubAgents, AllowSubagents, GigaMode);
+                    break;
+                case "/split":
+                    SplitContextShare = !SplitContextShare;
+                    if (SplitContextShare)
+                    {
+                        MuxConsole.WriteSuccess("Context sharing ARMED: delegation tools now offer inheritLeadContext.");
+                        MuxConsole.WriteMuted("The lead decides per delegation (or tell it: \"give the subagents your context\").");
+                        MuxConsole.WriteMuted("Never forced - delegations that don't opt in are unchanged. /split again disarms.");
+                        if (!AllowSubagents && !AllowParallelSubAgents && !UltraMode && !GigaMode)
+                            MuxConsole.WriteMuted("Note: no delegation mode is active yet (/sub, /psub, /ultra, or /giga).");
+                    }
+                    else
+                        MuxConsole.WriteInfo("Context sharing disarmed. Delegation tools revert to their default schemas.");
                     break;
                 case "/onboard":
                     Config = LoadConfig(ConfigPath);
