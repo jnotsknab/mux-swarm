@@ -182,6 +182,10 @@ internal sealed class ModelPickerView
     {
         width = Math.Max(1, width); height = Math.Max(1, height);
         hits?.Begin(width, height);
+        // Full-pane backdrop (added FIRST so item rows win the reverse scan): every click is
+        // COUNTABLE even on panes without item regions (Effort) - without it a triple-click's
+        // third click lands on nothing and the chain dies exactly when the user needs it.
+        hits?.Add(new HitRegion(1, 1, height, width, MouseTargetKind.PickerSearchBox, -1));
         string Esc(string s) => Spectre.Console.Markup.Escape(s);
         string Clip(string s) => TuiMarkup.TruncateMarkup(s, width, "");
         var rows = new List<string>

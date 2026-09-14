@@ -63,12 +63,17 @@ internal sealed partial class TuiDriver
                     // Enter the keyboard path uses to begin editing; TRIPLE click = the F4 Apply
                     // alias (commit the staged edit). Regions only exist while browsing, so edit
                     // mode stays keyboard-only for clicks on the list.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount) && hit.Kind == MouseTargetKind.PickerItem)
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount))
                     {
-                        view.ClickItem(hit.Payload);
-                        if (clickCount == 2)
-                            view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
-                        else if (clickCount == 3
+                        if (hit.Kind == MouseTargetKind.PickerItem)
+                        {
+                            view.ClickItem(hit.Payload);
+                            if (clickCount == 2)
+                                view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, height - 11));
+                        }
+                        // Triple anywhere = F4: the natural triple is select -> open editor ->
+                        // apply, and click 3 lands in EDIT mode where only the backdrop exists.
+                        if (clickCount == 3
                             && view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, height - 11))
                                 == SettingsPickerView.Action.Apply)
                         {

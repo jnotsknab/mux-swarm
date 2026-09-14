@@ -137,7 +137,7 @@ public class ModalMouseTests
     }
 
     [Fact]
-    public void SettingsPickerView_EditingMode_RegistersNoRegions()
+    public void SettingsPickerView_EditingMode_RegistersOnlyBackdrop()
     {
         var settings = new[]
         {
@@ -147,11 +147,15 @@ public class ModalMouseTests
         var view = new SettingsPickerView(settings);
         var hits = new MouseHitMap();
         view.Render(60, 20, hits);
-        Assert.True(hits.Count > 0);
+        Assert.True(hits.Count > 1);   // backdrop + item rows
         view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), 5);   // begin editing
         Assert.True(view.Editing);
         view.Render(60, 20, hits);
-        Assert.Equal(0, hits.Count);   // clicks are inert while a draft is open
+        // Editing: NO item rows - but the backdrop remains so clicks stay COUNTABLE (the
+        // triple-click chain must survive the editor opening under click 2).
+        Assert.Equal(1, hits.Count);
+        Assert.True(hits.TryHit(5, 5, out var hit, out _, out _));
+        Assert.Equal(MouseTargetKind.PickerSearchBox, hit.Kind);
     }
 
     [Fact]

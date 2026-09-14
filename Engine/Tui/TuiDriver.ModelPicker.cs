@@ -81,29 +81,31 @@ internal sealed partial class TuiDriver
                 {
                     // GUI convention: single click = move the selection there (the arrows alias);
                     // DOUBLE click = the Enter the keyboard path dispatches (advance pane /
-                    // choose); TRIPLE click = the F4 Apply alias (write the staged selection).
-                    // A single click never advances or applies.
-                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount) && hit.Kind == MouseTargetKind.PickerItem)
+                    // choose); TRIPLE click anywhere = the F4 Apply alias. The chain survives the
+                    // double's own pane change (position-union chaining + the backdrop region),
+                    // so select -> stage -> apply completes as three clicks on one spot.
+                    if (clicks.Feed(ev, hits, out var hit, out _, out _, out int clickCount))
                     {
-                        view.ClickItem(hit.Payload);
-                        if (clickCount == 2)
+                        if (hit.Kind == MouseTargetKind.PickerItem)
                         {
-                            var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
-                            if (clickAction == ModelPickerView.Action.Cancel) break;
-                            if (clickAction == ModelPickerView.Action.Refresh) Refresh();
-                        }
-                        else if (clickCount == 3)
-                        {
-                            var applyAction = view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, _term.Height - 10));
-                            if (applyAction == ModelPickerView.Action.Apply)
+                            view.ClickItem(hit.Payload);
+                            if (clickCount == 2)
                             {
-                                try { apply(view.Slot!.Id, view.Model, view.Effort); return true; }
-                                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException or InvalidOperationException)
-                                {
-                                    view.Message = ex is IOException
-                                        ? "Could not save: file changed or unavailable. Close and reopen the picker."
-                                        : "Could not save this selection. Check model, effort, and configuration permissions.";
-                                }
+                                var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
+                                if (clickAction == ModelPickerView.Action.Cancel) break;
+                                if (clickAction == ModelPickerView.Action.Refresh) Refresh();
+                            }
+                        }
+                        if (clickCount == 3
+                            && view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, _term.Height - 10))
+                                == ModelPickerView.Action.Apply)
+                        {
+                            try { apply(view.Slot!.Id, view.Model, view.Effort); return true; }
+                            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException or InvalidOperationException)
+                            {
+                                view.Message = ex is IOException
+                                    ? "Could not save: file changed or unavailable. Close and reopen the picker."
+                                    : "Could not save this selection. Check model, effort, and configuration permissions.";
                             }
                         }
                     }

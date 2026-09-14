@@ -83,12 +83,13 @@ internal static class TuiTable
         string indent = new string(' ', pad);
         var outp = new List<string>();
 
-        string topB = indent + $"[{Border}]\u256d" + string.Join("\u252c", colW.Select(w => new string('\u2500', w + 2))) + "\u256e[/]";
-        // Header rule uses DOUBLE-line fills with the matching double-to-single intersections
-        // (╞═╪═╡) so the header band reads clearly separated - the reference harnesses' tables
-        // all carry a visually heavier head rule than row borders.
-        string midB = indent + $"[{Border}]\u255e" + string.Join("\u256a", colW.Select(w => new string('\u2550', w + 2))) + "\u2561[/]";
-        string botB = indent + $"[{Border}]\u2570" + string.Join("\u2534", colW.Select(w => new string('\u2500', w + 2))) + "\u256f[/]";
+        // HEAVY box-drawing throughout (U+250F/2501/2533 top, U+2523/254B/252B header rule,
+        // U+2517/253B/251B bottom, U+2503 verticals): the boxy, thick-edged grid the reference
+        // harnesses set as the baseline. Light/rounded read as "extremely thin" in dogfooding;
+        // heavy strokes give the table real visual weight.
+        string topB = indent + $"[{Border}]\u250f" + string.Join("\u2533", colW.Select(w => new string('\u2501', w + 2))) + "\u2513[/]";
+        string midB = indent + $"[{Border}]\u2523" + string.Join("\u254b", colW.Select(w => new string('\u2501', w + 2))) + "\u252b[/]";
+        string botB = indent + $"[{Border}]\u2517" + string.Join("\u253b", colW.Select(w => new string('\u2501', w + 2))) + "\u251b[/]";
 
         outp.Add("");
         outp.Add(topB);
@@ -125,7 +126,7 @@ internal static class TuiTable
         for (int h = 0; h < height; h++)
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append(indent).Append($"[{Border}]\u2502[/] ");
+            sb.Append(indent).Append($"[{Border}]\u2503[/] ");
             for (int c = 0; c < colW.Length; c++)
             {
                 string seg = h < wrapped[c].Count ? wrapped[c][h] : "";
@@ -147,7 +148,7 @@ internal static class TuiTable
                 sb.Append(new string(' ', left)).Append(styled).Append(new string(' ', right));
                 // Interior separator between columns; the CLOSING border (last column) must not
                 // carry a trailing space that a TrimEnd would need to eat - emit it exactly.
-                sb.Append(c < colW.Length - 1 ? $" [{Border}]\u2502[/] " : $" [{Border}]\u2502[/]");
+                sb.Append(c < colW.Length - 1 ? $" [{Border}]\u2503[/] " : $" [{Border}]\u2503[/]");
             }
             outLines.Add(sb.ToString());
         }

@@ -101,6 +101,10 @@ internal sealed class MouseClickTracker
     /// double-click (the Enter alias). 450ms sits between the common 300-500ms defaults.</summary>
     internal const int DoubleClickWindowMs = 450;
 
+    /// <summary>Horizontal slop (cells) within which two clicks on the same row count as the
+    /// same SPOT for chaining - the terminal-cell analog of the OS double-click rectangle.</summary>
+    internal const int ChainColSlop = 2;
+
     private readonly Func<long> _clock;
     private bool _captured;
     private HitRegion _capture;
@@ -108,6 +112,7 @@ internal sealed class MouseClickTracker
     private MouseTargetKind _lastKind;
     private int _lastPayload;
     private string? _lastTag;
+    private int _lastRow, _lastCol;
     private long _lastTick;
 
     public MouseClickTracker(Func<long>? clock = null) => _clock = clock ?? (() => Environment.TickCount64);
@@ -132,13 +137,21 @@ internal sealed class MouseClickTracker
             localRow = ev.MouseRow - _capture.Top;
             localCol = ev.MouseCol - _capture.Left;
             long now = _clock();
-            bool chains = _chain > 0 && clicked.Kind == _lastKind && clicked.Payload == _lastPayload
-                && string.Equals(clicked.Tag, _lastTag, StringComparison.Ordinal)
-                && now - _lastTick <= DoubleClickWindowMs;
+            // Chain when the click is the SAME TARGET (Kind+Payload+Tag) *or* the SAME SPOT
+            // (row + col slop) inside the window. Identity alone breaks when the prior click's
+            // own action mutates the UI (a picker double-click advances the pane, so payloads
+            // shift under the third click); position alone breaks when the action moves the
+            // content (expanding a card shifts rows). The union is the OS convention (position
+            // + time) hardened for a UI that repaints between clicks.
+            bool sameTarget = clicked.Kind == _lastKind && clicked.Payload == _lastPayload
+                && string.Equals(clicked.Tag, _lastTag, StringComparison.Ordinal);
+            bool sameSpot = ev.MouseRow == _lastRow && Math.Abs(ev.MouseCol - _lastCol) <= ChainColSlop;
+            bool chains = _chain > 0 && (sameTarget || sameSpot) && now - _lastTick <= DoubleClickWindowMs;
             _chain = chains ? _chain + 1 : 1;
             clickCount = _chain;
             if (_chain >= 3) _chain = 0;   // triple consumed: next click starts fresh
-            _lastKind = clicked.Kind; _lastPayload = clicked.Payload; _lastTag = clicked.Tag; _lastTick = now;
+            _lastKind = clicked.Kind; _lastPayload = clicked.Payload; _lastTag = clicked.Tag;
+            _lastRow = ev.MouseRow; _lastCol = ev.MouseCol; _lastTick = now;
             return true;
         }
         if ((ev.MouseButton & 0x20) != 0) return false;   // motion while held: not a new capture

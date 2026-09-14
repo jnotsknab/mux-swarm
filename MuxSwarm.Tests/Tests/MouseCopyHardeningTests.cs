@@ -185,4 +185,82 @@ public class MouseCopyHardeningTests
                 return (r, hit);
         throw new Xunit.Sdk.XunitException("no TranscriptEntry region");
     }
+
+    // ---- round 3: position-union chaining (triple-click survives UI mutation under the pointer) ----
+
+    [Fact]
+    public void ClickChain_SurvivesTargetChange_AtSameSpot()
+    {
+        // The dogfood failure: the double-click's own action mutates the UI (pane advance, edit
+        // mode), so click 3 lands on a DIFFERENT region. Same-spot chaining must carry it.
+        var map1 = new MouseHitMap();
+        map1.Begin(80, 24);
+        map1.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
+        var map2 = new MouseHitMap();
+        map2.Begin(80, 24);
+        map2.Add(new HitRegion(1, 1, 24, 80, MouseTargetKind.PickerSearchBox, -1));   // backdrop only
+        long tick = 1000;
+        var t = new MouseClickTracker(() => tick);
+        ConsoleInputPump.InputEvent Press(int col, int row) => ConsoleInputPump.InputEvent.OfMouse(0, col, row, false);
+        ConsoleInputPump.InputEvent Release(int col, int row) => ConsoleInputPump.InputEvent.OfMouse(0, col, row, true);
+
+        t.Feed(Press(10, 5), map1, out _, out _, out _, out _);
+        Assert.True(t.Feed(Release(10, 5), map1, out _, out _, out _, out int c1));
+        Assert.Equal(1, c1);
+        tick += 200;
+        t.Feed(Press(10, 5), map1, out _, out _, out _, out _);
+        Assert.True(t.Feed(Release(10, 5), map1, out _, out _, out _, out int c2));
+        Assert.Equal(2, c2);
+        tick += 200;
+        // UI mutated: only the backdrop remains where the item was. Same spot -> chain holds.
+        t.Feed(Press(11, 5), map2, out _, out _, out _, out _);   // 1 cell of horizontal wobble
+        Assert.True(t.Feed(Release(11, 5), map2, out var hit3, out _, out _, out int c3));
+        Assert.Equal(3, c3);
+        Assert.Equal(MouseTargetKind.PickerSearchBox, hit3.Kind);
+    }
+
+    [Fact]
+    public void ClickChain_DifferentSpotAndTarget_DoesNotChain()
+    {
+        var map = new MouseHitMap();
+        map.Begin(80, 24);
+        map.Add(new HitRegion(5, 1, 1, 80, MouseTargetKind.PickerItem, 3));
+        map.Add(new HitRegion(9, 1, 1, 80, MouseTargetKind.PickerItem, 7));
+        long tick = 1000;
+        var t = new MouseClickTracker(() => tick);
+        ConsoleInputPump.InputEvent Press(int col, int row) => ConsoleInputPump.InputEvent.OfMouse(0, col, row, false);
+        ConsoleInputPump.InputEvent Release(int col, int row) => ConsoleInputPump.InputEvent.OfMouse(0, col, row, true);
+        t.Feed(Press(10, 5), map, out _, out _, out _, out _);
+        t.Feed(Release(10, 5), map, out _, out _, out _, out _);
+        tick += 200;
+        t.Feed(Press(40, 9), map, out _, out _, out _, out _);   // different row AND different payload
+        Assert.True(t.Feed(Release(40, 9), map, out _, out _, out _, out int c2));
+        Assert.Equal(1, c2);
+    }
+
+    [Fact]
+    public void DriverChain_SameSpot_TripleCountsAcrossRegionChange()
+    {
+        // Transcript card: click 1 expands (rows shift so the region under the pointer can
+        // change), clicks 2-3 on the same SPOT keep the chain: counts 2 and 3 both suppress.
+        var term = new Terminal();
+        var driver = new TuiDriver(term, frameEngine: true);
+        driver.SetMouseTrackingPreset("buttons");
+        long tick = 1000;
+        driver.MouseClock = () => tick;
+        driver.CommitCollapsed("· CodeAgent finished (ctrl+e)", "CodeAgent", "line1\nline2\nline3");
+        ComposeRows(driver);
+        var (row, hit) = FindEntry(driver, term);
+        var transcript = (System.Collections.IList)typeof(TuiDriver).GetField("_transcript", PrivateInstance)!.GetValue(driver)!;
+        var entry = transcript[hit.Payload]!;
+        var expandedField = entry.GetType().GetField("Expanded")!;
+        Mouse(driver, 0, 4, row); Mouse(driver, 0, 4, row, release: true);
+        Assert.True((bool)expandedField.GetValue(entry)!);
+        tick += 200;
+        Mouse(driver, 0, 4, row); Mouse(driver, 0, 4, row, release: true);   // same spot, rows may have shifted
+        Assert.True((bool)expandedField.GetValue(entry)!);                   // double: suppressed
+        tick += 200;
+        Mouse(driver, 0, 4, row); Mouse(driver, 0, 4, row, release: true);
+        Assert.True((bool)expandedField.GetValue(entry)!);                   // triple: still suppressed
+    }
 }

@@ -197,6 +197,9 @@ internal sealed class SettingsPickerView
     {
         width = Math.Max(1, width); height = Math.Max(1, height);
         hits?.Begin(width, height);
+        // Full-pane backdrop: clicks stay countable in EDIT mode (which registers no item
+        // rows), so the natural triple - select, open editor, apply - completes.
+        hits?.Add(new HitRegion(1, 1, height, width, MouseTargetKind.PickerSearchBox, -1));
         string Esc(string text) => Spectre.Console.Markup.Escape(Clean(text));
         string Clip(string text) => TuiMarkup.TruncateMarkup(text, width, "");
         if (width < MinWidth || height < MinHeight)

@@ -2720,6 +2720,7 @@ internal sealed partial class TuiDriver
     private MouseTargetKind _lastClickKind;
     private int _lastClickPayload;
     private string? _lastClickTag;
+    private int _lastClickRow, _lastClickCol;
     private long _lastClickTick;
 
     // Set when a dashboard-open AgentLane DOUBLE-click wants the Enter/foreground action; the
@@ -2874,18 +2875,22 @@ internal sealed partial class TuiDriver
         bool inRegion = ev.Row >= captured.Top && ev.Row < captured.Top + captured.Height
             && ev.Col >= captured.Left && ev.Col < captured.Left + captured.Width;
         if (!inRegion) return;
-        // Click chain on the same semantic target inside the window: 1 = single (select/
-        // toggle), 2 = double (the Enter alias), 3 = triple (the Apply alias where one exists).
-        // Same contract as MouseClickTracker; a triple resets the chain.
+        // Click chain: 1 = single (select/toggle), 2 = double (the Enter alias), 3 = triple
+        // (the Apply alias where one exists). Chains on same TARGET *or* same SPOT (row + col
+        // slop) - identity alone breaks when the prior click's action mutates the UI under the
+        // pointer (rows shift when a card expands). Same contract as MouseClickTracker.
         long now = MouseClock();
-        bool chains = _clickChain > 0 && captured.Kind == _lastClickKind && captured.Payload == _lastClickPayload
-            && string.Equals(captured.Tag, _lastClickTag, StringComparison.Ordinal)
+        bool sameTarget = captured.Kind == _lastClickKind && captured.Payload == _lastClickPayload
+            && string.Equals(captured.Tag, _lastClickTag, StringComparison.Ordinal);
+        bool sameSpot = ev.Row == _lastClickRow && Math.Abs(ev.Col - _lastClickCol) <= MouseClickTracker.ChainColSlop;
+        bool chains = _clickChain > 0 && (sameTarget || sameSpot)
             && now - _lastClickTick <= MouseClickTracker.DoubleClickWindowMs;
         _clickChain = chains ? _clickChain + 1 : 1;
         int clickCount = _clickChain;
         if (_clickChain >= 3) _clickChain = 0;
         bool isDouble = clickCount >= 2;   // for targets where 2+ shares the double action
-        _lastClickKind = captured.Kind; _lastClickPayload = captured.Payload; _lastClickTag = captured.Tag; _lastClickTick = now;
+        _lastClickKind = captured.Kind; _lastClickPayload = captured.Payload; _lastClickTag = captured.Tag;
+        _lastClickRow = ev.Row; _lastClickCol = ev.Col; _lastClickTick = now;
         switch (captured.Kind)
         {
             case MouseTargetKind.ScrollBarRail:
@@ -4040,30 +4045,31 @@ internal sealed partial class TuiDriver
                 int half = Math.Max(1, viewH / 2);
                 status = "";
 
-                if (key.Key == ConsoleKey.Q || key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.I)
+                // Match printable shortcuts by CHARACTER first, ConsoleKey second: under the
+                // buttons preset the terminal delivers printables as VT text with VirtualKey 0
+                // (the 2026-09-13 VT-printable reflex), so bare ConsoleKey.X tests silently die
+                // there. EVERY letter binding below carries both forms; KeyChar owns the case.
+                if (key.KeyChar is 'q' or 'i' || key.Key == ConsoleKey.Q || key.Key == ConsoleKey.Escape || key.Key == ConsoleKey.I)
                 {
                     // Esc/q exits; but if a selection is active, Esc first clears it (vim-like).
                     if (key.Key == ConsoleKey.Escape && model.Select != NavSelect.None) { model.ClearSelect(); Paint(); continue; }
                     break;
                 }
-                else if (key.Key == ConsoleKey.J || key.Key == ConsoleKey.DownArrow) model.MoveDown();
-                else if (key.Key == ConsoleKey.K || key.Key == ConsoleKey.UpArrow)   model.MoveUp();
-                else if (key.Key == ConsoleKey.H || key.Key == ConsoleKey.LeftArrow) model.MoveLeft();
-                else if (key.Key == ConsoleKey.L || key.Key == ConsoleKey.RightArrow) model.MoveRight();
+                else if (key.KeyChar == 'j' || key.Key == ConsoleKey.J || key.Key == ConsoleKey.DownArrow) model.MoveDown();
+                else if (key.KeyChar == 'k' || key.Key == ConsoleKey.K || key.Key == ConsoleKey.UpArrow)   model.MoveUp();
+                else if (key.KeyChar == 'h' || key.Key == ConsoleKey.H || key.Key == ConsoleKey.LeftArrow) model.MoveLeft();
+                else if (key.KeyChar == 'l' || key.Key == ConsoleKey.L || key.Key == ConsoleKey.RightArrow) model.MoveRight();
                 else if (ctrl && key.Key == ConsoleKey.D) model.Page(half);
                 else if (ctrl && key.Key == ConsoleKey.U) model.Page(-half);
                 else if ((ctrl && key.Key == ConsoleKey.F) || key.Key == ConsoleKey.PageDown) model.Page(viewH);
                 else if ((ctrl && key.Key == ConsoleKey.B) || key.Key == ConsoleKey.PageUp)   model.Page(-viewH);
                 else if (key.Key == ConsoleKey.Home) model.LineStart();
                 else if (key.Key == ConsoleKey.End)  model.LineEnd();
-                else if (key.Key == ConsoleKey.G && !shift) model.Top();
-                else if (key.Key == ConsoleKey.G && shift)  model.Bottom();
-                // Match by CHARACTER first: under the buttons preset the terminal delivers
-                // printables as VT text with VirtualKey 0 (the 2026-09-13 VT-printable reflex),
-                // so key.Key == ConsoleKey.V never fires there. KeyChar carries the case.
+                else if (key.KeyChar == 'g' || (key.Key == ConsoleKey.G && !shift)) model.Top();
+                else if (key.KeyChar == 'G' || (key.Key == ConsoleKey.G && shift))  model.Bottom();
                 else if (key.KeyChar == 'v' || (key.Key == ConsoleKey.V && !shift)) model.ToggleSelect(NavSelect.Char);
                 else if (key.KeyChar == 'V' || (key.Key == ConsoleKey.V && shift))  model.ToggleSelect(NavSelect.Line);
-                else if (key.Key == ConsoleKey.Y)
+                else if (key.KeyChar is 'y' or 'Y' || key.Key == ConsoleKey.Y)
                 {
                     string text = model.SelectedText();
                     if (text.Length > 0)
