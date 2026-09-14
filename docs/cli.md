@@ -1,6 +1,6 @@
 # CLI and Command Reference
 
-Complete reference for mux-swarm CLI flags and interactive slash commands (v0.12.1).
+Complete reference for mux-swarm CLI flags and interactive slash commands.
 
 ## CLI Flags
 

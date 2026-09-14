@@ -33,7 +33,7 @@ Features:
 - Loading skeleton, animated toasts, hover timestamps, character counter
 - Cancel active agent turns via Stop button or Escape key
 - Auto-reconnect on mobile with manual reconnect button
-- Accessible on LAN and Tailscale (binds to all interfaces)
+- Binds to loopback (`127.0.0.1`) by default; set `serve.address` (`/set serveAddress 0.0.0.0`) to expose on LAN/Tailscale behind your own perimeter
 - Voice input via browser speech-to-text for hands-free interaction
 - **Native config editor** (Monaco): edit `Config.json` / `Swarm.json` in-browser with
   server-side JSON validation, gated by `serve.configExposed` (default off)
