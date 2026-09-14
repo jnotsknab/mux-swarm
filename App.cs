@@ -885,6 +885,10 @@ public class App
                     var wfsArg = wfsc.Length > "/workflows".Length ? wfsc.Substring("/workflows".Length).Trim() : "";
                     CliCmdUtils.HandleWorkflowsCommand(wfsArg);
                     break;
+                case "/history":
+                    CliCmdUtils.HandleHistory();
+                    break;
+
                 case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
                     // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
                     // session directly (used by the web app's Resume button over the WS).

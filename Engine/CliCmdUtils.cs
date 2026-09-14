@@ -711,6 +711,34 @@ public static class CliCmdUtils
         return outList;
     }
 
+    /// <summary>Parse one saved session's statebag root by id (folder name). Null on any failure -
+    /// used by the /history browser and /resume preview, which surface failures as a no-op.</summary>
+    public static System.Text.Json.JsonElement? LoadSessionRoot(string sessionId)
+    {
+        try
+        {
+            var dir = Path.Combine(PlatformContext.SessionsDirectory, sessionId);
+            var file = Directory.GetFiles(dir, "*.json").FirstOrDefault();
+            if (file is null) return null;
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+            return doc.RootElement.Clone();
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// /history: open the alt-screen session browser (fuzzy list -> Enter re-renders the session
+    /// read-only with scroll + search). Falls back to the classic session list outside the docked
+    /// TUI. Read-only: never resumes or mutates a session.
+    /// </summary>
+    public static void HandleHistory()
+    {
+        var sessions = GetResumableSessions();
+        if (sessions.Count == 0) { MuxConsole.WriteWarning("No saved sessions found."); return; }
+        if (!MuxConsole.TryHistoryBrowser(sessions, LoadSessionRoot, resumePicker: false, out _))
+            ListSessions();   // classic/stdio fallback: the existing readable session list
+    }
+
     public static (JsonElement data, string sessionDir)? HandleSessionResume(string? sessionId = null)
     {
         string sessionsDir = PlatformContext.SessionsDirectory;
@@ -744,6 +772,18 @@ public static class CliCmdUtils
                 return null;
             }
             return LoadResumeSession(direct);
+        }
+
+        // Bare /resume in the docked TUI: the fuzzy alt-screen picker (Enter resumes, v previews
+        // the full transcript). Cancel returns null; classic/stdio keep the numbered prompt below.
+        if (MuxConsole.TryHistoryBrowser(GetResumableSessions(), LoadSessionRoot,
+                resumePicker: true, out var pickedId))
+        {
+            if (string.IsNullOrEmpty(pickedId)) { MuxConsole.WriteMuted("No session selected."); return null; }
+            var pickedDir = sessionDirs.FirstOrDefault(d =>
+                Path.GetFileName(d).Equals(pickedId, StringComparison.OrdinalIgnoreCase));
+            if (pickedDir == null) { MuxConsole.WriteWarning($"Session vanished: {pickedId}"); return null; }
+            return LoadResumeSession(pickedDir);
         }
 
         var idxW = sessionDirs.Count.ToString().Length;
