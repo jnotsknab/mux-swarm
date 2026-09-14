@@ -69,7 +69,7 @@ public static partial class MuxConsole
     /// the live TUI. Set from console.collapseToolLines; pushed to the driver on activation.
     /// 0 disables the expand affordance. Default 6.
     /// </summary>
-    public static int CollapseToolLines { get; set; } = 6;
+    public static int CollapseToolLines { get; set; } = 3;
 
     /// <summary>Blank lines emitted BELOW a tool/delegation block before the next agent output
     /// in the live TUI (the docked-below separator). Tool groups stay docked directly under the

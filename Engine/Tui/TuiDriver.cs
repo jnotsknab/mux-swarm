@@ -209,7 +209,7 @@ internal sealed partial class TuiDriver
 
     /// <summary>Informative-line threshold above which a collapsed result is Ctrl+E-expandable.
     /// Owned by the caller (config-driven); 0 disables the affordance entirely.</summary>
-    private int _collapseToolLines = 6;
+    private int _collapseToolLines = 3;
     public void SetCollapseThreshold(int lines) => _collapseToolLines = Math.Max(0, lines);
 
     /// <summary>Blank lines emitted below a tool/delegation block before following agent prose

@@ -293,7 +293,7 @@ public class ConsoleConfig
     /// (full) output mode where results already render as full panels. Ignored outside TUI.
     /// </summary>
     [JsonPropertyName("collapseToolLines")]
-    public int CollapseToolLines { get; set; } = 6;
+    public int CollapseToolLines { get; set; } = 3;
 
     /// <summary>
     /// Number of blank lines emitted BELOW a tool-call / sub-agent-delegation block before the
