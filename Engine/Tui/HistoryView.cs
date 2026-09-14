@@ -156,8 +156,28 @@ internal sealed class HistoryView
             string label = user ? "user" : role.ToLowerInvariant();
             _lines.Add($"── {label} ──");
             _markup.Add($"[{(user ? TuiComponents.Accent : TuiComponents.Agent)}]── {label} ──[/]");
+            // Table-aware layout: TuiMarkdown is strictly per-line and cannot align columns, so
+            // contiguous GFM table rows are buffered and rendered through the production TuiTable
+            // path (same as the live renderer's FlushTableBuffer) instead of leaking raw pipes.
+            var tableRun = new List<string>();
+            void FlushTableRun()
+            {
+                if (tableRun.Count == 0) return;
+                foreach (var trow in TuiTable.Render(tableRun, w))
+                {
+                    _lines.Add(TuiMarkup.Plain(trow));
+                    _markup.Add("  " + trow);
+                }
+                tableRun.Clear();
+            }
             foreach (var raw in text.Replace("\r\n", "\n").Split('\n'))
             {
+                if (!user && (TuiTable.IsTableRow(raw) || (tableRun.Count > 0 && TuiTable.IsSeparatorRow(raw))))
+                {
+                    tableRun.Add(raw);
+                    continue;
+                }
+                FlushTableRun();
                 foreach (var wrapped in TuiMarkup.WrapPlain(raw, w))
                 {
                     _lines.Add(wrapped);
@@ -169,6 +189,7 @@ internal sealed class HistoryView
                             : "  " + TuiMarkdown.ToMarkup(wrapped));
                 }
             }
+            FlushTableRun();
         }
         RunSearch();   // re-anchor hits at the new layout
     }

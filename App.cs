@@ -57,12 +57,14 @@ public class App
     public static bool UltraMode = false;
     private static bool _ultraPriorPlan = false;
     private static bool _ultraPriorParaSub = false;
+    private static bool _ultraPriorSplit = false;
     // v0.12.0 M6 Giga mode: a superset of /ultra that also grants dynamic orchestration tools
     // (spawn_team / run_team / write_workflow / run_workflow). Public so orchestrators + /api can read it.
     public static bool GigaMode = false;
     private static bool _gigaPriorPlan = false;
     private static bool _gigaPriorParaSub = false;
     private static bool _gigaPriorUltra = false;
+    private static bool _gigaPriorSplit = false;
 
     // Interactive render-mode preference from the CLI (--classic / --tui). Null = use
     // console.renderMode config (default "auto"). Never affects stdio/serve output.
@@ -81,7 +83,8 @@ public class App
     /// delegation tools advertise an inheritLeadContext parameter the lead (or the user, by
     /// asking) can set per delegation to seed sub-agents with the lead's current window as a
     /// delimited block. Never forced - default parameter value stays false, so an armed session
-    /// with a lead that never opts in behaves identically. Session-scoped, off by default.
+    /// with a lead that never opts in behaves identically. Session-scoped, off by default;
+    /// ultra and giga arm it automatically (restored to the prior state on toggle-off).
     /// </summary>
     public static bool SplitContextShare = false;
     
@@ -1007,19 +1010,25 @@ public class App
                         // Capture prior flags so toggling /ultra off restores them exactly.
                         _ultraPriorPlan = ShouldPlan;
                         _ultraPriorParaSub = AllowParallelSubAgents;
+                        _ultraPriorSplit = SplitContextShare;
                         ShouldPlan = true;
                         if (App.Config.Ultra.AutoSubAgents)
                             AllowParallelSubAgents = true;
+                        // Ultra leans on heavy delegation; arm lead-context sharing by default so
+                        // sub-agents can be seeded without re-running lookups. Restored on toggle-off.
+                        SplitContextShare = true;
                         MuxConsole.WriteSuccess("Ultra Mode enabled");
                         MuxConsole.WriteMuted($"Plan Mode forced on + maximum reasoning (thinking budget {App.Config.Ultra.ThinkingBudget}).");
                         if (App.Config.Ultra.AutoSubAgents)
                             MuxConsole.WriteMuted("Parallel sub-agents enabled — agents fan parallelizable work out to isolated sub-agent sessions.");
+                        MuxConsole.WriteMuted("Context sharing armed (/split): delegation tools offer inheritLeadContext per delegation.");
                         MuxConsole.WriteMuted("Agents decompose deeply, list assumptions, weigh alternatives, and self-review before finalizing.");
                     }
                     else
                     {
                         ShouldPlan = _ultraPriorPlan;
                         AllowParallelSubAgents = _ultraPriorParaSub;
+                        SplitContextShare = _ultraPriorSplit;
                         MuxConsole.WriteSuccess("Ultra Mode disabled");
                         MuxConsole.WriteMuted($"Reasoning, plan, and delegation flags restored (Plan Mode: {(ShouldPlan ? "on" : "off")}, Parallel sub-agents: {(AllowParallelSubAgents ? "on" : "off")}).");
                     }
@@ -1035,10 +1044,13 @@ public class App
                         _gigaPriorPlan = ShouldPlan;
                         _gigaPriorParaSub = AllowParallelSubAgents;
                         _gigaPriorUltra = UltraMode;
+                        _gigaPriorSplit = SplitContextShare;
                         UltraMode = true;
                         ShouldPlan = true;
                         if (App.Config.Ultra.AutoSubAgents)
                             AllowParallelSubAgents = true;
+                        // Giga inherits ultra's delegation posture: arm context sharing by default.
+                        SplitContextShare = true;
                         MuxConsole.WriteSuccess("Giga Mode enabled");
                         MuxConsole.WriteMuted("Dynamic orchestration unlocked: the agent can spawn_team, run_team, and write/run workflows on its own.");
                         MuxConsole.WriteMuted($"Maximum reasoning + plan discipline on (thinking budget {App.Config.Ultra.ThinkingBudget}). Giga teams are tagged 'giga:'.");
@@ -1048,6 +1060,7 @@ public class App
                         ShouldPlan = _gigaPriorPlan;
                         AllowParallelSubAgents = _gigaPriorParaSub;
                         UltraMode = _gigaPriorUltra;
+                        SplitContextShare = _gigaPriorSplit;
                         Engine.Teams.GigaMode.Reset();
                         MuxConsole.WriteSuccess("Giga Mode disabled");
                         MuxConsole.WriteMuted($"Orchestration tools removed; reasoning/plan flags restored (Ultra: {(UltraMode ? "on" : "off")}, Plan: {(ShouldPlan ? "on" : "off")}).");
@@ -1923,6 +1936,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     ShouldPlan = true;
                     if (Config.Ultra.AutoSubAgents)
                         AllowParallelSubAgents = true;
+                    SplitContextShare = true;   // parity with /ultra: context sharing armed by default
                     break;
                 case "--classic":
                     _cliRenderModeOverride = "classic";
@@ -1935,6 +1949,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     GigaMode = true;
                     if (Config.Ultra.AutoSubAgents)
                         AllowParallelSubAgents = true;
+                    SplitContextShare = true;   // parity with /giga: context sharing armed by default
                     break;
                 case "--sub":
                 case "--subagents":

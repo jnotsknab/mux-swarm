@@ -129,6 +129,35 @@ public class HistoryViewTests
     }
 
     [Fact]
+    public void ReadMode_MarkdownTable_RendersAlignedNotRawPipes()
+    {
+        var v = new HistoryView(Sessions);
+        string md = "Specs:\n| Part | Detail |\n|---|---|\n| OS | Windows 11 |\n| CPU | Ryzen 7 9800X3D |\n\nDone.";
+        v.OpenTranscript("s1", Statebag(("assistant", md)));
+        var rows = v.Render(100, 30);
+        string joined = string.Join("\n", rows);
+        // Rendered through TuiTable: box-drawing borders present, raw GFM pipe rows absent.
+        Assert.Contains("\u2503", joined);                       // heavy vertical border in cells
+        Assert.Contains("OS", joined);
+        Assert.Contains("Ryzen 7 9800X3D", joined);
+        Assert.DoesNotContain("| OS | Windows 11 |", joined);    // no raw pipes leak
+        Assert.DoesNotContain("|---|---|", joined);              // separator consumed
+        // Non-table prose still renders.
+        Assert.Contains("Done.", joined);
+    }
+
+    [Fact]
+    public void ReadMode_UserPipeText_IsNotTableified()
+    {
+        var v = new HistoryView(Sessions);
+        v.OpenTranscript("s1", Statebag(("user", "run: dir | findstr foo | sort")));
+        var rows = v.Render(90, 20);
+        string joined = string.Join("\n", rows);
+        // User text with pipes is command syntax, not a table - stays verbatim.
+        Assert.Contains("dir | findstr foo | sort", joined);
+    }
+
+    [Fact]
     public void Marquee_ShortTextStatic_LongTextSlidesAndWraps()
     {
         // Under budget: identical regardless of offset (no motion).
