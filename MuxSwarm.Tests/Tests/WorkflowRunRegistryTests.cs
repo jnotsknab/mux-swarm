@@ -1,6 +1,6 @@
 using System.Text.Json;
+using MuxSwarm.Engine.Tui;
 using MuxSwarm.State;
-using MuxSwarm.Utils.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

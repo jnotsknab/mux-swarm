@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Linq;
 using MuxSwarm.State;
-using MuxSwarm.Utils;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

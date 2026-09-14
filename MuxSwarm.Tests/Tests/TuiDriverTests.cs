@@ -1,5 +1,6 @@
 using System.Linq;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -149,7 +150,7 @@ public class TuiDriverTests
     public void Diff_HasLineNumberGutter_And_Summary()
     {
         var d = TuiComponents.Diff("file.cs", "@@ -10,2 +10,3 @@\n ctx\n-old line\n+new line a\n+new line b", 80);
-        var plain = d.Select(MuxSwarm.Utils.Tui.TuiMarkup.Plain).ToList();
+        var plain = d.Select(TuiMarkup.Plain).ToList();
         string joined = string.Join("\n", plain);
         // Header carries a +adds -dels summary (2 adds, 1 del here; del uses the U+2212 minus).
         Assert.Contains("+2", joined);
@@ -422,12 +423,12 @@ public class TuiDriverTests
         term.Clear();
 
         d.ToggleTaskBoardRepaint();
-        Assert.DoesNotContain(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+        Assert.DoesNotContain(Ansi.ClearScreen, term.Output);
 
         // Contrast: the manual Ctrl+L redraw IS allowed to clear the screen (its whole purpose).
         term.Clear();
         d.ForceRedraw();
-        Assert.Contains(MuxSwarm.Utils.Tui.Ansi.ClearScreen, term.Output);
+        Assert.Contains(Ansi.ClearScreen, term.Output);
     }
 
     [Fact]
@@ -734,7 +735,9 @@ public class TuiDriverTests
     {
         Assert.NotEmpty(TuiCommands.Keys);
         // Every entry has a non-empty chord, description, and a known context bucket.
-        var contexts = new HashSet<string> { "prompt", "turn", "view" };
+        var contexts = new HashSet<string> { "prompt", "turn", "view", "mouse" };
+        // The mouse group documents the buttons-default control surface (v0.14.0).
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "mouse");
         foreach (var k in TuiCommands.Keys)
         {
             Assert.False(string.IsNullOrWhiteSpace(k.Keys));
@@ -1215,6 +1218,55 @@ public class TuiDriverTests
         Assert.Contains("456 tokens", term.Output);
     }
 
+    private static string MergedPlain(System.Collections.Generic.List<string> rendered)
+        => string.Join("\n", rendered);
+
+    /// <summary>A long Command: line uses the width-aware budget (about two wrapped rows) instead
+    /// of the legacy fixed 90-char cap, so wide terminals show the whole command.</summary>
+    [Fact]
+    public void ToolCallResultMerged_WidthBudget_ShowsFullCommandOnWideTerminal()
+    {
+        string cmd = "Command: cd C:\\repo & git --no-optional-locks log -1 --pretty=full --stat & git status --porcelain=v1 -b && echo done-marker-at-the-very-end";
+        var legacy = MergedPlain(TuiComponents.ToolCallResultMerged("shell", null, cmd, error: false, expandable: false));
+        Assert.DoesNotContain("done-marker-at-the-very-end", legacy);
+
+        var wide = MergedPlain(TuiComponents.ToolCallResultMerged(
+            "shell", null, cmd, error: false, expandable: false, frame: -1, width: 200, out bool clipped));
+        Assert.Contains("done-marker-at-the-very-end", wide);
+        Assert.False(clipped);
+    }
+
+    /// <summary>When even the width budget cannot fit the command, the line is reported clipped and
+    /// carries the expand affordance instead of a dead ellipsis.</summary>
+    [Fact]
+    public void ToolCallResultMerged_StillClipped_ReportsClippedAndShowsExpandHint()
+    {
+        string cmd = "Command: " + new string('x', 600);
+        var narrow = MergedPlain(TuiComponents.ToolCallResultMerged(
+            "shell", null, cmd, error: false, expandable: false, frame: -1, width: 100, out bool clipped));
+        Assert.True(clipped);
+        Assert.Contains("ctrl+e expand", narrow);
+    }
+
+    /// <summary>Driver settle path: a single-line result whose command clips at the current width
+    /// is retained EXPANDABLE (Ctrl+E opens the full text) even though it is only one line.</summary>
+    [Fact]
+    public void Driver_ClippedSingleLineCommand_BecomesExpandable()
+    {
+        var term = new FakeTerminal { Width = 60, Height = 20 };
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(10);
+        d.BeginToolCall("shell", "long");
+        string cmd = "Command: " + new string('z', 500) + " END-SENTINEL";
+        d.ResolveMergedToolResult(cmd, error: false);
+        d.Commit(new[] { "next line" }); // flushes the settling result into the transcript
+        term.Clear();
+        bool open = d.ExpandLatestInline();
+        Assert.True(open);
+        Assert.Contains("END-SENTINEL", term.Output);
+    }
+
     [Fact]
     public void Driver_ErrorMerge_PaintsRedCrossInScrollback()
     {
@@ -1499,8 +1551,8 @@ public class TuiDriverTests
         // the palette/autocomplete), takes an inline arg (Tab keeps a space), and is documented.
         Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/workspace");
         Assert.True(TuiCommands.TakesArgument("/workspace"));
-        Assert.Contains("/workspace", MuxSwarm.Utils.Help.HelpText);
-        Assert.Contains("--workspace", MuxSwarm.Utils.Help.HelpText);
+        Assert.Contains("/workspace", Help.HelpText);
+        Assert.Contains("--workspace", Help.HelpText);
     }
 
     [Fact]
@@ -2036,7 +2088,7 @@ public class TuiDriverTests
     {
         int width = 60;
         var d = TuiComponents.Diff("file.cs", "@@ -1 +1 @@\n-old line\n+new line\n ctx", width);
-        var vis = d.Select(MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth).ToList();
+        var vis = d.Select(TuiMarkup.MarkupWidth).ToList();
         // Body/border rows never exceed the requested width...
         Assert.All(vis, w => Assert.True(w <= width, $"row width {w} exceeds {width}"));
         // ...and the last row (the ╰─ border) is exactly as wide as the widest shaded body row.
@@ -2052,8 +2104,8 @@ public class TuiDriverTests
         int width = 40;
         var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n+\u4f60\u597d\u4e16\u754c CJK line", width);
         Assert.All(d, row => Assert.True(
-            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
-            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+            TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {TuiMarkup.Plain(row)}"));
     }
 
     // Wide glyphs in a shaded tool-result card body must not overflow either.
@@ -2063,8 +2115,8 @@ public class TuiDriverTests
         int width = 40;
         var rows = TuiComponents.ToolResultPanel("read", "\u3053\u3093\u306b\u3061\u306f wide body line here", error: false, width: width);
         Assert.All(rows, row => Assert.True(
-            MuxSwarm.Utils.Tui.TuiMarkup.MarkupWidth(row) <= width,
-            $"row exceeds width {width}: {MuxSwarm.Utils.Tui.TuiMarkup.Plain(row)}"));
+            TuiMarkup.MarkupWidth(row) <= width,
+            $"row exceeds width {width}: {TuiMarkup.Plain(row)}"));
     }
 
     // console.contentBackgrounds = false suppresses card/diff background fills so the terminal's own
@@ -2073,20 +2125,20 @@ public class TuiDriverTests
     public void ContentBackgrounds_Off_EmitsNoBackgroundSgr()
     {
         bool prev = TuiComponents.ContentBackgrounds;
-        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        var prevTheme = Theme.Active;
         try
         {
-            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            Theme.Set(Theme.Default);
             TuiComponents.ContentBackgrounds = false;
             var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b\n c", 50);
-            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            string ansi = string.Join("\n", d.Select(TuiMarkup.ToAnsi));
             Assert.DoesNotContain("\u001b[48;2;", ansi);
 
             var card = TuiComponents.ToolResultPanel("read", "alpha\nbeta", error: false, width: 50);
-            string cardAnsi = string.Join("\n", card.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            string cardAnsi = string.Join("\n", card.Select(TuiMarkup.ToAnsi));
             Assert.DoesNotContain("\u001b[48;2;", cardAnsi);
         }
-        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
+        finally { TuiComponents.ContentBackgrounds = prev; Theme.Set(prevTheme); }
     }
 
     // Sanity: with backgrounds ON (default), the diff DOES emit background SGR (guards the toggle).
@@ -2094,15 +2146,15 @@ public class TuiDriverTests
     public void ContentBackgrounds_On_EmitsBackgroundSgr()
     {
         bool prev = TuiComponents.ContentBackgrounds;
-        var prevTheme = MuxSwarm.Utils.Theme.Active;
+        var prevTheme = Theme.Active;
         try
         {
-            MuxSwarm.Utils.Theme.Set(MuxSwarm.Utils.Theme.Default);
+            Theme.Set(Theme.Default);
             TuiComponents.ContentBackgrounds = true;
             var d = TuiComponents.Diff("f.cs", "@@ -1 +1 @@\n-a\n+b", 50);
-            string ansi = string.Join("\n", d.Select(MuxSwarm.Utils.Tui.TuiMarkup.ToAnsi));
+            string ansi = string.Join("\n", d.Select(TuiMarkup.ToAnsi));
             Assert.Contains("\u001b[48;2;", ansi);
         }
-        finally { TuiComponents.ContentBackgrounds = prev; MuxSwarm.Utils.Theme.Set(prevTheme); }
+        finally { TuiComponents.ContentBackgrounds = prev; Theme.Set(prevTheme); }
     }
 }

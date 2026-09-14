@@ -1,7 +1,7 @@
 ﻿using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.AI;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.State;
 

@@ -1,6 +1,7 @@
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -57,7 +58,7 @@ public class MetaCommandDispatchTests
     [Fact]
     public void Hide_IsNotRegistered_Unhide_IsRegistered()
     {
-        Assert.DoesNotContain(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/hide");
-        Assert.Contains(MuxSwarm.Utils.Tui.TuiCommands.All, e => e.Cmd == "/unhide");
+        Assert.DoesNotContain(TuiCommands.All, e => e.Cmd == "/hide");
+        Assert.Contains(TuiCommands.All, e => e.Cmd == "/unhide");
     }
 }

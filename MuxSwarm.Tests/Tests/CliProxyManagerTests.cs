@@ -3,7 +3,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils.Proxy;
+using MuxSwarm.Engine.Proxy;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

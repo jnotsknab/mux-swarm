@@ -2,9 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using MuxSwarm.Utils.NativeTools;
 using Microsoft.Extensions.AI;
 using System.Linq;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.NativeTools;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -17,7 +18,7 @@ namespace MuxSwarm.Tests.Tests;
 [Collection("ConsoleState")]
 public class NativeProgressWaitToolsTests
 {
-    public NativeProgressWaitToolsTests() => MuxSwarm.App.Config.Sandbox = new MuxSwarm.Utils.SandboxConfig();
+    public NativeProgressWaitToolsTests() => MuxSwarm.App.Config.Sandbox = new SandboxConfig();
 
     private static AIFunction Fn(string name) =>
         (AIFunction)ReplShellTools.Build().First(t => ((AIFunction)t).Name == name);

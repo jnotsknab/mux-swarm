@@ -14,7 +14,7 @@ Before any planning or delegation, **always query memory and vector stores** for
 Memory retrieval is the default. Skip it only for tasks that are clearly one-off, stateless, and have no plausible prior context (e.g. "update a config value", "create a test file"). For anything involving projects, code, research, preferences, or multi-step work — always query memory first. When in doubt, retrieve.
 
 ### 🐚 Shell Execution
-For shell commands, scripts, and git operations agents should use the shell tool appropriate for {{os}}. On Windows this is `Windows_Shell`. On Linux/Mac use the bash MCP or equivalent shell tool. Agents should discover the available shell tool via `list_skills` or their tool list at the start of the task.
+For shell commands, scripts, and git operations agents should use the shell tool appropriate for {{os}}. On Windows this is `Windows_Shell`. On Linux/Mac use the bash MCP or equivalent shell tool. Agents should identify the available shell tool from their tool list; skill discovery is not needed to locate a shell tool.
 
 For Python execution, agents must always use a virtual environment:
 ```bash
@@ -84,7 +84,7 @@ When delegating, always specify which sandbox is the target based on the nature 
 
 - **Outcome-oriented.** Describe what "done" looks like — never how to get there.
 - **Self-contained context.** Agents have no memory of prior conversation. Front-load everything they need.
-- **Skills check is mandatory.** Every delegation must explicitly instruct the agent to read the skills directory first and apply any relevant skills before proceeding. Do not assume agents will do this on their own.
+- **Skills when relevant.** Pass known relevant skill names in the delegation so the recipient can load them directly. Call `list_skills` only if the task may need a skill and the relevant skill name is not already in context. If the name is known, call `read_skill` directly by name without listing first. Reuse a definition already in context; reload only if it is missing (e.g. after compaction), changed, or an explicit refresh is requested. Follow relevant skill guidance before doing that work; skip skill tools when no skill is relevant. Judge reuse from the recipient's own context, not the lead's.
 - **Python always in venv.** Require `uv` for virtual environment creation and package management. Never install packages globally.
 - **Shell via OS tool.** Instruct agents to use the shell tool appropriate for {{os}} — they should discover it via their tool list.
 - **Git operations use the OS shell tool.** Instruct agents to use the available shell tool for {{os}} for all git operations.

@@ -1636,7 +1636,12 @@ body.hide-all-pills .event-group { display: none !important; }
 .session-menu {
   position: fixed; z-index: 200;
   min-width: 300px; max-width: min(420px, calc(100vw - 16px));
-  background: var(--bg-card, var(--bg));
+  /* NOTE: --bg-card is itself semi-transparent in every theme (zinc is
+     rgba(24,24,27,0.6)), which is why these menus were hard to read over the
+     transcript. Composite over the OPAQUE --bg instead - same trick the command
+     palette uses - so 100% is genuinely solid. The slider drives BACKGROUND
+     alpha only, never element opacity, so the label text never dims. */
+  background: color-mix(in srgb, var(--bg) calc(var(--menu-opacity, 1) * 100%), transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -1727,7 +1732,8 @@ body.hide-all-pills .event-group { display: none !important; }
   z-index: 200;
   min-width: 280px;
   max-width: min(420px, calc(100vw - 16px));
-  background: var(--bg-card, var(--bg));
+  /* See .session-menu: opaque --bg base, alpha-only, text never dims. */
+  background: color-mix(in srgb, var(--bg) calc(var(--menu-opacity, 1) * 100%), transparent);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 12px 40px rgba(0,0,0,0.5);
@@ -2070,18 +2076,39 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   body.header-collapsed .header-toggle { top: calc(env(safe-area-inset-top, 0px) + 6px); }
   .stream-block { padding: 8px 10px; font-size: calc(12px * var(--ui-font-scale, 1)); word-break: break-word; overflow-wrap: anywhere; }
   .panel-body { word-break: break-word; overflow-wrap: anywhere; }
+  /* Composer becomes a two-row stack on phones. The single-row desktop layout
+     (textarea + 5 controls side by side) needs ~385px of controls alone, which
+     exceeds the ~328-358px of content width available at 360-390px viewports --
+     the textarea was being flexed to a negative basis and became unusable.
+     Row 1: the textarea, full width. Row 2: the pickers + actions. */
   .input-area {
     left: 8px; right: 8px;
     bottom: calc(env(safe-area-inset-bottom, 0px) + var(--kb-inset) + 8px);
     padding: 6px 8px; gap: 4px; border-radius: 14px;
+    flex-direction: column; align-items: stretch;
   }
   /* Sidebar is a full-width overlay on mobile, so no right inset needed */
   body:has(.app.sidebar-open) .input-area { --composer-right-inset: 0px; }
-  .output { padding-bottom: 88px; }
+  .output { padding-bottom: 148px; }
   .input-area textarea { font-size: calc(16px * var(--ui-font-scale, 1)); min-height: 44px; max-height: 280px; padding: 8px 10px; }
-  .btn-group { gap: 4px; }
-  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; }
+  /* Second row: pickers flex and truncate, action buttons keep their tap targets. */
+  .input-area .btn-group {
+    align-self: stretch;
+    width: 100%;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+  .btn-group { gap: 6px; }
+  /* Pickers share the leftover width instead of forcing the row over the edge. */
+  .session-btn, .model-btn {
+    flex: 1 1 0; min-width: 0; max-width: none;
+    min-height: 44px;
+    font-size: calc(11px * var(--ui-font-scale, 1));
+    padding: 6px 8px;
+    justify-content: center;
+  }
+  .send-btn { height: 44px; padding: 0 16px; font-size: calc(12px * var(--ui-font-scale, 1)); flex: 0 0 auto; }
+  .upload-btn, .mic-btn { width: 44px; height: 44px; padding: 0; flex: 0 0 auto; }
   .prompt-block button { min-height: 44px; padding: 8px 12px; }
   :root { --sidebar-width: 100vw; }
   .app.sidebar-open { margin-right: 0; }
@@ -4348,6 +4375,11 @@ const icons = {
   }
   // Route a status pill through the cluster. `node` is a ready DOM element.
   function appendPill(node) {
+    // 'Hide status updates' drops noisy status pills before they are rendered, so
+    // the transcript stays clean and the DOM does not grow with hidden nodes.
+    // Important pills (token/context usage, 'Ready for next input', compaction
+    // results) never reach here - routePill() renders those standalone.
+    if (document.body.classList.contains('hide-status-updates')) return;
     // Skip pills with no visible text (e.g. empty rules) — they add blank rows and
     // inflate the cluster count without conveying anything.
     if (!(node.textContent || '').trim() && !node.querySelector('img,svg,.mux-token-badge')) return;
@@ -5181,6 +5213,11 @@ const icons = {
 
   async function openModelMenu() {
     closeModelMenu();
+    // Only one picker may be open: these menus are position:fixed at the same
+    // z-index and anchor to adjacent buttons, so leaving the other open makes
+    // them overlap. The per-button e.stopPropagation() also stops the other
+    // menu's outside-click handler from firing, so close it explicitly here.
+    closeSessionMenu();
     const btn = document.getElementById('modelBtn');
     if (!btn) return;
     btn.setAttribute('aria-expanded', 'true');
@@ -5558,6 +5595,9 @@ const icons = {
 
   async function openSessionMenu() {
     closeSessionMenu();
+    // Mirror of openModelMenu(): opening this picker closes the model picker so
+    // the two fixed-position menus can never overlap.
+    closeModelMenu();
     const btn = document.getElementById('sessionBtn');
     if (!btn) return;
     btn.setAttribute('aria-expanded', 'true');
@@ -9090,6 +9130,10 @@ const icons = {
      render in the roster. Point this toggle at the live roster so it does something. */
   body.hide-sub-roster .sub-roster { display: none !important; }
   body.hide-task-status-pills .event.no-default-icon { display: none !important; }
+  /* Master suppression for the coalesced status-update clusters. Covers rows
+     already in the DOM when the setting is toggled on mid-session; new pills
+     are dropped at the source in appendPill(). */
+  body.hide-status-updates .event-group { display: none !important; }
   body.hide-all-pills .mux-token-badge,
   body.hide-all-pills .mux-save-banner,
   body.hide-all-pills .mux-compact-row,
@@ -9491,6 +9535,7 @@ const icons = {
     pathMode: 'full',
     cmdPaletteEnabled: true,
     cmdPaletteOpacity: 1.0,
+    menuOpacity: 1.0,
     composerOpacity: 0.62,
     collapseCardsByDefault: true,
     collapseThreshold: 200,
@@ -9501,6 +9546,7 @@ const icons = {
     hideSubRoster: false,
     rosterCollapsed: false,
     hideTaskStatusPills: false,
+    hideStatusUpdates: true,
     toolGrouping: true,
     hideToolCalls: false,
     toolGroupAutoCollapse: true,
@@ -9577,6 +9623,7 @@ const icons = {
     b.dataset.sendOnEnter = state.sendOnEnter;
     b.classList.toggle('hide-cmd-palette',   !state.cmdPaletteEnabled);
     document.documentElement.style.setProperty('--cmd-palette-opacity', String(state.cmdPaletteOpacity));
+    document.documentElement.style.setProperty('--menu-opacity', String(state.menuOpacity != null ? state.menuOpacity : 1));
     document.documentElement.style.setProperty('--composer-opacity', String(state.composerOpacity != null ? state.composerOpacity : 0.62));
     b.classList.toggle('collapse-cards-default', !!state.collapseCardsByDefault);
     b.dataset.collapseThreshold = String(state.collapseThreshold || 200);
@@ -9587,6 +9634,7 @@ const icons = {
     b.classList.toggle('hide-sub-roster',        !!state.hideSubRoster);
     b.classList.toggle('sub-roster-collapsed-default', !!state.rosterCollapsed);
     b.classList.toggle('hide-task-status-pills', !!state.hideTaskStatusPills);
+    b.classList.toggle('hide-status-updates',    !!state.hideStatusUpdates);
     b.classList.toggle('tool-grouping-off',       !state.toolGrouping);
     b.classList.toggle('hide-tool-calls',          !!state.hideToolCalls);
     b.classList.toggle('tool-group-autocollapse-off', !state.toolGroupAutoCollapse);
@@ -9808,6 +9856,9 @@ const icons = {
       fontUploadRow(),
     ]);
     section('Display', [
+      sliderRow('menuOpacity', 'Selector menu opacity', 0.6, 1.0, 0.05,
+        'Background opacity of the session and model selector menus. 100% = fully solid (easiest to read); lower lets the transcript show through.',
+        (v) => Math.round(v * 100) + '%'),
       sliderRow('composerOpacity', 'Composer opacity', 0.3, 1.0, 0.02,
         'Background opacity of the floating message bar. Lower = more translucent/glassy.',
         (v) => Math.round(v * 100) + '%'),
@@ -9835,6 +9886,8 @@ const icons = {
         'New sub-agent rosters start collapsed (click to expand). Off: start expanded.'),
       toggleRow('hideTaskStatusPills',   'Hide task status rows',
         'Suppress generic task_start/task_done status rows (hourglass/check inline events).'),
+      toggleRow('hideStatusUpdates',     'Hide status updates',
+        'Suppress the collapsed "N status updates" clusters entirely (success/warning/info/debug/step/rule rows). On by default. Token counts, compaction results and \'Ready for next input\' still show.'),
       toggleRow('toolGrouping', 'Group tool calls',
         'Fold consecutive tool calls into a collapsible "N tool calls" cluster. Off: flat rows.'),
       toggleRow('hideToolCalls', 'Hide tool calls in chat',

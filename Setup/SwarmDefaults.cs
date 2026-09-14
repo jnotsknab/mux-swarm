@@ -1,5 +1,5 @@
 using System.Text.Json;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.Setup;
 
@@ -347,7 +347,7 @@ public static class SwarmDefaults
         Console.WriteLine("  Examples by provider:");
         Console.WriteLine("    OpenRouter:  anthropic/claude-sonnet-4-6");
         Console.WriteLine("    Anthropic:   claude-sonnet-4-6");
-        Console.WriteLine("    OpenAI:      gpt-4o");
+        Console.WriteLine("    OpenAI:      gpt-5.2");
         Console.WriteLine("    Ollama:      llama3");
         Console.WriteLine();
         Console.ResetColor();

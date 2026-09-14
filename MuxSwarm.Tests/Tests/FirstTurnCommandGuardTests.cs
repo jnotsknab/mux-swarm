@@ -1,4 +1,4 @@
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -57,6 +57,10 @@ public class FirstTurnCommandGuardTests
     [InlineData("/redo")]
     [InlineData("/effort")]
     [InlineData("/effort high")]
+    [InlineData("/effort xhigh")]
+    [InlineData("/effort max")]
+    [InlineData("/effort custom Future-V2")]
+    [InlineData("/max")]
     [InlineData("/tag my-session")]
     [InlineData("/update")]
     [InlineData("/detach")]

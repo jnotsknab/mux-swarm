@@ -1,6 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Reflection;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -46,7 +46,7 @@ public class ProcessCleanupTests
     public void WindowsCleanup_UsesSelfAssignedKillOnCloseJobObject()
     {
         var sourcePath = Path.Combine(
-            FindRepositoryRoot(), "Utils", "ProcessCleanup.cs");
+            FindRepositoryRoot(), "Engine", "ProcessCleanup.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains(
@@ -62,7 +62,7 @@ public class ProcessCleanupTests
     public void Shutdown_DisposesAllRegisteredMcpClients()
     {
         var sourcePath = Path.Combine(
-            FindRepositoryRoot(), "Utils", "ProcessCleanup.cs");
+            FindRepositoryRoot(), "Engine", "ProcessCleanup.cs");
         var source = File.ReadAllText(sourcePath);
 
         Assert.Contains(

@@ -116,7 +116,7 @@ The native in-process Filesystem and Shell/REPL tools enforce configurable secur
 
 ```json
 "filesystem": { "securityMode": "standard" },
-"shell": { "securityMode": "off", "allowedCommands": [] }
+"shell": { "securityMode": "off", "allowedCommands": [], "trimOutputWhitespace": true }
 ```
 
 | Key | Values | Description |
@@ -124,6 +124,7 @@ The native in-process Filesystem and Shell/REPL tools enforce configurable secur
 | `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
 | `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` runs commands ungated (default, run-anything); `prompt` asks for confirmation on every command; `allowlist` runs commands whose first token is in `allowedCommands` and prompts for anything else. Non-interactive sessions auto-deny a prompt. |
 | `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
+| `shell.trimOutputWhitespace` | `true` (default), `false` | Strip spaces/tabs immediately before line breaks from native Shell/REPL tool results before they reach the model (console-width padding, e.g. PowerShell `Format-Table`). Leading indentation, streaming tails, and file reads are never touched; applied once per result so prompt-cache prefixes stay stable. |
 
 ### Execution Sandbox (`sandbox`)
 
@@ -275,7 +276,7 @@ TUI rendering preferences.
 | `theme` | Color theme. |
 | `toolOutput` | How tool results render (full/collapsed/hidden). |
 | `dockedFooter` | Keep the status footer docked at the bottom. |
-| `collapseToolLines` | Collapse multi-line tool call output. |
+| `collapseToolLines` | Auto-collapse threshold for tool output, in lines (default `3`; `0` disables). |
 | `delegationSpacing` | Vertical spacing around delegation cards. |
 | `collapseSubAgents` | Collapse sub-agent activity into summary rows. |
 | `collapseDaemon` | Collapse daemon lane output. |
@@ -525,7 +526,7 @@ Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `r
 
 | Parameter | Values | Description |
 |-----------|--------|-------------|
-| `effort` | `none`, `low`, `medium`, `high`, `extra_high` | Controls how much computational effort the model puts into reasoning before responding. |
+| `effort` | `none`, `low`, `med`/`medium`, `high`, `xhigh`/`extra_high`, `max`, `custom <raw-value>` | `xhigh` and literal provider `max` are distinct. Max/custom bypass silent fallback; custom preserves casing/interior spaces, trims surrounding whitespace, and rejects control characters. |
 | `output` | `none`, `summary`, `full` | Controls whether reasoning traces are included in the response. |
 
 **Tuning guidelines:**
@@ -558,6 +559,8 @@ Prompt files define the **behavioral contract** for each role - how an agent rea
 ## Skills: `Skills/*`
 
 Skills are reusable operational modules agents discover and load at runtime via `list_skills` and `read_skill`. They keep core prompts lean while giving agents access to structured instructions when needed. Prompts define the **role**; skills provide the **task-specific playbooks**.
+
+**Using skills efficiently** - Skill discovery is conditional, not a mandatory first action. If a task may need a skill and its name is not already in context, use `list_skills`. A known name is enough to call `read_skill` directly. Reuse skill definitions already in context rather than reloading them every turn; reload only when missing (such as after compaction), changed, or explicitly requested. When no skill is relevant, skip both tools. Delegated agents apply this rule to their own context. This is prompting guidance, not a tool-call restriction or runtime cache.
 
 **Installing skills** - `/installskill` pulls [Agent Skills](https://agentskills.io) (the `SKILL.md`-per-directory format) from public GitHub sources and normalizes them to mux conventions:
 

@@ -42,7 +42,8 @@
 
 - **An OS for agents, in one binary.** TUI, web server, scheduling daemon, native tools, and sandbox drivers ship in a single static binary. Built in C#. No Python, no `node_modules`, no venv, nothing to install.
 - **Agents that operate the real machine.** Native in-process REPL, shell, and file tools with per-sub-agent scope isolation, no MCP subprocess forked per call.
-- **Agents in every gear.** One agent interactively, on-demand delegation with `/ultra`, persistent `/giga` teams with a shared task board, or a [`/swarm`](docs/cli.md) for batch and whole-codebase work.
+- **One main agentic interface, multiple execution styles.** Start with [`/agent`](docs/cli.md): a continuing lead session that can work directly or delegate specialists. Delegation-enabled `/ultra`, `/giga`, and team leads can match or exceed swarm-mode coordination; `/swarm` and `/pswarm` remain specialized serial and concurrent-batch interfaces, not capability upgrades.
+- **Explicit reasoning effort.** Shift+Tab cycles `low → med → high → xhigh → max`. Use `/effort xhigh`, `/effort max` (or `/max`), or `/effort custom <raw-value>` for a provider-specific value. Max/custom are sent literally, without silent fallback. See the [command reference](docs/cli.md#explicit-reasoning-effort).
 - **Pick your blast radius.** A pluggable sandbox runs commands bare, in [Docker or Podman, or behind gVisor and Kata microVMs](docs/sandbox.md), switchable per session with `/sandbox` and a deny-by-default network allowlist.
 - **Memory that compounds.** [Layered memory](docs/memory.md) (behavioral, factual, knowledge graph, vector) plus an opt-in deep-reflection mode that distills each session and injects it back, mid-turn and across runs.
 - **Sign in with the subscriptions you already have.** A bundled proxy signs into Claude, Codex, Kimi, xAI, or Antigravity with `/login`, no API keys in config. Any OpenAI-compatible provider works too.
@@ -70,13 +71,13 @@ mux-swarm --serve         # embedded web UI at http://localhost:6723
 mux-swarm --goal "Summarize the shareholder data in my sandbox and save a report"
 ```
 
-On first launch the `/setup` wizard walks you through configuration. The easiest path is subscription sign-in with `/login`. New here? Follow the [Getting Started tutorial](docs/getting-started.md).
+On first launch the `/setup` wizard walks you through configuration. The easiest path is subscription sign-in with `/login`. At the interactive menu, start with **`/agent`**, then enter your task; use `/swap` to choose its lead. New here? Follow the [Getting Started tutorial](docs/getting-started.md).
 
 ## About
 
-**Mux-Swarm** is a configurable agentic operating system that runs alongside your OS. It is not an agentic chat interface, it is an execution environment for AI agents, with process management, crash recovery, multi-tenant isolation, layered memory, and a workflow engine.
+**Mux-Swarm** is a configurable agentic operating system that runs alongside your OS. Its primary `/agent` interface sits on an execution environment for AI agents, with process management, crash recovery, multi-tenant isolation, layered memory, and a workflow engine.
 
-Out of the box it ships a general-purpose swarm of specialized agents (research, coding, analysis, automation, system operations) coordinated by an orchestrator that delegates work, manages results, and executes multi-step objectives. The real versatility comes from the [configuration-driven architecture](docs/configuration.md): define custom swarms, agent roles, prompts, MCP servers, skills, and execution policies entirely through config files. Swap providers, redesign topologies, or adapt the runtime for anything from personal workflows to enterprise pipelines, all without modifying code.
+Out of the box it ships specialized agent definitions for research, coding, analysis, automation, and system operations. Choose a lead for the main `/agent` interface and enable the delegation/team capabilities you need, or choose dedicated serial (`/swarm`) or concurrent-batch (`/pswarm`) coordination for a particular execution style. The real versatility comes from the [configuration-driven architecture](docs/configuration.md): define custom swarms, agent roles, prompts, MCP servers, skills, and execution policies entirely through config files. Swap providers, redesign topologies, or adapt the runtime for anything from personal workflows to enterprise pipelines, all without modifying code.
 
 ## Documentation
 
@@ -103,7 +104,7 @@ Full documentation lives in [`docs/`](docs/README.md).
 
 ## Architecture at a glance
 
-An orchestrator receives a goal, delegates scoped subtasks to specialized agents, collects results, and drives multi-step objectives to completion. Agents interact with the world through MCP tools, native Filesystem and Shell/REPL tools, and dynamically loaded skills. State persists across restarts through serializable sessions and a layered memory system. For the full picture, see [Architecture](docs/architecture.md) and [Memory](docs/memory.md).
+The main `/agent` interface owns a continuing lead conversation and can enlist specialists when enabled. Dedicated `/swarm` and `/pswarm` coordinators offer serial specialist dispatch and concurrent batches respectively; these are different coordination styles, not higher capability tiers. Agents interact with the world through MCP tools, native Filesystem and Shell/REPL tools, and dynamically loaded skills. State persists across restarts through serializable sessions and a layered memory system. For the full picture, see [Architecture](docs/architecture.md) and [Memory](docs/memory.md).
 
 ## Protocols and standards
 
@@ -113,7 +114,7 @@ Mux-Swarm is MCP-native and provider-agnostic. It speaks the [OpenAI-compatible 
 
 **Up next:** additional platform bridges (Slack, Matrix, Signal), expanded OpenTelemetry coverage.
 
-Recent releases include teams and subscription sign-in, native tools and pluggable sandboxing, the live TUI, the workflow engine, daemon mode, and event hooks. See the [changelog](RELEASE_NOTES_v0.12.0.md) for details.
+Recent releases include teams and subscription sign-in, native tools and pluggable sandboxing, the live TUI with full mouse control, the workflow engine, daemon mode, and event hooks. See the [GitHub releases](https://github.com/jnotsknab/mux-swarm/releases) for details.
 
 ## Contributing
 

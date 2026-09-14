@@ -2,8 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using MuxSwarm.Engine.Teams;
 using MuxSwarm.State;
-using MuxSwarm.Utils.Teams;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

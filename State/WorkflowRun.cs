@@ -2,7 +2,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.State;
 
@@ -65,6 +65,8 @@ public sealed class WorkflowRun
     public string? RunDir { get; init; }
     /// <summary>The dynamic driver process, when this run owns one.</summary>
     internal Process? Driver { get; set; }
+    /// <summary>Owner cancellation intent; prevents late journal completion from reviving the run.</summary>
+    internal bool OwnerCancellationRequested { get; set; }
     /// <summary>Mutable manifest snapshot (sections/tasks with live statuses).</summary>
     public WorkflowRunManifest Manifest { get; set; } = new();
     /// <summary>Bytes of status.ndjson already folded in (tail cursor).</summary>
@@ -103,6 +105,57 @@ public static class WorkflowRunRegistry
         return run;
     }
 
+    /// <summary>Bind an already-created dynamic driver's lifetime to its initiating execution only.
+    /// Registration is retained until the owned process exits; no unrelated registry run is cancelled.</summary>
+    internal static void BindExecutionCancellation(WorkflowRun run)
+    {
+        if (run.Driver is null || !ExecutionCancellation.Current.CanBeCanceled) return;
+        var owner = ExecutionCancellation.Link(CancellationToken.None);
+        var registration = owner.Token.Register(() => CancelOwnedRun(run));
+        _ = ReleaseOnExitAsync();
+        async Task ReleaseOnExitAsync()
+        {
+            try
+            {
+                await run.Driver.WaitForExitAsync();
+                lock (run)
+                {
+                    if (run.OwnerCancellationRequested && run.State != WorkflowRunState.Failed)
+                    { run.State = WorkflowRunState.Cancelled; run.Finished = DateTimeOffset.UtcNow; run.Error = null; }
+                }
+            }
+            catch { /* process may have already exited or been disposed */ }
+            finally { registration.Dispose(); owner.Dispose(); }
+        }
+    }
+
+    /// <summary>Cancel the exact owned driver even if its journal prematurely reported completion.
+    /// A failed kill is surfaced as failure, never silently reported as successful cancellation.</summary>
+    internal static void CancelOwnedRun(WorkflowRun run)
+    {
+        lock (run)
+        {
+            try
+            {
+                if (run.Driver is not { } process || process.HasExited) return;
+                run.OwnerCancellationRequested = true;
+                run.State = WorkflowRunState.Running;
+                run.Finished = null;
+                run.Error = "Cancellation requested; waiting for owned driver to exit.";
+                process.Kill(entireProcessTree: true);
+                if (process.HasExited)
+                { run.State = WorkflowRunState.Cancelled; run.Finished = DateTimeOffset.UtcNow; run.Error = null; }
+            }
+            catch (Exception ex)
+            {
+                run.OwnerCancellationRequested = true;
+                run.State = WorkflowRunState.Failed;
+                run.Error = $"Could not stop owned workflow driver: {ex.GetType().Name}. Check the run before retrying.";
+                run.Finished = DateTimeOffset.UtcNow;
+            }
+        }
+    }
+
     /// <summary>Snapshot all runs (newest last), folding in any new dynamic status first.</summary>
     public static IReadOnlyList<WorkflowRun> Snapshot()
     {
@@ -126,12 +179,21 @@ public static class WorkflowRunRegistry
     public static bool Cancel(string id)
     {
         var run = Find(id);
-        if (run is null || run.State != WorkflowRunState.Running) return false;
-        try { if (run.Driver is { HasExited: false } p) p.Kill(entireProcessTree: true); }
-        catch { /* best-effort */ }
-        run.State = WorkflowRunState.Cancelled;
-        run.Finished = DateTimeOffset.UtcNow;
-        return true;
+        if (run is null) return false;
+        lock (run)
+        {
+            try
+            {
+                bool alive = run.Driver is { HasExited: false };
+                if (run.State != WorkflowRunState.Running && !alive) return false;
+                if (alive) run.Driver!.Kill(entireProcessTree: true);
+            }
+            catch { run.Error = "Could not stop workflow driver; cancellation was not confirmed."; return false; }
+            run.Error = null;
+            run.State = WorkflowRunState.Cancelled;
+            run.Finished = DateTimeOffset.UtcNow;
+            return true;
+        }
     }
 
     /// <summary>Fold new status.ndjson lines + driver exits into every running dynamic run.
@@ -149,11 +211,16 @@ public static class WorkflowRunRegistry
         {
             try { TailStatus(run); } catch { /* journal is best-effort */ }
             // Driver exit with no terminal status line = the script died (or finished silently).
-            if (run.State == WorkflowRunState.Running && run.Driver is { HasExited: true } p)
+            lock (run)
             {
-                run.State = p.ExitCode == 0 ? WorkflowRunState.Done : WorkflowRunState.Failed;
-                if (p.ExitCode != 0) run.Error ??= $"driver exited {p.ExitCode}";
-                run.Finished = DateTimeOffset.UtcNow;
+                if (run.State == WorkflowRunState.Running && run.Driver is { HasExited: true } p)
+                {
+                    run.State = run.OwnerCancellationRequested ? WorkflowRunState.Cancelled
+                        : p.ExitCode == 0 ? WorkflowRunState.Done : WorkflowRunState.Failed;
+                    if (!run.OwnerCancellationRequested && p.ExitCode != 0) run.Error ??= $"driver exited {p.ExitCode}";
+                    if (run.OwnerCancellationRequested) run.Error = null;
+                    run.Finished = DateTimeOffset.UtcNow;
+                }
             }
         }
     }
@@ -194,6 +261,15 @@ public static class WorkflowRunRegistry
     }
 
     private static void ApplyStatusLine(WorkflowRun run, string line)
+    {
+        lock (run)
+        {
+            if (run.OwnerCancellationRequested || run.State == WorkflowRunState.Cancelled) return;
+            ApplyStatusLineCore(run, line);
+        }
+    }
+
+    private static void ApplyStatusLineCore(WorkflowRun run, string line)
     {
         JsonElement el;
         try { el = JsonSerializer.Deserialize<JsonElement>(line); }

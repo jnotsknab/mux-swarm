@@ -1,7 +1,7 @@
 using System.Linq;
 using System.Text;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 

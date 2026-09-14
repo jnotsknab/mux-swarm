@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.NativeTools;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.NativeTools;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
