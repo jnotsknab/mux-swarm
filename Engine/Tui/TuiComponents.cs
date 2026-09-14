@@ -209,6 +209,29 @@ internal static class TuiComponents
     private static string Trunc(string s, int max)
         => TuiMarkup.TruncatePlain(s ?? "", max);
 
+    /// <summary>
+    /// Fixed-width sliding window over <paramref name="s"/> for hover-marquee rows: text at or
+    /// under the budget is returned whole (no motion); longer text scrolls by
+    /// <paramref name="offset"/> characters, wrapping through a "  \u00b7  " separator so the
+    /// head follows the tail. Pure - the caller owns the tick that advances the offset.
+    /// </summary>
+    internal static string Marquee(string s, int budget, int offset)
+    {
+        s ??= "";
+        if (budget <= 0) return "";
+        if (offset <= 0 || TuiMarkup.Width(s) <= budget) return Trunc(s, budget);
+        string loop = s + "  \u00b7  ";
+        int at = offset % loop.Length;
+        var sb = new System.Text.StringBuilder(budget + 2);
+        int i = at;
+        while (TuiMarkup.Width(sb.ToString()) < budget)
+        {
+            sb.Append(loop[i]);
+            i = (i + 1) % loop.Length;
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Max candidate rows shown at once in an autocomplete preview window.</summary>
     public const int PreviewWindow = 8;
 
@@ -1238,6 +1261,15 @@ internal static class TuiComponents
     }
 
     public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview)> sessions, int width, int selected = -1)
+        => SessionsPreview(filter, sessions, width, selected, 0);
+
+    /// <summary>
+    /// As above with a marquee offset for the SELECTED row: when its one-line preview exceeds the
+    /// column budget, the visible window starts <paramref name="marqueeOffset"/> characters in
+    /// (wrapping past the end through a separator), so a slow idle-timer tick scrolls the full
+    /// preview text under the cursor. Unselected rows keep the plain truncation.
+    /// </summary>
+    public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview)> sessions, int width, int selected, int marqueeOffset)
     {
         var f = (filter ?? "").Trim().ToLowerInvariant();
         var rows = new List<string>();
@@ -1265,7 +1297,10 @@ internal static class TuiComponents
         for (int i = start; i < end; i++)
         {
             string id = ids[i];
-            string oneLine = Trunc(CollapseWs(prevOf.GetValueOrDefault(id) ?? ""), prevBudget);
+            string full = CollapseWs(prevOf.GetValueOrDefault(id) ?? "");
+            string oneLine = i == selected
+                ? Marquee(full, prevBudget, marqueeOffset)
+                : Trunc(full, prevBudget);
             rows.Add(i == selected
                 ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(id.PadRight(idW))}[/]  [{Text}]{Esc(oneLine)}[/]"
                 : $"    [{Agent}]{Esc(id.PadRight(idW))}[/]  [{Muted}]{Esc(oneLine)}[/]");

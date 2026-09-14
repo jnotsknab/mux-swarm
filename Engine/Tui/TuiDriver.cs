@@ -546,6 +546,13 @@ internal sealed partial class TuiDriver
     /// <summary>Resumable sessions catalog for the live "/resume" autocomplete preview.</summary>
     private IReadOnlyList<(string Id, string Preview)> _sessions = Array.Empty<(string, string)>();
 
+    // Hover-marquee state for the /resume dropdown: the selected row's long preview slides one
+    // character every few resize-poll ticks (~400ms). Offset resets when the selection moves so
+    // each hovered row starts from its head.
+    private int _resumeMarqueeOffset;
+    private int _resumeMarqueeSel = -1;
+    private int _resumeMarqueeTick;
+
     /// <summary>Set the sessions catalog backing the live "/resume" autocomplete preview.</summary>
     public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview)> sessions)
         => _sessions = sessions ?? Array.Empty<(string, string)>();
@@ -2121,7 +2128,10 @@ internal sealed partial class TuiDriver
             else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
                 lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
             else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
-                lines.AddRange(TuiComponents.SessionsPreview(_editor.ResumeFilter, _sessions, width, _paletteSel));
+            {
+                if (_paletteSel != _resumeMarqueeSel) { _resumeMarqueeSel = _paletteSel; _resumeMarqueeOffset = 0; _resumeMarqueeTick = 0; }
+                lines.AddRange(TuiComponents.SessionsPreview(_editor.ResumeFilter, _sessions, width, _paletteSel, _resumeMarqueeOffset));
+            }
             else if (!_editor.Attachments.Focused && _editor.IsSlashFilter)
                 lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries, _paletteSel));
             if (_editor.Attachments.Items.Count > 0)
@@ -2559,6 +2569,18 @@ internal sealed partial class TuiDriver
             _toolsGeneration = ToolCatalog.Generation;
             _paletteSel = -1;
             Repaint();
+        }
+        // /resume hover marquee: advance the selected row's preview window one character every
+        // 4th poll tick (~400ms - readable, not frantic) while the resume dropdown is live with
+        // a hovered row. Zero work in every other state.
+        if (_inInput && _editor.IsResumeFilter && _paletteSel >= 0 && !_suspended)
+        {
+            if (++_resumeMarqueeTick >= 4)
+            {
+                _resumeMarqueeTick = 0;
+                _resumeMarqueeOffset++;
+                Repaint();
+            }
         }
         // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
         // prompt, so it drives the short post-activation breathe of the ultra/giga chip.
