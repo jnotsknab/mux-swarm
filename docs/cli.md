@@ -44,6 +44,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--workspace <path>` / `--ws` | Set the @-file workspace root |
 | `--workflow <file>` / `--wf` | Load and run a workflow file |
 | `--serve [port]` | Embedded web UI (default 6723) |
+| `--telemetry [port]` | Standalone telemetry dashboard: all-time token/cost/tool metrics (default 6725) |
 | `--daemon` | Daemon mode (file watch, cron, status, and webhook triggers from config.json) |
 | `--update` | Self-update from the latest GitHub release, then exit |
 | `--register` / `--remove` | Register/unregister mux-swarm as an OS service |
@@ -118,6 +119,7 @@ Available inside a live lead-agent session (including supported team-lead launch
 | `/doctor` | Health check: providers, MCP, sandbox, proxy (no model call) |
 | `/cost` (+ `/cost all`) | Token usage + estimated cost; `all` = per-model matrixed breakdown |
 | `/tokens` / `/context` (+ `/tokens all`) | Context/token usage; `all` is an alias of `/cost all` |
+| `/context <n\|64k\|max>` | Set the session context window (auto-compact threshold); `max` queries the provider catalog and is an explicit no-op when the model's window is not exposed |
 | `/init` | Analyze the workspace and scaffold AGENTS.md |
 | `/review` | AI review of the working-tree diff (read-only) |
 | `/wipe` | Clear session history, keep the session |
@@ -204,6 +206,7 @@ Available at the top-level REPL.
 | `/tui` | Switch to the live full-screen TUI renderer |
 | `/resume` | Resume a previous lead-agent session; bare `/resume` in the TUI opens a fuzzy alt-screen picker (Enter resumes, `v` previews the transcript) |
 | `/history` | Browse past sessions full-screen: fuzzy find, Enter re-renders the session read-only with scroll (`j`/`k`, PgUp/PgDn, `g`/`G`) and in-view `/` search (`n`/`N` hops) |
+| `/telemetry [port\|off]` | Start/stop the standalone telemetry dashboard (default port 6725): all-time token/cost/tool metrics from the persistent JSONL sink, themed like the web UI |
 | `/attach [id]` | Re-attach a detached session |
 | `/model` | View current model assignments |
 | `/provider` | View or switch the active LLM provider |

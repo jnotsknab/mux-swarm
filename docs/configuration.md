@@ -276,7 +276,7 @@ TUI rendering preferences.
 | `theme` | Color theme. |
 | `toolOutput` | How tool results render (full/collapsed/hidden). |
 | `dockedFooter` | Keep the status footer docked at the bottom. |
-| `collapseToolLines` | Collapse multi-line tool call output. |
+| `collapseToolLines` | Auto-collapse threshold for tool output, in lines (default `3`; `0` disables). |
 | `delegationSpacing` | Vertical spacing around delegation cards. |
 | `collapseSubAgents` | Collapse sub-agent activity into summary rows. |
 | `collapseDaemon` | Collapse daemon lane output. |

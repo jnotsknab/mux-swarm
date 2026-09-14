@@ -384,6 +384,12 @@ public class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
+        if (parsed.TelemetryPort is int telemetryDashPort)
+        {
+            try { MuxConsole.WriteSuccess(await Engine.Telemetry.TelemetryServer.StartAsync(telemetryDashPort)); }
+            catch (Exception ex) { MuxConsole.WriteError($"Telemetry dashboard failed to start: {ex.Message}"); }
+        }
+
         if (parsed.AcpMode)
         {
             // ACP owns stdin (JSON-RPC line transport) and drives the single-agent REPL
@@ -891,6 +897,28 @@ public class App
                 case "/history":
                     CliCmdUtils.HandleHistory();
                     break;
+
+                case var tcmd when tcmd == "/telemetry" || tcmd.StartsWith("/telemetry ", StringComparison.Ordinal):
+                {
+                    var tArg = tcmd.Length > "/telemetry".Length ? tcmd["/telemetry".Length..].Trim() : "";
+                    if (tArg.Equals("off", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (Engine.Telemetry.TelemetryServer.IsRunning)
+                        {
+                            await Engine.Telemetry.TelemetryServer.StopAsync();
+                            MuxConsole.WriteInfo("Telemetry dashboard stopped.");
+                        }
+                        else MuxConsole.WriteMuted("Telemetry dashboard is not running.");
+                    }
+                    else
+                    {
+                        int tPort = int.TryParse(tArg, out var tp) && tp is > 0 and < 65536
+                            ? tp : Engine.Telemetry.TelemetryServer.DefaultPort;
+                        try { MuxConsole.WriteSuccess(await Engine.Telemetry.TelemetryServer.StartAsync(tPort)); }
+                        catch (Exception ex) { MuxConsole.WriteError($"Telemetry dashboard failed to start: {ex.Message}"); }
+                    }
+                    break;
+                }
 
                 case var rc when rc == "/resume" || rc.StartsWith("/resume ", StringComparison.Ordinal):
                     // Bare "/resume" -> interactive picker. "/resume <id>" -> resume that
@@ -1683,6 +1711,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         bool ReportAll,
         string AgentName,
         int? ServePort,
+        int? TelemetryPort,
         bool DaemonMode,
         bool AcpMode,
         bool UpdateMode
@@ -1809,6 +1838,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         uint persistInterval = 60;
         uint sessionRetention = 10;
         bool prodMode = false;
+        int? telemetryPort = null;
         bool? mcpStrictOverride = null;
         bool? dockerExecOverride = null;
         string? reportSessionId = null;
@@ -2054,6 +2084,11 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     if (Common.TryNextUInt(args, ref i, out var sp)) ServePort = (int)sp;
                     else ServePort = 6723;
                     break;
+                case "--telemetry":
+                    // Standalone telemetry dashboard (parity with /telemetry). Optional port.
+                    telemetryPort = Common.TryNextUInt(args, ref i, out var tport) && tport is > 0 and < 65536
+                        ? (int)tport : Engine.Telemetry.TelemetryServer.DefaultPort;
+                    break;
                 case "--daemon":
                     daemonMode = true;
                     break;
@@ -2091,6 +2126,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             reportAll,
             agentName,
             ServePort,
+            telemetryPort,
             daemonMode,
             acpMode,
             updateMode

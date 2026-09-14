@@ -94,6 +94,13 @@ public static class CostLedger
                 s.RollTotal += Delta(total, s.BaseTotal);
             }
 
+            // Persist the same positive delta to the durable telemetry sink (all-time dashboard).
+            long dIn = s.HasBase ? Delta(input, s.BaseInput) : Math.Max(0, input);
+            long dOut = s.HasBase ? Delta(output, s.BaseOutput) : Math.Max(0, output);
+            long dCache = s.HasBase ? Delta(cached, s.BaseCached) : Math.Max(0, cached);
+            long dReason = s.HasBase ? Delta(reasoning, s.BaseReasoning) : Math.Max(0, reasoning);
+            Telemetry.TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason);
+
             s.BaseInput = input;
             s.BaseOutput = output;
             s.BaseCached = cached;
@@ -115,6 +122,7 @@ public static class CostLedger
             s.SessToolCalls++;
             s.RollToolCalls++;
         }
+        Telemetry.TelemetrySink.RecordToolCall(model);
     }
 
     /// <summary>Increment the compaction-run count for a model (session + rolling).</summary>
@@ -126,6 +134,7 @@ public static class CostLedger
             s.SessCompactions++;
             s.RollCompactions++;
         }
+        Telemetry.TelemetrySink.RecordCompaction(model);
     }
 
     /// <summary>
