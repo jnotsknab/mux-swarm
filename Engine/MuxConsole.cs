@@ -2061,22 +2061,56 @@ public static partial class MuxConsole
         }
 
         // Under the live-region driver, the multi-column Spectre grid paints below the
-        // footer and gets clipped/desynced. Commit the plain help text through the driver
-        // as a borderless block (Claude-Code feel) so it scrolls into native history.
+        // footer and gets clipped/desynced. Commit the help text through the driver using the
+        // SAME visual language as /shortcuts (group titles + two-tone key/description columns),
+        // so the two references read as one family instead of a single-color text wall.
         if (ViaDriver)
         {
-            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Mux-Swarm \u2014 Command Reference[/]", "" };
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Mux-Swarm \u2014 Command Reference[/]" };
             foreach (var raw in (helpText ?? "").Replace("\r\n", "\n").Split('\n'))
-                lines.Add($"  [{C.Prompt}]{Esc(raw.TrimEnd())}[/]");
+                lines.Add(HelpLineMarkup(raw.TrimEnd()));
             lines.Add("");
             CommitLinesToDriver(lines);
             return;
         }
 
-        // Single source of truth: render Help.HelpText (the same catalog used by stdio and the
-        // live driver) in a rounded panel. The old hand-maintained multi-column grid was a
-        // duplicate that silently drifted from the real command set; it has been removed.
-        WritePanel("Mux-Swarm \u2014 Command Reference", helpText);
+        // Classic: the same two-tone treatment inside the rounded panel.
+        var body = new StringBuilder();
+        foreach (var raw in (helpText ?? "").Replace("\r\n", "\n").Split('\n'))
+            body.AppendLine(HelpLineMarkup(raw.TrimEnd(), classic: true));
+        var helpPanel = new Panel(new Markup(body.ToString().TrimEnd()))
+            .Header($"[{C.Step}]Mux-Swarm \u2014 Command Reference[/]")
+            .Border(BoxBorder.Rounded)
+            .BorderStyle(new Style(Color.Grey35))
+            .Padding(1, 0, 1, 0);
+        AnsiConsole.Write(helpPanel);
+    }
+
+    /// <summary>
+    /// Render one Help.HelpText line in the /shortcuts visual language: section headers (flush-
+    /// left lines) as group titles, entry lines (2-space indent + a 2+ space key/description gap)
+    /// as a two-tone key column + muted description, continuation/example lines fully muted.
+    /// Pure presentation - the catalog string is the single source of truth and stays unchanged.
+    /// </summary>
+    internal static string HelpLineMarkup(string raw, bool classic = false)
+    {
+        string ind = classic ? "" : "  ";
+        if (string.IsNullOrWhiteSpace(raw)) return "";
+        // Section header: no leading whitespace ("Slash Commands", "CLI Flags", ...).
+        if (raw[0] != ' ')
+            return $"{ind}[{C.Step}]{Esc(raw)}[/]";
+        string trimmed = raw.TrimStart();
+        int indent = raw.Length - trimmed.Length;
+        // Entry line: shallow indent + a 2+ space column gap => key + description columns.
+        int gap = trimmed.IndexOf("  ", StringComparison.Ordinal);
+        if (indent <= 2 && gap > 0)
+        {
+            string key = trimmed[..gap];
+            string desc = trimmed[gap..].TrimStart();
+            return $"{ind}  [{C.Prompt}]{Esc(key.PadRight(16))}[/][{C.Muted}]{Esc(desc)}[/]";
+        }
+        // Continuation / usage-example line: keep its own indentation, fully muted.
+        return $"{ind}  [{C.Muted}]{Esc(trimmed)}[/]";
     }
 
     /// <summary>
