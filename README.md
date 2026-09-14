@@ -114,7 +114,7 @@ Mux-Swarm is MCP-native and provider-agnostic. It speaks the [OpenAI-compatible 
 
 **Up next:** additional platform bridges (Slack, Matrix, Signal), expanded OpenTelemetry coverage.
 
-Recent releases include teams and subscription sign-in, native tools and pluggable sandboxing, the live TUI, the workflow engine, daemon mode, and event hooks. See the [changelog](RELEASE_NOTES_v0.12.0.md) for details.
+Recent releases include teams and subscription sign-in, native tools and pluggable sandboxing, the live TUI with full mouse control, the workflow engine, daemon mode, and event hooks. See the [GitHub releases](https://github.com/jnotsknab/mux-swarm/releases) for details.
 
 ## Contributing
 

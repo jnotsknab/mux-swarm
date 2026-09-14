@@ -116,7 +116,7 @@ The native in-process Filesystem and Shell/REPL tools enforce configurable secur
 
 ```json
 "filesystem": { "securityMode": "standard" },
-"shell": { "securityMode": "off", "allowedCommands": [] }
+"shell": { "securityMode": "off", "allowedCommands": [], "trimOutputWhitespace": true }
 ```
 
 | Key | Values | Description |
@@ -124,6 +124,7 @@ The native in-process Filesystem and Shell/REPL tools enforce configurable secur
 | `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
 | `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` runs commands ungated (default, run-anything); `prompt` asks for confirmation on every command; `allowlist` runs commands whose first token is in `allowedCommands` and prompts for anything else. Non-interactive sessions auto-deny a prompt. |
 | `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
+| `shell.trimOutputWhitespace` | `true` (default), `false` | Strip spaces/tabs immediately before line breaks from native Shell/REPL tool results before they reach the model (console-width padding, e.g. PowerShell `Format-Table`). Leading indentation, streaming tails, and file reads are never touched; applied once per result so prompt-cache prefixes stay stable. |
 
 ### Execution Sandbox (`sandbox`)
 

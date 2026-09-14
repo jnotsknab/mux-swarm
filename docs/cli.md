@@ -159,6 +159,7 @@ Available at the top-level REPL.
 | `/stateless` | Stateless agentic session for one-off tasks |
 | `/subagents` (`/sub`) | Enable specialist delegation from the lead |
 | `/parasubagents` (`/psub`) | Enable parallel ephemeral sub-agent delegation |
+| `/split` | Arm optional lead-context sharing: delegation tools gain `inheritLeadContext` (lead opts in per delegation; armed automatically by `/ultra` and `/giga`) |
 | `/workflow <file>` | Run a deterministic workflow from a JSON file |
 | `/teams [name]` | List and launch named teams from swarm.json |
 | `/createteam` | Guided wizard to define a team (lead, members, coordination, parallelism) |
@@ -171,8 +172,8 @@ Available at the top-level REPL.
 | Command | Description |
 |---|---|
 | `/plan` | Toggle plan mode (agents present a plan and ask for approval before executing) |
-| `/ultra` (`/ultraplan`) | Planning and deep reasoning for the main interface; parallel delegation when `ultra.autoSubAgents` is enabled |
-| `/giga` | Interactive Giga mode: ultra plus the agent can spawn named teams and author/run workflows on the fly |
+| `/ultra` (`/ultraplan`) | Planning and deep reasoning for the main interface; parallel delegation when `ultra.autoSubAgents` is enabled; arms `/split` context sharing |
+| `/giga` | Interactive Giga mode: ultra plus the agent can spawn named teams and author/run workflows on the fly; arms `/split` context sharing |
 | `/continuous` (`/cont`) | Toggle continued autonomous execution |
 | `/addcontext` | Configure what context each agent is injected with |
 | `/maxp` | Max agents running in parallel (default 4) |
@@ -201,7 +202,8 @@ Available at the top-level REPL.
 |---|---|
 | `/classic` | Switch to the classic line-by-line renderer |
 | `/tui` | Switch to the live full-screen TUI renderer |
-| `/resume` | Resume a previous lead-agent session (shows #tags) |
+| `/resume` | Resume a previous lead-agent session; bare `/resume` in the TUI opens a fuzzy alt-screen picker (Enter resumes, `v` previews the transcript) |
+| `/history` | Browse past sessions full-screen: fuzzy find, Enter re-renders the session read-only with scroll (`j`/`k`, PgUp/PgDn, `g`/`G`) and in-view `/` search (`n`/`N` hops) |
 | `/attach [id]` | Re-attach a detached session |
 | `/model` | View current model assignments |
 | `/provider` | View or switch the active LLM provider |

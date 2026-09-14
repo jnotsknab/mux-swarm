@@ -65,9 +65,9 @@ This makes Mux-Swarm easy to wire into CI systems, chat platforms, or an event b
 
 Bundled Telegram, Discord, and Signal bridges let you drive a swarm from a chat client, with voice transcription and authorization. Configure them through the [Setup Guide](setup-guide.md).
 
-## Python SDK (coming soon)
+## Python SDK
 
-A first-party Python SDK (`muxswarm`) is in active development. It provides a typed mapping over the engine's event, config, and tool contracts plus a drop-in client, and auto-downloads the engine binary at runtime. The first release is pending; this section will link to it on publish.
+The first-party Python SDK ([`muxswarm` on PyPI](https://pypi.org/project/muxswarm/), source at [mux-swarm-sdk](https://github.com/jnotsknab/mux-swarm-sdk)) provides a typed mapping over the engine's event, config, and tool contracts plus a drop-in client, and auto-downloads the engine binary at runtime. `pip install muxswarm` to get started.
 
 ## Example: inbound webhook to outbound notification
 
