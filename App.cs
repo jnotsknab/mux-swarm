@@ -1451,10 +1451,25 @@ public class App
                         if (TuiCommands.IsSessionNative(menuCmd))
                             MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
                         else
-                            MuxConsole.WriteWarning("Unknown command. Type /help.");
+                        {
+                            // Typo-tolerant recovery: rank the catalog by prefix/subsequence/bounded
+                            // edit distance and lead with a "Did you mean" instead of a dead end.
+                            var near = MuxSwarm.Engine.Tui.CommandSuggest.Suggest(menuCmd);
+                            if (near.Count > 0)
+                                MuxConsole.WriteWarning($"Unknown command '{menuCmd}'. Did you mean {string.Join(" or ", near)}? (/help lists all)");
+                            else
+                                MuxConsole.WriteWarning($"Unknown command '{menuCmd}'. Type /help.");
+                        }
                     }
                     else
-                        MuxConsole.WriteMuted("Type /help for commands.");
+                    {
+                        // Plain text at the TOP-LEVEL MENU is not sent to a model - most harnesses
+                        // drop users straight into an agent, so say explicitly that Mux has a menu
+                        // control plane and a session control plane, and how to start talking.
+                        var near = MuxSwarm.Engine.Tui.CommandSuggest.Suggest(userInput, max: 1, strict: true);
+                        string hint = near.Count > 0 ? $" (or did you mean {near[0]}?)" : "";
+                        MuxConsole.WriteMuted($"This is the main menu - text here isn't sent to an agent. /agent starts a session; /help lists commands.{hint}");
+                    }
                     break;
             }
         }
