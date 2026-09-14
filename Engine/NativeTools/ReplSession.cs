@@ -273,8 +273,10 @@ internal sealed class ReplSession : IDisposable
         sb.Append("StderrCursor: ").Append(nextErr - errDelta.Length).Append(" -> ").Append(nextErr).Append("   (total ").Append(totalErr).Append(")\n");
         sb.Append("Truncated: ").Append(truncated ? "true" : "false").Append("   Dropped: ").Append(dropped).Append('\n');
         sb.Append("SuggestedPollSeconds: ").Append(SuggestedPoll(_jobStatus, changed, idle));
-        if (outDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(outDelta);
-        if (errDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(errDelta);
+        // Deltas: cursors index the RAW buffers (unchanged); only the delivered text sheds
+        // end-of-line padding. An unterminated tail segment is never trimmed (mid-line split).
+        if (outDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(OutputWhitespace.Apply(outDelta));
+        if (errDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(OutputWhitespace.Apply(errDelta));
         return sb.ToString();
     }
 
@@ -317,8 +319,8 @@ internal sealed class ReplSession : IDisposable
         // NOTE: the code the user ran is shown in the TUI card from the display side channel
         // (ReplShellTools.CurrentReplCode -> CurrentCode), NOT echoed here - the model generated
         // the code, so repeating it in the result it ingests is pure dead-weight tokens.
-        if (_out.Length > 0) sb.Append("\n--- STDOUT ---\n").Append(_out);
-        if (_err.Length > 0) sb.Append("\n--- STDERR ---\n").Append(_err);
+        if (_out.Length > 0) sb.Append("\n--- STDOUT ---\n").Append(OutputWhitespace.Apply(_out.ToString()));
+        if (_err.Length > 0) sb.Append("\n--- STDERR ---\n").Append(OutputWhitespace.Apply(_err.ToString()));
         return sb.ToString().TrimEnd();
     }
 
@@ -592,8 +594,8 @@ internal sealed class ReplSession : IDisposable
           .Append("   (total ").Append(p.TotalStderr).Append(")\n");
         sb.Append("Truncated: ").Append(p.Truncated ? "true" : "false").Append("   Dropped: ").Append(p.Dropped).Append('\n');
         sb.Append("SuggestedPollSeconds: ").Append(SuggestedPoll(p.Status, changed, p.IdleSeconds));
-        if (p.StdoutDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(p.StdoutDelta);
-        if (p.StderrDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(p.StderrDelta);
+        if (p.StdoutDelta.Length > 0) sb.Append("\n\n--- STDOUT (new) ---\n").Append(OutputWhitespace.Apply(p.StdoutDelta));
+        if (p.StderrDelta.Length > 0) sb.Append("\n\n--- STDERR (new) ---\n").Append(OutputWhitespace.Apply(p.StderrDelta));
         return sb.ToString();
     }
 

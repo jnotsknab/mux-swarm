@@ -120,6 +120,17 @@ public class ShellConfig
     /// </summary>
     [JsonPropertyName("allowedCommands")]
     public List<string> AllowedCommands { get; set; } = [];
+
+    /// <summary>
+    /// When true (default), spaces/tabs immediately preceding a line break are stripped from
+    /// native Shell/REPL tool RESULTS before they enter model context - the console-width padding
+    /// class (e.g. PowerShell Format-Table) that costs tokens and carries no meaning. Leading
+    /// whitespace/indentation and unterminated trailing segments are never touched, and file-read
+    /// results stay byte-exact. Normalization happens once when the result is rendered, so bytes
+    /// are stable across requests (prompt-cache safe). Set false to disable.
+    /// </summary>
+    [JsonPropertyName("trimOutputWhitespace")]
+    public bool TrimOutputWhitespace { get; set; } = true;
 }
 
 /// <summary>

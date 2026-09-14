@@ -155,8 +155,10 @@ internal sealed class ShellJob
             if (_exitCode is { } ec) sb.Append(" (exit ").Append(ec).Append(')');
             sb.Append('\n');
             sb.Append("Command: ").Append(_command);
-            if (_out.Length > 0) sb.Append("\n\n--- STDOUT ---\n").Append(_out);
-            if (_err.Length > 0) sb.Append("\n\n--- STDERR ---\n").Append(_err);
+            // Model-facing render: strip per-line trailing padding (console-width Format-Table
+            // class) once here, so the bytes are stable across requests (prompt-cache safe).
+            if (_out.Length > 0) sb.Append("\n\n--- STDOUT ---\n").Append(OutputWhitespace.Apply(_out.ToString()));
+            if (_err.Length > 0) sb.Append("\n\n--- STDERR ---\n").Append(OutputWhitespace.Apply(_err.ToString()));
             return sb.ToString().TrimEnd();
         }
     }
