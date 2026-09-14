@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.Setup;
 
@@ -135,15 +135,13 @@ public static class McpServerDefaults
         if (!string.IsNullOrEmpty(npx))
         {
             PatchIfMatches(config, "Memory", "npx", npx);
-            if (!PlatformContext.IsWindows) PatchIfMatches(config, "Shell", "npx", npx);
+            PatchIfMatches(config, "Fetch", "npx", npx);
             PatchIfMatches(config, "BraveSearchMCP", "npx", npx);
         }
 
         if (!string.IsNullOrEmpty(uvx))
         {
-            PatchIfMatches(config, "Fetch", "uvx", uvx);
             PatchIfMatches(config, "ChromaDB", "uvx", uvx);
-
         }
     }
 

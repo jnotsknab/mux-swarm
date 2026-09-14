@@ -1,8 +1,8 @@
 using System.Runtime.CompilerServices;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Teams;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Teams;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

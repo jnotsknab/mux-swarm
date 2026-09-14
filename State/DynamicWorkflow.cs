@@ -2,7 +2,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.State;
 
@@ -450,6 +450,10 @@ public static class DynamicWorkflow
     public static async Task<string> GenerateAndLaunchAsync(
         string name, string goal, IChatClient client, ChatOptions? opts, CancellationToken ct)
     {
+        using var generationCancellation = ExecutionCancellation.Link(ct);
+        using var generationOwnership = ExecutionCancellation.Enter(generationCancellation.Token);
+        ct = generationCancellation.Token;
+        ct.ThrowIfCancellationRequested();
         var py = ResolvePython();
         if (py is null)
             return "[workflow] Dynamic mode needs python on PATH (drives the muxswarm SDK script). Install python 3.9+ or use /workflow static.";
@@ -463,6 +467,7 @@ public static class DynamicWorkflow
                 new[] { new ChatMessage(ChatRole.User, prompt) }, opts, ct);
             script = resp.Text ?? "";
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { return $"[workflow] Script generation failed: {ex.Message}"; }
         script = StripFences(script);
         if (string.IsNullOrWhiteSpace(script) || !script.Contains("muxswarm"))
@@ -499,6 +504,7 @@ public static class DynamicWorkflow
     /// The script is contract-validated first; violations return the contract instead of launching.</summary>
     public static string Launch(string name, string script, string? python = null, int? maxParallel = null)
     {
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         int capForContract = maxParallel ?? (App.MaxDegreeParallelism > 0 ? App.MaxDegreeParallelism : 4);
         if (ValidateScript(script) is { } rejection)
             return rejection + ScriptContract(capForContract);
@@ -559,6 +565,7 @@ public static class DynamicWorkflow
         if (preflight is { } preflightError)
             return preflightError;
 
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         Process proc;
         try
         {
@@ -581,10 +588,12 @@ public static class DynamicWorkflow
         }
         catch (Exception ex) { return $"[workflow] Could not launch driver: {ex.Message}"; }
 
-        WorkflowRunRegistry.Register(new WorkflowRun
+        var run = WorkflowRunRegistry.Register(new WorkflowRun
         {
             Id = id, Name = name, Mode = "dynamic", RunDir = dir, Driver = proc,
         });
+        WorkflowRunRegistry.BindExecutionCancellation(run);
+        ExecutionCancellation.Current.ThrowIfCancellationRequested();
         return $"[workflow] Dynamic run '{name}' launched (id {id}, driver pid {proc.Id}, cap {maxPar}). Watch it with /workflows; script + journal in {dir}.";
     }
 

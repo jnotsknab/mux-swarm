@@ -1,5 +1,5 @@
 using System.Linq;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;

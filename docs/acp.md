@@ -74,7 +74,7 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 
 ## Architecture (how it works)
 
-The adapter (`Utils/Acp/`) is a thin transport shim over the existing single-agent REPL - it
+The adapter (`Engine/Acp/`) is a thin transport shim over the existing single-agent REPL - it
 does **not** re-implement the turn engine:
 
 - **`AcpProtocol`** - pure, side-effect-free JSON-RPC envelope + ACP update factories and the

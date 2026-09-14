@@ -1,6 +1,6 @@
 using System.Linq;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Tui;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -80,6 +80,28 @@ public class FrameRendererTests
             o.IndexOf(Ansi.BeginSyncOutput, StringComparison.Ordinal)
                 < o.IndexOf(Ansi.EnterAltScreen, StringComparison.Ordinal),
             "On resume, BeginSyncOutput must precede EnterAltScreen (no flicker).");
+    }
+
+
+    /// <summary>Owning/re-entering the alternate screen must reassert configured input framing.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Driver_Reentry_ReassertsPasteModeAfterAlternateScreen(bool enabled)
+    {
+        var term = new FakeTerminal();
+        var driver = new TuiDriver(term, frameEngine: true);
+        driver.SetBracketedPaste(enabled);
+        driver.SetFooter(1, 100, false, false, false);
+        if (!enabled) Assert.DoesNotContain(Ansi.BracketedPasteOn, term.Output);
+        driver.Suspend();
+        term.Clear();
+        driver.Resume();
+        var output = term.Output;
+        int entered = output.IndexOf(Ansi.EnterAltScreen, StringComparison.Ordinal);
+        int mode = output.LastIndexOf(enabled ? Ansi.BracketedPasteOn : Ansi.BracketedPasteOff, StringComparison.Ordinal);
+        Assert.True(entered >= 0 && mode > entered, "Paste mode must be asserted after alt-screen entry.");
+        driver.Shutdown();
     }
 
     [Fact]
@@ -208,69 +230,170 @@ public class FrameRendererTests
         Assert.Equal("", t.Output);
     }
 
-    // --- fixed passive frame-scroll indicator -------------------------------
+
+    /// <summary>The retained diff must not alias the caller's mutable row buffer.</summary>
+    [Fact]
+    public void Present_ReusedMutableList_RepaintsChangedRow()
+    {
+        var terminal = new FakeTerminal();
+        var renderer = new FrameRenderer(terminal);
+        var rows = Enumerable.Repeat("original", terminal.Height).ToList();
+        renderer.Present(rows);
+        terminal.Clear();
+        rows[2] = "replacement";
+        renderer.Present(rows);
+        Assert.Contains(Ansi.MoveTo(3, 1), terminal.Output);
+        Assert.Contains("replacement", terminal.Output);
+    }
+
+    /// <summary>Erasing the suffix follows the terminal cursor, not estimated Unicode width.</summary>
+    [Fact]
+    public void Present_TextSymbolWidthMismatch_ClearsSuffixAfterWritingContent()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { "old marker here ▏" });
+        terminal.Clear();
+        // U+23BA is rendered as one cell by common terminals but estimated as two by Mux.
+        renderer.Present(new[] { "⎺" });
+        int text = terminal.Output.IndexOf("⎺", StringComparison.Ordinal);
+        int erase = terminal.Output.IndexOf("\u001b[0K", StringComparison.Ordinal);
+        Assert.True(text >= 0 && erase > text, "Clear the suffix AFTER painting, without BCE pre-erasure.");
+    }
+
+    /// <summary>An overflowing transcript has a discoverable track even while at the live tail.</summary>
+    [Fact]
+    public void Driver_OverflowAtTail_HasVisibleScrollTrack()
+    {
+        var terminal = new FakeTerminal { Width = 60, Height = 12 };
+        var driver = new TuiDriver(terminal, frameEngine: true);
+        for (int i = 0; i < 100; i++) driver.CommitLine($"row {i}");
+        Assert.Contains("│", terminal.Output);
+        Assert.Contains("█", terminal.Output);
+    }
+
+
+    [Fact]
+    public void Present_ChromeOnlyChange_RepaintsCellsNotTranscript()
+    {
+        var terminal = new FakeTerminal();
+        var renderer = new FrameRenderer(terminal);
+        var rows = Enumerable.Repeat("CONTENT", terminal.Height).ToList();
+        var gutter = Enumerable.Repeat(" ", terminal.Height).ToList();
+        gutter[2] = "█";
+        renderer.Present(rows, gutter);
+        terminal.Clear();
+        gutter[2] = "│";
+        gutter[3] = "█";
+        renderer.Present(rows, gutter);
+        Assert.DoesNotContain("CONTENT", terminal.Output);
+        Assert.Contains(Ansi.MoveTo(3, terminal.Width), terminal.Output);
+        Assert.Contains(Ansi.MoveTo(4, terminal.Width), terminal.Output);
+        terminal.Clear();
+        renderer.Present(rows, gutter);
+        Assert.Equal(Ansi.BeginSyncOutput + Ansi.EndSyncOutput, terminal.Output);
+    }
+
+    [Fact]
+    public void Present_FullWidthContent_DoesNotEraseItsLastCell()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { new string('x', 20) });
+        Assert.DoesNotContain("\u001b[0K", terminal.Output);
+    }
+
+    /// <summary>With a chrome gutter the suffix clear is unconditional: estimator-full rows can
+    /// render narrower on the real terminal (U+23BA class) and skipping the clear strands stale
+    /// cells in the scrollbar region. The gutter pass repaints the rail right after.</summary>
+    [Fact]
+    public void Present_FullWidthRowWithGutter_StillClearsSuffix()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { "seed" }, new[] { "|" });
+        terminal.Clear();
+        // Estimator says full-width; a narrower real render would leave stale cells before the rail.
+        renderer.Present(new[] { new string('x', 20) }, new[] { "|" });
+        Assert.Contains("\u001b[0K", terminal.Output);
+    }
+
+    /// <summary>Gutter-less presents keep the estimator guard (a genuinely full-width modal row
+    /// never erases its own last cell).</summary>
+    [Fact]
+    public void Present_FullWidthRowWithoutGutter_KeepsEstimatorGuard()
+    {
+        var terminal = new FakeTerminal { Width = 20, Height = 1 };
+        var renderer = new FrameRenderer(terminal);
+        renderer.Present(new[] { "seed" });
+        terminal.Clear();
+        renderer.Present(new[] { new string('y', 20) });
+        Assert.DoesNotContain("\u001b[0K", terminal.Output);
+    }
+
+    // --- independent proportional frame scrollbar ---------------------------
 
     [Theory]
-    [InlineData(1, 100, 20, 19)]
-    [InlineData(50, 100, 20, 10)]
-    [InlineData(100, 100, 20, 0)]
-    public void FrameScrollIndicator_TopMovesButSizeStaysFixed(int scroll, int maxScroll, int trackRows, int expectedTop)
+    [InlineData(0, 100, 20, 16, 4)]
+    [InlineData(40, 100, 20, 8, 4)]
+    [InlineData(80, 100, 20, 0, 4)]
+    [InlineData(1, 3, 1, 0, 1)]
+    [InlineData(1, 21, 20, 0, 19)]
+    [InlineData(0, 20, 20, 0, 0)]
+    [InlineData(0, 100, 0, 0, 0)]
+    public void FrameScrollBar_ProportionalGeometry(int scroll, int total, int room, int top, int length)
     {
-        var placement = TuiDriver.FrameScrollIndicatorPlacement(scroll, maxScroll, trackRows);
-        Assert.Equal(expectedTop, placement.Top);
-        Assert.Equal(1, placement.Length);
+        var bar = FrameScrollBar.Create(scroll, total, room);
+        Assert.Equal(top, bar.Top);
+        Assert.Equal(length, bar.Length);
     }
 
     [Fact]
-    public void FrameScrollIndicator_TooShortTrack_UsesSingleCell()
+    public void Driver_FrameEngine_KeyboardScrollMovesThumbAndTailRemainsDiscoverable()
     {
-        var placement = TuiDriver.FrameScrollIndicatorPlacement(1, 2, 1);
-        Assert.Equal(0, placement.Top);
-        Assert.Equal(1, placement.Length);
-    }
-
-    [Fact]
-    public void Driver_FrameEngine_KeyboardScrollShowsFixedIndicatorAndReturningTailClearsIt()
-    {
-        var t = new FakeTerminal { Width = 40, Height = 10 };
+        var t = new FakeTerminal { Width = 60, Height = 12 };
         var d = new TuiDriver(t, frameEngine: true);
-        d.SetFooter(1, 100, false, false, false);
-        for (int i = 0; i < 40; i++) d.CommitLine($"line {i:D2}");
-
-        Assert.True(d.FrameScrollBy(10_000));
+        for (int i = 0; i < 100; i++) d.CommitLine($"line {i:D3}");
+        var tailRows = d.ComposeFrameRows();
+        AssertPlainFrameDivider(d, tailRows);
+        var tail = d.ScrollBar;
+        Assert.True(tail.Visible);
+        Assert.True(d.FrameScrollBy(10));
         var scrolled = d.ComposeFrameRows();
+        Assert.True(d.ScrollBar.Top <= tail.Top);
+        AssertPlainFrameDivider(d, scrolled);
+        Assert.True(d.FrameScrollBy(int.MaxValue));
+        d.ComposeFrameRows();
+        Assert.Equal(0, d.ScrollBar.Top);
+        Assert.False(d.FrameScrollBy(int.MaxValue)); // no overflowing offset arithmetic
+        Assert.True(d.FrameScrollBy(int.MinValue));
+        AssertPlainFrameDivider(d, d.ComposeFrameRows());
+        Assert.Equal(tail, d.ScrollBar);
+    }
 
-        string marker = TuiDriver.FrameScrollIndicatorCell();
-        Assert.Single(scrolled, r => r.EndsWith(marker, StringComparison.Ordinal));
-
-        Assert.True(d.FrameScrollBy(-10_000));
-        var tail = d.ComposeFrameRows();
-        Assert.DoesNotContain(tail, r => r.EndsWith(marker, StringComparison.Ordinal));
+    // Position belongs in the rail, not text inserted into the transcript/footer separator.
+    private static void AssertPlainFrameDivider(TuiDriver driver, IReadOnlyList<string> rows)
+    {
+        string divider = Assert.Single(LiveRegion.WrapMarkupLine(TuiComponents.FullRule(driver.Width), driver.Width));
+        Assert.Contains(divider, rows);
+        Assert.DoesNotContain(rows, row => row.Contains("LIVE") || row.Contains("HISTORY")
+            || row.Contains("START") || row.Contains("End: latest") || row.Contains("PgUp/PgDn"));
     }
 
     [Fact]
-    public void Driver_FrameEngine_FirstPageKeepsIndicatorNearBottom_ThenMovesUpMonotonically()
+    public void ScrollBar_ThumbIsContiguousAndMovesMonotonically()
     {
-        var t = new FakeTerminal { Width = 60, Height = 16 };
-        var d = new TuiDriver(t, frameEngine: true);
-        d.SetFooter(1, 100, false, false, false);
-        for (int i = 0; i < 200; i++) d.CommitLine($"line {i:D3}");
-
-        string marker = TuiDriver.FrameScrollIndicatorCell();
-        static int MarkerRow(IReadOnlyList<string> rows, string marker)
-            => Enumerable.Range(0, rows.Count).Single(i => rows[i].EndsWith(marker, StringComparison.Ordinal));
-
-        Assert.True(d.FrameScrollBy(8));
-        var first = d.ComposeFrameRows();
-        int firstRow = MarkerRow(first, marker);
-        Assert.True(firstRow >= 5, $"First partial page marker was unexpectedly high: row {firstRow}");
-
-        Assert.True(d.FrameScrollBy(24));
-        int secondRow = MarkerRow(d.ComposeFrameRows(), marker);
-        Assert.True(secondRow < firstRow, $"Marker did not move upward: {firstRow} -> {secondRow}");
-
-        Assert.True(d.FrameScrollBy(10_000));
-        Assert.Equal(0, MarkerRow(d.ComposeFrameRows(), marker));
+        int previous = int.MaxValue;
+        for (int offset = 0; offset <= 980; offset++)
+        {
+            var bar = FrameScrollBar.Create(offset, 1000, 20);
+            Assert.InRange(bar.Top, 0, previous);
+            Assert.Equal(2, bar.Length);
+            var cells = Enumerable.Range(0, 20).Select(bar.Cell).ToArray();
+            Assert.Equal(2, cells.Count(cell => cell.Contains('█')));
+            Assert.Equal(18, cells.Count(cell => cell.Contains('│')));
+            previous = bar.Top;
+        }
     }
 
     [Fact]
@@ -575,25 +698,17 @@ public class FrameRendererTests
     }
 
     [Fact]
-    public void Driver_FrameEngine_StartupOverflow_ShowsNoMarkerUntilUserScrolls()
+    public void Driver_FrameEngine_StartupOverflow_KeepsScrollTrackAndPlainDivider()
     {
-        // A splash taller than the transcript pane seeds _frameScroll at the top via CommitStartup.
-        // The passive marker must NOT light on this virgin startup (the user has not paged yet).
-        var t = new FakeTerminal { Width = 40, Height = 6 };
+        var t = new FakeTerminal { Width = 60, Height = 8 };
         var d = new TuiDriver(t, frameEngine: true);
-        d.SetFooter(1, 100, false, false, false);
-        var splash = new List<string>();
-        for (int i = 0; i < 30; i++) splash.Add($"splash {i:D2}");
-        d.CommitStartup(splash);
-
-        string marker = TuiDriver.FrameScrollIndicatorCell();
+        d.CommitStartup(Enumerable.Range(0, 30).Select(i => $"splash {i:D2}").ToArray());
         var rows = d.ComposeFrameRows();
-        Assert.DoesNotContain(rows, r => r.EndsWith(marker, StringComparison.Ordinal));
-
-        // Once the user actually pages, the marker arms.
-        Assert.True(d.FrameScrollBy(-2)); // move toward the tail from the seeded top
-        var afterScroll = d.ComposeFrameRows();
-        Assert.Contains(afterScroll, r => r.EndsWith(marker, StringComparison.Ordinal));
+        Assert.True(d.ScrollBar.Visible);
+        Assert.Equal(0, d.ScrollBar.Top);
+        AssertPlainFrameDivider(d, rows);
+        Assert.True(d.FrameScrollBy(-2));
+        AssertPlainFrameDivider(d, d.ComposeFrameRows());
     }
 
     [Fact]
@@ -639,7 +754,7 @@ public class FrameRendererTests
         d.Commit(new[] { "Daemon", "  status: running", "  jobs: 3 active" });
 
         var rows = d.ComposeFrameRows();
-        string plain = string.Join("\n", rows.Select(MuxSwarm.Utils.Tui.TuiMarkup.Plain));
+        string plain = string.Join("\n", rows.Select(TuiMarkup.Plain));
         Assert.Contains("Daemon", plain);
         Assert.Contains("status: running", plain);
         Assert.Contains("jobs: 3 active", plain);

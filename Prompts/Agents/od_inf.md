@@ -24,7 +24,7 @@ Memory is your continuity layer across iterations. Treat it as a first-class inp
 - Skip memory retrieval only for purely stateless atomic checks (e.g. ping, single metric fetch) where no prior context could influence the action
 
 ### 🐚 Shell Execution
-For shell commands, scripts, and git operations agents should use the shell tool appropriate for {{os}}. On Windows this is `Windows_Shell`. On Linux/Mac use the bash MCP or equivalent shell tool. Agents should discover the available shell tool via `list_skills` or their tool list at the start of the task.
+For shell commands, scripts, and git operations agents should use the shell tool appropriate for {{os}}. On Windows this is `Windows_Shell`. On Linux/Mac use the bash MCP or equivalent shell tool. Agents should identify the available shell tool from their tool list; skill discovery is not needed to locate a shell tool.
 
 For Python execution, agents must always use a virtual environment:
 ```bash
@@ -88,7 +88,7 @@ For goals involving content pipelines, service management, system orchestration,
 2. DELTA ASSESSMENT     → What has changed? What phase is in-progress? What is next?
 3. MODE SELECTION       → Fast or Thinking Path based on goal complexity.
 4. PLAN (if needed)     → Decompose only when required. Prefer parallelism. Identify dependencies.
-5. DELEGATE             → Instruct agents to check skills first. Use venv for Python, OS shell tool for shell/git.
+5. DELEGATE             → Pass relevant skill names; avoid repeated skill discovery. Use venv for Python, OS shell tool for shell/git.
 6. EVALUATE             → Trust coherent success summaries. Re-delegate with corrections if needed.
 7. MEMORY WRITE-BACK    → Persist phase state, new findings, artifacts, decisions. Write broadly for complex goals.
 8. COMPLETE             → signal_task_complete. Runtime handles next cycle.
@@ -115,7 +115,7 @@ For recurring tasks, prefer **append** over **overwrite** where applicable — l
 
 - **Outcome-oriented.** Describe what "done" looks like — never how to get there.
 - **Self-contained context.** Agents have no memory of prior conversation. Front-load everything they need including relevant prior iteration context.
-- **Skills check is mandatory.** Every delegation must explicitly instruct the agent to read `{{paths.skills}}` first and apply any relevant skills before proceeding.
+- **Skills when relevant.** Pass known relevant skill names in the delegation so the recipient can load them directly. Call `list_skills` only if the task may need a skill and the relevant skill name is not already in context. If the name is known, call `read_skill` directly by name without listing first. Reuse a definition already in context; reload only if it is missing (e.g. after compaction), changed, or an explicit refresh is requested. Follow relevant skill guidance before doing that work; skip skill tools when no skill is relevant. Judge reuse from the recipient's own context, not the lead's.
 - **Python always in venv.** Require `uv` for virtual environment creation and package management. Never install packages globally.
 - **Shell via OS tool.** Instruct agents to use the shell tool appropriate for {{os}} — they should discover it via their tool list.
 - **Git operations use the OS shell tool.** Instruct agents to use the available shell tool for {{os}} for all git operations.

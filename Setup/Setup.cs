@@ -2,7 +2,9 @@ using System.Threading;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.NativeTools;
+using MuxSwarm.Engine.Proxy;
 
 namespace MuxSwarm.Setup;
 
@@ -182,9 +184,9 @@ public static class Setup
             new ("python", "Some skills and tooling rely on Python"),
             new ("node", "Required for npx-based MCP servers"),
             new ("npm", "Required for npx-based MCP servers"),
-            new ("npx", "Required for MCP servers (memory/filesystem/shell)"),
-            new ("uv",  "Required for uv/uvx-based MCP servers (fetch/chroma)"),
-            new ("uvx", "Required for uv/uvx-based MCP servers (fetch/chroma)"),
+            new ("npx", "Required for npx-based MCP servers (memory/fetch/search/playwright)"),
+            new ("uv",  "Required for uv/uvx-based MCP servers (chroma)"),
+            new ("uvx", "Required for uv/uvx-based MCP servers (chroma)"),
         };
 
         var verbose = Debugger.IsAttached || Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE") == "1";
@@ -196,7 +198,7 @@ public static class Setup
             verbose: verbose
         );
 
-        string choice = MuxConsole.Prompt("Install playwright debs for web browser functionality? (y/n)", "n");
+        string choice = MuxConsole.Prompt("Install Playwright browsers for web browser functionality? (y/n)", "n");
         if (choice.ToLowerInvariant() == "y")
         {
             MuxConsole.WriteInfo("Installing Playwright browsers and system dependencies...");
@@ -476,7 +478,7 @@ public static class Setup
     /// </summary>
     private static bool StepSubscriptionLogin()
     {
-        var providers = MuxSwarm.Utils.Proxy.CliProxyManager.LoginProviders.Keys.ToList();
+        var providers = CliProxyManager.LoginProviders.Keys.ToList();
         MuxConsole.WriteLine();
         MuxConsole.WriteBody("Log in to a subscription provider via OAuth.");
         MuxConsole.WriteMuted("(Reuses the official client id - same posture as other subscription tools.)");
@@ -492,7 +494,7 @@ public static class Setup
 
         // Pick browser vs headless login. Default follows the environment heuristic (SSH / no display
         // => headless), so a setup run on a remote / cloud VPS defaults to the URL-print flow.
-        bool guessHeadless = MuxSwarm.Utils.Proxy.CliProxyManager.LooksHeadless();
+        bool guessHeadless = CliProxyManager.LooksHeadless();
         var modeChoices = new System.Collections.Generic.List<string>
         {
             "browser - open a browser on this machine (local desktop)",
@@ -514,15 +516,15 @@ public static class Setup
                 MuxConsole.WriteInfo($"Starting the local CLIProxyAPI sidecar and opening your browser for {pick}...");
             }
             using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            bool ok = MuxSwarm.Utils.Proxy.CliProxyManager.LoginAsync(pick, cts.Token, headless).GetAwaiter().GetResult();
+            bool ok = CliProxyManager.LoginAsync(pick, cts.Token, headless).GetAwaiter().GetResult();
             if (!ok)
             {
                 MuxConsole.WriteWarning($"Login for '{pick}' did not complete.");
                 return false;
             }
 
-            string endpoint = MuxSwarm.Utils.Proxy.CliProxyManager.OpenAiEndpoint
-                ?? $"http://127.0.0.1:{MuxSwarm.Utils.Proxy.CliProxyManager.PreferredPort}/v1";
+            string endpoint = CliProxyManager.OpenAiEndpoint
+                ?? $"http://127.0.0.1:{CliProxyManager.PreferredPort}/v1";
 
             _appConfig.LlmProviders ??= [];
             _appConfig.LlmProviders.Clear();
@@ -531,14 +533,14 @@ public static class Setup
                 Name = "cliproxy",
                 Enabled = true,
                 Endpoint = endpoint,
-                ApiKeyEnvVar = MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar,
+                ApiKeyEnvVar = CliProxyManager.ClientKeyEnvVar,
             });
 
             MuxConsole.WriteSuccess($"Logged in. Provider 'cliproxy' configured -> {endpoint}.");
-            MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /model.");
+            MuxConsole.WriteMuted("Set your agent model id (e.g. claude-opus-4-6, gpt-5-codex) in Swarm.json or via /setmodel.");
             MuxConsole.WriteMuted("Log in to additional providers anytime with /login - they join the same router.");
 
-            ResolveAndPickModels(endpoint, MuxSwarm.Utils.Proxy.CliProxyManager.ClientKeyEnvVar, isSubscription: true);
+            ResolveAndPickModels(endpoint, CliProxyManager.ClientKeyEnvVar, isSubscription: true);
 
             return true;
         }
@@ -572,19 +574,19 @@ public static class Setup
             IReadOnlyList<string> models;
             if (isSubscription)
             {
-                models = MuxSwarm.Utils.Proxy.CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
+                models = CliProxyManager.ListModelsAsync(cts.Token).GetAwaiter().GetResult();
             }
             else
             {
                 var key = string.IsNullOrEmpty(apiKeyEnvVar) ? null : Environment.GetEnvironmentVariable(apiKeyEnvVar);
-                models = MuxSwarm.Utils.Proxy.CliProxyManager
+                models = CliProxyManager
                     .ProbeEndpointModelsAsync(endpoint ?? "", key, cts.Token).GetAwaiter().GetResult();
             }
 
             if (models.Count == 0)
             {
                 MuxConsole.WriteWarning("Could not retrieve a model list (endpoint may not list models, or key not set yet).");
-                MuxConsole.WriteMuted("Falling back to provider-based default model ids. You can edit them in swarm.json or via /model.");
+                MuxConsole.WriteMuted("Falling back to provider-based default model ids. You can edit them in swarm.json or via /setmodel.");
                 return;
             }
 
@@ -748,7 +750,7 @@ public static class Setup
         MuxConsole.WriteLine();
 
         // Swatch gallery so the user can SEE each theme before choosing.
-        foreach (var t in MuxSwarm.Utils.Theme.Presets)
+        foreach (var t in Theme.Presets)
         {
             string swatch =
                 $"[{t.Banner}]\u2588\u2588[/]" +
@@ -762,13 +764,13 @@ public static class Setup
         }
         MuxConsole.WriteLine();
 
-        var choice = MuxConsole.Select("Theme:", MuxSwarm.Utils.Theme.Presets
+        var choice = MuxConsole.Select("Theme:", Theme.Presets
             .Select(t => $"{t.Name}").ToList());
-        var picked = MuxSwarm.Utils.Theme.Find(choice) ?? MuxSwarm.Utils.Theme.Default;
+        var picked = Theme.Find(choice) ?? Theme.Default;
 
         _appConfig.Console ??= new ConsoleConfig();
         _appConfig.Console.Theme = picked.Name;
-        MuxSwarm.Utils.Theme.Set(picked);
+        Theme.Set(picked);
 
         // Live preview of the chosen theme's chrome so the choice is confirmed visually.
         MuxConsole.WriteLine();
@@ -782,7 +784,7 @@ public static class Setup
 
     private static bool StepCollectMcpSecrets()
     {
-        MuxConsole.WriteStep(7, "MCP API Keys");
+        MuxConsole.WriteStep(8, "MCP API Keys");
 
         MuxConsole.WriteBody("Some MCP servers require API keys.");
         MuxConsole.WriteBody("By default, MuxSwarm stores ONLY the env-var names in config (no secrets).");
@@ -861,7 +863,7 @@ public static class Setup
 
     private static bool StepResolveMcpServerPaths()
     {
-        MuxConsole.WriteStep(8, "MCP Server Validation");
+        MuxConsole.WriteStep(9, "MCP Server Validation");
 
         foreach (var (name, server) in _appConfig.McpServers)
         {
@@ -869,7 +871,7 @@ public static class Setup
 
             // Native in-process toolsets (Filesystem + Shell) carry the native-runtime-tools marker
             // instead of a real binary - validating them against PATH would falsely warn. Show as native.
-            if (MuxSwarm.Utils.NativeTools.NativeToolRegistry.IsNativeEntry(server))
+            if (NativeToolRegistry.IsNativeEntry(server))
             {
                 MuxConsole.WriteSuccess($"{name} - native (in-process)");
                 continue;
@@ -957,9 +959,24 @@ public static class Setup
             ("Shell security", _appConfig.Shell?.SecurityMode ?? "off"),
             ("ChromaDB path", _appConfig.Filesystem?.ChromaDbPath ?? "-"),
             ("Knowledge graph", _appConfig.Filesystem?.KnowledgeGraphPath ?? "-"),
+            ("Theme",         _appConfig.Console?.Theme ?? "default"),
+            ("TUI defaults",  DescribeTuiDefaults(_appConfig)),
         });
 
         MuxConsole.WriteLine();
+    }
+
+    /// <summary>
+    /// One-line description of the TUI defaults the just-written config carries (render engine +
+    /// mouse preset) with the commands that change them. Reads the LIVE config values rather than
+    /// hardcoding the v0.14.0 defaults, so this line can never drift from what was actually saved.
+    /// </summary>
+    internal static string DescribeTuiDefaults(AppConfig config)
+    {
+        var console = config.Console ?? new ConsoleConfig();
+        var engine = string.IsNullOrWhiteSpace(console.RenderEngine) ? "frame" : console.RenderEngine;
+        var mouse = string.IsNullOrWhiteSpace(console.MouseTracking) ? "buttons" : console.MouseTracking;
+        return $"{engine} renderer, mouse {mouse}  (change: /set renderEngine, /mouse)";
     }
 
     public static bool IsBinaryAvailable(string binary) => BinaryResolver.IsBinaryAvailable(binary);

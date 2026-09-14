@@ -1,6 +1,6 @@
 using Microsoft.Extensions.AI;
 using MuxSwarm;
-using MuxSwarm.Utils;
+using MuxSwarm.Engine;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -89,5 +89,22 @@ public class UltraReasoningTests
 
         Assert.True(opts.AdditionalProperties is null || !opts.AdditionalProperties.ContainsKey("thinking"));
         Assert.Equal(ReasoningEffort.ExtraHigh, opts.Reasoning!.Effort);
+    }
+    [Theory]
+    [InlineData("max")]
+    [InlineData("custom Vendor-Max")]
+    public void Apply_PreservesExplicitEffort(string value)
+    {
+        var previous = App.Config;
+        try
+        {
+            App.Config = new AppConfig();
+            var opts = new ModelOpts { Reasoning = new ReasoningConfig { Effort = value, Output = "full" } }.ToChatOptions()!;
+            UltraReasoning.Apply(opts);
+            Assert.Equal(value, ReasoningEffortControl.GetLabel(opts));
+            Assert.Equal(ReasoningOutput.Full, opts.Reasoning!.Output);
+            Assert.Null(opts.Reasoning.Effort);
+        }
+        finally { App.Config = previous; }
     }
 }

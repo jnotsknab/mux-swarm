@@ -1,6 +1,6 @@
 using System.Text.Json;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Memory;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Memory;
 
 namespace MuxSwarm.Tests.Tests;
 
@@ -181,7 +181,11 @@ public class ReflectionMemoryTests
     public void SelfHeal_Parse_AcceptsSkillProposal()
     {
         var props = SelfHeal.ParseProposals(
-            "BRAIN|reflex|do X\nSKILL|nas-venv-copy|copy NAS python apps local before running\nMEMORY|fact|user on windows");
+            """
+            [{"type":"BRAIN","key":"reflex","content":"do X"},
+             {"type":"SKILL","key":"nas-venv-copy","content":"copy NAS python apps local before running","skillBody":"# Steps\n\n1. Copy locally.\n2. Run in a venv."},
+             {"type":"MEMORY","key":"fact","content":"user on windows"}]
+            """);
         Assert.Contains(props, p => p.Type == "SKILL" && p.Key == "nas-venv-copy");
         Assert.Contains(props, p => p.Type == "BRAIN");
         Assert.Contains(props, p => p.Type == "MEMORY");
@@ -190,7 +194,7 @@ public class ReflectionMemoryTests
     [Fact]
     public void SelfHeal_Parse_RejectsUnknownType()
     {
-        var props = SelfHeal.ParseProposals("BOGUS|key|content");
+        var props = SelfHeal.ParseProposals("""[{"type":"BOGUS","key":"key","content":"content"}]""");
         Assert.Empty(props);
     }
 

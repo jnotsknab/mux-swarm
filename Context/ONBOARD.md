@@ -28,9 +28,9 @@ Note for recommended setup posture and onboarding you can reference the setup gu
 ### Capability Surface
 
 **Execution Modes**
-- `/agent` -- single-agent interactive loop for conversational tasks, coding, research, general use
-- `/swarm` -- multi-agent orchestration where a coordinator delegates to specialist agents (web, code, analysis, memory, system ops)
-- `/pswarm` -- parallel swarm for concurrent batch dispatch of independent subtasks
+- `/agent` -- the PRIMARY interface: an interactive lead-agent session for conversation, coding, research, general use. With delegation enabled (`/sub`, `/ultra`, `/giga`) the lead can fan work out to specialists, matching or exceeding the dedicated swarm modes. Start here.
+- `/swarm` -- specialty execution style: a coordinator dispatches one specialist task at a time (web, code, analysis, memory, system ops)
+- `/pswarm` -- specialty execution style: concurrent batches of independent specialist tasks
 - `/stateless` -- stateless single-agent loop for one-off tasks with no session persistence
 - `/teams` / `/createteam` -- named multi-agent teams with a dependency-gated TaskBoard, editable `/kanban`, peer self-claim, and an inter-agent mailbox
 - `/giga` -- Giga mode: grants a single agent on-the-fly team and workflow orchestration
@@ -42,6 +42,9 @@ Note for recommended setup posture and onboarding you can reference the setup gu
 
 **Tool Integration (MCP + native)**
 The runtime is MCP-native (Model Context Protocol). Filesystem and Shell/REPL now run as fast **native in-process tools** (no external subprocess) with per-session isolation; other default servers include memory (knowledge graph), web search (Brave Search), fetch, and ChromaDB (vector store). Per-agent scoping controls which tools each role can access.
+
+**Terminal UI (v0.14.0 defaults)**
+The TUI defaults to the full-frame renderer with full mouse control: click selects/expands, double-click activates, triple-click applies, drag selects and copies transcript lines (works over SSH via OSC 52), and the scrollbar is click/drag interactive. `/mouse` and `/set renderEngine` opt out. Esc or Ctrl+Q cancels the whole turn including delegated sub-agents; `\` opens the Agent View dashboard over live sub-agents. Key session commands: `/setmodel` (browse provider models, save per-slot model+effort), `/set` (searchable native settings editor), `/swap` (fuzzy lead picker), `/tools` (grouped tool browser), `/prune` (deterministic context trim). `/shortcuts` shows the full keyboard + mouse reference.
 
 **Subscription Sign-In**
 Operators can sign in to a subscription provider -- Claude, Codex, Kimi, xAI, or Antigravity -- with `/login` (browser OAuth, no API keys to paste). A bundled CLIProxyAPI sidecar is downloaded and managed automatically. `/ping` and `/proxy status|update` cover diagnostics.
@@ -58,6 +61,8 @@ Skills are reusable operational modules agents discover and load at runtime. Ope
 - Structured knowledge graph (entities, relationships)
 - Filesystem artifact layer (agents exchange files as a lightweight message bus)
 - BRAIN.md and MEMORY.md (operator profile and working context, read by all agents)
+- Optional deep memory (background reflection distills lessons across sessions; `/memory deep`)
+- `/heal` self-review: proposes BRAIN/MEMORY write-backs and complete reusable skills from the live session
 
 **Messaging Bridges**
 Telegram, Discord, and Signal bridges let operators interact with agents from any device. Bridges run as daemon triggers with auto-restart, WebSocket connectivity, and Whisper voice transcription.
@@ -178,8 +183,10 @@ Based on the operator's experience level from Phase 1, present a curated selecti
 - Event hooks (run scripts on agent lifecycle events)
 - Custom agents (add your own specialist roles to the swarm)
 - Skills authoring (create reusable tool modules)
-- Model tuning (per-agent temperature, reasoning, params)
+- Model tuning (`/setmodel` picker; per-agent temperature, reasoning, params)
 - Parallel swarm (concurrent batch dispatch)
+- Mouse-first TUI (click/double/triple/drag-copy; on by default -- `/shortcuts` shows the map)
+- Self-healing memory (`/heal` proposes BRAIN/MEMORY updates and complete skills)
 
 **For power users**, ask which of these features interest them (allow multiple selections):
 - Named teams + Kanban (coordinate several agents on a shared task board)
@@ -191,6 +198,7 @@ Based on the operator's experience level from Phase 1, present a curated selecti
 - Parallel swarm (run multiple tasks at once)
 - OS service registration (start on boot)
 - Workflow engine (JSON pipelines for repeatable tasks)
+- Mouse-first TUI (click to select, drag to copy -- on by default)
 
 **For casual users**, ask which of these features interest them (allow multiple selections):
 - Subscription sign-in (`/login` -- connect your Claude or ChatGPT plan, no API keys)

@@ -4,10 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using MuxSwarm.Engine;
+using MuxSwarm.Engine.Teams;
+using MuxSwarm.Engine.Tui;
 using MuxSwarm.State;
-using MuxSwarm.Utils;
-using MuxSwarm.Utils.Teams;
-using MuxSwarm.Utils.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
