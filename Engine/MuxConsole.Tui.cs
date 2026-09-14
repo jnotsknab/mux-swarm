@@ -84,8 +84,9 @@ public static partial class MuxConsole
     public static int ScrollSpeedRows { get; set; } = 1;
 
     /// <summary>Mirror of console.mouseTracking (off|wheel|buttons) for the frame engine. Applied
-    /// at TUI activation and live via /set mouseTracking or /mouse.</summary>
-    public static string MouseTracking { get; set; } = "wheel";
+    /// at TUI activation and live via /set mouseTracking or /mouse. Defaults to buttons (full
+    /// mouse control) since v0.14.0, matching AppConfig.</summary>
+    public static string MouseTracking { get; set; } = "buttons";
 
     /// <summary>Shade the user input/compose field (console.inputHighlight). Pushed to the driver
     /// on activation + live via /set. Ignored outside the live TUI.</summary>
@@ -901,7 +902,8 @@ public static partial class MuxConsole
 
     public static void SetTuiMouseTracking(string preset)
     {
-        MouseTracking = preset is "off" or "buttons" ? preset : "wheel";
+        // Unknown values normalize to the DEFAULT preset (buttons since v0.14.0).
+        MouseTracking = preset is "off" or "wheel" ? preset : "buttons";
         if (!ViaDriver) return;
         lock (ConsoleLock) { _driver!.SetMouseTrackingPreset(MouseTracking); }
     }

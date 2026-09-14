@@ -2092,9 +2092,19 @@ public static partial class MuxConsole
             "prompt" => "At the prompt (input line)",
             "turn"   => "During an agent turn",
             "view"   => "Transcript / expand view",
+            "mouse"  => "Mouse (frame engine · /mouse buttons)",
             _         => ctx,
         };
-        var order = new[] { "prompt", "turn", "view" };
+        // The mouse group is listed while the buttons preset is active (the default); under
+        // wheel/off it is elided with a one-line pointer so the reference matches what the
+        // user's clicks will actually do.
+        bool mouseLive = FrameEngineEnabled && string.Equals(MouseTracking, "buttons", StringComparison.OrdinalIgnoreCase);
+        var order = mouseLive
+            ? new[] { "prompt", "turn", "view", "mouse" }
+            : new[] { "prompt", "turn", "view" };
+        string mouseHint = FrameEngineEnabled
+            ? $"Mouse: preset '{MouseTracking}' - /mouse buttons enables click/double-click/triple-click/drag"
+            : "Mouse: full control available in the frame engine (/set renderEngine frame, then /mouse buttons)";
 
         // Plain text for stdio.
         if (StdioMode)
@@ -2109,6 +2119,7 @@ public static partial class MuxConsole
                     if (k.Context == ctx)
                         sb.AppendLine($"  {k.Keys,-14}{k.Desc}");
             }
+            if (!mouseLive) { sb.AppendLine(); sb.AppendLine(mouseHint); }
             WriteBody(sb.ToString().TrimEnd());
             return;
         }
@@ -2125,6 +2136,7 @@ public static partial class MuxConsole
                     if (k.Context == ctx)
                         lines.Add($"    [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
             }
+            if (!mouseLive) { lines.Add(""); lines.Add($"  [{C.Muted}]{Esc(mouseHint)}[/]"); }
             lines.Add("");
             CommitLinesToDriver(lines);
             return;
@@ -2137,12 +2149,13 @@ public static partial class MuxConsole
         {
             if (!firstGroup) body.AppendLine();
             firstGroup = false;
-            body.AppendLine($"[{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+            body.AppendLine($"[{C.Step}]{Esc(ContextTitle(ctx))}[/]");   // classic panel gets the same conditional groups
             body.AppendLine($"[{C.Muted}]────────────────────────────────────[/]");
             foreach (var k in Tui.TuiCommands.Keys)
                 if (k.Context == ctx)
                     body.AppendLine($"  [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
         }
+        if (!mouseLive) body.AppendLine().AppendLine($"[{C.Muted}]{Esc(mouseHint)}[/]");
 
         var shortcutsPanel = new Panel(new Markup(body.ToString().TrimEnd()))
             .Header($"[{C.Step}]Mux-Swarm — Keyboard Shortcuts[/]")

@@ -735,7 +735,9 @@ public class TuiDriverTests
     {
         Assert.NotEmpty(TuiCommands.Keys);
         // Every entry has a non-empty chord, description, and a known context bucket.
-        var contexts = new HashSet<string> { "prompt", "turn", "view" };
+        var contexts = new HashSet<string> { "prompt", "turn", "view", "mouse" };
+        // The mouse group documents the buttons-default control surface (v0.14.0).
+        Assert.Contains(TuiCommands.Keys, k => k.Context == "mouse");
         foreach (var k in TuiCommands.Keys)
         {
             Assert.False(string.IsNullOrWhiteSpace(k.Keys));

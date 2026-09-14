@@ -175,8 +175,9 @@ public class MouseHandlerTests
     [InlineData("off", "off")]
     [InlineData("buttons", "buttons")]
     [InlineData("wheel", "wheel")]
-    [InlineData("garbage", "wheel")]   // unknown normalizes to wheel
-    [InlineData("", "wheel")]
+    [InlineData("off", "off")]
+    [InlineData("garbage", "buttons")]   // unknown normalizes to the buttons default (v0.14.0)
+    [InlineData("", "buttons")]
     public void Driver_Preset_NormalizesUnknownValues(string input, string expected)
     {
         var d = new TuiDriver(new FakeTerm(), frameEngine: true);

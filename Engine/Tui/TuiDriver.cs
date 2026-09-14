@@ -280,13 +280,14 @@ internal sealed partial class TuiDriver
 
     // Hermes-style mouse preset: off = no reporting; wheel = report + wheel scrollback only
     // (press/release/drag parsed + swallowed); buttons = report + wheel + press/release/drag
-    // dispatched to their sinks. Default "wheel". Adjusted via /set mouseTracking or /mouse.
-    private string _mousePreset = "wheel";
+    // dispatched to their sinks. Default "buttons" (full mouse control) since v0.14.0, matching
+    // AppConfig/MuxConsole. Adjusted via /set mouseTracking or /mouse.
+    private string _mousePreset = "buttons";
 
     public string MousePreset => _mousePreset;
 
     /// <summary>Set the mouse reporting preset (off|wheel|buttons). Normalizes unknown values to
-    /// the wheel default. Applies immediately: off disables reporting, wheel/buttons enable it in
+    /// the buttons default. Applies immediately: off disables reporting, wheel/buttons enable it in
     /// frame mode (unless a blocking prompt is suspended), and buttons also enables the interactive
     /// sinks. Inline mode keeps native scrollback/selection and is untouched.</summary>
     public void SetMouseTrackingPreset(string preset)
@@ -294,8 +295,8 @@ internal sealed partial class TuiDriver
         _mousePreset = preset switch
         {
             "off" => "off",
-            "buttons" => "buttons",
-            _ => "wheel",
+            "wheel" => "wheel",
+            _ => "buttons",
         };
         ApplyMouseMode();
     }

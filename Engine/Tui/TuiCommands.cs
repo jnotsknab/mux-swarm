@@ -126,7 +126,7 @@ internal static class TuiCommands
         new("/setmodel",     "Browse provider models and save model/effort", Scope.ReplOnly),
         new("/set",          "Search/edit settings in a native view (F4 Apply), or /set key value", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
-        new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons)", Scope.ReplOnly),
+        new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons; default buttons)", Scope.ReplOnly),
         new("/config",       "Show all current config settings", Scope.ReplOnly),
         new("/newagent",     "Scaffold a new swarm agent (/newagent <name> [desc])", Scope.ReplOnly),
         new("/editagent",    "Edit a swarm agent (model/desc/MCP/delegate)", Scope.ReplOnly),
@@ -332,7 +332,20 @@ internal static class TuiCommands
         new("Ctrl+D/U",    "Scroll half a page down / up", "view"),
         new("Ctrl+F/B",    "Scroll a full page down / up (also PgDn/PgUp)", "view"),
         new("g / G",       "Jump to top / bottom (also Home/End)", "view"),
+        new("v / V",       "Char / line selection (then y to copy)", "view"),
+        new("y",           "Copy the selection to the clipboard (OSC 52 + OS fallback)", "view"),
         new("Ctrl+E/Enter","Toggle the focused tool result open / closed", "view"),
         new("q / Esc / i", "Exit the view and return to the prompt", "view"),
+
+        // --- mouse (frame engine, mouseTracking=buttons; /mouse adjusts the preset) ---
+        new("Wheel",        "Scroll the transcript viewport (all presets except off)", "mouse"),
+        new("Click",        "Select: picker/modal items, agent lanes, jobs, settings; position the compose caret", "mouse"),
+        new("Click card",   "Expand / collapse a tool-result or sub-agent card (works mid-turn)", "mouse"),
+        new("Double-click", "Activate: choose the item / accept the option (the Enter alias)", "mouse"),
+        new("Triple-click", "Apply: /setmodel and /set staged changes (the F4 alias)", "mouse"),
+        new("Drag",         "Select transcript lines; release copies clean text to the clipboard", "mouse"),
+        new("Scrollbar",    "Click the rail to page; drag the thumb to scroll", "mouse"),
+        new("Footer chips", "Click the model chip = /setmodel; the effort chip = cycle effort (\u21e7\u21b9)", "mouse"),
+        new("NAV click",    "Seek cursor; drag = line selection (y copies); double-click = expand", "mouse"),
     };
 }

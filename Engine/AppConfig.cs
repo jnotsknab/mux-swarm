@@ -231,19 +231,18 @@ public class ConsoleConfig
     public string RenderMode { get; set; } = "auto";
 
     /// <summary>
-    /// v0.12.4 opt-in live-render backend for the interactive TUI: <c>"inline"</c> (default -
-    /// the native-scrollback log-update live region; committed transcript flows into the terminal's
-    /// own scrollback with a cursor-relative bottom footer) or <c>"frame"</c> (a full-frame renderer
-    /// that takes the alternate screen and repaints the WHOLE viewport from retained state every
-    /// present, diffing changed rows). Frame mode removes the hybrid model's resize/reflow artifacts
-    /// - the transcript is always re-wrapped at the current width and there is no scrollback-relative
-    /// anchor to lose - at the cost of native terminal scrollback while the TUI is active (history
-    /// is paged with PgUp/PgDn and browsable via Ctrl+G NAV). Blocking sub-prompts suspend the alt
-    /// screen (?1049l) and resume after, so Spectre pickers render on the primary buffer. The
-    /// default stays <c>"inline"</c>. Ignored in stdio/serve mode and on non-capable terminals.
+    /// Live-render backend for the interactive TUI: <c>"frame"</c> (default since v0.14.0 - a
+    /// full-frame renderer that takes the alternate screen and repaints the WHOLE viewport from
+    /// retained state every present, diffing changed rows; resize always re-wraps at the current
+    /// width, and mouse control is fully supported) or <c>"inline"</c> (the native-scrollback
+    /// log-update live region; committed transcript flows into the terminal's own scrollback with
+    /// a cursor-relative bottom footer, and the terminal keeps native selection/scrollback).
+    /// Frame history is paged with PgUp/PgDn and browsable via Ctrl+G NAV; blocking sub-prompts
+    /// suspend the alt screen (?1049l) and resume after, so Spectre pickers render on the primary
+    /// buffer. Ignored in stdio/serve mode and on non-capable terminals.
     /// </summary>
     [JsonPropertyName("renderEngine")]
-    public string RenderEngine { get; set; } = "inline";
+    public string RenderEngine { get; set; } = "frame";
 
     /// <summary>
     /// Named TUI color theme (see <see cref="Theme"/>): one of default | dark | light | mono |
@@ -386,15 +385,16 @@ public class ConsoleConfig
 
     /// <summary>
     /// Mouse reporting preset for the frame render engine (Hermes-style): <c>off</c> = no mouse
-    /// reporting (terminal selection/native behavior untouched); <c>wheel</c> (default) = SGR
-    /// reporting enabled, wheel events drive viewport scrollback (press/release/drag are parsed and
-    /// discarded); <c>buttons</c> = same reporting, but press/release/drag are also dispatched to
-    /// interactive sinks (click-to-interact groundwork; additive as those land). Additive and
-    /// non-invasive: absent in older configs (defaults to <c>wheel</c>). Adjusted live with
-    /// <c>/set mouseTracking off|wheel|buttons</c> or <c>/mouse</c>. Ignored outside the frame engine.
+    /// reporting (terminal selection/native behavior untouched); <c>wheel</c> = SGR reporting
+    /// enabled, wheel events drive viewport scrollback (press/release/drag are parsed and
+    /// discarded); <c>buttons</c> (default since v0.14.0) = full mouse control - click to
+    /// select/expand/position, double-click to activate, triple-click to apply, drag to select
+    /// and copy transcript lines, scrollbar click/drag. Adjusted live with
+    /// <c>/set mouseTracking off|wheel|buttons</c> or <c>/mouse</c>. Ignored outside the frame
+    /// engine (inline keeps the terminal's native selection).
     /// </summary>
     [JsonPropertyName("mouseTracking")]
-    public string MouseTracking { get; set; } = "wheel";
+    public string MouseTracking { get; set; } = "buttons";
 }
 
 /// <summary>
