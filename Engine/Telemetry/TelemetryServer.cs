@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Builder;
+﻿using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -6,13 +6,16 @@ using Microsoft.Extensions.Logging;
 namespace MuxSwarm.Engine.Telemetry;
 
 /// <summary>
-/// Standalone Kestrel dashboard for the persistent telemetry sink (/telemetry, --telemetry).
-/// Grafana-style stat tiles, canvas time-series charts, and per-model / per-agent / per-tool tables over
-/// <see cref="TelemetryStore"/>, themed to match the main web UI (same Zinc palette, fonts,
-/// theme presets, and settings-panel conventions) so the two surfaces feel like one product.
-/// Zero external dependencies: one embedded HTML document, no chart library, no npm. Binds
-/// loopback by default via <c>serve.address</c> discipline; runs on its own port (default 6725)
-/// so it can live alongside --serve.
+/// Standalone Kestrel dashboard for the built-in telemetry stack (/telemetry, --telemetry).
+/// Four tabs: Overview (persistent JSONL sink via <see cref="TelemetryStore"/> - stat tiles,
+/// canvas time-series charts, per-model / per-agent / per-tool tables), plus Metrics, Traces,
+/// and Logs served live from <see cref="OtelIngest"/> - the full in-process OTel surface
+/// (every "MuxSwarm" meter instrument with tag breakdowns and rates, recent spans, recent
+/// log entries) without needing an external OTLP collector. Themed to match the main web UI
+/// (same Zinc palette, fonts, theme presets, and settings-panel conventions) so the two
+/// surfaces feel like one product. Zero external dependencies: one embedded HTML document,
+/// no chart library, no npm. Binds loopback by default via <c>serve.address</c> discipline;
+/// runs on its own port (default 6725) so it can live alongside --serve.
 /// </summary>
 public static class TelemetryServer
 {
@@ -60,6 +63,12 @@ public static class TelemetryServer
             var events = TelemetryStore.Load(ParseRange(range));
             return Results.Json(TelemetryStore.ByTool(events));
         });
+        // Live OTel plane (in-proc ingestion; process-lifetime, not persisted).
+        app.MapGet("/api/telemetry/otel/metrics", () => Results.Json(OtelIngest.MetricsSnapshot()));
+        app.MapGet("/api/telemetry/otel/traces", (int? limit, string? name, string? agent) =>
+            Results.Json(OtelIngest.TracesSnapshot(limit ?? 200, name, agent)));
+        app.MapGet("/api/telemetry/otel/logs", (int? limit, string? level) =>
+            Results.Json(OtelIngest.LogsSnapshot(limit ?? 200, level)));
 
         await app.StartAsync();
         _app = app;
@@ -119,7 +128,7 @@ header .spacer { flex:1; }
 .range-btn.active { background:rgba(var(--accent-rgb),.18); color:var(--accent); }
 .icon-btn { background:var(--bg-input); border:1px solid var(--border); color:var(--muted); border-radius:var(--radius); width:2rem; height:2rem; cursor:pointer; display:grid; place-items:center; }
 .icon-btn:hover { color:var(--text); }
-main { max-width: 1180px; margin: 0 auto; padding: 1.25rem; display:grid; gap:1rem; }
+main { max-width: 1180px; margin: 0 auto; padding: 1.25rem; }
 .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; }
 .tile { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding: .85rem 1rem; }
 .tile .label { font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
@@ -143,12 +152,33 @@ td.name { font-family:var(--font-sans); }
 .theme-preset-btn { display:flex; align-items:center; gap:.4rem; background:var(--bg-input); border:1px solid var(--border); color:var(--muted); border-radius:var(--radius); padding:.3rem .6rem; font:inherit; font-size:.78rem; cursor:pointer; }
 .theme-preset-btn.active { color:var(--text); border-color:rgba(var(--accent-rgb),.6); }
 .theme-preset-btn .dot { width:.6rem; height:.6rem; border-radius:50%; border:1px solid var(--border); }
+/* Tabs (Overview / Metrics / Traces / Logs) - same visual language as the range group. */
+.tab-group { display:flex; gap:.25rem; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius); padding:.2rem; }
+.tab-btn { background:none; border:none; color:var(--muted); font:inherit; font-size:.8rem; padding:.3rem .7rem; border-radius:calc(var(--radius) - .2rem); cursor:pointer; }
+.tab-btn.active { background:rgba(var(--accent-rgb),.18); color:var(--accent); }
+.tabpane { display:none; }
+.tabpane.active { display:grid; gap:1rem; }
+#metricsGroups { display:grid; gap:1rem; }
+.subnote { color:var(--muted); font-size:.75rem; }
+.chip { display:inline-block; background:var(--bg-input); border:1px solid var(--border); border-radius:.35rem; padding:.1rem .45rem; margin:.1rem .25rem .1rem 0; font-family:var(--font-mono); font-size:.7rem; color:var(--muted); }
+.tagrow td { padding:.15rem .5rem .45rem; }
+.filters { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.75rem; }
+.filters select, .filters input { background:var(--bg-input); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:.35rem .5rem; font:inherit; font-size:.8rem; }
+.lvl { font-family:var(--font-mono); font-size:.72rem; text-transform:uppercase; }
+.lvl-info { color:var(--blue); } .lvl-warn { color:var(--amber); } .lvl-error { color:var(--red); }
+td.msg { font-family:var(--font-sans); font-size:.82rem; white-space:pre-wrap; word-break:break-word; }
 </style>
 </head>
 <body>
 <header>
   <span class="dot"></span>
   <h1>Mux-Swarm Telemetry</h1>
+  <div class="tab-group" id="tabs">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="metrics">Metrics</button>
+    <button class="tab-btn" data-tab="traces">Traces</button>
+    <button class="tab-btn" data-tab="logs">Logs</button>
+  </div>
   <span class="spacer"></span>
   <div class="range-group" id="ranges">
     <button class="range-btn" data-range="24h">24h</button>
@@ -165,17 +195,50 @@ td.name { font-family:var(--font-sans); }
   <div class="theme-presets" id="themePresets"></div>
 </div>
 <main>
-  <div class="tiles" id="tiles"></div>
-  <div class="card"><h2>Tokens over time</h2><canvas id="tokChart"></canvas></div>
-  <div class="grid2">
-    <div class="card"><h2>Estimated cost over time</h2><canvas id="costChart"></canvas></div>
-    <div class="card"><h2>Tool calls over time</h2><canvas id="toolChart"></canvas></div>
+  <div class="tabpane active" id="tab-overview">
+    <div class="tiles" id="tiles"></div>
+    <div class="card"><h2>Tokens over time</h2><canvas id="tokChart"></canvas></div>
+    <div class="grid2">
+      <div class="card"><h2>Estimated cost over time</h2><canvas id="costChart"></canvas></div>
+      <div class="card"><h2>Tool calls over time</h2><canvas id="toolChart"></canvas></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>By model</h2><div id="modelTable"></div></div>
+      <div class="card"><h2>By agent</h2><div id="agentTable"></div></div>
+    </div>
+    <div class="card"><h2>By tool</h2><div id="toolTable"></div></div>
   </div>
-  <div class="grid2">
-    <div class="card"><h2>By model</h2><div id="modelTable"></div></div>
-    <div class="card"><h2>By agent</h2><div id="agentTable"></div></div>
+  <div class="tabpane" id="tab-metrics">
+    <div class="subnote" id="metricsSince">Live in-process metrics.</div>
+    <div id="metricsGroups"></div>
   </div>
-  <div class="card"><h2>By tool</h2><div id="toolTable"></div></div>
+  <div class="tabpane" id="tab-traces">
+    <div class="card">
+      <div class="filters">
+        <select id="traceName">
+          <option value="">All spans</option>
+          <option>runtime_startup</option><option>agent_session</option><option>swarm_session</option>
+          <option>orchestrator_turn</option><option>agent_turn</option><option>delegation</option>
+          <option>tool_call</option><option>compaction</option>
+        </select>
+        <input id="traceAgent" type="text" placeholder="Filter by agent...">
+        <span class="subnote" id="traceCount"></span>
+      </div>
+      <div id="traceTable"></div>
+    </div>
+  </div>
+  <div class="tabpane" id="tab-logs">
+    <div class="card">
+      <div class="filters">
+        <select id="logLevel">
+          <option value="">All levels</option>
+          <option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option>
+        </select>
+        <span class="subnote" id="logCount"></span>
+      </div>
+      <div id="logTable"></div>
+    </div>
+  </div>
 </main>
 <script>
 // Theme presets: same ids/palettes as the main web UI so the choice feels continuous.
@@ -209,29 +272,59 @@ document.addEventListener('click', e => {
 });
 
 let range = 'all';
+let tab = 'overview';
 let series = [], summary = null, models = [], agents = [], tools = [];
+let otelMetrics = null, otelTraces = null, otelLogs = null;
 document.getElementById('ranges').addEventListener('click', e => {
   const btn = e.target.closest('.range-btn'); if (!btn) return;
   range = btn.dataset.range;
   document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b === btn));
   refresh();
 });
+document.getElementById('tabs').addEventListener('click', e => {
+  const btn = e.target.closest('.tab-btn'); if (!btn) return;
+  tab = btn.dataset.tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+  // Range applies to the Overview (persistent) plane; the OTel tabs are process-lifetime.
+  document.getElementById('ranges').style.visibility = tab === 'overview' ? 'visible' : 'hidden';
+  refresh();
+});
+document.getElementById('traceName').addEventListener('change', refresh);
+document.getElementById('traceAgent').addEventListener('input', () => { clearTimeout(window._tdb); window._tdb = setTimeout(refresh, 300); });
+document.getElementById('logLevel').addEventListener('change', refresh);
 
 const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
 const money = n => '$' + (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
 
 async function refresh() {
-  const q = range === 'all' ? '' : ('?range=' + range);
   try {
-    [summary, series, modelsResp, tools] = await Promise.all([
-      fetch('/api/telemetry/summary' + q).then(r => r.json()),
-      fetch('/api/telemetry/series' + q).then(r => r.json()),
-      fetch('/api/telemetry/models' + q).then(r => r.json()),
-      fetch('/api/telemetry/tools' + q).then(r => r.json()),
-    ]);
-    models = modelsResp.models || []; agents = modelsResp.agents || []; tools = tools || [];
+    if (tab === 'overview') {
+      const q = range === 'all' ? '' : ('?range=' + range);
+      [summary, series, modelsResp, tools] = await Promise.all([
+        fetch('/api/telemetry/summary' + q).then(r => r.json()),
+        fetch('/api/telemetry/series' + q).then(r => r.json()),
+        fetch('/api/telemetry/models' + q).then(r => r.json()),
+        fetch('/api/telemetry/tools' + q).then(r => r.json()),
+      ]);
+      models = modelsResp.models || []; agents = modelsResp.agents || []; tools = tools || [];
+      renderTiles(); renderTables(); draw();
+    } else if (tab === 'metrics') {
+      otelMetrics = await fetch('/api/telemetry/otel/metrics').then(r => r.json());
+      renderMetrics();
+    } else if (tab === 'traces') {
+      const p = new URLSearchParams();
+      const n = document.getElementById('traceName').value; if (n) p.set('name', n);
+      const a = document.getElementById('traceAgent').value.trim(); if (a) p.set('agent', a);
+      otelTraces = await fetch('/api/telemetry/otel/traces?' + p).then(r => r.json());
+      renderTraces();
+    } else if (tab === 'logs') {
+      const p = new URLSearchParams();
+      const lv = document.getElementById('logLevel').value; if (lv) p.set('level', lv);
+      otelLogs = await fetch('/api/telemetry/otel/logs?' + p).then(r => r.json());
+      renderLogs();
+    }
   } catch { return; }
-  renderTiles(); renderTables(); draw();
 }
 
 function renderTiles() {
@@ -263,6 +356,84 @@ function renderTables() {
   tt.innerHTML = tools.length === 0 ? '<div class="empty">No tool calls recorded yet.</div>'
     : '<table><tr><th>Tool</th><th>Calls</th><th>Errors</th></tr>'
       + tools.map(t => `<tr><td class="name">${t.tool}</td><td>${fmt(t.calls)}</td><td>${t.errors ? `<span style="color:var(--red)">${fmt(t.errors)}</span>` : '0'}</td></tr>`).join('')
+      + '</table>';
+}
+
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const dur = ms => ms >= 60000 ? (ms/60000).toFixed(1)+'m' : ms >= 1000 ? (ms/1000).toFixed(2)+'s' : ms.toFixed(0)+'ms';
+
+// Instrument name prefixes -> display groups; keeps the Metrics tab organized by domain.
+const metricGroups = [
+  ['mux.tokens.', 'Tokens'], ['mux.agent.', 'Agents'], ['mux.orchestrator.', 'Orchestration'],
+  ['mux.tool.', 'Tools'], ['mux.session.', 'Sessions'], ['mux.goal.', 'Goals'],
+  ['mux.compaction.', 'Compaction'], ['mux.memory.', 'Memory'], ['mux.daemon.', 'Daemon'],
+];
+
+function renderMetrics() {
+  if (!otelMetrics) return;
+  document.getElementById('metricsSince').textContent =
+    'Live in-process metrics since ' + new Date(otelMetrics.startedUtc).toLocaleString() + ' (this process only; greyed rows have no recordings yet).';
+  const byGroup = new Map();
+  for (const inst of (otelMetrics.instruments || [])) {
+    const g = (metricGroups.find(([p]) => inst.name.startsWith(p)) || [null, 'Other'])[1];
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(inst);
+  }
+  let html = '';
+  for (const [, label] of metricGroups.concat([[null, 'Other']])) {
+    const insts = byGroup.get(label);
+    if (!insts || !insts.length || html.includes('>' + label + '<')) continue;
+    html += '<div class="card"><h2>' + label + '</h2><table>'
+      + '<tr><th>Instrument</th><th>Value</th><th>1m</th><th>5m</th><th>Detail</th></tr>'
+      + insts.map(i => {
+          const grey = i.recorded ? '' : ' style="opacity:.4"';
+          const val = i.kind === 'histogram' ? fmt(i.count) + ' rec' : fmt(Math.round(i.total));
+          const detail = i.kind === 'histogram'
+            ? (i.count ? 'avg ' + dur(i.sum / i.count) + ' - p50 ' + dur(i.p50) + ' - p95 ' + dur(i.p95) + ' - max ' + dur(i.max) : '-')
+            : (i.tags && i.tags.length ? i.tags.map(tg => '<span class="chip">' + esc(tg.key) + ': ' + fmt(Math.round(tg.value)) + '</span>').join('') : '-');
+          return '<tr' + grey + '><td class="name">' + esc(i.name) + '</td><td>' + val + '</td>'
+            + '<td>' + (i.kind === 'histogram' ? '-' : fmt(Math.round(i.rate1m))) + '</td>'
+            + '<td>' + (i.kind === 'histogram' ? '-' : fmt(Math.round(i.rate5m))) + '</td>'
+            + '<td>' + detail + '</td></tr>';
+        }).join('')
+      + '</table></div>';
+  }
+  document.getElementById('metricsGroups').innerHTML = html || '<div class="empty">No instruments published.</div>';
+}
+
+function renderTraces() {
+  if (!otelTraces) return;
+  document.getElementById('traceCount').textContent = otelTraces.total + ' spans captured (ring of 2000, this process)';
+  const spans = otelTraces.spans || [];
+  document.getElementById('traceTable').innerHTML = spans.length === 0
+    ? '<div class="empty">No spans captured yet.</div>'
+    : '<table><tr><th>Time</th><th>Span</th><th>Agent</th><th>Tool</th><th>Duration</th><th>Status</th><th>Trace</th></tr>'
+      + spans.map(s => {
+          const err = s.status === 'Error';
+          return '<tr><td>' + new Date(s.startUtc).toLocaleTimeString() + '</td>'
+            + '<td class="name">' + esc(s.name) + '</td>'
+            + '<td>' + esc(s.tags && s.tags.agent || '-') + '</td>'
+            + '<td>' + esc(s.tags && s.tags.tool || '-') + '</td>'
+            + '<td>' + dur(s.durationMs) + '</td>'
+            + '<td>' + (err ? '<span style="color:var(--red)">Error</span>' : esc(s.status)) + '</td>'
+            + '<td title="' + esc(s.traceId) + '">' + esc(s.traceId.slice(0, 8)) + '</td></tr>';
+        }).join('')
+      + '</table>';
+}
+
+function renderLogs() {
+  if (!otelLogs) return;
+  document.getElementById('logCount').textContent = otelLogs.total + ' entries captured (ring of 1000, this process)';
+  const entries = otelLogs.entries || [];
+  document.getElementById('logTable').innerHTML = entries.length === 0
+    ? '<div class="empty">No log entries captured yet.</div>'
+    : '<table><tr><th>Time</th><th>Level</th><th>Message</th><th>Span</th></tr>'
+      + entries.map(l =>
+          '<tr><td>' + new Date(l.tsUtc).toLocaleTimeString() + '</td>'
+          + '<td><span class="lvl lvl-' + esc(l.level) + '">' + esc(l.level) + '</span></td>'
+          + '<td class="msg">' + esc(l.message) + '</td>'
+          + '<td>' + (l.spanId ? esc(l.spanId.slice(0, 8)) : '-') + '</td></tr>'
+        ).join('')
       + '</table>';
 }
 

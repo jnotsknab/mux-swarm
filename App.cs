@@ -220,6 +220,10 @@ public class App
         
         Activity? startupSpan = null;
         
+        // In-proc OTel ingestion for the telemetry dashboard (metrics/traces/logs tabs).
+        // Always on, independent of the OTLP exporter gate; bounded memory.
+        Engine.Telemetry.OtelIngest.Start();
+        
         if (OtelTracer.TryInit())
         {
             OtelMetrics.TryInit();
