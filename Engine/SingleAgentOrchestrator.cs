@@ -2181,9 +2181,6 @@ public static class SingleAgentOrchestrator
                                     // artifact), and repaint the meter immediately with the real number.
                                     ReconcileLiveBaseline();
                                     RenderStatusBar();
-                                    OtelMetrics.RecordTokens(
-                                        singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
-                                        );
                                     CostLedger.RecordUsage(resolvedModelId,
                                         details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
                                         details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,

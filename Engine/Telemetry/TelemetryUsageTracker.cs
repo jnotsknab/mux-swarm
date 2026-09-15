@@ -1,4 +1,4 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 
 namespace MuxSwarm.Engine.Telemetry;
 
@@ -56,6 +56,8 @@ public static class TelemetryUsageTracker
             b.Has = true;
         }
         TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason, agent, dTot);
+        if (dIn > 0 || dOut > 0 || dCache > 0 || dReason > 0 || dTot > 0)
+            OtelMetrics.RecordTokens(agent, model, dIn, dOut, dCache, dReason, dTot);
     }
 
     private static long Delta(long now, long baseline)
