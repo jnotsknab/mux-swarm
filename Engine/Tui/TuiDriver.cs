@@ -560,13 +560,6 @@ internal sealed partial class TuiDriver
     private int _resumeMarqueeSel = -1;
     private int _resumeMarqueeTick;
 
-    // Hover-marquee state for the /resume dropdown: the selected row's long preview slides one
-    // character every few resize-poll ticks (~400ms). Offset resets when the selection moves so
-    // each hovered row starts from its head.
-    private int _resumeMarqueeOffset;
-    private int _resumeMarqueeSel = -1;
-    private int _resumeMarqueeTick;
-
     /// <summary>Set the sessions catalog backing the live "/resume" autocomplete preview.</summary>
     public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview, string? Tag)> sessions)
         => _sessions = sessions ?? Array.Empty<(string, string, string?)>();
