@@ -1,4 +1,4 @@
-namespace MuxSwarm.Engine.Tui;
+﻿namespace MuxSwarm.Engine.Tui;
 
 /// <summary>Pure native settings browser/editor. One draft, no live setters, explicit F4 apply.</summary>
 internal sealed class SettingsPickerView
@@ -225,8 +225,9 @@ internal sealed class SettingsPickerView
         rows.Add(TuiComponents.FullRule(width));
         rows.Add($"[{TuiComponents.Text}] {Esc(selected?.Description ?? "Choose a setting to edit.")}[/]");
         rows.Add($"[{TuiComponents.Muted}] Current: {Esc(selected?.Sensitive == true ? "(masked)" : selected?.Current ?? "-")} · Type: {Esc(selected?.ValueHint ?? "-")}[/]");
-        string draft = selected?.Sensitive == true ? (_dirty ? "(masked draft)▏" : "(enter replacement)▏")
-            : VisibleEditor(_value, Math.Max(1, width - 10));
+        // The DRAFT is always visible while typing - masking your own input makes the field
+        // unusable (you cannot see what you typed). Only the stored Current value stays masked.
+        string draft = VisibleEditor(_value, Math.Max(1, width - 10));
         rows.Add($"[{(Editing ? TuiComponents.Accent : TuiComponents.Muted)}] Draft: {Esc(Editing ? draft : "Enter to edit")}[/]");
         rows.Add($"[{TuiComponents.Warn}] {Esc(Message)}[/]");
         rows.Add($"[{TuiComponents.Muted}] {_matches.Count}/{_settings.Length} settings · {(Editing ? "↑↓ cycle choices; type replaces; arrows edit" : "↑↓/PgUp/PgDn/Home/End select")}[/]");

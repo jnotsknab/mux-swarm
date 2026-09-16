@@ -1403,73 +1403,9 @@ public static class SingleAgentOrchestrator
                          Common.DelegableAgentNames()
         );
 
-        // Poll + collect background delegations launched via delegate_parallel(background:true) (and /background jobs).
-        var checkDelegationsTool = AIFunctionFactory.Create(
-            method: (
-                [Description("Optional job id (e.g. bg3) to check just one; omit to list ALL background jobs.")]
-                string? jobId
-            ) =>
-            {
-                var jobs = DetachedRunner.Jobs();
-                if (!string.IsNullOrWhiteSpace(jobId))
-                    jobs = jobs.Where(j => j.Id.Equals(jobId.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
-
-                if (jobs.Count == 0)
-                    return string.IsNullOrWhiteSpace(jobId)
-                        ? "[check_delegations] No background jobs. Launch some with delegate_parallel(background:true)."
-                        : $"[check_delegations] No background job with id '{jobId}'.";
-
-                var sb = new System.Text.StringBuilder();
-                int running = jobs.Count(j => j.Status == DetachedStatus.Running);
-                sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
-                foreach (var j in jobs)
-                {
-                    if (j.Status == DetachedStatus.Running)
-                    {
-                        // Surface real progress for running jobs (elapsed + live activity + tool
-                        // count + a short output tail) instead of a bare "Running" - the detail the
-                        // lead needs to decide whether to wait, nudge, or cancel. Bounded: the tail
-                        // preview is ~120 chars and comes from the live capture, not the full buffer.
-                        var elapsed = DateTimeOffset.UtcNow - j.Started;
-                        var live = MuxConsole.GetLiveSubAgentDetail(j.Agent);
-                        string detail = live is { } d
-                            ? $" \u2014 {d.LiveStatus} (tools: {d.ToolCalls})"
-                            : "";
-                        string tail = live is { } d2 && d2.Tail.Length > 0
-                            ? $"\n    tail: {d2.Tail}"
-                            : "";
-                        sb.AppendLine($"- {j.Id} [{j.Agent}] Running ({(int)elapsed.TotalSeconds}s){detail}{tail}");
-                    }
-                    else
-                    {
-                        // Finished: small results inline; large ones spill to a d:Agent#N handle so
-                        // the lead pulls detail via read_delegation instead of a context-blowing dump.
-                        sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
-                        if (!string.IsNullOrWhiteSpace(j.Result))
-                        {
-                            if (!string.IsNullOrWhiteSpace(j.Handle))
-                            {
-                                var tailTxt = j.Result!.Length > 240 ? "\u2026" + j.Result[^240..] : j.Result;
-                                sb.AppendLine($"  result: {j.Result.Length} chars spilled as {j.Handle} (read with read_delegation). tail: {tailTxt}");
-                            }
-                            else
-                            {
-                                var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
-                                sb.AppendLine($"  result:\n{r}");
-                            }
-                        }
-                    }
-                }
-                if (running > 0) sb.AppendLine("Some jobs are still running; call check_delegations again later to collect them.");
-                return sb.ToString();
-            },
-            name: "check_delegations",
-            description: "Poll the status of background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
-                         "Pass a job id to check one, or omit to list all. Running jobs show elapsed time, live activity, " +
-                         "tool-call count, and a short output tail so you can see real progress (not just 'running'). " +
-                         "Finished jobs return their result inline when small, or a d:Agent#N handle to read surgically " +
-                         "with read_delegation when large - so collecting work never blows your context."
-        );
+        // Poll/WAIT + collect background delegations (shared implementation with the swarm
+        // orchestrator lead; wait_job_progress semantics via waitSeconds).
+        var checkDelegationsTool = DetachedRunner.CreateCheckDelegationsTool();
 
         var singleAgentTools = (IList<AITool>)
         [
@@ -1920,6 +1856,51 @@ public static class SingleAgentOrchestrator
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
+            // Pre-turn checkpoint: persist the session the moment the user submits, BEFORE the model
+            // call. Previously the first write happened only after a turn completed, so a brand-new
+            // session had nothing on disk (no directory at all) until the first response returned -
+            // a crash, kill, or hard exit during turn 1 lost the exchange entirely.
+            //
+            // The framework commits the run's messages to the session itself when the turn succeeds,
+            // so the goal is added, serialized, and then REMOVED again: the checkpoint captures the
+            // user message durably without leaving a duplicate for the framework to commit on top of.
+            // Snapshot-and-restore (rather than a trailing RemoveAt) keeps the session's own history
+            // object identical to what it was, which ContextPruneSession's ownership check requires.
+            if (persistSession)
+            {
+                // A BRAND-NEW session exposes no history yet (TryGet returns false and it serializes
+                // as an empty stateBag), which is precisely the first-turn case this checkpoint
+                // exists to protect - so fall back to an empty list and set unconditionally rather
+                // than skipping. hadHistory records whether the provider existed, so the restore
+                // below puts the session back exactly as it was found.
+                bool hadHistory = session.TryGetInMemoryChatHistory(out var checkpointHistory) && checkpointHistory is not null;
+                List<ChatMessage>? checkpointRestore = hadHistory ? checkpointHistory!.ToList() : null;
+                try
+                {
+                    var pending = hadHistory ? checkpointHistory! : new List<ChatMessage>();
+                    pending.Add(new ChatMessage(ChatRole.User, currentGoal));
+                    session.SetInMemoryChatHistory(pending);
+                    await Common.PersistChatSessionAsync(
+                        agent,
+                        session,
+                        sessionTimestamp,
+                        Common.FindSessionDirectory(sessionTimestamp),
+                        quiet: true);
+                }
+                catch (Exception ex)
+                {
+                    // A checkpoint is best-effort durability; never let it take down the turn.
+                    MuxConsole.WriteWarning($"[AGENT SESSION] Checkpoint failed: {ex.Message}");
+                }
+                finally
+                {
+                    // Restore what was there before: the prior history, or an empty history for a
+                    // session that had none, so the framework's own commit is the only writer of
+                    // this turn's messages and the goal cannot be duplicated.
+                    session.SetInMemoryChatHistory(checkpointRestore ?? new List<ChatMessage>());
+                }
+            }
+
             // Deep memory: this turn's goal is the relevance query for injection, and a new turn is
             // activity the background gatherer should reflect on. No-ops in standard mode.
             ReflectionInjector.CurrentQuery = currentGoal;
@@ -2064,7 +2045,12 @@ public static class SingleAgentOrchestrator
                                     if (string.IsNullOrEmpty(reasoningContent.Text))
                                         continue;
 
-                                    if (!currentlyStreaming)
+                                    // showReasoning=none drops these chunks client-side: opening a
+                                    // stream for them would blank the whole live band (no text, no
+                                    // spinner, no pending-tool line) for the entire reasoning phase.
+                                    // Keep the thinking indicator running instead; WriteStream still
+                                    // no-ops on the dropped chunks below.
+                                    if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                                     {
                                         thinking?.Dispose();
                                         thinking = null;
@@ -2130,7 +2116,11 @@ public static class SingleAgentOrchestrator
                                     else
                                     {
                                         calledTools.Add(functionCall.Name);
-                                        thinking?.UpdateStatus(calledTools);
+                                        // A tool call with NO live indicator must create one -
+                                        // thinking?.UpdateStatus on null silently showed nothing,
+                                        // leaving the whole call invisible (the "hung" screenshot).
+                                        thinking ??= MuxConsole.BeginThinking(singleAgentDef.Name);
+                                        thinking.UpdateStatus(calledTools);
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
@@ -2155,9 +2145,29 @@ public static class SingleAgentOrchestrator
                                     if (resultText != null)
                                         MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
 
-                                    if (!currentlyStreaming && thinking != null)
+                                    // A tool result ALWAYS transitions back to thinking state. If a
+                                    // stream was open when the result landed (e.g. a reasoning stream
+                                    // preceding the call), leaving it open kept the driver in
+                                    // _streaming and suppressed the spinner + pending-tool line for
+                                    // the rest of the iteration - the "agent looks hung" gap. The
+                                    // next text chunk reopens the stream normally.
+                                    if (currentlyStreaming)
+                                    {
+                                        currentlyStreaming = false;
+                                        thinking?.Dispose();
+                                        thinking = MuxConsole.ResumeThinking(singleAgentDef.Name);
+                                        if (calledTools.Count > 0)
+                                            thinking.UpdateStatus(calledTools);
+                                    }
+                                    else if (thinking != null)
                                     {
                                         thinking.Dispose();
+                                        thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
+                                        if (calledTools.Count > 0)
+                                            thinking.UpdateStatus(calledTools);
+                                    }
+                                    else
+                                    {
                                         thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
                                         if (calledTools.Count > 0)
                                             thinking.UpdateStatus(calledTools);
@@ -2181,9 +2191,6 @@ public static class SingleAgentOrchestrator
                                     // artifact), and repaint the meter immediately with the real number.
                                     ReconcileLiveBaseline();
                                     RenderStatusBar();
-                                    OtelMetrics.RecordTokens(
-                                        singleAgentDef.Name, resolvedModelId, details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0, details.CachedInputTokenCount, details.ReasoningTokenCount, details.TotalTokenCount
-                                        );
                                     CostLedger.RecordUsage(resolvedModelId,
                                         details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
                                         details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
@@ -2299,6 +2306,7 @@ public static class SingleAgentOrchestrator
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                             new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         Telemetry.TelemetrySink.RecordTurn(singleAgentDef.Name, resolvedModelId, turnSw.ElapsedMilliseconds);
+                        Telemetry.OtelIngest.RecordResponse(singleAgentDef.Name, responseText.ToString());
 
                         // Only Fires In Verbose Path
                         OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "assistant", responseText.ToString());
@@ -2384,13 +2392,13 @@ public static class SingleAgentOrchestrator
                 escapeListener.Dispose();
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (wasInterrupted)
-                MuxConsole.WriteInfo("Ready for next input.");
-
+            // Persist BEFORE honouring an outer cancellation. The turn-scoped catch above rebuilds
+            // the interrupted exchange into the session's history, but an OUTER-token cancel
+            // (/qc, /qm, Ctrl+C) used to rethrow here - above the persist block - and discard that
+            // reconstruction along with the completed turn. Saving first makes every exit path
+            // durable; the throw still unwinds immediately afterwards.
             bool shouldPersist = persistSession;
-            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted)
+            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted && !cancellationToken.IsCancellationRequested)
                 shouldPersist = (DateTime.UtcNow - lastPersistTime).TotalSeconds >= persistIntervalSeconds;
 
             if (shouldPersist)
@@ -2399,10 +2407,15 @@ public static class SingleAgentOrchestrator
                     agent,
                     session,
                     sessionTimestamp,
-                    resumedSession.HasValue ? Common.FindSessionDirectory(sessionTimestamp) : null);
+                    Common.FindSessionDirectory(sessionTimestamp));
 
                 lastPersistTime = DateTime.UtcNow;
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (wasInterrupted)
+                MuxConsole.WriteInfo("Ready for next input.");
 
             // In TUI mode the docked footer already shows live token usage, so skip this
             // redundant per-turn line; classic mode keeps it.

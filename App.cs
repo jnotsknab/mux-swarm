@@ -19,7 +19,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.13.2";
+    public static readonly string Version = "0.14.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -37,7 +37,28 @@ public class App
     /// environment variable. Gates non-essential init/orchestration console chatter.
     /// </summary>
     internal static bool VerboseInit => _verboseToggle || Debugger.IsAttached || string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_VERBOSE"), "1", StringComparison.OrdinalIgnoreCase);
-    private static bool _mcpStrictMode = !string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "0", StringComparison.OrdinalIgnoreCase);
+    // Non-strict by default (v0.14.1): a single failing MCP server degrades gracefully instead of
+    // killing the runtime; the process exits only when EVERY enabled server fails. Opt back into
+    // strict with MUXSWARM_MCP_STRICT=1 or --mcp-strict.
+    private static bool _mcpStrictMode = string.Equals(Environment.GetEnvironmentVariable("MUXSWARM_MCP_STRICT"), "1", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Bounded per-server tail of MCP child-process stderr (last 20 lines each). Stdio servers
+    /// spew startup noise (package resolution, deprecation warnings, tracebacks) on stderr; it is
+    /// captured here for diagnostics (/fix, telemetry logs) instead of scrolling the console.
+    /// </summary>
+    public static readonly System.Collections.Concurrent.ConcurrentDictionary<string, System.Collections.Concurrent.ConcurrentQueue<string>> McpStderrTails = new();
+
+    /// <summary>Names of enabled MCP servers that failed to connect this run (degraded, non-strict).</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentBag<string> McpDegradedServers = new();
+
+    private static void CaptureMcpStderr(string server, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        var tail = McpStderrTails.GetOrAdd(server, _ => new System.Collections.Concurrent.ConcurrentQueue<string>());
+        tail.Enqueue(line.Length > 500 ? line[..500] : line);
+        while (tail.Count > 20 && tail.TryDequeue(out _)) { }
+    }
     private static CancellationTokenSource _cts = new();
     private static readonly Lock CtsLock = new();
     public static int ServePort;
@@ -182,6 +203,7 @@ public class App
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
+            Engine.Telemetry.TraceStore.Shutdown();
         };
         
         System.Runtime.InteropServices.PosixSignalRegistration.Create(
@@ -219,6 +241,10 @@ public class App
         }
         
         Activity? startupSpan = null;
+        
+        // In-proc OTel ingestion for the telemetry dashboard (metrics/traces/logs tabs).
+        // Always on, independent of the OTLP exporter gate; bounded memory.
+        Engine.Telemetry.OtelIngest.Start();
         
         if (OtelTracer.TryInit())
         {
@@ -2403,7 +2429,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     Name = name,
                     Command = command,
                     Arguments = args,
-                    EnvironmentVariables = env!
+                    EnvironmentVariables = env!,
+                    // Swallow raw child stderr into a bounded tail (surfaced via /fix + telemetry
+                    // logs) instead of letting it scroll the console mid-startup.
+                    StandardErrorLines = line => CaptureMcpStderr(name, line)
                 };
 
                 var stdioTransport = new StdioClientTransport(stdioOptions);
@@ -2429,10 +2458,17 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         }
         catch (Exception ex)
         {
+            McpDegradedServers.Add(name);
+
+            // Console: one intuitive badge line, not the raw exception/stderr spew. Full detail
+            // (exception + captured stderr tail) goes to the telemetry plane for /fix and the
+            // dashboard Logs tab.
+            MuxConsole.WriteWarning(_mcpStrictMode
+                ? $"[MCP] {name} unavailable - strict mode will exit if any server fails"
+                : $"[MCP] {name} unavailable - continuing without it (details: /fix or /telemetry logs)");
+
             if (ex.Message.Contains("EACCES", StringComparison.OrdinalIgnoreCase))
             {
-                MuxConsole.WriteError($"Failed to connect to {name}: permission denied.");
-
                 if (PlatformContext.IsWindows)
                 {
                     MuxConsole.WriteMuted("  Try running your terminal as Administrator, or reinstall Node.js with the default settings.");
@@ -2449,10 +2485,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     MuxConsole.WriteMuted($"  Then add to your {(PlatformContext.IsLinux ? "~/.bashrc" : "~/.zshrc")}: export PATH=\"$HOME/.npm-global/bin:$PATH\"");
                 }
             }
-            else
-            {
-                MuxConsole.WriteError($"Failed to connect to {name}: {ex.Message}");
-            }
+
+            OtelLogger.Warn($"MCP connect failed: {name}: {ex.Message}");
+            if (McpStderrTails.TryGetValue(name, out var tail) && !tail.IsEmpty)
+                OtelLogger.Warn($"MCP stderr tail [{name}]: {string.Join(" | ", tail)}");
             return null;
         }
     }

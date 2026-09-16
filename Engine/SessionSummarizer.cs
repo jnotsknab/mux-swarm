@@ -42,7 +42,12 @@ public static class SessionSummarizer
         if (!Directory.Exists(sessionsPath))
             return string.Empty;
 
+        // Only sessions with persisted content count toward the rolling window. The pre-turn
+        // checkpoint creates a session directory as soon as the user submits, so without this
+        // filter the CURRENT in-progress session would occupy a slot and push a real prior
+        // session out of the orientation context.
         var sessionDirs = Directory.GetDirectories(sessionsPath)
+            .Where(Common.HasSessionFile)
             .OrderByDescending(d => d)
             .Take(count)
             .ToList();

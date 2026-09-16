@@ -938,7 +938,8 @@ public static partial class MuxConsole
         if (Capturing)
             return new ThinkingIndicator(
                 renderRaw: _ => { }, clearLine: _ => { }, consoleLock: ConsoleLock,
-                onStatusUpdate: status => SetCapturedLiveStatus(status));
+                onStatusUpdate: status => SetCapturedLiveStatus(status),
+                onToolCalls: count => SetCapturedToolCalls(count));
 
         if (StdioMode)
         {
@@ -954,13 +955,13 @@ public static partial class MuxConsole
 
         lock (ConsoleLock)
         {
-            if (_isStreaming)
-                return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
-
             // The live-region driver pins its own footer/input; route the spinner into the
             // driver's live "thinking" line (animated) instead of the inline \r renderer,
             // which would fight the region. The indicator's status updates flow through the
-            // onStatusUpdate callback below.
+            // onStatusUpdate callback below. Created even while _isStreaming: the driver's
+            // per-frame paint decides visibility (hidden during active streaming, shown the
+            // moment streaming ends), so the indicator is never frozen out for the whole
+            // turn by a decision taken at creation time (the "looks hung" gap).
             if (ViaDriver)
             {
                 var tuiInd = new ThinkingIndicator(
@@ -975,6 +976,11 @@ public static partial class MuxConsole
                 tuiInd.Start(agentName);
                 return tuiInd;
             }
+
+            // Legacy inline renderer: a \r-spinner would interleave with streamed text, so the
+            // inert indicator remains correct here while a stream is open.
+            if (_isStreaming)
+                return new ThinkingIndicator(_ => { }, _ => { }, ConsoleLock);
 
             StopActiveIndicator_NoLock();
         }
@@ -1018,7 +1024,13 @@ public static partial class MuxConsole
         lock (ConsoleLock)
         {
             _isStreaming = true;
-            StopActiveIndicator_NoLock();
+            // Driver mode: keep the indicator ALIVE through the stream. Its ~80ms pings keep
+            // hitting TuiSetThinking, the paint gate hides the line while _streaming, and the
+            // spinner self-revives the instant the stream ends - closing the "agent is working
+            // but nothing on screen" gap between stream end and the next tool call/resume.
+            // Inline renderer keeps the hard stop (a \r spinner would corrupt streamed text).
+            if (!ViaDriver)
+                StopActiveIndicator_NoLock();
             TuiBeginStream();
         }
     }
@@ -1082,6 +1094,14 @@ public static partial class MuxConsole
     /// never gated (protocol parity). Set at startup and by <c>/showreasoning</c>.
     /// </summary>
     public static string ShowReasoning { get; set; } = "summary";
+
+    /// <summary>
+    /// True when streamed reasoning chunks will actually render for the user; false when
+    /// <c>showReasoning=none</c> drops them client-side in interactive renderers (callers
+    /// should keep the thinking indicator alive instead of opening an invisible stream).
+    /// </summary>
+    public static bool WillRenderReasoning
+        => StdioMode || !string.Equals(ShowReasoning, "none", StringComparison.OrdinalIgnoreCase);
 
     public static void WriteStream(string text, bool muted = false, string? agentName = null)
     {

@@ -1,4 +1,4 @@
-using MuxSwarm.Engine;
+﻿using MuxSwarm.Engine;
 using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
@@ -62,15 +62,20 @@ public class SettingsPickerViewTests
         view.Handle(Key(ConsoleKey.Enter), 5); Assert.Equal("true", view.Draft); // canceled draft does not change snapshot
     }
     [Fact]
-    public void SecretNeverAppearsInListOrEditorAndPasteIsNotAnAction()
+    public void SecretDraftIsVisibleWhileTyping_StoredValueStaysMasked_PasteIsNotAnAction()
     {
+        // v0.14.1 contract (Jonathan): the LIVE DRAFT is never masked - users must see what they
+        // type. Only the STORED current value renders as (masked), and pasted text must never be
+        // interpreted as commands/actions.
         var view = new SettingsPickerView(new[] { Item("serve.auth.token", secret: true) }, "serve.auth.token");
         view.Paste("unique-secret\r\n/set renderEngine inline");
         Assert.NotNull(view.Selection);
         string output = string.Join("\n", view.Render(100, 20));
-        Assert.DoesNotContain("unique-secret", output);
-        Assert.DoesNotContain("renderEngine", output);
-        Assert.Contains("masked", output);
+        Assert.Contains("unique-secret", output);       // typed draft visible
+        Assert.Contains("(masked)", output);            // stored Current stays masked
+        // The embedded newline + "/set renderEngine inline" lands INSIDE the draft as flattened
+        // inert text (visible below) - proving paste is never interpreted as a command/action.
+        Assert.Contains("renderEngine", output);
         Assert.Equal(SettingsPickerView.Action.Cancel, view.Handle(Key(ConsoleKey.Q, ctrl: true), 5));
     }
     [Theory]

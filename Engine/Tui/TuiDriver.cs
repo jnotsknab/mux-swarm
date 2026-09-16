@@ -51,6 +51,13 @@ internal sealed partial class TuiDriver
     // content is ever lost - only the intra-frame live-tail preview is throttled.
     private long _lastStreamPaintTicks;
     private const long StreamPaintIntervalTicks = TimeSpan.TicksPerMillisecond * 33;
+    // One-shot trailing flush for the stream throttle: when a tail repaint is SKIPPED by the
+    // 33ms budget and no later chunk arrives to paint it, the freshest tail would never reach
+    // the screen (bursty providers deliver many chunks in one flush, then go quiet - the user
+    // saw the first word and then nothing until the next tool call/scroll repaint). The timer
+    // guarantees the final skipped state lands within one throttle interval.
+    private System.Threading.Timer? _streamTrailTimer;
+    private bool _streamTrailArmed;
     // True when the current stream tail is reasoning content (rendered grey+italic to distinguish
     // it from the final answer). Flushed/reset on a type switch so reasoning and answer never blend.
     private bool _streamReasoning;
@@ -544,7 +551,7 @@ internal sealed partial class TuiDriver
         => _skills = skills ?? Array.Empty<(string, string)>();
 
     /// <summary>Resumable sessions catalog for the live "/resume" autocomplete preview.</summary>
-    private IReadOnlyList<(string Id, string Preview)> _sessions = Array.Empty<(string, string)>();
+    private IReadOnlyList<(string Id, string Preview, string? Tag)> _sessions = Array.Empty<(string, string, string?)>();
 
     // Hover-marquee state for the /resume dropdown: the selected row's long preview slides one
     // character every few resize-poll ticks (~400ms). Offset resets when the selection moves so
@@ -554,8 +561,8 @@ internal sealed partial class TuiDriver
     private int _resumeMarqueeTick;
 
     /// <summary>Set the sessions catalog backing the live "/resume" autocomplete preview.</summary>
-    public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview)> sessions)
-        => _sessions = sessions ?? Array.Empty<(string, string)>();
+    public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview, string? Tag)> sessions)
+        => _sessions = sessions ?? Array.Empty<(string, string, string?)>();
 
     /// <summary>Relative-path file index backing the live "@" fuzzy file picker.</summary>
     private IReadOnlyList<string> _files = Array.Empty<string>();
@@ -1691,9 +1698,38 @@ internal sealed partial class TuiDriver
         // not trigger a full live-frame rebuild each. A type switch (forcePaint) and EndStream are
         // unthrottled so no boundary or final token is ever left unpainted.
         long now = DateTime.UtcNow.Ticks;
-        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks) return;
+        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks)
+        {
+            ArmStreamTrailFlush();
+            return;
+        }
         _lastStreamPaintTicks = now;
+        _streamTrailArmed = false;   // this paint carries the current tail; no trailing flush owed
         Repaint();
+    }
+
+    /// <summary>Arm the one-shot trailing flush for a throttled-away tail paint (idempotent
+    /// while armed). Fires ~one throttle interval later on the timer thread and repaints only
+    /// if no later chunk already painted (armed flag still set) and the stream is still open.</summary>
+    private void ArmStreamTrailFlush()
+    {
+        if (_streamTrailArmed) return;
+        _streamTrailArmed = true;
+        _streamTrailTimer ??= new System.Threading.Timer(_ => StreamTrailFlush(),
+            null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+        try { _streamTrailTimer.Change(35, System.Threading.Timeout.Infinite); } catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>Timer-thread callback: paint the freshest stream tail if it is still owed.</summary>
+    internal void StreamTrailFlush()
+    {
+        lock (MuxConsole.ConsoleLock)
+        {
+            if (!_streamTrailArmed || !_streaming) { _streamTrailArmed = false; return; }
+            _streamTrailArmed = false;
+            _lastStreamPaintTicks = DateTime.UtcNow.Ticks;
+            Repaint();
+        }
     }
 
     /// <summary>
@@ -1709,7 +1745,11 @@ internal sealed partial class TuiDriver
         // is unchanged (the caller pings SetThinking on a timer).
         _thinkFrame++;
         _thinkingText = t;
-        Repaint();
+        // While text is streaming the thinking line is hidden by the paint gate; keep the state
+        // (so the spinner self-revives on the first ping after EndStream) but skip the ~80ms
+        // full repaints - the stream's own throttled paints own the frame during that window.
+        if (!_streaming)
+            Repaint();
     }
 
     /// <summary>
@@ -1775,6 +1815,7 @@ internal sealed partial class TuiDriver
 
     public void EndStream()
     {
+        _streamTrailArmed = false;   // EndStream's own repaint below carries the final tail
         bool hadTail = _streamTail.Length > 0;
         string tail = _streamTail.ToString();
         _streamTail.Clear();
@@ -2027,8 +2068,11 @@ internal sealed partial class TuiDriver
 
         // The italic "thinking" indicator renders BELOW the live dot line(s) - the dot is the
         // primary action, the spinner+status is the running tail beneath it (rendering it above the
-        // dot looked off when both animate). Only when no sub-agent strip owns the line.
-        if (!_agentViewActive && _subAgents.Count == 0 && !_streaming && !string.IsNullOrEmpty(_thinkingText))
+        // dot looked off when both animate). It COEXISTS with the sub-agent strip: while collapsed
+        // sub-agents run, the lead's own spinner still renders beneath their lanes (suppressing it
+        // made the lead look hung whenever a delegation was in flight). Hidden only while text is
+        // actively streaming or the Agent View dashboard owns the frame.
+        if (!_agentViewActive && !_streaming && !string.IsNullOrEmpty(_thinkingText))
             lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session

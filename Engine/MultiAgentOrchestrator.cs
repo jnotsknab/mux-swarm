@@ -329,16 +329,31 @@ public static class MultiAgentOrchestrator
             method: async (
                 [Description("Name of the specialist agent to delegate to")] string agentName,
                 [Description("The specific sub-task or instruction for the agent")] string task,
+                [Description("When true, fire the delegation into the BACKGROUND and return its job id immediately so you keep working; track it with check_delegations (waitSeconds blocks until real progress). Default false blocks until the agent finishes and returns its result.")]
+                bool background = false,
                 CancellationToken invocationToken = default
             ) =>
             {
                 using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
                 invocationToken.ThrowIfCancellationRequested();
+                // Non-blocking path (v0.14.1): the orchestrator keeps sequencing other work while
+                // this specialist runs detached; results are collected via check_delegations
+                // (same DetachedRunner registry the single-agent lead uses).
+                if (background)
+                {
+                    var job = await DetachedRunner.LaunchAsync(
+                        agentName, task, chatClientFactory, agentModels, invocationToken);
+                    return job is null
+                        ? $"[delegate_to_agent] Could not launch '{agentName}' in the background (unknown agent?)."
+                        : $"[delegate_to_agent \u00b7 background] {job.Id} <- {agentName} launched; it runs while you continue. " +
+                          "Track/collect with check_delegations (pass waitSeconds to block until real progress).";
+                }
                 return await ExecuteDelegation(agentName, task, "Orchestrator", restrictToSpecialists: false);
             },
             name: "delegate_to_agent",
             description: "Delegates a sub-task to a specialist agent and returns their result. " +
                          "Use this to assign work to the appropriate agent based on the task type. " +
+                         "Pass background=true to launch it detached and keep working (track with check_delegations). " +
                          Common.DelegableAgentNames()
         );
 
@@ -566,6 +581,9 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
             LocalAiFunctions.ReadDelegationTool,
+            // Poll/WAIT on background delegations (shared with the single-agent lead;
+            // wait_job_progress semantics via waitSeconds).
+            DetachedRunner.CreateCheckDelegationsTool(),
             ..orchestratorFilteredTools
         ];
 
@@ -1236,7 +1254,9 @@ public static class MultiAgentOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;
@@ -1312,7 +1332,7 @@ public static class MultiAgentOrchestrator
 
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", "Orchestrator"),
-                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                                new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
@@ -1332,10 +1352,6 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            OtelMetrics.RecordTokens(
-                                "Orchestrator", _orchestratorModelId, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
-                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
-                            );
                             Telemetry.TelemetryUsageTracker.RecordCumulative(orchestratorSession, "Orchestrator", _orchestratorModelId,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
@@ -1385,6 +1401,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", "Orchestrator"));
                 Telemetry.TelemetrySink.RecordTurn("Orchestrator", _orchestratorModelId, orchTurnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse("Orchestrator", responseText.ToString());
                 OtelMetrics.OrchestratorIterations.Add(1);
             }
 
@@ -1623,7 +1640,9 @@ public static class MultiAgentOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;
@@ -1719,7 +1738,7 @@ public static class MultiAgentOrchestrator
 
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", specialist.Def.Name),
-                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                                new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
@@ -1732,10 +1751,6 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            OtelMetrics.RecordTokens(
-                                specialist.Def.Name, specialist.Agent.Id, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
-                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
-                            );
                             Telemetry.TelemetryUsageTracker.RecordCumulative(specialist.Session, specialist.Def.Name, specialist.Agent.Id,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
@@ -1778,6 +1793,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
                 Telemetry.TelemetrySink.RecordTurn(specialist.Def.Name, specialist.Agent.Id, turnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse(specialist.Def.Name, iterResponse.ToString());
             }
 
             cancellationToken.ThrowIfCancellationRequested();

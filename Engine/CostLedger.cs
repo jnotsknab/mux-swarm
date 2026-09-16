@@ -102,6 +102,8 @@ public static class CostLedger
             long dReason = s.HasBase ? Delta(reasoning, s.BaseReasoning) : Math.Max(0, reasoning);
             long dTotal = s.HasBase ? Delta(total, s.BaseTotal) : Math.Max(0, total);
             Telemetry.TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason, agent, dTotal);
+            if (dIn > 0 || dOut > 0 || dCache > 0 || dReason > 0 || dTotal > 0)
+                OtelMetrics.RecordTokens(agent ?? "(unknown)", model, dIn, dOut, dCache, dReason, dTotal);
 
             s.BaseInput = input;
             s.BaseOutput = output;

@@ -1,4 +1,4 @@
-using MuxSwarm.Engine;
+﻿using MuxSwarm.Engine;
 using MuxSwarm.Engine.Telemetry;
 
 namespace MuxSwarm.Tests.Tests;
@@ -6,6 +6,7 @@ namespace MuxSwarm.Tests.Tests;
 // Persistent telemetry pipeline: sink writes JSONL deltas, store aggregates summary/series/
 // per-model/per-agent, server range parsing, plus the v0.14.0 tuning defaults
 // (collapseToolLines=3) and the /context token-count parser.
+[Collection("TelemetryState")]
 public class TelemetryTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "mux-telemetry-" + Guid.NewGuid().ToString("N"));

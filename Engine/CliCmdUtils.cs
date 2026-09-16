@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -680,9 +680,9 @@ public static class CliCmdUtils
     /// preview), newest first, for the live "/resume" autocomplete preview. Best-effort:
     /// returns an empty list on any IO error.
     /// </summary>
-    public static List<(string Id, string Preview)> GetResumableSessions()
+    public static List<(string Id, string Preview, string? Tag)> GetResumableSessions()
     {
-        var outList = new List<(string, string)>();
+        var outList = new List<(string, string, string?)>();
         try
         {
             string sessionsDir = PlatformContext.SessionsDirectory;
@@ -699,12 +699,11 @@ public static class CliCmdUtils
                     if (file != null) preview = Common.GetFirstUserMessage(file);
                 }
                 catch { /* preview optional */ }
-                // Fold any session tags into the preview so the /resume palette both shows and
-                // fuzzy-matches them (the sidecar is .muxtag, invisible to the *.json detector).
+                // Tags travel as their own field (v0.14.1): tagged sessions surface the tag as the
+                // PRIMARY label in the resume dropdown + alt-screen picker, with the timestamp id
+                // demoted to detail. The sidecar is .muxtag, invisible to the *.json detector.
                 var tagLabel = SessionTags.TagLabel(d);
-                if (!string.IsNullOrEmpty(tagLabel))
-                    preview = string.IsNullOrEmpty(preview) ? $"#{tagLabel}" : $"#{tagLabel} - {preview}";
-                outList.Add((id, preview));
+                outList.Add((id, preview, string.IsNullOrEmpty(tagLabel) ? null : tagLabel));
             }
         }
         catch { /* best-effort */ }
@@ -790,16 +789,19 @@ public static class CliCmdUtils
         var lines = string.Join("\n", sessionDirs.Select((d, i) =>
         {
             var timestamp = Path.GetFileName(d);
-            var file = Directory.GetFiles(d, "*.json").First();
-            var size = new FileInfo(file).Length;
-            var preview = Common.GetFirstUserMessage(file);
+            // A checkpointed-but-not-yet-written session has no file; render it rather than throw.
+            var file = Directory.GetFiles(d, "*.json").FirstOrDefault();
+            var size = file is null ? 0L : new FileInfo(file).Length;
+            var preview = file is null ? "" : Common.GetFirstUserMessage(file);
             // Collapse embedded newlines/runs of whitespace so a multi-line first message stays a
             // single list row (otherwise it splits into stray dot-prefixed orphan rows).
             preview = System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim();
             var tagLabel = SessionTags.TagLabel(d);
-            var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
             var idxLabel = (i + 1).ToString().PadLeft(idxW);
-            return $"{idxLabel}  {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
+            // Tag-first: a tagged session leads with its tag; the timestamp demotes to detail.
+            return string.IsNullOrEmpty(tagLabel)
+                ? $"{idxLabel}  {timestamp} ({size / 1024}KB) — {preview}"
+                : $"{idxLabel}  #{tagLabel} — {timestamp} ({size / 1024}KB) — {preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);
@@ -831,7 +833,16 @@ public static class CliCmdUtils
     /// <summary>Load a session's persisted state from its directory for resume.</summary>
     private static (JsonElement data, string sessionDir)? LoadResumeSession(string selectedDir)
     {
-        var sessionFile = Directory.GetFiles(selectedDir, "*.json").First();
+        // FirstOrDefault + explicit guard: a session directory can legitimately exist with no
+        // persisted file yet (the pre-turn checkpoint creates it at user-submit time, and the
+        // write itself is temp+rename). .First() threw InvalidOperationException here, and it sat
+        // OUTSIDE the try below, so it escaped as an unhandled crash on resume.
+        var sessionFile = Directory.GetFiles(selectedDir, "*.json").FirstOrDefault();
+        if (sessionFile is null)
+        {
+            MuxConsole.WriteWarning($"Session '{Path.GetFileName(selectedDir)}' has no saved state yet.");
+            return null;
+        }
 
         try
         {
@@ -1831,6 +1842,24 @@ public static class CliCmdUtils
 
         if (string.IsNullOrWhiteSpace(arg))
         {
+            // Docked TUI: the alt-screen picker with live palette previews. Apply persists the
+            // same way the named path below does. Elsewhere: the classic static gallery.
+            if (MuxConsole.TryThemePicker(out var picked))
+            {
+                if (picked is null) { MuxConsole.WriteMuted("Theme unchanged."); return; }
+                Theme.Set(picked);
+                try
+                {
+                    App.Config.Console.Theme = picked.Name;
+                    Common.SaveConfig(App.Config);
+                    MuxConsole.WriteSuccess($"Theme set to '{picked.Name}' (persisted to config.json).");
+                }
+                catch (Exception ex)
+                {
+                    MuxConsole.WriteWarning($"Theme applied for this session, but saving failed: {ex.Message}");
+                }
+                return;
+            }
             ShowThemeGallery();
             return;
         }

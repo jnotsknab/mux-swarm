@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using MuxSwarm.Engine.Tui;
 
 namespace MuxSwarm.Tests.Tests;
@@ -7,11 +7,11 @@ namespace MuxSwarm.Tests.Tests;
 // scroll/search, and the picker-vs-history Enter contract. Pure-view tests (no terminal).
 public class HistoryViewTests
 {
-    private static List<(string, string)> Sessions => new()
+    private static List<(string, string, string?)> Sessions => new()
     {
-        ("2026-09-14_01-00-00", "fix the scrollbar artifact"),
-        ("2026-09-13_09-00-00", "#mux-dev - turn cancellation batch"),
-        ("2026-09-12_05-00-00", "research zig toolchain"),
+        ("2026-09-14_01-00-00", "fix the scrollbar artifact", null),
+        ("2026-09-13_09-00-00", "turn cancellation batch", "mux-dev"),
+        ("2026-09-12_05-00-00", "research zig toolchain", null),
     };
 
     private static ConsoleKeyInfo Key(char c) => new(c, ConsoleKey.Oem1, false, false, false);
@@ -178,10 +178,10 @@ public class HistoryViewTests
     [Fact]
     public void SessionsPreview_MarqueeOffset_AffectsOnlySelectedRow()
     {
-        var sessions = new List<(string, string)>
+        var sessions = new List<(string, string, string?)>
         {
-            ("s1", new string('x', 200) + " TAIL-MARKER"),
-            ("s2", "short preview"),
+            ("s1", new string('x', 200) + " TAIL-MARKER", null),
+            ("s2", "short preview", null),
         };
         var still = TuiComponents.SessionsPreview(null, sessions, 60, 0, 0);
         var moved = TuiComponents.SessionsPreview(null, sessions, 60, 0, 25);
@@ -191,9 +191,27 @@ public class HistoryViewTests
     }
 
     [Fact]
+    public void TaggedSession_TagIsPrimaryLabel_IdDemotedToDetail()
+    {
+        // v0.14.1: a tagged session's tag IS the display name in the list; the timestamp id
+        // moves into the muted detail column. Untagged rows keep timestamp-first.
+        var v = new HistoryView(Sessions);
+        var rows = v.Render(90, 14);
+        string joined = string.Join("\n", rows);
+        Assert.Contains("mux-dev", joined);
+        // The tagged row's markup places the tag BEFORE its timestamp id.
+        var taggedRow = rows.Single(r => r.Contains("mux-dev"));
+        Assert.True(taggedRow.IndexOf("mux-dev", StringComparison.Ordinal)
+                    < taggedRow.IndexOf("2026-09-13_09-00-00", StringComparison.Ordinal));
+        // Dropdown parity: SessionsPreview surfaces the tag as the label too.
+        var dd = TuiComponents.SessionsPreview(null, Sessions, 90);
+        Assert.Contains(dd, r => r.Contains("mux-dev"));
+    }
+
+    [Fact]
     public void EmptySessions_RenderAndFilterAreSafe()
     {
-        var v = new HistoryView(new List<(string, string)>());
+        var v = new HistoryView(new List<(string, string, string?)>());
         Assert.Null(v.SelectedId);
         var rows = v.Render(60, 12);
         Assert.Contains(rows, r => r.Contains("No saved sessions"));

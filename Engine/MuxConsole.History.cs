@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace MuxSwarm.Engine;
 
@@ -11,7 +11,7 @@ public static partial class MuxConsole
     /// <paramref name="resumeId"/> is non-null only for an explicit resume selection.
     /// </summary>
     internal static bool TryHistoryBrowser(
-        IReadOnlyList<(string Id, string Preview)> sessions,
+        IReadOnlyList<(string Id, string Preview, string? Tag)> sessions,
         Func<string, JsonElement?> loadSession,
         bool resumePicker,
         out string? resumeId)
