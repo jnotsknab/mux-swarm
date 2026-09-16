@@ -153,6 +153,10 @@ public static partial class MuxConsole
         // Rolling tail of streamed text (~240 chars) surfaced as a LIVE content preview in the panel.
         public readonly System.Text.StringBuilder Tail = new();
         public int ToolCalls;
+        // True once the indicator's calledTools sync has reported for this capture: from then on
+        // the sync OWNS the counter and per-result increments are skipped (they'd double-count -
+        // a call bumps the list to N, then its result would increment to N+1).
+        public volatile bool ToolCallsSynced;
         public string? Status;             // set from signal_task_complete (success/failure/partial)
         public volatile string LiveStatus = "working";  // concise live activity for the panel line
     }
@@ -272,6 +276,22 @@ public static partial class MuxConsole
     public static void SetCapturedStatus(string? status)
     {
         if (_capture.Value is { } cap && !string.IsNullOrEmpty(status)) cap.Status = status;
+    }
+
+    /// <summary>Sync the active capture's tool-call counter from the indicator's cumulative
+    /// calledTools list (same source as the "[calling: ...]" labels). MCP tool calls reach the
+    /// indicator but not every result funnels through CaptureToolResult, which previously left
+    /// the panel/wait-report count stuck at 0 while labels showed activity; max() keeps the
+    /// result-driven increment as a floor for paths without list updates. No-op when not capturing.</summary>
+    private static void SetCapturedToolCalls(int count)
+    {
+        if (_capture.Value is not { } cap) return;
+        cap.ToolCallsSynced = true;
+        if (count > cap.ToolCalls)
+        {
+            cap.ToolCalls = count;
+            PushSubAgentActivity();
+        }
     }
 
     /// <summary>Update the concise live-activity text for the active capture's panel line
@@ -481,7 +501,10 @@ public static partial class MuxConsole
     private static void CaptureToolResult(string summary)
     {
         if (_capture.Value is not { } cap) return;
-        cap.ToolCalls++;
+        // Fallback counter for paths where the indicator's calledTools sync never fires; once the
+        // sync has reported (ToolCallsSynced) it owns the count and this increment would
+        // double-count (call bumps the list to N, its result would then make N+1).
+        if (!cap.ToolCallsSynced) cap.ToolCalls++;
         string raw = CollapseWhitespace(summary ?? "");
         if (raw.Length == 0) return;
         string toolId = raw, detail = "";

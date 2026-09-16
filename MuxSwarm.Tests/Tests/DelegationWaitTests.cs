@@ -37,6 +37,35 @@ public class DelegationWaitTests : IDisposable
     }
 
     [Fact]
+    public async Task TailChurn_DoesNotWake_ToolCallDelta_Does()
+    {
+        // v0.14.1 wake tightening: streamed prose (tail/activity text changes) must NOT wake a
+        // waiter - sub-agents stream continuously and text-delta wakes turned every wait into
+        // ~2s spam. Only a DISCRETE event (tool-call count increase / status transition) wakes.
+        var job = DetachedRunner.InjectJobForTests("CodeAgent", DetachedStatus.Running);
+        int toolCalls = 1;
+        string tail = "first words";
+        DetachedRunner.LiveDetailOverrideForTests = _ => (toolCalls, "working", tail);
+        DetachedRunner.RenderCheckReport(job.Id, changedIds: null, waited: false, waitedSeconds: 0);
+
+        // Churn ONLY the tail: wait must ride out its full budget and return empty.
+        tail = "first words and a lot more streamed prose";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var changed = await DetachedRunner.WaitForProgressAsync(job.Id, waitSeconds: 1, CancellationToken.None);
+        sw.Stop();
+        Assert.Empty(changed);
+        Assert.True(sw.ElapsedMilliseconds >= 900, "tail-only churn must not wake the waiter");
+
+        // A tool call landing wakes promptly.
+        _ = Task.Run(async () => { await Task.Delay(300); toolCalls = 2; });
+        sw.Restart();
+        changed = await DetachedRunner.WaitForProgressAsync(job.Id, waitSeconds: 10, CancellationToken.None);
+        sw.Stop();
+        Assert.Single(changed);
+        Assert.True(sw.ElapsedMilliseconds < 5000, "tool-call delta must wake the waiter early");
+    }
+
+    [Fact]
     public async Task StatusTransition_WakesWaiter()
     {
         var job = DetachedRunner.InjectJobForTests("CodeAgent", DetachedStatus.Running);

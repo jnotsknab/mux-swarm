@@ -9,6 +9,10 @@ public sealed class ThinkingIndicator : IDisposable
     private readonly Action<int> _clearLine;
     private readonly object _consoleLock;
     private readonly Action<string>? _onStatusUpdate;
+    // Cumulative tool-call COUNT observer (fires with toolCalls.Count on each list update): the
+    // capture lane consumes this so its counter is derived from the SAME source as the
+    // "[calling: ...]" labels and the two can never diverge.
+    private readonly Action<int>? _onToolCalls;
     private readonly Action? _onDispose;
 
     private volatile string _status = "thinking";
@@ -110,13 +114,15 @@ public sealed class ThinkingIndicator : IDisposable
         Action<int> clearLine,
         object consoleLock,
         Action<string>? onStatusUpdate = null,
-        Action? onDispose = null)
+        Action? onDispose = null,
+        Action<int>? onToolCalls = null)
     {
         _renderRaw = renderRaw;
         _clearLine = clearLine;
         _consoleLock = consoleLock;
         _onStatusUpdate = onStatusUpdate;
         _onDispose = onDispose;
+        _onToolCalls = onToolCalls;
     }
 
     internal bool HasRendered => _hasRendered;
@@ -143,6 +149,7 @@ public sealed class ThinkingIndicator : IDisposable
         // e.g. "[calling: Running command, Sleeping]" not the raw "ReplShellMcp_execute_command_async".
         var labels = toolCalls.Select(ToolActionLabel.Describe);
         _onStatusUpdate?.Invoke($"[calling: {string.Join(", ", labels)}]");
+        _onToolCalls?.Invoke(toolCalls.Count);
     }
 
     private static int SafeWindowWidth()

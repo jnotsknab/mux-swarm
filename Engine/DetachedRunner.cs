@@ -297,8 +297,12 @@ public static class DetachedRunner
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReadCursor> _cursors = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>Test seam: overrides the live capture-lane lookup per job id.</summary>
+    internal static Func<DetachedJob, (int ToolCalls, string LiveStatus, string Tail)?>? LiveDetailOverrideForTests;
+
     private static (int ToolCalls, string LiveStatus, string Tail) LiveOf(DetachedJob j)
     {
+        if (LiveDetailOverrideForTests?.Invoke(j) is { } o) return o;
         try
         {
             var live = MuxConsole.GetLiveSubAgentDetail(j.Agent);
@@ -311,12 +315,17 @@ public static class DetachedRunner
 
     private static bool HasNewProgress(DetachedJob j)
     {
-        var (tc, status, tail) = LiveOf(j);
         if (!_cursors.TryGetValue(j.Id, out var c))
             return true;   // never read -> everything is new
         if (j.Status != c.Status) return true;
         if (j.Status != DetachedStatus.Running) return !c.ResultReported;
-        return tc != c.ToolCalls || status != c.LiveStatus || tail != c.Tail;
+        // Running: only DISCRETE events wake a waiter - a new tool call landing or a status
+        // transition. Streamed prose churns the tail/activity text continuously (sub-agents
+        // stream, unlike shell jobs), so text deltas are deliberately NOT wake triggers: they
+        // would turn every wait into a ~2s wake spam. The freshest tail/activity still rides
+        // along in the report whenever a real event fires.
+        var (tc, _, _) = LiveOf(j);
+        return tc > c.ToolCalls;
     }
 
     private static void CommitCursor(DetachedJob j)
@@ -356,6 +365,7 @@ public static class DetachedRunner
     {
         lock (_gate) { _jobs.Clear(); _seq = 0; }
         _cursors.Clear();
+        LiveDetailOverrideForTests = null;
     }
 
     /// <summary>Register a fabricated job (test seam; no task attached).</summary>
@@ -466,6 +476,7 @@ public static class DetachedRunner
             description: "Poll OR WAIT ON background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
                          "Pass a job id to target one, or omit for all. Default (waitSeconds=0) returns an instant snapshot: elapsed, live activity, " +
                          "tool-call count, and a short output tail per running job; finished jobs return results inline when small or as a d:Agent#N " +
-                         "handle for read_delegation when large. PREFER waitSeconds>0 while waiting on sub-agents: it BLOCKS until real progress " +
-                         "(new tool call, new output, or completion) and returns only what is NEW since your last read - never use system_sleep to wait on delegations.");
+                         "handle for read_delegation when large. PREFER waitSeconds>0 while waiting on sub-agents: it BLOCKS until a DISCRETE event " +
+                         "(a new tool call landing or the job finishing; streamed prose alone does not wake - the latest tail rides along in the report) " +
+                         "and returns only what is NEW since your last read - never use system_sleep to wait on delegations.");
 }

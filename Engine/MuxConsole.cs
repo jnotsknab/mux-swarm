@@ -938,7 +938,8 @@ public static partial class MuxConsole
         if (Capturing)
             return new ThinkingIndicator(
                 renderRaw: _ => { }, clearLine: _ => { }, consoleLock: ConsoleLock,
-                onStatusUpdate: status => SetCapturedLiveStatus(status));
+                onStatusUpdate: status => SetCapturedLiveStatus(status),
+                onToolCalls: count => SetCapturedToolCalls(count));
 
         if (StdioMode)
         {
