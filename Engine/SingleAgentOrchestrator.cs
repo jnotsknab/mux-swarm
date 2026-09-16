@@ -2064,7 +2064,12 @@ public static class SingleAgentOrchestrator
                                     if (string.IsNullOrEmpty(reasoningContent.Text))
                                         continue;
 
-                                    if (!currentlyStreaming)
+                                    // showReasoning=none drops these chunks client-side: opening a
+                                    // stream for them would blank the whole live band (no text, no
+                                    // spinner, no pending-tool line) for the entire reasoning phase.
+                                    // Keep the thinking indicator running instead; WriteStream still
+                                    // no-ops on the dropped chunks below.
+                                    if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                                     {
                                         thinking?.Dispose();
                                         thinking = null;
@@ -2130,7 +2135,11 @@ public static class SingleAgentOrchestrator
                                     else
                                     {
                                         calledTools.Add(functionCall.Name);
-                                        thinking?.UpdateStatus(calledTools);
+                                        // A tool call with NO live indicator must create one -
+                                        // thinking?.UpdateStatus on null silently showed nothing,
+                                        // leaving the whole call invisible (the "hung" screenshot).
+                                        thinking ??= MuxConsole.BeginThinking(singleAgentDef.Name);
+                                        thinking.UpdateStatus(calledTools);
                                     }
                                 }
                                 else if (content is FunctionResultContent functionResult)
@@ -2155,9 +2164,29 @@ public static class SingleAgentOrchestrator
                                     if (resultText != null)
                                         MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
 
-                                    if (!currentlyStreaming && thinking != null)
+                                    // A tool result ALWAYS transitions back to thinking state. If a
+                                    // stream was open when the result landed (e.g. a reasoning stream
+                                    // preceding the call), leaving it open kept the driver in
+                                    // _streaming and suppressed the spinner + pending-tool line for
+                                    // the rest of the iteration - the "agent looks hung" gap. The
+                                    // next text chunk reopens the stream normally.
+                                    if (currentlyStreaming)
+                                    {
+                                        currentlyStreaming = false;
+                                        thinking?.Dispose();
+                                        thinking = MuxConsole.ResumeThinking(singleAgentDef.Name);
+                                        if (calledTools.Count > 0)
+                                            thinking.UpdateStatus(calledTools);
+                                    }
+                                    else if (thinking != null)
                                     {
                                         thinking.Dispose();
+                                        thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
+                                        if (calledTools.Count > 0)
+                                            thinking.UpdateStatus(calledTools);
+                                    }
+                                    else
+                                    {
                                         thinking = MuxConsole.BeginThinking(singleAgentDef.Name);
                                         if (calledTools.Count > 0)
                                             thinking.UpdateStatus(calledTools);

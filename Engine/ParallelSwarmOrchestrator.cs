@@ -1015,7 +1015,9 @@ public static class ParallelSwarmOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;
@@ -1534,7 +1536,9 @@ public static class ParallelSwarmOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;

@@ -1094,6 +1094,14 @@ public static partial class MuxConsole
     /// </summary>
     public static string ShowReasoning { get; set; } = "summary";
 
+    /// <summary>
+    /// True when streamed reasoning chunks will actually render for the user; false when
+    /// <c>showReasoning=none</c> drops them client-side in interactive renderers (callers
+    /// should keep the thinking indicator alive instead of opening an invisible stream).
+    /// </summary>
+    public static bool WillRenderReasoning
+        => StdioMode || !string.Equals(ShowReasoning, "none", StringComparison.OrdinalIgnoreCase);
+
     public static void WriteStream(string text, bool muted = false, string? agentName = null)
     {
         if (string.IsNullOrEmpty(text)) return;
