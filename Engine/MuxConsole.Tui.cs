@@ -705,7 +705,7 @@ public static partial class MuxConsole
     /// Populate the driver's sessions catalog backing the live "/resume" autocomplete preview.
     /// Safe to call anytime; no-op when the driver is not active.
     /// </summary>
-    public static void SetTuiSessionsCatalog(IReadOnlyList<(string Id, string Preview)> sessions)
+    public static void SetTuiSessionsCatalog(IReadOnlyList<(string Id, string Preview, string? Tag)> sessions)
     {
         if (!TuiActive) return;
         lock (ConsoleLock) { _driver!.SetSessionsCatalog(sessions); }

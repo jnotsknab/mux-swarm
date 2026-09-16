@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using MuxSwarm.Engine;
 using MuxSwarm.Engine.Tui;
 
@@ -225,10 +225,10 @@ public class TuiDriverTests
     [Fact]
     public void SessionsPreview_FuzzyFiltersByIdAndPreview()
     {
-        var sessions = new (string, string)[]
+        var sessions = new (string, string, string?)[]
         {
-            ("2026-06-20_12-31-01", "research homelab network gear"),
-            ("2026-06-19_09-15-42", "fix the tui footer duplication"),
+            ("2026-06-20_12-31-01", "research homelab network gear", null),
+            ("2026-06-19_09-15-42", "fix the tui footer duplication", null),
         };
         var byId = TuiComponents.SessionsPreview("12-31", sessions, 80);
         Assert.Contains(byId, r => r.Contains("2026-06-20_12-31-01"));

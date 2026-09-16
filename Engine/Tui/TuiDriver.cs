@@ -544,7 +544,7 @@ internal sealed partial class TuiDriver
         => _skills = skills ?? Array.Empty<(string, string)>();
 
     /// <summary>Resumable sessions catalog for the live "/resume" autocomplete preview.</summary>
-    private IReadOnlyList<(string Id, string Preview)> _sessions = Array.Empty<(string, string)>();
+    private IReadOnlyList<(string Id, string Preview, string? Tag)> _sessions = Array.Empty<(string, string, string?)>();
 
     // Hover-marquee state for the /resume dropdown: the selected row's long preview slides one
     // character every few resize-poll ticks (~400ms). Offset resets when the selection moves so
@@ -554,8 +554,8 @@ internal sealed partial class TuiDriver
     private int _resumeMarqueeTick;
 
     /// <summary>Set the sessions catalog backing the live "/resume" autocomplete preview.</summary>
-    public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview)> sessions)
-        => _sessions = sessions ?? Array.Empty<(string, string)>();
+    public void SetSessionsCatalog(IReadOnlyList<(string Id, string Preview, string? Tag)> sessions)
+        => _sessions = sessions ?? Array.Empty<(string, string, string?)>();
 
     /// <summary>Relative-path file index backing the live "@" fuzzy file picker.</summary>
     private IReadOnlyList<string> _files = Array.Empty<string>();

@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
@@ -680,9 +680,9 @@ public static class CliCmdUtils
     /// preview), newest first, for the live "/resume" autocomplete preview. Best-effort:
     /// returns an empty list on any IO error.
     /// </summary>
-    public static List<(string Id, string Preview)> GetResumableSessions()
+    public static List<(string Id, string Preview, string? Tag)> GetResumableSessions()
     {
-        var outList = new List<(string, string)>();
+        var outList = new List<(string, string, string?)>();
         try
         {
             string sessionsDir = PlatformContext.SessionsDirectory;
@@ -699,12 +699,11 @@ public static class CliCmdUtils
                     if (file != null) preview = Common.GetFirstUserMessage(file);
                 }
                 catch { /* preview optional */ }
-                // Fold any session tags into the preview so the /resume palette both shows and
-                // fuzzy-matches them (the sidecar is .muxtag, invisible to the *.json detector).
+                // Tags travel as their own field (v0.14.1): tagged sessions surface the tag as the
+                // PRIMARY label in the resume dropdown + alt-screen picker, with the timestamp id
+                // demoted to detail. The sidecar is .muxtag, invisible to the *.json detector.
                 var tagLabel = SessionTags.TagLabel(d);
-                if (!string.IsNullOrEmpty(tagLabel))
-                    preview = string.IsNullOrEmpty(preview) ? $"#{tagLabel}" : $"#{tagLabel} - {preview}";
-                outList.Add((id, preview));
+                outList.Add((id, preview, string.IsNullOrEmpty(tagLabel) ? null : tagLabel));
             }
         }
         catch { /* best-effort */ }
@@ -797,9 +796,11 @@ public static class CliCmdUtils
             // single list row (otherwise it splits into stray dot-prefixed orphan rows).
             preview = System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim();
             var tagLabel = SessionTags.TagLabel(d);
-            var tagPrefix = string.IsNullOrEmpty(tagLabel) ? "" : $"#{tagLabel} — ";
             var idxLabel = (i + 1).ToString().PadLeft(idxW);
-            return $"{idxLabel}  {timestamp} ({size / 1024}KB) — {tagPrefix}{preview}";
+            // Tag-first: a tagged session leads with its tag; the timestamp demotes to detail.
+            return string.IsNullOrEmpty(tagLabel)
+                ? $"{idxLabel}  {timestamp} ({size / 1024}KB) — {preview}"
+                : $"{idxLabel}  #{tagLabel} — {timestamp} ({size / 1024}KB) — {preview}";
         }));
 
         MuxConsole.WritePanel("Select a session to resume or press Enter to cancel", lines);
