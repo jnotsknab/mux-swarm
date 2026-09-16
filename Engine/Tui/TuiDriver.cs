@@ -51,6 +51,13 @@ internal sealed partial class TuiDriver
     // content is ever lost - only the intra-frame live-tail preview is throttled.
     private long _lastStreamPaintTicks;
     private const long StreamPaintIntervalTicks = TimeSpan.TicksPerMillisecond * 33;
+    // One-shot trailing flush for the stream throttle: when a tail repaint is SKIPPED by the
+    // 33ms budget and no later chunk arrives to paint it, the freshest tail would never reach
+    // the screen (bursty providers deliver many chunks in one flush, then go quiet - the user
+    // saw the first word and then nothing until the next tool call/scroll repaint). The timer
+    // guarantees the final skipped state lands within one throttle interval.
+    private System.Threading.Timer? _streamTrailTimer;
+    private bool _streamTrailArmed;
     // True when the current stream tail is reasoning content (rendered grey+italic to distinguish
     // it from the final answer). Flushed/reset on a type switch so reasoning and answer never blend.
     private bool _streamReasoning;
@@ -1691,9 +1698,38 @@ internal sealed partial class TuiDriver
         // not trigger a full live-frame rebuild each. A type switch (forcePaint) and EndStream are
         // unthrottled so no boundary or final token is ever left unpainted.
         long now = DateTime.UtcNow.Ticks;
-        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks) return;
+        if (!forcePaint && !committed && now - _lastStreamPaintTicks < StreamPaintIntervalTicks)
+        {
+            ArmStreamTrailFlush();
+            return;
+        }
         _lastStreamPaintTicks = now;
+        _streamTrailArmed = false;   // this paint carries the current tail; no trailing flush owed
         Repaint();
+    }
+
+    /// <summary>Arm the one-shot trailing flush for a throttled-away tail paint (idempotent
+    /// while armed). Fires ~one throttle interval later on the timer thread and repaints only
+    /// if no later chunk already painted (armed flag still set) and the stream is still open.</summary>
+    private void ArmStreamTrailFlush()
+    {
+        if (_streamTrailArmed) return;
+        _streamTrailArmed = true;
+        _streamTrailTimer ??= new System.Threading.Timer(_ => StreamTrailFlush(),
+            null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
+        try { _streamTrailTimer.Change(35, System.Threading.Timeout.Infinite); } catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>Timer-thread callback: paint the freshest stream tail if it is still owed.</summary>
+    internal void StreamTrailFlush()
+    {
+        lock (MuxConsole.ConsoleLock)
+        {
+            if (!_streamTrailArmed || !_streaming) { _streamTrailArmed = false; return; }
+            _streamTrailArmed = false;
+            _lastStreamPaintTicks = DateTime.UtcNow.Ticks;
+            Repaint();
+        }
     }
 
     /// <summary>
@@ -1779,6 +1815,7 @@ internal sealed partial class TuiDriver
 
     public void EndStream()
     {
+        _streamTrailArmed = false;   // EndStream's own repaint below carries the final tail
         bool hadTail = _streamTail.Length > 0;
         string tail = _streamTail.ToString();
         _streamTail.Clear();
