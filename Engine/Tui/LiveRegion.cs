@@ -147,6 +147,13 @@ internal sealed class LiveRegion
     /// Wrap a single markup line to <paramref name="cols"/> display columns, preserving
     /// styling, and return each wrapped slice already rendered to ANSI. Works at the span
     /// level so color/attribute tags never get split mid-sequence.
+    ///
+    /// Wrapping is a SINGLE column-aware pass over the line's words: each word is measured
+    /// against the columns actually remaining on the current row, so a row fills to the true
+    /// right margin regardless of how many styled spans it crosses. (The previous two-stage
+    /// form pre-wrapped every span in isolation to a fixed budget, then re-checked the result
+    /// during assembly - a span starting mid-row could neither be re-split nor fit, so rows
+    /// broke many columns short of the margin, which is the ragged right edge.)
     /// </summary>
     internal static List<string> WrapMarkupLine(string markup, int cols)
     {
@@ -160,42 +167,93 @@ internal sealed class LiveRegion
         var cur = new StringBuilder();
         int curW = 0;
 
-        // Hang-indent: when a logical line is visually indented (leading spaces, or a lead-dot
-        // "* " marker that puts its text at col 2), every WRAPPED continuation row must re-apply
-        // that indent - otherwise long agent-prose lines soft-wrap back to col 0 and break the
-        // aligned column (the flush-left "off-indentation" bug). The hang width is the leading
-        // plain-text whitespace of the line, or 2 when the line starts with the U+25CF lead dot.
+        // Hang-indent: when a logical line is visually indented (leading spaces, or a list
+        // marker that puts its text at a deeper column), every WRAPPED continuation row must
+        // re-apply that indent - otherwise long agent-prose lines soft-wrap back to col 0 and
+        // break the aligned column (the flush-left "off-indentation" bug).
         string hangIndent = ComputeHangIndent(spans);
-        // Reserve room for the hang indent so a continuation row (hangIndent + wrapped text) never
-        // EXCEEDS the terminal width. Without this, pieces wrapped to the full `cols` plus the 2-col
-        // hang prefix sum to cols+2 and the terminal soft-wraps the overflow back to col 0 - the
-        // residual flush-left wrap bug. Wrapping text to (cols - hang) keeps every row within `cols`.
-        int textWidth = hangIndent.Length > 0 ? Math.Max(1, cols - hangIndent.Length) : cols;
+        // Continuation rows open with the hang indent, so their text budget is (cols - hang).
+        // The first row keeps the full width - its own prefix is real text already counted in
+        // curW - and every row is bounded by `cols` through the shared remaining-columns math.
+        int hangW = hangIndent.Length;
 
         void NewRow()
         {
             if (curW > 0 || cur.Length > 0) { cur.Append(Ansi.Reset); }
             outRows.Add(cur.ToString());
             cur.Clear(); curW = 0;
-            if (hangIndent.Length > 0) { cur.Append(hangIndent); curW = hangIndent.Length; }
+            if (hangW > 0) { cur.Append(hangIndent); curW = hangW; }
         }
+
+        // A run of spaces is held back rather than emitted immediately: if the word after it
+        // does not fit, the row breaks and the pending space is DROPPED, so a continuation row
+        // never opens with a stray space (the +1 column stagger). Spaces that stay inside a row
+        // are emitted with the style of the span that produced them.
+        string pendingSpace = "";
+        string pendingSgr = "";
 
         foreach (var span in spans)
         {
+            string sgr = span.Style.ToAnsi();
             // Split span text into wrapped chunks honoring embedded newlines.
             foreach (var sub in (span.Text ?? "").Replace("\r\n", "\n").Split('\n').Select((t, i) => (t, i)))
             {
-                if (sub.i > 0) NewRow(); // explicit newline inside a span
-                string sgr = span.Style.ToAnsi();
-                foreach (var piece in WrapPieces(sub.t, textWidth))
+                if (sub.i > 0) { pendingSpace = ""; NewRow(); }   // explicit newline inside a span
+                foreach (var word in SplitKeepingSpaces(sub.t))
                 {
-                    int pw = TuiMarkup.Width(piece.Text);
-                    if (curW + pw > cols && curW > 0) NewRow();
-                    if (sgr.Length > 0) cur.Append(sgr);
-                    cur.Append(piece.Text);
-                    if (sgr.Length > 0) cur.Append(Ansi.Reset);
-                    curW += pw;
-                    if (piece.ForceBreak) NewRow();
+                    if (word[0] == ' ')
+                    {
+                        // Trailing/interior whitespace: hold it until we know the next word fits.
+                        pendingSpace += word;
+                        pendingSgr = sgr;
+                        continue;
+                    }
+
+                    int ww = TuiMarkup.Width(word);
+                    int spaceW = pendingSpace.Length;
+                    // Break BEFORE the word when it cannot share this row, dropping the pending
+                    // space. A word wider than a whole row is never worth a break by itself - it
+                    // is filled into the remaining columns and hard-broken below.
+                    bool fitsOnOwnRow = ww <= Math.Max(1, cols - hangW);
+                    if (curW > 0 && fitsOnOwnRow && curW + spaceW + ww > cols)
+                    {
+                        pendingSpace = "";
+                        NewRow();
+                    }
+                    else if (pendingSpace.Length > 0)
+                    {
+                        // The space stays on this row (it separates two words that both fit).
+                        if (pendingSgr.Length > 0) cur.Append(pendingSgr);
+                        cur.Append(pendingSpace);
+                        if (pendingSgr.Length > 0) cur.Append(Ansi.Reset);
+                        curW += spaceW;
+                        pendingSpace = "";
+                    }
+
+                    // Emit the word, hard-breaking across rows when it cannot fit the remaining
+                    // columns. Filling the REMAINING columns (not a fixed budget) is what keeps
+                    // the right edge flush for long unbroken tokens (paths, hashes, URLs).
+                    string rest = word;
+                    while (rest.Length > 0)
+                    {
+                        int room = cols - curW;
+                        if (room <= 0) { NewRow(); continue; }
+                        var (head, tail) = SplitToWidth(rest, room);
+                        if (head.Length == 0)
+                        {
+                            // Nothing fit in the remaining columns (e.g. a wide glyph with 1 col
+                            // left). Break and retry on a fresh row; guard against a row that can
+                            // never hold the cluster so the loop always terminates.
+                            if (curW == 0) { head = rest[..1]; tail = rest[1..]; }
+                            else { NewRow(); continue; }
+                        }
+                        if (sgr.Length > 0) cur.Append(sgr);
+                        cur.Append(head);
+                        if (sgr.Length > 0) cur.Append(Ansi.Reset);
+                        curW += TuiMarkup.Width(head);
+                        rest = tail;
+                        if (rest.Length > 0) NewRow();
+                    }
                 }
             }
         }
@@ -203,44 +261,79 @@ internal sealed class LiveRegion
         return outRows;
     }
 
-    private readonly record struct Piece(string Text, bool ForceBreak);
-
     /// <summary>
-    /// Break a plain run into pieces that each fit within <paramref name="cols"/>. Pieces
-    /// that exactly fill a row are flagged ForceBreak so the caller starts a new row.
-    /// </summary>
-    /// <summary>
-    /// Leading indent to re-apply on each wrapped continuation row, derived from the logical line's
-    /// own leading whitespace - or 2 columns when the line opens with the U+25CF lead dot ("* text",
-    /// dot at col 0, text at col 2). Returns "" for flush-left lines (continuation stays at col 0).
+    /// Leading indent to re-apply on each wrapped continuation row: the column where the line's
+    /// BODY text begins. That is the line's own leading whitespace, plus any single list/quote
+    /// MARKER glyph and the space after it - so a bullet's continuation rows align under the
+    /// bullet TEXT instead of falling back to col 0. Markers recognized are the ones this
+    /// renderer emits: the streamed-block lead dot (U+25CF), markdown unordered bullets
+    /// (U+2022), task checkboxes (U+2610 / U+2713), the blockquote bar (U+2502), and ordered
+    /// markers ("1.", "12."). Returns "" for flush-left prose (continuation stays at col 0).
     /// Capped so a deeply-indented line can never consume the whole width.
     /// </summary>
     private static string ComputeHangIndent(IReadOnlyList<Span> spans)
     {
         if (spans.Count == 0) return "";
-        // Reconstruct the line's plain text (the dot is a styled span on its own, so it would be
-        // missed by only inspecting spans[0]) to find the column where the BODY text begins. That
-        // column is the hang indent every wrapped continuation row re-applies so the block stays in
-        // one aligned column. Lead-dot lines ("  * body", dot at col 2) put body at col 4; a plainly
-        // indented line uses its own leading whitespace.
+        // Reconstruct the line's plain text (a marker is a styled span on its own, so it would be
+        // missed by only inspecting spans[0]) to find the column where the BODY text begins.
         string plain = string.Concat(spans.Select(s => s.Text ?? ""));
         int i = 0;
         while (i < plain.Length && plain[i] == ' ') i++;          // leading whitespace
-        if (i < plain.Length && plain[i] == '\u25cf')            // the lead dot ...
+        int afterIndent = i;
+        if (i < plain.Length && IsMarkerGlyph(plain[i])) i++;      // single-glyph marker ...
+        else
         {
-            i++;
-            while (i < plain.Length && plain[i] == ' ') i++;      // ... and the space(s) after it
+            int d = i;
+            while (d < plain.Length && char.IsAsciiDigit(plain[d])) d++;
+            if (d > i && d < plain.Length && plain[d] == '.') i = d + 1;   // ... or an ordered "N."
+        }
+        if (i > afterIndent)
+        {
+            // Only treat it as a marker when a space actually separates it from the body.
+            if (i < plain.Length && plain[i] == ' ') { while (i < plain.Length && plain[i] == ' ') i++; }
+            else i = afterIndent;
         }
         if (i == 0) return "";
         return new string(' ', Math.Min(i, 8));
     }
 
-    private static IEnumerable<Piece> WrapPieces(string text, int cols)
+    /// <summary>True for the single-glyph list/quote markers the markdown renderer emits.</summary>
+    private static bool IsMarkerGlyph(char c) =>
+        c is '\u25cf' or '\u2022' or '\u2610' or '\u2713' or '\u2502';
+
+    /// <summary>Split a run into alternating space / non-space chunks, preserving both.</summary>
+    private static IEnumerable<string> SplitKeepingSpaces(string s)
     {
-        if (string.IsNullOrEmpty(text)) { yield return new Piece("", false); yield break; }
-        var lines = TuiMarkup.WrapPlain(text, cols);
-        for (int i = 0; i < lines.Count; i++)
-            yield return new Piece(lines[i], i < lines.Count - 1);
+        int i = 0;
+        while (i < s.Length)
+        {
+            bool space = s[i] == ' ';
+            int j = i;
+            while (j < s.Length && (s[j] == ' ') == space) j++;
+            yield return s.Substring(i, j - i);
+            i = j;
+        }
+    }
+
+    /// <summary>
+    /// Split <paramref name="text"/> at the last grapheme cluster that still fits within
+    /// <paramref name="width"/> display columns, returning the fitting head and the remainder.
+    /// Cluster-accurate so a wide glyph (CJK/emoji) is never cut in half or mis-measured.
+    /// </summary>
+    private static (string Head, string Tail) SplitToWidth(string text, int width)
+    {
+        if (width <= 0) return ("", text);
+        int w = 0, taken = 0;
+        var e = System.Globalization.StringInfo.GetTextElementEnumerator(text);
+        while (e.MoveNext())
+        {
+            string el = (string)e.Current;
+            int ew = TuiMarkup.TextElementWidth(el);
+            if (w + ew > width) break;
+            w += ew;
+            taken += el.Length;
+        }
+        return (text[..taken], text[taken..]);
     }
 
     /// <summary>Escape to put auto-wrap into the requested state, or empty if already there.
