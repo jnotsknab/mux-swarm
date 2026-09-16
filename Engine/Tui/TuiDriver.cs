@@ -1709,7 +1709,11 @@ internal sealed partial class TuiDriver
         // is unchanged (the caller pings SetThinking on a timer).
         _thinkFrame++;
         _thinkingText = t;
-        Repaint();
+        // While text is streaming the thinking line is hidden by the paint gate; keep the state
+        // (so the spinner self-revives on the first ping after EndStream) but skip the ~80ms
+        // full repaints - the stream's own throttled paints own the frame during that window.
+        if (!_streaming)
+            Repaint();
     }
 
     /// <summary>
@@ -2027,8 +2031,11 @@ internal sealed partial class TuiDriver
 
         // The italic "thinking" indicator renders BELOW the live dot line(s) - the dot is the
         // primary action, the spinner+status is the running tail beneath it (rendering it above the
-        // dot looked off when both animate). Only when no sub-agent strip owns the line.
-        if (!_agentViewActive && _subAgents.Count == 0 && !_streaming && !string.IsNullOrEmpty(_thinkingText))
+        // dot looked off when both animate). It COEXISTS with the sub-agent strip: while collapsed
+        // sub-agents run, the lead's own spinner still renders beneath their lanes (suppressing it
+        // made the lead look hung whenever a delegation was in flight). Hidden only while text is
+        // actively streaming or the Agent View dashboard owns the frame.
+        if (!_agentViewActive && !_streaming && !string.IsNullOrEmpty(_thinkingText))
             lines.Add(TuiComponents.ThinkingLine(_thinkingText, _thinkFrame));
 
         // v0.12.0 M1 Agent View: when foregrounded (backslash), the keyboard-navigable session
