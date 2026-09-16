@@ -929,7 +929,19 @@ public static partial class MuxConsole
 
     /// <summary>Clear resize/redraw artifacts and repaint the live region (Ctrl+L). No-op outside
     /// the TUI. Safe from the mid-turn key listener thread (serializes on the console lock).</summary>
-    internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+        /// <summary>
+    /// Open the alt-screen theme picker in the docked TUI. False when unavailable (classic
+    /// renderer / stdio / another modal), in which case the caller falls back to the static
+    /// gallery. <paramref name="applied"/> carries the chosen theme when the user applied one.
+    /// </summary>
+    internal static bool TryThemePicker(out Theme? applied)
+    {
+        applied = null;
+        if (!ViaDriver || InputOverride != Console.In) return false;
+        return _driver!.RunThemePicker(new Tui.ThemePickerView(activeName: Theme.Active.Name), out applied);
+    }
+
+internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
     /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
     /// viewport by net wheel notches through the driver's FrameScrollBy path + repaints. Serialized

@@ -1832,6 +1832,24 @@ public static class CliCmdUtils
 
         if (string.IsNullOrWhiteSpace(arg))
         {
+            // Docked TUI: the alt-screen picker with live palette previews. Apply persists the
+            // same way the named path below does. Elsewhere: the classic static gallery.
+            if (MuxConsole.TryThemePicker(out var picked))
+            {
+                if (picked is null) { MuxConsole.WriteMuted("Theme unchanged."); return; }
+                Theme.Set(picked);
+                try
+                {
+                    App.Config.Console.Theme = picked.Name;
+                    Common.SaveConfig(App.Config);
+                    MuxConsole.WriteSuccess($"Theme set to '{picked.Name}' (persisted to config.json).");
+                }
+                catch (Exception ex)
+                {
+                    MuxConsole.WriteWarning($"Theme applied for this session, but saving failed: {ex.Message}");
+                }
+                return;
+            }
             ShowThemeGallery();
             return;
         }
