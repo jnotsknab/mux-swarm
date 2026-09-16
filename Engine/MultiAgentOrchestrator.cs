@@ -1381,6 +1381,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", "Orchestrator"));
                 Telemetry.TelemetrySink.RecordTurn("Orchestrator", _orchestratorModelId, orchTurnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse("Orchestrator", responseText.ToString());
                 OtelMetrics.OrchestratorIterations.Add(1);
             }
 
@@ -1770,6 +1771,7 @@ public static class MultiAgentOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
                 Telemetry.TelemetrySink.RecordTurn(specialist.Def.Name, specialist.Agent.Id, turnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse(specialist.Def.Name, iterResponse.ToString());
             }
 
             cancellationToken.ThrowIfCancellationRequested();

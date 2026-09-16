@@ -3,18 +3,27 @@ using MuxSwarm.Engine.Telemetry;
 
 namespace MuxSwarm.Tests.Tests;
 
-// In-proc OTel ingestion for the dashboard tabs: meter measurements aggregate into instrument
-// snapshots (totals, tags, histogram stats), completed "MuxSwarm" spans land in the trace ring,
-// OtelLogger entries tee into the log ring, and snapshot filters behave. Assertions are
-// tolerant (>=, Contains with unique markers) because the ingest state is process-global and
-// other test classes may record measurements concurrently.
+// In-proc OTel ingestion: meter measurements aggregate into instrument snapshots (in-memory,
+// fixed-size), while completed "MuxSwarm" spans (with events), turn responses, and OtelLogger
+// entries persist through TraceStore (per-day JSONL, synchronous under the test override).
+// Metric assertions are tolerant (>=, Contains) because ingest state is process-global.
 [Collection("TelemetryState")]
-public class OtelIngestTests
+public class OtelIngestTests : IDisposable
 {
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), "mux-otel-ingest-" + Guid.NewGuid().ToString("N"));
+
     public OtelIngestTests()
     {
+        Directory.CreateDirectory(_dir);
+        TraceStore.OverrideDirectoryForTests(_dir);
         OtelIngest.Start();
         OtelIngest.ResetForTests();
+    }
+
+    public void Dispose()
+    {
+        TraceStore.OverrideDirectoryForTests(null);
+        try { Directory.Delete(_dir, true); } catch { }
     }
 
     [Fact]
@@ -37,7 +46,6 @@ public class OtelIngestTests
     {
         var snap = OtelIngest.MetricsSnapshot();
         Assert.True(snap.Instruments.Count >= 31);
-        // Declared-but-never-recorded instruments still appear (dashboard greys them out).
         Assert.Contains(snap.Instruments, i => i.Name == "mux.memory.reads");
         Assert.Contains(snap.Instruments, i => i.Name == "mux.daemon.triggers_fired");
         Assert.Equal("histogram", snap.Instruments.Single(i => i.Name == "mux.agent.turn_duration_ms").Kind);
@@ -59,36 +67,82 @@ public class OtelIngestTests
     }
 
     [Fact]
-    public void Traces_CompletedSpans_Captured_WithNameAndAgentFilters()
+    public void Spans_PersistWithEventsAndPayloadTags()
     {
+        string traceId;
         using (var a = OtelTracer.GetSource().StartActivity("tool_call"))
         {
-            a?.SetTag("agent", "IngestTraceAgent");
-            a?.SetTag("tool", "trace_probe");
+            Assert.NotNull(a);
+            traceId = a!.TraceId.ToString();
+            a.SetTag("agent", "IngestTraceAgent");
+            a.SetTag("tool", "trace_probe");
+            a.SetTag("args", new string('x', 3000)); // payload key: 2048 cap, not 256
+            a.AddEvent(new System.Diagnostics.ActivityEvent("message",
+                tags: new System.Diagnostics.ActivityTagsCollection { { "content", "hello from event" } }));
         }
 
-        var snap = OtelIngest.TracesSnapshot(limit: 50, name: "tool_call", agent: "IngestTraceAgent");
-        Assert.True(snap.Total >= 1);
-        var span = snap.Spans.First();
+        var detail = TraceStore.GetTrace(traceId);
+        Assert.NotNull(detail);
+        var span = detail!.Spans.Single();
         Assert.Equal("tool_call", span.Name);
-        Assert.Equal("IngestTraceAgent", span.Tags["agent"]);
-        Assert.Equal("trace_probe", span.Tags["tool"]);
-        Assert.False(string.IsNullOrEmpty(span.TraceId));
+        Assert.Equal("IngestTraceAgent", span.Tags!["agent"]);
+        Assert.True(span.Tags["args"].Length > 300, "payload tag should use the 2048 cap");
+        var ev = Assert.Single(span.Events!);
+        Assert.Equal("message", ev.Name);
+        Assert.Equal("hello from event", ev.Tags!["content"]);
     }
 
     [Fact]
-    public void Logs_TeeFromOtelLogger_CapturesLevels_AndLevelFilter()
+    public void Responses_TeeIntoStore_AttributedToActiveTrace()
+    {
+        string traceId;
+        using (var a = OtelTracer.GetSource().StartActivity("agent_turn"))
+        {
+            Assert.NotNull(a);
+            traceId = a!.TraceId.ToString();
+            OtelIngest.RecordResponse("IngestRespAgent", "the final answer");
+        }
+
+        var detail = TraceStore.GetTrace(traceId);
+        Assert.NotNull(detail);
+        var msg = Assert.Single(detail!.Messages);
+        Assert.Equal("IngestRespAgent", msg.Agent);
+        Assert.Equal("the final answer", msg.Text);
+    }
+
+    [Fact]
+    public void Logs_TeeFromOtelLogger_PersistWithLevelFilter()
     {
         OtelLogger.Info("ingest info probe");
         OtelLogger.Warn("ingest warn probe");
         OtelLogger.Error("ingest error probe");
 
-        var all = OtelIngest.LogsSnapshot(50);
-        Assert.True(all.Total >= 3);
-        Assert.Contains(all.Entries, e => e.Level == "info" && e.Message.Contains("ingest info probe"));
+        var all = TraceStore.ListLogs(50);
+        Assert.Contains(all, e => e.Level == "info" && e.Text!.Contains("ingest info probe"));
 
-        var errs = OtelIngest.LogsSnapshot(50, level: "error");
-        Assert.Contains(errs.Entries, e => e.Message.Contains("ingest error probe"));
-        Assert.All(errs.Entries, e => Assert.Equal("error", e.Level));
+        var errs = TraceStore.ListLogs(50, level: "error");
+        Assert.Contains(errs, e => e.Text!.Contains("ingest error probe"));
+        Assert.All(errs, e => Assert.Equal("error", e.Level));
+    }
+
+    [Fact]
+    public void ListTraces_GroupsSpansPerTrace_WithRootAndAgents()
+    {
+        string traceId;
+        using (var root = OtelTracer.GetSource().StartActivity("agent_session"))
+        {
+            Assert.NotNull(root);
+            traceId = root!.TraceId.ToString();
+            root.SetTag("agent", "ListAgent");
+            using (var child = OtelTracer.GetSource().StartActivity("tool_call"))
+                child?.SetTag("agent", "ListAgent");
+        }
+
+        var traces = TraceStore.ListTraces(limit: 20, days: 2);
+        var mine = traces.Single(t => t.TraceId == traceId);
+        Assert.Equal("agent_session", mine.Root);
+        Assert.Equal(2, mine.Spans);
+        Assert.Contains("ListAgent", mine.Agents);
+        Assert.False(mine.HasError);
     }
 }

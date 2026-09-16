@@ -4,22 +4,28 @@ using System.Diagnostics.Metrics;
 namespace MuxSwarm.Engine.Telemetry;
 
 /// <summary>
-/// In-process ingestion of the built-in OTel stack (Meter + ActivitySource "MuxSwarm" and
-/// <see cref="OtelLogger"/> entries) into bounded in-memory rings, so the telemetry dashboard
-/// can serve live metrics, traces, and logs without an external OTLP collector. Composes with
-/// the OTLP exporters: listeners observe the same instruments/spans the exporters push, and
-/// ingestion runs regardless of <c>telemetry.enabled</c>. Memory is bounded (span/log rings,
-/// capped tag cardinality, fixed histogram reservoirs).
+/// In-process ingestion of the built-in OTel stack (Meter + ActivitySource "MuxSwarm",
+/// <see cref="OtelLogger"/> entries, and turn-final agent responses) so the telemetry
+/// dashboard can serve live metrics, traces, and logs without an external OTLP collector.
+/// Metric aggregates stay in fixed-size memory (capped tag cardinality, fixed histogram
+/// reservoirs); spans (with their events), responses, and logs are persisted through
+/// <see cref="TraceStore"/> (per-day JSONL, cumulative retention) so trace step-through
+/// survives restarts and memory stays flat. Composes with the OTLP exporters: listeners
+/// observe the same instruments/spans the exporters push, and ingestion runs regardless of
+/// <c>telemetry.enabled</c>.
 /// </summary>
 public static class OtelIngest
 {
-    private const int SpanRingSize = 2000;
-    private const int LogRingSize = 1000;
     private const int HistReservoirSize = 256;
     private const int MaxTagCombos = 64;
     private const int MaxTagValueLength = 256;
+    private const int MaxPayloadTagLength = 2048;
     private const int MaxSpanTags = 16;
-    private const int MaxLogMessageLength = 4096;
+    private const int MaxSpanEvents = 64;
+
+    /// <summary>Tag/event keys that carry payloads (args, results, content) and get the larger cap.</summary>
+    private static readonly HashSet<string> PayloadKeys = new(StringComparer.OrdinalIgnoreCase)
+        { "args", "result", "content", "message", "task", "summary" };
 
     private static readonly object Gate = new();
     private static MeterListener? _meterListener;
@@ -46,17 +52,7 @@ public static class OtelIngest
         public readonly long[] MinuteStamps = new long[60];
     }
 
-    private sealed record SpanRec(string Name, string TraceId, string SpanId, string? ParentSpanId,
-        DateTime StartUtc, double DurationMs, string Status, string? StatusDescription,
-        Dictionary<string, string> Tags);
-
-    private sealed record LogRec(DateTime TsUtc, string Level, string Message, string? TraceId, string? SpanId);
-
     private static readonly Dictionary<string, InstrumentState> Instruments = new(StringComparer.Ordinal);
-    private static readonly SpanRec?[] SpanRing = new SpanRec?[SpanRingSize];
-    private static long _spanNext;
-    private static readonly LogRec?[] LogRing = new LogRec?[LogRingSize];
-    private static long _logNext;
 
     // ---- lifecycle ----------------------------------------------------------------------
 
@@ -114,8 +110,6 @@ public static class OtelIngest
                 s.TagCombos.Clear();
                 Array.Clear(s.MinuteValues); Array.Clear(s.MinuteStamps);
             }
-            Array.Clear(SpanRing); _spanNext = 0;
-            Array.Clear(LogRing); _logNext = 0;
         }
     }
 
@@ -191,40 +185,58 @@ public static class OtelIngest
         return sb.ToString();
     }
 
+    private static string CapTag(string key, string? value)
+        => Truncate(value ?? "", PayloadKeys.Contains(key) ? MaxPayloadTagLength : MaxTagValueLength);
+
     private static void OnActivityStopped(Activity activity)
     {
         var tags = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var kv in activity.TagObjects)
         {
             if (tags.Count >= MaxSpanTags) break;
-            tags[kv.Key] = Truncate(kv.Value?.ToString() ?? "", MaxTagValueLength);
+            tags[kv.Key] = CapTag(kv.Key, kv.Value?.ToString());
         }
-        var rec = new SpanRec(
-            activity.OperationName,
-            activity.TraceId.ToString(),
-            activity.SpanId.ToString(),
+
+        List<TraceStore.SpanEvent>? events = null;
+        foreach (var ev in activity.Events)
+        {
+            events ??= new List<TraceStore.SpanEvent>();
+            if (events.Count >= MaxSpanEvents) break;
+            Dictionary<string, string>? evTags = null;
+            foreach (var kv in ev.Tags)
+            {
+                evTags ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                if (evTags.Count >= MaxSpanTags) break;
+                evTags[kv.Key] = CapTag(kv.Key, kv.Value?.ToString());
+            }
+            events.Add(new TraceStore.SpanEvent(ev.Name, ev.Timestamp.UtcDateTime, evTags));
+        }
+
+        TraceStore.WriteSpan(new TraceStore.Rec("span", activity.StartTimeUtc,
+            activity.TraceId.ToString(), activity.SpanId.ToString(),
             activity.ParentSpanId == default ? null : activity.ParentSpanId.ToString(),
-            activity.StartTimeUtc,
-            activity.Duration.TotalMilliseconds,
+            activity.OperationName, activity.Duration.TotalMilliseconds,
             activity.Status.ToString(),
             string.IsNullOrEmpty(activity.StatusDescription) ? null : Truncate(activity.StatusDescription, MaxTagValueLength),
-            tags);
-        lock (Gate)
-        {
-            SpanRing[_spanNext++ % SpanRingSize] = rec;
-        }
+            tags.Count > 0 ? tags : null, events));
     }
 
-    /// <summary>Tee an <see cref="OtelLogger"/> entry into the log ring (always captured, even with no active span).</summary>
+    /// <summary>Tee an <see cref="OtelLogger"/> entry to durable trace storage (always captured, even with no active span).</summary>
     public static void RecordLog(string level, string message)
     {
         var current = Activity.Current;
-        var rec = new LogRec(DateTime.UtcNow, level, Truncate(message, MaxLogMessageLength),
-            current?.TraceId.ToString(), current?.SpanId.ToString());
-        lock (Gate)
-        {
-            LogRing[_logNext++ % LogRingSize] = rec;
-        }
+        TraceStore.WriteLog(level, message, current?.TraceId.ToString(), current?.SpanId.ToString());
+    }
+
+    /// <summary>
+    /// Record a turn-final agent response for trace step-through, attributed to the active
+    /// span/trace. Always captured to local storage (unlike the verbosity-gated OTLP span
+    /// event in <see cref="OtelMetrics.RecordAgentMessage"/>); never exported.
+    /// </summary>
+    public static void RecordResponse(string agent, string text)
+    {
+        var current = Activity.Current;
+        TraceStore.WriteMessage(agent, text, current?.TraceId.ToString(), current?.SpanId.ToString());
     }
 
     private static string Truncate(string value, int max)
@@ -242,20 +254,6 @@ public static class OtelIngest
 
     /// <summary>Full metrics snapshot: ingestion start time plus every published instrument.</summary>
     public sealed record MetricsSnap(DateTime StartedUtc, IReadOnlyList<InstrumentSnap> Instruments);
-
-    /// <summary>One completed span captured from the "MuxSwarm" ActivitySource.</summary>
-    public sealed record SpanSnap(string Name, string TraceId, string SpanId, string? ParentSpanId,
-        DateTime StartUtc, double DurationMs, string Status, string? StatusDescription,
-        IReadOnlyDictionary<string, string> Tags);
-
-    /// <summary>Recent-spans snapshot: total captured plus the filtered page, newest first.</summary>
-    public sealed record TraceSnap(int Total, IReadOnlyList<SpanSnap> Spans);
-
-    /// <summary>One captured log entry with its originating span/trace ids when available.</summary>
-    public sealed record LogSnap(DateTime TsUtc, string Level, string Message, string? TraceId, string? SpanId);
-
-    /// <summary>Recent-logs snapshot: total captured plus the filtered page, newest first.</summary>
-    public sealed record LogsSnap(int Total, IReadOnlyList<LogSnap> Entries);
 
     /// <summary>Snapshot every published instrument (declaration order preserved per registration).</summary>
     public static MetricsSnap MetricsSnapshot()
@@ -294,47 +292,6 @@ public static class OtelIngest
             }
             list.Sort(static (a, b) => string.CompareOrdinal(a.Name, b.Name));
             return new MetricsSnap(StartedUtc, list);
-        }
-    }
-
-    /// <summary>Snapshot recent spans, newest first, optionally filtered by span name and/or agent tag.</summary>
-    public static TraceSnap TracesSnapshot(int limit = 200, string? name = null, string? agent = null)
-    {
-        limit = Math.Clamp(limit, 1, SpanRingSize);
-        lock (Gate)
-        {
-            int total = (int)Math.Min(_spanNext, SpanRingSize);
-            var spans = new List<SpanSnap>(Math.Min(limit, total));
-            for (long i = _spanNext - 1; i >= 0 && i >= _spanNext - SpanRingSize && spans.Count < limit; i--)
-            {
-                var rec = SpanRing[i % SpanRingSize];
-                if (rec is null) continue;
-                if (name is { Length: > 0 } && !rec.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
-                if (agent is { Length: > 0 } &&
-                    !(rec.Tags.TryGetValue("agent", out var a) && a.Contains(agent, StringComparison.OrdinalIgnoreCase))) continue;
-                spans.Add(new SpanSnap(rec.Name, rec.TraceId, rec.SpanId, rec.ParentSpanId,
-                    rec.StartUtc, rec.DurationMs, rec.Status, rec.StatusDescription, rec.Tags));
-            }
-            return new TraceSnap(total, spans);
-        }
-    }
-
-    /// <summary>Snapshot recent log entries, newest first, optionally filtered by level.</summary>
-    public static LogsSnap LogsSnapshot(int limit = 200, string? level = null)
-    {
-        limit = Math.Clamp(limit, 1, LogRingSize);
-        lock (Gate)
-        {
-            int total = (int)Math.Min(_logNext, LogRingSize);
-            var entries = new List<LogSnap>(Math.Min(limit, total));
-            for (long i = _logNext - 1; i >= 0 && i >= _logNext - LogRingSize && entries.Count < limit; i--)
-            {
-                var rec = LogRing[i % LogRingSize];
-                if (rec is null) continue;
-                if (level is { Length: > 0 } && !rec.Level.Equals(level, StringComparison.OrdinalIgnoreCase)) continue;
-                entries.Add(new LogSnap(rec.TsUtc, rec.Level, rec.Message, rec.TraceId, rec.SpanId));
-            }
-            return new LogsSnap(total, entries);
         }
     }
 }

@@ -75,12 +75,18 @@ public static class TelemetryServer
             var events = TelemetryStore.Load(ParseRange(range));
             return Results.Json(TelemetryStore.ByTool(events));
         });
-        // Live OTel plane (in-proc ingestion; process-lifetime, not persisted).
+        // Live OTel plane: metric aggregates from in-proc ingestion; traces/logs from the
+        // durable TraceStore (per-day JSONL, cumulative retention).
         app.MapGet("/api/telemetry/otel/metrics", () => Results.Json(OtelIngest.MetricsSnapshot()));
-        app.MapGet("/api/telemetry/otel/traces", (int? limit, string? name, string? agent) =>
-            Results.Json(OtelIngest.TracesSnapshot(limit ?? 200, name, agent)));
-        app.MapGet("/api/telemetry/otel/logs", (int? limit, string? level) =>
-            Results.Json(OtelIngest.LogsSnapshot(limit ?? 200, level)));
+        app.MapGet("/api/telemetry/otel/traces", (int? limit, int? days, string? name, string? agent) =>
+            Results.Json(TraceStore.ListTraces(limit ?? 50, days ?? 7, name, agent)));
+        app.MapGet("/api/telemetry/otel/trace", (string? id) =>
+        {
+            var detail = string.IsNullOrWhiteSpace(id) ? null : TraceStore.GetTrace(id);
+            return detail is null ? Results.NotFound() : Results.Json(detail);
+        });
+        app.MapGet("/api/telemetry/otel/logs", (int? limit, string? level, int? days) =>
+            Results.Json(TraceStore.ListLogs(limit ?? 200, level, days ?? 7)));
 
         await app.StartAsync();
         _app = app;

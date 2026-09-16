@@ -16,6 +16,7 @@ public class TelemetryServerHttpTests : IAsyncLifetime
     {
         Directory.CreateDirectory(_dir);
         TelemetrySink.OverrideDirectoryForTests(_dir);
+        TraceStore.OverrideDirectoryForTests(_dir);
         OtelIngest.Start();
         OtelIngest.ResetForTests();
 
@@ -35,6 +36,7 @@ public class TelemetryServerHttpTests : IAsyncLifetime
         _client.Dispose();
         await TelemetryServer.StopAsync();
         TelemetrySink.OverrideDirectoryForTests(null);
+        TraceStore.OverrideDirectoryForTests(null);
         try { Directory.Delete(_dir, true); } catch { }
     }
 
@@ -58,8 +60,15 @@ public class TelemetryServerHttpTests : IAsyncLifetime
         OtelMetrics.ToolCalls.Add(1,
             new KeyValuePair<string, object?>("agent", "HttpProbeAgent"),
             new KeyValuePair<string, object?>("tool", "http_probe"));
+        string traceId;
         using (var a = OtelTracer.GetSource().StartActivity("tool_call"))
-            a?.SetTag("agent", "HttpProbeAgent");
+        {
+            Assert.NotNull(a);
+            traceId = a!.TraceId.ToString();
+            a.SetTag("agent", "HttpProbeAgent");
+            a.SetTag("args", "{\"q\":42}");
+            OtelIngest.RecordResponse("HttpProbeAgent", "probe response body");
+        }
         OtelLogger.Warn("http probe warn");
 
         using var metrics = System.Text.Json.JsonDocument.Parse(await _client.GetStringAsync("/api/telemetry/otel/metrics"));
@@ -70,14 +79,24 @@ public class TelemetryServerHttpTests : IAsyncLifetime
 
         using var traces = System.Text.Json.JsonDocument.Parse(
             await _client.GetStringAsync("/api/telemetry/otel/traces?name=tool_call&agent=HttpProbeAgent"));
-        Assert.True(traces.RootElement.GetProperty("total").GetInt32() >= 1);
-        Assert.Contains(traces.RootElement.GetProperty("spans").EnumerateArray(),
-            s => s.GetProperty("name").GetString() == "tool_call");
+        Assert.Contains(traces.RootElement.EnumerateArray(),
+            t => t.GetProperty("traceId").GetString() == traceId && t.GetProperty("spans").GetInt32() >= 1);
+
+        using var detail = System.Text.Json.JsonDocument.Parse(
+            await _client.GetStringAsync("/api/telemetry/otel/trace?id=" + traceId));
+        Assert.Contains(detail.RootElement.GetProperty("spans").EnumerateArray(),
+            s => s.GetProperty("name").GetString() == "tool_call"
+                 && s.GetProperty("tags").GetProperty("args").GetString() == "{\"q\":42}");
+        Assert.Contains(detail.RootElement.GetProperty("messages").EnumerateArray(),
+            m => m.GetProperty("text").GetString() == "probe response body");
+
+        var missing = await _client.GetAsync("/api/telemetry/otel/trace?id=00000000000000000000000000000000");
+        Assert.Equal(System.Net.HttpStatusCode.NotFound, missing.StatusCode);
 
         using var logs = System.Text.Json.JsonDocument.Parse(
             await _client.GetStringAsync("/api/telemetry/otel/logs?level=warn"));
-        Assert.Contains(logs.RootElement.GetProperty("entries").EnumerateArray(),
-            e => e.GetProperty("message").GetString()!.Contains("http probe warn"));
+        Assert.Contains(logs.RootElement.EnumerateArray(),
+            e => e.GetProperty("text").GetString()!.Contains("http probe warn"));
     }
 
     [Fact]

@@ -64,6 +64,27 @@ td.name { font-family:var(--font-sans); }
 .lvl { font-family:var(--font-mono); font-size:.72rem; text-transform:uppercase; }
 .lvl-info { color:var(--blue); } .lvl-warn { color:var(--amber); } .lvl-error { color:var(--red); }
 td.msg { font-family:var(--font-sans); font-size:.82rem; white-space:pre-wrap; word-break:break-word; }
+/* Trace drill-down */
+.trace-row { cursor:pointer; }
+.trace-row:hover td { background:rgba(var(--accent-rgb),.06); }
+.crumb { background:none; border:none; color:var(--accent); font:inherit; font-size:.8rem; cursor:pointer; padding:0; }
+.wf-row { display:flex; align-items:center; gap:.5rem; padding:.18rem 0; font-size:.78rem; }
+.wf-label { font-family:var(--font-mono); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:34%; }
+.wf-track { flex:1; position:relative; height:.85rem; background:var(--bg-input); border-radius:.25rem; }
+.wf-bar { position:absolute; top:0; height:100%; border-radius:.25rem; background:rgba(var(--accent-rgb),.55); min-width:2px; }
+.wf-bar.err { background:var(--red); }
+.wf-ms { font-family:var(--font-mono); color:var(--muted); white-space:nowrap; width:5.5rem; text-align:right; }
+.step-item { border:1px solid var(--border); border-radius:var(--radius); padding:.6rem .75rem; margin-bottom:.5rem; }
+.step-item.current { border-color:rgba(var(--accent-rgb),.7); background:rgba(var(--accent-rgb),.05); }
+.step-head { display:flex; gap:.6rem; align-items:baseline; font-size:.75rem; color:var(--muted); }
+.step-kind { font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.05em; }
+.step-kind.k-turn { color:var(--blue); } .step-kind.k-tool { color:var(--amber); }
+.step-kind.k-msg { color:var(--green); } .step-kind.k-log { color:var(--muted); }
+.step-body { margin-top:.35rem; font-size:.8rem; white-space:pre-wrap; word-break:break-word; font-family:var(--font-sans); }
+.step-payload { margin-top:.3rem; font-family:var(--font-mono); font-size:.72rem; color:var(--muted); white-space:pre-wrap; word-break:break-word; max-height:9rem; overflow:auto; background:var(--bg-input); border-radius:.35rem; padding:.4rem .55rem; }
+.stepper { display:flex; gap:.5rem; align-items:center; margin:.4rem 0 .75rem; }
+.stepper button { background:var(--bg-input); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:.3rem .8rem; font:inherit; font-size:.8rem; cursor:pointer; }
+.stepper button:disabled { opacity:.4; cursor:default; }
 </style>
 </head>
 <body>
@@ -110,18 +131,37 @@ td.msg { font-family:var(--font-sans); font-size:.82rem; white-space:pre-wrap; w
     <div id="metricsGroups"></div>
   </div>
   <div class="tabpane" id="tab-traces">
-    <div class="card">
+    <div class="card" id="traceListCard">
       <div class="filters">
         <select id="traceName">
-          <option value="">All spans</option>
+          <option value="">All traces</option>
           <option>runtime_startup</option><option>agent_session</option><option>swarm_session</option>
           <option>orchestrator_turn</option><option>agent_turn</option><option>delegation</option>
           <option>tool_call</option><option>compaction</option>
         </select>
         <input id="traceAgent" type="text" placeholder="Filter by agent...">
+        <select id="traceDays">
+          <option value="1">1 day</option><option value="7" selected>7 days</option>
+          <option value="30">30 days</option><option value="365">1 year</option>
+        </select>
         <span class="subnote" id="traceCount"></span>
       </div>
       <div id="traceTable"></div>
+    </div>
+    <div class="card" id="traceDetailCard" style="display:none">
+      <div class="filters">
+        <button class="crumb" id="traceBack">&larr; All traces</button>
+        <span class="subnote" id="traceDetailTitle"></span>
+      </div>
+      <h2>Waterfall</h2>
+      <div id="traceWaterfall"></div>
+      <h2 style="margin-top:1rem">Step-through</h2>
+      <div class="stepper">
+        <button id="stepPrev">&larr; Prev</button>
+        <button id="stepNext">Next &rarr;</button>
+        <span class="subnote" id="stepPos"></span>
+      </div>
+      <div id="traceSteps"></div>
     </div>
   </div>
   <div class="tabpane" id="tab-logs">
@@ -189,7 +229,23 @@ document.getElementById('tabs').addEventListener('click', e => {
 });
 document.getElementById('traceName').addEventListener('change', refresh);
 document.getElementById('traceAgent').addEventListener('input', () => { clearTimeout(window._tdb); window._tdb = setTimeout(refresh, 300); });
+document.getElementById('traceDays').addEventListener('change', refresh);
 document.getElementById('logLevel').addEventListener('change', refresh);
+let traceDetail = null, stepIdx = 0, steps = [];
+document.getElementById('traceBack').onclick = () => { traceDetail = null; renderTraces(); };
+document.getElementById('stepPrev').onclick = () => { if (stepIdx > 0) { stepIdx--; renderSteps(); } };
+document.getElementById('stepNext').onclick = () => { if (stepIdx < steps.length - 1) { stepIdx++; renderSteps(); } };
+document.addEventListener('keydown', e => {
+  if (tab !== 'traces' || !traceDetail) return;
+  if (e.key === 'ArrowLeft') document.getElementById('stepPrev').click();
+  if (e.key === 'ArrowRight') document.getElementById('stepNext').click();
+});
+async function openTrace(id) {
+  try { traceDetail = await fetch('/api/telemetry/otel/trace?id=' + encodeURIComponent(id)).then(r => r.json()); }
+  catch { return; }
+  stepIdx = 0;
+  renderTraces();
+}
 
 const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
 const money = n => '$' + (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
@@ -210,9 +266,11 @@ async function refresh() {
       otelMetrics = await fetch('/api/telemetry/otel/metrics').then(r => r.json());
       renderMetrics();
     } else if (tab === 'traces') {
+      if (traceDetail) { renderTraces(); return; }
       const p = new URLSearchParams();
       const n = document.getElementById('traceName').value; if (n) p.set('name', n);
       const a = document.getElementById('traceAgent').value.trim(); if (a) p.set('agent', a);
+      p.set('days', document.getElementById('traceDays').value);
       otelTraces = await fetch('/api/telemetry/otel/traces?' + p).then(r => r.json());
       renderTraces();
     } else if (tab === 'logs') {
@@ -299,37 +357,111 @@ function renderMetrics() {
 }
 
 function renderTraces() {
+  const listCard = document.getElementById('traceListCard');
+  const detailCard = document.getElementById('traceDetailCard');
+  if (traceDetail) {
+    listCard.style.display = 'none'; detailCard.style.display = 'block';
+    renderWaterfall(); buildSteps(); renderSteps();
+    return;
+  }
+  listCard.style.display = 'block'; detailCard.style.display = 'none';
   if (!otelTraces) return;
-  document.getElementById('traceCount').textContent = otelTraces.total + ' spans captured (ring of 2000, this process)';
-  const spans = otelTraces.spans || [];
-  document.getElementById('traceTable').innerHTML = spans.length === 0
-    ? '<div class="empty">No spans captured yet.</div>'
-    : '<table><tr><th>Time</th><th>Span</th><th>Agent</th><th>Tool</th><th>Duration</th><th>Status</th><th>Trace</th></tr>'
-      + spans.map(s => {
-          const err = s.status === 'Error';
-          return '<tr><td>' + new Date(s.startUtc).toLocaleTimeString() + '</td>'
-            + '<td class="name">' + esc(s.name) + '</td>'
-            + '<td>' + esc(s.tags && s.tags.agent || '-') + '</td>'
-            + '<td>' + esc(s.tags && s.tags.tool || '-') + '</td>'
-            + '<td>' + dur(s.durationMs) + '</td>'
-            + '<td>' + (err ? '<span style="color:var(--red)">Error</span>' : esc(s.status)) + '</td>'
-            + '<td title="' + esc(s.traceId) + '">' + esc(s.traceId.slice(0, 8)) + '</td></tr>';
-        }).join('')
+  const traces = otelTraces || [];
+  document.getElementById('traceCount').textContent = traces.length + ' traces (durable store, survives restarts)';
+  document.getElementById('traceTable').innerHTML = traces.length === 0
+    ? '<div class="empty">No traces recorded yet. Run any agent turn and refresh.</div>'
+    : '<table><tr><th>Started</th><th>Root</th><th>Agents</th><th>Spans</th><th>Msgs</th><th>Duration</th><th>Status</th><th>Trace</th></tr>'
+      + traces.map(t =>
+          '<tr class="trace-row" onclick="openTrace(\'' + esc(t.traceId) + '\')">'
+          + '<td>' + new Date(t.startUtc).toLocaleString() + '</td>'
+          + '<td class="name">' + esc(t.root) + '</td>'
+          + '<td class="name">' + esc((t.agents || []).join(', ') || '-') + '</td>'
+          + '<td>' + t.spans + '</td><td>' + t.messages + '</td>'
+          + '<td>' + dur(t.durationMs) + '</td>'
+          + '<td>' + (t.hasError ? '<span style="color:var(--red)">Error</span>' : 'OK') + '</td>'
+          + '<td title="' + esc(t.traceId) + '">' + esc(t.traceId.slice(0, 8)) + '</td></tr>'
+        ).join('')
       + '</table>';
+}
+
+function renderWaterfall() {
+  const spans = traceDetail.spans || [];
+  document.getElementById('traceDetailTitle').textContent =
+    'Trace ' + traceDetail.traceId.slice(0, 16) + ' - ' + spans.length + ' spans, '
+    + (traceDetail.messages || []).length + ' messages, ' + (traceDetail.logs || []).length + ' logs';
+  if (!spans.length) { document.getElementById('traceWaterfall').innerHTML = '<div class="empty">No spans.</div>'; return; }
+  const t0 = Math.min(...spans.map(s => +new Date(s.ts)));
+  const t1 = Math.max(...spans.map(s => +new Date(s.ts) + (s.ms || 0)));
+  const total = Math.max(t1 - t0, 1);
+  // parent/child indent via depth walk
+  const byId = {}; spans.forEach(s => { if (s.span) byId[s.span] = s; });
+  const depth = s => { let d = 0, p = s.parent; while (p && byId[p] && d < 12) { d++; p = byId[p].parent; } return d; };
+  document.getElementById('traceWaterfall').innerHTML = spans.map(s => {
+    const left = ((+new Date(s.ts) - t0) / total * 100).toFixed(2);
+    const width = Math.max(((s.ms || 0) / total * 100), 0.4).toFixed(2);
+    const err = s.status === 'Error';
+    const label = (s.name || '?') + (s.tags && s.tags.agent ? ' - ' + s.tags.agent : '') + (s.tags && s.tags.tool ? ' [' + s.tags.tool + ']' : '');
+    return '<div class="wf-row"><span class="wf-label" style="padding-left:' + (depth(s) * 0.9) + 'rem" title="' + esc(label) + '">' + esc(label) + '</span>'
+      + '<span class="wf-track"><span class="wf-bar' + (err ? ' err' : '') + '" style="left:' + left + '%;width:' + width + '%"></span></span>'
+      + '<span class="wf-ms">' + dur(s.ms || 0) + '</span></div>';
+  }).join('');
+}
+
+function buildSteps() {
+  steps = [];
+  for (const s of (traceDetail.spans || [])) {
+    const kind = s.name === 'tool_call' ? 'tool' : 'turn';
+    steps.push({ kind, ts: +new Date(s.ts), title: (s.name || '?') + (s.tags && s.tags.agent ? ' - ' + s.tags.agent : ''), span: s });
+    for (const ev of (s.events || []))
+      steps.push({ kind: ev.n === 'message' ? 'msg' : 'log', ts: +new Date(ev.ts), title: ev.n + (ev.tags && ev.tags.agent ? ' - ' + ev.tags.agent : ''), ev });
+  }
+  for (const m of (traceDetail.messages || []))
+    steps.push({ kind: 'msg', ts: +new Date(m.ts), title: 'response - ' + (m.agent || '?'), text: m.text });
+  for (const l of (traceDetail.logs || []))
+    steps.push({ kind: 'log', ts: +new Date(l.ts), title: 'log [' + (l.level || '?') + ']', text: l.text });
+  steps.sort((a, b) => a.ts - b.ts);
+  if (stepIdx >= steps.length) stepIdx = Math.max(0, steps.length - 1);
+}
+
+function stepBody(st) {
+  if (st.text) return '<div class="step-body">' + esc(st.text) + '</div>';
+  let html = '';
+  const tags = (st.span && st.span.tags) || (st.ev && st.ev.tags);
+  if (tags) {
+    for (const k of ['args', 'result', 'content', 'message', 'task', 'summary'])
+      if (tags[k]) html += '<div class="step-payload"><b>' + k + ':</b> ' + esc(tags[k]) + '</div>';
+    const rest = Object.entries(tags).filter(([k]) => !['args','result','content','message','task','summary'].includes(k));
+    if (rest.length) html += '<div class="step-payload">' + rest.map(([k, v]) => esc(k) + '=' + esc(v)).join('  ') + '</div>';
+  }
+  if (st.span) html = '<div class="step-body">' + dur(st.span.ms || 0) + (st.span.status === 'Error' ? ' - <span style="color:var(--red)">Error' + (st.span.desc ? ': ' + esc(st.span.desc) : '') + '</span>' : '') + '</div>' + html;
+  return html || '<div class="step-body subnote">(no payload)</div>';
+}
+
+function renderSteps() {
+  document.getElementById('stepPos').textContent = steps.length ? ('Step ' + (stepIdx + 1) + ' / ' + steps.length + ' (arrow keys work)') : 'No steps';
+  document.getElementById('stepPrev').disabled = stepIdx <= 0;
+  document.getElementById('stepNext').disabled = stepIdx >= steps.length - 1;
+  const win = steps.map((st, i) => ({ st, i })).slice(Math.max(0, stepIdx - 2), stepIdx + 4);
+  document.getElementById('traceSteps').innerHTML = win.map(({ st, i }) =>
+    '<div class="step-item' + (i === stepIdx ? ' current' : '') + '" onclick="stepIdx=' + i + ';renderSteps()">'
+    + '<div class="step-head"><span class="step-kind k-' + st.kind + '">' + st.kind + '</span>'
+    + '<span>' + new Date(st.ts).toLocaleTimeString() + '</span><span class="name">' + esc(st.title) + '</span></div>'
+    + (i === stepIdx ? stepBody(st) : '')
+    + '</div>').join('') || '<div class="empty">Nothing to step through.</div>';
 }
 
 function renderLogs() {
   if (!otelLogs) return;
-  document.getElementById('logCount').textContent = otelLogs.total + ' entries captured (ring of 1000, this process)';
-  const entries = otelLogs.entries || [];
+  const entries = otelLogs || [];
+  document.getElementById('logCount').textContent = entries.length + ' entries (durable store)';
   document.getElementById('logTable').innerHTML = entries.length === 0
     ? '<div class="empty">No log entries captured yet.</div>'
-    : '<table><tr><th>Time</th><th>Level</th><th>Message</th><th>Span</th></tr>'
+    : '<table><tr><th>Time</th><th>Level</th><th>Message</th><th>Trace</th></tr>'
       + entries.map(l =>
-          '<tr><td>' + new Date(l.tsUtc).toLocaleTimeString() + '</td>'
+          '<tr><td>' + new Date(l.ts).toLocaleTimeString() + '</td>'
           + '<td><span class="lvl lvl-' + esc(l.level) + '">' + esc(l.level) + '</span></td>'
-          + '<td class="msg">' + esc(l.message) + '</td>'
-          + '<td>' + (l.spanId ? esc(l.spanId.slice(0, 8)) : '-') + '</td></tr>'
+          + '<td class="msg">' + esc(l.text) + '</td>'
+          + '<td>' + (l.trace ? '<button class="crumb" onclick="tab=\'traces\';document.querySelectorAll(\'.tab-btn\').forEach(b=>b.classList.toggle(\'active\',b.dataset.tab===\'traces\'));document.querySelectorAll(\'.tabpane\').forEach(p=>p.classList.toggle(\'active\',p.id===\'tab-traces\'));openTrace(\'' + esc(l.trace) + '\')">' + esc(l.trace.slice(0, 8)) + '</button>' : '-') + '</td></tr>'
         ).join('')
       + '</table>';
 }

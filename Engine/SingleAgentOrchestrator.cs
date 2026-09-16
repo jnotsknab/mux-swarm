@@ -2296,6 +2296,7 @@ public static class SingleAgentOrchestrator
                         OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                             new KeyValuePair<string, object?>("agent", singleAgentDef.Name));
                         Telemetry.TelemetrySink.RecordTurn(singleAgentDef.Name, resolvedModelId, turnSw.ElapsedMilliseconds);
+                        Telemetry.OtelIngest.RecordResponse(singleAgentDef.Name, responseText.ToString());
 
                         // Only Fires In Verbose Path
                         OtelMetrics.RecordAgentMessage(singleAgentDef.Name, "assistant", responseText.ToString());

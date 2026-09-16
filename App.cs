@@ -182,6 +182,7 @@ public class App
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
+            Engine.Telemetry.TraceStore.Shutdown();
         };
         
         System.Runtime.InteropServices.PosixSignalRegistration.Create(
