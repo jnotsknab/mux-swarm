@@ -1293,7 +1293,7 @@ Daemon-specific hook events emitted automatically:
 ## Security Recommendations
 
 - Keep `allowedPaths` minimal and purpose-specific
-- Keep `--mcp-strict` enabled (default) so startup fails if required integrations are unavailable
+- Enable `--mcp-strict` (default is non-strict since v0.14.1) so startup fails if required integrations are unavailable
 - Use environment variables for all credentials, never put secrets in config files
 - Scope MCP servers narrowly per agent role via `mcpServers` in swarm.json
 - Route execution-heavy tasks through Docker when possible (`/dockerexec`)

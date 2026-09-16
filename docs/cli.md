@@ -23,7 +23,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--persist-interval <s>` | Persist session state every N seconds |
 | `--session-retention <n>` | Keep the last N sessions (default 10) |
 | `--watchdog` | External watchdog (auto-restart on crash) |
-| `--mcp-strict <bool>` | Require all MCP servers to connect (default true) |
+| `--mcp-strict <bool>` | Require ALL MCP servers to connect or exit (default false: failed servers are skipped with a warning badge; exits only if every enabled server fails). Opt in via flag or `MUXSWARM_MCP_STRICT=1` |
 | `--docker-exec <bool>` | Route execution through Docker skills |
 | `--sandbox [backend]` | Startup sandbox backend override (default argument `docker`); validated and synced to config |
 | `--agent <name>` | Pick the lead and boot into the main agentic interface (or the agent for a goal/machine run) |

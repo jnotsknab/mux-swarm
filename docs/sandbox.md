@@ -1,4 +1,4 @@
-# Execution Sandbox & Security Posture
+﻿# Execution Sandbox & Security Posture
 
 Mux-Swarm can route all native shell and REPL execution through a per-session sandbox. The
 sandbox is pluggable: OCI container engines, microVMs, lightweight process wrappers, or a
@@ -84,7 +84,7 @@ handling, hook execution gating, and daemon trigger isolation.
 ## Recommended production stance
 
 - Use `--cfg` and `--swarmcfg` to isolate per-user or per-environment instances.
-- Keep `--mcp-strict` enabled (the default) so startup fails if required integrations are
+- Enable `--mcp-strict` (default is non-strict since v0.14.1) so startup fails if required integrations are
   unavailable.
 - Keep filesystem allowed paths minimal and purpose-specific.
 - Route execution-heavy tasks through an OCI sandbox backend when possible; step up to
