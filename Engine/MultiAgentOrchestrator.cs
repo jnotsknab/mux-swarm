@@ -329,16 +329,31 @@ public static class MultiAgentOrchestrator
             method: async (
                 [Description("Name of the specialist agent to delegate to")] string agentName,
                 [Description("The specific sub-task or instruction for the agent")] string task,
+                [Description("When true, fire the delegation into the BACKGROUND and return its job id immediately so you keep working; track it with check_delegations (waitSeconds blocks until real progress). Default false blocks until the agent finishes and returns its result.")]
+                bool background = false,
                 CancellationToken invocationToken = default
             ) =>
             {
                 using var invocationOwner = ExecutionCancellation.Enter(invocationToken.CanBeCanceled ? invocationToken : ExecutionCancellation.Current);
                 invocationToken.ThrowIfCancellationRequested();
+                // Non-blocking path (v0.14.1): the orchestrator keeps sequencing other work while
+                // this specialist runs detached; results are collected via check_delegations
+                // (same DetachedRunner registry the single-agent lead uses).
+                if (background)
+                {
+                    var job = await DetachedRunner.LaunchAsync(
+                        agentName, task, chatClientFactory, agentModels, invocationToken);
+                    return job is null
+                        ? $"[delegate_to_agent] Could not launch '{agentName}' in the background (unknown agent?)."
+                        : $"[delegate_to_agent \u00b7 background] {job.Id} <- {agentName} launched; it runs while you continue. " +
+                          "Track/collect with check_delegations (pass waitSeconds to block until real progress).";
+                }
                 return await ExecuteDelegation(agentName, task, "Orchestrator", restrictToSpecialists: false);
             },
             name: "delegate_to_agent",
             description: "Delegates a sub-task to a specialist agent and returns their result. " +
                          "Use this to assign work to the appropriate agent based on the task type. " +
+                         "Pass background=true to launch it detached and keep working (track with check_delegations). " +
                          Common.DelegableAgentNames()
         );
 
@@ -566,6 +581,9 @@ public static class MultiAgentOrchestrator
             LocalAiFunctions.SleepTool,
             LocalAiFunctions.MuxRefreshTool,
             LocalAiFunctions.ReadDelegationTool,
+            // Poll/WAIT on background delegations (shared with the single-agent lead;
+            // wait_job_progress semantics via waitSeconds).
+            DetachedRunner.CreateCheckDelegationsTool(),
             ..orchestratorFilteredTools
         ];
 

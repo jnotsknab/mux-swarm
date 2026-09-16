@@ -228,6 +228,13 @@ public static class PreambleBuilder
           Just call them again with the same job_id (no cursor needed) to continue. Do NOT drive these
           with system_sleep + a status poll: that wastes the wall and can miss the finish.
 
+        - Waiting on a BACKGROUND DELEGATION (a bg job id from delegate_parallel(background:true),
+          delegate_to_agent(background:true), or run_team(background:true))? Use
+          check_delegations(waitSeconds: 15-60). It BLOCKS until a watched sub-agent produces real
+          progress (a new tool call, new output, or completion) and reports only what is NEW since
+          your last read - the delegation equivalent of wait_job_progress. Never system_sleep + re-poll
+          a delegation.
+
         - system_sleep(seconds) is for the handle-LESS wait: fixed backoff between retries of an external
           API, waiting on something you did NOT start via execute_command_async (a detached service
           booting, a file expected from an out-of-band process, network/DNS settle), or a deliberate
