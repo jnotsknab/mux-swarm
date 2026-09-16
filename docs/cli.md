@@ -1,4 +1,4 @@
-# CLI and Command Reference
+﻿# CLI and Command Reference
 
 Complete reference for mux-swarm CLI flags and interactive slash commands.
 
@@ -23,7 +23,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--persist-interval <s>` | Persist session state every N seconds |
 | `--session-retention <n>` | Keep the last N sessions (default 10) |
 | `--watchdog` | External watchdog (auto-restart on crash) |
-| `--mcp-strict <bool>` | Require all MCP servers to connect (default true) |
+| `--mcp-strict <bool>` | Require ALL MCP servers to connect or exit (default false: failed servers are skipped with a warning badge; exits only if every enabled server fails). Opt in via flag or `MUXSWARM_MCP_STRICT=1` |
 | `--docker-exec <bool>` | Route execution through Docker skills |
 | `--sandbox [backend]` | Startup sandbox backend override (default argument `docker`); validated and synced to config |
 | `--agent <name>` | Pick the lead and boot into the main agentic interface (or the agent for a goal/machine run) |
@@ -44,7 +44,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--workspace <path>` / `--ws` | Set the @-file workspace root |
 | `--workflow <file>` / `--wf` | Load and run a workflow file |
 | `--serve [port]` | Embedded web UI (default 6723) |
-| `--telemetry [port]` | Standalone telemetry dashboard: all-time token/cost/turn/tool metrics with per-model, per-agent, and per-tool breakdowns (default 6725) |
+| `--telemetry [port]` | Standalone telemetry dashboard (default 6725), four tabs: Overview (persistent all-time token/cost/turn/tool metrics), plus live Metrics / Traces / Logs served from the built-in OTel stack (every `mux.*` instrument with tag breakdowns and rates, trace waterfall + step-through of turns/tool calls/responses, durable log history) - no external OTLP collector needed |
 | `--daemon` | Daemon mode (file watch, cron, status, and webhook triggers from config.json) |
 | `--update` | Self-update from the latest GitHub release, then exit |
 | `--register` / `--remove` | Register/unregister mux-swarm as an OS service |
@@ -206,7 +206,7 @@ Available at the top-level REPL.
 | `/tui` | Switch to the live full-screen TUI renderer |
 | `/resume` | Resume a previous lead-agent session; bare `/resume` in the TUI opens a fuzzy alt-screen picker (Enter resumes, `v` previews the transcript) |
 | `/history` | Browse past sessions full-screen: fuzzy find, Enter re-renders the session read-only with scroll (`j`/`k`, PgUp/PgDn, `g`/`G`) and in-view `/` search (`n`/`N` hops) |
-| `/telemetry [port\|off]` | Start/stop the standalone telemetry dashboard (default port 6725): all-time token/cost/turn/tool metrics from the persistent JSONL sink - per-model, per-agent (tokens/cost/turns/delegations), and per-tool (calls/errors) breakdowns, compaction savings, themed like the web UI |
+| `/telemetry [port\|off]` | Start/stop the standalone telemetry dashboard (default port 6725). Overview tab: all-time token/cost/turn/tool metrics from the persistent JSONL sink - per-model, per-agent, per-tool breakdowns, compaction savings. Metrics/Traces/Logs tabs: the live in-process OTel stack (all `mux.*` instruments, durable trace list with waterfall + step-through of turns, tool calls (args/results), and agent responses; log history filterable by level) - persisted as per-day JSONL under Telemetry/, works without any external OTLP collector, themed like the web UI |
 | `/attach [id]` | Re-attach a detached session |
 | `/model` | View current model assignments |
 | `/provider` | View or switch the active LLM provider |

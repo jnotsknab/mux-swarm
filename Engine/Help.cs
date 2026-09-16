@@ -181,7 +181,7 @@ public struct Help
         "  --daemon                   Start daemon mode (file watch, cron, status triggers from config.json)",
         "  --register                 Register mux-swarm as an OS service (survives reboots)",
         "  --remove                   Unregister mux-swarm OS service",
-        "  --mcp-strict <true|false>  Require all MCPs (default true)",
+        "  --mcp-strict <true|false>  Require all MCPs to connect (default false)",
         "  --docker-exec <true|false> Route exec via docker skills",
         "  --cfg <path>               Override Config.json path for scoped instance",
         "  --swarmcfg <path>          Override Swarm.json path for scoped instance",

@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using MuxSwarm.Engine;
 using MuxSwarm.Engine.Tui;
 
@@ -225,10 +225,10 @@ public class TuiDriverTests
     [Fact]
     public void SessionsPreview_FuzzyFiltersByIdAndPreview()
     {
-        var sessions = new (string, string)[]
+        var sessions = new (string, string, string?)[]
         {
-            ("2026-06-20_12-31-01", "research homelab network gear"),
-            ("2026-06-19_09-15-42", "fix the tui footer duplication"),
+            ("2026-06-20_12-31-01", "research homelab network gear", null),
+            ("2026-06-19_09-15-42", "fix the tui footer duplication", null),
         };
         var byId = TuiComponents.SessionsPreview("12-31", sessions, 80);
         Assert.Contains(byId, r => r.Contains("2026-06-20_12-31-01"));
@@ -451,6 +451,35 @@ public class TuiDriverTests
         Assert.Contains("second partial", term.Output);
 
         d.EndStream();
+    }
+
+    [Fact]
+    public void Driver_Streaming_ThrottledTail_IsFlushedByTrailingTimer()
+    {
+        // Regression (v0.14.1): tail-only chunks arriving inside the 33ms stream-paint budget
+        // were skipped by the throttle; if the provider then went quiet (bursty flush), the
+        // freshest tail NEVER painted - the user saw the first word and nothing else until the
+        // next tool call or a scroll forced a repaint. The one-shot trailing flush must land
+        // the skipped tail within ~one throttle interval, with no further chunks needed.
+        var term = new FakeTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.BeginStream();
+
+        d.StreamChunk("first ");           // BeginStream reset the budget -> this paints
+        term.Clear();
+        d.StreamChunk("word and the rest of the paragraph");   // inside 33ms -> throttled away
+        // Not painted synchronously (throttle) ...
+        Assert.DoesNotContain("paragraph", term.Output);
+        // ... the trailing flush is owed; fire it deterministically (timer thread does this live).
+        d.StreamTrailFlush();
+        Assert.Contains("paragraph", term.Output);
+
+        // After EndStream nothing further is owed: a manual flush repaints nothing new.
+        d.EndStream();
+        term.Clear();
+        d.StreamTrailFlush();
+        Assert.DoesNotContain("paragraph", term.Output);
     }
 
     [Fact]

@@ -1015,7 +1015,9 @@ public static class ParallelSwarmOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;
@@ -1080,7 +1082,7 @@ public static class ParallelSwarmOrchestrator
 
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", "Orchestrator"),
-                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                                new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1111,10 +1113,6 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            OtelMetrics.RecordTokens(
-                                "Orchestrator", _orchestratorModelId, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
-                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
-                            );
                             Telemetry.TelemetryUsageTracker.RecordCumulative(orchestratorSession, "Orchestrator", _orchestratorModelId,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
@@ -1158,6 +1156,7 @@ public static class ParallelSwarmOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(orchTurnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", "Orchestrator"));
                 Telemetry.TelemetrySink.RecordTurn("Orchestrator", _orchestratorModelId, orchTurnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse("Orchestrator", responseText.ToString());
                 OtelMetrics.OrchestratorIterations.Add(1);
             }
 
@@ -1537,7 +1536,9 @@ public static class ParallelSwarmOrchestrator
                             if (string.IsNullOrEmpty(reasoningContent.Text))
                                 continue;
 
-                            if (!currentlyStreaming)
+                            // showReasoning=none: dropped chunks must not open a stream (blanks
+                            // the live band - no spinner, no pending tool - for the whole phase).
+                            if (!currentlyStreaming && MuxConsole.WillRenderReasoning)
                             {
                                 thinking?.Dispose();
                                 thinking = null;
@@ -1622,7 +1623,7 @@ public static class ParallelSwarmOrchestrator
 
                             OtelMetrics.ToolCalls.Add(1,
                                 new KeyValuePair<string, object?>("agent", specialist.Def.Name),
-                                new KeyValuePair<string, object?>("tool", fr.CallId));
+                                new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
                             HookWorker.Enqueue(new HookEvent
                             {
@@ -1647,10 +1648,6 @@ public static class ParallelSwarmOrchestrator
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            OtelMetrics.RecordTokens(
-                                specialist.Def.Name, specialist.Agent.Id, usageContent.Details.InputTokenCount ?? 0, usageContent.Details.OutputTokenCount ?? 0,
-                                usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount
-                            );
                             Telemetry.TelemetryUsageTracker.RecordCumulative(specialist.Session, specialist.Def.Name, specialist.Agent.Id,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
@@ -1687,6 +1684,7 @@ public static class ParallelSwarmOrchestrator
                 OtelMetrics.AgentTurnDuration.Record(turnSw.ElapsedMilliseconds,
                     new KeyValuePair<string, object?>("agent", specialist.Def.Name));
                 Telemetry.TelemetrySink.RecordTurn(specialist.Def.Name, specialist.Agent.Id, turnSw.ElapsedMilliseconds);
+                Telemetry.OtelIngest.RecordResponse(specialist.Def.Name, iterResponse.ToString());
             }
 
             cancellationToken.ThrowIfCancellationRequested();

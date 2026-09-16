@@ -1,10 +1,11 @@
-using MuxSwarm.Engine;
+﻿using MuxSwarm.Engine;
 
 namespace MuxSwarm.Tests.Tests;
 
 // CostLedger backs /cost all + /tokens all. Tests run sequentially because the ledger is a
 // process-static accumulator; each test resets the session and uses a unique model id to avoid
 // cross-test bleed on the rolling (process-lifetime) totals.
+[Collection("TelemetryState")]
 public class CostLedgerTests
 {
     [Fact]

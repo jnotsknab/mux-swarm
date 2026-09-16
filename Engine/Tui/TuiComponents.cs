@@ -1251,16 +1251,18 @@ internal static class TuiComponents
     /// after the command word, and renders each match as "id  preview" (width-aware). Pure.
     /// </summary>
     /// <summary>Session ids matching <paramref name="filter"/> (id or preview), in catalog order.</summary>
-    public static List<string> RankSessions(string? filter, IReadOnlyList<(string Id, string Preview)> sessions)
+    public static List<string> RankSessions(string? filter, IReadOnlyList<(string Id, string Preview, string? Tag)> sessions)
     {
         var f = (filter ?? "").Trim().ToLowerInvariant();
         return sessions
-            .Where(se => f.Length == 0 || se.Id.ToLowerInvariant().Contains(f) || (se.Preview ?? "").ToLowerInvariant().Contains(f))
+            .Where(se => f.Length == 0 || se.Id.ToLowerInvariant().Contains(f)
+                || (se.Preview ?? "").ToLowerInvariant().Contains(f)
+                || (se.Tag ?? "").ToLowerInvariant().Contains(f))
             .Select(se => se.Id)
             .ToList();
     }
 
-    public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview)> sessions, int width, int selected = -1)
+    public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview, string? Tag)> sessions, int width, int selected = -1)
         => SessionsPreview(filter, sessions, width, selected, 0);
 
     /// <summary>
@@ -1269,7 +1271,7 @@ internal static class TuiComponents
     /// (wrapping past the end through a separator), so a slow idle-timer tick scrolls the full
     /// preview text under the cursor. Unselected rows keep the plain truncation.
     /// </summary>
-    public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview)> sessions, int width, int selected, int marqueeOffset)
+    public static List<string> SessionsPreview(string? filter, IReadOnlyList<(string Id, string Preview, string? Tag)> sessions, int width, int selected, int marqueeOffset)
     {
         var f = (filter ?? "").Trim().ToLowerInvariant();
         var rows = new List<string>();
@@ -1281,6 +1283,7 @@ internal static class TuiComponents
 
         var ids = RankSessions(filter, sessions);
         var prevOf = sessions.ToDictionary(se => se.Id, se => se.Preview, StringComparer.Ordinal);
+        var tagOf = sessions.ToDictionary(se => se.Id, se => se.Tag, StringComparer.Ordinal);
 
         rows.Add($"  [{Accent}]\u2503[/] [{Accent}]resume[/] [{Dim}]({ids.Count})[/]");
         if (ids.Count == 0)
@@ -1289,7 +1292,11 @@ internal static class TuiComponents
             return rows;
         }
 
-        int idW = ids.Max(i => i.Length);
+        // Tagged sessions surface the TAG as the primary label (timestamp id folds into the
+        // preview column as muted detail); untagged rows keep the timestamp-first layout. The
+        // label column is padded to the widest primary label so the preview column stays aligned.
+        string PrimaryOf(string id) => tagOf.GetValueOrDefault(id) is { Length: > 0 } tg ? tg : id;
+        int idW = ids.Max(i => PrimaryOf(i).Length);
         int prevBudget = Math.Max(16, Math.Max(8, width) - 6 - idW - 2);
         int start = WindowStart(ids.Count, selected);
         int end = Math.Min(ids.Count, start + PreviewWindow);
@@ -1297,13 +1304,15 @@ internal static class TuiComponents
         for (int i = start; i < end; i++)
         {
             string id = ids[i];
-            string full = CollapseWs(prevOf.GetValueOrDefault(id) ?? "");
+            string primary = PrimaryOf(id);
+            string detail = ReferenceEquals(primary, id) || primary == id ? "" : id + "  ";
+            string full = detail + CollapseWs(prevOf.GetValueOrDefault(id) ?? "");
             string oneLine = i == selected
                 ? Marquee(full, prevBudget, marqueeOffset)
                 : Trunc(full, prevBudget);
             rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(id.PadRight(idW))}[/]  [{Text}]{Esc(oneLine)}[/]"
-                : $"    [{Agent}]{Esc(id.PadRight(idW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
+                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(primary.PadRight(idW))}[/]  [{Text}]{Esc(oneLine)}[/]"
+                : $"    [{Agent}]{Esc(primary.PadRight(idW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
         }
         if (end < ids.Count) rows.Add($"    [{Dim}]\u2193 {ids.Count - end} more[/]");
         return rows;

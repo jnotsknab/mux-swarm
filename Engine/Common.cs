@@ -587,10 +587,24 @@ public static class Common
         return null;
     }
 
+    /// <summary>True when a directory holds at least one persisted session file (<c>*_session.json</c>).
+    /// Distinguishes a real session from a freshly-created checkpoint directory or a foreign folder.</summary>
+    public static bool HasSessionFile(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir, "*_session.json").Any(); }
+        catch { return false; }
+    }
+
     public static void PruneOldSessions(string sessionDir, uint retention)
     {
+        // Retention counts real SESSIONS, not bare directories. A session dir is only a candidate
+        // once it holds a persisted *_session.json: the pre-turn checkpoint creates the directory
+        // at user-submit time, and unrelated tooling drops its own folders in here (observed:
+        // PlaywrightChromeProfile), so counting directories silently evicted real sessions before
+        // their retention window was up.
         var dirs = Directory.GetDirectories(sessionDir)
             .Where(d => !Path.GetFileName(d).Equals("state", StringComparison.OrdinalIgnoreCase))
+            .Where(d => HasSessionFile(d))
             .OrderByDescending(d => d)
             .Skip((int)retention)
             .ToList();
@@ -685,7 +699,7 @@ public static class Common
         }
     }
 
-    public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp, string? existingSessionDir = null)
+    public static async Task PersistChatSessionAsync(AIAgent agent, AgentSession session, string sessionTimestamp, string? existingSessionDir = null, bool quiet = false)
     {
         try
         {
@@ -695,11 +709,20 @@ public static class Common
             Directory.CreateDirectory(sessionSubDir);
 
             var serialized = await agent.SerializeSessionAsync(session);
-            await File.WriteAllTextAsync(
-                Path.Combine(sessionSubDir, "agent_session.json"),
-                serialized.GetRawText());
+            var destination = Path.Combine(sessionSubDir, "agent_session.json");
+            // Write via temp + replace so a reader can never observe a truncated file. The whole
+            // session is rewritten on every save (~1 MB on long sessions), so a bare WriteAllText
+            // leaves a torn-read window that widens with session length - and saves now also happen
+            // at user-submit time, before the turn runs. Mirrors the temp+move discipline already
+            // used by ContinuousStateManager and ContextPruneSession. The .partial suffix keeps the
+            // in-flight file out of the "*.json" globs every session reader uses.
+            var temporary = destination + ".partial";
+            await File.WriteAllTextAsync(temporary, serialized.GetRawText());
+            File.Move(temporary, destination, overwrite: true);
 
-            MuxConsole.WriteSessionSaved($"[AGENT SESSION] Saved to {sessionSubDir}");
+            // The pre-turn checkpoint saves on every submit; announcing each one would spam the
+            // transcript, so only turn-completion saves narrate themselves.
+            if (!quiet) MuxConsole.WriteSessionSaved($"[AGENT SESSION] Saved to {sessionSubDir}");
         }
         catch (Exception ex)
         {

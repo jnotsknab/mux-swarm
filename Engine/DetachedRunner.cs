@@ -287,4 +287,196 @@ public static class DetachedRunner
         sb.Append("open the interactive viewer: /background jobs  (o reopen \u00b7 c cancel)");
         return sb.ToString();
     }
+
+    // ---- progress waiting (wait_job_progress semantics for delegations) -------------------
+
+    /// <summary>Per-job read cursor: what the lead last saw. A job has "new progress" when its
+    /// live tool-call count, activity line, output tail, or status differs from this snapshot.
+    /// Kept per PROCESS (one lead per process owns the delegation loop), reset with the jobs.</summary>
+    private sealed record ReadCursor(int ToolCalls, string LiveStatus, string Tail, DetachedStatus Status, bool ResultReported);
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ReadCursor> _cursors = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Test seam: overrides the live capture-lane lookup per job id.</summary>
+    internal static Func<DetachedJob, (int ToolCalls, string LiveStatus, string Tail)?>? LiveDetailOverrideForTests;
+
+    private static (int ToolCalls, string LiveStatus, string Tail) LiveOf(DetachedJob j)
+    {
+        if (LiveDetailOverrideForTests?.Invoke(j) is { } o) return o;
+        try
+        {
+            var live = MuxConsole.GetLiveSubAgentDetail(j.Agent);
+            if (live is { } d)
+                return (d.ToolCalls, d.LiveStatus ?? "", d.Tail ?? "");
+        }
+        catch { /* live detail is best-effort */ }
+        return (0, j.LiveActivity ?? "", j.Tail ?? "");
+    }
+
+    private static bool HasNewProgress(DetachedJob j)
+    {
+        if (!_cursors.TryGetValue(j.Id, out var c))
+            return true;   // never read -> everything is new
+        if (j.Status != c.Status) return true;
+        if (j.Status != DetachedStatus.Running) return !c.ResultReported;
+        // Running: only DISCRETE events wake a waiter - a new tool call landing or a status
+        // transition. Streamed prose churns the tail/activity text continuously (sub-agents
+        // stream, unlike shell jobs), so text deltas are deliberately NOT wake triggers: they
+        // would turn every wait into a ~2s wake spam. The freshest tail/activity still rides
+        // along in the report whenever a real event fires.
+        var (tc, _, _) = LiveOf(j);
+        return tc > c.ToolCalls;
+    }
+
+    private static void CommitCursor(DetachedJob j)
+    {
+        var (tc, status, tail) = LiveOf(j);
+        bool reported = j.Status != DetachedStatus.Running;
+        _cursors[j.Id] = new ReadCursor(tc, status, tail, j.Status, reported);
+    }
+
+    /// <summary>
+    /// Block up to <paramref name="waitSeconds"/> for NEW progress on the watched jobs (all
+    /// running jobs, or one by id): a live tool call landing, the activity line or output tail
+    /// changing, or a job reaching a terminal state. Returns the ids that changed (empty on
+    /// timeout). Polls every 250ms; returns immediately when something is already unread.
+    /// Cancellation (Esc / turn cancel) propagates.
+    /// </summary>
+    internal static async Task<List<string>> WaitForProgressAsync(string? jobId, int waitSeconds, CancellationToken ct)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(Math.Clamp(waitSeconds, 0, 600));
+        while (true)
+        {
+            ct.ThrowIfCancellationRequested();
+            var jobs = Jobs();
+            if (!string.IsNullOrWhiteSpace(jobId))
+                jobs = jobs.Where(j => j.Id.Equals(jobId.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+            var changed = jobs.Where(HasNewProgress).Select(j => j.Id).ToList();
+            if (changed.Count > 0) return changed;
+            if (jobs.All(j => j.Status != DetachedStatus.Running)) return changed;   // nothing left to wait on
+            if (DateTimeOffset.UtcNow >= deadline) return changed;
+            await Task.Delay(250, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>Reset jobs + read cursors (test isolation).</summary>
+    internal static void ResetForTests()
+    {
+        lock (_gate) { _jobs.Clear(); _seq = 0; }
+        _cursors.Clear();
+        LiveDetailOverrideForTests = null;
+    }
+
+    /// <summary>Register a fabricated job (test seam; no task attached).</summary>
+    internal static DetachedJob InjectJobForTests(string agent, DetachedStatus status, string? result = null)
+    {
+        DetachedJob job;
+        lock (_gate)
+        {
+            job = new DetachedJob { Id = $"bg{++_seq}", Agent = agent, Goal = "test goal", Status = status, Result = result };
+            _jobs.Add(job);
+        }
+        return job;
+    }
+
+    /// <summary>
+    /// Render the check_delegations report for the given jobs. <paramref name="deltaOnly"/>
+    /// (wait mode) reports just the jobs in <paramref name="changedIds"/> so a waiting lead
+    /// reads only what is NEW since its last look; snapshot mode keeps the full listing.
+    /// Commits read cursors for everything reported.
+    /// </summary>
+    internal static string RenderCheckReport(string? jobId, IReadOnlyList<string>? changedIds, bool waited, int waitedSeconds)
+    {
+        var jobs = Jobs();
+        if (!string.IsNullOrWhiteSpace(jobId))
+            jobs = jobs.Where(j => j.Id.Equals(jobId.Trim(), StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (jobs.Count == 0)
+            return string.IsNullOrWhiteSpace(jobId)
+                ? "[check_delegations] No background jobs. Launch some with delegate_parallel(background:true)."
+                : $"[check_delegations] No background job with id '{jobId}'.";
+
+        bool deltaOnly = waited && changedIds is { Count: > 0 };
+        var report = deltaOnly ? jobs.Where(j => changedIds!.Contains(j.Id, StringComparer.OrdinalIgnoreCase)).ToList() : jobs;
+
+        var sb = new System.Text.StringBuilder();
+        int running = jobs.Count(j => j.Status == DetachedStatus.Running);
+        if (waited)
+            sb.AppendLine(changedIds is { Count: > 0 }
+                ? $"[check_delegations] NEW progress on {changedIds.Count} job(s) (waited; {running} running total)."
+                : $"[check_delegations] No new progress within {waitedSeconds}s ({running} running). Wait again or keep working.");
+        else
+            sb.AppendLine($"[check_delegations] {jobs.Count} job(s), {running} still running.");
+
+        foreach (var j in report)
+        {
+            bool alreadyCollected = _cursors.TryGetValue(j.Id, out var cur)
+                && j.Status != DetachedStatus.Running && cur.ResultReported && cur.Status == j.Status;
+            if (j.Status == DetachedStatus.Running)
+            {
+                var elapsed = DateTimeOffset.UtcNow - j.Started;
+                var (tc, liveStatus, tail) = LiveOf(j);
+                string detail = liveStatus.Length > 0 ? $" \u2014 {liveStatus} (tools: {tc})" : "";
+                string tailTxt = tail.Length > 0 ? $"\n    tail: {tail}" : "";
+                sb.AppendLine($"- {j.Id} [{j.Agent}] Running ({(int)elapsed.TotalSeconds}s){detail}{tailTxt}");
+            }
+            else if (alreadyCollected)
+            {
+                // Result already delivered on a prior read: one line, no re-dump.
+                sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status} (result already collected{(string.IsNullOrWhiteSpace(j.Handle) ? "" : $"; re-read via {j.Handle}")})");
+            }
+            else
+            {
+                sb.AppendLine($"- {j.Id} [{j.Agent}] {j.Status}");
+                if (!string.IsNullOrWhiteSpace(j.Result))
+                {
+                    if (!string.IsNullOrWhiteSpace(j.Handle))
+                    {
+                        var tailTxt = j.Result!.Length > 240 ? "\u2026" + j.Result[^240..] : j.Result;
+                        sb.AppendLine($"  result: {j.Result.Length} chars spilled as {j.Handle} (read with read_delegation). tail: {tailTxt}");
+                    }
+                    else
+                    {
+                        var r = j.Result!.Length > 4000 ? j.Result[..4000] + "\n... (truncated)" : j.Result;
+                        sb.AppendLine($"  result:\n{r}");
+                    }
+                }
+            }
+            CommitCursor(j);
+        }
+
+        if (running > 0)
+            sb.AppendLine("Jobs still running: call check_delegations with waitSeconds (e.g. 30) to BLOCK until real progress instead of sleeping/polling.");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The shared check_delegations tool (single-agent leads, giga leads, and the swarm
+    /// orchestrator all grant this same instance's factory output). waitSeconds=0 preserves the
+    /// classic instant snapshot; &gt;0 blocks until new progress / a terminal state / timeout,
+    /// reporting only what changed since the lead's last read - wait_job_progress semantics for
+    /// sub-agents, so leads never burn turns on system_sleep + re-poll loops.
+    /// </summary>
+    public static Microsoft.Extensions.AI.AIFunction CreateCheckDelegationsTool()
+        => Microsoft.Extensions.AI.AIFunctionFactory.Create(
+            method: async (
+                [System.ComponentModel.Description("Optional job id (e.g. bg3) to check/wait on just one; omit for ALL background jobs.")]
+                string? jobId = null,
+                [System.ComponentModel.Description("Seconds to BLOCK waiting for new progress (default 0 = instant snapshot). When >0, returns EARLY the moment any watched job produces a new tool call / activity / output or finishes - strictly better than system_sleep + re-poll. Use 15-60.")]
+                int waitSeconds = 0
+            ) =>
+            {
+                if (waitSeconds <= 0)
+                    return RenderCheckReport(jobId, changedIds: null, waited: false, waitedSeconds: 0);
+                var changed = await WaitForProgressAsync(jobId, waitSeconds, ExecutionCancellation.Current).ConfigureAwait(false);
+                return RenderCheckReport(jobId, changed, waited: true, waitedSeconds: waitSeconds);
+            },
+            name: "check_delegations",
+            description: "Poll OR WAIT ON background delegations launched via delegate_parallel(background:true) (and /background jobs). " +
+                         "Pass a job id to target one, or omit for all. Default (waitSeconds=0) returns an instant snapshot: elapsed, live activity, " +
+                         "tool-call count, and a short output tail per running job; finished jobs return results inline when small or as a d:Agent#N " +
+                         "handle for read_delegation when large. PREFER waitSeconds>0 while waiting on sub-agents: it BLOCKS until a DISCRETE event " +
+                         "(a new tool call landing or the job finishing; streamed prose alone does not wake - the latest tail rides along in the report) " +
+                         "and returns only what is NEW since your last read - never use system_sleep to wait on delegations.");
 }

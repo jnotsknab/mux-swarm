@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 
 namespace MuxSwarm.Engine.Tui;
 
@@ -18,7 +18,7 @@ internal sealed class HistoryView
     internal const int MinHeight = 8;
     private const int MaxQueryLength = 256;
 
-    private readonly List<(string Id, string Preview)> _sessions;
+    private readonly List<(string Id, string Preview, string? Tag)> _sessions;
     private readonly bool _resumePicker;
     private List<int> _matches;
     private int _index;
@@ -37,7 +37,7 @@ internal sealed class HistoryView
     private readonly List<int> _hits = new();
     private int _hit = -1;
 
-    internal HistoryView(IReadOnlyList<(string Id, string Preview)> sessions, bool resumePicker = false)
+    internal HistoryView(IReadOnlyList<(string Id, string Preview, string? Tag)> sessions, bool resumePicker = false)
     {
         _sessions = sessions.ToList();
         _resumePicker = resumePicker;
@@ -61,7 +61,9 @@ internal sealed class HistoryView
             .Where(i => q.Length == 0
                 || _sessions[i].Id.ToLowerInvariant().Contains(q)
                 || (_sessions[i].Preview ?? "").ToLowerInvariant().Contains(q)
-                || IsSubsequence(q, _sessions[i].Id.ToLowerInvariant()))
+                || (_sessions[i].Tag ?? "").ToLowerInvariant().Contains(q)
+                || IsSubsequence(q, _sessions[i].Id.ToLowerInvariant())
+                || IsSubsequence(q, (_sessions[i].Tag ?? "").ToLowerInvariant()))
             .ToList();
         _index = 0;
     }
@@ -349,14 +351,18 @@ internal sealed class HistoryView
             rows.Add($"[{TuiComponents.Muted}] {(_sessions.Count == 0 ? "No saved sessions." : "No matches. Backspace or Ctrl+U clears the filter.")}[/]");
         for (int i = start; i < Math.Min(_matches.Count, start + listRoom); i++)
         {
-            var (id, preview) = _sessions[_matches[i]];
+            var (id, preview, tag) = _sessions[_matches[i]];
+            // Tagged sessions: the tag IS the name; the timestamp id demotes to muted detail.
+            // Untagged sessions keep the timestamp-first layout.
+            string primary = string.IsNullOrEmpty(tag) ? id : tag;
+            string detail = string.IsNullOrEmpty(tag) ? "" : id + "  ";
             string one = TuiMarkup.TruncatePlain(
-                System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim(),
-                Math.Max(8, width - id.Length - 6));
+                detail + System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim(),
+                Math.Max(8, width - primary.Length - 6));
             hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
             rows.Add(i == _index
-                ? $"[{TuiComponents.Accent}]›[/] [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(id)}[/]  [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(one)}[/]"
-                : $"  [{TuiComponents.Agent}]{Spectre.Console.Markup.Escape(id)}[/]  [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(one)}[/]");
+                ? $"[{TuiComponents.Accent}]›[/] [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(primary)}[/]  [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(one)}[/]"
+                : $"  [{TuiComponents.Agent}]{Spectre.Console.Markup.Escape(primary)}[/]  [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(one)}[/]");
         }
         while (rows.Count < height - 2) rows.Add("");
         rows.Add($"[{TuiComponents.Accent}] {(_resumePicker ? "Enter resume · v preview" : "Enter open")} · ↑↓/PgUp/PgDn navigate[/]");

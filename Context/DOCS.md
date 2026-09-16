@@ -1122,7 +1122,7 @@ The three-layer resilience stack: `--register` (OS ensures process starts) + `--
 
 Launch with `mux-swarm --serve` (default port 6723) or `mux-swarm --serve 8080` for a custom port.
 
-Binds to all interfaces (0.0.0.0). Accessible on LAN, Tailscale, or any network the host is connected to at `http://<host-ip>:<port>`.
+Binds to loopback (`127.0.0.1`) by default, so it is reachable only from the host machine. Set `serveAddress` to `0.0.0.0` to expose it on LAN/Tailscale (`http://<host-ip>:<port>`); pair that with `serve.auth` and your own perimeter.
 
 Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (Zinc, Light, Ocean, Matrix), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
 
@@ -1293,7 +1293,7 @@ Daemon-specific hook events emitted automatically:
 ## Security Recommendations
 
 - Keep `allowedPaths` minimal and purpose-specific
-- Keep `--mcp-strict` enabled (default) so startup fails if required integrations are unavailable
+- Enable `--mcp-strict` (default is non-strict since v0.14.1) so startup fails if required integrations are unavailable
 - Use environment variables for all credentials, never put secrets in config files
 - Scope MCP servers narrowly per agent role via `mcpServers` in swarm.json
 - Route execution-heavy tasks through Docker when possible (`/dockerexec`)
