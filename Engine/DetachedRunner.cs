@@ -452,7 +452,7 @@ public static class DetachedRunner
         => Microsoft.Extensions.AI.AIFunctionFactory.Create(
             method: async (
                 [System.ComponentModel.Description("Optional job id (e.g. bg3) to check/wait on just one; omit for ALL background jobs.")]
-                string? jobId,
+                string? jobId = null,
                 [System.ComponentModel.Description("Seconds to BLOCK waiting for new progress (default 0 = instant snapshot). When >0, returns EARLY the moment any watched job produces a new tool call / activity / output or finishes - strictly better than system_sleep + re-poll. Use 15-60.")]
                 int waitSeconds = 0
             ) =>
