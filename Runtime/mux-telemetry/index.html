@@ -56,6 +56,9 @@ td.name { font-family:var(--font-sans); }
 .tabpane { display:none; }
 .tabpane.active { display:grid; gap:1rem; }
 #metricsGroups { display:grid; gap:1rem; }
+#metricsGroups table { table-layout:fixed; }
+#metricsGroups td { overflow:hidden; text-overflow:ellipsis; }
+#metricsGroups td:last-child { white-space:normal; }
 .subnote { color:var(--muted); font-size:.75rem; }
 .chip { display:inline-block; background:var(--bg-input); border:1px solid var(--border); border-radius:.35rem; padding:.1rem .45rem; margin:.1rem .25rem .1rem 0; font-family:var(--font-mono); font-size:.7rem; color:var(--muted); }
 .tagrow td { padding:.15rem .5rem .45rem; }
@@ -339,6 +342,7 @@ function renderMetrics() {
     const insts = byGroup.get(label);
     if (!insts || !insts.length || html.includes('>' + label + '<')) continue;
     html += '<div class="card"><h2>' + label + '</h2><table>'
+      + '<colgroup><col style="width:30%"><col style="width:11%"><col style="width:8%"><col style="width:8%"><col style="width:43%"></colgroup>'
       + '<tr><th>Instrument</th><th>Value</th><th>1m</th><th>5m</th><th>Detail</th></tr>'
       + insts.map(i => {
           const grey = i.recorded ? '' : ' style="opacity:.4"';
