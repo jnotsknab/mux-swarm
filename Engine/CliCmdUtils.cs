@@ -789,9 +789,10 @@ public static class CliCmdUtils
         var lines = string.Join("\n", sessionDirs.Select((d, i) =>
         {
             var timestamp = Path.GetFileName(d);
-            var file = Directory.GetFiles(d, "*.json").First();
-            var size = new FileInfo(file).Length;
-            var preview = Common.GetFirstUserMessage(file);
+            // A checkpointed-but-not-yet-written session has no file; render it rather than throw.
+            var file = Directory.GetFiles(d, "*.json").FirstOrDefault();
+            var size = file is null ? 0L : new FileInfo(file).Length;
+            var preview = file is null ? "" : Common.GetFirstUserMessage(file);
             // Collapse embedded newlines/runs of whitespace so a multi-line first message stays a
             // single list row (otherwise it splits into stray dot-prefixed orphan rows).
             preview = System.Text.RegularExpressions.Regex.Replace(preview ?? "", @"\s+", " ").Trim();
@@ -832,7 +833,16 @@ public static class CliCmdUtils
     /// <summary>Load a session's persisted state from its directory for resume.</summary>
     private static (JsonElement data, string sessionDir)? LoadResumeSession(string selectedDir)
     {
-        var sessionFile = Directory.GetFiles(selectedDir, "*.json").First();
+        // FirstOrDefault + explicit guard: a session directory can legitimately exist with no
+        // persisted file yet (the pre-turn checkpoint creates it at user-submit time, and the
+        // write itself is temp+rename). .First() threw InvalidOperationException here, and it sat
+        // OUTSIDE the try below, so it escaped as an unhandled crash on resume.
+        var sessionFile = Directory.GetFiles(selectedDir, "*.json").FirstOrDefault();
+        if (sessionFile is null)
+        {
+            MuxConsole.WriteWarning($"Session '{Path.GetFileName(selectedDir)}' has no saved state yet.");
+            return null;
+        }
 
         try
         {

@@ -1856,6 +1856,51 @@ public static class SingleAgentOrchestrator
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
+            // Pre-turn checkpoint: persist the session the moment the user submits, BEFORE the model
+            // call. Previously the first write happened only after a turn completed, so a brand-new
+            // session had nothing on disk (no directory at all) until the first response returned -
+            // a crash, kill, or hard exit during turn 1 lost the exchange entirely.
+            //
+            // The framework commits the run's messages to the session itself when the turn succeeds,
+            // so the goal is added, serialized, and then REMOVED again: the checkpoint captures the
+            // user message durably without leaving a duplicate for the framework to commit on top of.
+            // Snapshot-and-restore (rather than a trailing RemoveAt) keeps the session's own history
+            // object identical to what it was, which ContextPruneSession's ownership check requires.
+            if (persistSession)
+            {
+                // A BRAND-NEW session exposes no history yet (TryGet returns false and it serializes
+                // as an empty stateBag), which is precisely the first-turn case this checkpoint
+                // exists to protect - so fall back to an empty list and set unconditionally rather
+                // than skipping. hadHistory records whether the provider existed, so the restore
+                // below puts the session back exactly as it was found.
+                bool hadHistory = session.TryGetInMemoryChatHistory(out var checkpointHistory) && checkpointHistory is not null;
+                List<ChatMessage>? checkpointRestore = hadHistory ? checkpointHistory!.ToList() : null;
+                try
+                {
+                    var pending = hadHistory ? checkpointHistory! : new List<ChatMessage>();
+                    pending.Add(new ChatMessage(ChatRole.User, currentGoal));
+                    session.SetInMemoryChatHistory(pending);
+                    await Common.PersistChatSessionAsync(
+                        agent,
+                        session,
+                        sessionTimestamp,
+                        Common.FindSessionDirectory(sessionTimestamp),
+                        quiet: true);
+                }
+                catch (Exception ex)
+                {
+                    // A checkpoint is best-effort durability; never let it take down the turn.
+                    MuxConsole.WriteWarning($"[AGENT SESSION] Checkpoint failed: {ex.Message}");
+                }
+                finally
+                {
+                    // Restore what was there before: the prior history, or an empty history for a
+                    // session that had none, so the framework's own commit is the only writer of
+                    // this turn's messages and the goal cannot be duplicated.
+                    session.SetInMemoryChatHistory(checkpointRestore ?? new List<ChatMessage>());
+                }
+            }
+
             // Deep memory: this turn's goal is the relevance query for injection, and a new turn is
             // activity the background gatherer should reflect on. No-ops in standard mode.
             ReflectionInjector.CurrentQuery = currentGoal;
@@ -2347,13 +2392,13 @@ public static class SingleAgentOrchestrator
                 escapeListener.Dispose();
             }
 
-            cancellationToken.ThrowIfCancellationRequested();
-
-            if (wasInterrupted)
-                MuxConsole.WriteInfo("Ready for next input.");
-
+            // Persist BEFORE honouring an outer cancellation. The turn-scoped catch above rebuilds
+            // the interrupted exchange into the session's history, but an OUTER-token cancel
+            // (/qc, /qm, Ctrl+C) used to rethrow here - above the persist block - and discard that
+            // reconstruction along with the completed turn. Saving first makes every exit path
+            // durable; the throw still unwinds immediately afterwards.
             bool shouldPersist = persistSession;
-            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted)
+            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted && !cancellationToken.IsCancellationRequested)
                 shouldPersist = (DateTime.UtcNow - lastPersistTime).TotalSeconds >= persistIntervalSeconds;
 
             if (shouldPersist)
@@ -2362,10 +2407,15 @@ public static class SingleAgentOrchestrator
                     agent,
                     session,
                     sessionTimestamp,
-                    resumedSession.HasValue ? Common.FindSessionDirectory(sessionTimestamp) : null);
+                    Common.FindSessionDirectory(sessionTimestamp));
 
                 lastPersistTime = DateTime.UtcNow;
             }
+
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (wasInterrupted)
+                MuxConsole.WriteInfo("Ready for next input.");
 
             // In TUI mode the docked footer already shows live token usage, so skip this
             // redundant per-turn line; classic mode keeps it.
