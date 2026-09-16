@@ -19,7 +19,7 @@ namespace MuxSwarm;
 
 public class App
 {
-    public static readonly string Version = "0.13.2";
+    public static readonly string Version = "0.14.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     

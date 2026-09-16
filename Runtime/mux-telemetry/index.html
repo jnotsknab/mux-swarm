@@ -15,6 +15,13 @@
   --radius: .5rem;
 }
 * { box-sizing: border-box; margin: 0; }
+/* Thin themed scrollbars everywhere - never default browser chrome (page, tables, payload boxes). */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+*:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
+*::-webkit-scrollbar-button { display: none; }
 body { background: var(--bg); color: var(--text); font-family: var(--font-sans); min-height: 100vh; }
 header { display:flex; align-items:center; gap:.75rem; padding:.9rem 1.25rem; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:5; }
 header h1 { font-size:1rem; font-weight:600; letter-spacing:.02em; }
