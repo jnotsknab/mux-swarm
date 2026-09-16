@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mux-Swarm - Telemetry</title>
+<style>
+:root {
+  --bg: #09090b; --bg-card: rgba(24,24,27,.6); --bg-input: rgba(39,39,42,.5);
+  --border: rgba(63,63,70,.4); --text: #fafafa; --muted: #a1a1aa;
+  --blue: #3b82f6; --green: #10b981; --amber: #f59e0b; --red: #ef4444;
+  --agent: #8b5cf6; --accent: #64B4DC; --accent-rgb: 100,180,220;
+  --font-mono: 'JetBrains Mono','Cascadia Code','Fira Code',monospace;
+  --font-sans: 'IBM Plex Sans',-apple-system,sans-serif;
+  --radius: .5rem;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font-sans); min-height: 100vh; }
+header { display:flex; align-items:center; gap:.75rem; padding:.9rem 1.25rem; border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:5; }
+header h1 { font-size:1rem; font-weight:600; letter-spacing:.02em; }
+header .dot { width:.55rem; height:.55rem; border-radius:50%; background:var(--accent); box-shadow:0 0 8px rgba(var(--accent-rgb),.8); }
+header .spacer { flex:1; }
+.range-group { display:flex; gap:.25rem; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius); padding:.2rem; }
+.range-btn { background:none; border:none; color:var(--muted); font:inherit; font-size:.8rem; padding:.3rem .7rem; border-radius:calc(var(--radius) - .2rem); cursor:pointer; }
+.range-btn.active { background:rgba(var(--accent-rgb),.18); color:var(--accent); }
+.icon-btn { background:var(--bg-input); border:1px solid var(--border); color:var(--muted); border-radius:var(--radius); width:2rem; height:2rem; cursor:pointer; display:grid; place-items:center; }
+.icon-btn:hover { color:var(--text); }
+main { max-width: 1180px; margin: 0 auto; padding: 1.25rem; }
+.tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:.75rem; }
+.tile { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding: .85rem 1rem; }
+.tile .label { font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.tile .value { font-family:var(--font-mono); font-size:1.35rem; margin-top:.3rem; }
+.tile .sub { font-size:.72rem; color:var(--muted); margin-top:.15rem; }
+.card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:1rem; }
+.card h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:.75rem; }
+canvas { width:100%; height:220px; display:block; }
+table { width:100%; border-collapse:collapse; font-size:.85rem; }
+th { text-align:left; color:var(--muted); font-weight:500; font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; padding:.4rem .5rem; border-bottom:1px solid var(--border); }
+td { padding:.45rem .5rem; border-bottom:1px solid var(--border); font-family:var(--font-mono); font-size:.8rem; }
+td.name { font-family:var(--font-sans); }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+@media (max-width: 860px) { .grid2 { grid-template-columns:1fr; } }
+.empty { color:var(--muted); font-size:.85rem; padding:.75rem .25rem; }
+/* Settings popover - mirrors the web UI settings panel + theme picker conventions. */
+.settings-pop { position:fixed; top:3.4rem; right:1.25rem; width:260px; background:var(--bg-card); backdrop-filter:blur(12px); border:1px solid var(--border); border-radius:var(--radius); padding:1rem; display:none; z-index:10; }
+.settings-pop.open { display:block; }
+.settings-pop h3 { font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:.6rem; }
+.theme-presets { display:flex; flex-wrap:wrap; gap:.45rem; }
+.theme-preset-btn { display:flex; align-items:center; gap:.4rem; background:var(--bg-input); border:1px solid var(--border); color:var(--muted); border-radius:var(--radius); padding:.3rem .6rem; font:inherit; font-size:.78rem; cursor:pointer; }
+.theme-preset-btn.active { color:var(--text); border-color:rgba(var(--accent-rgb),.6); }
+.theme-preset-btn .dot { width:.6rem; height:.6rem; border-radius:50%; border:1px solid var(--border); }
+/* Tabs (Overview / Metrics / Traces / Logs) - same visual language as the range group. */
+.tab-group { display:flex; gap:.25rem; background:var(--bg-input); border:1px solid var(--border); border-radius:var(--radius); padding:.2rem; }
+.tab-btn { background:none; border:none; color:var(--muted); font:inherit; font-size:.8rem; padding:.3rem .7rem; border-radius:calc(var(--radius) - .2rem); cursor:pointer; }
+.tab-btn.active { background:rgba(var(--accent-rgb),.18); color:var(--accent); }
+.tabpane { display:none; }
+.tabpane.active { display:grid; gap:1rem; }
+#metricsGroups { display:grid; gap:1rem; }
+.subnote { color:var(--muted); font-size:.75rem; }
+.chip { display:inline-block; background:var(--bg-input); border:1px solid var(--border); border-radius:.35rem; padding:.1rem .45rem; margin:.1rem .25rem .1rem 0; font-family:var(--font-mono); font-size:.7rem; color:var(--muted); }
+.tagrow td { padding:.15rem .5rem .45rem; }
+.filters { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.75rem; }
+.filters select, .filters input { background:var(--bg-input); border:1px solid var(--border); color:var(--text); border-radius:var(--radius); padding:.35rem .5rem; font:inherit; font-size:.8rem; }
+.lvl { font-family:var(--font-mono); font-size:.72rem; text-transform:uppercase; }
+.lvl-info { color:var(--blue); } .lvl-warn { color:var(--amber); } .lvl-error { color:var(--red); }
+td.msg { font-family:var(--font-sans); font-size:.82rem; white-space:pre-wrap; word-break:break-word; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot"></span>
+  <h1>Mux-Swarm Telemetry</h1>
+  <div class="tab-group" id="tabs">
+    <button class="tab-btn active" data-tab="overview">Overview</button>
+    <button class="tab-btn" data-tab="metrics">Metrics</button>
+    <button class="tab-btn" data-tab="traces">Traces</button>
+    <button class="tab-btn" data-tab="logs">Logs</button>
+  </div>
+  <span class="spacer"></span>
+  <div class="range-group" id="ranges">
+    <button class="range-btn" data-range="24h">24h</button>
+    <button class="range-btn" data-range="7d">7d</button>
+    <button class="range-btn" data-range="30d">30d</button>
+    <button class="range-btn active" data-range="all">All</button>
+  </div>
+  <button class="icon-btn" id="settingsBtn" title="Theme">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v3m0 16v3M4.2 4.2l2.1 2.1m11.4 11.4 2.1 2.1M1 12h3m16 0h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+  </button>
+</header>
+<div class="settings-pop" id="settingsPop">
+  <h3>Theme</h3>
+  <div class="theme-presets" id="themePresets"></div>
+</div>
+<main>
+  <div class="tabpane active" id="tab-overview">
+    <div class="tiles" id="tiles"></div>
+    <div class="card"><h2>Tokens over time</h2><canvas id="tokChart"></canvas></div>
+    <div class="grid2">
+      <div class="card"><h2>Estimated cost over time</h2><canvas id="costChart"></canvas></div>
+      <div class="card"><h2>Tool calls over time</h2><canvas id="toolChart"></canvas></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>By model</h2><div id="modelTable"></div></div>
+      <div class="card"><h2>By agent</h2><div id="agentTable"></div></div>
+    </div>
+    <div class="card"><h2>By tool</h2><div id="toolTable"></div></div>
+  </div>
+  <div class="tabpane" id="tab-metrics">
+    <div class="subnote" id="metricsSince">Live in-process metrics.</div>
+    <div id="metricsGroups"></div>
+  </div>
+  <div class="tabpane" id="tab-traces">
+    <div class="card">
+      <div class="filters">
+        <select id="traceName">
+          <option value="">All spans</option>
+          <option>runtime_startup</option><option>agent_session</option><option>swarm_session</option>
+          <option>orchestrator_turn</option><option>agent_turn</option><option>delegation</option>
+          <option>tool_call</option><option>compaction</option>
+        </select>
+        <input id="traceAgent" type="text" placeholder="Filter by agent...">
+        <span class="subnote" id="traceCount"></span>
+      </div>
+      <div id="traceTable"></div>
+    </div>
+  </div>
+  <div class="tabpane" id="tab-logs">
+    <div class="card">
+      <div class="filters">
+        <select id="logLevel">
+          <option value="">All levels</option>
+          <option value="info">Info</option><option value="warn">Warn</option><option value="error">Error</option>
+        </select>
+        <span class="subnote" id="logCount"></span>
+      </div>
+      <div id="logTable"></div>
+    </div>
+  </div>
+</main>
+<script>
+// Theme presets: same ids/palettes as the main web UI so the choice feels continuous.
+const themes = [
+  { id:'zinc', name:'Zinc', dot:'#09090b', vars:{ '--bg':'#09090b','--bg-card':'rgba(24,24,27,.6)','--bg-input':'rgba(39,39,42,.5)','--border':'rgba(63,63,70,.4)','--text':'#fafafa','--muted':'#a1a1aa','--accent':'#64B4DC','--accent-rgb':'100,180,220','--green':'#10b981','--blue':'#3b82f6','--amber':'#f59e0b','--red':'#ef4444','--agent':'#8b5cf6' } },
+  { id:'light', name:'Light', dot:'#f4f4f5', vars:{ '--bg':'#f4f4f5','--bg-card':'rgba(255,255,255,.8)','--bg-input':'rgba(255,255,255,.9)','--border':'rgba(228,228,231,.8)','--text':'#18181b','--muted':'#71717a','--accent':'#0284c7','--accent-rgb':'2,132,199','--green':'#059669','--blue':'#2563eb','--amber':'#d97706','--red':'#dc2626','--agent':'#7c3aed' } },
+  { id:'ocean', name:'Ocean', dot:'#0f172a', vars:{ '--bg':'#0f172a','--bg-card':'rgba(30,41,59,.6)','--bg-input':'rgba(51,65,85,.5)','--border':'rgba(71,85,105,.4)','--text':'#f8fafc','--muted':'#94a3b8','--accent':'#2dd4bf','--accent-rgb':'45,212,191','--green':'#34d399','--blue':'#38bdf8','--amber':'#fbbf24','--red':'#f87171','--agent':'#a78bfa' } },
+  { id:'matrix', name:'Matrix', dot:'#000000', vars:{ '--bg':'#000000','--bg-card':'rgba(0,20,0,.6)','--bg-input':'rgba(0,40,0,.5)','--border':'rgba(0,80,0,.4)','--text':'#4ade80','--muted':'#22c55e','--accent':'#22c55e','--accent-rgb':'34,197,94','--green':'#86efac','--blue':'#4ade80','--amber':'#facc15','--red':'#ef4444','--agent':'#4ade80' } },
+  { id:'mocha', name:'Mocha', dot:'#1e1e2e', vars:{ '--bg':'#1e1e2e','--bg-card':'rgba(49,50,68,.6)','--bg-input':'rgba(69,71,90,.5)','--border':'rgba(88,91,112,.4)','--text':'#cdd6f4','--muted':'#a6adc8','--accent':'#cba6f7','--accent-rgb':'203,166,247','--green':'#a6e3a1','--blue':'#89b4fa','--amber':'#f9e2af','--red':'#f38ba8','--agent':'#cba6f7' } },
+];
+let themeId = localStorage.getItem('muxTelemetryTheme') || 'zinc';
+function applyTheme() {
+  const t = themes.find(x => x.id === themeId) || themes[0];
+  for (const [k, v] of Object.entries(t.vars)) document.documentElement.style.setProperty(k, v);
+  document.querySelectorAll('.theme-preset-btn').forEach(b => b.classList.toggle('active', b.dataset.id === themeId));
+  draw();
+}
+const presetsEl = document.getElementById('themePresets');
+for (const t of themes) {
+  const btn = document.createElement('button');
+  btn.className = 'theme-preset-btn'; btn.dataset.id = t.id;
+  btn.innerHTML = `<span class="dot" style="background:${t.dot}"></span>${t.name}`;
+  btn.onclick = () => { themeId = t.id; localStorage.setItem('muxTelemetryTheme', themeId); applyTheme(); };
+  presetsEl.appendChild(btn);
+}
+document.getElementById('settingsBtn').onclick = () => document.getElementById('settingsPop').classList.toggle('open');
+document.addEventListener('click', e => {
+  const pop = document.getElementById('settingsPop');
+  if (pop.classList.contains('open') && !pop.contains(e.target) && e.target.closest('#settingsBtn') === null)
+    pop.classList.remove('open');
+});
+
+let range = 'all';
+let tab = 'overview';
+let series = [], summary = null, models = [], agents = [], tools = [];
+let otelMetrics = null, otelTraces = null, otelLogs = null;
+document.getElementById('ranges').addEventListener('click', e => {
+  const btn = e.target.closest('.range-btn'); if (!btn) return;
+  range = btn.dataset.range;
+  document.querySelectorAll('.range-btn').forEach(b => b.classList.toggle('active', b === btn));
+  refresh();
+});
+document.getElementById('tabs').addEventListener('click', e => {
+  const btn = e.target.closest('.tab-btn'); if (!btn) return;
+  tab = btn.dataset.tab;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
+  document.querySelectorAll('.tabpane').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+  // Range applies to the Overview (persistent) plane; the OTel tabs are process-lifetime.
+  document.getElementById('ranges').style.visibility = tab === 'overview' ? 'visible' : 'hidden';
+  refresh();
+});
+document.getElementById('traceName').addEventListener('change', refresh);
+document.getElementById('traceAgent').addEventListener('input', () => { clearTimeout(window._tdb); window._tdb = setTimeout(refresh, 300); });
+document.getElementById('logLevel').addEventListener('change', refresh);
+
+const fmt = n => n >= 1e9 ? (n/1e9).toFixed(2)+'B' : n >= 1e6 ? (n/1e6).toFixed(2)+'M' : n >= 1e3 ? (n/1e3).toFixed(1)+'k' : String(n);
+const money = n => '$' + (n >= 100 ? n.toFixed(0) : n >= 1 ? n.toFixed(2) : n.toFixed(4));
+
+async function refresh() {
+  try {
+    if (tab === 'overview') {
+      const q = range === 'all' ? '' : ('?range=' + range);
+      [summary, series, modelsResp, tools] = await Promise.all([
+        fetch('/api/telemetry/summary' + q).then(r => r.json()),
+        fetch('/api/telemetry/series' + q).then(r => r.json()),
+        fetch('/api/telemetry/models' + q).then(r => r.json()),
+        fetch('/api/telemetry/tools' + q).then(r => r.json()),
+      ]);
+      models = modelsResp.models || []; agents = modelsResp.agents || []; tools = tools || [];
+      renderTiles(); renderTables(); draw();
+    } else if (tab === 'metrics') {
+      otelMetrics = await fetch('/api/telemetry/otel/metrics').then(r => r.json());
+      renderMetrics();
+    } else if (tab === 'traces') {
+      const p = new URLSearchParams();
+      const n = document.getElementById('traceName').value; if (n) p.set('name', n);
+      const a = document.getElementById('traceAgent').value.trim(); if (a) p.set('agent', a);
+      otelTraces = await fetch('/api/telemetry/otel/traces?' + p).then(r => r.json());
+      renderTraces();
+    } else if (tab === 'logs') {
+      const p = new URLSearchParams();
+      const lv = document.getElementById('logLevel').value; if (lv) p.set('level', lv);
+      otelLogs = await fetch('/api/telemetry/otel/logs?' + p).then(r => r.json());
+      renderLogs();
+    }
+  } catch { return; }
+}
+
+function renderTiles() {
+  if (!summary) return;
+  const t = document.getElementById('tiles');
+  const total = (summary.totalIn|0) + (summary.totalOut|0);
+  t.innerHTML = `
+    <div class="tile"><div class="label">Total tokens</div><div class="value">${fmt(total)}</div><div class="sub">${fmt(summary.totalIn)} in - ${fmt(summary.totalOut)} out</div></div>
+    <div class="tile"><div class="label">Cached</div><div class="value">${fmt(summary.totalCached)}</div><div class="sub">prompt-cache reads</div></div>
+    <div class="tile"><div class="label">Reasoning</div><div class="value">${fmt(summary.totalReason)}</div><div class="sub">thinking tokens</div></div>
+    <div class="tile"><div class="label">Est. cost</div><div class="value">${money(summary.totalCost)}</div><div class="sub">API list prices; subscriptions bill separately</div></div>
+    <div class="tile"><div class="label">Tool calls</div><div class="value">${fmt(summary.toolCalls)}</div><div class="sub">${summary.toolErrors ? `<span style="color:var(--red)">${fmt(summary.toolErrors)} errors</span> - ` : ''}${fmt(summary.compactions)} compactions${summary.tokensSaved ? ` (${fmt(summary.tokensSaved)} tok saved)` : ''}</div></div>
+    <div class="tile"><div class="label">Turns</div><div class="value">${fmt(summary.turns || 0)}</div><div class="sub">${summary.turns ? 'avg ' + (summary.avgTurnMs/1000).toFixed(1) + 's per turn' : 'agent responses'}</div></div>
+    <div class="tile"><div class="label">Delegations</div><div class="value">${fmt(summary.delegations)}</div><div class="sub">since ${summary.firstEvent ? new Date(summary.firstEvent).toLocaleDateString() : '-'}</div></div>`;
+}
+
+function renderTables() {
+  const mt = document.getElementById('modelTable');
+  mt.innerHTML = models.length === 0 ? '<div class="empty">No usage recorded yet.</div>'
+    : '<table><tr><th>Model</th><th>In</th><th>Out</th><th>Cached</th><th>Cost</th><th>Tools</th></tr>'
+      + models.map(m => `<tr><td class="name">${m.model}</td><td>${fmt(m.in)}</td><td>${fmt(m.out)}</td><td>${fmt(m.cached)}</td><td>${money(m.cost)}</td><td>${fmt(m.tools)}</td></tr>`).join('')
+      + '</table>';
+  const at = document.getElementById('agentTable');
+  at.innerHTML = agents.length === 0 ? '<div class="empty">No agent activity recorded yet.</div>'
+    : '<table><tr><th>Agent</th><th>Tokens</th><th>Cost</th><th>Turns</th><th>Deleg.</th><th>Time</th></tr>'
+      + agents.map(a => `<tr><td class="name">${a.agent}</td><td>${fmt((a.in|0)+(a.out|0))}</td><td>${money(a.cost||0)}</td><td>${fmt(a.turns||0)}</td><td>${fmt(a.delegations)}</td><td>${(a.totalMs/1000).toFixed(1)}s</td></tr>`).join('')
+      + '</table>';
+  const tt = document.getElementById('toolTable');
+  tt.innerHTML = tools.length === 0 ? '<div class="empty">No tool calls recorded yet.</div>'
+    : '<table><tr><th>Tool</th><th>Calls</th><th>Errors</th></tr>'
+      + tools.map(t => `<tr><td class="name">${t.tool}</td><td>${fmt(t.calls)}</td><td>${t.errors ? `<span style="color:var(--red)">${fmt(t.errors)}</span>` : '0'}</td></tr>`).join('')
+      + '</table>';
+}
+
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const dur = ms => ms >= 60000 ? (ms/60000).toFixed(1)+'m' : ms >= 1000 ? (ms/1000).toFixed(2)+'s' : ms.toFixed(0)+'ms';
+
+// Instrument name prefixes -> display groups; keeps the Metrics tab organized by domain.
+const metricGroups = [
+  ['mux.tokens.', 'Tokens'], ['mux.agent.', 'Agents'], ['mux.orchestrator.', 'Orchestration'],
+  ['mux.tool.', 'Tools'], ['mux.session.', 'Sessions'], ['mux.goal.', 'Goals'],
+  ['mux.compaction.', 'Compaction'], ['mux.memory.', 'Memory'], ['mux.daemon.', 'Daemon'],
+];
+
+function renderMetrics() {
+  if (!otelMetrics) return;
+  document.getElementById('metricsSince').textContent =
+    'Live in-process metrics since ' + new Date(otelMetrics.startedUtc).toLocaleString() + ' (this process only; greyed rows have no recordings yet).';
+  const byGroup = new Map();
+  for (const inst of (otelMetrics.instruments || [])) {
+    const g = (metricGroups.find(([p]) => inst.name.startsWith(p)) || [null, 'Other'])[1];
+    if (!byGroup.has(g)) byGroup.set(g, []);
+    byGroup.get(g).push(inst);
+  }
+  let html = '';
+  for (const [, label] of metricGroups.concat([[null, 'Other']])) {
+    const insts = byGroup.get(label);
+    if (!insts || !insts.length || html.includes('>' + label + '<')) continue;
+    html += '<div class="card"><h2>' + label + '</h2><table>'
+      + '<tr><th>Instrument</th><th>Value</th><th>1m</th><th>5m</th><th>Detail</th></tr>'
+      + insts.map(i => {
+          const grey = i.recorded ? '' : ' style="opacity:.4"';
+          const val = i.kind === 'histogram' ? fmt(i.count) + ' rec' : fmt(Math.round(i.total));
+          const detail = i.kind === 'histogram'
+            ? (i.count ? 'avg ' + dur(i.sum / i.count) + ' - p50 ' + dur(i.p50) + ' - p95 ' + dur(i.p95) + ' - max ' + dur(i.max) : '-')
+            : (i.tags && i.tags.length ? i.tags.map(tg => '<span class="chip">' + esc(tg.key) + ': ' + fmt(Math.round(tg.value)) + '</span>').join('') : '-');
+          return '<tr' + grey + '><td class="name">' + esc(i.name) + '</td><td>' + val + '</td>'
+            + '<td>' + (i.kind === 'histogram' ? '-' : fmt(Math.round(i.rate1m))) + '</td>'
+            + '<td>' + (i.kind === 'histogram' ? '-' : fmt(Math.round(i.rate5m))) + '</td>'
+            + '<td>' + detail + '</td></tr>';
+        }).join('')
+      + '</table></div>';
+  }
+  document.getElementById('metricsGroups').innerHTML = html || '<div class="empty">No instruments published.</div>';
+}
+
+function renderTraces() {
+  if (!otelTraces) return;
+  document.getElementById('traceCount').textContent = otelTraces.total + ' spans captured (ring of 2000, this process)';
+  const spans = otelTraces.spans || [];
+  document.getElementById('traceTable').innerHTML = spans.length === 0
+    ? '<div class="empty">No spans captured yet.</div>'
+    : '<table><tr><th>Time</th><th>Span</th><th>Agent</th><th>Tool</th><th>Duration</th><th>Status</th><th>Trace</th></tr>'
+      + spans.map(s => {
+          const err = s.status === 'Error';
+          return '<tr><td>' + new Date(s.startUtc).toLocaleTimeString() + '</td>'
+            + '<td class="name">' + esc(s.name) + '</td>'
+            + '<td>' + esc(s.tags && s.tags.agent || '-') + '</td>'
+            + '<td>' + esc(s.tags && s.tags.tool || '-') + '</td>'
+            + '<td>' + dur(s.durationMs) + '</td>'
+            + '<td>' + (err ? '<span style="color:var(--red)">Error</span>' : esc(s.status)) + '</td>'
+            + '<td title="' + esc(s.traceId) + '">' + esc(s.traceId.slice(0, 8)) + '</td></tr>';
+        }).join('')
+      + '</table>';
+}
+
+function renderLogs() {
+  if (!otelLogs) return;
+  document.getElementById('logCount').textContent = otelLogs.total + ' entries captured (ring of 1000, this process)';
+  const entries = otelLogs.entries || [];
+  document.getElementById('logTable').innerHTML = entries.length === 0
+    ? '<div class="empty">No log entries captured yet.</div>'
+    : '<table><tr><th>Time</th><th>Level</th><th>Message</th><th>Span</th></tr>'
+      + entries.map(l =>
+          '<tr><td>' + new Date(l.tsUtc).toLocaleTimeString() + '</td>'
+          + '<td><span class="lvl lvl-' + esc(l.level) + '">' + esc(l.level) + '</span></td>'
+          + '<td class="msg">' + esc(l.message) + '</td>'
+          + '<td>' + (l.spanId ? esc(l.spanId.slice(0, 8)) : '-') + '</td></tr>'
+        ).join('')
+      + '</table>';
+}
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function drawChart(id, keys, colors) {
+  const cv = document.getElementById(id), ctx = cv.getContext('2d');
+  const w = cv.width = cv.clientWidth * devicePixelRatio, h = cv.height = 220 * devicePixelRatio;
+  ctx.clearRect(0, 0, w, h);
+  if (!series.length) {
+    ctx.fillStyle = css('--muted'); ctx.font = `${12*devicePixelRatio}px ${css('--font-sans')}`;
+    ctx.fillText('No data in range.', 12*devicePixelRatio, 24*devicePixelRatio);
+    return;
+  }
+  const pad = 34 * devicePixelRatio, innerW = w - pad*1.5, innerH = h - pad*1.6;
+  let max = 0;
+  for (const p of series) for (const k of keys) max = Math.max(max, p[k] || 0);
+  if (max === 0) max = 1;
+  ctx.strokeStyle = css('--border'); ctx.lineWidth = 1;
+  ctx.font = `${10*devicePixelRatio}px ${css('--font-mono')}`;
+  for (let g = 0; g <= 3; g++) {
+    const y = pad*0.4 + innerH * g/3;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(pad + innerW, y); ctx.stroke();
+    ctx.fillStyle = css('--muted');
+    ctx.fillText(fmt(Math.round(max*(1 - g/3))), 4*devicePixelRatio, y + 3*devicePixelRatio);
+  }
+  keys.forEach((k, ki) => {
+    ctx.strokeStyle = css(colors[ki]); ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.beginPath();
+    series.forEach((p, i) => {
+      const x = pad + innerW * (series.length === 1 ? 0.5 : i/(series.length - 1));
+      const y = pad*0.4 + innerH * (1 - (p[k] || 0)/max);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+  ctx.fillStyle = css('--muted');
+  const first = series[0].bucket, last = series[series.length - 1].bucket;
+  ctx.fillText(first, pad, h - 8*devicePixelRatio);
+  const lw = ctx.measureText(last).width;
+  ctx.fillText(last, pad + innerW - lw, h - 8*devicePixelRatio);
+}
+
+function draw() {
+  drawChart('tokChart', ['in', 'out'], ['--accent', '--agent']);
+  drawChart('costChart', ['cost'], ['--green']);
+  drawChart('toolChart', ['tools'], ['--amber']);
+}
+
+window.addEventListener('resize', draw);
+applyTheme();
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>
