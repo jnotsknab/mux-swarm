@@ -15,14 +15,14 @@ Defines which external integrations are available, where the runtime can read/wr
 
 ### Top-level keys
 
-| Key | Purpose |
-|-----|---------|
-| `setupCompleted` | Set by the `/setup` wizard on completion; gates first-time setup. |
-| `isUsingDockerForExec` | Legacy Docker execution posture flag (superseded by the `sandbox` block). |
-| `serveAddress` | Default bind address for `--serve` (web UI + API + WebSocket). |
-| `mcpConnectTimeoutSeconds` | Per-server timeout for MCP connection at startup. |
-| `showReasoning` | Whether model reasoning traces render in the console. |
-| `startupArgs` | Persisted default CLI arguments applied at launch. |
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `setupCompleted` | `false` | Set by the `/setup` wizard on completion; gates first-time setup. |
+| `isUsingDockerForExec` | `false` | Legacy Docker execution posture flag (superseded by the `sandbox` block). |
+| `serveAddress` | `127.0.0.1` | Default bind address for `--serve` (web UI + API + WebSocket). **Loopback only by default** - the server is not reachable from other machines unless you change this. Set `0.0.0.0` to expose it on the LAN, and pair that with `serve.auth`. |
+| `mcpConnectTimeoutSeconds` | `90` | Per-server timeout for MCP connection at startup. Values `<= 0` fall back to `90`; the effective floor is `5`. |
+| `showReasoning` | `summary` | Whether model reasoning traces render in the console: `none`, `summary`, or `full`. |
+| `startupArgs` | - | Persisted default CLI arguments applied at launch. |
 
 ### MCP Servers (`mcpServers`)
 
@@ -53,7 +53,12 @@ Registry of Model Context Protocol servers available to agents. Which agents see
 | `env` | Environment variables passed to the child process. |
 | `url` | Endpoint for remote (HTTP/SSE) servers. |
 | `headers` | Extra HTTP headers for remote servers (auth tokens etc.). |
+| `protocolVersion` | Pin the MCP protocol version for this server (default unset). Setting any value skips the capability-probe handshake and uses the legacy `initialize` flow. Use `"2024-11-05"` - the oldest handshake - for servers that reject newer probes. The bundled Memory, Fetch, ChromaDB, Brave, and Playwright defaults ship with this pin. |
 | `enabled` | Toggle without deleting the entry. |
+
+Note: the built-in `Filesystem` and `Shell` entries use the reserved command `native-runtime-tools`. They bind to in-process implementations and never spawn a child process.
+
+**Startup behaviour.** A server that fails to start is skipped with a single notice and the run continues; startup aborts only if *every* enabled server fails. To require all of them, pass `--mcp-strict` or set `MUXSWARM_MCP_STRICT=1`.
 
 ### LLM Providers (`llmProviders`)
 
@@ -121,7 +126,7 @@ The native in-process Filesystem and Shell/REPL tools enforce configurable secur
 
 | Key | Values | Description |
 |-----|--------|-------------|
-| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
+| `filesystem.securityMode` | `standard` (default), `secure`, `lax` (alias `yolo`), `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`yolo`/`none` relax checks. |
 | `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` runs commands ungated (default, run-anything); `prompt` asks for confirmation on every command; `allowlist` runs commands whose first token is in `allowedCommands` and prompts for anything else. Non-interactive sessions auto-deny a prompt. |
 | `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
 | `shell.trimOutputWhitespace` | `true` (default), `false` | Strip spaces/tabs immediately before line breaks from native Shell/REPL tool results before they reach the model (console-width padding, e.g. PowerShell `Format-Table`). Leading indentation, streaming tails, and file reads are never touched; applied once per result so prompt-cache prefixes stay stable. |
@@ -192,7 +197,7 @@ Optional OpenTelemetry configuration for exporting traces, logs, and metrics. Al
 | `endpoint` | - | OTLP receiver (Jaeger, OTEL Collector, Tempo, Datadog agent). |
 | `protocol` | `grpc` | `grpc` or `http/protobuf`. |
 | `serviceName` | `mux-swarm` | Service name in traces. Useful for multi-instance deployments. |
-| `logLevel` | - | Minimum level for exported logs. |
+| `logLevel` | - | **Reserved / not implemented.** Declared in the config model but never read by the runtime; setting it has no effect. |
 | `verbosity` | `standard` | `minimal` (spans only), `standard` (spans + model tags), `verbose` (spans + full message content). |
 | `headers` | - | Auth headers for hosted backends (e.g. `{"Authorization": "Basic ..."}`). |
 
@@ -223,15 +228,15 @@ Background trigger engine for unattended work. Scaffold triggers interactively w
 |-----|---------|
 | `enabled` | Master switch for the daemon. |
 | `triggers[].id` | Unique trigger identifier (also the inbound URL segment for webhook triggers). |
-| `triggers[].type` | `cron`, `watch`, `status`, `interval`, or `webhook`. |
+| `triggers[].type` | `cron`, `watch`, `status`, `bridge`, or `webhook`. Note there is **no `interval` type** - `interval` is a *field* available on triggers (see below). |
 | `triggers[].schedule` | Cron expression (cron type). |
 | `triggers[].path` | Watched file/directory (watch type). |
-| `triggers[].interval` / `cooldown` | Polling cadence and re-fire suppression (interval/status types). |
-| `triggers[].check` / `restart` / `failThreshold` | Health-check command, restart command, and failure tolerance (status type). |
+| `triggers[].interval` / `cooldown` | Polling cadence (default `30` seconds) and re-fire suppression, used by `watch`/`status` triggers. |
+| `triggers[].check` / `restart` / `failThreshold` | Health-check command, restart command, and failure tolerance (default `3`) for `status` triggers. |
 | `triggers[].command` / `env` / `args` | External command execution instead of (or alongside) a goal. |
-| `triggers[].goal` / `mode` / `agent` | Agent goal to run, execution mode (`agent`/`swarm`/pipeline variants), and target agent. |
+| `triggers[].goal` / `mode` / `agent` | Agent goal to run, execution mode (`agent` (default), `swarm`, or `pswarm`), and target agent. |
 | `triggers[].secret` | Webhook trigger only: HMAC-SHA256 secret (or bearer token) validating inbound `POST /api/hook/{id}` calls. |
-| `triggers[].payloadLimit` | Webhook trigger only: max accepted request body size in bytes. |
+| `triggers[].payloadLimit` | Webhook trigger only: max accepted request body size in bytes (default `8192`). |
 
 A `webhook` trigger exposes `POST /api/hook/{id}` on the serve surface. It is excluded from the global serve bearer middleware; auth is enforced per-trigger (HMAC signature or bearer) in the handler.
 
@@ -243,8 +248,8 @@ Gates for the web UI and HTTP API when running `--serve`. All gates default to t
 "serve": {
   "editable": false,
   "configExposed": false,
-  "auth": { "enabled": false, "token": "", "scheme": "Bearer" },
-  "editor": { "autoFetch": true, "version": "" }
+  "auth": { "enabled": false, "token": "" },
+  "editor": { "autoFetch": true, "version": "0.52.2" }
 }
 ```
 
@@ -254,36 +259,40 @@ Gates for the web UI and HTTP API when running `--serve`. All gates default to t
 | `configExposed` | `false` | Expose config file contents through the API/editor. |
 | `auth.enabled` | `false` | Require a bearer token on `/api/*` and `/ws`. |
 | `auth.token` | - | The shared token clients must present. |
-| `auth.scheme` | `Bearer` | Authorization scheme name. |
+| `auth.scheme` | `bearer` | **Reserved / not implemented.** The runtime always uses the `Bearer` scheme; this value is never read. |
 | `editor.autoFetch` | `true` | Auto-fetch Monaco editor assets. |
-| `editor.version` | - | Pin a specific Monaco version. |
+| `editor.version` | `0.52.2` | Monaco editor version to load. |
 
 ### Ultra Mode (`ultra`)
 
-| Key | Purpose |
-|-----|---------|
-| `thinkingBudget` | Reasoning-token budget applied in ultra mode. |
-| `includeSubAgents` | Whether ultra settings propagate to sub-agents. |
-| `autoSubAgents` | Automatically fan out to sub-agents in ultra mode. |
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `thinkingBudget` | `31999` | Reasoning-token budget applied in ultra mode. |
+| `includeSubAgents` | `true` | Whether ultra settings propagate to sub-agents. |
+| `autoSubAgents` | `true` | Automatically fan out to sub-agents in ultra mode. |
 
 ### Console (`console`)
 
 TUI rendering preferences.
 
-| Key | Purpose |
-|-----|---------|
-| `renderMode` | Rendering pipeline selection (live-region TUI vs classic scroll). |
-| `theme` | Color theme. |
-| `toolOutput` | How tool results render (full/collapsed/hidden). |
-| `dockedFooter` | Keep the status footer docked at the bottom. |
-| `collapseToolLines` | Auto-collapse threshold for tool output, in lines (default `3`; `0` disables). |
-| `delegationSpacing` | Vertical spacing around delegation cards. |
-| `collapseSubAgents` | Collapse sub-agent activity into summary rows. |
-| `collapseDaemon` | Collapse daemon lane output. |
-| `collapseDelegations` | Collapse completed delegation cards. |
-| `inputHighlight` | Syntax highlight for the input line. |
-| `cardMarkdown` | Render markdown inside cards. |
-| `bracketedPaste` | Enable bracketed-paste handling for multi-line input. |
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `renderMode` | `tui` | Rendering pipeline selection (live-region TUI vs classic scroll). |
+| `renderEngine` | `frame` | `frame` renders a full-screen viewport over retained history (alternate screen, mouse-capable); `inline` keeps output in the terminal's own scrollback. Default changed to `frame` in v0.14.0. |
+| `theme` | `default` | Color theme - one of `default`, `dark`, `light`, `mono`, `solarized`, `dracula`, `gruvbox`, `catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-latte`, `nord`, `tokyo-night`, `tokyo-storm`, `rose-pine`, `rose-dawn`, `kanagawa`, `everforest`, `one-dark`, `monokai`, `ayu-mirage`, `synthwave`. Preview and switch interactively with `/theme`. |
+| `mouseTracking` | `buttons` | `off`, `wheel` (scroll only), or `buttons` (scroll + click/selection). Frame engine only. Default changed to `buttons` in v0.14.0. |
+| `scrollSpeedRows` | `1` | Rows advanced per Ctrl+U / Ctrl+D step in frame mode. Minimum `1`. |
+| `contentBackgrounds` | `true` | Paint opaque themed fills behind tool, diff, and code cards. Set `false` to let a translucent terminal background show through. |
+| `toolOutput` | `collapsed` | How tool results render (full/collapsed/hidden). |
+| `dockedFooter` | `true` | Keep the status footer docked at the bottom. |
+| `collapseToolLines` | `3` | Auto-collapse threshold for tool output, in lines (`0` disables). |
+| `delegationSpacing` | `1` | Vertical spacing around delegation cards. |
+| `collapseSubAgents` | `true` | Collapse sub-agent activity into summary rows. |
+| `collapseDaemon` | `true` | Collapse daemon lane output. |
+| `collapseDelegations` | `true` | Collapse completed delegation cards. |
+| `inputHighlight` | `true` | Syntax highlight for the input line. |
+| `cardMarkdown` | `true` | Render markdown inside cards. |
+| `bracketedPaste` | `true` | Enable bracketed-paste handling for multi-line input. |
 
 ---
 
@@ -375,15 +384,17 @@ Optional tuning for orchestration budgets, iteration caps, retry behavior, and t
 | `maxSubTaskRetries` | 4 | Retry attempts per failed sub-task with progressive recovery hints. |
 | `maxStuckCount` | 3 | Consecutive empty responses before aborting. |
 | `compactionCharBudget` | 6000 | Target char budget for the LLM session-compaction summary (`/compact`, auto-compaction). |
-| `contextInjection` | - | Controls how much cross-agent context is injected into delegations. |
-| `compactionMaxMessageChars` | - | Per-message char ceiling fed to the compaction model. |
+| `contextInjection` | `full` | Controls how much cross-agent context is injected into delegations. |
+| `compactionMaxMessageChars` | 2500 | Per-message char ceiling fed to the compaction model. |
 | `subAgentSummaryMode` | `auto` | How an over-budget sub-agent result is compacted before returning to the lead: `auto`/`llm` run the compaction model and append signal-scored extracted references; `extractive` skips the LLM entirely (no extra cost). |
-| `delegationRetentionDays` | - | How long spilled delegation payloads (size-tiered context passing) are kept on disk. |
-| `activityTimeoutSeconds` | - | Inactivity watchdog for long-running agent turns. |
+| `delegationRetentionDays` | 30 | How long spilled delegation payloads (size-tiered context passing) are kept on disk. |
+| `activityTimeoutSeconds` | 3600 | Inactivity watchdog for long-running agent turns. |
 | `maxToolIterationsPerTurn` | 1000 | Max model-to-tool round-trips within a single turn before the tool loop stops. `<= 0` = unlimited. |
 | `maxAutoContinuesPerTurn` | 3 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
 | `taskClaimTtlSeconds` | 900 | Team taskboard: how long a claimed task may go without a heartbeat before it is reaped and requeued. |
 | `maxTaskAttempts` | 3 | Team taskboard: bounded retry cap per task before the circuit breaker marks it `Failed`. |
+| `midTurnCompaction` | `true` | Compact a single-agent turn *mid-turn* when it crosses the token checkpoint, instead of waiting for the next user message. |
+| `autoAllowWorkspace` | `true` | Automatically add the resolved workspace root to `filesystem.allowedPaths` at startup. Set `false` to require every path be declared explicitly. |
 
 ### Compaction Agent (`compactionAgent`)
 
@@ -402,9 +413,9 @@ Background deep-memory system: a gatherer distills session activity into reflect
 "reflectionAgent": {
   "mode": "deep",
   "model": "google/gemini-3-flash-preview",
-  "injectTokenBudget": 1200,
-  "pollIntervalSeconds": 120,
-  "relevanceFloor": 0.2,
+  "injectTokenBudget": 1500,
+  "pollIntervalSeconds": 90,
+  "relevanceFloor": 0.35,
   "scope": "lead"
 }
 ```
@@ -414,9 +425,9 @@ Background deep-memory system: a gatherer distills session activity into reflect
 | `mode` | `standard` (off) or `deep` (gatherer + injector active). |
 | `memoryMode` (top-level) | Convenience alias: overrides `reflectionAgent.mode` at load. |
 | `model` / `modelOpts` | Model used by the background gatherer. |
-| `injectTokenBudget` | Hard token cap on the TOTAL injected reflection block. |
-| `pollIntervalSeconds` | Gatherer tick interval; activity-gated (no LLM call when idle). |
-| `relevanceFloor` | Minimum relevance score for a reflection to be injected. |
+| `injectTokenBudget` | Hard token cap on the TOTAL injected reflection block. Default `1500`. |
+| `pollIntervalSeconds` | Gatherer tick interval; activity-gated (no LLM call when idle). Default `90`. |
+| `relevanceFloor` | Minimum relevance score for a reflection to be injected. Default `0.35`. |
 | `scope` | `lead` (lead agent only) or `all` (sub-agents too). |
 | `maxReflections` | Store prune ceiling (oldest beyond this are dropped). |
 | `injectQueryTimeoutMs` | Timeout for the semantic (Chroma) relevance query at inject time. |
@@ -445,18 +456,18 @@ Opt-in background dispatcher that expands a goal into a dependency graph of task
 
 Team definitions for coordinated multi-agent execution (taskboard, mailbox, auto-run).
 
-| Key | Purpose |
-|-----|---------|
-| `name` / `description` | Team identity. |
-| `lead` | Lead agent name. |
-| `members` | Member agent names. |
-| `coordination` | Coordination style for the team. |
-| `maxParallel` | Max members working concurrently. |
-| `agentView` | What members see of each other's activity. |
-| `autoRun` / `autoRunIntervalSeconds` | Background auto-run loop and its cadence. |
-| `memberContext` | How much shared context members receive. |
-| `pickupPolicy` | How members claim taskboard tasks. |
-| `mailbox` | Enable inter-member mailbox messaging. |
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `name` / `description` | - | Team identity. |
+| `lead` | `Orchestrator` | Lead agent name. |
+| `members` | - | Member agent names. |
+| `coordination` | `fanout` | Coordination style for the team. |
+| `maxParallel` | - | Max members working concurrently. |
+| `agentView` | `auto` | What members see of each other's activity. |
+| `autoRun` / `autoRunIntervalSeconds` | `false` / `15` | Background auto-run loop and its cadence (seconds). |
+| `memberContext` | `persistent` | How much shared context members receive. |
+| `pickupPolicy` | `assigned` | How members claim taskboard tasks. |
+| `mailbox` | `true` | Enable inter-member mailbox messaging. |
 
 ### Hooks (`hooks[]`)
 
@@ -468,7 +479,7 @@ Lifecycle hooks: run an external command when a runtime event fires. Scaffold wi
 | `mode` | Execution mode for the hook command. |
 | `persistent` | Keep the process alive across events vs spawn-per-event. |
 | `command` | The external command to run. |
-| `when` | Lifecycle event(s) that fire the hook. |
+| `when` | Match clause selecting which events fire the hook. An object with `event` (required, the lifecycle event name) plus optional `agent` and `tool` filters to narrow it to a specific agent or tool. |
 | `timeoutSeconds` | Kill the hook command after this long. |
 
 ### Outbound Webhooks (`webhooks[]`)
@@ -516,12 +527,17 @@ Any agent, orchestrator, singleAgent, compactionAgent, reflectionAgent, or visio
 | `presencePenalty` | float | -2.0-2.0 | Penalizes any token that has appeared at all. Encourages topic diversity. |
 | `seed` | long | - | Attempts deterministic output for identical inputs. Provider support varies. |
 
-### Reasoning Options (`reasoning`)
+### Reasoning Options (`modelOpts.reasoning`)
 
-Any agent, orchestrator, singleAgent, or compactionAgent supports an optional `reasoning` block for controlling model reasoning behavior. Both fields are optional.
+`reasoning` is a block **inside `modelOpts`**, not a sibling of it. Any role that accepts `modelOpts` (`singleAgent`, `agents[]`, `orchestrator`, `compactionAgent`, `reflectionAgent`, `visionAgent`) therefore supports it. Both fields are optional.
+
+> **Placement matters.** A `reasoning` block placed directly on an agent (rather than under `modelOpts`) is silently ignored - it does not error, it simply never reaches the provider.
 
 ```json
-"reasoning": { "effort": "high", "output": "full" }
+"modelOpts": {
+  "temperature": 0.3,
+  "reasoning": { "effort": "high", "output": "full" }
+}
 ```
 
 | Parameter | Values | Description |
@@ -549,6 +565,32 @@ For parameters not covered by the standard `modelOpts` fields or the `reasoning`
 ```
 
 Use this for provider-specific features not covered by the standard fields (e.g. `top_a`, `min_p`, `repetition_penalty`).
+
+---
+
+## Environment Variables
+
+Environment variables override or supplement file configuration. They are read at process start.
+
+| Variable | Semantics |
+|----------|-----------|
+| `MUXSWARM_MCP_STRICT` | Require **every** enabled MCP server to connect. Enabled only by the exact value `1` - any other value (including `true`) leaves the default non-strict behaviour in place. Equivalent to `--mcp-strict`. |
+| `MUXSWARM_VERBOSE` | Set to `1` for verbose setup and dependency-resolution output. Implied when a debugger is attached. |
+| `MUXSWARM_SESSION_API_KEY` | Set *by* the runtime, not by you. When you paste a raw API key during `/setup`, it is held in this process-scoped variable instead of being written to `config.json`, and `llmProviders[].apiKeyEnvVar` is pointed at it. The key never touches disk, but it also does not survive a restart. |
+
+Provider API keys are referenced indirectly: set `llmProviders[].apiKeyEnvVar` to the **name** of the variable holding the key (e.g. `OPENROUTER_API_KEY`), so the key itself stays out of configuration files.
+
+---
+
+## Where defaults actually live
+
+Defaults in this document are transcribed from the code. When in doubt, the source of truth is:
+
+- `Engine/AppConfig.cs` - `config.json` model, including `console`, `serve`, `ultra`, `sandbox`, and `contextLimits`.
+- `Engine/ExecutionLimits.cs`, `CompacterConfig.cs`, `ReflectionConfig.cs`, `FilesystemConfig.cs`, `TeamConfig.cs` - `swarm.json` blocks.
+- `Setup/SwarmDefaults.cs` and `Setup/McpServerDefaults.cs` - what `/setup` actually writes on first run.
+
+Inspect the live values of a running instance with `/limits` (execution limits) and `/config`.
 
 ---
 
