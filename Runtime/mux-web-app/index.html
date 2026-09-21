@@ -12842,6 +12842,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return (
         /^Type \/qc to exit/i.test(m) ||
         /has \d+ tools available/i.test(m) ||
+        /^Loaded \d+ agents? from swarm\.json/i.test(m) ||
         /^\[GOAL\]/i.test(m) ||
         /^\[AGENT SESSION\]/i.test(m) ||
         /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired|Goal completed)/i.test(m) ||

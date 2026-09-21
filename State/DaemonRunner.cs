@@ -709,6 +709,9 @@ public sealed class DaemonRunner : IAsyncDisposable
             // TUI collapse is handled separately by BeginDaemonCapture below.
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
             {
+            // State the resolved mode explicitly so a fired job's mode is never inferred
+            // from downstream log noise (e.g. roster loads that also occur in agent mode).
+            MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Firing in '{trigger.Mode}' mode.");
             switch (trigger.Mode.ToLowerInvariant())
             {
                 case "swarm":
@@ -733,7 +736,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                 default:
                     if (!string.IsNullOrEmpty(trigger.Agent))
                     {
-                        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
+                        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
                         var matched = agentDefs.FirstOrDefault(d =>
                             d.Name.Equals(trigger.Agent, StringComparison.OrdinalIgnoreCase));
                         if (matched != null)
