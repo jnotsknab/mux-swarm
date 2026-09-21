@@ -1404,7 +1404,13 @@ internal sealed partial class TuiDriver
             ConsoleInputPump.PromptActive = prevPromptActive;
             _promptModalActive = false;
             _promptModal.Close();
-            Repaint();
+            // Teardown paint must be NON-BLOCKING: a synchronous Repaint() here contends for
+            // MuxConsole.ConsoleLock with the ~100ms sub-agent ticker / resize poll while the
+            // pump has NO consumer (the caller sits between ReadLine loops), which can strand
+            // the single input plane and freeze the whole runtime (observed via /tag's confirm).
+            // Invalidate instead; the ticker's next tick (or the next ReadLine entry, which
+            // repaints unconditionally) presents the post-modal frame within ~100ms.
+            try { _frame.Invalidate(); } catch { /* best-effort; never strand input */ }
         }
     }
 
