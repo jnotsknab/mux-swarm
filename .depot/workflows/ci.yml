@@ -65,6 +65,47 @@ jobs:
             ls -lh ./publish/MuxSwarm
             chmod +x ./publish/MuxSwarm
           fi
+      # End-to-end self-test harness: run the PUBLISHED binary's built-in checks (--selftest) against
+      # generated dummy configs, so first-run setup is bypassed and real control flows (downloads,
+      # detached spawns, network health) are exercised on every OS in the matrix. Add new flows as
+      # checks in Engine/SelfTest.cs; this step runs them all. MUX_CLIPROXY_HOME isolates the proxy.
+      - name: Self-test (published binary)
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -u
+          ST="$RUNNER_TEMP/mux-selftest"
+          mkdir -p "$ST/cfg" "$ST/proxy"
+          echo '{ "setupCompleted": true, "llmProviders": [], "mcpServers": {} }' > "$ST/cfg/Config.json"
+          echo '{}' > "$ST/cfg/Swarm.json"
+          export MUX_CLIPROXY_HOME="$ST/proxy"
+          BIN="./publish/MuxSwarm${{ matrix.extension }}"
+          set +e
+          "$BIN" --cfg "$ST/cfg/Config.json" --swarmcfg "$ST/cfg/Swarm.json" --selftest all 2>&1 | tee "$ST/selftest.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "selftest exit code: $rc"
+          exit $rc
+
+      - name: Self-test cleanup
+        if: always()
+        shell: bash
+        run: |
+          # The sidecar is detached by design; never leave it running on the runner.
+          if [ "${{ matrix.rid }}" = "win-x64" ]; then
+            taskkill //F //IM cli-proxy-api.exe >/dev/null 2>&1 || true
+          else
+            pkill -f "$RUNNER_TEMP/mux-selftest/proxy" >/dev/null 2>&1 || true
+          fi
+
+      - name: Upload self-test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-${{ matrix.rid }}
+          path: ${{ runner.temp }}/mux-selftest/
+          retention-days: 7
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
