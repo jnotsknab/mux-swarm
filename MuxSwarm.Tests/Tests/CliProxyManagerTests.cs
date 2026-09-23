@@ -205,4 +205,31 @@ public class CliProxyManagerTests
             squatter.Stop();
         }
     }
+
+    [Fact]
+    public void UnixSpawn_FallsBackWhenSetsidIsMissing_AndKeepsArgsPositional()
+    {
+        // macOS ships no `setsid` (util-linux); an unconditional `setsid` made sh exit 127 and the sidecar
+        // never started. The launcher must probe for it and fall back to a job-control process group.
+        var psi = CliProxyManager.BuildUnixSpawn("/opt/mux dir/cli-proxy-api", "/cfg dir/config.yaml", "/opt/mux dir");
+        Assert.Equal("/bin/sh", psi.FileName);
+        Assert.False(psi.UseShellExecute);
+        Assert.Equal(new[] { "-c", CliProxyManager.UnixLaunchScript, "/opt/mux dir/cli-proxy-api", "/cfg dir/config.yaml" },
+                     psi.ArgumentList.ToArray());
+
+        string s = CliProxyManager.UnixLaunchScript;
+        Assert.Contains("command -v setsid", s);          // probe, never assume
+        Assert.Contains("set -m", s);                     // own process group without setsid
+        Assert.Contains("trap '' HUP", s);                // survive terminal close
+        Assert.Contains("&", s);                          // detached, shell returns immediately
+        Assert.DoesNotContain("$2", s);                   // paths are only ever positional $0/$1
+        Assert.Equal(2, CountOccurrences(s, "</dev/null >/dev/null 2>&1")); // stdio never inherits the TUI tty
+    }
+
+    private static int CountOccurrences(string s, string sub)
+    {
+        int n = 0, i = 0;
+        while ((i = s.IndexOf(sub, i, StringComparison.Ordinal)) >= 0) { n++; i += sub.Length; }
+        return n;
+    }
 }

@@ -364,7 +364,7 @@ internal static class CliProxyManager
     /// OpenAI-compatible endpoint. The sidecar is DETACHED so it outlives Mux: on entry we first probe the
     /// fixed <see cref="PreferredPort"/> and ADOPT a healthy instance (possibly started by a prior Mux
     /// session) with zero spawn. Only if nothing healthy is listening do we spawn a new detached process
-    /// (Windows: CREATE_BREAKAWAY_FROM_JOB so it escapes Mux's kill-on-close Job Object; Unix: setsid so it
+    /// (Windows: CREATE_BREAKAWAY_FROM_JOB so it escapes Mux's kill-on-close Job Object; Unix: setsid, or a job-control process group on macOS, so it
     /// leaves Mux's process group and survives the group SIGTERM). Lazy: only called on first
     /// subscription-provider use.
     /// </summary>
@@ -421,8 +421,8 @@ internal static class CliProxyManager
     /// Spawns the proxy DETACHED from Mux's lifecycle so it survives Mux exit. Windows uses CreateProcess
     /// with CREATE_BREAKAWAY_FROM_JOB (escapes the kill-on-job-close Job Object) + CREATE_NO_WINDOW; if
     /// breakaway is denied it falls back to a normal spawn (then it dies with Mux and is simply re-spawned
-    /// next launch). Unix launches via `setsid` to start a new session/process-group so Mux's shutdown
-    /// `kill -TERM -&lt;pgid&gt;` group sweep cannot reach it; stdio is redirected to the null device.
+    /// next launch). Unix launches via <see cref="BuildUnixSpawn"/> (setsid where available, job-control
+    /// process group on macOS) so it is detached from Mux's group; stdio is redirected to the null device.
     /// </summary>
     private static void SpawnDetached(int port)
     {
@@ -444,45 +444,41 @@ internal static class CliProxyManager
             return;
         }
 
-        // Unix: setsid <exe> -config <cfg>, stdio -> /dev/null, new session => detached from Mux's group.
-        // The stdio redirect is DONE VIA THE SHELL (</dev/null >/dev/null 2>&1), not .NET pipes: the sidecar
-        // is detached and must OUTLIVE Mux, so a .NET-redirected pipe would break on Mux exit (SIGPIPE/block)
-        // and would need a live drain thread. Without this redirect the Go sidecar INHERITS Mux's TTY and its
-        // logs (gin access lines, auth-file-watch events) bleed straight into the alt-screen TUI viewport.
-        // setsid only detaches the controlling terminal for SIGNAL purposes; it does NOT reassign fd 0/1/2,
-        // which still point at the inherited tty. Positional args ($0/$1) keep paths-with-spaces injection-safe.
-        var upsi = new ProcessStartInfo
+        Process.Start(BuildUnixSpawn(ExecutablePath, ConfigPath, InstallDir)); // NOT Track()ed: must survive Mux exit
+    }
+
+    /// <summary>
+    /// Portable POSIX launcher for the detached sidecar (Linux AND macOS). `setsid` is a util-linux tool
+    /// that macOS does NOT ship: invoking it unconditionally made `/bin/sh` exit 127 ("command not found",
+    /// swallowed by the redirect) while Process.Start itself succeeded, so the sidecar never started and
+    /// every macOS launch timed out the health wait. Where `setsid` exists it is used exactly as before (new
+    /// session, detached from Mux's group). Otherwise the shell enables job control (`set -m`) so the
+    /// backgrounded sidecar gets its OWN process group (terminal Ctrl+C to Mux's foreground group cannot
+    /// reach it), and ignores SIGHUP (inherited across exec; Go keeps an ignored SIGHUP ignored) so closing
+    /// the terminal does not kill it. stdio goes to the null device via the SHELL, not .NET pipes: the
+    /// sidecar outlives Mux, so a .NET pipe would break on exit, and an inherited TTY would bleed its logs
+    /// into the TUI viewport. Positional args ($0/$1) keep paths-with-spaces injection-safe.
+    /// </summary>
+    internal static ProcessStartInfo BuildUnixSpawn(string exe, string configPath, string workDir)
+    {
+        var psi = new ProcessStartInfo
         {
             FileName = "/bin/sh",
             UseShellExecute = false,
-            WorkingDirectory = InstallDir,
+            WorkingDirectory = workDir,
         };
-        upsi.ArgumentList.Add("-c");
-        upsi.ArgumentList.Add("setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
-        upsi.ArgumentList.Add(ExecutablePath);
-        upsi.ArgumentList.Add(ConfigPath);
-        try
-        {
-            Process.Start(upsi); // NOT Track()ed: must survive Mux exit
-        }
-        catch
-        {
-            // setsid/sh missing (rare): fall back to a plain spawn without tracking. It may still be swept by
-            // the group SIGTERM, but will be re-spawned on next launch. Redirect stdio to the null device so
-            // its logs never leak into the TUI viewport even on this degraded path.
-            var fpsi = new ProcessStartInfo
-            {
-                FileName = "/bin/sh",
-                UseShellExecute = false,
-                WorkingDirectory = InstallDir,
-            };
-            fpsi.ArgumentList.Add("-c");
-            fpsi.ArgumentList.Add("exec \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
-            fpsi.ArgumentList.Add(ExecutablePath);
-            fpsi.ArgumentList.Add(ConfigPath);
-            Process.Start(fpsi);
-        }
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(UnixLaunchScript);
+        psi.ArgumentList.Add(exe);
+        psi.ArgumentList.Add(configPath);
+        return psi;
     }
+
+    /// <summary>The POSIX sh script behind <see cref="BuildUnixSpawn"/> ($0 = executable, $1 = config).</summary>
+    internal const string UnixLaunchScript =
+        "if command -v setsid >/dev/null 2>&1; then " +
+        "setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1; " +
+        "else trap '' HUP; set -m; \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & fi";
 
     /// <summary>
     /// Explicitly stops the sidecar (used by `/proxy` and tests). Because the proxy is detached we do NOT
