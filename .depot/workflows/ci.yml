@@ -65,6 +65,61 @@ jobs:
             ls -lh ./publish/MuxSwarm
             chmod +x ./publish/MuxSwarm
           fi
+      # End-to-end self-test harness: run the PUBLISHED binary's built-in checks (--selftest) against
+      # generated dummy configs, so first-run setup is bypassed and real control flows (downloads,
+      # detached spawns, network health) are exercised. Add new flows as checks in Engine/SelfTest.cs;
+      # this step runs them all. MUX_CLIPROXY_HOME isolates the proxy.
+      # Runs only where the host can execute the artifact: Depot CI sandboxes are Linux x86_64 only
+      # (non-Depot runs-on labels fall back to depot-ubuntu-latest), so cross-compiled win/osx legs
+      # skip with a notice here and execute automatically on any native runner.
+      - name: Self-test (published binary)
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -u
+          case "$(uname -s)-$(uname -m)" in
+            Linux-x86_64)            HOST=linux-x64 ;;
+            Linux-aarch64)           HOST=linux-arm64 ;;
+            Darwin-arm64)            HOST=osx-arm64 ;;
+            Darwin-x86_64)           HOST=osx-x64 ;;
+            MINGW*-x86_64|MSYS*-x86_64|CYGWIN*-x86_64) HOST=win-x64 ;;
+            *)                       HOST=unknown ;;
+          esac
+          if [ "$HOST" != "${{ matrix.rid }}" ]; then
+            echo "::notice::Self-test skipped for ${{ matrix.rid }}: host is $HOST ($(uname -sm)); a cross-compiled artifact cannot execute here."
+            exit 0
+          fi
+          ST="$RUNNER_TEMP/mux-selftest"
+          mkdir -p "$ST/cfg" "$ST/proxy"
+          echo '{ "setupCompleted": true, "llmProviders": [], "mcpServers": {} }' > "$ST/cfg/Config.json"
+          echo '{}' > "$ST/cfg/Swarm.json"
+          export MUX_CLIPROXY_HOME="$ST/proxy"
+          BIN="./publish/MuxSwarm${{ matrix.extension }}"
+          set +e
+          "$BIN" --cfg "$ST/cfg/Config.json" --swarmcfg "$ST/cfg/Swarm.json" --selftest all 2>&1 | tee "$ST/selftest.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "selftest exit code: $rc"
+          exit $rc
+
+      - name: Self-test cleanup
+        if: always()
+        shell: bash
+        run: |
+          # The sidecar is detached by design; never leave it running on the runner.
+          case "$(uname -s)" in
+            MINGW*|MSYS*|CYGWIN*) taskkill //F //IM cli-proxy-api.exe >/dev/null 2>&1 || true ;;
+            *) pkill -f "$RUNNER_TEMP/mux-selftest/proxy" >/dev/null 2>&1 || true ;;
+          esac
+
+      - name: Upload self-test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selftest-${{ matrix.rid }}
+          path: ${{ runner.temp }}/mux-selftest/
+          retention-days: 7
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:

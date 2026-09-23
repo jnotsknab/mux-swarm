@@ -32,7 +32,9 @@ namespace MuxSwarm
                 // runtime hangs at startup whenever swarm.json has hooks. StdioMode was
                 // previously only set later (ParseArgs / ServeMode.StartAsync), after the
                 // constructor had already run — hence the ordering bug.
-                if (Array.IndexOf(args, "--stdio") >= 0 || Array.IndexOf(args, "--serve") >= 0)
+                // --selftest is a headless CI run: same early gate so a hooks Confirm can never hang it.
+                if (Array.IndexOf(args, "--stdio") >= 0 || Array.IndexOf(args, "--serve") >= 0
+                    || Array.IndexOf(args, "--selftest") >= 0)
                     MuxConsole.StdioMode = true;
 
                 // --acp (Zed Agent Client Protocol) is a machine transport too: gate StdioMode

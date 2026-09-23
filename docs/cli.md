@@ -47,6 +47,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--telemetry [port]` | Standalone telemetry dashboard (default 6725), four tabs: Overview (persistent all-time token/cost/turn/tool metrics), plus live Metrics / Traces / Logs served from the built-in OTel stack (every `mux.*` instrument with tag breakdowns and rates, trace waterfall + step-through of turns/tool calls/responses, durable log history) - no external OTLP collector needed |
 | `--daemon` | Daemon mode (file watch, cron, status, and webhook triggers from config.json) |
 | `--update` | Self-update from the latest GitHub release, then exit |
+| `--selftest [checks]` | Run built-in end-to-end checks (comma list or `all`; default all) against this binary, print PASS/FAIL, exit 0/1. The CI harness. `proxy` requires `MUX_CLIPROXY_HOME` set to a scratch dir. |
 | `--register` / `--remove` | Register/unregister mux-swarm as an OS service |
 | `--relaunch-after` | Internal: post-update re-exec handshake (not user-facing) |
 

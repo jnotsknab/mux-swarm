@@ -22,16 +22,36 @@ internal static class CliProxyManager
     /// ~/.local/share/Mux-Swarm/cliproxy/&lt;version&gt;/ elsewhere. Versioned so a pin bump installs
     /// side-by-side and an old binary is never silently reused.
     /// </summary>
-    public static string InstallDir
+    public static string InstallDir => InstallDirFor(ActiveVersion);
+
+    /// <summary>Install root for an arbitrary proxy version (side-by-side layout).</summary>
+    internal static string InstallDirFor(string version) => Path.Combine(ConfigDir, version);
+
+    /// <summary>Marker recording a user-chosen proxy version (from `/proxy update`) that overrides
+    /// the compile-time pin. Lives beside config.yaml so it survives Mux updates.</summary>
+    private static string ActiveVersionMarkerPath => Path.Combine(ConfigDir, "active-version.txt");
+
+    /// <summary>
+    /// The proxy version this process actually uses: the marker's version when its binary is
+    /// present (a `/proxy update` install), otherwise the compile-time pin. Falling back when the
+    /// marker's binary is missing means a deleted/partial latest-install can never brick the proxy.
+    /// </summary>
+    public static string ActiveVersion
     {
         get
         {
-            string baseDir = OperatingSystem.IsWindows()
-                ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-                : Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".local", "share");
-            return Path.Combine(baseDir, "Mux-Swarm", "cliproxy", CliProxyAssets.Version);
+            try
+            {
+                if (File.Exists(ActiveVersionMarkerPath))
+                {
+                    string v = File.ReadAllText(ActiveVersionMarkerPath).Trim();
+                    if (v.Length > 0 &&
+                        File.Exists(Path.Combine(InstallDirFor(v), CliProxyAssets.ExecutableName)))
+                        return v;
+                }
+            }
+            catch { /* fall through to the pin */ }
+            return CliProxyAssets.Version;
         }
     }
 
@@ -89,10 +109,14 @@ internal static class CliProxyManager
     /// provisioned files into <see cref="InstallDir"/>. A partial/failed download can never leave a
     /// half-populated install behind.
     /// </summary>
-    private static async Task DownloadVerifyExtractAsync(CliProxyAssets.Asset asset, CancellationToken ct)
+    private static Task DownloadVerifyExtractAsync(CliProxyAssets.Asset asset, CancellationToken ct)
+        => DownloadVerifyExtractAsync(asset.Url, asset.Sha256, asset.IsZip, InstallDirFor(CliProxyAssets.Version), ct);
+
+    private static async Task DownloadVerifyExtractAsync(
+        string url, string sha256, bool isZip, string installDir, CancellationToken ct)
     {
         string tmpArchive = Path.Combine(Path.GetTempPath(),
-            $"cliproxy-{CliProxyAssets.Version}-{Guid.NewGuid():N}{(asset.IsZip ? ".zip" : ".tar.gz")}");
+            $"cliproxy-{Guid.NewGuid():N}{(isZip ? ".zip" : ".tar.gz")}");
         string stageDir = Path.Combine(Path.GetTempPath(), $"cliproxy-stage-{Guid.NewGuid():N}");
 
         try
@@ -100,15 +124,15 @@ internal static class CliProxyManager
             using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
             {
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("mux-swarm-cliproxy-fetch");
-                await using var net = await http.GetStreamAsync(asset.Url, ct).ConfigureAwait(false);
+                await using var net = await http.GetStreamAsync(url, ct).ConfigureAwait(false);
                 await using var fs = File.Create(tmpArchive);
                 await net.CopyToAsync(fs, ct).ConfigureAwait(false);
             }
 
-            await VerifySha256Async(tmpArchive, asset.Sha256, ct).ConfigureAwait(false);
+            await VerifySha256Async(tmpArchive, sha256, ct).ConfigureAwait(false);
 
             Directory.CreateDirectory(stageDir);
-            if (asset.IsZip)
+            if (isZip)
                 ZipFile.ExtractToDirectory(tmpArchive, stageDir, overwriteFiles: true);
             else
                 await ExtractTarGzAsync(tmpArchive, stageDir, ct).ConfigureAwait(false);
@@ -118,28 +142,29 @@ internal static class CliProxyManager
                     $"CLIProxyAPI archive did not contain '{CliProxyAssets.ExecutableName}'.");
 
             // Swap the whole extracted tree (the binary may ship alongside a default config/README) into
-            // place, then ensure the executable lands at the canonical ExecutablePath.
-            Directory.CreateDirectory(Path.GetDirectoryName(InstallDir)!);
-            if (Directory.Exists(InstallDir))
+            // place, then ensure the executable lands at the canonical per-version path.
+            string exePath = Path.Combine(installDir, CliProxyAssets.ExecutableName);
+            Directory.CreateDirectory(Path.GetDirectoryName(installDir)!);
+            if (Directory.Exists(installDir))
             {
-                var old = InstallDir + ".old-" + Guid.NewGuid().ToString("N");
-                Directory.Move(InstallDir, old);
+                var old = installDir + ".old-" + Guid.NewGuid().ToString("N");
+                Directory.Move(installDir, old);
                 try { Directory.Delete(old, recursive: true); } catch { /* best effort */ }
             }
 
             string stagedRoot = Path.GetDirectoryName(stagedExe)!;
-            Directory.Move(stagedRoot, InstallDir);
+            Directory.Move(stagedRoot, installDir);
 
-            // If the executable sat in a subdirectory of the staged root, it is now under InstallDir at the
-            // same relative spot; normalize it to ExecutablePath so callers have a stable path.
-            string movedExe = Path.Combine(InstallDir, Path.GetFileName(stagedExe));
-            if (!File.Exists(ExecutablePath) && File.Exists(movedExe) &&
-                !string.Equals(movedExe, ExecutablePath, StringComparison.Ordinal))
+            // If the executable sat in a subdirectory of the staged root, it is now under installDir at the
+            // same relative spot; normalize it to the canonical path so callers have a stable path.
+            string movedExe = Path.Combine(installDir, Path.GetFileName(stagedExe));
+            if (!File.Exists(exePath) && File.Exists(movedExe) &&
+                !string.Equals(movedExe, exePath, StringComparison.Ordinal))
             {
-                File.Move(movedExe, ExecutablePath, overwrite: true);
+                File.Move(movedExe, exePath, overwrite: true);
             }
 
-            MakeExecutable(ExecutablePath);
+            MakeExecutable(exePath);
         }
         finally
         {
@@ -247,18 +272,29 @@ internal static class CliProxyManager
     /// <summary>The per-process client bearer to send as the OpenAI api key; null until running.</summary>
     public static string? ClientApiKey => _apiKey;
 
-    /// <summary>Local directory holding the generated config.yaml and persistent token store (auth-dir).</summary>
-    public static string ConfigDir
+    /// <summary>
+    /// Environment variable that relocates the whole proxy root (binaries, config.yaml, keys, auth-dir).
+    /// Used by <c>--selftest</c> and CI to run a fully isolated sidecar: with its own keys, the adopt-by-port
+    /// probe never adopts a live user proxy, and the spawn falls back to a free port.
+    /// </summary>
+    public const string HomeEnvVar = "MUX_CLIPROXY_HOME";
+
+    /// <summary>Local directory holding the generated config.yaml, persistent token store (auth-dir), keys,
+    /// and the per-version binaries. <see cref="HomeEnvVar"/> overrides the per-user default.</summary>
+    public static string ConfigDir => ResolveConfigDir(Environment.GetEnvironmentVariable(HomeEnvVar));
+
+    /// <summary>Pure resolution for <see cref="ConfigDir"/>: a non-blank override wins (made absolute),
+    /// else %LOCALAPPDATA%/Mux-Swarm/cliproxy (Windows) or ~/.local/share/Mux-Swarm/cliproxy.</summary>
+    internal static string ResolveConfigDir(string? overrideDir)
     {
-        get
-        {
-            string baseDir = OperatingSystem.IsWindows()
-                ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-                : Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".local", "share");
-            return Path.Combine(baseDir, "Mux-Swarm", "cliproxy");
-        }
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+            return Path.GetFullPath(overrideDir.Trim());
+        string baseDir = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "share");
+        return Path.Combine(baseDir, "Mux-Swarm", "cliproxy");
     }
 
     /// <summary>Path to the generated config.yaml.</summary>
@@ -331,7 +367,7 @@ internal static class CliProxyManager
     /// OpenAI-compatible endpoint. The sidecar is DETACHED so it outlives Mux: on entry we first probe the
     /// fixed <see cref="PreferredPort"/> and ADOPT a healthy instance (possibly started by a prior Mux
     /// session) with zero spawn. Only if nothing healthy is listening do we spawn a new detached process
-    /// (Windows: CREATE_BREAKAWAY_FROM_JOB so it escapes Mux's kill-on-close Job Object; Unix: setsid so it
+    /// (Windows: CREATE_BREAKAWAY_FROM_JOB so it escapes Mux's kill-on-close Job Object; Unix: setsid, or a job-control process group on macOS, so it
     /// leaves Mux's process group and survives the group SIGTERM). Lazy: only called on first
     /// subscription-provider use.
     /// </summary>
@@ -388,8 +424,8 @@ internal static class CliProxyManager
     /// Spawns the proxy DETACHED from Mux's lifecycle so it survives Mux exit. Windows uses CreateProcess
     /// with CREATE_BREAKAWAY_FROM_JOB (escapes the kill-on-job-close Job Object) + CREATE_NO_WINDOW; if
     /// breakaway is denied it falls back to a normal spawn (then it dies with Mux and is simply re-spawned
-    /// next launch). Unix launches via `setsid` to start a new session/process-group so Mux's shutdown
-    /// `kill -TERM -&lt;pgid&gt;` group sweep cannot reach it; stdio is redirected to the null device.
+    /// next launch). Unix launches via <see cref="BuildUnixSpawn"/> (setsid where available, job-control
+    /// process group on macOS) so it is detached from Mux's group; stdio is redirected to the null device.
     /// </summary>
     private static void SpawnDetached(int port)
     {
@@ -411,45 +447,41 @@ internal static class CliProxyManager
             return;
         }
 
-        // Unix: setsid <exe> -config <cfg>, stdio -> /dev/null, new session => detached from Mux's group.
-        // The stdio redirect is DONE VIA THE SHELL (</dev/null >/dev/null 2>&1), not .NET pipes: the sidecar
-        // is detached and must OUTLIVE Mux, so a .NET-redirected pipe would break on Mux exit (SIGPIPE/block)
-        // and would need a live drain thread. Without this redirect the Go sidecar INHERITS Mux's TTY and its
-        // logs (gin access lines, auth-file-watch events) bleed straight into the alt-screen TUI viewport.
-        // setsid only detaches the controlling terminal for SIGNAL purposes; it does NOT reassign fd 0/1/2,
-        // which still point at the inherited tty. Positional args ($0/$1) keep paths-with-spaces injection-safe.
-        var upsi = new ProcessStartInfo
+        Process.Start(BuildUnixSpawn(ExecutablePath, ConfigPath, InstallDir)); // NOT Track()ed: must survive Mux exit
+    }
+
+    /// <summary>
+    /// Portable POSIX launcher for the detached sidecar (Linux AND macOS). `setsid` is a util-linux tool
+    /// that macOS does NOT ship: invoking it unconditionally made `/bin/sh` exit 127 ("command not found",
+    /// swallowed by the redirect) while Process.Start itself succeeded, so the sidecar never started and
+    /// every macOS launch timed out the health wait. Where `setsid` exists it is used exactly as before (new
+    /// session, detached from Mux's group). Otherwise the shell enables job control (`set -m`) so the
+    /// backgrounded sidecar gets its OWN process group (terminal Ctrl+C to Mux's foreground group cannot
+    /// reach it), and ignores SIGHUP (inherited across exec; Go keeps an ignored SIGHUP ignored) so closing
+    /// the terminal does not kill it. stdio goes to the null device via the SHELL, not .NET pipes: the
+    /// sidecar outlives Mux, so a .NET pipe would break on exit, and an inherited TTY would bleed its logs
+    /// into the TUI viewport. Positional args ($0/$1) keep paths-with-spaces injection-safe.
+    /// </summary>
+    internal static ProcessStartInfo BuildUnixSpawn(string exe, string configPath, string workDir)
+    {
+        var psi = new ProcessStartInfo
         {
             FileName = "/bin/sh",
             UseShellExecute = false,
-            WorkingDirectory = InstallDir,
+            WorkingDirectory = workDir,
         };
-        upsi.ArgumentList.Add("-c");
-        upsi.ArgumentList.Add("setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
-        upsi.ArgumentList.Add(ExecutablePath);
-        upsi.ArgumentList.Add(ConfigPath);
-        try
-        {
-            Process.Start(upsi); // NOT Track()ed: must survive Mux exit
-        }
-        catch
-        {
-            // setsid/sh missing (rare): fall back to a plain spawn without tracking. It may still be swept by
-            // the group SIGTERM, but will be re-spawned on next launch. Redirect stdio to the null device so
-            // its logs never leak into the TUI viewport even on this degraded path.
-            var fpsi = new ProcessStartInfo
-            {
-                FileName = "/bin/sh",
-                UseShellExecute = false,
-                WorkingDirectory = InstallDir,
-            };
-            fpsi.ArgumentList.Add("-c");
-            fpsi.ArgumentList.Add("exec \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1");
-            fpsi.ArgumentList.Add(ExecutablePath);
-            fpsi.ArgumentList.Add(ConfigPath);
-            Process.Start(fpsi);
-        }
+        psi.ArgumentList.Add("-c");
+        psi.ArgumentList.Add(UnixLaunchScript);
+        psi.ArgumentList.Add(exe);
+        psi.ArgumentList.Add(configPath);
+        return psi;
     }
+
+    /// <summary>The POSIX sh script behind <see cref="BuildUnixSpawn"/> ($0 = executable, $1 = config).</summary>
+    internal const string UnixLaunchScript =
+        "if command -v setsid >/dev/null 2>&1; then " +
+        "setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1; " +
+        "else trap '' HUP; set -m; \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & fi";
 
     /// <summary>
     /// Explicitly stops the sidecar (used by `/proxy` and tests). Because the proxy is detached we do NOT
@@ -703,17 +735,76 @@ internal static class CliProxyManager
     public static string PinnedVersion => CliProxyAssets.Version;
 
     /// <summary>
-    /// Re-provisions the pinned binary: removes the installed copy and re-downloads + verifies it, then (if a
-    /// sidecar was running) restarts it so the new binary takes effect. Used by `/proxy update`.
+    /// Update to the LATEST upstream CLIProxyAPI release: resolves the newest tag + its checksums.txt,
+    /// downloads + SHA256-verifies the platform artifact side-by-side, records it as the active version,
+    /// and (if a sidecar is up - tracked or orphaned from a prior Mux) cold-restarts it on the new binary. Returns the resolved version, or
+    /// null when already on it (no download performed; a live sidecar is still restarted onto it). Newer proxy releases spoof newer Claude Code
+    /// client versions upstream, which newly released Anthropic models gate on. Used by `/proxy update`.
+    /// </summary>
+    public static async Task<string?> UpdateToLatestAsync(CancellationToken ct = default)
+    {
+        var latest = await CliProxyAssets.ResolveLatestAsync(ct).ConfigureAwait(false);
+        if (string.Equals(latest.Version, ActiveVersion, StringComparison.OrdinalIgnoreCase) && IsBinaryPresent)
+        {
+            // Already installed - but a live sidecar (possibly an orphan from a prior Mux instance) may
+            // still be the OLD binary, so restart it anyway: update always leaves the latest one serving.
+            if (IsSidecarLive) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
+            return null;
+        }
+
+        string installDir = InstallDirFor(latest.Version);
+        MuxConsole.WriteInfo($"Fetching CLIProxyAPI v{latest.Version} ({CliProxyAssets.CurrentRid()})...");
+        await DownloadVerifyExtractAsync(latest.Url, latest.Sha256, latest.IsZip, installDir, ct)
+            .ConfigureAwait(false);
+        if (!File.Exists(Path.Combine(installDir, CliProxyAssets.ExecutableName)))
+            throw new InvalidOperationException(
+                $"CLIProxyAPI v{latest.Version} archive extracted but the executable was not found.");
+
+        bool live = IsSidecarLive;
+        Directory.CreateDirectory(ConfigDir);
+        File.WriteAllText(ActiveVersionMarkerPath, latest.Version);
+        if (live) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
+        return latest.Version;
+    }
+
+    /// <summary>
+    /// Re-provision the PINNED binary: clears any `/proxy update` override, removes the pinned install,
+    /// re-downloads + verifies it, then (if a sidecar was running) restarts it. Used by `/proxy update pinned`
+    /// and as the recovery path from a bad latest release.
     /// </summary>
     public static async Task UpdateAsync(CancellationToken ct = default)
     {
-        bool wasRunning = IsRunning;
+        bool live = IsSidecarLive;
+        // Release the binary before deleting its install dir: an adopted-or-orphaned sidecar on the
+        // fixed port still holds the executable open (Windows file lock) even when untracked here.
         Stop();
-        try { if (Directory.Exists(InstallDir)) Directory.Delete(InstallDir, recursive: true); } catch { }
+        if (!PortIsFree(PreferredPort)) try { KillListenerOnPort(PreferredPort); } catch { }
+        try { File.Delete(ActiveVersionMarkerPath); } catch { }
+        try
+        {
+            string pinnedDir = InstallDirFor(CliProxyAssets.Version);
+            if (Directory.Exists(pinnedDir)) Directory.Delete(pinnedDir, recursive: true);
+        }
+        catch { }
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
-        if (wasRunning)
-            await EnsureRunningAsync(ct).ConfigureAwait(false);
+        if (live) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// True when a sidecar is up: tracked by this process OR merely listening on the fixed port. The
+    /// port check matters because the sidecar is detached and adopted lazily - one left running by a
+    /// PREVIOUS Mux instance is not yet tracked (<see cref="IsRunning"/> is false), yet an update
+    /// must still restart it or the next adopt-by-port silently keeps serving the old binary.
+    /// </summary>
+    private static bool IsSidecarLive => IsRunning || !PortIsFree(PreferredPort);
+
+    /// <summary>Cold-restart the sidecar onto the now-active binary via the same path as
+    /// `/proxy restart` (reclaims the fixed port from any orphan, respawns, waits for health).</summary>
+    private static async Task RestartOnNewBinaryAsync(CancellationToken ct)
+    {
+        if (!await RecycleAsync(ct).ConfigureAwait(false))
+            MuxConsole.WriteWarning("Updated, but the sidecar did not become healthy on the new binary. " +
+                                    "Try /proxy restart, or /proxy update pinned to revert.");
     }
 
     /// <summary>

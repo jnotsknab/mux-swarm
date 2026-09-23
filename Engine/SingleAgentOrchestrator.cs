@@ -223,6 +223,7 @@ public static class SingleAgentOrchestrator
         AIAgent agent,
         string resolvedModelId,
         Func<string, IChatClient>? chatClientFactory,
+        bool persistSession,
         CancellationToken ct)
     {
         var parts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
@@ -233,9 +234,11 @@ public static class SingleAgentOrchestrator
         }
         var tag = parts[1].Trim();
 
-        // Ensure the session is persisted so its directory exists, then resolve it.
+        // Ensure the session is persisted so its directory exists, then resolve it. Stateless
+        // sessions (/stateless) never touch the sessions directory: creating one here would
+        // surface an empty session in the resume picker / panels, so the tag is refused below.
         string? sessionDir = Common.FindSessionDirectory(sessionTimestamp);
-        if (sessionDir == null)
+        if (sessionDir == null && persistSession)
         {
             try
             {
@@ -247,7 +250,9 @@ public static class SingleAgentOrchestrator
 
         if (sessionDir == null)
         {
-            MuxConsole.WriteWarning("Could not resolve the session directory to write the tag.");
+            MuxConsole.WriteWarning(persistSession
+                ? "Could not resolve the session directory to write the tag."
+                : "This is a stateless session; there is no session on disk to tag.");
             return;
         }
 
@@ -2694,7 +2699,7 @@ public static class SingleAgentOrchestrator
                       || metaCmd.StartsWith("/tag ", StringComparison.OrdinalIgnoreCase))
                 {
                     await HandleTagAsync(metaCmd, sessionTimestamp, session, agent,
-                        resolvedModelId, chatClientFactory, cancellationToken);
+                        resolvedModelId, chatClientFactory, persistSession, cancellationToken);
                 }
                 else if (metaCmd.Equals("/kanban", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/kanban ", StringComparison.OrdinalIgnoreCase))
@@ -2759,8 +2764,12 @@ public static class SingleAgentOrchestrator
                     else
                     {
                         // Persist so the parked session is also resumable from disk as a safety net.
-                        try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
-                        catch { /* best-effort; the live frame is preserved regardless */ }
+                        // Stateless sessions stay memory-only: the live frame IS the session.
+                        if (persistSession)
+                        {
+                            try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
+                            catch { /* best-effort; the live frame is preserved regardless */ }
+                        }
                         interactiveHandle.Tokens = _sessionTokens;
                         MuxConsole.WriteSuccess($"Detached session {interactiveHandle.Id} ({interactiveHandle.Label}). Re-attach with /attach {interactiveHandle.Id} or \\.");
                         // Release the session-scoped TUI hooks so the menu's footer is clean while

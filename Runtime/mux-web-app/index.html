@@ -512,7 +512,10 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .sidebar-header::-webkit-scrollbar { display: none; }
 
 .sidebar-tab {
-  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+  /* Grow to distribute the header width when the panel is resized wider (a fixed
+     intrinsic width left the tabs huddled left in an expanded panel); shrink stays
+     0 so narrow widths overflow into the header's scroll instead of clipping. */
+  flex: 1 0 auto; min-width: 0; white-space: nowrap; text-align: center;
   background: transparent; color: var(--muted); border: none;
   border-radius: calc(var(--radius) - 2px); padding: 8px 10px; font-family: var(--font-sans); font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500; cursor: pointer; transition: all 0.2s ease;
@@ -12842,6 +12845,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       return (
         /^Type \/qc to exit/i.test(m) ||
         /has \d+ tools available/i.test(m) ||
+        /^Loaded \d+ agents? from swarm\.json/i.test(m) ||
         /^\[GOAL\]/i.test(m) ||
         /^\[AGENT SESSION\]/i.test(m) ||
         /^\[Daemon:[^\]]+\]\s*(Next fire|Cron|Watching|Cron scheduled|Cron fired|Goal completed)/i.test(m) ||

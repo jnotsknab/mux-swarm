@@ -1,4 +1,5 @@
 ﻿using System.Runtime.InteropServices;
+using System.Text.Json;
 
 namespace MuxSwarm.Engine.Proxy;
 
@@ -75,4 +76,84 @@ internal static class CliProxyAssets
     /// <summary>The expected executable file name on the current OS once extracted.</summary>
     public static string ExecutableName =>
         RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "cli-proxy-api.exe" : "cli-proxy-api";
+
+    // ─── Latest-release resolution (used by `/proxy update`) ───
+
+    private const string LatestReleaseApi =
+        "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest";
+
+    /// <summary>A release artifact resolved at RUNTIME (the latest upstream release) rather than the
+    /// compile-time pin. Its SHA256 comes from the release's own checksums.txt, so the download is
+    /// still integrity-verified end to end.</summary>
+    public sealed record ResolvedRelease(string Version, string FileName, string Sha256, bool IsZip)
+    {
+        /// <summary>Full GitHub Releases download URL for this artifact at its resolved version.</summary>
+        public string Url => $"{ReleaseBase}/v{Version}/{FileName}";
+    }
+
+    /// <summary>
+    /// Compose the upstream asset file name for a runtime identifier at an arbitrary version,
+    /// mirroring the pinned table's naming scheme. Null when the rid is unsupported.
+    /// </summary>
+    public static string? FileNameFor(string rid, string version) => rid.ToLowerInvariant() switch
+    {
+        "win-x64"     => $"CLIProxyAPI_{version}_windows_amd64.zip",
+        "win-arm64"   => $"CLIProxyAPI_{version}_windows_aarch64.zip",
+        "osx-x64"     => $"CLIProxyAPI_{version}_darwin_amd64.tar.gz",
+        "osx-arm64"   => $"CLIProxyAPI_{version}_darwin_aarch64.tar.gz",
+        "linux-x64"   => $"CLIProxyAPI_{version}_linux_amd64.tar.gz",
+        "linux-arm64" => $"CLIProxyAPI_{version}_linux_aarch64.tar.gz",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Parse a GitHub-release checksums.txt (whitespace-separated "&lt;sha256&gt; &lt;filename&gt;" pairs,
+    /// one per line) into a filename -&gt; sha256 map. Tolerant of blank lines and extra whitespace.
+    /// </summary>
+    public static Dictionary<string, string> ParseChecksums(string text)
+    {
+        var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i + 1 < tokens.Length; i += 2)
+        {
+            // Pairs are (hash, filename); a 64-hex first token keeps us aligned if a stray line sneaks in.
+            if (tokens[i].Length == 64) map[tokens[i + 1]] = tokens[i];
+            else i -= 1; // resync: treat the next token as a potential hash
+        }
+        return map;
+    }
+
+    /// <summary>
+    /// Resolve the LATEST upstream release for the current runtime: queries the GitHub Releases API
+    /// for the tag, then fetches the release's checksums.txt for the artifact's SHA256. Throws on
+    /// network failure, an unsupported platform, or a checksums.txt without this artifact.
+    /// </summary>
+    public static async Task<ResolvedRelease> ResolveLatestAsync(CancellationToken ct = default)
+    {
+        string rid = CurrentRid()
+            ?? throw new PlatformNotSupportedException("Unsupported OS/architecture for CLIProxyAPI.");
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("mux-swarm-cliproxy-fetch");
+
+        string json = await http.GetStringAsync(LatestReleaseApi, ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        string tag = doc.RootElement.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
+        if (tag.Length == 0)
+            throw new InvalidOperationException("GitHub latest-release response had no tag_name.");
+        string version = tag.TrimStart('v', 'V');
+
+        string fileName = FileNameFor(rid, version)
+            ?? throw new PlatformNotSupportedException($"No CLIProxyAPI artifact naming for rid '{rid}'.");
+
+        string checksums = await http.GetStringAsync(
+            $"{ReleaseBase}/{tag}/checksums.txt", ct).ConfigureAwait(false);
+        var map = ParseChecksums(checksums);
+        if (!map.TryGetValue(fileName, out var sha))
+            throw new InvalidOperationException(
+                $"Release {tag} checksums.txt has no entry for {fileName}.");
+
+        return new ResolvedRelease(version, fileName, sha,
+            IsZip: fileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+    }
 }
