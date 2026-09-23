@@ -25,15 +25,7 @@ internal static class CliProxyManager
     public static string InstallDir => InstallDirFor(ActiveVersion);
 
     /// <summary>Install root for an arbitrary proxy version (side-by-side layout).</summary>
-    internal static string InstallDirFor(string version)
-    {
-        string baseDir = OperatingSystem.IsWindows()
-            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-            : Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".local", "share");
-        return Path.Combine(baseDir, "Mux-Swarm", "cliproxy", version);
-    }
+    internal static string InstallDirFor(string version) => Path.Combine(ConfigDir, version);
 
     /// <summary>Marker recording a user-chosen proxy version (from `/proxy update`) that overrides
     /// the compile-time pin. Lives beside config.yaml so it survives Mux updates.</summary>
@@ -280,18 +272,29 @@ internal static class CliProxyManager
     /// <summary>The per-process client bearer to send as the OpenAI api key; null until running.</summary>
     public static string? ClientApiKey => _apiKey;
 
-    /// <summary>Local directory holding the generated config.yaml and persistent token store (auth-dir).</summary>
-    public static string ConfigDir
+    /// <summary>
+    /// Environment variable that relocates the whole proxy root (binaries, config.yaml, keys, auth-dir).
+    /// Used by <c>--selftest</c> and CI to run a fully isolated sidecar: with its own keys, the adopt-by-port
+    /// probe never adopts a live user proxy, and the spawn falls back to a free port.
+    /// </summary>
+    public const string HomeEnvVar = "MUX_CLIPROXY_HOME";
+
+    /// <summary>Local directory holding the generated config.yaml, persistent token store (auth-dir), keys,
+    /// and the per-version binaries. <see cref="HomeEnvVar"/> overrides the per-user default.</summary>
+    public static string ConfigDir => ResolveConfigDir(Environment.GetEnvironmentVariable(HomeEnvVar));
+
+    /// <summary>Pure resolution for <see cref="ConfigDir"/>: a non-blank override wins (made absolute),
+    /// else %LOCALAPPDATA%/Mux-Swarm/cliproxy (Windows) or ~/.local/share/Mux-Swarm/cliproxy.</summary>
+    internal static string ResolveConfigDir(string? overrideDir)
     {
-        get
-        {
-            string baseDir = OperatingSystem.IsWindows()
-                ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-                : Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".local", "share");
-            return Path.Combine(baseDir, "Mux-Swarm", "cliproxy");
-        }
+        if (!string.IsNullOrWhiteSpace(overrideDir))
+            return Path.GetFullPath(overrideDir.Trim());
+        string baseDir = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "share");
+        return Path.Combine(baseDir, "Mux-Swarm", "cliproxy");
     }
 
     /// <summary>Path to the generated config.yaml.</summary>

@@ -177,6 +177,7 @@ public struct Help
         "  --delimiter <str>          Set multi-line input delimiter (e.g. --delimiter ---)",
         "  --watchdog                 Enable external watchdog (auto-restart on crash)",
         "  --serve <port>             Start embedded web UI (default 6723)",
+        "  --selftest [checks]        Run built-in end-to-end checks and exit (CI harness; e.g. proxy)",
         "  --telemetry [port]         Start the telemetry dashboard (default 6725; token/cost metrics, all-time)",
         "  --daemon                   Start daemon mode (file watch, cron, status triggers from config.json)",
         "  --register                 Register mux-swarm as an OS service (survives reboots)",

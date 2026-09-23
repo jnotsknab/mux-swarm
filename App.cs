@@ -348,6 +348,10 @@ public class App
             return 0;
         }
 
+        // --selftest [names] : run built-in end-to-end checks against this binary and exit (CI harness).
+        if (parsed.SelfTestSelector is not null)
+            return await SelfTest.RunAsync(parsed.SelfTestSelector);
+
         // Resolve the interactive render mode (G1/G10). CLI flag (--classic/--tui) wins over
         // console.renderMode config; default "auto" is capability-aware. No effect on the
         // stdio/serve path — MuxConsole.RenderMode reports Stdio whenever StdioMode is set.
@@ -1740,7 +1744,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         int? TelemetryPort,
         bool DaemonMode,
         bool AcpMode,
-        bool UpdateMode
+        bool UpdateMode,
+        string? SelfTestSelector
     );
 
     private static string? NextValue(string[] args, ref int i)
@@ -1873,6 +1878,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         bool daemonMode = false;
         bool acpMode = false;
         bool updateMode = false;
+        string? selfTestSelector = null;
 
 
         for (int i = 0; i < args.Length; i++)
@@ -2121,6 +2127,11 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 case "--update":
                     updateMode = true;
                     break;
+                case "--selftest":
+                    // Optional comma-separated check list; a following flag is not a selector.
+                    selfTestSelector = (i + 1 < args.Length && !args[i + 1].StartsWith("-", StringComparison.Ordinal))
+                        ? args[++i] : "all";
+                    break;
                 case "--register":
                     ServiceRegistration.Register(args);
                     Environment.Exit(0);
@@ -2155,7 +2166,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             telemetryPort,
             daemonMode,
             acpMode,
-            updateMode
+            updateMode,
+            selfTestSelector
         );
     }
 
