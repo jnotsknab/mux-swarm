@@ -1579,11 +1579,13 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /proxy [status|update|restart] - manage the local CLIProxyAPI sidecar. `status` (default) reports the
-    /// pinned version, running state + endpoint, and per-provider auth readiness. `update` re-downloads +
-    /// verifies the pinned binary and restarts the sidecar if it was running. `restart` (alias `recycle`)
-    /// cold-restarts the sidecar so it re-reads the auth-dir - recovery when a fresh credential was not
-    /// hot-reloaded.
+    /// /proxy [status|update|update pinned|restart] - manage the local CLIProxyAPI sidecar. `status`
+    /// (default) reports the active + pinned versions, running state + endpoint, and per-provider auth
+    /// readiness. `update` fetches the LATEST upstream release (checksums.txt-verified) and switches to
+    /// it - newer proxy releases present newer Claude Code client versions upstream, which newly
+    /// released Anthropic models require. `update pinned` reverts to this build's pinned version
+    /// (recovery from a bad latest). `restart` (alias `recycle`) cold-restarts the sidecar so it
+    /// re-reads the auth-dir - recovery when a fresh credential was not hot-reloaded.
     /// </summary>
     public static async Task HandleProxyAsync(string userInput)
     {
@@ -1594,10 +1596,24 @@ public static class CliCmdUtils
         {
             if (sub == "update")
             {
-                MuxConsole.WriteInfo($"Updating CLIProxyAPI to the pinned v{CliProxyManager.PinnedVersion}...");
+                string arg = parts.Length >= 3 ? parts[2].Trim().ToLowerInvariant() : "latest";
                 using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-                await CliProxyManager.UpdateAsync(cts.Token);
-                MuxConsole.WriteSuccess($"CLIProxyAPI is now at v{CliProxyManager.PinnedVersion}.");
+                if (arg is "pinned" or "pin")
+                {
+                    MuxConsole.WriteInfo($"Reverting CLIProxyAPI to the pinned v{CliProxyManager.PinnedVersion}...");
+                    await CliProxyManager.UpdateAsync(cts.Token);
+                    MuxConsole.WriteSuccess($"CLIProxyAPI is now at pinned v{CliProxyManager.PinnedVersion}.");
+                }
+                else
+                {
+                    string from = CliProxyManager.ActiveVersion;
+                    MuxConsole.WriteInfo($"Checking the latest CLIProxyAPI release (active: v{from})...");
+                    string? to = await CliProxyManager.UpdateToLatestAsync(cts.Token);
+                    if (to is null)
+                        MuxConsole.WriteSuccess($"Already on the latest release (v{from}).");
+                    else
+                        MuxConsole.WriteSuccess($"CLIProxyAPI updated v{from} -> v{to}.");
+                }
                 return;
             }
 
@@ -1614,7 +1630,7 @@ public static class CliCmdUtils
             }
 
             // status
-            MuxConsole.WriteInfo($"CLIProxyAPI pinned version: v{CliProxyManager.PinnedVersion}");
+            MuxConsole.WriteInfo($"CLIProxyAPI active version: v{CliProxyManager.ActiveVersion} (pinned: v{CliProxyManager.PinnedVersion})");
             MuxConsole.WriteMuted($"  binary present: {CliProxyManager.IsBinaryPresent} ({CliProxyManager.ExecutablePath})");
             if (CliProxyManager.IsRunning)
             {

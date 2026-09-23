@@ -22,16 +22,44 @@ internal static class CliProxyManager
     /// ~/.local/share/Mux-Swarm/cliproxy/&lt;version&gt;/ elsewhere. Versioned so a pin bump installs
     /// side-by-side and an old binary is never silently reused.
     /// </summary>
-    public static string InstallDir
+    public static string InstallDir => InstallDirFor(ActiveVersion);
+
+    /// <summary>Install root for an arbitrary proxy version (side-by-side layout).</summary>
+    internal static string InstallDirFor(string version)
+    {
+        string baseDir = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".local", "share");
+        return Path.Combine(baseDir, "Mux-Swarm", "cliproxy", version);
+    }
+
+    /// <summary>Marker recording a user-chosen proxy version (from `/proxy update`) that overrides
+    /// the compile-time pin. Lives beside config.yaml so it survives Mux updates.</summary>
+    private static string ActiveVersionMarkerPath => Path.Combine(ConfigDir, "active-version.txt");
+
+    /// <summary>
+    /// The proxy version this process actually uses: the marker's version when its binary is
+    /// present (a `/proxy update` install), otherwise the compile-time pin. Falling back when the
+    /// marker's binary is missing means a deleted/partial latest-install can never brick the proxy.
+    /// </summary>
+    public static string ActiveVersion
     {
         get
         {
-            string baseDir = OperatingSystem.IsWindows()
-                ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
-                : Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".local", "share");
-            return Path.Combine(baseDir, "Mux-Swarm", "cliproxy", CliProxyAssets.Version);
+            try
+            {
+                if (File.Exists(ActiveVersionMarkerPath))
+                {
+                    string v = File.ReadAllText(ActiveVersionMarkerPath).Trim();
+                    if (v.Length > 0 &&
+                        File.Exists(Path.Combine(InstallDirFor(v), CliProxyAssets.ExecutableName)))
+                        return v;
+                }
+            }
+            catch { /* fall through to the pin */ }
+            return CliProxyAssets.Version;
         }
     }
 
@@ -89,10 +117,14 @@ internal static class CliProxyManager
     /// provisioned files into <see cref="InstallDir"/>. A partial/failed download can never leave a
     /// half-populated install behind.
     /// </summary>
-    private static async Task DownloadVerifyExtractAsync(CliProxyAssets.Asset asset, CancellationToken ct)
+    private static Task DownloadVerifyExtractAsync(CliProxyAssets.Asset asset, CancellationToken ct)
+        => DownloadVerifyExtractAsync(asset.Url, asset.Sha256, asset.IsZip, InstallDirFor(CliProxyAssets.Version), ct);
+
+    private static async Task DownloadVerifyExtractAsync(
+        string url, string sha256, bool isZip, string installDir, CancellationToken ct)
     {
         string tmpArchive = Path.Combine(Path.GetTempPath(),
-            $"cliproxy-{CliProxyAssets.Version}-{Guid.NewGuid():N}{(asset.IsZip ? ".zip" : ".tar.gz")}");
+            $"cliproxy-{Guid.NewGuid():N}{(isZip ? ".zip" : ".tar.gz")}");
         string stageDir = Path.Combine(Path.GetTempPath(), $"cliproxy-stage-{Guid.NewGuid():N}");
 
         try
@@ -100,15 +132,15 @@ internal static class CliProxyManager
             using (var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) })
             {
                 http.DefaultRequestHeaders.UserAgent.ParseAdd("mux-swarm-cliproxy-fetch");
-                await using var net = await http.GetStreamAsync(asset.Url, ct).ConfigureAwait(false);
+                await using var net = await http.GetStreamAsync(url, ct).ConfigureAwait(false);
                 await using var fs = File.Create(tmpArchive);
                 await net.CopyToAsync(fs, ct).ConfigureAwait(false);
             }
 
-            await VerifySha256Async(tmpArchive, asset.Sha256, ct).ConfigureAwait(false);
+            await VerifySha256Async(tmpArchive, sha256, ct).ConfigureAwait(false);
 
             Directory.CreateDirectory(stageDir);
-            if (asset.IsZip)
+            if (isZip)
                 ZipFile.ExtractToDirectory(tmpArchive, stageDir, overwriteFiles: true);
             else
                 await ExtractTarGzAsync(tmpArchive, stageDir, ct).ConfigureAwait(false);
@@ -118,28 +150,29 @@ internal static class CliProxyManager
                     $"CLIProxyAPI archive did not contain '{CliProxyAssets.ExecutableName}'.");
 
             // Swap the whole extracted tree (the binary may ship alongside a default config/README) into
-            // place, then ensure the executable lands at the canonical ExecutablePath.
-            Directory.CreateDirectory(Path.GetDirectoryName(InstallDir)!);
-            if (Directory.Exists(InstallDir))
+            // place, then ensure the executable lands at the canonical per-version path.
+            string exePath = Path.Combine(installDir, CliProxyAssets.ExecutableName);
+            Directory.CreateDirectory(Path.GetDirectoryName(installDir)!);
+            if (Directory.Exists(installDir))
             {
-                var old = InstallDir + ".old-" + Guid.NewGuid().ToString("N");
-                Directory.Move(InstallDir, old);
+                var old = installDir + ".old-" + Guid.NewGuid().ToString("N");
+                Directory.Move(installDir, old);
                 try { Directory.Delete(old, recursive: true); } catch { /* best effort */ }
             }
 
             string stagedRoot = Path.GetDirectoryName(stagedExe)!;
-            Directory.Move(stagedRoot, InstallDir);
+            Directory.Move(stagedRoot, installDir);
 
-            // If the executable sat in a subdirectory of the staged root, it is now under InstallDir at the
-            // same relative spot; normalize it to ExecutablePath so callers have a stable path.
-            string movedExe = Path.Combine(InstallDir, Path.GetFileName(stagedExe));
-            if (!File.Exists(ExecutablePath) && File.Exists(movedExe) &&
-                !string.Equals(movedExe, ExecutablePath, StringComparison.Ordinal))
+            // If the executable sat in a subdirectory of the staged root, it is now under installDir at the
+            // same relative spot; normalize it to the canonical path so callers have a stable path.
+            string movedExe = Path.Combine(installDir, Path.GetFileName(stagedExe));
+            if (!File.Exists(exePath) && File.Exists(movedExe) &&
+                !string.Equals(movedExe, exePath, StringComparison.Ordinal))
             {
-                File.Move(movedExe, ExecutablePath, overwrite: true);
+                File.Move(movedExe, exePath, overwrite: true);
             }
 
-            MakeExecutable(ExecutablePath);
+            MakeExecutable(exePath);
         }
         finally
         {
@@ -703,14 +736,51 @@ internal static class CliProxyManager
     public static string PinnedVersion => CliProxyAssets.Version;
 
     /// <summary>
-    /// Re-provisions the pinned binary: removes the installed copy and re-downloads + verifies it, then (if a
-    /// sidecar was running) restarts it so the new binary takes effect. Used by `/proxy update`.
+    /// Update to the LATEST upstream CLIProxyAPI release: resolves the newest tag + its checksums.txt,
+    /// downloads + SHA256-verifies the platform artifact side-by-side, records it as the active version,
+    /// and (if a sidecar was running) restarts it on the new binary. Returns the resolved version, or
+    /// null when already on it (no download performed). Newer proxy releases spoof newer Claude Code
+    /// client versions upstream, which newly released Anthropic models gate on. Used by `/proxy update`.
+    /// </summary>
+    public static async Task<string?> UpdateToLatestAsync(CancellationToken ct = default)
+    {
+        var latest = await CliProxyAssets.ResolveLatestAsync(ct).ConfigureAwait(false);
+        if (string.Equals(latest.Version, ActiveVersion, StringComparison.OrdinalIgnoreCase) && IsBinaryPresent)
+            return null;
+
+        string installDir = InstallDirFor(latest.Version);
+        MuxConsole.WriteInfo($"Fetching CLIProxyAPI v{latest.Version} ({CliProxyAssets.CurrentRid()})...");
+        await DownloadVerifyExtractAsync(latest.Url, latest.Sha256, latest.IsZip, installDir, ct)
+            .ConfigureAwait(false);
+        if (!File.Exists(Path.Combine(installDir, CliProxyAssets.ExecutableName)))
+            throw new InvalidOperationException(
+                $"CLIProxyAPI v{latest.Version} archive extracted but the executable was not found.");
+
+        bool wasRunning = IsRunning;
+        Stop();
+        Directory.CreateDirectory(ConfigDir);
+        File.WriteAllText(ActiveVersionMarkerPath, latest.Version);
+        if (wasRunning)
+            await EnsureRunningAsync(ct).ConfigureAwait(false);
+        return latest.Version;
+    }
+
+    /// <summary>
+    /// Re-provision the PINNED binary: clears any `/proxy update` override, removes the pinned install,
+    /// re-downloads + verifies it, then (if a sidecar was running) restarts it. Used by `/proxy update pinned`
+    /// and as the recovery path from a bad latest release.
     /// </summary>
     public static async Task UpdateAsync(CancellationToken ct = default)
     {
         bool wasRunning = IsRunning;
         Stop();
-        try { if (Directory.Exists(InstallDir)) Directory.Delete(InstallDir, recursive: true); } catch { }
+        try { File.Delete(ActiveVersionMarkerPath); } catch { }
+        try
+        {
+            string pinnedDir = InstallDirFor(CliProxyAssets.Version);
+            if (Directory.Exists(pinnedDir)) Directory.Delete(pinnedDir, recursive: true);
+        }
+        catch { }
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
         if (wasRunning)
             await EnsureRunningAsync(ct).ConfigureAwait(false);

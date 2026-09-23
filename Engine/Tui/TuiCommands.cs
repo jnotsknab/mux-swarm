@@ -142,6 +142,10 @@ internal static class TuiCommands
         new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
         new("/login",        "Log in with Claude / ChatGPT (subscription OAuth; add 'headless' for remote/VPS)", Scope.ReplOnly),
         new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),
+        new("/proxy",        "CLIProxyAPI sidecar status: versions, endpoint, provider auth", Scope.ReplOnly),
+        new("/proxy update", "Update the proxy to the LATEST upstream release (newest model support)", Scope.ReplOnly),
+        new("/proxy update pinned", "Revert the proxy to this build's pinned version", Scope.ReplOnly),
+        new("/proxy restart","Cold-restart the sidecar (re-reads auth-dir)", Scope.ReplOnly),
         new("/delimiter",    "Toggle multi-line input delimiter", Scope.ReplOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.ReplOnly),
 
@@ -183,7 +187,7 @@ internal static class TuiCommands
         "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
-        "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom",
+        "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom", "/proxy",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

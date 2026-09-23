@@ -132,4 +132,42 @@ public class CliProxyAssetsTests
             try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
+
+    // ─── Latest-release resolution helpers (offline) ───
+
+    [Fact]
+    public void FileNameFor_MatchesPinnedTableNaming_ForEveryRid()
+    {
+        foreach (var a in CliProxyAssets.Artifacts)
+            Assert.Equal(a.FileName, CliProxyAssets.FileNameFor(a.Rid, CliProxyAssets.Version));
+        Assert.Null(CliProxyAssets.FileNameFor("solaris-sparc", "1.0.0"));
+    }
+
+    [Fact]
+    public void ParseChecksums_ParsesPairs_LineBreaksAndExtraWhitespace()
+    {
+        string sha1 = new string('a', 64);
+        string sha2 = new string('b', 64);
+        string text = $"{sha1}  CLIProxyAPI_9.9.9_windows_amd64.zip\n\n  {sha2}\tCLIProxyAPI_9.9.9_linux_amd64.tar.gz \n";
+        var map = CliProxyAssets.ParseChecksums(text);
+        Assert.Equal(2, map.Count);
+        Assert.Equal(sha1, map["CLIProxyAPI_9.9.9_windows_amd64.zip"]);
+        Assert.Equal(sha2, map["CLIProxyAPI_9.9.9_linux_amd64.tar.gz"]);
+    }
+
+    [Fact]
+    public void ParseChecksums_EmptyOrGarbage_YieldsEmptyMap()
+    {
+        Assert.Empty(CliProxyAssets.ParseChecksums(""));
+        Assert.Empty(CliProxyAssets.ParseChecksums("not a checksum line"));
+    }
+
+    [Fact]
+    public void ResolvedRelease_Url_PointsAtItsOwnVersion()
+    {
+        var r = new CliProxyAssets.ResolvedRelease("9.9.9", "CLIProxyAPI_9.9.9_windows_amd64.zip", new string('c', 64), IsZip: true);
+        Assert.Equal(
+            "https://github.com/router-for-me/CLIProxyAPI/releases/download/v9.9.9/CLIProxyAPI_9.9.9_windows_amd64.zip",
+            r.Url);
+    }
 }
