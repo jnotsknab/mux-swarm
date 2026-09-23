@@ -738,15 +738,20 @@ internal static class CliProxyManager
     /// <summary>
     /// Update to the LATEST upstream CLIProxyAPI release: resolves the newest tag + its checksums.txt,
     /// downloads + SHA256-verifies the platform artifact side-by-side, records it as the active version,
-    /// and (if a sidecar was running) restarts it on the new binary. Returns the resolved version, or
-    /// null when already on it (no download performed). Newer proxy releases spoof newer Claude Code
+    /// and (if a sidecar is up - tracked or orphaned from a prior Mux) cold-restarts it on the new binary. Returns the resolved version, or
+    /// null when already on it (no download performed; a live sidecar is still restarted onto it). Newer proxy releases spoof newer Claude Code
     /// client versions upstream, which newly released Anthropic models gate on. Used by `/proxy update`.
     /// </summary>
     public static async Task<string?> UpdateToLatestAsync(CancellationToken ct = default)
     {
         var latest = await CliProxyAssets.ResolveLatestAsync(ct).ConfigureAwait(false);
         if (string.Equals(latest.Version, ActiveVersion, StringComparison.OrdinalIgnoreCase) && IsBinaryPresent)
+        {
+            // Already installed - but a live sidecar (possibly an orphan from a prior Mux instance) may
+            // still be the OLD binary, so restart it anyway: update always leaves the latest one serving.
+            if (IsSidecarLive) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
             return null;
+        }
 
         string installDir = InstallDirFor(latest.Version);
         MuxConsole.WriteInfo($"Fetching CLIProxyAPI v{latest.Version} ({CliProxyAssets.CurrentRid()})...");
@@ -756,12 +761,10 @@ internal static class CliProxyManager
             throw new InvalidOperationException(
                 $"CLIProxyAPI v{latest.Version} archive extracted but the executable was not found.");
 
-        bool wasRunning = IsRunning;
-        Stop();
+        bool live = IsSidecarLive;
         Directory.CreateDirectory(ConfigDir);
         File.WriteAllText(ActiveVersionMarkerPath, latest.Version);
-        if (wasRunning)
-            await EnsureRunningAsync(ct).ConfigureAwait(false);
+        if (live) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
         return latest.Version;
     }
 
@@ -772,8 +775,11 @@ internal static class CliProxyManager
     /// </summary>
     public static async Task UpdateAsync(CancellationToken ct = default)
     {
-        bool wasRunning = IsRunning;
+        bool live = IsSidecarLive;
+        // Release the binary before deleting its install dir: an adopted-or-orphaned sidecar on the
+        // fixed port still holds the executable open (Windows file lock) even when untracked here.
         Stop();
+        if (!PortIsFree(PreferredPort)) try { KillListenerOnPort(PreferredPort); } catch { }
         try { File.Delete(ActiveVersionMarkerPath); } catch { }
         try
         {
@@ -782,8 +788,24 @@ internal static class CliProxyManager
         }
         catch { }
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
-        if (wasRunning)
-            await EnsureRunningAsync(ct).ConfigureAwait(false);
+        if (live) await RestartOnNewBinaryAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// True when a sidecar is up: tracked by this process OR merely listening on the fixed port. The
+    /// port check matters because the sidecar is detached and adopted lazily - one left running by a
+    /// PREVIOUS Mux instance is not yet tracked (<see cref="IsRunning"/> is false), yet an update
+    /// must still restart it or the next adopt-by-port silently keeps serving the old binary.
+    /// </summary>
+    private static bool IsSidecarLive => IsRunning || !PortIsFree(PreferredPort);
+
+    /// <summary>Cold-restart the sidecar onto the now-active binary via the same path as
+    /// `/proxy restart` (reclaims the fixed port from any orphan, respawns, waits for health).</summary>
+    private static async Task RestartOnNewBinaryAsync(CancellationToken ct)
+    {
+        if (!await RecycleAsync(ct).ConfigureAwait(false))
+            MuxConsole.WriteWarning("Updated, but the sidecar did not become healthy on the new binary. " +
+                                    "Try /proxy restart, or /proxy update pinned to revert.");
     }
 
     /// <summary>

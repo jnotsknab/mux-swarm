@@ -1610,7 +1610,7 @@ public static class CliCmdUtils
                     MuxConsole.WriteInfo($"Checking the latest CLIProxyAPI release (active: v{from})...");
                     string? to = await CliProxyManager.UpdateToLatestAsync(cts.Token);
                     if (to is null)
-                        MuxConsole.WriteSuccess($"Already on the latest release (v{from}).");
+                        MuxConsole.WriteSuccess($"Already on the latest release (v{from}); sidecar restarted if it was running.");
                     else
                         MuxConsole.WriteSuccess($"CLIProxyAPI updated v{from} -> v{to}.");
                 }

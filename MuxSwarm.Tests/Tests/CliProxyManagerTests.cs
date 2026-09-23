@@ -35,8 +35,10 @@ public class CliProxyManagerTests
     [Fact]
     public void PathsAreLocal_AndVersioned()
     {
-        // Install dir is versioned (side-by-side pins); config + auth live under the shared cliproxy dir.
-        Assert.Contains(CliProxyAssets.Version, CliProxyManager.InstallDir);
+        // Install dir is versioned (side-by-side installs) and follows the ACTIVE version - the pin, or a
+        // `/proxy update` override recorded on this machine - so this holds on any host state.
+        Assert.Contains(CliProxyManager.ActiveVersion, CliProxyManager.InstallDir);
+        Assert.Contains(CliProxyAssets.Version, CliProxyManager.InstallDirFor(CliProxyAssets.Version));
         Assert.EndsWith("config.yaml", CliProxyManager.ConfigPath);
         Assert.EndsWith("auth", CliProxyManager.AuthDir);
         // Never on a NAS/UNC path (the no-exec-on-NAS rule); must be a local rooted path.
