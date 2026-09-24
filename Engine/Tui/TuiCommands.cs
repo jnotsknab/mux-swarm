@@ -80,6 +80,11 @@ internal static class TuiCommands
         new("/background",        "Run an agent on a goal in the background, watchable via \\ (alias /bg) (/background <agent> <goal>)", Scope.SessionOnly),
         new("/background jobs",   "List background agent jobs", Scope.SessionOnly),
         new("/background cancel", "Cancel a running background job (/background cancel <id>)", Scope.SessionOnly),
+        new("/share",         "Share this session live - others ask to watch, you approve (/share [--local|--lan])", Scope.Both),
+        new("/share status",  "Show the join link and who is watching", Scope.Both),
+        new("/share kick",    "Disconnect a guest (/share kick <name|#id>)", Scope.Both),
+        new("/share stop",    "Stop sharing: invalidate the link and disconnect everyone", Scope.Both),
+        new("/join",          "Watch someone's shared session (/join <link>)", Scope.Both),
         new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.Both),
         new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.Both),
         new("/daemon off",    "Stop the daemon", Scope.Both),
@@ -186,7 +191,7 @@ internal static class TuiCommands
     {
         "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
-        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da",
+        "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da", "/join", "/share kick",
         "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom", "/proxy",
     };
 

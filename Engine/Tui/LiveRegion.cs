@@ -40,6 +40,9 @@ internal sealed class ConsoleTuiTerminal : ITuiTerminal
     {
         Console.Out.Write(s);
         if (CapturePath is not null) Capture(s);
+        // Live session sharing (/share): mirror the exact bytes to approved guests. Enqueue-only,
+        // never blocks the renderer; a single volatile read when nobody is watching.
+        if (Share.ShareHost.HasGuests) Share.ShareHost.OnTerminalWrite(s, Width, Height);
     }
     public void Flush() { try { Console.Out.Flush(); } catch { /* ignore */ } }
 

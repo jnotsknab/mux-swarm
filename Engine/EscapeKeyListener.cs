@@ -172,6 +172,10 @@ public sealed class EscapeKeyListener : IDisposable
                         // this loop stole was detoured through the replay queue and only surfaced
                         // at the NEXT prompt entry (choppy typing + chars "flushed" a turn late).
                         if (Tui.ConsoleInputPump.PromptActive) { Thread.Sleep(20); continue; }
+                        // Mid-turn background ask (e.g. /share join approval): this listener owns
+                        // the pump right now, so it hosts the in-frame modal (same no-second-reader
+                        // contract as Ctrl+N steer).
+                        if (!Tui.ConsoleInputPump.ModalActive && MuxConsole.TuiServiceBackgroundAsk(false)) continue;
                         if (!pump.TryTake(out var pev, 100)) continue;
                         if (Tui.ConsoleInputPump.PromptActive)
                         {

@@ -1521,6 +1521,11 @@ public class App
                     break;
                 }
 
+                case var shareCmd when Engine.Share.ShareCommand.Matches(shareCmd):
+                    // Session-agnostic like /daemon: sharing mirrors whatever the TUI shows.
+                    await Engine.Share.ShareCommand.RunAsync(userInput);
+                    break;
+
                 case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ")
                                   || dmnCmd == "/da" || dmnCmd.StartsWith("/da "):
                 {
