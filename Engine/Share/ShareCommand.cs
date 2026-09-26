@@ -75,7 +75,8 @@ internal static class ShareCommand
             const string local = "This machine only (loopback)";
             const string all = "All interfaces - people on your LAN / Tailscale can join";
             const string cancel = "Cancel";
-            var choice = MuxConsole.Select("Where should the share listen?", [all, local, cancel]);
+            // Loopback first: the safe choice is the default (Enter / Esc without moving).
+            var choice = MuxConsole.Select("Where should the share listen?", [local, all, cancel]);
             if (choice == cancel) { MuxConsole.WriteMuted("Share cancelled."); return; }
             lan = choice == all;
         }

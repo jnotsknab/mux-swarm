@@ -155,9 +155,61 @@ public class AnsiSanitizerTests
         => Assert.Equal("x", S("\u001b[" + new string('1', 5000) + "mx"));
 }
 
+public class SecretRedactorTests
+{
+    private const string Secret = "q3Zk8VYb1mXw-Tn_4Lr0PdHs9EaJcUfGiKoMtByNe2A";   // 43-char base64url
+
+    [Fact]
+    public void Masks_Full_Link_Keeping_Width_And_Room()
+    {
+        string line = $"  mux-swarm --join \"http://10.0.0.5:6726/s/ROOMROOMROOMROOMROOMRO#{Secret}\"";
+        string got = SecretRedactor.Redact(line, Secret);
+        Assert.DoesNotContain(Secret[..SecretRedactor.MinFragment], got);
+        Assert.Equal(line.Length, got.Length);
+        Assert.Contains("/s/ROOMROOMROOMROOMROOMRO#" + new string('\u2022', Secret.Length) + "\"", got);
+    }
+
+    [Fact]
+    public void Masks_Both_Halves_Of_A_Wrapped_Link_Across_Escapes()
+    {
+        string frame = "\u001b[?2026h\u001b[5;1H\u001b[0m\u001b[36m/s/ROOM#" + Secret[..20] + "\u001b[0K\u001b[6;1H\u001b[36m" + Secret[20..] + "\"\u001b[0m\u001b[?2026l";
+        string got = SecretRedactor.Redact(frame, Secret);
+        Assert.DoesNotContain(Secret[..10], got);
+        Assert.DoesNotContain(Secret[^10..], got);
+        Assert.Equal(frame.Length, got.Length);
+        Assert.Contains("\u001b[5;1H\u001b[0m\u001b[36m", got);   // escapes untouched (digits are base64url chars)
+    }
+
+    [Fact]
+    public void Leaves_Ordinary_Output_Untouched()
+    {
+        string s = "\u001b[38;2;10;20;30mBuilding MuxSwarm.csproj 1936/1936 passed\u001b[0m Secret-ish words";
+        Assert.Same(s, SecretRedactor.Redact(s, Secret));
+    }
+}
+
+public class GuestViewTests
+{
+    [Fact]
+    public void Host_Resize_Clears_Stale_Cells_And_Requests_Keyframe()
+    {
+        var sb = new StringBuilder();
+        var view = new ShareGuest.GuestView(s => sb.Append(s));
+        view.Enter(20, 5);
+        sb.Clear();
+        Assert.True(view.SetHostSize(10, 3));          // host shrank: clear + keyframe
+        Assert.Contains("\u001b[2J", sb.ToString());
+        sb.Clear();
+        Assert.False(view.SetHostSize(10, 3));         // same size: no-op
+        Assert.Equal("", sb.ToString());
+    }
+}
+
 /// <summary>End-to-end over a real loopback listener: handshake, approval, frame delivery, and
 /// the negative paths (wrong secret, wrong room, declined).</summary>
-[Collection("ShareHost")]
+// Serialized with the console-state tests: ShareHost is process-global and feeds the TUI footer
+// chip and transcript, so running in parallel with TuiDriver tests races their assertions.
+[Collection("ConsoleState")]
 public class ShareHostLoopbackTests : IAsyncLifetime
 {
     public Task InitializeAsync() => Task.CompletedTask;
@@ -229,6 +281,23 @@ public class ShareHostLoopbackTests : IAsyncLifetime
         var bye = await NextOfType(guest, ShareProtocol.Bye);
         Assert.Contains("declined", Encoding.UTF8.GetString(bye, 1, bye.Length - 1));
         Assert.False(ShareHost.HasGuests);
+    }
+
+    [Fact]
+    public async Task Link_Secret_Never_Reaches_Guests()
+    {
+        ShareHost.ApprovalOverride = _ => true;
+        var link = await ShareHost.StartAsync(lan: false, port: 0);
+        using var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
+        await NextOfType(guest, ShareProtocol.Accept);
+        for (int i = 0; i < 50 && !ShareHost.HasGuests; i++) await Task.Delay(20);
+        string secret = System.Buffers.Text.Base64Url.EncodeToString(link.Secret);
+        ShareHost.OnTerminalWrite("\u001b[2;1Hjoin: " + link, 120, 30);
+        var output = await NextOfType(guest, ShareProtocol.Output);
+        string text = Encoding.UTF8.GetString(output, 1, output.Length - 1);
+        Assert.Contains("/s/" + link.RoomId + "#", text);
+        Assert.DoesNotContain(secret[..SecretRedactor.MinFragment], text);
+        await guest.CloseAsync();
     }
 
     [Fact]

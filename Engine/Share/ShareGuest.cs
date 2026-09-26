@@ -296,7 +296,7 @@ internal static class ShareGuest
     }
 
     /// <summary>Local terminal state for the viewer: alt screen, size gating, status overlays.</summary>
-    private sealed class GuestView(Action<string> write)
+    internal sealed class GuestView(Action<string> write)
     {
         private readonly object _lock = new();
         private readonly AnsiSanitizer _sanitizer = new();
@@ -323,13 +323,20 @@ internal static class ShareGuest
             }
         }
 
-        /// <summary>Returns true when the guest just became large enough and needs a keyframe.</summary>
+        /// <summary>Apply a host resize; true when the guest needs a keyframe.</summary>
         public bool SetHostSize(int w, int h)
         {
             lock (_lock)
             {
+                bool changed = (w, h) != (_hostW, _hostH);
                 _hostW = w; _hostH = h;
-                return _entered && EvaluateFit();
+                if (!_entered) return false;
+                if (EvaluateFit()) return true;   // too-small -> fits (already cleared)
+                if (!changed || _tooSmall) return false;
+                // The host's new frame may be smaller than the last one: drop stale cells outside
+                // it rather than relying on every host paint path to clear, then ask for a keyframe.
+                write("\u001b[0m\u001b[2J\u001b[H");
+                return true;
             }
         }
 

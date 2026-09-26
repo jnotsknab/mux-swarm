@@ -47,6 +47,7 @@ internal static class ShareHost
     private static int _nextId;
     private static volatile int _guestCount;
     private static (int W, int H) _lastSize;
+    private static string? _secretText;   // base64url link secret, redacted from the guest stream
 
     /// <summary>True while the share listener is running.</summary>
     public static bool IsActive => _app is not null;
@@ -91,6 +92,7 @@ internal static class ShareHost
         {
             _app = app;
             _link = link;
+            _secretText = System.Buffers.Text.Base64Url.EncodeToString(link.Secret);
             _lan = lan;
             _addresses = addresses.Select(a => $"{FormatHost(a)}:{bound}").ToList();
             _lastSize = (0, 0);
@@ -106,7 +108,7 @@ internal static class ShareHost
     public static async Task StopAsync(string reason = "host stopped sharing")
     {
         WebApplication? app;
-        lock (Gate) { app = _app; _app = null; _link = null; _addresses = []; }
+        lock (Gate) { app = _app; _app = null; _link = null; _secretText = null; _addresses = []; }
         foreach (var g in Guests.Values) g.Close(reason);
         if (app is not null)
         {
@@ -135,6 +137,9 @@ internal static class ShareHost
     internal static void OnTerminalWrite(string s, int width, int height)
     {
         if (_guestCount == 0 || s.Length == 0) return;
+        // The join link may be on the host's screen (the /share printout, /share status). Guests
+        // must never receive the secret, so mask it once here, before fan-out.
+        if (_secretText is { } secret) s = SecretRedactor.Redact(s, secret);
         bool resized = (width, height) != _lastSize;
         _lastSize = (width, height);
         foreach (var g in Guests.Values)
