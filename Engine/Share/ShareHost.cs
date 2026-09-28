@@ -60,6 +60,13 @@ internal static class ShareHost
     /// <summary>Test/selftest seam: when set, replaces the host approval modal.</summary>
     internal static Func<string, bool>? ApprovalOverride { get; set; }
 
+    /// <summary>
+    /// Test seam for the approval question itself (question, choices, cancellation) -> chosen index or null.
+    /// Unlike <see cref="ApprovalOverride"/> it runs inside the gate and the cancellation plumbing, so tests
+    /// can prove a pending approval ends when the guest leaves or the share stops.
+    /// </summary>
+    internal static Func<string, string[], CancellationToken, int?>? AskOverride { get; set; }
+
     /// <summary>Current join link, or null when not sharing.</summary>
     public static ShareLink? Link => _link;
 
@@ -320,7 +327,10 @@ internal static class ShareHost
             if (guest.Closed || cts.IsCancellationRequested) return false;
             string q = $"\"{guest.Name}\" ({guest.Address}) wants to WATCH this session live. " +
                        "They will see everything on your screen. Allow?";
-            int? answer = await Task.Run(() => MuxConsole.TuiAskFromBackground(q, ["Deny", "Allow"], 0, ApprovalTimeout, cts.Token));
+            string[] choices = ["Deny", "Allow"];
+            int? answer = await Task.Run(() => AskOverride is { } ask
+                ? ask(q, choices, cts.Token)
+                : MuxConsole.TuiAskFromBackground(q, choices, 0, ApprovalTimeout, cts.Token));
             return answer == 1 && !cts.IsCancellationRequested;
         }
         finally { ApprovalGate.Release(); }

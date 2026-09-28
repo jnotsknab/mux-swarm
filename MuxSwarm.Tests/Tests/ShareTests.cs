@@ -1,4 +1,4 @@
-using System.Net.WebSockets;
+﻿using System.Net.WebSockets;
 using System.Text;
 using MuxSwarm.Engine.Share;
 
@@ -232,7 +232,47 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     public async Task DisposeAsync()
     {
         ShareHost.ApprovalOverride = null;
+        ShareHost.AskOverride = null;
         await ShareHost.StopAsync();
+    }
+
+    /// <summary>An approval ask that blocks until cancelled (or 10 s), recording what ended it.</summary>
+    private static (TaskCompletionSource Entered, TaskCompletionSource<bool> Cancelled) BlockingAsk()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ShareHost.AskOverride = (_, _, ct) =>
+        {
+            entered.TrySetResult();
+            bool wasCancelled = ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(10));
+            cancelled.TrySetResult(wasCancelled);
+            return wasCancelled ? null : 1;
+        };
+        return (entered, cancelled);
+    }
+
+    [Fact]
+    public async Task Pending_Approval_Ends_When_The_Share_Stops()
+    {
+        var (entered, cancelled) = BlockingAsk();
+        var link = await ShareHost.StartAsync(lan: false, port: 0);
+        using var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await ShareHost.StopAsync();
+        Assert.True(await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5)));   // withdrawn, not answered
+        Assert.False(ShareHost.HasGuests);
+    }
+
+    [Fact]
+    public async Task Pending_Approval_Ends_When_The_Guest_Leaves()
+    {
+        var (entered, cancelled) = BlockingAsk();
+        var link = await ShareHost.StartAsync(lan: false, port: 0);
+        var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        guest.Dispose();   // drop the connection while the host is still being asked
+        Assert.True(await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(ShareHost.HasGuests);
     }
 
     private static async Task<byte[]> NextOfType(ShareGuestConnection c, byte type)

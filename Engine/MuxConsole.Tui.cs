@@ -1254,6 +1254,9 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         if (ask.Result.TrySetResult(answer))
             CommitToDriver($"  [{TC.Dim}]? {Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(ask.Question, 60))} \u00b7 " +
                            $"{Spectre.Console.Markup.Escape(answer is { } i ? ask.Choices[i] : "cancelled")}[/]");
+        else   // timed out or withdrawn (e.g. the guest left) while the modal was open: the answer is void
+            CommitToDriver($"  [{TC.Dim}]? {Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(ask.Question, 60))} \u00b7 " +
+                           "request withdrawn or timed out; your answer was not applied[/]");
         return true;
     }
 
