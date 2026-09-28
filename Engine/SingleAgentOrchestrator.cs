@@ -2323,7 +2323,10 @@ public static class SingleAgentOrchestrator
                     string response = responseText.ToString();
 
                     if (!string.IsNullOrWhiteSpace(response))
+                    {
                         conversationHistory.Add(new ChatMessage(ChatRole.Assistant, response));
+                        RunResult.Report(response);   // daemon/webhook callback result (no-op otherwise)
+                    }
 
                     if (string.IsNullOrWhiteSpace(response))
                     {

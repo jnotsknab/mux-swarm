@@ -277,6 +277,7 @@ public static class ParallelSwarmOrchestrator
                 [Description("Optional comma-separated list of file paths or identifiers produced")] string? artifacts
             ) =>
             {
+                RunResult.Report(status == "success" ? summary : $"[{status}] {summary}");   // daemon/webhook callback result
                 if (status == "success")
                     MuxConsole.WriteTaskComplete("Task", summary);
                 else

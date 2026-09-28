@@ -161,8 +161,7 @@ running to receive.
         "mode": "agent",
         "agent": "CodeAgent",
         "secret": "${GH_WEBHOOK_SECRET}",
-        "payloadLimit": 8192,
-        "cooldown": 5
+        "callbackUrl": "https://bot.example.com/mux-result"
       }
     ]
   }
@@ -173,21 +172,40 @@ running to receive.
 |-------|---------|
 | `id` | Route id → `POST /api/hook/<id>` |
 | `type` | `"webhook"` |
-| `goal` | Goal template; `{payload}` = request body, plus `{source}` `{timestamp}` `{id}` |
-| `mode` / `agent` | Orchestrator (`agent`/`swarm`/`pswarm`) + optional agent override |
-| `secret` | HMAC shared secret. When set, a valid `X-Hub-Signature-256` is **required** |
-| `payloadLimit` | Max body bytes forwarded into the goal (untrusted input; default 8192) |
-| `cooldown` | Minimum seconds between firings |
+| `goal` | Goal template; `{payload}` = request body, plus `{source}` `{timestamp}` `{id}` `{deliveryId}`. Substituted in one pass: placeholder-like text inside the body stays verbatim |
+| `mode` / `agent` | Orchestrator (`agent`/`swarm`/`pswarm`) + optional agent override (applies to that run only) |
+| `secret` | HMAC shared secret. When set, a valid `X-Hub-Signature-256` is **required**; it also signs the callback |
+| `callbackUrl` | Optional. When the run finishes, Mux POSTs its result here (see *Getting the result back*) |
+| `payloadLimit` | Max body **characters** forwarded into the goal (untrusted input; default 65536). Longer bodies end with a `[payload truncated: N of M chars]` marker |
+| `cooldown` / `interval` | Minimum seconds between accepted deliveries. Default **0** for webhooks (every delivery runs) |
 
 ### How it works
 
 1. A sender (GitHub, Stripe, an alert, another Mux) POSTs to `POST /api/hook/{id}`.
-2. Mux verifies the HMAC signature (when a `secret` is set), truncates the body to `payloadLimit`,
-   and **immediately returns `202 Accepted`** - it does not wait for the agent (goals are long runs).
-3. The payload is queued; a background loop drains it under `cooldown` and fires the goal with
-   `{payload}` templated in.
+2. Mux verifies the HMAC signature over the **raw body bytes** (when a `secret` is set) and
+   **immediately returns `202 Accepted`** with a `deliveryId` - it does not wait for the agent (goals are long runs).
+   GitHub's form-encoded delivery (`application/x-www-form-urlencoded`) is unwrapped to its `payload` field.
+3. The payload is queued; a background loop fires the goal with `{payload}` templated in. Each
+   delivery runs **stateless**: an isolated context per delivery, no session directory.
+4. If `callbackUrl` is set, the result is POSTed there when the run finishes.
 
-**Response contract:** `202` accepted · `401` bad/missing signature · `404` unknown or non-webhook id.
+**Response contract:** `202 {accepted, id, deliveryId}` · `401` bad/missing signature · `404` unknown or
+non-webhook id · `429 {retryAfter}` + `Retry-After` header when a delivery lands inside `cooldown`
+(nothing is accepted and then silently dropped).
+
+### Getting the result back
+
+With `callbackUrl` set, each finished delivery POSTs:
+
+```json
+{ "id": "ghpr", "deliveryId": "5f0c...", "status": "ok", "result": "<final answer>", "error": null, "timestamp": "..." }
+```
+
+`status` is `ok` or `error` (with `error` set). `result` is the agent's final answer (`agent` mode) or the
+orchestrator's `signal_task_complete` summary (`swarm`/`pswarm`; a non-success status is prefixed, e.g.
+`[partial] ...`). The callback is signed with the trigger's `secret` (`X-Hub-Signature-256`) and retried
+like outbound sinks. Match it to the original POST by `deliveryId`. Multi-step pipelines keep their state
+in the caller: read the result, then POST the next step's payload.
 
 ### Trust - HMAC signatures
 
