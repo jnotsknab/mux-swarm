@@ -8,7 +8,9 @@ namespace MuxSwarm.Tests.Tests;
 /// <summary>
 /// Regression coverage for the v0.14.2 /stateless fixes: /tag and /detach must never create a session
 /// directory for a stateless session (it would surface as an empty session in the resume picker).
+/// Both paths write through MuxConsole, so the class shares the serialized console-state collection.
 /// </summary>
+[Collection("ConsoleState")]
 public class StatelessPersistenceTests
 {
     private sealed class NullChatClient : IChatClient
