@@ -228,7 +228,7 @@ host execution.
 | `backend` | `host` (default, no sandbox) \| `docker` \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
 | `image` | Container image for OCI backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
-| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. |
+| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
 | `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for OCI backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by wrapper/custom/host. |
 
@@ -796,7 +796,7 @@ Flags can be combined. Common stacks:
 /provider       View or switch the active LLM provider
 /login [prov]   Log in to a subscription provider (claude|codex|kimi|...) via the CLIProxyAPI sidecar
 /ping [prov]    Test the CLIProxyAPI sidecar + show per-provider login readiness
-/proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update | /proxy restart
+/proxy          Manage the CLIProxyAPI sidecar: /proxy status | /proxy update [pinned] | /proxy restart
 /config         Show ALL config settings (every key is /set-able)
 /set <key> <v>  Edit any config key (e.g. /set ultra.thinkingBudget 20000)
 /showreasoning  full | summary (shown, grey italic) | none (hidden); persists to config
@@ -1153,7 +1153,17 @@ OpenAI-compatible endpoint Mux talks to unchanged.
   the proxy then routes by model id, so later logins add nothing.
 - `/ping [provider]` - ensure the sidecar is up and report per-provider login readiness.
 - `/proxy status` - pinned version, binary presence, running state + endpoint, auth state.
-- `/proxy update` - re-download + verify the pinned proxy binary and restart it.
+- `/proxy update` - install the LATEST upstream CLIProxyAPI release side-by-side
+  (`cliproxy/<ver>/`), record it in `cliproxy/active-version.txt`, and cold-restart a running
+  sidecar onto it (including an orphan left by an earlier Mux). Newer releases support newer
+  models. Trust model: the download is verified against that release's own `checksums.txt`
+  (integrity in transit), not against hashes compiled into Mux. The override only applies while it
+  is newer than the build's pin: a later Mux whose pinned version is the same or newer takes precedence.
+- `/proxy update pinned` - drop the override and reinstall this build's pinned version, verified
+  against the SHA256 table compiled into Mux.
+- `/proxy restart` - cold-restart the sidecar (re-reads the auth dir, reclaims the port).
+- `MUX_CLIPROXY_HOME` (env) - relocates the whole proxy root (binaries, config, keys, auth); used by
+  `--selftest proxy` so tests never touch the live sidecar.
 
 The sidecar is downloaded on first use into `%LOCALAPPDATA%/Mux-Swarm/cliproxy/<ver>/`
 (SHA256-verified), runs detached so it survives Mux exit, and is re-adopted by port on the

@@ -126,7 +126,8 @@ public static class MultiAgentOrchestrator
         uint minDelaySeconds = 300,
         uint persistIntervalSeconds = 60,
         uint sessionRetention = 10,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool persistSession = true)
     {
         AgentDefs = Common.GetAgentDefinitions(SwarmConfPath);
 
@@ -161,6 +162,7 @@ public static class MultiAgentOrchestrator
                 [Description("Optional comma-separated list of file paths or identifiers produced")] string? artifacts
             ) =>
             {
+                RunResult.Report(status == "success" ? summary : $"[{status}] {summary}");   // daemon/webhook callback result
                 if (status == "success")
                     MuxConsole.WriteTaskComplete("Task", summary);
                 else
@@ -625,7 +627,7 @@ public static class MultiAgentOrchestrator
         await using var persister = new SeshPersistor(
             async () =>
             {
-                if (!_sessionDirty || string.IsNullOrEmpty(currentIterationSessionDir)) return;
+                if (!persistSession || !_sessionDirty || string.IsNullOrEmpty(currentIterationSessionDir)) return;
                 await Common.PersistSessionsAsync(orchestratorAgent, currentOrchestratorSession, Specialists, currentIterationSessionDir);
             },
             intervalSeconds: (int)persistIntervalSeconds
@@ -786,7 +788,8 @@ public static class MultiAgentOrchestrator
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (_sessionDirty)
+            // persistSession=false (stateless webhook deliveries): no session directory is written.
+            if (_sessionDirty && persistSession)
             {
                 await MuxConsole.WithSpinnerAsync(
                     wasInterrupted ? "Persisting partial progress" : "Persisting sessions",

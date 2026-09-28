@@ -1,5 +1,6 @@
 ﻿using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace MuxSwarm.Engine.Proxy;
 
@@ -10,8 +11,8 @@ namespace MuxSwarm.Engine.Proxy;
 /// fetched from GitHub Releases on demand and SHA256-verified against the table below.
 ///
 /// To bump the pinned version: update <see cref="Version"/> and replace every entry's asset name +
-/// SHA256 from the new release's checksums. The <c>/proxy update</c> command re-resolves against this
-/// same table at runtime.
+/// SHA256 from the new release's checksums. <c>/proxy update pinned</c> reinstalls from this table;
+/// plain <c>/proxy update</c> resolves the LATEST upstream release instead (see <see cref="ResolveLatestAsync"/>).
 /// </summary>
 internal static class CliProxyAssets
 {
@@ -124,9 +125,21 @@ internal static class CliProxyAssets
     }
 
     /// <summary>
+    /// True when <paramref name="version"/> is a plain numeric release version (e.g. <c>7.3.15</c>). The
+    /// version becomes a directory name under the proxy root, so anything else (separators, <c>..</c>,
+    /// pre-release suffixes) is rejected. Upstream tags have always been <c>vMAJOR.MINOR.PATCH</c>.
+    /// </summary>
+    internal static bool IsValidVersion(string? version) =>
+        version != null && Regex.IsMatch(version, @"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}\z");
+
+    /// <summary>
     /// Resolve the LATEST upstream release for the current runtime: queries the GitHub Releases API
     /// for the tag, then fetches the release's checksums.txt for the artifact's SHA256. Throws on
-    /// network failure, an unsupported platform, or a checksums.txt without this artifact.
+    /// network failure, an unsupported platform, a tag that is not a plain numeric version, or a
+    /// checksums.txt without this artifact.
+    /// Trust model: the download is verified against the release's OWN checksums.txt, which proves
+    /// integrity in transit but not that the upstream release itself is trustworthy. The compiled-in
+    /// pin (<c>/proxy update pinned</c>) is the only path verified against hashes shipped in Mux.
     /// </summary>
     public static async Task<ResolvedRelease> ResolveLatestAsync(CancellationToken ct = default)
     {
@@ -142,6 +155,8 @@ internal static class CliProxyAssets
         if (tag.Length == 0)
             throw new InvalidOperationException("GitHub latest-release response had no tag_name.");
         string version = tag.TrimStart('v', 'V');
+        if (!IsValidVersion(version))
+            throw new InvalidOperationException($"GitHub latest-release tag '{tag}' is not a plain version (vX.Y.Z).");
 
         string fileName = FileNameFor(rid, version)
             ?? throw new PlatformNotSupportedException($"No CLIProxyAPI artifact naming for rid '{rid}'.");

@@ -1298,9 +1298,10 @@ internal static partial class TuiConfigCommands
                 MuxConsole.WriteWarning("No secret set - the endpoint will be open unless serve auth is enabled.");
         }
 
-        int payloadLimit = 8192;
-        var pl = MuxConsole.Prompt("Max payload bytes forwarded into the goal", "8192").Trim();
-        if (!int.TryParse(pl, out payloadLimit) || payloadLimit <= 0) payloadLimit = 8192;
+        // Default mirrors DaemonTrigger.PayloadLimit (characters, not bytes).
+        int defaultLimit = new DaemonTrigger().PayloadLimit;
+        var pl = MuxConsole.Prompt("Max payload characters forwarded into the goal", defaultLimit.ToString()).Trim();
+        if (!int.TryParse(pl, out int payloadLimit) || payloadLimit <= 0) payloadLimit = defaultLimit;
 
         try
         {

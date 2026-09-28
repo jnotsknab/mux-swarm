@@ -231,12 +231,13 @@ Background trigger engine for unattended work. Scaffold triggers interactively w
 | `triggers[].type` | `cron`, `watch`, `status`, `bridge`, or `webhook`. Note there is **no `interval` type** - `interval` is a *field* available on triggers (see below). |
 | `triggers[].schedule` | Cron expression (cron type). |
 | `triggers[].path` | Watched file/directory (watch type). |
-| `triggers[].interval` / `cooldown` | Polling cadence (default `30` seconds) and re-fire suppression, used by `watch`/`status` triggers. |
+| `triggers[].interval` / `cooldown` | Polling cadence (default `30` seconds) and re-fire suppression, used by `watch`/`status` triggers. Webhook triggers default to `0`; a delivery inside a set cooldown gets `429` + `Retry-After`. |
 | `triggers[].check` / `restart` / `failThreshold` | Health-check command, restart command, and failure tolerance (default `3`) for `status` triggers. |
 | `triggers[].command` / `env` / `args` | External command execution instead of (or alongside) a goal. |
 | `triggers[].goal` / `mode` / `agent` | Agent goal to run, execution mode (`agent` (default), `swarm`, or `pswarm`), and target agent. |
 | `triggers[].secret` | Webhook trigger only: HMAC-SHA256 secret (or bearer token) validating inbound `POST /api/hook/{id}` calls. |
-| `triggers[].payloadLimit` | Webhook trigger only: max accepted request body size in bytes (default `8192`). |
+| `triggers[].payloadLimit` | Webhook trigger only: max body characters forwarded into the goal (default `65536`); longer bodies are cut with a truncation marker. |
+| `triggers[].callbackUrl` | Webhook trigger only: URL that receives `{id, deliveryId, status, result, error}` when a delivery's run finishes (signed with `secret`). |
 
 A `webhook` trigger exposes `POST /api/hook/{id}` on the serve surface. It is excluded from the global serve bearer middleware; auth is enforced per-trigger (HMAC signature or bearer) in the handler.
 
