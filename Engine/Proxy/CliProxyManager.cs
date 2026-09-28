@@ -34,7 +34,8 @@ internal static class CliProxyManager
     /// <summary>
     /// The proxy version this process actually uses: the marker's version when its binary is
     /// present (a `/proxy update` install), otherwise the compile-time pin. Falling back when the
-    /// marker's binary is missing means a deleted/partial latest-install can never brick the proxy.
+    /// marker's binary is missing means a deleted/partial latest-install can never brick the proxy; a
+    /// marker that is not a plain version is ignored (it becomes a path segment).
     /// </summary>
     public static string ActiveVersion
     {
@@ -45,7 +46,7 @@ internal static class CliProxyManager
                 if (File.Exists(ActiveVersionMarkerPath))
                 {
                     string v = File.ReadAllText(ActiveVersionMarkerPath).Trim();
-                    if (v.Length > 0 &&
+                    if (CliProxyAssets.IsValidVersion(v) &&
                         File.Exists(Path.Combine(InstallDirFor(v), CliProxyAssets.ExecutableName)))
                         return v;
                 }
@@ -455,10 +456,12 @@ internal static class CliProxyManager
     /// that macOS does NOT ship: invoking it unconditionally made `/bin/sh` exit 127 ("command not found",
     /// swallowed by the redirect) while Process.Start itself succeeded, so the sidecar never started and
     /// every macOS launch timed out the health wait. Where `setsid` exists it is used exactly as before (new
-    /// session, detached from Mux's group). Otherwise the shell enables job control (`set -m`) so the
-    /// backgrounded sidecar gets its OWN process group (terminal Ctrl+C to Mux's foreground group cannot
-    /// reach it), and ignores SIGHUP (inherited across exec; Go keeps an ignored SIGHUP ignored) so closing
-    /// the terminal does not kill it. stdio goes to the null device via the SHELL, not .NET pipes: the
+    /// session, detached from Mux's group). Otherwise perl (ships with macOS) calls POSIX::setsid() and
+    /// execs the sidecar: a new session with or without a TTY. Under launchd, `--serve --daemon` or CI
+    /// there is no TTY, so `set -m` alone is a silent no-op that leaves the sidecar in Mux's process group.
+    /// Last resort, no perl: job control (`set -m`, own process group only when a TTY exists) plus an
+    /// ignored SIGHUP (inherited across exec; Go keeps an ignored SIGHUP ignored) so closing the terminal
+    /// does not kill it. stdio goes to the null device via the SHELL, not .NET pipes: the
     /// sidecar outlives Mux, so a .NET pipe would break on exit, and an inherited TTY would bleed its logs
     /// into the TUI viewport. Positional args ($0/$1) keep paths-with-spaces injection-safe.
     /// </summary>
@@ -481,7 +484,9 @@ internal static class CliProxyManager
     internal const string UnixLaunchScript =
         "if command -v setsid >/dev/null 2>&1; then " +
         "setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1; " +
-        "else trap '' HUP; set -m; \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & fi";
+        "elif command -v perl >/dev/null 2>&1; then " +
+        "perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & " +
+        "else trap '' HUP; set -m 2>/dev/null; \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & fi";
 
     /// <summary>
     /// Explicitly stops the sidecar (used by `/proxy` and tests). Because the proxy is detached we do NOT

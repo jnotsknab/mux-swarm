@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Threading;
@@ -219,11 +221,70 @@ public class CliProxyManagerTests
 
         string s = CliProxyManager.UnixLaunchScript;
         Assert.Contains("command -v setsid", s);          // probe, never assume
-        Assert.Contains("set -m", s);                     // own process group without setsid
+        Assert.Contains("POSIX::setsid()", s);            // macOS: new session even without a TTY
+        Assert.Contains("set -m 2>/dev/null", s);         // last resort; job-control warning never leaks
         Assert.Contains("trap '' HUP", s);                // survive terminal close
         Assert.Contains("&", s);                          // detached, shell returns immediately
         Assert.DoesNotContain("$2", s);                   // paths are only ever positional $0/$1
-        Assert.Equal(2, CountOccurrences(s, "</dev/null >/dev/null 2>&1")); // stdio never inherits the TUI tty
+        Assert.Equal(3, CountOccurrences(s, "</dev/null >/dev/null 2>&1")); // stdio never inherits the TUI tty
+    }
+
+    [Fact]
+    public void UnixSpawn_WithoutSetsid_PerlBranchStartsANewSession()
+    {
+        // Mux Bud #87 finding: without setsid and without a TTY (launchd, --daemon, CI) `set -m` is a no-op, so
+        // the sidecar stayed in Mux's process group. Hide setsid from PATH, run the real script, and check that
+        // the child reports a session id different from the test process's own.
+        if (OperatingSystem.IsWindows()) return;
+        var tools = new[] { "perl", "ps", "sh", "sleep", "mv" }.Select(Which).ToArray();
+        if (tools.Any(t => t == null)) return;                // minimal images: nothing to prove
+
+        string dir = Directory.CreateTempSubdirectory("mux-setsid-").FullName;
+        try
+        {
+            string bin = Path.Combine(dir, "bin");
+            Directory.CreateDirectory(bin);
+            foreach (var tool in tools)
+                File.CreateSymbolicLink(Path.Combine(bin, Path.GetFileName(tool!)), tool!);
+
+            string exe = Path.Combine(dir, "fake-exe"), outFile = Path.Combine(dir, "sid.txt");
+            File.WriteAllText(exe, "#!/bin/sh\nps -o sid= -p $$ > \"$2.tmp\"; mv \"$2.tmp\" \"$2\"\nsleep 2\n");
+            File.SetUnixFileMode(exe, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            var psi = CliProxyManager.BuildUnixSpawn(exe, outFile, dir);
+            psi.Environment["PATH"] = bin;                 // setsid NOT on PATH -> perl branch
+            psi.RedirectStandardError = true;
+            using (var p = Process.Start(psi)!)
+            {
+                Assert.True(p.WaitForExit(10_000), "launcher shell did not return");
+                Assert.Equal("", p.StandardError.ReadToEnd()); // no job-control warning leaks
+            }
+
+            var deadline = DateTime.UtcNow.AddSeconds(10);
+            while (!File.Exists(outFile) && DateTime.UtcNow < deadline) Thread.Sleep(50);
+            Assert.True(File.Exists(outFile), "sidecar stand-in never ran");
+            int childSid = int.Parse(File.ReadAllText(outFile).Trim());
+            Assert.NotEqual(OwnSessionId(tools[1]!), childSid);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
+        }
+    }
+
+    private static string? Which(string tool) =>
+        (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':')
+            .Select(d => Path.Combine(d, tool)).FirstOrDefault(File.Exists);
+
+    private static int OwnSessionId(string ps)
+    {
+        var psi = new ProcessStartInfo(ps) { RedirectStandardOutput = true };
+        psi.ArgumentList.Add("-o"); psi.ArgumentList.Add("sid=");
+        psi.ArgumentList.Add("-p"); psi.ArgumentList.Add(Environment.ProcessId.ToString());
+        using var p = Process.Start(psi)!;
+        string o = p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+        return int.Parse(o.Trim());
     }
 
     private static int CountOccurrences(string s, string sub)
