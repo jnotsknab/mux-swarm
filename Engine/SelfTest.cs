@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using MuxSwarm.Engine.Proxy;
 
 namespace MuxSwarm.Engine;
@@ -6,7 +6,9 @@ namespace MuxSwarm.Engine;
 /// <summary>
 /// Built-in end-to-end self-checks run by <c>--selftest [name,...]</c> against the real, published
 /// binary. This is the CI harness pattern: the workflow generates dummy configs (so first-run setup is
-/// bypassed), runs <c>MuxSwarm --selftest</c> on every OS in the build matrix, and gates on the exit code.
+/// bypassed), runs <c>MuxSwarm --selftest</c> on each matrix leg whose runner can execute the artifact, and
+/// gates on the exit code. Depot CI runners are Linux x86_64 only, so today only linux-x64 runs it; the
+/// cross-compiled win/osx legs skip with a notice.
 /// Each check exercises a real control flow (downloads, spawns, network) that unit tests mock out.
 ///
 /// To add a check: add one <see cref="Check"/> entry to <see cref="All"/>. Checks print their own
