@@ -44,17 +44,23 @@ internal static class CliProxyManager
             try
             {
                 if (File.Exists(ActiveVersionMarkerPath))
-                {
-                    string v = File.ReadAllText(ActiveVersionMarkerPath).Trim();
-                    if (CliProxyAssets.IsValidVersion(v) &&
-                        File.Exists(Path.Combine(InstallDirFor(v), CliProxyAssets.ExecutableName)))
-                        return v;
-                }
+                    return ResolveActiveVersion(File.ReadAllText(ActiveVersionMarkerPath).Trim(), CliProxyAssets.Version,
+                        v => File.Exists(Path.Combine(InstallDirFor(v), CliProxyAssets.ExecutableName)));
             }
             catch { /* fall through to the pin */ }
             return CliProxyAssets.Version;
         }
     }
+
+    /// <summary>
+    /// The marker's version wins only if it is a plain version, NEWER than the compiled-in pin, and its binary
+    /// is installed. A marker at or below the pin is stale: a later Mux release bumped the pin past the user's
+    /// earlier `/proxy update`, and that pin bump must take effect.
+    /// </summary>
+    internal static string ResolveActiveVersion(string? marker, string pin, Func<string, bool> binaryExists) =>
+        CliProxyAssets.IsValidVersion(marker) && Version.Parse(marker!) > Version.Parse(pin) && binaryExists(marker!)
+            ? marker!
+            : pin;
 
     /// <summary>Absolute path the proxy executable is expected at once provisioned.</summary>
     public static string ExecutablePath =>
@@ -455,8 +461,9 @@ internal static class CliProxyManager
     /// Portable POSIX launcher for the detached sidecar (Linux AND macOS). `setsid` is a util-linux tool
     /// that macOS does NOT ship: invoking it unconditionally made `/bin/sh` exit 127 ("command not found",
     /// swallowed by the redirect) while Process.Start itself succeeded, so the sidecar never started and
-    /// every macOS launch timed out the health wait. Where `setsid` exists it is used exactly as before (new
-    /// session, detached from Mux's group). Otherwise perl (ships with macOS) calls POSIX::setsid() and
+    /// every macOS launch timed out the health wait. Where `setsid` exists the shell `exec`s it (new session,
+    /// detached from Mux's group, and no /bin/sh left waiting in Mux's group as the sidecar's parent - the
+    /// pre-probe one-command script got that exec implicitly). Otherwise perl (ships with macOS) calls POSIX::setsid() and
     /// execs the sidecar: a new session with or without a TTY. Under launchd, `--serve --daemon` or CI
     /// there is no TTY, so `set -m` alone is a silent no-op that leaves the sidecar in Mux's process group.
     /// Last resort, no perl: job control (`set -m`, own process group only when a TTY exists) plus an
@@ -483,7 +490,7 @@ internal static class CliProxyManager
     /// <summary>The POSIX sh script behind <see cref="BuildUnixSpawn"/> ($0 = executable, $1 = config).</summary>
     internal const string UnixLaunchScript =
         "if command -v setsid >/dev/null 2>&1; then " +
-        "setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1; " +
+        "exec setsid \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1; " +
         "elif command -v perl >/dev/null 2>&1; then " +
         "perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & " +
         "else trap '' HUP; set -m 2>/dev/null; \"$0\" -config \"$1\" </dev/null >/dev/null 2>&1 & fi";

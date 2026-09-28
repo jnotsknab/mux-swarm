@@ -221,6 +221,7 @@ public class CliProxyManagerTests
 
         string s = CliProxyManager.UnixLaunchScript;
         Assert.Contains("command -v setsid", s);          // probe, never assume
+        Assert.Contains("exec setsid", s);                // Linux: no /bin/sh left behind in Mux's group
         Assert.Contains("POSIX::setsid()", s);            // macOS: new session even without a TTY
         Assert.Contains("set -m 2>/dev/null", s);         // last resort; job-control warning never leaks
         Assert.Contains("trap '' HUP", s);                // survive terminal close
@@ -270,6 +271,18 @@ public class CliProxyManagerTests
         {
             try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ }
         }
+    }
+
+    [Theory]
+    [InlineData("7.3.15", "7.2.44", true, "7.3.15")]   // user updated past the pin
+    [InlineData("7.3.15", "7.4.0", true, "7.4.0")]     // later Mux bumped the pin past it: pin wins
+    [InlineData("7.4.0", "7.4.0", true, "7.4.0")]
+    [InlineData("7.3.15", "7.2.44", false, "7.2.44")]  // marker binary missing
+    [InlineData("../x", "7.2.44", true, "7.2.44")]     // invalid marker
+    [InlineData("", "7.2.44", true, "7.2.44")]
+    public void ResolveActiveVersion_MarkerOnlyWinsWhenNewerAndInstalled(string marker, string pin, bool installed, string expected)
+    {
+        Assert.Equal(expected, CliProxyManager.ResolveActiveVersion(marker, pin, _ => installed));
     }
 
     private static string? Which(string tool) =>
