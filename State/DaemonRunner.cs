@@ -693,15 +693,23 @@ public sealed class DaemonRunner : IAsyncDisposable
     internal readonly record struct GoalOutcome(bool Ok, string? Result, string? Error);
 
     /// <summary>
-    /// Serializes daemon-fired swarm/pswarm runs: their orchestrators keep process-wide static state
-    /// (specialists, session-dirty flags), so two concurrent runs would clobber each other. Agent-mode
-    /// runs are unaffected and stay concurrent.
+    /// Serializes daemon-fired swarm/pswarm runs with each other: their orchestrators keep process-wide
+    /// static state (specialists, session-dirty flags), so two concurrent runs would clobber each other.
+    /// Covers daemon-fired runs only; an interactive /swarm or /pswarm is not gated (known limit).
+    /// Agent-mode runs are unaffected and stay concurrent.
     /// </summary>
     private static readonly SemaphoreSlim SwarmGate = new(1, 1);
 
     /// <summary>Case-insensitive lookup of a trigger's agent override; null when no definition matches.</summary>
     internal static Common.AgentDefinition? FindTriggerAgent(string name, IEnumerable<Common.AgentDefinition> defs)
         => defs.FirstOrDefault(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Model for an agent-mode run: the model mapped to <paramref name="agentName"/> (pass the RESOLVED
+    /// definition name, since the models map is case-sensitive), else the Orchestrator's model.
+    /// </summary>
+    internal static string ResolveTriggerModel(IReadOnlyDictionary<string, string> agentModels, string? agentName)
+        => agentModels.GetValueOrDefault(agentName ?? "Orchestrator", agentModels["Orchestrator"]);
 
     private async Task<GoalOutcome> FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct, bool stateless = false)
     {
@@ -781,11 +789,8 @@ public sealed class DaemonRunner : IAsyncDisposable
                             }
                         }
 
-                        var modelId = !string.IsNullOrEmpty(trigger.Agent)
-                            ? _agentModels.GetValueOrDefault(trigger.Agent, _agentModels["Orchestrator"])
-                            : _agentModels.GetValueOrDefault(
-                                SingleAgentOrchestrator.AgentDef?.Name ?? "Orchestrator",
-                                _agentModels["Orchestrator"]);
+                        var modelId = ResolveTriggerModel(_agentModels,
+                            triggerAgent?.Name ?? SingleAgentOrchestrator.AgentDef?.Name);
 
                         // Collapse the daemon-fired agent run into one expandable Agent-View line
                         // (dense by default) instead of streaming the full reasoning + tool transcript
@@ -851,13 +856,16 @@ public sealed class DaemonRunner : IAsyncDisposable
         retryAfterSeconds = 0;
         if (!_webhookQueues.TryGetValue(id ?? "", out var entry)) return WebhookEnqueue.Unknown;
         uint cooldown = entry.Trigger.EffectiveInterval;
-        if (cooldown > 0)
+        // One lock per trigger (its queue) covers the cooldown check-then-set (Kestrel runs requests in
+        // parallel) AND the enqueue, which must not race the loop's shutdown removal + drain.
+        lock (entry.Queue)
         {
-            var key = $"{entry.Trigger.Id}:webhook";
-            // Check-then-set under the trigger's own lock: concurrent POSTs to one trigger (Kestrel
-            // runs requests in parallel) must not both pass the same cooldown window.
-            lock (entry.Queue)
+            // The loop may have exited after our lookup: never accept into an orphaned queue.
+            if (!_webhookQueues.TryGetValue(id!, out var live) || !ReferenceEquals(live.Queue, entry.Queue))
+                return WebhookEnqueue.Unknown;
+            if (cooldown > 0)
             {
+                var key = $"{entry.Trigger.Id}:webhook";
                 var now = DateTime.UtcNow;
                 if (_lastFired.TryGetValue(key, out var last) && (now - last).TotalSeconds < cooldown)
                 {
@@ -866,9 +874,9 @@ public sealed class DaemonRunner : IAsyncDisposable
                 }
                 _lastFired[key] = now;
             }
+            deliveryId = Guid.NewGuid().ToString("N");
+            entry.Queue.Enqueue((payload, source, deliveryId));
         }
-        deliveryId = Guid.NewGuid().ToString("N");
-        entry.Queue.Enqueue((payload, source, deliveryId));
         try { entry.Signal.Release(); } catch { /* disposed race */ }
         return WebhookEnqueue.Accepted;
     }
@@ -950,7 +958,9 @@ public sealed class DaemonRunner : IAsyncDisposable
         }
         finally
         {
-            _webhookQueues.TryRemove(trigger.Id, out _);
+            // Unregister under the queue lock EnqueueWebhook takes: any delivery accepted before this
+            // is in the queue (drained below); any later POST sees the trigger gone and gets a 404.
+            lock (queue) _webhookQueues.TryRemove(trigger.Id, out _);
             // Accepted-but-never-run deliveries still get a (fire-and-forget) callback.
             while (queue.TryDequeue(out var left))
                 PostWebhookCallback(trigger, left.Item3, new GoalOutcome(false, null, "shutdown"));

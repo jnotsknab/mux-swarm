@@ -210,6 +210,18 @@ public class WebhookTests
     }
 
     [Fact]
+    public void ResolveTriggerModel_UsesResolvedName_AndFallsBackToOrchestrator()
+    {
+        var models = new Dictionary<string, string> { ["Orchestrator"] = "orch-model", ["CodeAgent"] = "code-model" };
+        var defs = new List<Common.AgentDefinition> { new("CodeAgent", "", "code.md", false, t => t) };
+        // "codeagent" resolves case-insensitively to CodeAgent, and the model must follow that resolution.
+        var resolved = DaemonRunner.FindTriggerAgent("codeagent", defs)!;
+        Assert.Equal("code-model", DaemonRunner.ResolveTriggerModel(models, resolved.Name));
+        Assert.Equal("orch-model", DaemonRunner.ResolveTriggerModel(models, null));
+        Assert.Equal("orch-model", DaemonRunner.ResolveTriggerModel(models, "NoModelMapped"));
+    }
+
+    [Fact]
     public void CallbackBody_CarriesCorrelationAndOutcome()
     {
         using var ok = System.Text.Json.JsonDocument.Parse(

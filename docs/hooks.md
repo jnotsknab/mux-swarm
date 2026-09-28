@@ -191,9 +191,9 @@ running to receive.
 
 Webhook triggers added at runtime (the web UI or `POST /api/daemon/trigger`) are live immediately;
 deleting one stops it. `/createhook` saves the trigger to config; it takes effect on the next daemon start.
-One Mux process serves any number of webhooks: **agent-mode triggers run concurrently, while swarm/pswarm runs
-are serialized (one at a time per process); deliveries to the same trigger run in order**. To scale further,
-run more Mux processes.
+One Mux process serves any number of webhooks: **agent-mode triggers run concurrently, daemon-fired swarm/pswarm
+runs are serialized with each other, and deliveries to the same trigger run in order**. Known limit: an interactive
+`/swarm` or `/pswarm` running at the same time is not serialized with them. To scale further, run more Mux processes.
 
 **Response contract:** `202 {accepted, id, deliveryId}` · `401` bad/missing signature · `404` unknown or
 non-webhook id · `429 {retryAfter}` + `Retry-After` header when a delivery lands inside `cooldown`
