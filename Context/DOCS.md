@@ -271,7 +271,7 @@ microVM path that fits the existing model.
 
 ## Daemon Triggers
 
-There are exactly four trigger types: `watch`, `cron`, `status`, and `bridge`. No other values are valid.
+There are five trigger types: `watch`, `cron`, `status`, `bridge`, and `webhook`.
 
 ### Common Trigger Fields
 
@@ -280,22 +280,31 @@ Every trigger shares these base fields:
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `id` | string | `""` | Unique identifier for this trigger |
-| `type` | string | `""` | One of: `watch`, `cron`, `status`, `interval`, `bridge`, `webhook` |
+| `type` | string | `""` | One of: `watch`, `cron`, `status`, `bridge`, `webhook` |
 | `mode` | string | `"agent"` | Orchestration mode for goal execution: `agent`, `swarm`, or `pswarm` |
 | `agent` | string? | null | Optional agent name override for single-agent mode goals |
-| `interval` | uint | 30 | Seconds between polls (status), restart delay (bridge), or debounce (watch) |
+| `interval` | uint | 30 (webhook: 0) | Seconds between polls (status), restart delay (bridge), debounce (watch), or min gap between accepted deliveries (webhook; inside it the POST gets 429 + Retry-After) |
 | `cooldown` | uint | 0 | Alias for interval on watch triggers. If set (>0), takes precedence over interval |
 | `restart` | bool | false | Whether to restart on failure (status) or on exit (bridge) |
-| `goal` | string? | null | Goal text for watch/cron triggers. Supports template variables |
+| `goal` | string? | null | Goal text for watch/cron/webhook triggers. Template vars substituted in one pass (`{payload}` `{source}` `{deliveryId}` `{file}` `{filename}` `{timestamp}` `{id}`) |
 | `failThreshold` | int | 3 | Consecutive status check failures before alerting (0 = alert every failure) |
 | `secret` | string? | null | (webhook) HMAC-SHA256 shared secret. When set, `POST /api/hook/{id}` requires a valid `X-Hub-Signature-256` header |
-| `payloadLimit` | int | (default) | (webhook) Max inbound request body size in bytes |
+| `payloadLimit` | int | 65536 | (webhook) Max body characters forwarded into the goal; longer bodies end with a `[payload truncated: N of M chars]` marker |
+| `callbackUrl` | string? | null | (webhook) Receives `{id, deliveryId, status, result, error}` when the run finishes, signed with `secret` |
 
 Effective interval logic: if `cooldown > 0`, use cooldown; otherwise use `interval`.
 
 A `webhook` trigger is exposed at `POST /api/hook/{id}` (excluded from the serve bearer middleware; it
 authenticates per-trigger via HMAC `secret` or, if none is set, the serve bearer token). External systems
-POST a payload to start a run. See the Event Hooks section for inbound/outbound webhook detail.
+POST a payload to start a run; the 202 body carries a `deliveryId`. Webhook runs are stateless (no session dir) and
+a run's `agent` override applies to that run only (an unknown agent fails the delivery). Webhook triggers added at
+runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. `/createhook` saves a
+trigger to config; it takes effect on the next daemon start. One process serves any number of webhooks: agent-mode
+triggers run concurrently, daemon-fired swarm/pswarm runs are serialized with each other (an interactive `/swarm` at
+the same time is not covered), and deliveries to the same
+trigger run in order. A delivery cancelled mid-run reports `error: "cancelled"`; one still queued when the trigger
+stops reports `error: "shutdown"`. Watch `path` is a directory plus a filename pattern (`dir/*`, `dir/*.md`); `/`
+works on every OS. See the Event Hooks section for inbound/outbound webhook detail.
 
 ### watch
 
@@ -497,7 +506,9 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "maxToolIterationsPerTurn": 1000,
   "maxAutoContinuesPerTurn": 3,
   "taskClaimTtlSeconds": 900,
-  "maxTaskAttempts": 3
+  "maxTaskAttempts": 3,
+  "midTurnCompaction": true,
+  "autoAllowWorkspace": true
 }
 ```
 
@@ -517,6 +528,8 @@ Any key may be omitted; missing keys inherit the built-in default shown above.
 - `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
 - `taskClaimTtlSeconds` - team TaskBoard claim time-to-live: a claimed task with no heartbeat past this window is reclaimed by the stale-reaper. Default 900.
 - `maxTaskAttempts` - bounded retry ceiling for a team task before the circuit-breaker marks it Failed. Default 3.
+- `midTurnCompaction` - compact mid-turn when the context crosses the threshold (the turn continues on the reseeded summary). Default true; false = compact only between turns.
+- `autoAllowWorkspace` - add the launch/`--workspace` directory to `filesystem.allowedPaths` automatically. Default true; false = declare every allowed path explicitly.
 
 
 ### compactionAgent
@@ -681,7 +694,10 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --session-retention <n>    Keep last N sessions (default 10)
 --stdio                    Machine-readable NDJSON output
 --serve [port]             Start web UI (default 6723)
+--telemetry [port]         Standalone telemetry dashboard (default 6725)
+--selftest [checks]        Run built-in end-to-end checks against this binary, exit 0/1 (CI harness)
 --daemon                   Enable daemon triggers
+--join <link>              Join a shared session as a guest (no config/provider needed), then exit
 --register                 Register as OS service
 --remove                   Unregister OS service
 --watchdog                 Enable external watchdog
@@ -738,6 +754,7 @@ Flags can be combined. Common stacks:
 /giga           Interactive giga mode (ultra + agent can spawn teams and author/run workflows on the fly)
 /continuous     Toggle autonomous execution (/cont shorthand)
 /workflow <f>   Run a deterministic, replayable workflow file
+/workflows      Live workflow-run viewer (+ saved | save <runId> [as <name>] | rerun <runId> | run <name> | delete <name>)
 ```
 
 ### Teams
@@ -762,6 +779,9 @@ Flags can be combined. Common stacks:
 /review         AI review of the working-tree diff (read-only findings)
 !<command>      Run a shell command and inject its output into the conversation context
 /tokens         Show the current token / context breakdown
+/context [n]    Show usage, or set the context window (/context <n|64k|max>)
+/prune [kind]   Deterministic local context trim, no model call (dupes | tools | stale; bare = all)
+/paste          Paste clipboard text or a screenshot into the draft
 /tokens all     Per-model matrixed cost/token breakdown (alias of /cost all)
 /effort         Cycle live effort: low -> med -> high -> xhigh -> max -> low (also Shift+Tab)
 /effort xhigh   Select extra-high reasoning, distinct from provider max
@@ -769,7 +789,7 @@ Flags can be combined. Common stacks:
 /max            Shortcut for /effort max
 /effort custom <raw-value>  Send a literal provider effort (no silent fallback); next cycle returns to low
 /undo           Drop the last exchange from history
-/retry          Re-run the last turn
+/retry, /redo   Re-run the last turn
 /wipe           Clear the session history
 /tag <text>     Tag the live session for easy resume/search
 /detach         Park the live session to the background (re-enter with /attach)
@@ -778,10 +798,21 @@ Flags can be combined. Common stacks:
 /qc, /qm        Exit the active session
 ```
 
+### Live sharing (see ## Session Sharing)
+```
+/share [--local|--lan]  Share this session live; prints a join link. Asks loopback vs all-interfaces unless a flag is given
+/share status   Show the link + who is watching (and who can type)
+/share control <name|#id|all> on|off  Let a guest type, or make them view-only (Ctrl+] revokes all typing instantly)
+/share kick <name|#id>  Disconnect a guest
+/share stop     Stop sharing (invalidates the link)
+/join <link>    Watch someone else's shared session (Ctrl+] then q to leave, r to redraw)
+```
+
 ### Session lifecycle
 ```
 /resume         Resume a previous single-agent session
 /sessions       List saved sessions with type + agent count
+/history        Browse past sessions full-screen (fuzzy find, open, scroll, search)
 /attach [id]    Re-enter a session parked via /detach (no id = pick from list)
 /background, /bg  Manage detached background jobs (alias of the old /detach job command)
 /report [id]    Generate session audit report(s); /report <id> audits a specific session
@@ -804,6 +835,8 @@ Flags can be combined. Common stacks:
 /dockerexec     Toggle Docker execution mode
 /startargs <a>  Persist launch flags to run every start (clear with /startargs clear)
 /limits         Display current execution limits
+/maxp <n>       Max agents running in parallel (default 4)
+/split          Arm optional lead-context sharing for delegated sub-agents (toggle)
 /workspace <p>  Show or set the @-file workspace root
 /addcontext     Configure what context each agent is injected with
 ```
@@ -813,7 +846,7 @@ Flags can be combined. Common stacks:
 /onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
 /tools          List available MCP + native tools
 /skills         List loaded skills
-/theme          View or switch the TUI color theme (/theme [default|dark|light|mono|solarized|dracula|gruvbox])
+/theme          View or switch the TUI color theme (21 presets; bare /theme opens a picker; /theme <name> sets one)
 /memory         Deep-memory status / toggle (/memory [deep|standard|show])
 /deep           Toggle deep memory on/off (/deep [off])
 /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
@@ -827,6 +860,11 @@ Flags can be combined. Common stacks:
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills)
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
+/mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
+/telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
+/daemonview, /dv  Toggle collapsed/expanded daemon-fired goal output
+/delimiter      Toggle the multi-line input delimiter
+/help           Full command reference
 /verbose, /sav  Toggle full-vs-collapsed tool output / sub-agent output
 /shortcuts      Show keyboard shortcuts (alias /keys)
 /clear          Clear terminal
@@ -950,8 +988,6 @@ inboxes/
 
 The Agent View `m` key shows any agent's full message history (the m-log) on demand, without
 draining its inbox.
-
-tasks then run only when the lead assigns them.
 
 ## Deep Memory (reflectionAgent)
 
@@ -1078,10 +1114,11 @@ hook, so cancellation is delivered via an explicit "cancel" affordance labelled 
 The interactive TUI palette (banner/accent, success/warning/error, info/muted, prompt text, the
 agent-name color, and rendered-markdown heading/code/link/quote colors) is theme-driven, not
 hardcoded. Built-in presets: `default` (original palette), `dark`, `light`, `mono` (no-color /
-accessibility - inherits the terminal foreground), `solarized`, `dracula`, `gruvbox`.
+accessibility - inherits the terminal foreground), `solarized`, `dracula`, `gruvbox`, plus
+`catppuccin-mocha`, `catppuccin-macchiato`, `catppuccin-latte`, `nord`, `tokyo-night`, `tokyo-storm`, `rose-pine`, `kanagawa`, `everforest`, `one-dark`, `monokai`, `ayu-mirage`, `synthwave`, `rose-dawn` (21 total).
 
 ```
-/theme            List presets with live color swatches + the active marker
+/theme            Open the theme picker (live preview; fuzzy find) - lists presets with swatches + the active marker
 /theme <name>     Apply + persist to config.json (console.theme); live-applies immediately
 ```
 
@@ -1089,12 +1126,54 @@ accessibility - inherits the terminal foreground), `solarized`, `dracula`, `gruv
 chrome before you pick. The choice persists to `config.json`:
 
 ```jsonc
-"console": { "theme": "default" }   // default | dark | light | mono | solarized | dracula | gruvbox
+"console": { "theme": "default" }   // any preset name above, e.g. default | dark | nord | tokyo-night
 ```
 
 The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
 configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
 per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
+
+## Session Sharing (`/share`, `/join`)
+
+Share a live session with someone on the same network. Guests see exactly what your TUI draws, in real time.
+
+**Host**
+- `/share` asks where to listen: **This machine only** (loopback, the default) or **All interfaces** (same-network
+  guests). `/share --local` / `/share --lan` skip the prompt. The join link looks like
+  `http://host:port/s/<room>#<secret>`; send it over a channel you trust.
+- Every join asks you **Deny / Watch / Watch + type** (Deny is the default; no answer within 2 minutes = Deny).
+- `/share status`, `/share control <name|#id|all> on|off`, `/share kick <name|#id>`, `/share stop`.
+- **Ctrl+]** takes typing away from every guest instantly, at the prompt or mid-turn. Your own keyboard is never locked.
+- Footer: `sharing · N watching · M typing`.
+
+**Guest**
+- `/join <link>` inside Mux, or `mux-swarm --join "<link>"` (cold path: no config, provider, or setup needed).
+- The guest screen shows the host's frame at the host's size; resize your terminal or font to fit.
+- **Ctrl+]** opens the local menu: `q` leave, `r` redraw. Ctrl+] is never sent to the host.
+
+**Guest typing (only when the host grants it)**
+- Guest keys are limited to editing keys (text, Enter, Backspace, Delete, Left/Right, Home/End, Tab, Ctrl+A/E/K/U/W).
+  Host hotkeys, history, clipboard, NAV, mouse and terminal replies are dropped **on the host**.
+- Guest keys go to a separate queue that only the host's idle prompt reads. No modal, picker, tool-permission prompt,
+  or join approval ever receives a guest key; anything typed while the agent is working is dropped.
+- A paste never submits on its own. Only a lone Enter submits.
+- A line a guest typed into may only be a prompt or one of `/help /shortcuts /status /tokens /context /cost /diff
+  /compact /retry /undo /redo`. `!shell`, `/exit`, `/share`, `/join`, config/provider/clipboard and all other commands
+  are refused with a notice naming the guest, even if the host presses Enter. Accepted guest prompts are marked
+  `↳ typed by <name>`.
+
+**Security**
+- The link is the credential: the room id routes the request, and the 32-byte secret stays in the URL fragment
+  (browsers never send it) and is only used for key derivation. A new link is made on every `/share`; `/share stop`
+  invalidates it. The secret is masked in everything sent to guests.
+- Handshake: P-256 ECDH + HKDF-SHA256 with HMAC-SHA256 mutual proofs over the full transcript (host proves first);
+  fresh keys per session. Channel: AES-256-GCM with per-direction counter nonces; tampered, replayed or reordered frames
+  drop the connection.
+- The guest filters host output to text, colour and cursor control; OSC (incl. clipboard writes), DCS, terminal queries
+  and mode toggles are dropped.
+- Limits: 4 guests, 4 pending handshakes, 10 s handshake timeout, per-IP ban after repeated failed proofs; slow guests
+  are disconnected rather than stalling the host.
+- Same-network only in this release (direct connect; no relay/NAT traversal).
 
 ## OS Service Registration
 
@@ -1291,7 +1370,7 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
-12 supported events: `session_start`, `session_end`, `user_input`, `text_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `daemon_start`, `daemon_stop`.
+Supported events include `session_start`, `session_end`, `user_input`, `text_chunk`, `thinking_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `runtime_ready`, and the daemon events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. See `docs/hooks.md` for the full table.
 
 Daemon-specific hook events emitted automatically:
 - `daemon_start` -- fired when daemon starts with trigger count

@@ -211,6 +211,7 @@ internal static class ShareGuest
         var view = new GuestView(write);
         string reason = "disconnected";
         bool accepted = false;
+        int canType = 0;   // host's word (1 = may type), read by the key loop; the host enforces it independently
 
         var receiver = Task.Run(async () =>
         {
@@ -242,6 +243,12 @@ internal static class ShareGuest
                             break;
                         case ShareProtocol.Notice:
                             view.Flash(AnsiSanitizer.PlainText(Encoding.UTF8.GetString(payload)));
+                            break;
+                        case ShareProtocol.Control:
+                            bool allowed = payload.Length > 0 && payload[0] == (byte)'1';
+                            Volatile.Write(ref canType, allowed ? 1 : 0);
+                            view.Flash(allowed ? "The host let you type - Enter sends. Ctrl+] then q to leave."
+                                               : "View-only now. Ctrl+] then q to leave.");
                             break;
                     }
                 }
@@ -277,8 +284,28 @@ internal static class ShareGuest
                     continue;
                 }
                 if (ctrlBracket) { prefix = true; view.ShowMenu(); continue; }
-                if (ctrlC) { view.Flash("View-only. Press Ctrl+] then q to leave."); continue; }
-                view.Flash("View-only session. Ctrl+] then q to leave, r to redraw.");
+                if (ctrlC) { view.Flash("Ctrl+C is not sent to the host. Ctrl+] then q to leave."); continue; }
+                if (Volatile.Read(ref canType) == 0)
+                {
+                    view.Flash("View-only session. Ctrl+] then q to leave, r to redraw.");
+                    continue;
+                }
+                // Forward this key plus everything already buffered as ONE message: the host only
+                // submits on a message that is exactly one Enter, so a paste can never submit itself.
+                var vt = new StringBuilder(KeyToVt(k));
+                bool menuNext = false, truncated = false;
+                while (readKey(out var more, 0))
+                {
+                    if (more.KeyChar == EscapePrefix || (more.Key == ConsoleKey.Oem6 && more.Modifiers.HasFlag(ConsoleModifiers.Control)))
+                    { menuNext = true; break; }
+                    // Over the cap: drop the rest of this burst rather than split it - a split could
+                    // leave a lone Enter as its own message, which the host would treat as a submit.
+                    if (vt.Length >= RemoteInput.MaxMessageChars - 16) { truncated = true; continue; }
+                    vt.Append(KeyToVt(more));
+                }
+                if (vt.Length > 0) await SafeSend(conn, ShareProtocol.Msg(ShareProtocol.Input, vt.ToString()), cts.Token);
+                if (truncated) view.Flash("Paste too long - only the first part was sent.");
+                if (menuNext) { prefix = true; view.ShowMenu(); }
             }
         }
         finally
@@ -291,9 +318,44 @@ internal static class ShareGuest
         return reason;
     }
 
-    private static async Task SafeSend(ShareGuestConnection conn, byte type, CancellationToken ct)
+    private static Task SafeSend(ShareGuestConnection conn, byte type, CancellationToken ct)
+        => SafeSend(conn, ShareProtocol.Msg(type, ""), ct);
+
+    private static async Task SafeSend(ShareGuestConnection conn, byte[] message, CancellationToken ct)
     {
-        try { await conn.SendAsync(ShareProtocol.Msg(type, ""), ct); } catch { /* connection closing */ }
+        try { await conn.SendAsync(message, ct); } catch { /* connection closing */ }
+    }
+
+    /// <summary>
+    /// Encode one local key as the VT bytes a terminal would send. Only keys the host accepts are
+    /// encoded (text, Enter, Backspace, Tab, Delete, Left/Right, Home/End, Ctrl+A/E/K/U/W); the rest
+    /// map to nothing. The host re-validates everything - this only keeps the wire honest.
+    /// </summary>
+    internal static string KeyToVt(ConsoleKeyInfo k)
+    {
+        bool ctrl = k.Modifiers.HasFlag(ConsoleModifiers.Control);
+        switch (k.Key)
+        {
+            case ConsoleKey.Enter: return "\r";
+            case ConsoleKey.Backspace: return "\u007f";
+            case ConsoleKey.Tab: return k.Modifiers.HasFlag(ConsoleModifiers.Shift) ? "" : "\t";
+            case ConsoleKey.Delete: return "\u001b[3~";
+            case ConsoleKey.LeftArrow: return ctrl ? "\u001b[1;5D" : "\u001b[D";
+            case ConsoleKey.RightArrow: return ctrl ? "\u001b[1;5C" : "\u001b[C";
+            case ConsoleKey.Home: return "\u001b[H";
+            case ConsoleKey.End: return "\u001b[F";
+        }
+        if (ctrl)
+            return k.Key switch
+            {
+                ConsoleKey.A => "\u0001", ConsoleKey.E => "\u0005", ConsoleKey.K => "\u000b",
+                ConsoleKey.U => "\u0015", ConsoleKey.W => "\u0017", _ => "",
+            };
+        char c = k.KeyChar;
+        if (c == '\r' || c == '\n') return "\r";
+        if (c is '\b' or '\u007f') return "\u007f";
+        if (c == '\t') return "\t";
+        return c != '\0' && !char.IsControl(c) ? c.ToString() : "";
     }
 
     /// <summary>Local terminal state for the viewer: alt screen, size gating, status overlays.</summary>
@@ -385,6 +447,7 @@ internal static class ShareGuest
         }
 
         public void ShowMenu() => Bar("\u001b[7m Ctrl+] \u001b[0m  q leave  \u00b7  r redraw  \u00b7  any other key: back ");
+
         public void HideMenu() { }
         public void Flash(string text) => Bar("\u001b[7m " + text + " \u001b[0m");
 

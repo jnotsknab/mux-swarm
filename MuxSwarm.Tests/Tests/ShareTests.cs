@@ -188,6 +188,237 @@ public class SecretRedactorTests
     }
 }
 
+[Collection("ConsoleState")]   // RemoteInput is process-global (shared with the loopback tests)
+public class RemoteInputTests
+{
+    private static List<(ConsoleKeyInfo Key, string? Text)> D(string s) => RemoteInput.Decode(s);
+
+    [Fact]
+    public void Lone_Enter_Submits_But_Enter_In_A_Burst_Is_A_Newline()
+    {
+        Assert.Equal(ConsoleKey.Enter, Assert.Single(D("\r")).Key.Key);
+        var burst = D("ls\r");
+        Assert.Equal("ls\n", Assert.Single(burst).Text);
+        Assert.DoesNotContain(burst, e => e.Key.Key == ConsoleKey.Enter);
+    }
+
+    [Fact]
+    public void Editing_Keys_Decode_To_Editor_Keys()
+    {
+        var keys = D("a\u007f\u001b[D\u001b[1;5C\u001b[H\u001b[F\u001b[3~\t\u0001\u0005\u000b\u0015\u0017")
+            .Where(e => e.Text is null).Select(e => e.Key).ToList();
+        Assert.Equal(new[] { ConsoleKey.Backspace, ConsoleKey.LeftArrow, ConsoleKey.RightArrow, ConsoleKey.Home,
+            ConsoleKey.End, ConsoleKey.Delete, ConsoleKey.Tab, ConsoleKey.A, ConsoleKey.E, ConsoleKey.K, ConsoleKey.U, ConsoleKey.W },
+            keys.Select(k => k.Key));
+        Assert.True(keys[1].Modifiers == 0 && keys[2].Modifiers == ConsoleModifiers.Control);
+    }
+
+    [Theory]
+    [InlineData("\u001b[A")]                     // Up: host prompt history
+    [InlineData("\u001b[B")]                     // Down
+    [InlineData("\u001b[5~")]                    // PageUp
+    [InlineData("\u001b[Z")]                     // Shift+Tab: effort cycle
+    [InlineData("\u001bOS")]                     // F4: inferred-paste send
+    [InlineData("\u001b")]                       // Esc: NAV
+    [InlineData("\u0016")]                       // Ctrl+V: host clipboard
+    [InlineData("\u0003")]                       // Ctrl+C
+    [InlineData("\u0004")]                       // Ctrl+D
+    [InlineData("\u0007")]                       // Ctrl+G
+    [InlineData("\u0012")]                       // Ctrl+R: history search
+    [InlineData("\u0014")]                       // Ctrl+T
+    [InlineData("\u001d")]                       // Ctrl+]
+    [InlineData("\u001b[<0;5;5M")]               // mouse
+    [InlineData("\u001b[I")]                     // focus in
+    [InlineData("\u001b]52;c;ZXZpbA==\u0007")]   // OSC
+    [InlineData("\u001b[?2004;1$y")]             // mode reply
+    [InlineData("\u001b[13;2u")]                 // kitty Shift+Enter
+    [InlineData("\u001b[M")]                     // CSI Enter
+    [InlineData("\u0085\u009b")]                 // C1
+    public void Host_Hotkeys_And_Terminal_Noise_Are_Dropped(string vt) => Assert.Empty(D(vt));
+
+    [Fact]
+    public void Bracketed_Paste_Is_Literal_Text_And_Never_Submits()
+    {
+        var e = Assert.Single(D("\u001b[200~line1\r\nline2\u001b[31m\u001b[201~"));
+        Assert.Equal("line1\nline2[31m", e.Text);
+    }
+
+    [Fact]
+    public void Post_Requires_Grant_And_Open_Prompt_And_Revoke_Cancels_In_Flight()
+    {
+        RemoteInput.ResetForTest();
+        RemoteInput.Post(7, "x");                        // no grant, no prompt
+        RemoteInput.Grant(7, "g");
+        RemoteInput.Post(7, "x");                        // prompt closed
+        Assert.False(RemoteInput.HasPending);
+        RemoteInput.BeginPrompt();
+        RemoteInput.Post(7, "abc");
+        RemoteInput.Post(8, "zzz");                      // other guest, no grant
+        RemoteInput.Revoke(7);
+        Assert.False(RemoteInput.TryTake(out _));        // queued before revoke: re-checked on take
+        RemoteInput.Grant(7, "g");
+        RemoteInput.Post(7, new string('a', RemoteInput.MaxMessageChars + 1));   // oversize: dropped whole
+        Assert.False(RemoteInput.HasPending);
+        RemoteInput.EndPrompt();
+        RemoteInput.ResetForTest();
+    }
+
+    [Theory]
+    [InlineData("explain this repo", true)]
+    [InlineData("", false)]      // an empty submit quits the host's agent/swarm loop
+    [InlineData("   ", false)]
+    [InlineData("/", true)]
+    [InlineData("/help", true)]
+    [InlineData("/compact focus on tests", true)]
+    [InlineData("/retry", true)]
+    [InlineData("!rm -rf /", false)]
+    [InlineData("  !whoami", false)]
+    [InlineData("/exit", false)]
+    [InlineData("/qc", false)]
+    [InlineData("/share stop", false)]
+    [InlineData("/join http://x", false)]
+    [InlineData("/proxy update", false)]
+    [InlineData("/config", false)]
+    [InlineData("/model", false)]
+    [InlineData("/paste", false)]
+    [InlineData("/setup", false)]
+    [InlineData("/some-future-command", false)]
+    public void Policy_Allowlists_Guest_Lines(string line, bool allowed) => Assert.Equal(allowed, RemotePolicy.IsAllowed(line));
+
+    [Fact]
+    public void Guest_Key_Encoding_Round_Trips_Through_Host_Decode()
+    {
+        static ConsoleKeyInfo K(char c, ConsoleKey k, bool ctrl = false) => new(c, k, false, false, ctrl);
+        Assert.Equal("h", ShareGuest.KeyToVt(K('h', ConsoleKey.H)));
+        Assert.Equal("\r", ShareGuest.KeyToVt(K('\r', ConsoleKey.Enter)));
+        Assert.Equal("", ShareGuest.KeyToVt(K('\u0016', ConsoleKey.V, ctrl: true)));   // Ctrl+V never sent
+        Assert.Equal("", ShareGuest.KeyToVt(K('\0', ConsoleKey.UpArrow)));
+        var keys = D(ShareGuest.KeyToVt(K('\0', ConsoleKey.LeftArrow)) + ShareGuest.KeyToVt(K('\u0017', ConsoleKey.W, ctrl: true)));
+        Assert.Equal(new[] { ConsoleKey.LeftArrow, ConsoleKey.W }, keys.Select(k => k.Key.Key));
+    }
+}
+
+/// <summary>Guest typing through the real idle prompt loop (no network): feed, submit, block, attribution.</summary>
+[Collection("ConsoleState")]
+public class RemotePromptTests
+{
+    private sealed class Terminal : MuxSwarm.Engine.Tui.ITuiTerminal
+    {
+        internal readonly StringBuilder Output = new();
+        public int Width => 80;
+        public int Height => 24;
+        public void Write(string text) { lock (Output) Output.Append(text); }
+        public void Flush() { }
+        internal string Plain() { lock (Output) return System.Text.RegularExpressions.Regex.Replace(Output.ToString(), "\u001b\\[[0-9;?]*[A-Za-z]", ""); }
+    }
+
+    private static async Task<string?> Run(Action<MuxSwarm.Engine.Tui.ConsoleInputPump> drive, Terminal term)
+    {
+        RemoteInput.ResetForTest();
+        RemoteInput.Grant(1, "alice");
+        using var pump = MuxSwarm.Engine.Tui.ConsoleInputPump.CreateUnstartedForTest();
+        var driver = new MuxSwarm.Engine.Tui.TuiDriver(term, frameEngine: false);
+        var read = Task.Run(() => driver.ReadLineCore(pump));
+        try
+        {
+            for (int i = 0; i < 300 && !RemoteInput.IsOpen; i++) await Task.Delay(10);
+            drive(pump);
+            return await read.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            pump.Dispose();
+            try { await read.WaitAsync(TimeSpan.FromSeconds(3)); } catch { }
+            driver.Shutdown();
+            RemoteInput.ResetForTest();
+        }
+    }
+
+    private static ConsoleKeyInfo K(char c, ConsoleKey k) => new(c, k, false, false, false);
+
+    [Fact]
+    public async Task Guest_Types_And_Submits_A_Prompt_With_Attribution()
+    {
+        var term = new Terminal();
+        string? line = await Run(_ =>
+        {
+            RemoteInput.Post(1, "explain");
+            RemoteInput.Post(1, " this");
+            RemoteInput.Post(1, "\r");
+        }, term);
+        Assert.Equal("explain this", line);
+        Assert.Contains("typed by alice", term.Plain());
+    }
+
+    [Fact]
+    public async Task Guest_Shell_Escape_Is_Blocked_And_Host_Can_Still_Submit()
+    {
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "!whoami");
+            RemoteInput.Post(1, "\r");
+            Thread.Sleep(300);
+            foreach (char c in "ok") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("ok", line);   // the blocked draft was cleared, never submitted
+        Assert.Contains("Blocked a line typed by alice", term.Plain());
+    }
+
+    [Fact]
+    public async Task Host_Submitting_A_Guest_Edited_Draft_Still_Applies_Policy()
+    {
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "/exit");
+            Thread.Sleep(300);
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));   // host presses Enter
+            Thread.Sleep(300);
+            foreach (char c in "fine") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("fine", line);
+    }
+
+    [Fact]
+    public async Task Guest_Typed_Paste_Command_Never_Pastes_The_Host_Clipboard()
+    {
+        // `/paste` + Enter is a host clipboard shortcut; a guest-typed `/paste` must be refused by the
+        // guest-draft check instead, even when the HOST presses Enter (Mux Bud #94 round 2).
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "/paste");
+            Thread.Sleep(300);
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));   // host Enter
+            Thread.Sleep(300);
+            foreach (char c in "ok") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("ok", line);
+        Assert.Contains("Blocked a line typed by alice", term.Plain());
+    }
+
+    [Fact]
+    public async Task Guest_Enter_On_Empty_Prompt_Does_Not_Submit()
+    {
+        // An empty submit is "quit" to the agent/swarm loops (Mux Bud #94 P1): a guest's bare Enter
+        // must be a no-op, so ReadLine keeps waiting until the host types.
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "\r");
+            RemoteInput.Post(1, "   \r");
+            Thread.Sleep(300);
+            foreach (char c in "host") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("host", line.Trim());
+    }
+}
+
 public class GuestViewTests
 {
     [Fact]
@@ -234,6 +465,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
         ShareHost.ApprovalOverride = null;
         ShareHost.AskOverride = null;
         await ShareHost.StopAsync();
+        RemoteInput.ResetForTest();
     }
 
     /// <summary>An approval ask that blocks until cancelled (or 10 s), recording what ended it.</summary>
@@ -289,7 +521,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     public async Task Approved_Guest_Receives_Teed_Output()
     {
         string? askedName = null;
-        ShareHost.ApprovalOverride = n => { askedName = n; return true; };
+        ShareHost.ApprovalOverride = n => { askedName = n; return ShareHost.Approval.Watch; };
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         using var guest = await ShareGuestConnection.ConnectAsync(link, "tester<\u001b>", CancellationToken.None);
         await NextOfType(guest, ShareProtocol.Accept);
@@ -309,7 +541,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     public async Task Wrong_Secret_Is_Refused_Before_Approval()
     {
         bool asked = false;
-        ShareHost.ApprovalOverride = _ => { asked = true; return true; };
+        ShareHost.ApprovalOverride = _ => { asked = true; return ShareHost.Approval.Watch; };
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         var forged = new ShareLink(link.BaseUri, link.RoomId, new byte[32]);
         var ex = await Assert.ThrowsAsync<ShareJoinException>(() => ShareGuestConnection.ConnectAsync(forged, "x", CancellationToken.None));
@@ -321,7 +553,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     [Fact]
     public async Task Wrong_Room_Is_404()
     {
-        ShareHost.ApprovalOverride = _ => true;
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.Watch;
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         var other = new ShareLink(link.BaseUri, ShareLink.NewRoomId(), link.Secret);
         var ex = await Assert.ThrowsAsync<ShareJoinException>(() => ShareGuestConnection.ConnectAsync(other, "x", CancellationToken.None));
@@ -331,7 +563,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     [Fact]
     public async Task Declined_Guest_Gets_Bye_And_Nothing_Else()
     {
-        ShareHost.ApprovalOverride = _ => false;
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.Deny;
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         using var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
         var bye = await NextOfType(guest, ShareProtocol.Bye);
@@ -342,7 +574,7 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     [Fact]
     public async Task Link_Secret_Never_Reaches_Guests()
     {
-        ShareHost.ApprovalOverride = _ => true;
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.Watch;
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         using var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
         await NextOfType(guest, ShareProtocol.Accept);
@@ -357,9 +589,65 @@ public class ShareHostLoopbackTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Typing_Is_Host_Enforced_Granted_And_Revoked()
+    {
+        RemoteInput.ResetForTest();
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.WatchAndType;
+        var link = await ShareHost.StartAsync(lan: false, port: 0);
+        using var guest = await ShareGuestConnection.ConnectAsync(link, "typist", CancellationToken.None);
+        await NextOfType(guest, ShareProtocol.Accept);
+        var ctl = await NextOfType(guest, ShareProtocol.Control);
+        Assert.Equal((byte)'1', ctl[1]);
+        for (int i = 0; i < 50 && RemoteInput.TypistCount == 0; i++) await Task.Delay(20);
+
+        // No prompt open: input is dropped even though the guest may type.
+        await guest.SendAsync(ShareProtocol.Msg(ShareProtocol.Input, "early"), CancellationToken.None);
+        await Task.Delay(100);
+        Assert.False(RemoteInput.HasPending);
+
+        RemoteInput.BeginPrompt();
+        try
+        {
+            await guest.SendAsync(ShareProtocol.Msg(ShareProtocol.Input, "hi"), CancellationToken.None);
+            for (int i = 0; i < 50 && !RemoteInput.HasPending; i++) await Task.Delay(20);
+            Assert.True(RemoteInput.TryTake(out var e));
+            Assert.Equal("hi", e.Text);
+            Assert.Equal("typist", e.Name);
+
+            Assert.Equal(1, ShareHost.RevokeAllTyping());
+            var off = await NextOfType(guest, ShareProtocol.Control);
+            Assert.Equal((byte)'0', off[1]);
+            await guest.SendAsync(ShareProtocol.Msg(ShareProtocol.Input, "after"), CancellationToken.None);
+            await Task.Delay(150);
+            Assert.False(RemoteInput.TryTake(out _));   // revoked: host drops it
+        }
+        finally { RemoteInput.EndPrompt(); }
+        await guest.CloseAsync();
+    }
+
+    [Fact]
+    public async Task Watch_Only_Guest_Input_Is_Dropped()
+    {
+        RemoteInput.ResetForTest();
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.Watch;
+        var link = await ShareHost.StartAsync(lan: false, port: 0);
+        using var guest = await ShareGuestConnection.ConnectAsync(link, "viewer", CancellationToken.None);
+        await NextOfType(guest, ShareProtocol.Accept);
+        RemoteInput.BeginPrompt();
+        try
+        {
+            await guest.SendAsync(ShareProtocol.Msg(ShareProtocol.Input, "rm -rf\r"), CancellationToken.None);
+            await Task.Delay(150);
+            Assert.False(RemoteInput.HasPending);
+        }
+        finally { RemoteInput.EndPrompt(); }
+        await guest.CloseAsync();
+    }
+
+    [Fact]
     public async Task Stop_Disconnects_Guests_And_Frees_Listener()
     {
-        ShareHost.ApprovalOverride = _ => true;
+        ShareHost.ApprovalOverride = _ => ShareHost.Approval.Watch;
         var link = await ShareHost.StartAsync(lan: false, port: 0);
         using var guest = await ShareGuestConnection.ConnectAsync(link, "x", CancellationToken.None);
         await NextOfType(guest, ShareProtocol.Accept);

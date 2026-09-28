@@ -230,6 +230,13 @@ public sealed class EscapeKeyListener : IDisposable
                         // Active-turn shortcuts are always turn-wide, even with a foregrounded lane.
                         // Ctrl+Q survives hosts that reserve Escape. Retain the legacy bare native-Q alias.
                         key = Tui.VtKeyboard.Normalize(key);
+                        // Ctrl+] while sharing: revoke guest typing mid-turn too (never cancels).
+                        if (Tui.TuiDriver.IsRevokeKey(key) && Share.ShareHost.IsActive)
+                        {
+                            int revoked = Share.ShareHost.RevokeAllTyping();
+                            MuxConsole.WriteMuted(revoked > 0 ? "Guest typing revoked." : "No guest can type.");
+                            continue;
+                        }
                         bool cancelKey = key.Key == ConsoleKey.Escape
                             || (key.Key == ConsoleKey.Q && !key.Modifiers.HasFlag(ConsoleModifiers.Alt)
                                 && (key.Modifiers & ~ConsoleModifiers.Shift) is 0 or ConsoleModifiers.Control);
