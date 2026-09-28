@@ -3729,6 +3729,7 @@ internal sealed partial class TuiDriver
             string line = _editor.Buffer.Trim();
             if (line.Length > 0)
             {
+                if (!RemoteSubmitAllowed(line)) return true;   // guest-typed draft refused (cleared + noticed)
                 _editor.Remember(line);
                 _inInput = false;
                 _pendingGap = false;

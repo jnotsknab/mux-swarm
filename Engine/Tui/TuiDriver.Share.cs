@@ -35,6 +35,8 @@ internal sealed partial class TuiDriver
             }
             if (e.Key.Key == ConsoleKey.Enter)
             {
+                // Enter on an empty draft is a silent no-op for a guest (an empty submit quits the session).
+                if (string.IsNullOrWhiteSpace(_editor.Buffer)) continue;
                 _remoteAuthors.Add(e.Name);
                 string line = _editor.Buffer;
                 if (!RemoteSubmitAllowed(line)) { changed = true; continue; }

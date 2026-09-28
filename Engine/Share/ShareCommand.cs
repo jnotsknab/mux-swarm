@@ -133,7 +133,8 @@ internal static class ShareCommand
             return;
         }
         string who = string.Join(' ', parts[..^1]);
-        var changed = ShareHost.SetTyping(who, mode == "on");
+        var changed = ShareHost.SetTyping(who, mode == "on", out bool ambiguous);
+        if (ambiguous) { MuxConsole.WriteWarning($"More than one guest is named '{who}'. Use #id (see /share status)."); return; }
         if (changed.Count == 0) { MuxConsole.WriteMuted($"No guest matching '{who}'."); return; }
         string names = string.Join(", ", changed);
         if (mode == "on")

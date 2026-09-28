@@ -265,7 +265,8 @@ public class RemoteInputTests
 
     [Theory]
     [InlineData("explain this repo", true)]
-    [InlineData("", true)]
+    [InlineData("", false)]      // an empty submit quits the host's agent/swarm loop
+    [InlineData("   ", false)]
     [InlineData("/", true)]
     [InlineData("/help", true)]
     [InlineData("/compact focus on tests", true)]
@@ -379,6 +380,23 @@ public class RemotePromptTests
             pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
         }, term);
         Assert.Equal("fine", line);
+    }
+
+    [Fact]
+    public async Task Guest_Enter_On_Empty_Prompt_Does_Not_Submit()
+    {
+        // An empty submit is "quit" to the agent/swarm loops (Mux Bud #94 P1): a guest's bare Enter
+        // must be a no-op, so ReadLine keeps waiting until the host types.
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "\r");
+            RemoteInput.Post(1, "   \r");
+            Thread.Sleep(300);
+            foreach (char c in "host") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("host", line.Trim());
     }
 }
 

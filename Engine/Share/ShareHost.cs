@@ -88,16 +88,22 @@ internal static class ShareHost
 
     /// <summary>
     /// Allow or stop typing for one guest (by #id or name) or every guest (<c>all</c>). Returns the
-    /// names changed; empty when no guest matched.
+    /// names changed; empty when no guest matched. Guests pick their own names, so a name that
+    /// matches more than one guest changes nobody and sets <paramref name="ambiguous"/>: use #id.
     /// </summary>
-    public static IReadOnlyList<string> SetTyping(string who, bool allow)
+    public static IReadOnlyList<string> SetTyping(string who, bool allow, out bool ambiguous)
     {
         string w = who.Trim();
         bool all = w.Equals("all", StringComparison.OrdinalIgnoreCase);
+        bool byId = w.StartsWith('#') || w.All(char.IsAsciiDigit);
+        var matches = Guests.Values.Where(g => g.Accepted).OrderBy(g => g.Id)
+            .Where(g => all || (byId ? g.Id.ToString() == w.TrimStart('#') : g.Name.Equals(w, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        ambiguous = !all && !byId && matches.Count > 1;
         var changed = new List<string>();
-        foreach (var g in Guests.Values.Where(g => g.Accepted).OrderBy(g => g.Id))
+        if (ambiguous) return changed;
+        foreach (var g in matches)
         {
-            if (!all && g.Id.ToString() != w.TrimStart('#') && !g.Name.Equals(w, StringComparison.OrdinalIgnoreCase)) continue;
             SetTyping(g, allow);
             changed.Add(g.Name);
         }

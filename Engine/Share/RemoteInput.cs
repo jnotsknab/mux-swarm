@@ -198,11 +198,14 @@ internal static class RemotePolicy
         "/compact", "/retry", "/undo", "/redo",
     };
 
-    /// <summary>True when a guest-authored line may be submitted.</summary>
+    /// <summary>
+    /// True when a guest-authored line may be submitted. Empty/whitespace lines are refused: the
+    /// agent and swarm loops treat an empty submit as quit.
+    /// </summary>
     public static bool IsAllowed(string? line)
     {
         var t = (line ?? "").Trim();
-        if (t.Length == 0) return true;
+        if (t.Length == 0) return false;
         if (t[0] == '!') return false;
         if (t[0] != '/') return true;
         if (t is "/" or "/?") return true;
@@ -213,6 +216,7 @@ internal static class RemotePolicy
     public static string Describe(string? line)
     {
         var t = (line ?? "").Trim();
+        if (t.Length == 0) return "an empty line (ends the host's session)";
         if (t.StartsWith('!')) return "a shell command (!)";
         var token = t.Split(' ', '\n')[0];
         return token.Length > 40 ? token[..40] + "..." : token;
