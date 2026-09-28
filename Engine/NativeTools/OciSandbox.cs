@@ -135,6 +135,7 @@ internal sealed class OciSandbox : IDisposable
             }
             if (skipped.Count > 0)
                 MuxConsole.WriteWarning($"[sandbox] skipped {skipped.Count} un-mountable path(s): {string.Join("; ", skipped)}");
+            EnsureImage(_spec.Image, "sandbox");   // a cold multi-hundred-MB pull must not hit the 60 s CLI cap
             string args = $"run -d --name {_containerName} {runtimeArg} {hardenArg} {netArg} {proxyEnv} " +
                           $"{binds} -w {GuestWorkDir} " +
                           $"--entrypoint sh {_spec.Image} -c \"sleep infinity\"";
@@ -188,7 +189,7 @@ internal sealed class OciSandbox : IDisposable
         // base64 the script in so we don't fight shell quoting across platforms.
         string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(BuildProxyScript(_spec.AllowedDomains)));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
-        EnsureProxyImage();
+        EnsureImage(ProxyImage, "network proxy");
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
         if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
@@ -199,15 +200,15 @@ internal sealed class OciSandbox : IDisposable
     }
 
     /// <summary>
-    /// Pull <see cref="ProxyImage"/> as its own step when it is not present locally, with a 10 min timeout:
+    /// Pull <paramref name="image"/> as its own step when it is not present locally, with a 10 min timeout:
     /// a first-use pull on a slow link can exceed the 60 s CLI default, and a failed pull (offline, registry
-    /// blocked) is reported as a pull failure rather than a misleading proxy start failure.
+    /// blocked) is reported as a pull failure rather than a misleading container start failure.
     /// </summary>
-    private void EnsureProxyImage()
+    private void EnsureImage(string image, string what)
     {
-        if (Run(_spec.Binary, $"image inspect {ProxyImage}", allowFail: true).ok) return;
-        var (ok, _, err) = Run(_spec.Binary, $"pull {ProxyImage}", allowFail: true, timeoutMs: 600_000);
-        if (!ok) throw new SandboxException($"failed to pull the sandbox network proxy image {ProxyImage} " +
+        if (Run(_spec.Binary, $"image inspect {image}", allowFail: true).ok) return;
+        var (ok, _, err) = Run(_spec.Binary, $"pull {image}", allowFail: true, timeoutMs: 600_000);
+        if (!ok) throw new SandboxException($"failed to pull the {what} image {image} " +
             $"(pre-pull it on offline/air-gapped hosts): {err.Trim()}");
     }
 
@@ -310,8 +311,11 @@ internal sealed class OciSandbox : IDisposable
                 try { p.Kill(true); } catch { }
                 return (false, outTask.IsCompletedSuccessfully ? outTask.Result : "", "timed out");
             }
-            string o = outTask.GetAwaiter().GetResult();
-            string e = errTask.GetAwaiter().GetResult();
+            // Bound the drain too: a detached grandchild can keep the pipes open after the CLI exits.
+            if (!Task.WaitAll([outTask, errTask], TimeSpan.FromSeconds(5)))
+                return (false, outTask.IsCompletedSuccessfully ? outTask.Result : "", "timed out reading output");
+            string o = outTask.Result;
+            string e = errTask.Result;
             bool ok = p.ExitCode == 0;
             if (!ok && !allowFail) throw new SandboxException($"{file} {args} failed: {e.Trim()}");
             return (ok, o, e);
