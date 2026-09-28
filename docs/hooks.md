@@ -189,6 +189,10 @@ running to receive.
    delivery runs **stateless**: an isolated context per delivery, no session directory.
 4. If `callbackUrl` is set, the result is POSTed there when the run finishes.
 
+Webhook triggers added at runtime (`/daemon`, the web UI, or `POST /api/daemon/trigger`) are live immediately;
+deleting one stops it. One Mux process serves any number of webhooks: **different triggers run concurrently,
+deliveries to the same trigger run in order**. To scale further, run more Mux processes.
+
 **Response contract:** `202 {accepted, id, deliveryId}` · `401` bad/missing signature · `404` unknown or
 non-webhook id · `429 {retryAfter}` + `Retry-After` header when a delivery lands inside `cooldown`
 (nothing is accepted and then silently dropped).
