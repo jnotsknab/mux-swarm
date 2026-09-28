@@ -194,7 +194,8 @@ public class GuestViewTests
     public void Host_Resize_Clears_Stale_Cells_And_Requests_Keyframe()
     {
         var sb = new StringBuilder();
-        var view = new ShareGuest.GuestView(s => sb.Append(s));
+        // Fixed local size: headless runs (CI, containers) have no real console window.
+        var view = new ShareGuest.GuestView(s => sb.Append(s), () => (80, 24));
         view.Enter(20, 5);
         sb.Clear();
         Assert.True(view.SetHostSize(10, 3));          // host shrank: clear + keyframe
@@ -202,6 +203,21 @@ public class GuestViewTests
         sb.Clear();
         Assert.False(view.SetHostSize(10, 3));         // same size: no-op
         Assert.Equal("", sb.ToString());
+    }
+
+    [Fact]
+    public void Host_Text_Cannot_Carry_Escape_Sequences()
+    {
+        // Notices and reject/bye reasons bypass the frame sanitizer: OSC 52 (clipboard) and a DSR
+        // query must not survive, and neither may C1 controls.
+        string hostile = "hi\u001b]52;c;ZXZpbA==\u0007\u001b[6n\u009b0c\tthere\r\n";
+        string clean = AnsiSanitizer.PlainText(hostile);
+        Assert.DoesNotContain('\u001b', clean);
+        Assert.DoesNotContain('\u0007', clean);
+        Assert.DoesNotContain('\u009b', clean);
+        Assert.DoesNotContain('\r', clean);
+        Assert.Equal("hi]52;c;ZXZpbA==[6n0c there", clean);
+        Assert.Equal("", AnsiSanitizer.PlainText(null));
     }
 }
 

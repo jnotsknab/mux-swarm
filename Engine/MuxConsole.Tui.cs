@@ -1219,13 +1219,16 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
     /// e.g. a /share join approval arriving while the user types or the agent streams. The question
     /// is queued and shown as an in-frame modal by the loop that currently owns the input pump (idle
     /// prompt or mid-turn listener). Blocks the calling thread until answered; returns the chosen
-    /// index, or null on Esc, timeout, or when no frame TUI is available to ask.
+    /// index, or null on Esc, timeout, cancellation (<paramref name="ct"/>: the ask is withdrawn before it
+    /// is shown), or when no frame TUI is available to ask.
     /// </summary>
-    internal static int? TuiAskFromBackground(string question, string[] choices, int defaultIndex, TimeSpan timeout)
+    internal static int? TuiAskFromBackground(string question, string[] choices, int defaultIndex, TimeSpan timeout,
+        CancellationToken ct = default)
     {
         if (!ViaDriver || !FrameEngineEnabled || choices.Length == 0) return null;
         var ask = new BackgroundAsk(question, choices, defaultIndex);
         _backgroundAsks.Enqueue(ask);
+        using var reg = ct.Register(() => ask.Result.TrySetResult(null));
         if (!ask.Result.Task.Wait(timeout)) ask.Result.TrySetResult(null);
         return ask.Result.Task.Result;
     }
@@ -1239,7 +1242,10 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
     {
         if (!ViaDriver || !FrameEngineEnabled) return false;
         if (!_backgroundAsks.TryDequeue(out var ask)) return false;
-        if (ask.Result.Task.IsCompleted) return true;   // expired while queued
+        if (ask.Result.Task.IsCompleted) return true;   // expired or withdrawn while queued
+        // Stop the spinner only when the modal can actually open: a re-queued ask is retried every
+        // listener loop, and stopping the indicator each time would freeze it for no visible reason.
+        if (!_driver!.CanOpenPromptModal(ownerReentry)) { _backgroundAsks.Enqueue(ask); return false; }
         lock (ConsoleLock) { StopActiveIndicator_NoLock(); }
         var res = _driver!.RunPromptModal(PromptModalView.Kind.Select, ask.Question, ask.Choices,
             initialSel: ask.DefaultIndex, ownerReentry: ownerReentry);

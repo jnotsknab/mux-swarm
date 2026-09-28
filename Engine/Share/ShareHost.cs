@@ -46,6 +46,8 @@ internal static class ShareHost
     private static int _pending;
     private static int _nextId;
     private static volatile int _guestCount;
+    private static readonly object GuestLock = new();   // admission check + count update are one step
+    private static CancellationTokenSource _shareCts = new();   // cancelled by StopAsync: ends pending approvals
     private static (int W, int H) _lastSize;
     private static string? _secretText;   // base64url link secret, redacted from the guest stream
 
@@ -97,6 +99,7 @@ internal static class ShareHost
             _addresses = addresses.Select(a => $"{FormatHost(a)}:{bound}").ToList();
             _lastSize = (0, 0);
             Failures.Clear();
+            _shareCts = new CancellationTokenSource();
         }
         return link;
     }
@@ -109,6 +112,7 @@ internal static class ShareHost
     {
         WebApplication? app;
         lock (Gate) { app = _app; _app = null; _link = null; _secretText = null; _addresses = []; }
+        try { _shareCts.Cancel(); } catch (ObjectDisposedException) { }
         foreach (var g in Guests.Values) g.Close(reason);
         if (app is not null)
         {
@@ -257,19 +261,25 @@ internal static class ShareHost
         var sender = Task.Run(() => guest.SendLoopAsync(aborted));
         try
         {
-            bool approved = await ApproveAsync(guest);
-            if (!approved || guest.Closed)
+            bool approved = await ApproveAsync(guest, aborted);
+            if (!approved || guest.Closed || !IsActive)
             {
                 guest.Close(approved ? "disconnected" : "the host declined the request");
                 await sender;
                 return;
             }
-            if (_guestCount >= MaxGuests) { guest.Close("the session is full"); await sender; return; }
-
-            var (w, h) = CurrentSize();
-            guest.Enqueue(new Outgoing(ShareProtocol.Accept, null, w, h));
-            guest.Accepted = true;
-            _guestCount = Guests.Values.Count(g => g.Accepted);
+            lock (GuestLock)
+            {
+                if (_guestCount >= MaxGuests) { guest.Close("the session is full"); }
+                else
+                {
+                    var (w, h) = CurrentSize();
+                    guest.Enqueue(new Outgoing(ShareProtocol.Accept, null, w, h));
+                    guest.Accepted = true;
+                    _guestCount = Guests.Values.Count(g => g.Accepted);
+                }
+            }
+            if (!guest.Accepted) { await sender; return; }
             MuxConsole.WriteInfo($"\u25cf {guest.Name} joined the share ({guest.Address}).");
             MuxConsole.TuiForceRedraw();   // full keyframe for the new guest (and a fresh footer)
 
@@ -280,9 +290,12 @@ internal static class ShareHost
         {
             guest.Close("disconnected");
             try { await sender; } catch { /* ignore */ }
-            Guests.TryRemove(guest.Id, out _);
             bool wasAccepted = guest.Accepted;
-            _guestCount = Guests.Values.Count(g => g.Accepted);
+            lock (GuestLock)
+            {
+                Guests.TryRemove(guest.Id, out _);
+                _guestCount = Guests.Values.Count(g => g.Accepted);
+            }
             guest.Dispose();
             if (wasAccepted && IsActive)
             {
@@ -292,17 +305,23 @@ internal static class ShareHost
         }
     }
 
-    private static async Task<bool> ApproveAsync(Guest guest)
+    /// <summary>
+    /// Ask the host to approve a join. Ends as a denial when the guest disconnects (<paramref name="aborted"/>)
+    /// or the share stops, so no stale prompt lingers and the approval gate is released promptly.
+    /// </summary>
+    private static async Task<bool> ApproveAsync(Guest guest, CancellationToken aborted)
     {
         if (ApprovalOverride is { } ov) return ov(guest.Name);
-        await ApprovalGate.WaitAsync();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(aborted, _shareCts.Token);
+        try { await ApprovalGate.WaitAsync(cts.Token); }
+        catch (OperationCanceledException) { return false; }
         try
         {
-            if (guest.Closed) return false;
+            if (guest.Closed || cts.IsCancellationRequested) return false;
             string q = $"\"{guest.Name}\" ({guest.Address}) wants to WATCH this session live. " +
                        "They will see everything on your screen. Allow?";
-            int? answer = await Task.Run(() => MuxConsole.TuiAskFromBackground(q, ["Deny", "Allow"], 0, ApprovalTimeout));
-            return answer == 1;
+            int? answer = await Task.Run(() => MuxConsole.TuiAskFromBackground(q, ["Deny", "Allow"], 0, ApprovalTimeout, cts.Token));
+            return answer == 1 && !cts.IsCancellationRequested;
         }
         finally { ApprovalGate.Release(); }
     }

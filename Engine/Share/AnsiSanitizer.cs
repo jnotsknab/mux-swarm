@@ -24,6 +24,22 @@ internal sealed class AnsiSanitizer
     private State _state = State.Ground;
     private readonly StringBuilder _csi = new();
 
+    /// <summary>
+    /// Host-supplied plain text (notices, reject/bye reasons) shown outside the frame stream: drop
+    /// every C0/C1 control and ESC so it can carry no escape sequence at all. Tab becomes a space.
+    /// </summary>
+    public static string PlainText(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        var sb = new StringBuilder(s.Length);
+        foreach (char c in s)
+        {
+            if (c == '\t') sb.Append(' ');
+            else if (c >= 0x20 && c != 0x7F && (c < 0x80 || c > 0x9F)) sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
     /// <summary>Reset to ground state.</summary>
     public void Reset() { _state = State.Ground; _csi.Clear(); }
 

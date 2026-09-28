@@ -149,6 +149,6 @@ internal static class ShareCommand
             }
         }
         MuxConsole.TuiResume();
-        MuxConsole.WriteMuted($"Left the shared session: {reason}");
+        MuxConsole.WriteMuted($"Left the shared session: {AnsiSanitizer.PlainText(reason)}");
     }
 }

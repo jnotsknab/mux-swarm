@@ -29,6 +29,7 @@ internal sealed class ShareGuestConnection : IDisposable
     {
         var ws = new ClientWebSocket();
         ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
+        ws.Options.Proxy = null;   // direct connect: HTTP(S)_PROXY would break same-network joins
         ws.Options.CollectHttpResponseDetails = true;   // surface 404/429/503 as specific user messages
         try
         {
@@ -163,7 +164,7 @@ internal static class ShareGuest
         try
         {
             string? reason = await RunAsync(link!, ConsoleRead, Console.Out.Write);
-            Console.Out.WriteLine($"Left the shared session: {reason}");
+            Console.Out.WriteLine($"Left the shared session: {AnsiSanitizer.PlainText(reason)}");
             return 0;
         }
         catch (ShareJoinException ex)
@@ -229,7 +230,7 @@ internal static class ShareGuest
                             break;
                         case ShareProtocol.Reject:
                         case ShareProtocol.Bye:
-                            reason = Encoding.UTF8.GetString(payload);
+                            reason = AnsiSanitizer.PlainText(Encoding.UTF8.GetString(payload));
                             cts.Cancel();
                             break;
                         case ShareProtocol.Size:
@@ -240,7 +241,7 @@ internal static class ShareGuest
                             view.Output(Encoding.UTF8.GetString(payload));
                             break;
                         case ShareProtocol.Notice:
-                            view.Flash(Encoding.UTF8.GetString(payload));
+                            view.Flash(AnsiSanitizer.PlainText(Encoding.UTF8.GetString(payload)));
                             break;
                     }
                 }
@@ -296,7 +297,9 @@ internal static class ShareGuest
     }
 
     /// <summary>Local terminal state for the viewer: alt screen, size gating, status overlays.</summary>
-    internal sealed class GuestView(Action<string> write)
+    /// <param name="write">Raw terminal output sink.</param>
+    /// <param name="size">Local window size; defaults to the real console (tests pass a fixed size).</param>
+    internal sealed class GuestView(Action<string> write, Func<(int W, int H)>? size = null)
     {
         private readonly object _lock = new();
         private readonly AnsiSanitizer _sanitizer = new();
@@ -304,7 +307,9 @@ internal static class ShareGuest
         private bool _tooSmall;
         private int _hostW, _hostH, _myW, _myH;
 
-        private static (int W, int H) MySize()
+        private (int W, int H) MySize() => size is null ? ConsoleSize() : size();
+
+        private static (int W, int H) ConsoleSize()
         {
             try { return (Math.Max(1, Console.WindowWidth), Math.Max(1, Console.WindowHeight)); }
             catch { return (80, 24); }
