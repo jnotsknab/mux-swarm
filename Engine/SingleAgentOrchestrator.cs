@@ -220,7 +220,7 @@ public static class SingleAgentOrchestrator
     /// record a one-line stub in MEMORY.md via a one-shot LLM rewrite (opt-in). TUI/interactive
     /// only path; safe no-op style on any failure.
     /// </summary>
-    private static async Task HandleTagAsync(
+    internal static async Task HandleTagAsync(
         string metaCmd,
         string sessionTimestamp,
         AgentSession session,
@@ -273,6 +273,18 @@ public static class SingleAgentOrchestrator
         if (!alsoMemory) return;
 
         await WriteMemoryTagStubAsync(tag, sessionTimestamp, resolvedModelId, chatClientFactory, ct);
+    }
+
+    /// <summary>
+    /// Best-effort session save used by /detach. A stateless session (<paramref name="persistSession"/>
+    /// false) is never written: it must not appear in the sessions directory or resume picker.
+    /// </summary>
+    internal static async Task PersistUnlessStatelessAsync(
+        bool persistSession, AIAgent agent, AgentSession session, string sessionTimestamp)
+    {
+        if (!persistSession) return;
+        try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
+        catch { /* best-effort; the live frame is preserved regardless */ }
     }
 
     /// <summary>
@@ -2778,11 +2790,7 @@ public static class SingleAgentOrchestrator
                     {
                         // Persist so the parked session is also resumable from disk as a safety net.
                         // Stateless sessions stay memory-only: the live frame IS the session.
-                        if (persistSession)
-                        {
-                            try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
-                            catch { /* best-effort; the live frame is preserved regardless */ }
-                        }
+                        await PersistUnlessStatelessAsync(persistSession, agent, session, sessionTimestamp);
                         interactiveHandle.Tokens = _sessionTokens;
                         MuxConsole.WriteSuccess($"Detached session {interactiveHandle.Id} ({interactiveHandle.Label}). Re-attach with /attach {interactiveHandle.Id} or \\.");
                         // Release the session-scoped TUI hooks so the menu's footer is clean while
