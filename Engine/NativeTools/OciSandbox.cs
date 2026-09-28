@@ -12,9 +12,10 @@ namespace MuxSwarm.Engine.NativeTools;
 /// proxy + internal network, if any). Created/owned by a <see cref="ReplSession"/>.
 ///
 /// Network allowlist: when <see cref="SandboxSpec.UsesAllowlist"/>, the container is attached ONLY to a
-/// Docker `--internal` network (no host egress); a tiny filtering-proxy sidecar (python from the same
-/// base image) sits on both that internal net and a normal net and CONNECT-filters by host against the
-/// allowlist. The sandbox's HTTP(S)_PROXY point at the sidecar, so it can reach listed domains only.
+/// Docker `--internal` network (no host egress); a tiny filtering-proxy sidecar sits on both that internal
+/// net and a normal net and CONNECT-filters by host against the allowlist. The sandbox's HTTP(S)_PROXY
+/// point at the sidecar, so it can reach listed domains only. The sidecar always runs from
+/// <see cref="ProxyImage"/>, never the sandbox image, so any sandbox image works with an allowlist.
 /// </summary>
 internal sealed class OciSandbox : IDisposable
 {
@@ -38,6 +39,13 @@ internal sealed class OciSandbox : IDisposable
     private readonly UncDriveMapper _uncMapper = new();
 
     public const string GuestWorkDir = "/work";
+
+    /// <summary>
+    /// Image the allowlist proxy sidecar runs from, independent of the sandbox image (which may have no
+    /// python, e.g. dotnet/sdk). Fully qualified so podman/nerdctl resolve it without a short-name prompt;
+    /// multi-arch (amd64/arm64). Pulled on first allowlist use; pre-pull it on air-gapped hosts.
+    /// </summary>
+    internal const string ProxyImage = "docker.io/library/python:3.12-alpine";
 
     public OciSandbox(SandboxSpec spec, string hostWorkDir, string key)
     {
@@ -150,6 +158,15 @@ internal sealed class OciSandbox : IDisposable
                 throw new SandboxException($"sandbox container exited immediately ({_spec.Backend}). " +
                     $"Image entrypoint may be wrong or a dropped capability is required. Detail: {_lastBuildError}");
             }
+            // The allowlist proxy must be up too, or the sandbox silently has no network at all.
+            if (_spec.UsesAllowlist && !IsRunning(_proxyName))
+            {
+                var (_, logs, lerr) = Run(_spec.Binary, $"logs {_proxyName}", allowFail: true);
+                _lastBuildError = (logs + lerr).Trim();
+                RebuildTeardown_NoLock();
+                throw new SandboxException($"sandbox network proxy ({ProxyImage}) exited on start, so " +
+                    $"allowedDomains cannot be reached. Detail: {_lastBuildError}");
+            }
             _buildAttempts = 0;          // healthy - reset the self-heal budget
             _lastBuildError = "";
         }
@@ -157,9 +174,9 @@ internal sealed class OciSandbox : IDisposable
 
     private void StartProxy(string sfx)
     {
-        // Write a tiny CONNECT-filtering proxy script and run it from the SAME base image (no extra pull).
-        // It allows CONNECT only to allowlisted hosts (suffix match), denies everything else. Plain HTTP
-        // is also filtered by Host header. ~deny-by-default.
+        // Write a tiny CONNECT-filtering proxy script and run it from ProxyImage (NOT the sandbox image,
+        // which may have no python). It allows CONNECT only to allowlisted hosts (suffix match), denies
+        // everything else. Plain HTTP is also filtered by Host header. ~deny-by-default.
         string allowPy = "[" + string.Join(",", _spec.AllowedDomains.Select(d => "\\\"" + d.Replace("\"", "") + "\\\"")) + "]";
         // Normalize to LF: the verbatim ProxyScript carries the file's CRLF endings; base64 it as LF
         // so the python written to /tmp/p.py inside the container is clean.
@@ -168,14 +185,18 @@ internal sealed class OciSandbox : IDisposable
         string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
-        string args = $"run -d --name {_proxyName} --network {_netName} " +
-                      $"-e MUX_PROXY_B64={b64} --entrypoint sh {_spec.Image} -c " +
-                      "\"echo $MUX_PROXY_B64 | base64 -d > /tmp/p.py && python /tmp/p.py\"";
-        var (ok, _, err) = Run(_spec.Binary, args, allowFail: true);
-        if (!ok) throw new SandboxException($"failed to start sandbox network proxy: {err.Trim()}");
+        var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
+        if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage} " +
+            $"(offline hosts must pre-pull it): {err.Trim()}");
         // give the proxy a normal egress path too (second network with default bridge).
         Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
     }
+
+    /// <summary>`run` arguments for the allowlist proxy sidecar. Always <see cref="ProxyImage"/>.</summary>
+    internal static string ProxyRunArgs(string proxyName, string netName, string scriptB64) =>
+        $"run -d --name {proxyName} --network {netName} " +
+        $"-e MUX_PROXY_B64={scriptB64} --entrypoint sh {ProxyImage} -c " +
+        "\"echo $MUX_PROXY_B64 | base64 -d > /tmp/p.py && python /tmp/p.py\"";
 
     /// <summary>
     /// Build the (file,args) to run a one-off shell command inside the container via `exec`.
@@ -200,12 +221,14 @@ internal sealed class OciSandbox : IDisposable
     }
 
     /// <summary>True when the session container exists AND is in the running state. Cheap docker inspect.</summary>
-    private bool ContainerRunning()
+    private bool ContainerRunning() => IsRunning(_containerName);
+
+    private bool IsRunning(string name)
     {
-        if (string.IsNullOrEmpty(_containerName)) return false;
+        if (string.IsNullOrEmpty(name)) return false;
         // `inspect -f {{.State.Running}}` prints "true"/"false"; non-zero exit => container absent.
         var (ok, outp, _) = Run(_spec.Binary,
-            $"inspect -f {{{{.State.Running}}}} {_containerName}", allowFail: true);
+            $"inspect -f {{{{.State.Running}}}} {name}", allowFail: true);
         return ok && outp.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
     }
 

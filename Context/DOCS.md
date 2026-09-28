@@ -228,7 +228,7 @@ host execution.
 | `backend` | `host` (default, no sandbox) \| `docker` \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
 | `image` | Container image for OCI backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
-| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. |
+| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
 | `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for OCI backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by wrapper/custom/host. |
 

@@ -29,6 +29,17 @@ public class SandboxBackendTests
     }
 
     [Fact]
+    public void AllowlistProxy_RunsFromFixedImage_NotTheSandboxImage()
+    {
+        // The proxy sidecar used to run `python` from the SANDBOX image, so a python-less image (dotnet/sdk)
+        // made it exit 127 and left the sandbox with no network at all.
+        string args = OciSandbox.ProxyRunArgs("mux_sbxproxy_x", "mux_sbxnet_x", "QUJD");
+        Assert.Contains($"--entrypoint sh {OciSandbox.ProxyImage} -c", args);
+        Assert.Contains("--network mux_sbxnet_x", args);
+        Assert.StartsWith("docker.io/library/python:", OciSandbox.ProxyImage); // fully qualified for podman
+    }
+
+    [Fact]
     public void UnknownBackend_IsRejected()
     {
         var err = SandboxBackend.Validate(Cfg("garbage-backend"));
