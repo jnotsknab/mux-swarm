@@ -17,9 +17,9 @@ using static MuxSwarm.Setup.Setup;
 
 namespace MuxSwarm;
 
-public class App
+internal class App
 {
-    public static readonly string Version = "0.14.2";
+    public static readonly string Version = "0.15.0";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     

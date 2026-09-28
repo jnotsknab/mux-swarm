@@ -46,6 +46,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--serve [port]` | Embedded web UI (default 6723) |
 | `--telemetry [port]` | Standalone telemetry dashboard (default 6725), four tabs: Overview (persistent all-time token/cost/turn/tool metrics), plus live Metrics / Traces / Logs served from the built-in OTel stack (every `mux.*` instrument with tag breakdowns and rates, trace waterfall + step-through of turns/tool calls/responses, durable log history) - no external OTLP collector needed |
 | `--daemon` | Daemon mode (file watch, cron, status, and webhook triggers from config.json) |
+| `--join <link>` | Join a shared session as a guest, then exit. Needs no config or provider (see [Session sharing](share.md)) |
 | `--update` | Self-update from the latest GitHub release, then exit |
 | `--selftest [checks]` | Run built-in end-to-end checks (comma list or `all`; default all) against this binary, print PASS/FAIL, exit 0/1. The CI harness. `proxy` requires `MUX_CLIPROXY_HOME` set to a scratch dir. |
 | `--register` / `--remove` | Register/unregister mux-swarm as an OS service |
@@ -136,6 +137,8 @@ Available inside a live lead-agent session (including supported team-lead launch
 | `/detach` | Park the session in the background; re-enter with `/attach` |
 | `/voice [auto\|off\|vol <1-10>]` | Local speech-to-text dictation into the compose field (TUI only) |
 | `/unhide <agent>` | Restore a hidden sub-agent to the viewport (hide via the `\` Agent View `h` key; `/background` lanes start hidden) |
+| `/share [--local\|--lan]` (+ status/control/kick/stop) | Share this session live with guests you approve ([Session sharing](share.md)) |
+| `/join <link>` | Watch (and, if allowed, type into) someone else's shared session |
 | `/qc` / `/qm` | Quit the session loop |
 | `!<command>` | Run a shell command and add its output to context |
 
@@ -164,6 +167,7 @@ Available at the top-level REPL.
 | `/parasubagents` (`/psub`) | Enable parallel ephemeral sub-agent delegation |
 | `/split` | Arm optional lead-context sharing: delegation tools gain `inheritLeadContext` (lead opts in per delegation; armed automatically by `/ultra` and `/giga`) |
 | `/workflow <file>` | Run a deterministic workflow from a JSON file |
+| `/workflows` (+ `saved`/`save`/`rerun`/`run`/`delete`) | Live workflow-run viewer; save a run's driver script as a reusable definition, re-run it, or launch/delete a saved workflow |
 | `/teams [name]` | List and launch named teams from swarm.json |
 | `/createteam` | Guided wizard to define a team (lead, members, coordination, parallelism) |
 | `/createhook [id]` | Guided wizard: scaffold a hook, an outbound webhook, or an inbound webhook |
@@ -218,7 +222,7 @@ Available at the top-level REPL.
 | `/memory [deep\|standard\|show\|set <k> <v>]` | Toggle deep memory + status and tuning |
 | `/deep [off]` | Shortcut to enable (or disable) deep memory mode |
 | `/taskgraph on\|off\|status` | Auto task decomposition onto the task board (config block is `decompose`) |
-| `/theme [default\|dark\|light\|mono\|solarized\|dracula\|gruvbox]` | Switch the TUI theme |
+| `/theme [name]` | Switch the TUI theme (21 presets; bare `/theme` opens a live-preview picker) |
 | `/sessions` | List all saved sessions with type and agent count |
 | `/setup` | Run initial setup / reconfigure |
 | `/reloadskills` | Refresh the skills directory for mid-process changes |

@@ -12,7 +12,7 @@ namespace MuxSwarm.Engine.Share;
 internal sealed partial class ShareLink
 {
     /// <summary>Room id length in bytes.</summary>
-    public const int RoomBytes = 16;
+    private const int RoomBytes = 16;
 
     /// <summary>Link secret (PSK) length in bytes.</summary>
     public const int SecretBytes = 32;

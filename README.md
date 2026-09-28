@@ -49,6 +49,7 @@
 - **Sign in with the subscriptions you already have.** A bundled proxy signs into Claude, Codex, Kimi, xAI, or Antigravity with `/login`, no API keys in config. Any OpenAI-compatible provider works too.
 - **Runs while you sleep.** A built-in [daemon](docs/hooks.md) fires whole multi-agent pipelines on cron, file-watch, status, or webhook triggers, with OS service registration for always-on hosts.
 - **A web UI from the same binary.** [`--serve`](docs/serve-api.md) gives live agent streams, a node graph, and session management behind your own auth, plus an HTTP and WebSocket API to [drive it from anything](docs/automation.md).
+- **Pair on a live session.** [`/share`](docs/share.md) streams your session to teammates you approve, end-to-end encrypted, and can let them type prompts while you keep control (`Ctrl+]` takes it back).
 - **MCP-native, in your editor too.** Attach any [MCP](https://modelcontextprotocol.io/) server to any agent, extend with a hot-reloadable [skills system](docs/configuration.md), and connect from Zed over [ACP](docs/acp.md).
 ## Quickstart
 
@@ -96,6 +97,7 @@ Full documentation lives in [`docs/`](docs/README.md).
 
 **Guides and concepts**
 - [Workflows](docs/workflows.md) - deterministic workflow files
+- [Session Sharing](docs/share.md) - `/share` + `/join` live, encrypted session sharing
 - [Hooks, Webhooks, and Daemon](docs/hooks.md) - lifecycle hooks and automation triggers
 - [Sandbox and Security](docs/sandbox.md) - execution backends and production posture
 - [ACP](docs/acp.md) - Zed editor integration
