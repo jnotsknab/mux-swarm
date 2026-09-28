@@ -40,6 +40,17 @@ public class SandboxBackendTests
     }
 
     [Fact]
+    public void AllowlistProxyScript_EmbedsAValidListLiteral()
+    {
+        // Regression: domains were wrapped in \" (left over from shell quoting), which made the generated
+        // python `ALLOW = [\"api.nuget.org\"]` a syntax error, so the proxy never started.
+        string script = OciSandbox.BuildProxyScript(new[] { "api.nuget.org", "www.nuget.org" });
+        Assert.Contains("ALLOW = [\"api.nuget.org\",\"www.nuget.org\"]\n", script);
+        Assert.DoesNotContain("\\\"", script.Split('\n').First(l => l.StartsWith("ALLOW = ")));
+        Assert.DoesNotContain("\r", script);
+    }
+
+    [Fact]
     public void UnknownBackend_IsRejected()
     {
         var err = SandboxBackend.Validate(Cfg("garbage-backend"));

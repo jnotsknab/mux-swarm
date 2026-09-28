@@ -177,12 +177,8 @@ internal sealed class OciSandbox : IDisposable
         // Write a tiny CONNECT-filtering proxy script and run it from ProxyImage (NOT the sandbox image,
         // which may have no python). It allows CONNECT only to allowlisted hosts (suffix match), denies
         // everything else. Plain HTTP is also filtered by Host header. ~deny-by-default.
-        string allowPy = "[" + string.Join(",", _spec.AllowedDomains.Select(d => "\\\"" + d.Replace("\"", "") + "\\\"")) + "]";
-        // Normalize to LF: the verbatim ProxyScript carries the file's CRLF endings; base64 it as LF
-        // so the python written to /tmp/p.py inside the container is clean.
-        string script = ProxyScript.Replace("\r\n", "\n").Replace("__ALLOW__", allowPy);
         // base64 the script in so we don't fight shell quoting across platforms.
-        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(BuildProxyScript(_spec.AllowedDomains)));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
@@ -191,6 +187,15 @@ internal sealed class OciSandbox : IDisposable
         // give the proxy a normal egress path too (second network with default bridge).
         Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
     }
+
+    /// <summary>
+    /// The proxy's python source with the allowlist filled in. The list is a JSON string array, which is
+    /// also a valid python literal (JSON escaping covers quotes/backslashes). LF line endings: the verbatim
+    /// ProxyScript carries this file's CRLF.
+    /// </summary>
+    internal static string BuildProxyScript(IEnumerable<string> allowedDomains) =>
+        ProxyScript.Replace("\r\n", "\n")
+            .Replace("__ALLOW__", System.Text.Json.JsonSerializer.Serialize(allowedDomains.ToArray()));
 
     /// <summary>`run` arguments for the allowlist proxy sidecar. Always <see cref="ProxyImage"/>.</summary>
     internal static string ProxyRunArgs(string proxyName, string netName, string scriptB64) =>
