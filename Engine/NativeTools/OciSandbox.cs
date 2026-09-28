@@ -82,6 +82,11 @@ internal sealed class OciSandbox : IDisposable
                     "Check the image, docker daemon, and `/sandbox` config (or set sandbox.backend host).");
             _buildAttempts++;
 
+            // Pull images FIRST, before any network/container exists: a failed pull then leaves nothing to leak.
+            // A cold multi-hundred-MB pull must not hit the 60 s CLI cap, so it runs as its own step.
+            EnsureImage(_spec.Image, "sandbox");
+            if (_spec.UsesAllowlist) EnsureImage(ProxyImage, "network proxy");
+
             string sfx = Sanitize(_key) + "_" + Guid.NewGuid().ToString("N")[..6];
             _containerName = "mux_sbx_" + sfx;
             Directory.CreateDirectory(_hostWorkDir);
@@ -135,7 +140,6 @@ internal sealed class OciSandbox : IDisposable
             }
             if (skipped.Count > 0)
                 MuxConsole.WriteWarning($"[sandbox] skipped {skipped.Count} un-mountable path(s): {string.Join("; ", skipped)}");
-            EnsureImage(_spec.Image, "sandbox");   // a cold multi-hundred-MB pull must not hit the 60 s CLI cap
             string args = $"run -d --name {_containerName} {runtimeArg} {hardenArg} {netArg} {proxyEnv} " +
                           $"{binds} -w {GuestWorkDir} " +
                           $"--entrypoint sh {_spec.Image} -c \"sleep infinity\"";
@@ -189,7 +193,6 @@ internal sealed class OciSandbox : IDisposable
         // base64 the script in so we don't fight shell quoting across platforms.
         string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(BuildProxyScript(_spec.AllowedDomains)));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
-        EnsureImage(ProxyImage, "network proxy");
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
         if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
