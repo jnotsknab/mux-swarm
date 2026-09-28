@@ -287,8 +287,11 @@ internal sealed class OciSandbox : IDisposable
 
     // ---- helpers ----
 
-    /// <summary>Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s).</summary>
-    private static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
+    /// <summary>
+    /// Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s). stdout and
+    /// stderr are drained concurrently so the timeout is enforced and a full stderr pipe cannot deadlock.
+    /// </summary>
+    internal static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
     {
         try
         {
@@ -300,9 +303,15 @@ internal sealed class OciSandbox : IDisposable
             };
             using var p = Process.Start(psi);
             if (p is null) return (false, "", "could not start " + file);
-            string o = p.StandardOutput.ReadToEnd();
-            string e = p.StandardError.ReadToEnd();
-            if (!p.WaitForExit(timeoutMs)) { try { p.Kill(true); } catch { } return (false, o, "timed out"); }
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try { p.Kill(true); } catch { }
+                return (false, outTask.IsCompletedSuccessfully ? outTask.Result : "", "timed out");
+            }
+            string o = outTask.GetAwaiter().GetResult();
+            string e = errTask.GetAwaiter().GetResult();
             bool ok = p.ExitCode == 0;
             if (!ok && !allowFail) throw new SandboxException($"{file} {args} failed: {e.Trim()}");
             return (ok, o, e);

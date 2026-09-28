@@ -71,6 +71,21 @@ public class SandboxBackendTests
         => Assert.Equal(expected, OciSandbox.IsHealthy(containerUp, allowlist, proxyUp));
 
     [Fact]
+    public void Run_EnforcesTimeout_OnAHangingCommand()
+    {
+        // Regression: Run read stdout/stderr to the end BEFORE WaitForExit, so the timeout never fired.
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("powershell", "-NoProfile -Command Start-Sleep 10")
+            : ("sleep", "10");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (ok, _, err) = OciSandbox.Run(file, args, allowFail: true, timeoutMs: 500);
+        sw.Stop();
+        Assert.False(ok);
+        Assert.Equal("timed out", err);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(8), $"took {sw.Elapsed}");
+    }
+
+    [Fact]
     public void UnknownBackend_IsRejected()
     {
         var err = SandboxBackend.Validate(Cfg("garbage-backend"));
