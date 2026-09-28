@@ -51,6 +51,26 @@ public class SandboxBackendTests
     }
 
     [Fact]
+    public void AllowlistProxyScript_EscapesQuotesAndBackslashes()
+    {
+        // The ALLOW literal must stay valid (JSON == python string list) for hostile domain text.
+        var domains = new[] { "a\"b.example", "c\\d.example" };
+        string script = OciSandbox.BuildProxyScript(domains);
+        string line = script.Split('\n').First(l => l.StartsWith("ALLOW = "));
+        var parsed = System.Text.Json.JsonSerializer.Deserialize<string[]>(line["ALLOW = ".Length..]);
+        Assert.Equal(domains, parsed);
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]   // no allowlist: the container alone decides
+    [InlineData(true, true, true, true)]
+    [InlineData(true, true, false, false)]   // proxy died: rebuild
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, true, false)]
+    public void HealthyFastPath_RequiresProxyWhenAllowlisted(bool containerUp, bool allowlist, bool proxyUp, bool expected)
+        => Assert.Equal(expected, OciSandbox.IsHealthy(containerUp, allowlist, proxyUp));
+
+    [Fact]
     public void UnknownBackend_IsRejected()
     {
         var err = SandboxBackend.Validate(Cfg("garbage-backend"));

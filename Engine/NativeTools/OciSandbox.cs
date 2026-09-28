@@ -67,8 +67,9 @@ internal sealed class OciSandbox : IDisposable
             if (_disposed) return;
             if (_started)
             {
-                if (ContainerRunning()) return;       // healthy - nothing to do
-                // Container is gone/dead: tear down stale proxy+net and rebuild from scratch.
+                if (IsHealthy(ContainerRunning(), _spec.UsesAllowlist, _spec.UsesAllowlist && IsRunning(_proxyName)))
+                    return;                           // healthy - nothing to do
+                // Container (or its allowlist proxy) is gone/dead: tear down stale state and rebuild.
                 RebuildTeardown_NoLock();
             }
 
@@ -172,6 +173,13 @@ internal sealed class OciSandbox : IDisposable
         }
     }
 
+    /// <summary>
+    /// Healthy fast-path check: the container is up and, when an allowlist is active, so is its proxy
+    /// (a dead proxy leaves the sandbox with no network, so it must trigger a rebuild too).
+    /// </summary>
+    internal static bool IsHealthy(bool containerUp, bool usesAllowlist, bool proxyUp) =>
+        containerUp && (!usesAllowlist || proxyUp);
+
     private void StartProxy(string sfx)
     {
         // Write a tiny CONNECT-filtering proxy script and run it from ProxyImage (NOT the sandbox image,
@@ -180,12 +188,27 @@ internal sealed class OciSandbox : IDisposable
         // base64 the script in so we don't fight shell quoting across platforms.
         string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(BuildProxyScript(_spec.AllowedDomains)));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
+        EnsureProxyImage();
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
-        if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage} " +
-            $"(offline hosts must pre-pull it): {err.Trim()}");
+        if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
         // give the proxy a normal egress path too (second network with default bridge).
+        // Known limit (unverified): podman names its default network `podman`, not `bridge`, so this
+        // connect may fail there and leave the proxy without egress.
         Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
+    }
+
+    /// <summary>
+    /// Pull <see cref="ProxyImage"/> as its own step when it is not present locally, with a 10 min timeout:
+    /// a first-use pull on a slow link can exceed the 60 s CLI default, and a failed pull (offline, registry
+    /// blocked) is reported as a pull failure rather than a misleading proxy start failure.
+    /// </summary>
+    private void EnsureProxyImage()
+    {
+        if (Run(_spec.Binary, $"image inspect {ProxyImage}", allowFail: true).ok) return;
+        var (ok, _, err) = Run(_spec.Binary, $"pull {ProxyImage}", allowFail: true, timeoutMs: 600_000);
+        if (!ok) throw new SandboxException($"failed to pull the sandbox network proxy image {ProxyImage} " +
+            $"(pre-pull it on offline/air-gapped hosts): {err.Trim()}");
     }
 
     /// <summary>
@@ -264,7 +287,8 @@ internal sealed class OciSandbox : IDisposable
 
     // ---- helpers ----
 
-    private static (bool ok, string outp, string err) Run(string file, string args, bool allowFail)
+    /// <summary>Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s).</summary>
+    private static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
     {
         try
         {
@@ -278,7 +302,7 @@ internal sealed class OciSandbox : IDisposable
             if (p is null) return (false, "", "could not start " + file);
             string o = p.StandardOutput.ReadToEnd();
             string e = p.StandardError.ReadToEnd();
-            if (!p.WaitForExit(60000)) { try { p.Kill(true); } catch { } return (false, o, "timed out"); }
+            if (!p.WaitForExit(timeoutMs)) { try { p.Kill(true); } catch { } return (false, o, "timed out"); }
             bool ok = p.ExitCode == 0;
             if (!ok && !allowFail) throw new SandboxException($"{file} {args} failed: {e.Trim()}");
             return (ok, o, e);
