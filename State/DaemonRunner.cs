@@ -31,7 +31,7 @@ public sealed class DaemonRunner : IAsyncDisposable
     // Inbound webhook triggers: each "webhook" loop registers a queue keyed by trigger id. The serve
     // route POST /api/hook/{id} enqueues (body, source) here; the loop drains + fires the goal. The
     // queue exists only while the loop runs, so a POST to a non-webhook / disabled id is rejected.
-    private readonly ConcurrentDictionary<string, (ConcurrentQueue<(string Payload, string Source)> Queue, SemaphoreSlim Signal)> _webhookQueues = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (ConcurrentQueue<(string Payload, string Source, string DeliveryId)> Queue, SemaphoreSlim Signal, DaemonTrigger Trigger)> _webhookQueues = new(StringComparer.OrdinalIgnoreCase);
     private ConcurrentDictionary<string, Process> _bridgeProcesses = new();
     private Func<string, IChatClient>? _chatClientFactory;
     private IList<AITool>? _mcpTools;
@@ -125,15 +125,15 @@ public sealed class DaemonRunner : IAsyncDisposable
     /// Add and immediately start a trigger at runtime (via /daemon cron|watch), independent of the
     /// boot config. The trigger gets its own CancellationTokenSource so <see cref="CancelTrigger"/>
     /// can stop just this one. Returns the assigned id, or null when the daemon isn't started yet or
-    /// the type is unsupported for runtime add (only "cron" and "watch").
+    /// the type is unsupported for runtime add ("cron", "watch" and "webhook").
     /// </summary>
     public string? AddTriggerRuntime(DaemonTrigger trigger)
     {
         if (!IsStarted) { MuxConsole.WriteWarning("[Daemon] Not started yet; cannot add a runtime trigger."); return null; }
         var type = (trigger.Type ?? "").ToLowerInvariant();
-        if (type is not ("cron" or "watch"))
+        if (type is not ("cron" or "watch" or "webhook"))
         {
-            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch (got '{trigger.Type}').");
+            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch|webhook (got '{trigger.Type}').");
             return null;
         }
         if (string.IsNullOrWhiteSpace(trigger.Id))
@@ -145,9 +145,10 @@ public sealed class DaemonRunner : IAsyncDisposable
 
         var worker = type switch
         {
-            "watch" => RunWatchLoop(trigger, cts.Token),
-            "cron"  => RunCronLoop(trigger, cts.Token),
-            _       => LogUnknownTrigger(trigger),
+            "watch"   => RunWatchLoop(trigger, cts.Token),
+            "cron"    => RunCronLoop(trigger, cts.Token),
+            "webhook" => RunWebhookLoop(trigger, cts.Token),
+            _         => LogUnknownTrigger(trigger),
         };
         _workers.Add(worker);
         return trigger.Id;
@@ -688,15 +689,39 @@ public sealed class DaemonRunner : IAsyncDisposable
         }
     }
 
-    private async Task FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct)
+    /// <summary>Outcome of one fired goal: whether it completed, its result text, and any error.</summary>
+    internal readonly record struct GoalOutcome(bool Ok, string? Result, string? Error);
+
+    /// <summary>
+    /// Serializes daemon-fired swarm/pswarm runs with each other: their orchestrators keep process-wide
+    /// static state (specialists, session-dirty flags), so two concurrent runs would clobber each other.
+    /// Covers daemon-fired runs only; an interactive /swarm or /pswarm is not gated (known limit).
+    /// Agent-mode runs are unaffected and stay concurrent.
+    /// </summary>
+    private static readonly SemaphoreSlim SwarmGate = new(1, 1);
+
+    /// <summary>Case-insensitive lookup of a trigger's agent override; null when no definition matches.</summary>
+    internal static Common.AgentDefinition? FindTriggerAgent(string name, IEnumerable<Common.AgentDefinition> defs)
+        => defs.FirstOrDefault(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Model for an agent-mode run: the model mapped to <paramref name="agentName"/> (pass the RESOLVED
+    /// definition name, since the models map is case-sensitive), else the Orchestrator's model.
+    /// </summary>
+    internal static string ResolveTriggerModel(IReadOnlyDictionary<string, string> agentModels, string? agentName)
+        => agentModels.GetValueOrDefault(agentName ?? "Orchestrator", agentModels["Orchestrator"]);
+
+    private async Task<GoalOutcome> FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct, bool stateless = false)
     {
         _lastFiredByTrigger[trigger.Id] = DateTime.UtcNow;
         if (_chatClientFactory is null || _mcpTools is null || _agentModels is null)
         {
             MuxConsole.WriteWarning(
                 $"[Daemon:{trigger.Id}] Cannot fire goal -- dependencies not initialized.");
-            return;
+            return new GoalOutcome(false, null, "daemon dependencies not initialized");
         }
+
+        using var result = RunResult.Begin();
 
         try
         {
@@ -709,65 +734,93 @@ public sealed class DaemonRunner : IAsyncDisposable
             // TUI collapse is handled separately by BeginDaemonCapture below.
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
             {
-            // State the resolved mode explicitly so a fired job's mode is never inferred
-            // from downstream log noise (e.g. roster loads that also occur in agent mode).
-            MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Firing in '{trigger.Mode}' mode.");
-            switch (trigger.Mode.ToLowerInvariant())
-            {
-                case "swarm":
-                    await MultiAgentOrchestrator.RunAsync(
-                        chatClientFactory: _chatClientFactory,
-                        mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                        agentModels: _agentModels,
-                        incomingGoal: goal,
-                        cancellationToken: ct);
-                    break;
+                // State the resolved mode explicitly so a fired job's mode is never inferred
+                // from downstream log noise (e.g. roster loads that also occur in agent mode).
+                MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Firing in '{trigger.Mode}' mode.");
+                switch (trigger.Mode.ToLowerInvariant())
+                {
+                    case "swarm":
+                        // swarm/pswarm orchestrators keep static state: one such run at a time per process.
+                        await SwarmGate.WaitAsync(ct);
+                        try
+                        {
+                            await MultiAgentOrchestrator.RunAsync(
+                                chatClientFactory: _chatClientFactory,
+                                mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                                agentModels: _agentModels,
+                                incomingGoal: goal,
+                                cancellationToken: ct,
+                                persistSession: !stateless);
+                        }
+                        finally { SwarmGate.Release(); }
+                        break;
 
-                case "pswarm":
-                    await ParallelSwarmOrchestrator.RunAsync(
-                        chatClientFactory: _chatClientFactory,
-                        mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                        agentModels: _agentModels,
-                        incomingGoal: goal,
-                        cancellationToken: ct);
-                    break;
+                    case "pswarm":
+                        await SwarmGate.WaitAsync(ct);
+                        try
+                        {
+                            await ParallelSwarmOrchestrator.RunAsync(
+                                chatClientFactory: _chatClientFactory,
+                                mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                                agentModels: _agentModels,
+                                incomingGoal: goal,
+                                cancellationToken: ct,
+                                persistSession: !stateless);
+                        }
+                        finally { SwarmGate.Release(); }
+                        break;
 
-                case "agent":
-                default:
-                    if (!string.IsNullOrEmpty(trigger.Agent))
-                    {
-                        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
-                        var matched = agentDefs.FirstOrDefault(d =>
-                            d.Name.Equals(trigger.Agent, StringComparison.OrdinalIgnoreCase));
-                        if (matched != null)
-                            SingleAgentOrchestrator.AgentDef = matched;
-                    }
+                    case "agent":
+                    default:
+                        // The trigger's agent override is passed per call, never written to the
+                        // process-wide SingleAgentOrchestrator.AgentDef: concurrent triggers and the
+                        // interactive session each keep their own agent.
+                        Common.AgentDefinition? triggerAgent = null;
+                        if (!string.IsNullOrEmpty(trigger.Agent))
+                        {
+                            var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
+                            triggerAgent = FindTriggerAgent(trigger.Agent, agentDefs);
+                            if (triggerAgent is null)
+                            {
+                                // Fail loudly: silently running the default agent would do the wrong job.
+                                var unknown = $"unknown agent '{trigger.Agent}'";
+                                MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal failed: {unknown}");
+                                return new GoalOutcome(false, null, unknown);
+                            }
+                        }
 
-                    var modelId = !string.IsNullOrEmpty(trigger.Agent)
-                        ? _agentModels.GetValueOrDefault(trigger.Agent, _agentModels["Orchestrator"])
-                        : _agentModels.GetValueOrDefault(
-                            SingleAgentOrchestrator.AgentDef?.Name ?? "Orchestrator",
-                            _agentModels["Orchestrator"]);
+                        var modelId = ResolveTriggerModel(_agentModels,
+                            triggerAgent?.Name ?? SingleAgentOrchestrator.AgentDef?.Name);
 
-                    // Collapse the daemon-fired agent run into one expandable Agent-View line
-                    // (dense by default) instead of streaming the full reasoning + tool transcript
-                    // into the main viewport. Off (/daemonview off) => null scope => streams inline
-                    // as before. swarm/pswarm modes self-collapse via their specialist sub-agents.
-                    using (MuxConsole.BeginDaemonCapture($"daemon:{trigger.Id}"))
-                    {
-                        await SingleAgentOrchestrator.ChatAgentAsync(
-                            client: _chatClientFactory(modelId),
-                            cancellationToken: ct,
-                            mcpTools: _mcpTools
-                                .Cast<ModelContextProtocol.Client.McpClientTool>().ToList(),
-                            chatClientFactory: _chatClientFactory,
-                            incomingGoal: goal);
-                    }
-                    break;
+                        // Collapse the daemon-fired agent run into one expandable Agent-View line
+                        // (dense by default) instead of streaming the full reasoning + tool transcript
+                        // into the main viewport. Off (/daemonview off) => null scope => streams inline
+                        // as before. swarm/pswarm modes self-collapse via their specialist sub-agents.
+                        using (MuxConsole.BeginDaemonCapture($"daemon:{trigger.Id}"))
+                        {
+                            await SingleAgentOrchestrator.ChatAgentAsync(
+                                client: _chatClientFactory(modelId),
+                                cancellationToken: ct,
+                                mcpTools: _mcpTools
+                                    .Cast<ModelContextProtocol.Client.McpClientTool>().ToList(),
+                                chatClientFactory: _chatClientFactory,
+                                // Webhook deliveries are stateless: an isolated context per
+                                // delivery, no session directory. Watch/cron keep persisting.
+                                persistSession: !stateless,
+                                incomingGoal: goal,
+                                agentDef: triggerAgent);
+                        }
+                        break;
+                }
+
+                if (result.Error is { } runError)
+                {
+                    MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal failed: {runError}");
+                    return new GoalOutcome(false, result.Text, runError);
+                }
+                MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Goal completed.");
             }
-
-            MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Goal completed.");
-            }
+            return new GoalOutcome(true, result.Text, null);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -776,22 +829,61 @@ public sealed class DaemonRunner : IAsyncDisposable
             // run's origin scope already disposed when the try exited).
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
                 MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal execution failed: {ex.Message}");
+            return new GoalOutcome(false, result.Text, ex.Message);
         }
+    }
+
+    /// <summary>Result of <see cref="EnqueueWebhook(string, string, string, out string, out int)"/>.</summary>
+    public enum WebhookEnqueue
+    {
+        /// <summary>Queued; the delivery id identifies this run in the callback.</summary>
+        Accepted,
+        /// <summary>No active webhook loop owns the id.</summary>
+        Unknown,
+        /// <summary>The trigger fired within its cooldown; retry after the given seconds.</summary>
+        Cooldown,
     }
 
     /// <summary>
     /// Enqueue an inbound webhook payload for the given trigger id. Called by the serve route
-    /// <c>POST /api/hook/{id}</c> after it has verified the request. Returns false when no active
-    /// <c>webhook</c> loop owns that id (unknown id, wrong type, or disabled) so the route can 404.
-    /// Non-blocking: the payload is queued and the response returns immediately (goals are long runs).
+    /// <c>POST /api/hook/{id}</c> after it has verified the request. Non-blocking: the payload is
+    /// queued and the route returns immediately (goals are long runs). A delivery inside the
+    /// trigger's cooldown is refused up front (never accepted-then-dropped).
     /// </summary>
-    public bool EnqueueWebhook(string id, string payload, string source)
+    public WebhookEnqueue EnqueueWebhook(string id, string payload, string source, out string deliveryId, out int retryAfterSeconds)
     {
-        if (!_webhookQueues.TryGetValue(id ?? "", out var entry)) return false;
-        entry.Queue.Enqueue((payload, source));
+        deliveryId = "";
+        retryAfterSeconds = 0;
+        if (!_webhookQueues.TryGetValue(id ?? "", out var entry)) return WebhookEnqueue.Unknown;
+        uint cooldown = entry.Trigger.EffectiveInterval;
+        // One lock per trigger (its queue) covers the cooldown check-then-set (Kestrel runs requests in
+        // parallel) AND the enqueue, which must not race the loop's shutdown removal + drain.
+        lock (entry.Queue)
+        {
+            // The loop may have exited after our lookup: never accept into an orphaned queue.
+            if (!_webhookQueues.TryGetValue(id!, out var live) || !ReferenceEquals(live.Queue, entry.Queue))
+                return WebhookEnqueue.Unknown;
+            if (cooldown > 0)
+            {
+                var key = $"{entry.Trigger.Id}:webhook";
+                var now = DateTime.UtcNow;
+                if (_lastFired.TryGetValue(key, out var last) && (now - last).TotalSeconds < cooldown)
+                {
+                    retryAfterSeconds = (int)Math.Ceiling(cooldown - (now - last).TotalSeconds);
+                    return WebhookEnqueue.Cooldown;
+                }
+                _lastFired[key] = now;
+            }
+            deliveryId = Guid.NewGuid().ToString("N");
+            entry.Queue.Enqueue((payload, source, deliveryId));
+        }
         try { entry.Signal.Release(); } catch { /* disposed race */ }
-        return true;
+        return WebhookEnqueue.Accepted;
     }
+
+    /// <summary>Back-compat convenience: true when the payload was accepted.</summary>
+    public bool EnqueueWebhook(string id, string payload, string source)
+        => EnqueueWebhook(id, payload, source, out _, out _) == WebhookEnqueue.Accepted;
 
     /// <summary>True when an active webhook loop owns this id (for route validation).</summary>
     public bool HasWebhook(string id) => _webhookQueues.ContainsKey(id ?? "");
@@ -804,9 +896,9 @@ public sealed class DaemonRunner : IAsyncDisposable
             return;
         }
 
-        var queue = new ConcurrentQueue<(string, string)>();
+        var queue = new ConcurrentQueue<(string, string, string)>();
         var signal = new SemaphoreSlim(0);
-        _webhookQueues[trigger.Id] = (queue, signal);
+        _webhookQueues[trigger.Id] = (queue, signal, trigger);
 
         MuxConsole.WriteSuccess(
             $"[Daemon:{trigger.Id}] Webhook ready: POST /api/hook/{trigger.Id} (cooldown {trigger.EffectiveInterval}s)");
@@ -819,20 +911,11 @@ public sealed class DaemonRunner : IAsyncDisposable
 
                 while (queue.TryDequeue(out var item))
                 {
-                    var (payload, source) = item;
-
-                    var cooldownKey = $"{trigger.Id}:webhook";
-                    if (_lastFired.TryGetValue(cooldownKey, out var lastFire)
-                        && (DateTime.UtcNow - lastFire).TotalSeconds < trigger.EffectiveInterval)
-                    {
-                        MuxConsole.WriteMuted($"[Daemon:{trigger.Id}] Webhook in cooldown; dropping payload.");
-                        continue;
-                    }
-                    _lastFired[cooldownKey] = DateTime.UtcNow;
+                    var (payload, source, deliveryId) = item;
+                    // Cooldown is enforced at enqueue (429 to the sender), never by dropping here.
 
                     // Untrusted external input: cap the body forwarded into the agent goal.
-                    var limit = trigger.PayloadLimit > 0 ? trigger.PayloadLimit : 8192;
-                    if (payload.Length > limit) payload = payload[..limit];
+                    payload = TruncatePayload(payload, trigger.PayloadLimit > 0 ? trigger.PayloadLimit : 65536);
 
                     var goal = SubstituteGoalTemplate(
                         trigger.Goal ?? "Handle webhook: {payload}",
@@ -840,6 +923,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                         {
                             ["{payload}"] = payload,
                             ["{source}"] = source,
+                            ["{deliveryId}"] = deliveryId,
                             ["{timestamp}"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                             ["{id}"] = trigger.Id
                         });
@@ -855,7 +939,15 @@ public sealed class DaemonRunner : IAsyncDisposable
                         Timestamp = DateTimeOffset.UtcNow
                     });
 
-                    await FireGoal(trigger, goal, ct);
+                    GoalOutcome outcome;
+                    try { outcome = await FireGoal(trigger, goal, ct, stateless: true); }
+                    catch (OperationCanceledException)
+                    {
+                        // The sender was told 202: close the loop for the in-flight delivery too.
+                        PostWebhookCallback(trigger, deliveryId, new GoalOutcome(false, null, "cancelled"));
+                        throw;
+                    }
+                    PostWebhookCallback(trigger, deliveryId, outcome);
                 }
             }
         }
@@ -866,19 +958,56 @@ public sealed class DaemonRunner : IAsyncDisposable
         }
         finally
         {
-            _webhookQueues.TryRemove(trigger.Id, out _);
+            // Unregister under the queue lock EnqueueWebhook takes: any delivery accepted before this
+            // is in the queue (drained below); any later POST sees the trigger gone and gets a 404.
+            lock (queue) _webhookQueues.TryRemove(trigger.Id, out _);
+            // Accepted-but-never-run deliveries still get a (fire-and-forget) callback.
+            while (queue.TryDequeue(out var left))
+                PostWebhookCallback(trigger, left.Item3, new GoalOutcome(false, null, "shutdown"));
             signal.Dispose();
         }
     }
 
-    private static string SubstituteGoalTemplate(
+    /// <summary>
+    /// Fire-and-forget POST of a delivery's outcome to the trigger's <c>callbackUrl</c>; no-op when
+    /// none is configured. Never blocks the webhook loop or shutdown.
+    /// </summary>
+    private static void PostWebhookCallback(DaemonTrigger trigger, string deliveryId, GoalOutcome outcome)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.CallbackUrl)) return;
+        _ = Task.Run(() => WebhookSink.PostCallbackAsync(trigger.CallbackUrl!, trigger.Secret,
+            BuildCallbackBody(trigger.Id, deliveryId, outcome)));
+    }
+
+    /// <summary>
+    /// Substitute <c>{name}</c> placeholders in ONE pass: a substituted value is never scanned
+    /// again, so placeholder-like text inside a webhook body or file path stays verbatim.
+    /// Unknown placeholders are left as-is. Keys include their braces, matched case-insensitively.
+    /// </summary>
+    internal static string SubstituteGoalTemplate(
         string template, Dictionary<string, string> vars)
     {
-        var result = template;
-        foreach (var (key, value) in vars)
-            result = result.Replace(key, value, StringComparison.OrdinalIgnoreCase);
-        return result;
+        var lookup = new Dictionary<string, string>(vars, StringComparer.OrdinalIgnoreCase);
+        return System.Text.RegularExpressions.Regex.Replace(template, @"\{[A-Za-z]+\}",
+            m => lookup.TryGetValue(m.Value, out var v) ? v : m.Value);
     }
+
+    /// <summary>Cap a webhook body at <paramref name="limit"/> chars, marking the cut so the agent knows.</summary>
+    internal static string TruncatePayload(string payload, int limit)
+        => payload.Length <= limit ? payload
+            : payload[..limit] + $"\n[payload truncated: {limit} of {payload.Length} chars]";
+
+    /// <summary>JSON body POSTed to a webhook trigger's callbackUrl when its run finishes.</summary>
+    internal static string BuildCallbackBody(string id, string deliveryId, GoalOutcome outcome)
+        => System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["id"] = id,
+            ["deliveryId"] = deliveryId,
+            ["status"] = outcome.Ok ? "ok" : "error",
+            ["result"] = outcome.Result,
+            ["error"] = outcome.Error,
+            ["timestamp"] = DateTimeOffset.UtcNow,
+        });
 
     private static Task LogUnknownTrigger(DaemonTrigger trigger)
     {

@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -96,29 +96,33 @@ public static partial class ServeMode
     {
         var id = context.Request.RouteValues["id"]?.ToString() ?? "";
         var runner = App.DaemonRunner;
-        if (runner is null || !runner.HasWebhook(id))
+        var trigger = App.Config.Daemon?.Triggers
+            .FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase)
+                                 && string.Equals(t.Type, "webhook", StringComparison.OrdinalIgnoreCase));
+        // Both must agree: a live loop AND a configured trigger. A loop whose trigger was removed
+        // from config would otherwise run with no secret (fail open).
+        if (runner is null || trigger is null || !runner.HasWebhook(id))
         {
             await WriteJson(context, 404, new { error = "No such webhook trigger" });
             return;
         }
 
-        // Read the raw body once (needed verbatim for HMAC verification + templating).
-        string body;
-        using (var reader = new StreamReader(context.Request.Body, Encoding.UTF8))
-            body = await reader.ReadToEndAsync();
-
-        var trigger = App.Config.Daemon?.Triggers
-            .FirstOrDefault(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase)
-                                 && string.Equals(t.Type, "webhook", StringComparison.OrdinalIgnoreCase));
+        // Read the raw bytes once: HMAC is verified over exactly what the sender signed.
+        byte[] raw;
+        using (var ms = new MemoryStream())
+        {
+            await context.Request.Body.CopyToAsync(ms);
+            raw = ms.ToArray();
+        }
 
         // Auth: prefer per-trigger HMAC. If a secret is configured, a valid X-Hub-Signature-256 is
         // mandatory. With no secret, fall back to the runtime bearer gate when global auth is on;
         // when auth is off and no secret is set, the endpoint is open (documented, opt-in surface).
-        var secret = trigger?.Secret;
+        var secret = trigger.Secret;
         if (!string.IsNullOrEmpty(secret))
         {
             var sig = context.Request.Headers["X-Hub-Signature-256"].ToString();
-            if (!VerifyHmacSignature(body, secret, sig))
+            if (!VerifyHmacSignature(raw, secret, sig))
             {
                 await WriteJson(context, 401, new { error = "Invalid signature" });
                 return;
@@ -131,21 +135,48 @@ public static partial class ServeMode
             return;
         }
 
+        string body = DecodeWebhookBody(raw, context.Request.ContentType);
         var source = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-        if (!runner.EnqueueWebhook(id, body, source))
+        switch (runner.EnqueueWebhook(id, body, source, out var deliveryId, out var retryAfter))
         {
-            await WriteJson(context, 404, new { error = "No such webhook trigger" });
-            return;
+            case MuxSwarm.State.DaemonRunner.WebhookEnqueue.Accepted:
+                await WriteJson(context, 202, new { accepted = true, id, deliveryId });
+                return;
+            case MuxSwarm.State.DaemonRunner.WebhookEnqueue.Cooldown:
+                context.Response.Headers.Append("Retry-After", Math.Max(1, retryAfter).ToString());
+                await WriteJson(context, 429, new { error = "Webhook trigger is cooling down", retryAfter = Math.Max(1, retryAfter) });
+                return;
+            default:
+                await WriteJson(context, 404, new { error = "No such webhook trigger" });
+                return;
         }
+    }
 
-        await WriteJson(context, 202, new { accepted = true, id });
+    /// <summary>
+    /// Webhook body as text: UTF-8 (BOM stripped). A form-encoded body (GitHub's default
+    /// "application/x-www-form-urlencoded" delivery) is unwrapped to its <c>payload</c> field.
+    /// </summary>
+    internal static string DecodeWebhookBody(byte[] raw, string? contentType)
+    {
+        var text = new UTF8Encoding(false).GetString(raw).TrimStart('\uFEFF');
+        if (contentType is not null
+            && contentType.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var pair in text.Split('&'))
+            {
+                int eq = pair.IndexOf('=');
+                if (eq > 0 && pair[..eq] == "payload")
+                    return Uri.UnescapeDataString(pair[(eq + 1)..].Replace('+', ' '));
+            }
+        }
+        return text;
     }
 
     /// <summary>
     /// Constant-time verify of a GitHub-style <c>X-Hub-Signature-256: sha256=&lt;hex&gt;</c> header
-    /// against an HMAC-SHA256 of the raw body under the shared secret.
+    /// against an HMAC-SHA256 of the raw body bytes under the shared secret.
     /// </summary>
-    private static bool VerifyHmacSignature(string body, string secret, string header)
+    internal static bool VerifyHmacSignature(byte[] body, string secret, string header)
     {
         if (string.IsNullOrEmpty(header)) return false;
         const string prefix = "sha256=";
@@ -157,8 +188,7 @@ public static partial class ServeMode
         catch (FormatException) { return false; }
 
         var key = Encoding.UTF8.GetBytes(secret);
-        var data = Encoding.UTF8.GetBytes(body);
-        var expected = System.Security.Cryptography.HMACSHA256.HashData(key, data);
+        var expected = System.Security.Cryptography.HMACSHA256.HashData(key, body);
 
         return presented.Length == expected.Length
             && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(presented, expected);
@@ -1233,9 +1263,21 @@ public static partial class ServeMode
             Command = Str("command") is { Length: > 0 } cmd ? cmd : null,
             Agent = Str("agent") is { Length: > 0 } a ? a : null,
             Mode = Str("mode") is { Length: > 0 } m ? m : "agent",
+            Secret = Str("secret") is { Length: > 0 } sec ? sec : null,
+            CallbackUrl = Str("callbackUrl") is { Length: > 0 } cb ? cb : null,
         };
         if (root.TryGetProperty("interval", out var iv) && iv.TryGetUInt32(out var ivv) && ivv > 0)
             trigger.Interval = ivv;
+        if (root.TryGetProperty("cooldown", out var cd) && cd.TryGetUInt32(out var cdv) && cdv > 0)
+            trigger.Cooldown = cdv;
+        if (root.TryGetProperty("payloadLimit", out var pl) && pl.TryGetInt32(out var plv) && plv > 0)
+            trigger.PayloadLimit = plv;
+        if (trigger.CallbackUrl is { } cbu
+            && !(Uri.TryCreate(cbu, UriKind.Absolute, out var cbUri) && cbUri.Scheme is "http" or "https"))
+        {
+            await WriteJson(context, 400, new { error = "'callbackUrl' must be an absolute http(s) URL" });
+            return;
+        }
 
         // Per-type requirements. Without these the daemon would register the trigger
         // and then never be able to act on it.
@@ -1285,9 +1327,9 @@ public static partial class ServeMode
         }
 
         // Register with a LIVE runner so the trigger fires without a restart. Runtime add
-        // supports cron|watch only; status/webhook triggers take effect on next daemon start.
+        // supports cron|watch|webhook; status triggers take effect on next daemon start.
         // A cold daemon just persists (it will pick the trigger up when started).
-        if (App.DaemonRunner is { IsStarted: true } runner && type is "cron" or "watch"
+        if (App.DaemonRunner is { IsStarted: true } runner && type is "cron" or "watch" or "webhook"
             && runner.AddTriggerRuntime(trigger) is not null)
         {
             MuxConsole.WriteMuted($"[daemon] Registered runtime trigger '{trigger.Id}'.");
@@ -1319,6 +1361,7 @@ public static partial class ServeMode
         }
 
         DisabledTriggers.Remove(trigger.Id);
+        App.DaemonRunner?.CancelTrigger(trigger.Id);   // stop a runtime-added loop too (no-op for boot triggers)
         await WriteJson(context, 200, new { id = trigger.Id, deleted = true });
     }
 
