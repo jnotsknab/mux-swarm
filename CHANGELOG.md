@@ -28,7 +28,8 @@ Live session sharing, webhooks as request → run → result, and a working sand
 ### Changed
 - Webhook runs are **stateless** (no session directory) in every mode, and an `agent` override applies to
   that run only. An unknown agent now fails the delivery instead of running the default agent.
-- Daemon-fired swarm/pswarm runs are serialized per process; agent-mode triggers stay concurrent.
+- Daemon-fired swarm/pswarm runs are serialized with each other; agent-mode triggers stay concurrent.
+- `/createhook` defaults `payloadLimit` to 65536 characters.
 - Webhook default `cooldown` is now 0; a delivery inside a configured cooldown gets `429` + `Retry-After`
   instead of being accepted and dropped. `payloadLimit` default is 65536 characters, truncated with a marker.
 - Webhook triggers added at runtime (web UI / `POST /api/daemon/trigger`) are live immediately.

@@ -47,7 +47,7 @@ DOCS.md wins (it ships with the build).
 | Live session sharing: `/share`, `/join`, guest typing, security | `## Session Sharing` |
 | Teams, TaskBoard, peer self-claim, mailbox | `## Teams & TaskBoard` |
 | Deep memory (reflection agent) | `## Deep Memory (reflectionAgent)` |
-| Cost/token breakdown | `## Cost breakdown - `/cost all` / `/tokens all`` |
+| Cost/token breakdown | `## Cost breakdown` |
 | Task auto-decomposition / `/taskgraph` | `## Task auto-decomposition` |
 | TUI themes | `## TUI color themes` |
 | OS service registration | `## OS Service Registration` |
@@ -69,7 +69,7 @@ DOCS.md wins (it ships with the build).
 - **v0.15.0: webhooks return results.** `POST /api/hook/{id}` returns `202 {deliveryId}`; set `callbackUrl` on the
   trigger to receive `{id, deliveryId, status: ok|error, result, error}` (signed with `secret`). Webhook runs are
   stateless; default webhook cooldown is 0 (a set cooldown answers `429` + `Retry-After`); `payloadLimit` default 65536.
-  One process serves many webhooks (agent-mode triggers concurrent, swarm/pswarm one at a time, deliveries per
+  One process serves many webhooks (agent-mode triggers concurrent, daemon swarm/pswarm one at a time, deliveries per
   trigger in order); scale with more processes.
 - **v0.14.x:** persistent telemetry + `/telemetry` dashboard, mouse support in the TUI (frame engine default),
   `/effort` tiers incl. `xhigh`/`max`/custom, `/proxy update` (latest CLIProxyAPI), `--selftest`, MCP non-strict by
