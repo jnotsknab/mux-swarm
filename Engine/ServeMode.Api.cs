@@ -1263,9 +1263,19 @@ public static partial class ServeMode
             Command = Str("command") is { Length: > 0 } cmd ? cmd : null,
             Agent = Str("agent") is { Length: > 0 } a ? a : null,
             Mode = Str("mode") is { Length: > 0 } m ? m : "agent",
+            Secret = Str("secret") is { Length: > 0 } sec ? sec : null,
+            CallbackUrl = Str("callbackUrl") is { Length: > 0 } cb ? cb : null,
         };
         if (root.TryGetProperty("interval", out var iv) && iv.TryGetUInt32(out var ivv) && ivv > 0)
             trigger.Interval = ivv;
+        if (root.TryGetProperty("payloadLimit", out var pl) && pl.TryGetInt32(out var plv) && plv > 0)
+            trigger.PayloadLimit = plv;
+        if (trigger.CallbackUrl is { } cbu
+            && !(Uri.TryCreate(cbu, UriKind.Absolute, out var cbUri) && cbUri.Scheme is "http" or "https"))
+        {
+            await WriteJson(context, 400, new { error = "'callbackUrl' must be an absolute http(s) URL" });
+            return;
+        }
 
         // Per-type requirements. Without these the daemon would register the trigger
         // and then never be able to act on it.
@@ -1315,9 +1325,9 @@ public static partial class ServeMode
         }
 
         // Register with a LIVE runner so the trigger fires without a restart. Runtime add
-        // supports cron|watch only; status/webhook triggers take effect on next daemon start.
+        // supports cron|watch|webhook; status triggers take effect on next daemon start.
         // A cold daemon just persists (it will pick the trigger up when started).
-        if (App.DaemonRunner is { IsStarted: true } runner && type is "cron" or "watch"
+        if (App.DaemonRunner is { IsStarted: true } runner && type is "cron" or "watch" or "webhook"
             && runner.AddTriggerRuntime(trigger) is not null)
         {
             MuxConsole.WriteMuted($"[daemon] Registered runtime trigger '{trigger.Id}'.");
@@ -1349,6 +1359,7 @@ public static partial class ServeMode
         }
 
         DisabledTriggers.Remove(trigger.Id);
+        App.DaemonRunner?.CancelTrigger(trigger.Id);   // stop a runtime-added loop too (no-op for boot triggers)
         await WriteJson(context, 200, new { id = trigger.Id, deleted = true });
     }
 

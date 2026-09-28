@@ -824,7 +824,8 @@ public static class SingleAgentOrchestrator
         bool allowSubAgents = false,
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
-        InteractiveSession? interactiveHandle = null)
+        InteractiveSession? interactiveHandle = null,
+        Common.AgentDefinition? agentDef = null)
     {
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
@@ -837,7 +838,9 @@ public static class SingleAgentOrchestrator
 
         // When launched as a team (teamScope != null) the lead drives this loop with the
         // resolved lead definition; off-team this is exactly today's single-agent def.
-        var singleAgentDef = teamScope?.LeadDef ?? GetCurrSingleAgentDef();
+        // agentDef: a per-call override (daemon/webhook runs) that never touches the process-wide
+        // AgentDef, so concurrent triggers and the interactive session cannot see each other's agent.
+        var singleAgentDef = teamScope?.LeadDef ?? agentDef ?? GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
         var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
@@ -2393,6 +2396,7 @@ public static class SingleAgentOrchestrator
             catch (Exception ex)
             {
                 MuxConsole.WriteError(ex.Message);
+                RunResult.ReportError(ex.Message);   // daemon/webhook callback reports status=error (no-op otherwise)
             }
             finally
             {

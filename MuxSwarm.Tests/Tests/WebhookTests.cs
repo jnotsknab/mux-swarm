@@ -169,6 +169,20 @@ public class WebhookTests
     }
 
     [Fact]
+    public async Task Webhook_AddedAtRuntime_IsLiveImmediately_AndCancelStopsIt()
+    {
+        await using var runner = new DaemonRunner(new DaemonConfig());
+        runner.Start(_ => throw new InvalidOperationException("no model in tests"), [], new Dictionary<string, string> { ["Orchestrator"] = "m" });
+        Assert.Equal("rt-hook", runner.AddTriggerRuntime(new DaemonTrigger { Id = "rt-hook", Type = "webhook", Goal = "x" }));
+        for (int i = 0; i < 100 && !runner.HasWebhook("rt-hook"); i++) await Task.Delay(10);
+        Assert.True(runner.HasWebhook("rt-hook"));
+
+        Assert.True(runner.CancelTrigger("rt-hook"));
+        for (int i = 0; i < 100 && runner.HasWebhook("rt-hook"); i++) await Task.Delay(10);
+        Assert.False(runner.HasWebhook("rt-hook"));   // route 404s once the loop is gone
+    }
+
+    [Fact]
     public void CallbackBody_CarriesCorrelationAndOutcome()
     {
         using var ok = System.Text.Json.JsonDocument.Parse(
@@ -191,6 +205,16 @@ public class WebhookTests
         await Task.Run(async () => { await Task.Yield(); RunResult.Report("first"); RunResult.Report("final"); });
         RunResult.Report("   ");        // blank never overwrites
         Assert.Equal("final", scope.Text);
+    }
+
+    [Fact]
+    public async Task RunResult_ReportError_FirstWins_AndIsInertOutsideAScope()
+    {
+        RunResult.ReportError("ignored");   // no scope: no-op
+        using var scope = RunResult.Begin();
+        Assert.Null(scope.Error);
+        await Task.Run(() => { RunResult.ReportError("model rejected"); RunResult.ReportError("later"); });
+        Assert.Equal("model rejected", scope.Error);
     }
 
     // --- alias map: outbound events[] accepts the lifecycle/hook names users already know ---

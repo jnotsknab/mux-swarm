@@ -214,7 +214,8 @@ public static class ParallelSwarmOrchestrator
         uint minDelaySeconds = 300,
         uint persistIntervalSeconds = 60,
         uint sessionRetention = 10,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool persistSession = true)
     {
         // Merge native tools (Filesystem + shell/REPL) into the pool so per-agent + orchestrator
         // ToolFilters gate them like MCP tools (swarm.json mcpServers "Filesystem"/"Shell").
@@ -622,6 +623,7 @@ public static class ParallelSwarmOrchestrator
             async () =>
             {
                 if (!_sessionDirty || string.IsNullOrEmpty(currentIterationSessionDir)) return;
+                if (!persistSession) return;
                 await Common.PersistSessionsAsync(orchestratorAgent, currentOrchestratorSession, specialists, currentIterationSessionDir);
             },
             intervalSeconds: (int)persistIntervalSeconds
@@ -780,7 +782,8 @@ public static class ParallelSwarmOrchestrator
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (_sessionDirty)
+            // persistSession=false (stateless webhook deliveries): no session directory is written.
+            if (_sessionDirty && persistSession)
             {
                 await MuxConsole.WithSpinnerAsync(
                     wasInterrupted ? "Persisting partial progress" : "Persisting sessions",

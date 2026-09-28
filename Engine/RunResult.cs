@@ -24,11 +24,23 @@ internal static class RunResult
         if (Current.Value is { } scope && !string.IsNullOrWhiteSpace(text)) scope.Text = text;
     }
 
+    /// <summary>
+    /// Record that the run failed (e.g. a turn exception the orchestrator caught and only printed).
+    /// First error wins. No-op without a scope.
+    /// </summary>
+    public static void ReportError(string? message)
+    {
+        if (Current.Value is { } scope) scope.Error ??= string.IsNullOrWhiteSpace(message) ? "run failed" : message;
+    }
+
     /// <summary>A capture scope; <see cref="Text"/> holds the last reported result.</summary>
     public sealed class Scope : IDisposable
     {
         /// <summary>Last reported result text, or null when the run reported none.</summary>
         public string? Text { get; internal set; }
+
+        /// <summary>First reported error, or null when the run reported none.</summary>
+        public string? Error { get; internal set; }
 
         public void Dispose() { if (ReferenceEquals(Current.Value, this)) Current.Value = null; }
     }

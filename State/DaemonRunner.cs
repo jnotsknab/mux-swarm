@@ -125,15 +125,15 @@ public sealed class DaemonRunner : IAsyncDisposable
     /// Add and immediately start a trigger at runtime (via /daemon cron|watch), independent of the
     /// boot config. The trigger gets its own CancellationTokenSource so <see cref="CancelTrigger"/>
     /// can stop just this one. Returns the assigned id, or null when the daemon isn't started yet or
-    /// the type is unsupported for runtime add (only "cron" and "watch").
+    /// the type is unsupported for runtime add ("cron", "watch" and "webhook").
     /// </summary>
     public string? AddTriggerRuntime(DaemonTrigger trigger)
     {
         if (!IsStarted) { MuxConsole.WriteWarning("[Daemon] Not started yet; cannot add a runtime trigger."); return null; }
         var type = (trigger.Type ?? "").ToLowerInvariant();
-        if (type is not ("cron" or "watch"))
+        if (type is not ("cron" or "watch" or "webhook"))
         {
-            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch (got '{trigger.Type}').");
+            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch|webhook (got '{trigger.Type}').");
             return null;
         }
         if (string.IsNullOrWhiteSpace(trigger.Id))
@@ -145,9 +145,10 @@ public sealed class DaemonRunner : IAsyncDisposable
 
         var worker = type switch
         {
-            "watch" => RunWatchLoop(trigger, cts.Token),
-            "cron"  => RunCronLoop(trigger, cts.Token),
-            _       => LogUnknownTrigger(trigger),
+            "watch"   => RunWatchLoop(trigger, cts.Token),
+            "cron"    => RunCronLoop(trigger, cts.Token),
+            "webhook" => RunWebhookLoop(trigger, cts.Token),
+            _         => LogUnknownTrigger(trigger),
         };
         _workers.Add(worker);
         return trigger.Id;
@@ -714,59 +715,54 @@ public sealed class DaemonRunner : IAsyncDisposable
             // TUI collapse is handled separately by BeginDaemonCapture below.
             using (MuxConsole.BeginServeOrigin("daemon", $"daemon:{trigger.Id}"))
             {
-            // State the resolved mode explicitly so a fired job's mode is never inferred
-            // from downstream log noise (e.g. roster loads that also occur in agent mode).
-            MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Firing in '{trigger.Mode}' mode.");
-            switch (trigger.Mode.ToLowerInvariant())
-            {
-                case "swarm":
-                    await MultiAgentOrchestrator.RunAsync(
-                        chatClientFactory: _chatClientFactory,
-                        mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                        agentModels: _agentModels,
-                        incomingGoal: goal,
-                        cancellationToken: ct);
-                    break;
+                // State the resolved mode explicitly so a fired job's mode is never inferred
+                // from downstream log noise (e.g. roster loads that also occur in agent mode).
+                MuxConsole.WriteInfo($"[Daemon:{trigger.Id}] Firing in '{trigger.Mode}' mode.");
+                switch (trigger.Mode.ToLowerInvariant())
+                {
+                    case "swarm":
+                        await MultiAgentOrchestrator.RunAsync(
+                            chatClientFactory: _chatClientFactory,
+                            mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                            agentModels: _agentModels,
+                            incomingGoal: goal,
+                            cancellationToken: ct,
+                            persistSession: !stateless);
+                        break;
 
-                case "pswarm":
-                    await ParallelSwarmOrchestrator.RunAsync(
-                        chatClientFactory: _chatClientFactory,
-                        mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                        agentModels: _agentModels,
-                        incomingGoal: goal,
-                        cancellationToken: ct);
-                    break;
+                    case "pswarm":
+                        await ParallelSwarmOrchestrator.RunAsync(
+                            chatClientFactory: _chatClientFactory,
+                            mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                            agentModels: _agentModels,
+                            incomingGoal: goal,
+                            cancellationToken: ct,
+                            persistSession: !stateless);
+                        break;
 
-                case "agent":
-                default:
-                    // Webhook runs must not permanently switch the interactive session's agent:
-                    // remember the current definition and restore it after the run.
-                    var previousAgentDef = SingleAgentOrchestrator.AgentDef;
-                    bool restoreAgent = false;
-                    if (!string.IsNullOrEmpty(trigger.Agent))
-                    {
-                        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
-                        var matched = agentDefs.FirstOrDefault(d =>
-                            d.Name.Equals(trigger.Agent, StringComparison.OrdinalIgnoreCase));
-                        if (matched != null)
+                    case "agent":
+                    default:
+                        // The trigger's agent override is passed per call, never written to the
+                        // process-wide SingleAgentOrchestrator.AgentDef: concurrent triggers and the
+                        // interactive session each keep their own agent.
+                        Common.AgentDefinition? triggerAgent = null;
+                        if (!string.IsNullOrEmpty(trigger.Agent))
                         {
-                            SingleAgentOrchestrator.AgentDef = matched;
-                            restoreAgent = stateless;
+                            var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
+                            triggerAgent = agentDefs.FirstOrDefault(d =>
+                                d.Name.Equals(trigger.Agent, StringComparison.OrdinalIgnoreCase));
                         }
-                    }
 
-                    var modelId = !string.IsNullOrEmpty(trigger.Agent)
-                        ? _agentModels.GetValueOrDefault(trigger.Agent, _agentModels["Orchestrator"])
-                        : _agentModels.GetValueOrDefault(
-                            SingleAgentOrchestrator.AgentDef?.Name ?? "Orchestrator",
-                            _agentModels["Orchestrator"]);
+                        var modelId = !string.IsNullOrEmpty(trigger.Agent)
+                            ? _agentModels.GetValueOrDefault(trigger.Agent, _agentModels["Orchestrator"])
+                            : _agentModels.GetValueOrDefault(
+                                SingleAgentOrchestrator.AgentDef?.Name ?? "Orchestrator",
+                                _agentModels["Orchestrator"]);
 
-                    // Collapse the daemon-fired agent run into one expandable Agent-View line
-                    // (dense by default) instead of streaming the full reasoning + tool transcript
-                    // into the main viewport. Off (/daemonview off) => null scope => streams inline
-                    // as before. swarm/pswarm modes self-collapse via their specialist sub-agents.
-                    try
-                    {
+                        // Collapse the daemon-fired agent run into one expandable Agent-View line
+                        // (dense by default) instead of streaming the full reasoning + tool transcript
+                        // into the main viewport. Off (/daemonview off) => null scope => streams inline
+                        // as before. swarm/pswarm modes self-collapse via their specialist sub-agents.
                         using (MuxConsole.BeginDaemonCapture($"daemon:{trigger.Id}"))
                         {
                             await SingleAgentOrchestrator.ChatAgentAsync(
@@ -778,17 +774,18 @@ public sealed class DaemonRunner : IAsyncDisposable
                                 // Webhook deliveries are stateless: an isolated context per
                                 // delivery, no session directory. Watch/cron keep persisting.
                                 persistSession: !stateless,
-                                incomingGoal: goal);
+                                incomingGoal: goal,
+                                agentDef: triggerAgent);
                         }
-                    }
-                    finally
-                    {
-                        if (restoreAgent) SingleAgentOrchestrator.AgentDef = previousAgentDef;
-                    }
-                    break;
-            }
+                        break;
+                }
 
-            MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Goal completed.");
+                if (result.Error is { } runError)
+                {
+                    MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal failed: {runError}");
+                    return new GoalOutcome(false, result.Text, runError);
+                }
+                MuxConsole.WriteSuccess($"[Daemon:{trigger.Id}] Goal completed.");
             }
             return new GoalOutcome(true, result.Text, null);
         }
