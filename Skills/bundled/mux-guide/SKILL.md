@@ -44,7 +44,7 @@ DOCS.md wins (it ships with the build).
 | Reasoning effort + provider params | `### reasoning`, `### additionalParams` |
 | CLI launch flags (incl. `--join`, `--selftest`) | `## CLI Flags` |
 | Slash commands (modes/session/sharing/config/system) | `## Interactive Commands` |
-| Live session sharing: `/share`, `/join`, guest typing, security | `## Session Sharing (`/share`, `/join`)` |
+| Live session sharing: `/share`, `/join`, guest typing, security | `## Session Sharing` |
 | Teams, TaskBoard, peer self-claim, mailbox | `## Teams & TaskBoard` |
 | Deep memory (reflection agent) | `## Deep Memory (reflectionAgent)` |
 | Cost/token breakdown | `## Cost breakdown - `/cost all` / `/tokens all`` |
@@ -69,7 +69,8 @@ DOCS.md wins (it ships with the build).
 - **v0.15.0: webhooks return results.** `POST /api/hook/{id}` returns `202 {deliveryId}`; set `callbackUrl` on the
   trigger to receive `{id, deliveryId, status: ok|error, result, error}` (signed with `secret`). Webhook runs are
   stateless; default webhook cooldown is 0 (a set cooldown answers `429` + `Retry-After`); `payloadLimit` default 65536.
-  One process serves many webhooks (triggers concurrent, deliveries per trigger in order); scale with more processes.
+  One process serves many webhooks (agent-mode triggers concurrent, swarm/pswarm one at a time, deliveries per
+  trigger in order); scale with more processes.
 - **v0.14.x:** persistent telemetry + `/telemetry` dashboard, mouse support in the TUI (frame engine default),
   `/effort` tiers incl. `xhigh`/`max`/custom, `/proxy update` (latest CLIProxyAPI), `--selftest`, MCP non-strict by
   default (`--mcp-strict` to require all servers), event-driven delegation waits.
@@ -123,7 +124,7 @@ repair steps), `/refresh` (config+MCP+skills), `/reloadskills`, `/setup`.
 - Sandbox exec failing: `/sandbox host` to fall back, or check Docker/daemon is up.
 - Webhook not firing: the trigger `id` must match the URL, the daemon must be running (`--daemon`), a set `secret`
   requires `X-Hub-Signature-256` over the raw body, and a `429` means the trigger's cooldown is active.
-- Watch trigger not firing: `path` must be a glob (`dir\*`), not a bare directory.
+- Watch trigger not firing: `path` is a directory plus a filename pattern (`dir/*`), not a bare directory.
 - Share guest can't connect: `/share --lan` for other machines (default is loopback only); check the firewall allows
   the share port; the full link including `#secret` is required.
 - Full reference for any of the above: grep the matching `## Section` in `{{paths.context}}/DOCS.md`.

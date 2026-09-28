@@ -297,9 +297,13 @@ Effective interval logic: if `cooldown > 0`, use cooldown; otherwise use `interv
 A `webhook` trigger is exposed at `POST /api/hook/{id}` (excluded from the serve bearer middleware; it
 authenticates per-trigger via HMAC `secret` or, if none is set, the serve bearer token). External systems
 POST a payload to start a run; the 202 body carries a `deliveryId`. Webhook runs are stateless (no session dir) and
-a run's `agent` override applies to that run only. Webhook triggers added at runtime (`/daemon`, web UI,
-`POST /api/daemon/trigger`) are live immediately; deleting one stops it. One process serves any number of webhooks:
-different triggers run concurrently, deliveries to the same trigger run in order. Watch `path` must be a glob (`dir\*`). See the Event Hooks section for inbound/outbound webhook detail.
+a run's `agent` override applies to that run only (an unknown agent fails the delivery). Webhook triggers added at
+runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. `/createhook` saves a
+trigger to config; it takes effect on the next daemon start. One process serves any number of webhooks: agent-mode
+triggers run concurrently, swarm/pswarm runs are serialized (one at a time per process), and deliveries to the same
+trigger run in order. A delivery cancelled mid-run reports `error: "cancelled"`; one still queued when the trigger
+stops reports `error: "shutdown"`. Watch `path` is a directory plus a filename pattern (`dir/*`, `dir/*.md`); `/`
+works on every OS. See the Event Hooks section for inbound/outbound webhook detail.
 
 ### watch
 

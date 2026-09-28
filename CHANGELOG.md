@@ -13,6 +13,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.15.0-alpha] — Unreleased
+
+Live session sharing, webhooks as request → run → result, and a working sandbox network allowlist.
+
+### Added
+- **Live session sharing.** `/share` streams your TUI to same-network guests over an end-to-end encrypted
+  link (`/join <link>` or `mux-swarm --join "<link>"`). You approve every join (Deny / Watch / Watch + type);
+  guests with typing can only edit at your idle prompt, never a modal or permission prompt, and `!shell`,
+  lifecycle and config commands are refused. **Ctrl+]** revokes typing from everyone. See `docs/share.md`.
+- **Webhook results.** Every accepted delivery returns a `deliveryId`; with `callbackUrl` set, the run's
+  outcome (`status`, `result`, `error`) is POSTed back, signed with the trigger's `secret`.
+
+### Changed
+- Webhook runs are **stateless** (no session directory) in every mode, and an `agent` override applies to
+  that run only. An unknown agent now fails the delivery instead of running the default agent.
+- Daemon-fired swarm/pswarm runs are serialized per process; agent-mode triggers stay concurrent.
+- Webhook default `cooldown` is now 0; a delivery inside a configured cooldown gets `429` + `Retry-After`
+  instead of being accepted and dropped. `payloadLimit` default is 65536 characters, truncated with a marker.
+- Webhook triggers added at runtime (web UI / `POST /api/daemon/trigger`) are live immediately.
+- `/proxy update` only accepts plain `X.Y.Z` release tags, and a newer compiled-in pin overrides an older
+  `/proxy update`.
+
+### Fixed
+- **Sandbox `allowedDomains` never worked:** the generated proxy script was a Python syntax error and ran
+  from the sandbox image. The proxy now runs from `python:3.12-alpine` (pulled as its own step), and a dead
+  proxy triggers a rebuild instead of a silent no-network sandbox.
+- **macOS:** the CLIProxy sidecar stayed in Mux's process group when started without a terminal (launchd,
+  `nohup`); it now detaches via `setsid` (Linux) or perl `POSIX::setsid` (macOS).
+- Webhook failures (missing prompt, failed agent init) no longer report `status: ok`; cancelled and
+  shutdown deliveries get an error callback; concurrent POSTs can no longer both pass a cooldown.
+- The CI self-test uploads only its log on failure (the scratch proxy's keys were in the artifact).
+
+### Breaking
+- `App` and share types are `internal`; nothing outside the engine should reference the assembly.
+- Webhook defaults changed (`cooldown` 0, `payloadLimit` 65536, stateless runs); see Changed.
+
+## [v0.14.2-alpha] — 2026-09-23
+
+Hotfixes: stateless sessions are never persisted by `/tag` or `/detach`, `/proxy update` installs the latest
+upstream CLIProxyAPI (checksum-verified) and restarts the sidecar onto it, the macOS sidecar starts without
+`setsid`, a `/tag` confirm freeze is mitigated (root cause unconfirmed), and `--selftest` runs end-to-end checks in CI.
+
+## [v0.14.1-alpha] — 2026-09-16
+
 Session durability, telemetry as a first-class surface, and TUI polish.
 
 ### Added

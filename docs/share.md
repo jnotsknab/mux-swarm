@@ -7,7 +7,10 @@ Share a live session with someone on the same network. Guests see exactly what y
   guests). `/share --local` / `/share --lan` skip the prompt. The join link looks like
   `http://host:port/s/<room>#<secret>`; send it over a channel you trust.
 - Every join asks you **Deny / Watch / Watch + type** (Deny is the default; no answer within 2 minutes = Deny).
-- `/share status`, `/share control <name|#id|all> on|off`, `/share kick <name|#id>`, `/share stop`.
+- `/share status`, `/share control <name|#id|all> on|off`, `/share kick <name|#id>`, `/share stop`. Guests pick
+  their own names; when two share a name, use `#id`.
+- The listener uses port 6726 (any free port if it is taken). With **All interfaces**, Windows may show a firewall
+  prompt the first time; allow it on private networks only.
 - **Ctrl+]** takes typing away from every guest instantly, at the prompt or mid-turn. Your own keyboard is never locked.
 - Footer: `sharing · N watching · M typing`.
 
@@ -21,7 +24,8 @@ Share a live session with someone on the same network. Guests see exactly what y
   Host hotkeys, history, clipboard, NAV, mouse and terminal replies are dropped **on the host**.
 - Guest keys go to a separate queue that only the host's idle prompt reads. No modal, picker, tool-permission prompt,
   or join approval ever receives a guest key; anything typed while the agent is working is dropped.
-- A paste never submits on its own. Only a lone Enter submits.
+- A paste never submits on its own. Only a lone Enter submits, and a guest's Enter on an empty prompt does nothing
+  (an empty submit would end the host's session).
 - A line a guest typed into may only be a prompt or one of `/help /shortcuts /status /tokens /context /cost /diff
   /compact /retry /undo /redo`. `!shell`, `/exit`, `/share`, `/join`, config/provider/clipboard and all other commands
   are refused with a notice naming the guest, even if the host presses Enter. Accepted guest prompts are marked
@@ -38,4 +42,6 @@ Share a live session with someone on the same network. Guests see exactly what y
   and mode toggles are dropped.
 - Limits: 4 guests, 4 pending handshakes, 10 s handshake timeout, per-IP ban after repeated failed proofs; slow guests
   are disconnected rather than stalling the host.
-- Same-network only in this release (direct connect; no relay/NAT traversal).
+- Same-network only in this release (direct connect; no relay/NAT traversal). The guest never routes through
+  `HTTP(S)_PROXY`.
+- Host text shown outside the frame (notices, the reason a session ended) is stripped of all control characters.
