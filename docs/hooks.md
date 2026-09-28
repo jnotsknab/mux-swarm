@@ -211,7 +211,8 @@ With `callbackUrl` set, each finished delivery POSTs:
 orchestrator's `signal_task_complete` summary (`swarm`/`pswarm`; a non-success status is prefixed, e.g.
 `[partial] ...`). The callback is signed with the trigger's `secret` (`X-Hub-Signature-256`) and retried
 like outbound sinks. Match it to the original POST by `deliveryId`. A delivery cancelled mid-run reports
-`error: "cancelled"`; one still queued when the trigger stops reports `error: "shutdown"`. Multi-step pipelines
+`error: "cancelled"`; one still queued when the trigger stops reports `error: "shutdown"` (best-effort: on process
+exit these may not be sent, so keep your own timeout per `deliveryId`). Multi-step pipelines
 keep their state in the caller: read the result, then POST the next step's payload.
 
 ### Trust - HMAC signatures
