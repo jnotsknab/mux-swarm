@@ -19,6 +19,11 @@ namespace MuxSwarm
                 static string? ArgValue(string[] args, string flag)
                     => Array.IndexOf(args, flag) is >= 0 and var i && i + 1 < args.Length ? args[i + 1] : null;
 
+                // --join <link>: watch a shared session. Cold path - no config, setup, providers,
+                // MCP or hooks are touched, so a guest needs nothing but this binary.
+                if (Array.IndexOf(args, "--join") >= 0)
+                    return await MuxSwarm.Engine.Share.ShareGuest.RunCliAsync(ArgValue(args, "--join"));
+
                 //Override for native multi-tenancy support
                 PlatformContext.ApplyOverrides(
                     ArgValue(args, "--cfg"),

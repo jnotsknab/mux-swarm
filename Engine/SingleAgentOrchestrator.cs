@@ -2745,6 +2745,11 @@ public static class SingleAgentOrchestrator
                     // Launch/list/cancel background agent jobs (watchable via the \\ Agent View).
                     await DetachedRunner.RunCommand(metaCmd, chatClientFactory, Models, cancellationToken);
                 }
+                else if (Share.ShareCommand.Matches(metaCmd))
+                {
+                    // Live session sharing (process-level, session-agnostic like /daemon).
+                    await Share.ShareCommand.RunAsync(metaCmd);
+                }
                 else if (metaCmd.Equals("/daemon", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/da", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/daemon ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/da ", StringComparison.OrdinalIgnoreCase))
                 {

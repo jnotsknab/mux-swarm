@@ -134,6 +134,10 @@ internal sealed partial class TuiDriver
     // Null when no team mailbox is active (the 'm' key is then a no-op).
     public Func<string, IReadOnlyList<string>>? MessageLogProvider { get; set; }
 
+    /// <summary>Services one queued background ask (argument: caller already owns the pump).
+    /// Returns true when a modal ran. Polled by whichever loop currently consumes the pump.</summary>
+    public Func<bool, bool>? BackgroundAskPump { get; set; }
+
     // Opens the inline Agent View dashboard from the IDLE prompt (the backslash key). MuxConsole
     // wires this to TuiEnterAgentView(), which builds the running-agent snapshot + body provider
     // from the live capture registry. Null or returns false => no agents running => backslash falls
@@ -1272,6 +1276,25 @@ internal sealed partial class TuiDriver
     }
 
     /// <summary>
+    /// True when <see cref="RunPromptModal"/> could open right now: frame engine live, a pump exists,
+    /// no other full-frame view or modal owns the screen, and no concurrent prompt holds the pump
+    /// (unless <paramref name="ownerReentry"/>: the caller is the loop that holds it).
+    /// </summary>
+    internal bool CanOpenPromptModal(bool ownerReentry)
+    {
+        if (!_engineFrame || _suspended || _shuttingDown || ConsoleInputPump.Current is null) return false;
+        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive || _promptModalActive) return false;
+        // The idle-prompt ReadLine loop is a CONCURRENT pump consumer; two blocking TryTake
+        // loops on one queue would split typed keys randomly between the input editor and the
+        // modal. If a prompt already owns the pump (e.g. a background agent's ask_user fires
+        // while the user sits at the idle prompt), fall back to the legacy path, whose
+        // SuspendInput stand-down the ReadLine loop already tolerates. ownerReentry: the caller IS
+        // the loop that holds the claim (the idle prompt servicing a background ask on its own
+        // thread), so there is no second consumer and the modal may borrow the pump.
+        return !ConsoleInputPump.PromptActive || ownerReentry;
+    }
+
+    /// <summary>
     /// Run a blocking prompt IN the frame (v0.12.4): renders the <see cref="PromptModalView"/>
     /// inside the live band and drives it from the single input plane until the user submits
     /// or cancels. The alternate screen is NEVER left, so the transcript above (a streamed
@@ -1283,20 +1306,11 @@ internal sealed partial class TuiDriver
     /// </summary>
     public PromptModalResult? RunPromptModal(
         PromptModalView.Kind kind, string question, IReadOnlyList<string>? choices,
-        string? defaultValue = null, bool secret = false, int initialSel = 0)
+        string? defaultValue = null, bool secret = false, int initialSel = 0, bool ownerReentry = false)
     {
-        if (!_engineFrame || _suspended || _shuttingDown) return null;
-        var pump = ConsoleInputPump.Current;
-        if (pump is null) return null;
-        if (_navActive || _agentViewActive || _jobViewActive || _workflowViewActive || _promptModalActive) return null;
+        if (!CanOpenPromptModal(ownerReentry)) return null;
+        var pump = ConsoleInputPump.Current!;
         if (kind != PromptModalView.Kind.Text && (choices is null || choices.Count == 0)) return null;
-        // The idle-prompt ReadLine loop is a CONCURRENT pump consumer; two blocking TryTake
-        // loops on one queue would split typed keys randomly between the input editor and the
-        // modal. If a prompt already owns the pump (e.g. a background agent's ask_user fires
-        // while the user sits at the idle prompt), fall back to the legacy path, whose
-        // SuspendInput stand-down the ReadLine loop already tolerates.
-        if (ConsoleInputPump.PromptActive) return null;
-
         _promptModal.Open(kind, question, choices, defaultValue, secret, initialSel);
         _promptModalActive = true;
         // Claim the pump: the mid-turn EscapeKeyListener must stand down for the modal's
@@ -3263,6 +3277,9 @@ internal sealed partial class TuiDriver
                             if (!Voice.VoiceSession.IsActive) Repaint();   // voice off: restore caret
                             continue;
                         }
+                        // A background thread (e.g. a /share join request) is waiting for the
+                        // user's answer: the idle prompt owns the pump, so it hosts the modal.
+                        if (BackgroundAskPump is { } bgAsk && bgAsk(true)) { Repaint(); continue; }
                         // Bounded take, not blocking-forever: a transition-race key the listener
                         // hands back via PushFront lands in the FRONT lane, which TryTake only
                         // checks on entry - an infinite block on the inner queue would strand it.

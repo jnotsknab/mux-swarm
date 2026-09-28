@@ -76,6 +76,11 @@ internal static class MetaCommandDispatch
                 KanbanCommand.Run(line);
                 return Result.Handled;
 
+            case "/share":
+            case "/join":
+                await Share.ShareCommand.RunAsync(line);
+                return Result.Handled;
+
             case "/workflows":
                 // Live workflow-run viewer + saved/delete. Session-agnostic: the run registry
                 // and the TUI modal are process-level state, so it works identically at the

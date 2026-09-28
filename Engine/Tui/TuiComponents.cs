@@ -791,6 +791,11 @@ internal static class TuiComponents
         else if (string.Equals(activeMode, "pswarm", StringComparison.OrdinalIgnoreCase))
             modeBadges.Insert(0, $"[{Accent}]pswarm[/]");
 
+        // Live session share (/share): always-visible, never degraded away - the user must always
+        // be able to see that their screen is being broadcast and how many people are watching.
+        if (Share.ShareHost.FooterLabel is { } shareChip)
+            modeBadges.Insert(0, $"[{Err}]\u25cf {Esc(shareChip)}[/]");
+
         // Turn timer: bright + ticking while the model works the current turn; between turns
         // the LAST turn's duration shows dimmed (same glyph, dim = idle) so the cost of the
         // previous exchange stays visible until the next send resets it.
