@@ -21,6 +21,7 @@ Reference and guides for Mux-Swarm. New here? Start with the Getting Started tut
 | Page | What it covers |
 |---|---|
 | [Workflows](workflows.md) | Deterministic multi-step workflow files |
+| [Session Sharing](share.md) | `/share` + `/join`: live, end-to-end encrypted session sharing with host-controlled guest typing |
 | [Hooks, Webhooks, and Daemon](hooks.md) | Lifecycle hooks, inbound/outbound webhooks, cron/watch daemon triggers |
 | [Automation and Integration](automation.md) | Drive Mux-Swarm from other systems: CLI, `--stdio`, API, webhooks, SDK |
 | [Sandbox and Security](sandbox.md) | Pluggable execution sandbox backends and production security posture |
