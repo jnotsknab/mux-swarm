@@ -3146,6 +3146,7 @@ internal sealed partial class TuiDriver
         _pasteStatus = null; _pasteDeferred.Clear();
         _inferredPasteGuard = false; _inferredStart = -1;
         _paletteSel = -1;
+        _remoteAuthors.Clear();
         _inInput = true;
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
         // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
@@ -3177,6 +3178,7 @@ internal sealed partial class TuiDriver
         if (pump is not null)
         {
             ConsoleInputPump.PromptActive = true;
+            Share.RemoteInput.BeginPrompt();   // share guests may type only while this prompt is open
             // Close the entry race: a key the listener stole AFTER the replay-drain above but
             // BEFORE the claim landed would otherwise sit in its replay queue until the NEXT
             // prompt. Re-drain now that the listener is standing down.
@@ -3266,6 +3268,8 @@ internal sealed partial class TuiDriver
                     ConsoleInputPump.InputEvent ev;
                     while (true)
                     {
+                        // Share guests allowed to type feed the draft from their own queue (never the pump).
+                        if (DrainRemoteInput() is { } remoteLine) return remoteLine;
                         if (Voice.VoiceSession.IsActive)
                         {
                             // /voice on: poll so the loop services transcript injects, voice-driven
@@ -3283,7 +3287,8 @@ internal sealed partial class TuiDriver
                         // Bounded take, not blocking-forever: a transition-race key the listener
                         // hands back via PushFront lands in the FRONT lane, which TryTake only
                         // checks on entry - an infinite block on the inner queue would strand it.
-                        if (!pump.TryTake(out ev, 100))
+                        // Poll faster while a guest can type so remote keystrokes feel live.
+                        if (!pump.TryTake(out ev, Share.RemoteInput.TypistCount > 0 ? 15 : 100))
                         {
                             if (pump.Disposed)
                             {
@@ -3426,6 +3431,9 @@ internal sealed partial class TuiDriver
                     key = pasted.Key; // Explicit cancellation keeps its normal editor meaning.
                 }
 
+                // Ctrl+] while sharing: take typing away from every guest (host hotkey, never text).
+                if (TryRevokeGuestTyping(key)) { Repaint(); continue; }
+
                 // Uncertain legacy input may only stage a draft. An explicit non-newline chord sends;
                 // a delayed pasted newline cannot silently dispatch a paragraph.
                 if (_inferredPasteGuard && !_editor.Attachments.Focused && key.Key == ConsoleKey.Enter
@@ -3449,6 +3457,7 @@ internal sealed partial class TuiDriver
                         case ReverseSearchSignal.AcceptAndSubmit:
                         {
                             string line = _editor.Buffer;
+                            if (!RemoteSubmitAllowed(line)) { Repaint(); continue; }
                             _editor.Remember(line);
                             _inInput = false;
                             _pendingGap = false;
@@ -3632,19 +3641,9 @@ internal sealed partial class TuiDriver
                     case LineEditSignal.Submit:
                     {
                         string line = _editor.Buffer;
-                        _editor.Remember(line);
-                        _inInput = false;
-                        _frameScroll = 0;   // submitting always returns the frame viewport to the live tail
-                        _userScrolled = false;
-                        // Erase input box, then echo the submitted line into scrollback with a
-                        // leading blank + accent gutter so each turn is clearly delimited.
-                        _pendingGap = false;
-                        // Suppress the echo for bare commands that open a blocking interactive
-                        // picker (e.g. /set, /swap): the picker draws its own UI and the handler
-                        // prints a confirmation, so echoing the bare command line just leaves
-                        // residue above the prompt. All other lines echo normally.
-                        EchoDraft(line);
-                        return line;
+                        // A draft a share guest typed into stays guest-authored: same policy on host submit.
+                        if (!RemoteSubmitAllowed(line)) { Repaint(); break; }
+                        return SubmitDraft(line);
                     }
                     case LineEditSignal.Cancel:
                         _inInput = false;
@@ -3700,7 +3699,7 @@ internal sealed partial class TuiDriver
             CancelPendingPaste(discardQueued: true);
             _terminalPaste?.Stop(); _terminalPaste = null;
             _inInput = false;
-            if (pump is not null) ConsoleInputPump.PromptActive = false;
+            if (pump is not null) { ConsoleInputPump.PromptActive = false; Share.RemoteInput.EndPrompt(); }
             try { Console.TreatControlCAsInput = prevCtrlC; } catch { /* ignore */ }
         }
     }

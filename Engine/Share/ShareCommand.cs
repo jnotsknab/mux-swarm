@@ -50,6 +50,9 @@ internal static class ShareCommand
                 if (rest.Length == 0) { MuxConsole.WriteMuted("Usage: /share kick <name|#id>"); return; }
                 MuxConsole.WriteMuted(ShareHost.Kick(rest) ? $"Removed {rest}." : $"No guest matching '{rest}'.");
                 return;
+            case "control":
+                Control(rest);
+                return;
             case "":
             case "start":
             case "on":
@@ -57,7 +60,7 @@ internal static class ShareCommand
             case "--lan":
                 break;
             default:
-                MuxConsole.WriteMuted("Usage: /share [--local|--lan] | status | stop | kick <name>");
+                MuxConsole.WriteMuted("Usage: /share [--local|--lan] | status | stop | kick <name> | control <name|all> on|off");
                 return;
         }
 
@@ -92,7 +95,8 @@ internal static class ShareCommand
         }
         MuxConsole.WriteSuccess("Sharing this session. Anyone with the link can ASK to watch - you approve each person.");
         PrintLinks();
-        MuxConsole.WriteMuted("Guests are view-only. /share status  \u00b7  /share kick <name>  \u00b7  /share stop");
+        MuxConsole.WriteMuted("You choose per guest: watch, or watch + type. Ctrl+] revokes typing.  " +
+                              "/share status  \u00b7  /share control <name> on|off  \u00b7  /share kick <name>  \u00b7  /share stop");
     }
 
     private static void PrintLinks()
@@ -115,7 +119,27 @@ internal static class ShareCommand
         PrintLinks();
         var people = ShareHost.Participants;
         MuxConsole.WriteInfo(people.Count == 0 ? "No one is watching yet."
-            : "Watching: " + string.Join(", ", people.Select(p => $"#{p.Id} {p.Name} ({p.Address})")));
+            : "Watching: " + string.Join(", ", people.Select(p => $"#{p.Id} {p.Name} ({p.Address}){(p.CanType ? " [can type]" : "")}")));
+    }
+
+    private static void Control(string rest)
+    {
+        var parts = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string? mode = parts.Length >= 2 ? parts[^1].ToLowerInvariant() : null;
+        if (!ShareHost.IsActive) { MuxConsole.WriteMuted("Not sharing."); return; }
+        if (mode is not ("on" or "off"))
+        {
+            MuxConsole.WriteMuted("Usage: /share control <name|#id|all> on|off   (Ctrl+] revokes all typing instantly)");
+            return;
+        }
+        string who = string.Join(' ', parts[..^1]);
+        var changed = ShareHost.SetTyping(who, mode == "on");
+        if (changed.Count == 0) { MuxConsole.WriteMuted($"No guest matching '{who}'."); return; }
+        string names = string.Join(", ", changed);
+        if (mode == "on")
+            MuxConsole.WriteWarning($"{names} can now type prompts the agent will act on. Shell escapes and most / commands stay blocked. Ctrl+] revokes.");
+        else
+            MuxConsole.WriteMuted($"{names} is view-only now.");
     }
 
     private static async Task JoinAsync(string arg)

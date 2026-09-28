@@ -57,8 +57,11 @@ internal static class ShareHost
     /// <summary>True when at least one approved guest is connected (cheap hot-path check).</summary>
     public static bool HasGuests => _guestCount > 0;
 
+    /// <summary>Host's answer to a join request.</summary>
+    internal enum Approval { Deny, Watch, WatchAndType }
+
     /// <summary>Test/selftest seam: when set, replaces the host approval modal.</summary>
-    internal static Func<string, bool>? ApprovalOverride { get; set; }
+    internal static Func<string, Approval>? ApprovalOverride { get; set; }
 
     /// <summary>
     /// Test seam for the approval question itself (question, choices, cancellation) -> chosen index or null.
@@ -75,11 +78,58 @@ internal static class ShareHost
 
     /// <summary>Footer chip text while sharing, or null.</summary>
     public static string? FooterLabel => _app is null ? null
-        : _guestCount == 0 ? "sharing" : $"sharing \u00b7 {_guestCount} watching";
+        : _guestCount == 0 ? "sharing"
+        : $"sharing \u00b7 {_guestCount} watching" + (RemoteInput.TypistCount > 0 ? $" \u00b7 {RemoteInput.TypistCount} typing" : "");
 
-    /// <summary>Connected guest names, in join order.</summary>
-    public static IReadOnlyList<(int Id, string Name, string Address)> Participants
-        => Guests.Values.Where(g => g.Accepted).OrderBy(g => g.Id).Select(g => (g.Id, g.Name, g.Address)).ToList();
+    /// <summary>Connected guests in join order, with whether each may type.</summary>
+    public static IReadOnlyList<(int Id, string Name, string Address, bool CanType)> Participants
+        => Guests.Values.Where(g => g.Accepted).OrderBy(g => g.Id)
+            .Select(g => (g.Id, g.Name, g.Address, RemoteInput.CanType(g.Id))).ToList();
+
+    /// <summary>
+    /// Allow or stop typing for one guest (by #id or name) or every guest (<c>all</c>). Returns the
+    /// names changed; empty when no guest matched.
+    /// </summary>
+    public static IReadOnlyList<string> SetTyping(string who, bool allow)
+    {
+        string w = who.Trim();
+        bool all = w.Equals("all", StringComparison.OrdinalIgnoreCase);
+        var changed = new List<string>();
+        foreach (var g in Guests.Values.Where(g => g.Accepted).OrderBy(g => g.Id))
+        {
+            if (!all && g.Id.ToString() != w.TrimStart('#') && !g.Name.Equals(w, StringComparison.OrdinalIgnoreCase)) continue;
+            SetTyping(g, allow);
+            changed.Add(g.Name);
+        }
+        if (changed.Count > 0) MuxConsole.TuiForceRedraw();   // footer chip
+        return changed;
+    }
+
+    /// <summary>Host Ctrl+]: take typing away from every guest. Returns how many were revoked.</summary>
+    public static int RevokeAllTyping()
+    {
+        int n = 0;
+        foreach (var g in Guests.Values.Where(g => g.Accepted && RemoteInput.CanType(g.Id)))
+        {
+            SetTyping(g, false);
+            n++;
+        }
+        RemoteInput.RevokeAll();
+        if (n > 0) MuxConsole.TuiForceRedraw();
+        return n;
+    }
+
+    /// <summary>Flash a status line on every connected guest.</summary>
+    public static void NoticeAll(string text)
+    {
+        foreach (var g in Guests.Values.Where(g => g.Accepted)) g.Enqueue(new Outgoing(ShareProtocol.Notice, text, 0, 0));
+    }
+
+    private static void SetTyping(Guest g, bool allow)
+    {
+        if (allow) RemoteInput.Grant(g.Id, g.Name); else RemoteInput.Revoke(g.Id);
+        g.Enqueue(new Outgoing(ShareProtocol.Control, allow ? "1" : "0", 0, 0));
+    }
 
     /// <summary>
     /// Start sharing. <paramref name="lan"/> false binds loopback only (same machine); true binds
@@ -121,6 +171,7 @@ internal static class ShareHost
         lock (Gate) { app = _app; _app = null; _link = null; _secretText = null; _addresses = []; }
         try { _shareCts.Cancel(); } catch (ObjectDisposedException) { }
         foreach (var g in Guests.Values) g.Close(reason);
+        RemoteInput.RevokeAll();
         if (app is not null)
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
@@ -268,7 +319,8 @@ internal static class ShareHost
         var sender = Task.Run(() => guest.SendLoopAsync(aborted));
         try
         {
-            bool approved = await ApproveAsync(guest, aborted);
+            var approval = await ApproveAsync(guest, aborted);
+            bool approved = approval != Approval.Deny;
             if (!approved || guest.Closed || !IsActive)
             {
                 guest.Close(approved ? "disconnected" : "the host declined the request");
@@ -287,7 +339,9 @@ internal static class ShareHost
                 }
             }
             if (!guest.Accepted) { await sender; return; }
-            MuxConsole.WriteInfo($"\u25cf {guest.Name} joined the share ({guest.Address}).");
+            if (approval == Approval.WatchAndType) SetTyping(guest, true);
+            MuxConsole.WriteInfo($"\u25cf {guest.Name} joined the share ({guest.Address})" +
+                                 (approval == Approval.WatchAndType ? " and can type. Ctrl+] revokes." : ", view-only."));
             MuxConsole.TuiForceRedraw();   // full keyframe for the new guest (and a fresh footer)
 
             await guest.ReceiveLoopAsync(aborted);
@@ -297,6 +351,7 @@ internal static class ShareHost
         {
             guest.Close("disconnected");
             try { await sender; } catch { /* ignore */ }
+            RemoteInput.Revoke(guest.Id);
             bool wasAccepted = guest.Accepted;
             lock (GuestLock)
             {
@@ -313,25 +368,28 @@ internal static class ShareHost
     }
 
     /// <summary>
-    /// Ask the host to approve a join. Ends as a denial when the guest disconnects (<paramref name="aborted"/>)
-    /// or the share stops, so no stale prompt lingers and the approval gate is released promptly.
+    /// Ask the host to approve a join. Ends as <see cref="Approval.Deny"/> when the guest disconnects
+    /// (<paramref name="aborted"/>) or the share stops, so no stale prompt lingers and the approval gate
+    /// is released promptly.
     /// </summary>
-    private static async Task<bool> ApproveAsync(Guest guest, CancellationToken aborted)
+    private static async Task<Approval> ApproveAsync(Guest guest, CancellationToken aborted)
     {
         if (ApprovalOverride is { } ov) return ov(guest.Name);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(aborted, _shareCts.Token);
         try { await ApprovalGate.WaitAsync(cts.Token); }
-        catch (OperationCanceledException) { return false; }
+        catch (OperationCanceledException) { return Approval.Deny; }
         try
         {
-            if (guest.Closed || cts.IsCancellationRequested) return false;
-            string q = $"\"{guest.Name}\" ({guest.Address}) wants to WATCH this session live. " +
-                       "They will see everything on your screen. Allow?";
-            string[] choices = ["Deny", "Allow"];
+            if (guest.Closed || cts.IsCancellationRequested) return Approval.Deny;
+            string q = $"\"{guest.Name}\" ({guest.Address}) wants to join this session live. They will see everything " +
+                       "on your screen. \"Watch + type\" also lets them type prompts the agent will act on " +
+                       "(shell escapes and most / commands stay blocked; Ctrl+] revokes).";
+            string[] choices = ["Deny", "Watch", "Watch + type"];
             int? answer = await Task.Run(() => AskOverride is { } ask
                 ? ask(q, choices, cts.Token)
                 : MuxConsole.TuiAskFromBackground(q, choices, 0, ApprovalTimeout, cts.Token));
-            return answer == 1 && !cts.IsCancellationRequested;
+            if (cts.IsCancellationRequested) return Approval.Deny;
+            return answer switch { 1 => Approval.Watch, 2 => Approval.WatchAndType, _ => Approval.Deny };
         }
         finally { ApprovalGate.Release(); }
     }
@@ -495,6 +553,11 @@ internal static class ShareHost
                 {
                     case ShareProtocol.GuestBye:
                         return;
+                    case ShareProtocol.Input:
+                        // Host-enforced: dropped unless this guest may type AND a prompt is open.
+                        if (m.Length - 1 <= RemoteInput.MaxMessageChars * 4)
+                            RemoteInput.Post(Id, Encoding.UTF8.GetString(m, 1, m.Length - 1));
+                        break;
                     case ShareProtocol.Resync:
                         long now = Environment.TickCount64;
                         if (now - Interlocked.Read(ref _lastResync) >= 1000)
