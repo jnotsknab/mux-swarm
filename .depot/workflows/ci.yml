@@ -117,7 +117,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: selftest-${{ matrix.rid }}
-          path: ${{ runner.temp }}/mux-selftest/
+          # Log only: mux-selftest/proxy/ holds the generated client/management keys.
+          path: ${{ runner.temp }}/mux-selftest/selftest.log
           retention-days: 7
 
       - name: Upload build artifact

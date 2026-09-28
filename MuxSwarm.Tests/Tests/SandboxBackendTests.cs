@@ -29,6 +29,63 @@ public class SandboxBackendTests
     }
 
     [Fact]
+    public void AllowlistProxy_RunsFromFixedImage_NotTheSandboxImage()
+    {
+        // The proxy sidecar used to run `python` from the SANDBOX image, so a python-less image (dotnet/sdk)
+        // made it exit 127 and left the sandbox with no network at all.
+        string args = OciSandbox.ProxyRunArgs("mux_sbxproxy_x", "mux_sbxnet_x", "QUJD");
+        Assert.Contains($"--entrypoint sh {OciSandbox.ProxyImage} -c", args);
+        Assert.Contains("--network mux_sbxnet_x", args);
+        Assert.StartsWith("docker.io/library/python:", OciSandbox.ProxyImage); // fully qualified for podman
+    }
+
+    [Fact]
+    public void AllowlistProxyScript_EmbedsAValidListLiteral()
+    {
+        // Regression: domains were wrapped in \" (left over from shell quoting), which made the generated
+        // python `ALLOW = [\"api.nuget.org\"]` a syntax error, so the proxy never started.
+        string script = OciSandbox.BuildProxyScript(new[] { "api.nuget.org", "www.nuget.org" });
+        Assert.Contains("ALLOW = [\"api.nuget.org\",\"www.nuget.org\"]\n", script);
+        Assert.DoesNotContain("\\\"", script.Split('\n').First(l => l.StartsWith("ALLOW = ")));
+        Assert.DoesNotContain("\r", script);
+    }
+
+    [Fact]
+    public void AllowlistProxyScript_EscapesQuotesAndBackslashes()
+    {
+        // The ALLOW literal must stay valid (JSON == python string list) for hostile domain text.
+        var domains = new[] { "a\"b.example", "c\\d.example" };
+        string script = OciSandbox.BuildProxyScript(domains);
+        string line = script.Split('\n').First(l => l.StartsWith("ALLOW = "));
+        var parsed = System.Text.Json.JsonSerializer.Deserialize<string[]>(line["ALLOW = ".Length..]);
+        Assert.Equal(domains, parsed);
+    }
+
+    [Theory]
+    [InlineData(true, false, false, true)]   // no allowlist: the container alone decides
+    [InlineData(true, true, true, true)]
+    [InlineData(true, true, false, false)]   // proxy died: rebuild
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, true, false)]
+    public void HealthyFastPath_RequiresProxyWhenAllowlisted(bool containerUp, bool allowlist, bool proxyUp, bool expected)
+        => Assert.Equal(expected, OciSandbox.IsHealthy(containerUp, allowlist, proxyUp));
+
+    [Fact]
+    public void Run_EnforcesTimeout_OnAHangingCommand()
+    {
+        // Regression: Run read stdout/stderr to the end BEFORE WaitForExit, so the timeout never fired.
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("powershell", "-NoProfile -Command Start-Sleep 10")
+            : ("sleep", "10");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (ok, _, err) = OciSandbox.Run(file, args, allowFail: true, timeoutMs: 500);
+        sw.Stop();
+        Assert.False(ok);
+        Assert.Equal("timed out", err);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(8), $"took {sw.Elapsed}");
+    }
+
+    [Fact]
     public void UnknownBackend_IsRejected()
     {
         var err = SandboxBackend.Validate(Cfg("garbage-backend"));

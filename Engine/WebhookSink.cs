@@ -121,6 +121,13 @@ public static class WebhookSink
             _ = Task.Run(() => DeliverAsync(sink, body));
     }
 
+    /// <summary>
+    /// POST a webhook trigger's run result to its <c>callbackUrl</c>: same signing, headers and
+    /// bounded retry as outbound sinks, independent of whether any sink is configured.
+    /// </summary>
+    internal static Task PostCallbackAsync(string url, string? secret, string body)
+        => DeliverAsync(new WebhookConfig { Url = url, Secret = secret }, body);
+
     private static async Task DeliverAsync(WebhookConfig sink, string body)
     {
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)

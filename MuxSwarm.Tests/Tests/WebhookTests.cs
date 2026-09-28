@@ -87,9 +87,173 @@ public class WebhookTests
     }
 
     [Fact]
-    public void DaemonTrigger_PayloadLimit_DefaultsTo8K()
+    public void DaemonTrigger_PayloadLimit_DefaultsTo64K()
     {
-        Assert.Equal(8192, new DaemonTrigger().PayloadLimit);
+        Assert.Equal(65536, new DaemonTrigger().PayloadLimit);
+    }
+
+    // --- v0.15.0 webhook fixes: response path, templating, truncation, HMAC, form bodies, cooldown ---
+
+    [Fact]
+    public void GoalTemplate_PlaceholdersInsidePayload_AreNotReexpanded()
+    {
+        var goal = DaemonRunner.SubstituteGoalTemplate("Handle {payload} ({ID} @ {timestamp}) {unknown}",
+            new Dictionary<string, string>
+            {
+                ["{payload}"] = "{\"comment\":\"deploy {id} at {timestamp}\"}",
+                ["{id}"] = "ghpr",
+                ["{timestamp}"] = "T",
+            });
+        Assert.Equal("Handle {\"comment\":\"deploy {id} at {timestamp}\"} (ghpr @ T) {unknown}", goal);
+    }
+
+    [Fact]
+    public void TruncatePayload_MarksTheCut()
+    {
+        Assert.Equal("abc", DaemonRunner.TruncatePayload("abc", 5));
+        Assert.Equal("abcde\n[payload truncated: 5 of 8 chars]", DaemonRunner.TruncatePayload("abcdefgh", 5));
+    }
+
+    private static string Sig(byte[] body, string secret)
+        => "sha256=" + Convert.ToHexStringLower(System.Security.Cryptography.HMACSHA256.HashData(System.Text.Encoding.UTF8.GetBytes(secret), body));
+
+    [Fact]
+    public void Hmac_IsVerifiedOverRawBytes_IncludingBomAndNonUtf8()
+    {
+        byte[] bom = [0xEF, 0xBB, 0xBF, (byte)'{', (byte)'}'];
+        byte[] latin1 = [(byte)'{', 0xE9, (byte)'}'];   // not valid UTF-8
+        Assert.True(ServeMode.VerifyHmacSignature(bom, "s3cret", Sig(bom, "s3cret")));
+        Assert.True(ServeMode.VerifyHmacSignature(latin1, "s3cret", Sig(latin1, "s3cret")));
+        Assert.False(ServeMode.VerifyHmacSignature(bom, "s3cret", Sig(bom, "other")));
+        Assert.False(ServeMode.VerifyHmacSignature(bom, "s3cret", ""));
+    }
+
+    [Fact]
+    public void Body_FormEncoded_UnwrapsPayloadField_JsonPassesThrough()
+    {
+        var form = System.Text.Encoding.UTF8.GetBytes("payload=%7B%22action%22%3A%22opened%22%2C%22n%22%3A1%7D&x=1");
+        Assert.Equal("{\"action\":\"opened\",\"n\":1}",
+            ServeMode.DecodeWebhookBody(form, "application/x-www-form-urlencoded; charset=utf-8"));
+        byte[] json = [0xEF, 0xBB, 0xBF, .. System.Text.Encoding.UTF8.GetBytes("{\"a\":1}")];
+        Assert.Equal("{\"a\":1}", ServeMode.DecodeWebhookBody(json, "application/json"));
+    }
+
+    [Fact]
+    public void Webhook_DefaultCooldownIsZero_OtherTriggersKeep30()
+    {
+        Assert.Equal(0u, new DaemonTrigger { Type = "webhook" }.EffectiveInterval);
+        Assert.Equal(30u, new DaemonTrigger { Type = "watch" }.EffectiveInterval);
+        Assert.Equal(7u, new DaemonTrigger { Type = "webhook", Interval = 7 }.EffectiveInterval);
+        Assert.Equal(5u, new DaemonTrigger { Type = "webhook", Interval = 7, Cooldown = 5 }.EffectiveInterval);
+    }
+
+    [Fact]
+    public async Task Enqueue_ReturnsDeliveryId_AndRefusesInsideCooldown()
+    {
+        var hook = new DaemonTrigger { Id = "ghpr", Type = "webhook", Cooldown = 60 };
+        var free = new DaemonTrigger { Id = "free", Type = "webhook" };
+        await using var runner = new DaemonRunner(new DaemonConfig { Triggers = [hook, free] });
+        runner.Start(_ => throw new InvalidOperationException("no model in tests"), [], new Dictionary<string, string> { ["Orchestrator"] = "m" });
+        for (int i = 0; i < 100 && !(runner.HasWebhook("ghpr") && runner.HasWebhook("free")); i++) await Task.Delay(10);
+
+        Assert.Equal(DaemonRunner.WebhookEnqueue.Accepted, runner.EnqueueWebhook("ghpr", "{}", "t", out var d1, out _));
+        Assert.Equal(32, d1.Length);
+        Assert.Equal(DaemonRunner.WebhookEnqueue.Cooldown, runner.EnqueueWebhook("ghpr", "{}", "t", out var d2, out var retry));
+        Assert.Equal("", d2);
+        Assert.InRange(retry, 1, 60);
+
+        Assert.Equal(DaemonRunner.WebhookEnqueue.Accepted, runner.EnqueueWebhook("free", "{}", "t", out var a, out _));
+        Assert.Equal(DaemonRunner.WebhookEnqueue.Accepted, runner.EnqueueWebhook("free", "{}", "t", out var b, out _));
+        Assert.NotEqual(a, b);
+        Assert.Equal(DaemonRunner.WebhookEnqueue.Unknown, runner.EnqueueWebhook("nope", "{}", "t", out _, out _));
+    }
+
+    [Fact]
+    public async Task Webhook_AddedAtRuntime_IsLiveImmediately_AndCancelStopsIt()
+    {
+        await using var runner = new DaemonRunner(new DaemonConfig());
+        runner.Start(_ => throw new InvalidOperationException("no model in tests"), [], new Dictionary<string, string> { ["Orchestrator"] = "m" });
+        Assert.Equal("rt-hook", runner.AddTriggerRuntime(new DaemonTrigger { Id = "rt-hook", Type = "webhook", Goal = "x" }));
+        for (int i = 0; i < 100 && !runner.HasWebhook("rt-hook"); i++) await Task.Delay(10);
+        Assert.True(runner.HasWebhook("rt-hook"));
+
+        Assert.True(runner.CancelTrigger("rt-hook"));
+        for (int i = 0; i < 100 && runner.HasWebhook("rt-hook"); i++) await Task.Delay(10);
+        Assert.False(runner.HasWebhook("rt-hook"));   // route 404s once the loop is gone
+    }
+
+    [Fact]
+    public async Task Enqueue_ConcurrentPostsInsideCooldown_AcceptExactlyOne()
+    {
+        var hook = new DaemonTrigger { Id = "race", Type = "webhook", Cooldown = 60 };
+        await using var runner = new DaemonRunner(new DaemonConfig { Triggers = [hook] });
+        runner.Start(_ => throw new InvalidOperationException("no model in tests"), [], new Dictionary<string, string> { ["Orchestrator"] = "m" });
+        for (int i = 0; i < 100 && !runner.HasWebhook("race"); i++) await Task.Delay(10);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(i => Task.Run(
+            () => runner.EnqueueWebhook("race", "{}", "t", out _, out _))));
+        Assert.Equal(1, results.Count(r => r == DaemonRunner.WebhookEnqueue.Accepted));
+        Assert.Equal(31, results.Count(r => r == DaemonRunner.WebhookEnqueue.Cooldown));
+    }
+
+    [Fact]
+    public void FindTriggerAgent_MatchesCaseInsensitively_AndReturnsNullForUnknown()
+    {
+        var defs = new List<Common.AgentDefinition>
+        {
+            new("CodeAgent", "", "code.md", false, t => t),
+            new("WebAgent", "", "web.md", false, t => t),
+        };
+        Assert.Equal("CodeAgent", DaemonRunner.FindTriggerAgent("codeagent", defs)!.Name);
+        // Unknown names must not fall back to a default: FireGoal fails the run with "unknown agent '...'".
+        Assert.Null(DaemonRunner.FindTriggerAgent("NoSuchAgent", defs));
+    }
+
+    [Fact]
+    public void ResolveTriggerModel_UsesResolvedName_AndFallsBackToOrchestrator()
+    {
+        var models = new Dictionary<string, string> { ["Orchestrator"] = "orch-model", ["CodeAgent"] = "code-model" };
+        var defs = new List<Common.AgentDefinition> { new("CodeAgent", "", "code.md", false, t => t) };
+        // "codeagent" resolves case-insensitively to CodeAgent, and the model must follow that resolution.
+        var resolved = DaemonRunner.FindTriggerAgent("codeagent", defs)!;
+        Assert.Equal("code-model", DaemonRunner.ResolveTriggerModel(models, resolved.Name));
+        Assert.Equal("orch-model", DaemonRunner.ResolveTriggerModel(models, null));
+        Assert.Equal("orch-model", DaemonRunner.ResolveTriggerModel(models, "NoModelMapped"));
+    }
+
+    [Fact]
+    public void CallbackBody_CarriesCorrelationAndOutcome()
+    {
+        using var ok = System.Text.Json.JsonDocument.Parse(
+            DaemonRunner.BuildCallbackBody("ghpr", "abc", new DaemonRunner.GoalOutcome(true, "LGTM", null)));
+        Assert.Equal("ghpr", ok.RootElement.GetProperty("id").GetString());
+        Assert.Equal("abc", ok.RootElement.GetProperty("deliveryId").GetString());
+        Assert.Equal("ok", ok.RootElement.GetProperty("status").GetString());
+        Assert.Equal("LGTM", ok.RootElement.GetProperty("result").GetString());
+        using var err = System.Text.Json.JsonDocument.Parse(
+            DaemonRunner.BuildCallbackBody("ghpr", "abc", new DaemonRunner.GoalOutcome(false, null, "boom")));
+        Assert.Equal("error", err.RootElement.GetProperty("status").GetString());
+        Assert.Equal("boom", err.RootElement.GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public async Task RunResult_FlowsThroughAsyncAndIsInertOutsideAScope()
+    {
+        RunResult.Report("ignored");   // no scope: no-op
+        using var scope = RunResult.Begin();
+        await Task.Run(async () => { await Task.Yield(); RunResult.Report("first"); RunResult.Report("final"); });
+        RunResult.Report("   ");        // blank never overwrites
+        Assert.Equal("final", scope.Text);
+    }
+
+    [Fact]
+    public async Task RunResult_ReportError_FirstWins_AndIsInertOutsideAScope()
+    {
+        RunResult.ReportError("ignored");   // no scope: no-op
+        using var scope = RunResult.Begin();
+        Assert.Null(scope.Error);
+        await Task.Run(() => { RunResult.ReportError("model rejected"); RunResult.ReportError("later"); });
+        Assert.Equal("model rejected", scope.Error);
     }
 
     // --- alias map: outbound events[] accepts the lifecycle/hook names users already know ---
