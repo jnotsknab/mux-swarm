@@ -173,7 +173,11 @@ public static class SingleAgentOrchestrator
         };
     }
 
-    private static ModelOpts? GetSingleAgentModelOpts()
+    /// <summary>
+    /// Load swarm.json and resolve the modelOpts for <paramref name="agentName"/> (the agent this
+    /// run actually uses, which may be a per-call daemon/webhook override, not the global AgentDef).
+    /// </summary>
+    private static ModelOpts? GetSingleAgentModelOpts(string? agentName)
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
             return null;
@@ -182,7 +186,7 @@ public static class SingleAgentOrchestrator
         {
             var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
             var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
-            return ResolveSingleAgentModelOpts(swarm, AgentDef?.Name);
+            return ResolveSingleAgentModelOpts(swarm, agentName);
         }
         catch { return null; }
     }
@@ -216,7 +220,7 @@ public static class SingleAgentOrchestrator
     /// record a one-line stub in MEMORY.md via a one-shot LLM rewrite (opt-in). TUI/interactive
     /// only path; safe no-op style on any failure.
     /// </summary>
-    private static async Task HandleTagAsync(
+    internal static async Task HandleTagAsync(
         string metaCmd,
         string sessionTimestamp,
         AgentSession session,
@@ -269,6 +273,18 @@ public static class SingleAgentOrchestrator
         if (!alsoMemory) return;
 
         await WriteMemoryTagStubAsync(tag, sessionTimestamp, resolvedModelId, chatClientFactory, ct);
+    }
+
+    /// <summary>
+    /// Best-effort session save used by /detach. A stateless session (<paramref name="persistSession"/>
+    /// false) is never written: it must not appear in the sessions directory or resume picker.
+    /// </summary>
+    internal static async Task PersistUnlessStatelessAsync(
+        bool persistSession, AIAgent agent, AgentSession session, string sessionTimestamp)
+    {
+        if (!persistSession) return;
+        try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
+        catch { /* best-effort; the live frame is preserved regardless */ }
     }
 
     /// <summary>
@@ -824,7 +840,8 @@ public static class SingleAgentOrchestrator
         bool allowSubAgents = false,
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
-        InteractiveSession? interactiveHandle = null)
+        InteractiveSession? interactiveHandle = null,
+        Common.AgentDefinition? agentDef = null)
     {
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
@@ -837,7 +854,9 @@ public static class SingleAgentOrchestrator
 
         // When launched as a team (teamScope != null) the lead drives this loop with the
         // resolved lead definition; off-team this is exactly today's single-agent def.
-        var singleAgentDef = teamScope?.LeadDef ?? GetCurrSingleAgentDef();
+        // agentDef: a per-call override (daemon/webhook runs) that never touches the process-wide
+        // AgentDef, so concurrent triggers and the interactive session cannot see each other's agent.
+        var singleAgentDef = teamScope?.LeadDef ?? agentDef ?? GetCurrSingleAgentDef();
         var delegationResults = new List<MultiAgentOrchestrator.DelegationResult>();
         var pDelegationResults = new List<ParallelSwarmOrchestrator.DelegationResult>();
         var retryRegistry = new Dictionary<string, ParallelSwarmOrchestrator.RetryState>();
@@ -1049,6 +1068,7 @@ public static class SingleAgentOrchestrator
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
             MuxConsole.WriteError("[AGENT] singleAgent.promptPath not set in swarm.json.");
+            RunResult.ReportError("singleAgent.promptPath not set in swarm.json");   // daemon/webhook: report, not ok
             return;
         }
 
@@ -1556,7 +1576,7 @@ public static class SingleAgentOrchestrator
         }
 
         // Merge modelOpts from swarm.json if present
-        var singleAgentOpts = GetSingleAgentModelOpts();
+        var singleAgentOpts = GetSingleAgentModelOpts(singleAgentDef?.Name);
         if (singleAgentOpts is not null)
         {
             var modelChatOpts = singleAgentOpts.ToChatOptions();
@@ -1593,6 +1613,7 @@ public static class SingleAgentOrchestrator
         if (agent == null)
         {
             MuxConsole.WriteError($"[AGENT] Failed to initialize {singleAgentDef.Name}. Verify your configuration and API credentials.");
+            RunResult.ReportError($"failed to initialize agent {singleAgentDef.Name}");   // daemon/webhook: report, not ok
             return;
         }
 
@@ -2323,7 +2344,10 @@ public static class SingleAgentOrchestrator
                     string response = responseText.ToString();
 
                     if (!string.IsNullOrWhiteSpace(response))
+                    {
                         conversationHistory.Add(new ChatMessage(ChatRole.Assistant, response));
+                        RunResult.Report(response);   // daemon/webhook callback result (no-op otherwise)
+                    }
 
                     if (string.IsNullOrWhiteSpace(response))
                     {
@@ -2390,6 +2414,7 @@ public static class SingleAgentOrchestrator
             catch (Exception ex)
             {
                 MuxConsole.WriteError(ex.Message);
+                RunResult.ReportError(ex.Message);   // daemon/webhook callback reports status=error (no-op otherwise)
             }
             finally
             {
@@ -2770,11 +2795,7 @@ public static class SingleAgentOrchestrator
                     {
                         // Persist so the parked session is also resumable from disk as a safety net.
                         // Stateless sessions stay memory-only: the live frame IS the session.
-                        if (persistSession)
-                        {
-                            try { await Common.PersistChatSessionAsync(agent, session, sessionTimestamp); }
-                            catch { /* best-effort; the live frame is preserved regardless */ }
-                        }
+                        await PersistUnlessStatelessAsync(persistSession, agent, session, sessionTimestamp);
                         interactiveHandle.Tokens = _sessionTokens;
                         MuxConsole.WriteSuccess($"Detached session {interactiveHandle.Id} ({interactiveHandle.Label}). Re-attach with /attach {interactiveHandle.Id} or \\.");
                         // Release the session-scoped TUI hooks so the menu's footer is clean while

@@ -12,9 +12,10 @@ namespace MuxSwarm.Engine.NativeTools;
 /// proxy + internal network, if any). Created/owned by a <see cref="ReplSession"/>.
 ///
 /// Network allowlist: when <see cref="SandboxSpec.UsesAllowlist"/>, the container is attached ONLY to a
-/// Docker `--internal` network (no host egress); a tiny filtering-proxy sidecar (python from the same
-/// base image) sits on both that internal net and a normal net and CONNECT-filters by host against the
-/// allowlist. The sandbox's HTTP(S)_PROXY point at the sidecar, so it can reach listed domains only.
+/// Docker `--internal` network (no host egress); a tiny filtering-proxy sidecar sits on both that internal
+/// net and a normal net and CONNECT-filters by host against the allowlist. The sandbox's HTTP(S)_PROXY
+/// point at the sidecar, so it can reach listed domains only. The sidecar always runs from
+/// <see cref="ProxyImage"/>, never the sandbox image, so any sandbox image works with an allowlist.
 /// </summary>
 internal sealed class OciSandbox : IDisposable
 {
@@ -39,6 +40,13 @@ internal sealed class OciSandbox : IDisposable
 
     public const string GuestWorkDir = "/work";
 
+    /// <summary>
+    /// Image the allowlist proxy sidecar runs from, independent of the sandbox image (which may have no
+    /// python, e.g. dotnet/sdk). Fully qualified so podman/nerdctl resolve it without a short-name prompt;
+    /// multi-arch (amd64/arm64). Pulled on first allowlist use; pre-pull it on air-gapped hosts.
+    /// </summary>
+    internal const string ProxyImage = "docker.io/library/python:3.12-alpine";
+
     public OciSandbox(SandboxSpec spec, string hostWorkDir, string key)
     {
         _spec = spec;
@@ -59,8 +67,9 @@ internal sealed class OciSandbox : IDisposable
             if (_disposed) return;
             if (_started)
             {
-                if (ContainerRunning()) return;       // healthy - nothing to do
-                // Container is gone/dead: tear down stale proxy+net and rebuild from scratch.
+                if (IsHealthy(ContainerRunning(), _spec.UsesAllowlist, _spec.UsesAllowlist && IsRunning(_proxyName)))
+                    return;                           // healthy - nothing to do
+                // Container (or its allowlist proxy) is gone/dead: tear down stale state and rebuild.
                 RebuildTeardown_NoLock();
             }
 
@@ -72,6 +81,11 @@ internal sealed class OciSandbox : IDisposable
                     $"Last error: {(_lastBuildError.Length > 0 ? _lastBuildError : "unknown")}. " +
                     "Check the image, docker daemon, and `/sandbox` config (or set sandbox.backend host).");
             _buildAttempts++;
+
+            // Pull images FIRST, before any network/container exists: a failed pull then leaves nothing to leak.
+            // A cold multi-hundred-MB pull must not hit the 60 s CLI cap, so it runs as its own step.
+            EnsureImage(_spec.Image, "sandbox");
+            if (_spec.UsesAllowlist) EnsureImage(ProxyImage, "network proxy");
 
             string sfx = Sanitize(_key) + "_" + Guid.NewGuid().ToString("N")[..6];
             _containerName = "mux_sbx_" + sfx;
@@ -150,32 +164,71 @@ internal sealed class OciSandbox : IDisposable
                 throw new SandboxException($"sandbox container exited immediately ({_spec.Backend}). " +
                     $"Image entrypoint may be wrong or a dropped capability is required. Detail: {_lastBuildError}");
             }
+            // The allowlist proxy must be up too, or the sandbox silently has no network at all.
+            if (_spec.UsesAllowlist && !IsRunning(_proxyName))
+            {
+                var (_, logs, lerr) = Run(_spec.Binary, $"logs {_proxyName}", allowFail: true);
+                _lastBuildError = (logs + lerr).Trim();
+                RebuildTeardown_NoLock();
+                throw new SandboxException($"sandbox network proxy ({ProxyImage}) exited on start, so " +
+                    $"allowedDomains cannot be reached. Detail: {_lastBuildError}");
+            }
             _buildAttempts = 0;          // healthy - reset the self-heal budget
             _lastBuildError = "";
         }
     }
 
+    /// <summary>
+    /// Healthy fast-path check: the container is up and, when an allowlist is active, so is its proxy
+    /// (a dead proxy leaves the sandbox with no network, so it must trigger a rebuild too).
+    /// </summary>
+    internal static bool IsHealthy(bool containerUp, bool usesAllowlist, bool proxyUp) =>
+        containerUp && (!usesAllowlist || proxyUp);
+
     private void StartProxy(string sfx)
     {
-        // Write a tiny CONNECT-filtering proxy script and run it from the SAME base image (no extra pull).
-        // It allows CONNECT only to allowlisted hosts (suffix match), denies everything else. Plain HTTP
-        // is also filtered by Host header. ~deny-by-default.
-        string allowPy = "[" + string.Join(",", _spec.AllowedDomains.Select(d => "\\\"" + d.Replace("\"", "") + "\\\"")) + "]";
-        // Normalize to LF: the verbatim ProxyScript carries the file's CRLF endings; base64 it as LF
-        // so the python written to /tmp/p.py inside the container is clean.
-        string script = ProxyScript.Replace("\r\n", "\n").Replace("__ALLOW__", allowPy);
+        // Write a tiny CONNECT-filtering proxy script and run it from ProxyImage (NOT the sandbox image,
+        // which may have no python). It allows CONNECT only to allowlisted hosts (suffix match), denies
+        // everything else. Plain HTTP is also filtered by Host header. ~deny-by-default.
         // base64 the script in so we don't fight shell quoting across platforms.
-        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(script));
+        string b64 = Convert.ToBase64String(Encoding.UTF8.GetBytes(BuildProxyScript(_spec.AllowedDomains)));
         _netName = string.IsNullOrEmpty(_netName) ? ("mux_sbxnet_" + sfx) : _netName;
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
-        string args = $"run -d --name {_proxyName} --network {_netName} " +
-                      $"-e MUX_PROXY_B64={b64} --entrypoint sh {_spec.Image} -c " +
-                      "\"echo $MUX_PROXY_B64 | base64 -d > /tmp/p.py && python /tmp/p.py\"";
-        var (ok, _, err) = Run(_spec.Binary, args, allowFail: true);
-        if (!ok) throw new SandboxException($"failed to start sandbox network proxy: {err.Trim()}");
+        var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
+        if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
         // give the proxy a normal egress path too (second network with default bridge).
+        // Known limit (unverified): podman names its default network `podman`, not `bridge`, so this
+        // connect may fail there and leave the proxy without egress.
         Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
     }
+
+    /// <summary>
+    /// Pull <paramref name="image"/> as its own step when it is not present locally, with a 10 min timeout:
+    /// a first-use pull on a slow link can exceed the 60 s CLI default, and a failed pull (offline, registry
+    /// blocked) is reported as a pull failure rather than a misleading container start failure.
+    /// </summary>
+    private void EnsureImage(string image, string what)
+    {
+        if (Run(_spec.Binary, $"image inspect {image}", allowFail: true).ok) return;
+        var (ok, _, err) = Run(_spec.Binary, $"pull {image}", allowFail: true, timeoutMs: 600_000);
+        if (!ok) throw new SandboxException($"failed to pull the {what} image {image} " +
+            $"(pre-pull it on offline/air-gapped hosts): {err.Trim()}");
+    }
+
+    /// <summary>
+    /// The proxy's python source with the allowlist filled in. The list is a JSON string array, which is
+    /// also a valid python literal (JSON escaping covers quotes/backslashes). LF line endings: the verbatim
+    /// ProxyScript carries this file's CRLF.
+    /// </summary>
+    internal static string BuildProxyScript(IEnumerable<string> allowedDomains) =>
+        ProxyScript.Replace("\r\n", "\n")
+            .Replace("__ALLOW__", System.Text.Json.JsonSerializer.Serialize(allowedDomains.ToArray()));
+
+    /// <summary>`run` arguments for the allowlist proxy sidecar. Always <see cref="ProxyImage"/>.</summary>
+    internal static string ProxyRunArgs(string proxyName, string netName, string scriptB64) =>
+        $"run -d --name {proxyName} --network {netName} " +
+        $"-e MUX_PROXY_B64={scriptB64} --entrypoint sh {ProxyImage} -c " +
+        "\"echo $MUX_PROXY_B64 | base64 -d > /tmp/p.py && python /tmp/p.py\"";
 
     /// <summary>
     /// Build the (file,args) to run a one-off shell command inside the container via `exec`.
@@ -200,12 +253,14 @@ internal sealed class OciSandbox : IDisposable
     }
 
     /// <summary>True when the session container exists AND is in the running state. Cheap docker inspect.</summary>
-    private bool ContainerRunning()
+    private bool ContainerRunning() => IsRunning(_containerName);
+
+    private bool IsRunning(string name)
     {
-        if (string.IsNullOrEmpty(_containerName)) return false;
+        if (string.IsNullOrEmpty(name)) return false;
         // `inspect -f {{.State.Running}}` prints "true"/"false"; non-zero exit => container absent.
         var (ok, outp, _) = Run(_spec.Binary,
-            $"inspect -f {{{{.State.Running}}}} {_containerName}", allowFail: true);
+            $"inspect -f {{{{.State.Running}}}} {name}", allowFail: true);
         return ok && outp.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -236,7 +291,11 @@ internal sealed class OciSandbox : IDisposable
 
     // ---- helpers ----
 
-    private static (bool ok, string outp, string err) Run(string file, string args, bool allowFail)
+    /// <summary>
+    /// Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s). stdout and
+    /// stderr are drained concurrently so the timeout is enforced and a full stderr pipe cannot deadlock.
+    /// </summary>
+    internal static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
     {
         try
         {
@@ -248,9 +307,18 @@ internal sealed class OciSandbox : IDisposable
             };
             using var p = Process.Start(psi);
             if (p is null) return (false, "", "could not start " + file);
-            string o = p.StandardOutput.ReadToEnd();
-            string e = p.StandardError.ReadToEnd();
-            if (!p.WaitForExit(60000)) { try { p.Kill(true); } catch { } return (false, o, "timed out"); }
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                try { p.Kill(true); } catch { }
+                return (false, outTask.IsCompletedSuccessfully ? outTask.Result : "", "timed out");
+            }
+            // Bound the drain too: a detached grandchild can keep the pipes open after the CLI exits.
+            if (!Task.WaitAll([outTask, errTask], TimeSpan.FromSeconds(5)))
+                return (false, outTask.IsCompletedSuccessfully ? outTask.Result : "", "timed out reading output");
+            string o = outTask.Result;
+            string e = errTask.Result;
             bool ok = p.ExitCode == 0;
             if (!ok && !allowFail) throw new SandboxException($"{file} {args} failed: {e.Trim()}");
             return (ok, o, e);

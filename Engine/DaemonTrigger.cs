@@ -44,7 +44,11 @@ public class DaemonTrigger
     public bool Restart { get; set; }
 
 
-    /// <summary>Goal text for watch/cron triggers. Supports {file}, {timestamp}, {id}.</summary>
+    /// <summary>
+    /// Goal text template. watch: {file}, {filename}; webhook: {payload}, {source}, {deliveryId};
+    /// all: {timestamp}, {id}. Substituted in one pass, so placeholder-like text inside a
+    /// substituted value (e.g. a webhook body containing "{id}") is never re-expanded.
+    /// </summary>
     [JsonPropertyName("goal")]
     public string? Goal { get; set; }
 
@@ -52,9 +56,12 @@ public class DaemonTrigger
     [JsonPropertyName("mode")]
     public string Mode { get; set; } = "agent";
 
-    /// <summary>Minimum seconds between firings (watch debounce, status poll interval).</summary>
+    /// <summary>
+    /// Minimum seconds between firings (watch debounce, status poll interval). Null = the type
+    /// default: 30 for most triggers, 0 (no cooldown) for <c>webhook</c>.
+    /// </summary>
     [JsonPropertyName("interval")]
-    public uint Interval { get; set; } = 30;
+    public uint? Interval { get; set; }
 
     /// <summary>Alias for interval on watch triggers for readability.</summary>
     [JsonPropertyName("cooldown")]
@@ -78,13 +85,23 @@ public class DaemonTrigger
     public string? Secret { get; set; }
 
     /// <summary>
-    /// Max bytes of the inbound webhook body forwarded into the goal template (prompt-injection
-    /// surface: the body is untrusted). Bodies over the cap are truncated. Default 8 KiB.
+    /// Max characters of the inbound webhook body forwarded into the goal template (prompt-injection
+    /// surface: the body is untrusted). Longer bodies are cut and end with a
+    /// <c>[payload truncated: N of M chars]</c> marker. Default 65536.
     /// </summary>
     [JsonPropertyName("payloadLimit")]
-    public int PayloadLimit { get; set; } = 8192;
+    public int PayloadLimit { get; set; } = 65536;
 
-    /// <summary>Effective interval: Cooldown if set, otherwise Interval.</summary>
+    /// <summary>
+    /// Optional URL for <c>webhook</c> triggers: when a delivery's run finishes, Mux POSTs
+    /// <c>{id, deliveryId, status: "ok"|"error", result, error}</c> here (signed with
+    /// <see cref="Secret"/> as <c>X-Hub-Signature-256</c> when set). Null = no callback.
+    /// </summary>
+    [JsonPropertyName("callbackUrl")]
+    public string? CallbackUrl { get; set; }
+
+    /// <summary>Effective interval: Cooldown if set, otherwise Interval, otherwise the type default.</summary>
     [JsonIgnore]
-    public uint EffectiveInterval => Cooldown > 0 ? Cooldown : Interval;
+    public uint EffectiveInterval => Cooldown > 0 ? Cooldown
+        : Interval ?? (string.Equals(Type, "webhook", StringComparison.OrdinalIgnoreCase) ? 0u : 30u);
 }
