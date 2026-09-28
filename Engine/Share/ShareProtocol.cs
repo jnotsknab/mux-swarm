@@ -23,9 +23,11 @@ internal static class ShareProtocol
     public const byte Output = 0x12;    // utf8 terminal output (sanitized by the guest)
     public const byte Size = 0x13;      // w[u16] h[u16]
     public const byte Notice = 0x14;    // utf8 status text
+    public const byte Control = 0x15;   // utf8 "1" = the guest may type, "0" = view-only
     public const byte Bye = 0x1F;       // utf8 reason
 
     // --- guest -> host (sealed) ---
+    public const byte Input = 0x21;     // utf8 VT key bytes (host drops it unless the guest may type)
     public const byte Resync = 0x23;    // request a full repaint
     public const byte GuestBye = 0x2F;
 
