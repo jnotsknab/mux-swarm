@@ -692,6 +692,17 @@ public sealed class DaemonRunner : IAsyncDisposable
     /// <summary>Outcome of one fired goal: whether it completed, its result text, and any error.</summary>
     internal readonly record struct GoalOutcome(bool Ok, string? Result, string? Error);
 
+    /// <summary>
+    /// Serializes daemon-fired swarm/pswarm runs: their orchestrators keep process-wide static state
+    /// (specialists, session-dirty flags), so two concurrent runs would clobber each other. Agent-mode
+    /// runs are unaffected and stay concurrent.
+    /// </summary>
+    private static readonly SemaphoreSlim SwarmGate = new(1, 1);
+
+    /// <summary>Case-insensitive lookup of a trigger's agent override; null when no definition matches.</summary>
+    internal static Common.AgentDefinition? FindTriggerAgent(string name, IEnumerable<Common.AgentDefinition> defs)
+        => defs.FirstOrDefault(d => d.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
     private async Task<GoalOutcome> FireGoal(DaemonTrigger trigger, string goal, CancellationToken ct, bool stateless = false)
     {
         _lastFiredByTrigger[trigger.Id] = DateTime.UtcNow;
@@ -721,23 +732,34 @@ public sealed class DaemonRunner : IAsyncDisposable
                 switch (trigger.Mode.ToLowerInvariant())
                 {
                     case "swarm":
-                        await MultiAgentOrchestrator.RunAsync(
-                            chatClientFactory: _chatClientFactory,
-                            mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                            agentModels: _agentModels,
-                            incomingGoal: goal,
-                            cancellationToken: ct,
-                            persistSession: !stateless);
+                        // swarm/pswarm orchestrators keep static state: one such run at a time per process.
+                        await SwarmGate.WaitAsync(ct);
+                        try
+                        {
+                            await MultiAgentOrchestrator.RunAsync(
+                                chatClientFactory: _chatClientFactory,
+                                mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                                agentModels: _agentModels,
+                                incomingGoal: goal,
+                                cancellationToken: ct,
+                                persistSession: !stateless);
+                        }
+                        finally { SwarmGate.Release(); }
                         break;
 
                     case "pswarm":
-                        await ParallelSwarmOrchestrator.RunAsync(
-                            chatClientFactory: _chatClientFactory,
-                            mcpTools: _mcpTools.Cast<AITool>().ToList(),
-                            agentModels: _agentModels,
-                            incomingGoal: goal,
-                            cancellationToken: ct,
-                            persistSession: !stateless);
+                        await SwarmGate.WaitAsync(ct);
+                        try
+                        {
+                            await ParallelSwarmOrchestrator.RunAsync(
+                                chatClientFactory: _chatClientFactory,
+                                mcpTools: _mcpTools.Cast<AITool>().ToList(),
+                                agentModels: _agentModels,
+                                incomingGoal: goal,
+                                cancellationToken: ct,
+                                persistSession: !stateless);
+                        }
+                        finally { SwarmGate.Release(); }
                         break;
 
                     case "agent":
@@ -749,8 +771,14 @@ public sealed class DaemonRunner : IAsyncDisposable
                         if (!string.IsNullOrEmpty(trigger.Agent))
                         {
                             var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
-                            triggerAgent = agentDefs.FirstOrDefault(d =>
-                                d.Name.Equals(trigger.Agent, StringComparison.OrdinalIgnoreCase));
+                            triggerAgent = FindTriggerAgent(trigger.Agent, agentDefs);
+                            if (triggerAgent is null)
+                            {
+                                // Fail loudly: silently running the default agent would do the wrong job.
+                                var unknown = $"unknown agent '{trigger.Agent}'";
+                                MuxConsole.WriteError($"[Daemon:{trigger.Id}] Goal failed: {unknown}");
+                                return new GoalOutcome(false, null, unknown);
+                            }
                         }
 
                         var modelId = !string.IsNullOrEmpty(trigger.Agent)
@@ -826,13 +854,18 @@ public sealed class DaemonRunner : IAsyncDisposable
         if (cooldown > 0)
         {
             var key = $"{entry.Trigger.Id}:webhook";
-            var now = DateTime.UtcNow;
-            if (_lastFired.TryGetValue(key, out var last) && (now - last).TotalSeconds < cooldown)
+            // Check-then-set under the trigger's own lock: concurrent POSTs to one trigger (Kestrel
+            // runs requests in parallel) must not both pass the same cooldown window.
+            lock (entry.Queue)
             {
-                retryAfterSeconds = (int)Math.Ceiling(cooldown - (now - last).TotalSeconds);
-                return WebhookEnqueue.Cooldown;
+                var now = DateTime.UtcNow;
+                if (_lastFired.TryGetValue(key, out var last) && (now - last).TotalSeconds < cooldown)
+                {
+                    retryAfterSeconds = (int)Math.Ceiling(cooldown - (now - last).TotalSeconds);
+                    return WebhookEnqueue.Cooldown;
+                }
+                _lastFired[key] = now;
             }
-            _lastFired[key] = now;
         }
         deliveryId = Guid.NewGuid().ToString("N");
         entry.Queue.Enqueue((payload, source, deliveryId));
@@ -898,10 +931,15 @@ public sealed class DaemonRunner : IAsyncDisposable
                         Timestamp = DateTimeOffset.UtcNow
                     });
 
-                    var outcome = await FireGoal(trigger, goal, ct, stateless: true);
-                    if (!string.IsNullOrWhiteSpace(trigger.CallbackUrl))
-                        _ = Task.Run(() => WebhookSink.PostCallbackAsync(trigger.CallbackUrl!, trigger.Secret,
-                            BuildCallbackBody(trigger.Id, deliveryId, outcome)));
+                    GoalOutcome outcome;
+                    try { outcome = await FireGoal(trigger, goal, ct, stateless: true); }
+                    catch (OperationCanceledException)
+                    {
+                        // The sender was told 202: close the loop for the in-flight delivery too.
+                        PostWebhookCallback(trigger, deliveryId, new GoalOutcome(false, null, "cancelled"));
+                        throw;
+                    }
+                    PostWebhookCallback(trigger, deliveryId, outcome);
                 }
             }
         }
@@ -913,8 +951,22 @@ public sealed class DaemonRunner : IAsyncDisposable
         finally
         {
             _webhookQueues.TryRemove(trigger.Id, out _);
+            // Accepted-but-never-run deliveries still get a (fire-and-forget) callback.
+            while (queue.TryDequeue(out var left))
+                PostWebhookCallback(trigger, left.Item3, new GoalOutcome(false, null, "shutdown"));
             signal.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Fire-and-forget POST of a delivery's outcome to the trigger's <c>callbackUrl</c>; no-op when
+    /// none is configured. Never blocks the webhook loop or shutdown.
+    /// </summary>
+    private static void PostWebhookCallback(DaemonTrigger trigger, string deliveryId, GoalOutcome outcome)
+    {
+        if (string.IsNullOrWhiteSpace(trigger.CallbackUrl)) return;
+        _ = Task.Run(() => WebhookSink.PostCallbackAsync(trigger.CallbackUrl!, trigger.Secret,
+            BuildCallbackBody(trigger.Id, deliveryId, outcome)));
     }
 
     /// <summary>

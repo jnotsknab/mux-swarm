@@ -173,7 +173,11 @@ public static class SingleAgentOrchestrator
         };
     }
 
-    private static ModelOpts? GetSingleAgentModelOpts()
+    /// <summary>
+    /// Load swarm.json and resolve the modelOpts for <paramref name="agentName"/> (the agent this
+    /// run actually uses, which may be a per-call daemon/webhook override, not the global AgentDef).
+    /// </summary>
+    private static ModelOpts? GetSingleAgentModelOpts(string? agentName)
     {
         if (!File.Exists(MultiAgentOrchestrator.SwarmConfPath))
             return null;
@@ -182,7 +186,7 @@ public static class SingleAgentOrchestrator
         {
             var json = File.ReadAllText(MultiAgentOrchestrator.SwarmConfPath);
             var swarm = JsonSerializer.Deserialize<SwarmConfig>(json);
-            return ResolveSingleAgentModelOpts(swarm, AgentDef?.Name);
+            return ResolveSingleAgentModelOpts(swarm, agentName);
         }
         catch { return null; }
     }
@@ -1052,6 +1056,7 @@ public static class SingleAgentOrchestrator
         if (string.IsNullOrEmpty(singleAgentDef?.SystemPromptPath))
         {
             MuxConsole.WriteError("[AGENT] singleAgent.promptPath not set in swarm.json.");
+            RunResult.ReportError("singleAgent.promptPath not set in swarm.json");   // daemon/webhook: report, not ok
             return;
         }
 
@@ -1559,7 +1564,7 @@ public static class SingleAgentOrchestrator
         }
 
         // Merge modelOpts from swarm.json if present
-        var singleAgentOpts = GetSingleAgentModelOpts();
+        var singleAgentOpts = GetSingleAgentModelOpts(singleAgentDef?.Name);
         if (singleAgentOpts is not null)
         {
             var modelChatOpts = singleAgentOpts.ToChatOptions();
@@ -1596,6 +1601,7 @@ public static class SingleAgentOrchestrator
         if (agent == null)
         {
             MuxConsole.WriteError($"[AGENT] Failed to initialize {singleAgentDef.Name}. Verify your configuration and API credentials.");
+            RunResult.ReportError($"failed to initialize agent {singleAgentDef.Name}");   // daemon/webhook: report, not ok
             return;
         }
 

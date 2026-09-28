@@ -189,9 +189,11 @@ running to receive.
    delivery runs **stateless**: an isolated context per delivery, no session directory.
 4. If `callbackUrl` is set, the result is POSTed there when the run finishes.
 
-Webhook triggers added at runtime (`/daemon`, the web UI, or `POST /api/daemon/trigger`) are live immediately;
-deleting one stops it. One Mux process serves any number of webhooks: **different triggers run concurrently,
-deliveries to the same trigger run in order**. To scale further, run more Mux processes.
+Webhook triggers added at runtime (the web UI or `POST /api/daemon/trigger`) are live immediately;
+deleting one stops it. `/createhook` saves the trigger to config; it takes effect on the next daemon start.
+One Mux process serves any number of webhooks: **agent-mode triggers run concurrently, while swarm/pswarm runs
+are serialized (one at a time per process); deliveries to the same trigger run in order**. To scale further,
+run more Mux processes.
 
 **Response contract:** `202 {accepted, id, deliveryId}` · `401` bad/missing signature · `404` unknown or
 non-webhook id · `429 {retryAfter}` + `Retry-After` header when a delivery lands inside `cooldown`
@@ -208,8 +210,9 @@ With `callbackUrl` set, each finished delivery POSTs:
 `status` is `ok` or `error` (with `error` set). `result` is the agent's final answer (`agent` mode) or the
 orchestrator's `signal_task_complete` summary (`swarm`/`pswarm`; a non-success status is prefixed, e.g.
 `[partial] ...`). The callback is signed with the trigger's `secret` (`X-Hub-Signature-256`) and retried
-like outbound sinks. Match it to the original POST by `deliveryId`. Multi-step pipelines keep their state
-in the caller: read the result, then POST the next step's payload.
+like outbound sinks. Match it to the original POST by `deliveryId`. A delivery cancelled mid-run reports
+`error: "cancelled"`; one still queued when the trigger stops reports `error: "shutdown"`. Multi-step pipelines
+keep their state in the caller: read the result, then POST the next step's payload.
 
 ### Trust - HMAC signatures
 

@@ -183,6 +183,33 @@ public class WebhookTests
     }
 
     [Fact]
+    public async Task Enqueue_ConcurrentPostsInsideCooldown_AcceptExactlyOne()
+    {
+        var hook = new DaemonTrigger { Id = "race", Type = "webhook", Cooldown = 60 };
+        await using var runner = new DaemonRunner(new DaemonConfig { Triggers = [hook] });
+        runner.Start(_ => throw new InvalidOperationException("no model in tests"), [], new Dictionary<string, string> { ["Orchestrator"] = "m" });
+        for (int i = 0; i < 100 && !runner.HasWebhook("race"); i++) await Task.Delay(10);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(i => Task.Run(
+            () => runner.EnqueueWebhook("race", "{}", "t", out _, out _))));
+        Assert.Equal(1, results.Count(r => r == DaemonRunner.WebhookEnqueue.Accepted));
+        Assert.Equal(31, results.Count(r => r == DaemonRunner.WebhookEnqueue.Cooldown));
+    }
+
+    [Fact]
+    public void FindTriggerAgent_MatchesCaseInsensitively_AndReturnsNullForUnknown()
+    {
+        var defs = new List<Common.AgentDefinition>
+        {
+            new("CodeAgent", "", "code.md", false, t => t),
+            new("WebAgent", "", "web.md", false, t => t),
+        };
+        Assert.Equal("CodeAgent", DaemonRunner.FindTriggerAgent("codeagent", defs)!.Name);
+        // Unknown names must not fall back to a default: FireGoal fails the run with "unknown agent '...'".
+        Assert.Null(DaemonRunner.FindTriggerAgent("NoSuchAgent", defs));
+    }
+
+    [Fact]
     public void CallbackBody_CarriesCorrelationAndOutcome()
     {
         using var ok = System.Text.Json.JsonDocument.Parse(

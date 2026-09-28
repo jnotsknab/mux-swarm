@@ -1268,6 +1268,8 @@ public static partial class ServeMode
         };
         if (root.TryGetProperty("interval", out var iv) && iv.TryGetUInt32(out var ivv) && ivv > 0)
             trigger.Interval = ivv;
+        if (root.TryGetProperty("cooldown", out var cd) && cd.TryGetUInt32(out var cdv) && cdv > 0)
+            trigger.Cooldown = cdv;
         if (root.TryGetProperty("payloadLimit", out var pl) && pl.TryGetInt32(out var plv) && plv > 0)
             trigger.PayloadLimit = plv;
         if (trigger.CallbackUrl is { } cbu
