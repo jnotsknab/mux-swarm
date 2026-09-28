@@ -1157,7 +1157,8 @@ OpenAI-compatible endpoint Mux talks to unchanged.
   (`cliproxy/<ver>/`), record it in `cliproxy/active-version.txt`, and cold-restart a running
   sidecar onto it (including an orphan left by an earlier Mux). Newer releases support newer
   models. Trust model: the download is verified against that release's own `checksums.txt`
-  (integrity in transit), not against hashes compiled into Mux.
+  (integrity in transit), not against hashes compiled into Mux. The override only applies while it
+  is newer than the build's pin: a later Mux whose pinned version is the same or newer takes precedence.
 - `/proxy update pinned` - drop the override and reinstall this build's pinned version, verified
   against the SHA256 table compiled into Mux.
 - `/proxy restart` - cold-restart the sidecar (re-reads the auth dir, reclaims the port).
