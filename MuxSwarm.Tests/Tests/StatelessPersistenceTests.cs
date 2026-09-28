@@ -42,10 +42,26 @@ public class StatelessPersistenceTests
         var session = await agent.CreateSessionAsync();
         string ts = NewTimestamp();
 
-        await SingleAgentOrchestrator.HandleTagAsync("/tag release", ts, session, agent,
-            "test-model", chatClientFactory: null, persistSession: false, CancellationToken.None);
+        // Capture console output (StdioMode emits JSON lines to Console.Out) to prove the STATELESS branch
+        // ran, not some other early return that would also leave no directory.
+        var prevStdio = MuxConsole.StdioMode;
+        var prevOut = Console.Out;
+        var sw = new StringWriter();
+        try
+        {
+            Console.SetOut(sw);
+            MuxConsole.StdioMode = true;
+            await SingleAgentOrchestrator.HandleTagAsync("/tag release", ts, session, agent,
+                "test-model", chatClientFactory: null, persistSession: false, CancellationToken.None);
+        }
+        finally
+        {
+            MuxConsole.StdioMode = prevStdio;
+            Console.SetOut(prevOut);
+        }
 
         Assert.False(Directory.Exists(SessionPath(ts)));
+        Assert.Contains("stateless session", sw.ToString());
     }
 
     [Fact]
