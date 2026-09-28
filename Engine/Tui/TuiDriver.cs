@@ -3476,6 +3476,12 @@ internal sealed partial class TuiDriver
                     }
                 }
 
+                // `/paste` + Enter is a shortcut for the host's clipboard. A guest-typed `/paste` must hit the
+                // guest-draft check instead (refused + cleared), or Enter would stream the host's clipboard.
+                if (key.Key == ConsoleKey.Enter && _remoteAuthors.Count > 0
+                    && _editor.Buffer.Trim().Equals("/paste", StringComparison.OrdinalIgnoreCase)
+                    && !RemoteSubmitAllowed(_editor.Buffer))
+                { Repaint(); continue; }
                 if ((key.Key == ConsoleKey.V && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) != 0)
                     || (key.Key == ConsoleKey.Enter && _editor.Buffer.Trim().Equals("/paste", StringComparison.OrdinalIgnoreCase)))
                 {

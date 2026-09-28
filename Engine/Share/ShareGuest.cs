@@ -211,7 +211,7 @@ internal static class ShareGuest
         var view = new GuestView(write);
         string reason = "disconnected";
         bool accepted = false;
-        bool canType = false;   // host's word; the host enforces it independently
+        int canType = 0;   // host's word (1 = may type), read by the key loop; the host enforces it independently
 
         var receiver = Task.Run(async () =>
         {
@@ -245,8 +245,9 @@ internal static class ShareGuest
                             view.Flash(AnsiSanitizer.PlainText(Encoding.UTF8.GetString(payload)));
                             break;
                         case ShareProtocol.Control:
-                            canType = payload.Length > 0 && payload[0] == (byte)'1';
-                            view.Flash(canType ? "The host let you type - Enter sends. Ctrl+] then q to leave."
+                            bool allowed = payload.Length > 0 && payload[0] == (byte)'1';
+                            Volatile.Write(ref canType, allowed ? 1 : 0);
+                            view.Flash(allowed ? "The host let you type - Enter sends. Ctrl+] then q to leave."
                                                : "View-only now. Ctrl+] then q to leave.");
                             break;
                     }
@@ -284,7 +285,7 @@ internal static class ShareGuest
                 }
                 if (ctrlBracket) { prefix = true; view.ShowMenu(); continue; }
                 if (ctrlC) { view.Flash("Ctrl+C is not sent to the host. Ctrl+] then q to leave."); continue; }
-                if (!canType)
+                if (Volatile.Read(ref canType) == 0)
                 {
                     view.Flash("View-only session. Ctrl+] then q to leave, r to redraw.");
                     continue;

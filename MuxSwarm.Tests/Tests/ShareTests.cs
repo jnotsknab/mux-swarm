@@ -383,6 +383,25 @@ public class RemotePromptTests
     }
 
     [Fact]
+    public async Task Guest_Typed_Paste_Command_Never_Pastes_The_Host_Clipboard()
+    {
+        // `/paste` + Enter is a host clipboard shortcut; a guest-typed `/paste` must be refused by the
+        // guest-draft check instead, even when the HOST presses Enter (Mux Bud #94 round 2).
+        var term = new Terminal();
+        string? line = await Run(pump =>
+        {
+            RemoteInput.Post(1, "/paste");
+            Thread.Sleep(300);
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));   // host Enter
+            Thread.Sleep(300);
+            foreach (char c in "ok") pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K(c, ConsoleKey.NoName)));
+            pump.Enqueue(MuxSwarm.Engine.Tui.ConsoleInputPump.InputEvent.OfKey(K('\r', ConsoleKey.Enter)));
+        }, term);
+        Assert.Equal("ok", line);
+        Assert.Contains("Blocked a line typed by alice", term.Plain());
+    }
+
+    [Fact]
     public async Task Guest_Enter_On_Empty_Prompt_Does_Not_Submit()
     {
         // An empty submit is "quit" to the agent/swarm loops (Mux Bud #94 P1): a guest's bare Enter
