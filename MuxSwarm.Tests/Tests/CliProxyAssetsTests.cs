@@ -155,6 +155,23 @@ public class CliProxyAssetsTests
         Assert.Equal(sha2, map["CLIProxyAPI_9.9.9_linux_amd64.tar.gz"]);
     }
 
+    [Theory]
+    [InlineData("7.3.15", true)]
+    [InlineData("8.0.3", true)]
+    [InlineData("7.2.159", true)]
+    [InlineData("v7.3.15", false)]   // callers strip the 'v' first
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("../../x", false)]
+    [InlineData("7.3.15/..", false)]
+    [InlineData("7.3.15\\..", false)]
+    [InlineData("7.3.15-rc1", false)]
+    [InlineData("7.3.15\n", false)]
+    public void IsValidVersion_OnlyPlainNumericVersions(string? v, bool expected)
+    {
+        Assert.Equal(expected, CliProxyAssets.IsValidVersion(v));
+    }
+
     [Fact]
     public void ParseChecksums_EmptyOrGarbage_YieldsEmptyMap()
     {
