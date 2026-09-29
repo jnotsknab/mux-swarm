@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Globalization;
 using System.Text;
 using MuxSwarm.Engine.Tui;
 
@@ -204,7 +205,7 @@ internal static class RemotePolicy
     /// </summary>
     public static bool IsAllowed(string? line)
     {
-        var t = (line ?? "").Trim();
+        var t = Visible(line);
         if (t.Length == 0) return false;
         if (t[0] == '!') return false;
         if (t[0] != '/') return true;
@@ -215,10 +216,28 @@ internal static class RemotePolicy
     /// <summary>Short label for a refused line (for the host's notice).</summary>
     public static string Describe(string? line)
     {
-        var t = (line ?? "").Trim();
+        var t = Visible(line);
         if (t.Length == 0) return "an empty line (ends the host's session)";
         if (t.StartsWith('!')) return "a shell command (!)";
         var token = t.Split(' ', '\n')[0];
         return token.Length > 40 ? token[..40] + "..." : token;
+    }
+
+    /// <summary>
+    /// The line as a reader sees it: format / zero-width characters (Unicode Cf) removed, then any
+    /// leading combining marks (Mn/Me) with no base character, then trimmed. The policy classifies
+    /// this, so an invisible prefix can never make a dispatcher see a different first character
+    /// than the policy did (v0.15.0 audit F1). Guest text itself is not modified.
+    /// </summary>
+    private static string Visible(string? line)
+    {
+        var src = line ?? "";
+        var sb = new StringBuilder(src.Length);
+        foreach (char c in src)
+            if (char.GetUnicodeCategory(c) != UnicodeCategory.Format) sb.Append(c);
+        var t = sb.ToString().Trim();
+        int i = 0;
+        while (i < t.Length && char.GetUnicodeCategory(t[i]) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark) i++;
+        return t[i..].TrimStart();
     }
 }
