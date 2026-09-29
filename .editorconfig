@@ -1,0 +1,6 @@
+root = false
+
+# Security guard (F1, v0.15.0 /share audit): user-input dispatch must use ordinal comparison.
+# Culture-sensitive StartsWith/EndsWith/IndexOf(string) ignore zero-width chars under ICU.
+[{App.cs,Engine/SingleAgentOrchestrator.cs}]
+dotnet_diagnostic.CA1310.severity = error

@@ -1167,22 +1167,22 @@ internal class App
                 case "/dockerexec":
                     CliCmdUtils.HandleDockerExec(ConfigPath);
                     break;
-                case var sbx when sbx == "/sandbox" || sbx.StartsWith("/sandbox "):
+                case var sbx when sbx == "/sandbox" || sbx.StartsWith("/sandbox ", StringComparison.Ordinal):
                     CliCmdUtils.HandleSandbox(userInput, ConfigPath);
                     break;
-                case var lg when lg == "/login" || lg.StartsWith("/login "):
+                case var lg when lg == "/login" || lg.StartsWith("/login ", StringComparison.Ordinal):
                     await CliCmdUtils.HandleLoginAsync(userInput, ConfigPath);
                     break;
-                case var pg when pg == "/ping" || pg.StartsWith("/ping "):
+                case var pg when pg == "/ping" || pg.StartsWith("/ping ", StringComparison.Ordinal):
                     await CliCmdUtils.HandlePingAsync(userInput);
                     break;
-                case var px when px == "/proxy" || px.StartsWith("/proxy "):
+                case var px when px == "/proxy" || px.StartsWith("/proxy ", StringComparison.Ordinal):
                     await CliCmdUtils.HandleProxyAsync(userInput);
                     break;
                 case "/delimiter":
                     CliCmdUtils.HandleMultiDelimiterToggle();
                     break;
-                case var vc when vc == "/voice" || vc.StartsWith("/voice "):
+                case var vc when vc == "/voice" || vc.StartsWith("/voice ", StringComparison.Ordinal):
                     CliCmdUtils.HandleVoice(vc);
                     break;
                 case "/swap":
@@ -1210,12 +1210,12 @@ internal class App
                     }
                     break;
 
-                case var mem when mem == "/memory" || mem.StartsWith("/memory ")
-                                  || mem == "/deep" || mem.StartsWith("/deep "):
+                case var mem when mem == "/memory" || mem.StartsWith("/memory ", StringComparison.Ordinal)
+                                  || mem == "/deep" || mem.StartsWith("/deep ", StringComparison.Ordinal):
                     CliCmdUtils.HandleMemory(userInput, McpClients, McpTools);
                     break;
 
-                case var tg when tg == "/taskgraph" || tg.StartsWith("/taskgraph "):
+                case var tg when tg == "/taskgraph" || tg.StartsWith("/taskgraph ", StringComparison.Ordinal):
                     {
                         var tgArg = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                         var msg = TeamController.ToggleDecompose(
@@ -1228,7 +1228,7 @@ internal class App
                     CliCmdUtils.ShowLoadedSkills();
                     break;
 
-                case var th when th == "/theme" || th.StartsWith("/theme "):
+                case var th when th == "/theme" || th.StartsWith("/theme ", StringComparison.Ordinal):
                     CliCmdUtils.HandleTheme(userInput);
                     break;
 
@@ -1236,7 +1236,7 @@ internal class App
                     CliCmdUtils.ReloadSkills();
                     break;
 
-                case var iskl when iskl == "/installskill" || iskl.StartsWith("/installskill "):
+                case var iskl when iskl == "/installskill" || iskl.StartsWith("/installskill ", StringComparison.Ordinal):
                     await CliCmdUtils.HandleInstallSkillAsync(userInput);
                     break;
 
@@ -1246,7 +1246,7 @@ internal class App
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     break;
 
-                case var cmd when cmd.StartsWith("/report"):
+                case var cmd when cmd.StartsWith("/report", StringComparison.Ordinal):
                     var parts = cmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     CliCmdUtils.GenerateSessionReports(parts.Length > 1 ? parts[1] : null);
                     break;
@@ -1256,7 +1256,7 @@ internal class App
                     break;
 
                 case "/config":
-                case var wsCmd when wsCmd == "/workspace" || wsCmd.StartsWith("/workspace "):
+                case var wsCmd when wsCmd == "/workspace" || wsCmd.StartsWith("/workspace ", StringComparison.Ordinal):
                 {
                     // Runtime mirror of the --workspace CLI arg: with no path, report the current
                     // @-file workspace root; with a path, repoint it and re-index the live "@" file
@@ -1281,7 +1281,7 @@ internal class App
                     break;
                 }
 
-                case var cfgCmd when cfgCmd.StartsWith("/config "):
+                case var cfgCmd when cfgCmd.StartsWith("/config ", StringComparison.Ordinal):
                 {
                     var res = TuiConfigCommands.Handle(userInput);
                     if (res.Ok) MuxConsole.WriteInfo(res.Message);
@@ -1289,7 +1289,7 @@ internal class App
                     break;
                 }
 
-                case var setCmd when setCmd == "/set" || setCmd.StartsWith("/set "):
+                case var setCmd when setCmd == "/set" || setCmd.StartsWith("/set ", StringComparison.Ordinal):
                 {
                     var res = TuiConfigCommands.NeedsInteractive(userInput)
                         ? TuiConfigCommands.RunInteractive(userInput)
@@ -1300,7 +1300,7 @@ internal class App
                     break;
                 }
 
-                case var rsn when rsn == "/showreasoning" || rsn.StartsWith("/showreasoning "):
+                case var rsn when rsn == "/showreasoning" || rsn.StartsWith("/showreasoning ", StringComparison.Ordinal):
                 {
                     // Top-level control of the client-side reasoning display gate. With no arg, show
                     // the current value; otherwise route through the showReasoning /set key so
@@ -1319,7 +1319,7 @@ internal class App
                     break;
                 }
 
-                case var mc when mc == "/mouse" || mc.StartsWith("/mouse "):
+                case var mc when mc == "/mouse" || mc.StartsWith("/mouse ", StringComparison.Ordinal):
                 {
                     // Hermes-style mouse preset for the frame engine. Bare /mouse reports the current
                     // preset; /mouse off|wheel|buttons routes through the mouseTracking /set key so
@@ -1338,7 +1338,7 @@ internal class App
                     break;
                 }
 
-                case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs "):
+                case var saCmd when saCmd == "/startargs" || saCmd.StartsWith("/startargs ", StringComparison.Ordinal):
                 {
                     // Persist CLI args applied automatically at every startup (config.startupArgs).
                     // No arg -> show current value. "clear" -> empty it. Otherwise set verbatim.
@@ -1361,7 +1361,7 @@ internal class App
                     break;
                 }
 
-                case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent "):
+                case var naCmd when naCmd == "/newagent" || naCmd.StartsWith("/newagent ", StringComparison.Ordinal):
                 {
                     // The wizard may offer to spawn a helper agent (like /onboard) to author the
                     // new agent's prompt; wire that callback so the user can opt in.
@@ -1398,7 +1398,7 @@ internal class App
                     break;
                 }
 
-                case var hkCmd when hkCmd == "/createhook" || hkCmd.StartsWith("/createhook "):
+                case var hkCmd when hkCmd == "/createhook" || hkCmd.StartsWith("/createhook ", StringComparison.Ordinal):
                 {
                     await EnsureMcpReadyAsync();
                     var helperModel = LoadSingleAgentModel();
@@ -1426,7 +1426,7 @@ internal class App
                     break;
                 }
 
-                case var hksCmd when hksCmd == "/hooks" || hksCmd.StartsWith("/hooks "):
+                case var hksCmd when hksCmd == "/hooks" || hksCmd.StartsWith("/hooks ", StringComparison.Ordinal):
                 {
                     var hp = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     var sub = hp.Length > 1 ? hp[1].Trim().ToLowerInvariant() : "";
@@ -1479,7 +1479,7 @@ internal class App
                     break;
                 }
 
-                case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam "):
+                case var ctCmd when ctCmd == "/createteam" || ctCmd.StartsWith("/createteam ", StringComparison.Ordinal):
                 {
                     var res = TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
@@ -1491,9 +1491,9 @@ internal class App
                     break;
                 }
 
-                case var eaCmd when eaCmd == "/editagent" || eaCmd.StartsWith("/editagent ")
-                                 || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ")
-                                 || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent "):
+                case var eaCmd when eaCmd == "/editagent" || eaCmd.StartsWith("/editagent ", StringComparison.Ordinal)
+                                 || eaCmd == "/delagent" || eaCmd.StartsWith("/delagent ", StringComparison.Ordinal)
+                                 || eaCmd == "/removeagent" || eaCmd.StartsWith("/removeagent ", StringComparison.Ordinal):
                 {
                     var res = TuiConfigCommands.RunInteractive(userInput);
                     if (res.Ok)
@@ -1526,8 +1526,8 @@ internal class App
                     await Engine.Share.ShareCommand.RunAsync(userInput);
                     break;
 
-                case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ")
-                                  || dmnCmd == "/da" || dmnCmd.StartsWith("/da "):
+                case var dmnCmd when dmnCmd == "/daemon" || dmnCmd.StartsWith("/daemon ", StringComparison.Ordinal)
+                                  || dmnCmd == "/da" || dmnCmd.StartsWith("/da ", StringComparison.Ordinal):
                 {
                     // /daemon is session-AGNOSTIC: it controls process-level background triggers
                     // (DaemonRunner) that do not depend on any live session, so it runs at the menu
@@ -1544,7 +1544,7 @@ internal class App
                 }
 
                 default:
-                    if (userInput.StartsWith("/"))
+                    if (userInput.StartsWith("/", StringComparison.Ordinal))
                     {
                         // Slash-anywhere symmetry: a SESSION-native command typed at the menu has
                         // no live session to act on. Warn that it needs an active session instead
@@ -2057,7 +2057,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                     {
                         var v = NextValue(args, ref i);
                         // If next value looks like another flag or is missing, report all
-                        if (v == null || v.StartsWith("-"))
+                        if (v == null || v.StartsWith("-", StringComparison.Ordinal))
                         {
                             if (v != null) i--; // put it back
                             reportAll = true;
@@ -2071,7 +2071,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 case "--provider":
                     {
                         var v = NextValue(args, ref i);
-                        if (v != null && !v.StartsWith("-"))
+                        if (v != null && !v.StartsWith("-", StringComparison.Ordinal))
                         {
                             var config = LoadConfig(configPath: ConfigPath);
                             var match = config.LlmProviders.FirstOrDefault(p =>
@@ -2249,10 +2249,10 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         if (System.Text.RegularExpressions.Regex.IsMatch(s, @"^[A-Za-z]:\\"))
             return true;
 
-        if (s.StartsWith("/"))
+        if (s.StartsWith("/", StringComparison.Ordinal))
             return true;
 
-        if (s.StartsWith("\\\\"))
+        if (s.StartsWith("\\\\", StringComparison.Ordinal))
             return true;
 
         if (s.Contains(Path.PathSeparator) && (s.Contains("\\") || s.Contains("/")))
