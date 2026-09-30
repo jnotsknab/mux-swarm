@@ -85,7 +85,7 @@ public struct Help
         "  /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)",
         "  /sessions       List all saved sessions with type and agent count",
         "  /dockerexec     Toggle the docker sandbox (microVM) on/off",
-            "  /sandbox        Show/swap exec sandbox backend (host|docker|podman|gvisor|kata|bwrap|...)",
+        "  /sandbox        Show/swap exec sandbox backend (host|docker|docker-container|podman|gvisor|kata|...)",
         "  /delimiter      Toggle multi-line input delimiter",
         "  /dbg            Enable tool call output (applies to stdio mode only)",
         "  /nodbg          Disable tool call output (applies to stdio mode only)",

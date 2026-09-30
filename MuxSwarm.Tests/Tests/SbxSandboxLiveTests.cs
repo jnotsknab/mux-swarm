@@ -28,6 +28,13 @@ public class SbxSandboxLiveTests
         return (await fn.InvokeAsync(new AIFunctionArguments(dict), CancellationToken.None))?.ToString() ?? "";
     }
 
+    private static string SbxOutput(string args)
+    {
+        var (ok, outp, err) = OciSandbox.Run(SandboxBackend.SbxBinary(), args, allowFail: true);
+        Assert.True(ok, $"sbx {args} failed: {err}");
+        return outp;
+    }
+
     private static async Task<string> RunJob(string command)
     {
         string started = await Call("execute_command_async", new { command });
@@ -77,14 +84,20 @@ public class SbxSandboxLiveTests
                 // network: false => egress denied; true => reachable.
                 string net = await RunJob("python -c \"import urllib.request as u; print('status', u.urlopen('https://pypi.org', timeout=15).status)\" || echo net-blocked");
                 Assert.Contains(network ? "status 200" : "net-blocked", net);
+
+                // Positive checks while alive, so the teardown checks below cannot pass on empty output.
+                if (backend == "docker")
+                {
+                    Assert.Contains("\"mux-live-", SbxOutput("ls --json"));
+                    // Both modes add one per-sandbox rule for "**": allow (network true) or deny (false).
+                    string rule = SbxOutput("policy ls --wide").Split('\n').Single(l => l.Contains("sandbox:mux-live-"));
+                    Assert.Matches(network ? @"\ballow\b" : @"\bdeny\b", rule);
+                }
             }   // scope dispose tears the session (and its microVM) down
             if (backend == "docker")
             {
-                string ls = OciSandbox.Run(SandboxBackend.SbxBinary(), "ls --json", allowFail: true).outp;
-                Assert.DoesNotContain("mux-live-", ls);   // torn down with the session
-                // ...including the per-sandbox allow-all rule that network: true adds.
-                string rules = OciSandbox.Run(SandboxBackend.SbxBinary(), "policy ls --wide", allowFail: true).outp;
-                Assert.DoesNotContain("sandbox:mux-live-", rules);
+                Assert.DoesNotContain("\"mux-live-", SbxOutput("ls --json"));                // VM removed
+                Assert.DoesNotContain("sandbox:mux-live-", SbxOutput("policy ls --wide"));   // and its network rule
             }
         }
         finally
