@@ -225,19 +225,23 @@ internal static class RemotePolicy
 
     /// <summary>
     /// The line as a reader sees it: format / zero-width characters (Unicode Cf) removed, then any
-    /// leading combining marks (Mn/Me) with no base character, then trimmed. The policy classifies
-    /// this, so an invisible prefix can never make a dispatcher see a different first character
-    /// than the policy did (v0.15.0 audit F1). Guest text itself is not modified.
+    /// leading combining marks (Mn/Me) with no base character, then trimmed. Works on runes, so
+    /// supplementary-plane format chars and marks (tags, U+E0100+ variation selectors) count too.
+    /// The policy classifies this, so an invisible prefix can never make a dispatcher see a different
+    /// first character than the policy did (v0.15.0 audit F1). Guest text itself is not modified.
     /// </summary>
     private static string Visible(string? line)
     {
-        var src = line ?? "";
-        var sb = new StringBuilder(src.Length);
-        foreach (char c in src)
-            if (char.GetUnicodeCategory(c) != UnicodeCategory.Format) sb.Append(c);
-        var t = sb.ToString().Trim();
-        int i = 0;
-        while (i < t.Length && char.GetUnicodeCategory(t[i]) is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark) i++;
-        return t[i..].TrimStart();
+        var sb = new StringBuilder((line ?? "").Length);
+        bool leading = true;
+        foreach (var r in (line ?? "").EnumerateRunes())
+        {
+            var cat = Rune.GetUnicodeCategory(r);
+            if (cat == UnicodeCategory.Format) continue;
+            if (leading && (Rune.IsWhiteSpace(r) || cat is UnicodeCategory.NonSpacingMark or UnicodeCategory.EnclosingMark)) continue;
+            leading = false;
+            sb.Append(r.ToString());
+        }
+        return sb.ToString().TrimEnd();
     }
 }

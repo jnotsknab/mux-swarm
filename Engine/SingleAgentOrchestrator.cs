@@ -153,11 +153,6 @@ public static class SingleAgentOrchestrator
         GuardedSessionNative,
     }
 
-    /// <summary>
-    /// True when a trimmed line is a <c>!command</c> shell escape. Ordinal on purpose: the '!' must be
-    /// the literal first char. Culture-sensitive StartsWith ignores zero-width/format chars under ICU,
-    /// so "\u200B!cmd" would dispatch as shell while every ordinal policy check saw no '!'.
-    /// </summary>
     internal static bool IsShellEscape(string t) => t.Length > 1 && t[0] == '!';
 
     internal static FirstTurnInputKind ClassifyFirstTurnInput(string? input)
