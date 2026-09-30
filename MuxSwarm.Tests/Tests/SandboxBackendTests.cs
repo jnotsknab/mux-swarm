@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using MuxSwarm.Engine;
 using MuxSwarm.Engine.NativeTools;
@@ -108,7 +108,7 @@ public class SandboxBackendTests
     {
         var err = SandboxBackend.Validate(Cfg("custom", command: "x {cmd}", allow: new() { "pypi.org" }));
         Assert.NotNull(err);
-        Assert.Contains("OCI", err);
+        Assert.Contains("container backends", err);
     }
 
     [Fact]
@@ -145,18 +145,148 @@ public class SandboxBackendTests
         Assert.Contains("echo hi", args);
     }
 
-    [Fact]
-    public void OciBackend_MissingBinary_IsHardError_NeverSilentHost()
+    [Theory]
+    [InlineData("docker-container")]
+    [InlineData("docker-legacy")]
+    public void OciBackend_MissingBinary_IsHardError_NeverSilentHost(string backend)
     {
         // If docker is not installed/ready on the test host, validation MUST return an error (the
         // anti-silent-fallback contract). If docker IS present+ready, it validates - both are correct;
         // the invariant is "never null-with-an-unusable-backend".
-        var err = SandboxBackend.Validate(Cfg("docker"));
+        var err = SandboxBackend.Validate(Cfg(backend));
         if (err is not null)
             Assert.True(err.Contains("docker", StringComparison.OrdinalIgnoreCase));
         else
-            Assert.NotNull(SandboxBackend.Resolve(Cfg("docker"))); // present => resolves to a real spec
+        {
+            var spec = SandboxBackend.Resolve(Cfg(backend))!;
+            Assert.Equal(SandboxKind.Oci, spec.Kind);
+            Assert.Equal("docker-container", spec.Backend);   // docker-legacy is an alias
+            Assert.Equal("docker", spec.Binary);
+        }
     }
+
+    [Fact]
+    public void Docker_IsTheSbxMicroVm_OrAHardError()
+    {
+        // `docker` is the Docker Sandboxes microVM. Without a ready sbx it is an error naming sbx and the
+        // container escape hatch - never a silent fall back to a plain container or the host.
+        var err = SandboxBackend.Validate(Cfg("docker"));
+        if (err is not null)
+        {
+            Assert.Contains("sbx", err);
+            Assert.Contains("docker-container", err);
+        }
+        else
+            Assert.Equal(SandboxKind.Sbx, SandboxBackend.Resolve(Cfg("docker"))!.Kind);
+    }
+
+    [Fact]
+    public void Docker_RejectsAllowlist_BeforeProbingSbx()
+    {
+        // sbx deny rules outrank allow rules, so a strict allowlist is not expressible: fail loud.
+        var err = SandboxBackend.Validate(Cfg("docker", allow: new() { "pypi.org" }));
+        Assert.NotNull(err);
+        Assert.Contains("allowedDomains", err);
+        Assert.Contains("docker-container", err);
+    }
+
+    [Theory]
+    [InlineData("docker-legacy", "docker-container")]
+    [InlineData(" Docker-Legacy ", "docker-container")]
+    [InlineData("docker", "docker")]
+    [InlineData(null, "host")]
+    public void Canonical_MapsLegacyAlias(string? input, string expected) =>
+        Assert.Equal(expected, SandboxBackend.Canonical(input));
+
+    [Theory]
+    [InlineData("gvisor")]
+    [InlineData("kata")]
+    public void HardenedRuntimes_StayOnTheContainerEngine(string backend)
+    {
+        // gvisor/kata layer a runtime onto docker containers; they must not route to sbx.
+        var err = SandboxBackend.Validate(Cfg(backend));
+        if (err is null) Assert.Equal(SandboxKind.Oci, SandboxBackend.Resolve(Cfg(backend))!.Kind);
+        else Assert.DoesNotContain("sbx", err);
+    }
+
+    [Theory]
+    [InlineData("repl_abc", "mux-repl-abc-1a2b3c")]
+    [InlineData("__primary__", "mux-primary-1a2b3c")]
+    [InlineData("", "mux-s-1a2b3c")]
+    [InlineData("Web Agent/#2", "mux-web-agent--2-1a2b3c")]
+    public void SbxName_IsLowercaseHyphenated_NoUnderscores(string key, string expected)
+    {
+        string name = SbxSandbox.SandboxName(key, "1a2b3c");
+        Assert.Equal(expected, name);
+        Assert.DoesNotContain('_', name);
+    }
+
+    [Fact]
+    public void SbxName_IsLengthBounded()
+    {
+        string name = SbxSandbox.SandboxName(new string('a', 200), "1a2b3c");
+        Assert.True(name.Length <= "mux-".Length + 24 + "-1a2b3c".Length);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\work", true, "/c/Users/me/work")]
+    [InlineData(@"D:\proj\", true, "/d/proj")]
+    [InlineData(@"E:\", true, "/e")]
+    [InlineData("/home/me/work", false, "/home/me/work")]
+    public void SbxGuestPath_MirrorsHostPath(string host, bool windows, string expected) =>
+        Assert.Equal(expected, SbxSandbox.GuestPath(host, windows));
+
+    [Fact]
+    public void SbxCreateArgs_DeniesEgress_UnlessNetworkOpen_AndMarksReadOnlyMounts()
+    {
+        var mounts = new[] { new SandboxMount(@"C:\proj", "/host/proj", false), new SandboxMount(@"C:\refs", "/host/refs", true) };
+        string closed = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", false, @"C:\w", mounts);
+        Assert.Equal("create --name mux-x-1 -q --pull missing -t python:3.12-slim --deny-network \"**\" shell \"C:\\w\" \"C:\\proj\" \"C:\\refs:ro\"", closed);
+        string open = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", true, @"C:\w", mounts);
+        Assert.DoesNotContain("--deny-network", open);
+    }
+
+    [Fact]
+    public void SbxLayoutScript_LinksWorkAndHostMounts_WithoutDeleting()
+    {
+        string s = SbxSandbox.LayoutScript("/c/w", new[] { ("/c/proj", "/host/proj"), ("/c/it's", "/host/its") });
+        Assert.StartsWith("mkdir -p /host && ", s);
+        Assert.Contains("ln -sfn '/c/w' '/work'", s);
+        Assert.Contains("ln -sfn '/c/proj' '/host/proj'", s);
+        Assert.Contains("ln -sfn '/c/it'\\''s' '/host/its'", s);
+        // Never deletes (a real dir at a link path may be host data on Linux/macOS) and never uses $.
+        Assert.DoesNotContain("rm ", s);
+        Assert.DoesNotContain("$", s);
+    }
+
+    [Fact]
+    public void SbxLayoutScript_RefusesToShadowARealDirectory()
+    {
+        if (OperatingSystem.IsWindows()) return;   // runs the script under a real POSIX sh
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mux-layout-" + Guid.NewGuid().ToString("N")[..6]);
+        string realDir = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "work")).FullName;
+        System.IO.File.WriteAllText(System.IO.Path.Combine(realDir, "keep.txt"), "host data");
+        try
+        {
+            // Swap the fixed /work and /host targets for temp paths so the real script body runs safely.
+            string script = SbxSandbox.LayoutScript("/tmp", Array.Empty<(string, string)>())
+                .Replace("'/work'", "'" + realDir + "'").Replace("mkdir -p /host", "mkdir -p '" + root + "/host'");
+            var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh")
+                { ArgumentList = { "-c", script }, RedirectStandardError = true })!;
+            p.WaitForExit();
+            Assert.NotEqual(0, p.ExitCode);
+            Assert.Equal("host data", System.IO.File.ReadAllText(System.IO.Path.Combine(realDir, "keep.txt")));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("{\"sandboxes\":[{\"name\":\"mux-a-1\",\"status\":\"stopped\"}]}", "mux-a-1", true)]
+    [InlineData("{\"sandboxes\":[]}", "mux-a-1", false)]
+    [InlineData("not json", "mux-a-1", false)]
+    public void SbxListContains_ParsesLsJson(string json, string name, bool expected) =>
+        Assert.Equal(expected, SbxSandbox.ListContains(json, name));
+
     private static FilesystemConfig Fs(string mode, params string[] paths) =>
         new() { SecurityMode = mode, AllowedPaths = new List<string>(paths) };
 
