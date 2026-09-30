@@ -14,7 +14,8 @@ namespace MuxSwarm.Tests.Tests;
 /// Live end-to-end check of the <c>docker</c> (Docker Sandboxes microVM) and <c>docker-container</c> backends
 /// through the real native tool surface: Python worker, shell job, /work + /host layout, read-only mount, air-gapped network and
 /// teardown; both must honour the same contract. Needs a signed-in <c>sbx</c> and a running Docker engine,
-/// so it only runs when <c>MUX_SBX_LIVE=1</c>; otherwise it returns without asserting.
+/// so it only runs when <c>MUX_SBX_LIVE=1</c>; otherwise it returns without asserting. The checks match
+/// the <c>mux-live-</c> prefix: clear leftovers from a crashed run first (<c>sbx ls</c>, <c>sbx rm --force</c>).
 /// </summary>
 [Collection("ConsoleState")]
 public class SbxSandboxLiveTests

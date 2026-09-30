@@ -245,7 +245,9 @@ public class SandboxBackendTests
     {
         // A CLI that asks a question and reads stdin (sbx: "workspace does not exist, create it? (y/N)")
         // must see EOF at once. With stdin inherited it blocked on the user's console until the timeout,
-        // which froze the first tool call of every docker session.
+        // which froze the first tool call of every docker session. Note: under `dotnet test` the host's own
+        // stdin is usually not a console, so this pins the contract (EOF, fast) rather than reproducing the
+        // console hang; the console repro is in the PR evidence.
         var (file, args) = OperatingSystem.IsWindows()
             ? ("powershell", "-NoProfile -Command \"$l = [Console]::In.ReadLine(); if ($null -eq $l) { 'eof' } else { 'got:' + $l }\"")
             : ("/bin/sh", "-c \"read l && echo got:$l || echo eof\"");

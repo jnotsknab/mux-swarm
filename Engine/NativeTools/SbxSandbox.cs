@@ -62,7 +62,8 @@ internal sealed class SbxSandbox : ISessionSandbox
 
             var mounts = _spec.Mounts;   // network shares + missing paths were already dropped (SandboxBackend.SbxMounts)
             var skipped = (App.Config.Filesystem?.AllowedPaths ?? [])
-                .Where(p => !string.IsNullOrWhiteSpace(p) && !mounts.Any(m => m.HostPath == p)).Distinct().ToList();
+                .Where(p => !string.IsNullOrWhiteSpace(p) && !mounts.Any(m => string.Equals(m.HostPath, p, StringComparison.OrdinalIgnoreCase)))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (skipped.Count > 0)
                 MuxConsole.WriteWarning($"[sandbox] not mounted in the microVM ({skipped.Count}: network shares or " +
                     $"missing paths): {string.Join("; ", skipped)}");
