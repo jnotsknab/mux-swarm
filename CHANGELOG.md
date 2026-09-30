@@ -15,7 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v0.15.1-alpha] — Unreleased
 
+### Changed
+- **`docker` sandbox is now a microVM.** `sandbox.backend: docker` (and `/sandbox docker`, bare `--sandbox`)
+  runs each session in a [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM through the `sbx`
+  CLI: its own kernel and Docker engine, on Windows 11, macOS (Apple silicon) and Ubuntu 24.04+. It needs
+  `sbx login`; a missing or signed-out `sbx` is an error, never a fall back to a container or the host.
+  `/work` and `/host/<leaf>` mounts work as before; `network: false` denies all egress.
+- **Upgrade note:** configs with `backend: docker` get the microVM. The previous container path is
+  `docker-container` (alias `docker-legacy`), unchanged. `allowedDomains` only works on container backends
+  and is rejected on `docker` (sbx cannot express a strict allowlist).
+
 ### Fixed
+- `/sandbox` and `--sandbox` no longer clear a configured `sandbox.runtime` (e.g. `kata-runtime` on podman)
+  when switching backends.
 - **`/share` guest typing:** an invisible format character (e.g. a zero-width space) before `!` or a
   blocked `/command` hid it from the guest-input policy while the orchestrator still dispatched it. Command
   prefixes (`!`, `/`) are now matched ordinally everywhere, and guest lines are classified on their visible

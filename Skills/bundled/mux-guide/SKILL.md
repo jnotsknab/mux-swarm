@@ -1,9 +1,9 @@
 ---
 name: mux-guide
-description: Authoritative user guide + reference map for Mux-Swarm itself (v0.15.0). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation/daemon/webhooks/session sharing work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
+description: Authoritative user guide + reference map for Mux-Swarm itself (v0.15.1). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation/daemon/webhooks/session sharing work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
 ---
 
-# Mux-Swarm Guide (v0.15.0)
+# Mux-Swarm Guide (v0.15.1)
 
 This skill is the map to Mux-Swarm's own documentation. The full reference is the bundled
 **`DOCS.md`** at `{{paths.context}}/DOCS.md`. DOCS.md is large - DO NOT read it whole. Instead,
@@ -20,7 +20,7 @@ DOCS.md wins (it ships with the build).
 
 ## Current version
 
-- **Mux-Swarm v0.15.0.** If `/status` or the splash reports a different version, trust the runtime
+- **Mux-Swarm v0.15.1.** If `/status` or the splash reports a different version, trust the runtime
   and tell the user this guide may be slightly behind.
 
 ## DOCS.md section map (grep these exact headings)
@@ -35,7 +35,7 @@ DOCS.md wins (it ships with the build).
 | Telemetry (OTLP + local JSONL sink) | `### telemetry` |
 | Web UI bind address + auth | `### serve` |
 | Self-update, `--update`, restart | `## Self-Update & Lifecycle` |
-| Execution sandbox (docker/podman/gvisor/kata/bwrap, network allowlist) | `## Execution Sandbox` |
+| Execution sandbox (docker microVM, docker-container/podman/gvisor/kata/bwrap, network allowlist) | `## Execution Sandbox`, `### Docker Sandboxes microVM (docker)` |
 | Daemon triggers (watch/cron/status/bridge/webhook), trigger fields | `## Daemon Triggers`, `### Common Trigger Fields` |
 | Telegram/Discord/Signal bridges | `## Bridge Setup` |
 | swarm.json: agents, orchestrator, compaction, teams, model options | `## Swarm.json Structure` |
@@ -62,6 +62,10 @@ DOCS.md wins (it ships with the build).
 
 ## What changed since v0.12.1 (headline)
 
+- **v0.15.1: `docker` is a microVM.** `/sandbox docker` now runs a Docker Sandboxes microVM (`sbx` CLI, own kernel;
+  needs `sbx login`). The old container path is `/sandbox docker-container` (alias `docker-legacy`).
+  `allowedDomains` is container-only. Also: `/share` guests can no longer hide `!` or a blocked command behind
+  invisible characters.
 - **v0.15.0: live session sharing.** `/share [--local|--lan]` streams the session to guests the host approves
   (Deny / Watch / Watch + type); `/join <link>` or `mux-swarm --join "<link>"` to watch. End-to-end encrypted;
   the link's `#secret` is the credential. Guest typing is host-enforced (editing keys only, separate queue read only by
@@ -106,8 +110,9 @@ Background delegations are awaited with `check_delegations(waitSeconds)`.
 UI add/remove them at runtime. External systems drive Mux via `--stdio`, the serve HTTP/WS API, webhooks (with result
 callbacks), or the Python SDK (`muxswarm` on PyPI).
 
-**Sandbox.** `/sandbox [backend]` runs shell/REPL execution inside a container (docker/podman/gvisor/
-kata microVM) or OS wrapper, with an optional network allowlist. Default is host execution.
+**Sandbox.** `/sandbox [backend]` runs shell/REPL execution inside a Docker Sandboxes microVM (`docker`), a
+container (docker-container/podman/gvisor/kata) or an OS wrapper; containers support a network allowlist.
+Default is host execution.
 
 **Self-service repair.** `/doctor` (health check, no model call), `/fix [what is wrong]` (diagnose + ordered
 repair steps), `/refresh` (config+MCP+skills), `/reloadskills`, `/setup`.

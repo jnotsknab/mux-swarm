@@ -141,10 +141,10 @@ Optionally run native shell + REPL execution inside a per-session sandbox. Hot-s
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `backend` | `host` | `host` (no sandbox), `docker`, `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap`/`firejail`/`sandbox-exec` (wrapper), or `custom`. |
-| `image` | `python:3.12-slim` | Container image for OCI backends. |
+| `backend` | `host` | `host` (no sandbox), `docker` (Docker Sandboxes microVM), `docker-container` (alias `docker-legacy`), `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap`/`firejail`/`sandbox-exec` (wrapper), or `custom`. |
+| `image` | `python:3.12-slim` | Image for the `docker` microVM and container backends. |
 | `network` | `false` | Allow network egress. With a non-empty `allowedDomains`, a deny-by-default CONNECT allowlist is enforced. |
-| `allowedDomains` | `[]` | Domains the sandbox may reach (OCI backends only). |
+| `allowedDomains` | `[]` | Domains the sandbox may reach (container backends only; rejected on `docker`). |
 | `command` | - | Launch command template for the `custom` backend. |
 | `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
 

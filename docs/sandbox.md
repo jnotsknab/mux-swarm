@@ -1,7 +1,7 @@
 ﻿# Execution Sandbox & Security Posture
 
 Mux-Swarm can route all native shell and REPL execution through a per-session sandbox. The
-sandbox is pluggable: OCI container engines, microVMs, lightweight process wrappers, or a
+sandbox is pluggable: Docker Sandboxes microVMs, OCI container engines, lightweight process wrappers, or a
 custom command all slot behind the same config block. This page covers configuring the
 sandbox, swapping backends at runtime, and the broader filesystem/shell security posture for
 production deployments.
@@ -10,7 +10,7 @@ production deployments.
 
 The native Shell/REPL tools (`repl_shell_exec` and the async shell-job tools). When a sandbox
 backend is active, each session gets its own isolated execution environment (a per-session
-container for OCI backends). Filesystem MCP tools and other integrations are governed
+microVM for `docker`, a per-session container for the container backends). Filesystem MCP tools and other integrations are governed
 separately by the filesystem allowlist (below), not the sandbox.
 
 `SandboxRuntime.IsActive` is authoritative: the agent preamble reflects the live sandbox
@@ -29,17 +29,21 @@ state, so agents know whether their shell runs on the host or inside isolation.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `backend` | `host` | `host` (no sandbox), `docker`, `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap` / `firejail` / `sandbox-exec` (process wrappers), or `custom`. |
-| `image` | `python:3.12-slim` | Container image for OCI backends. |
+| `backend` | `host` | `host` (no sandbox), `docker` (Docker Sandboxes microVM), `docker-container` (alias `docker-legacy`), `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap` / `firejail` / `sandbox-exec` (process wrappers), or `custom`. |
+| `image` | `python:3.12-slim` | Image for the `docker` microVM and container backends. |
 | `network` | `false` | Allow network egress from the sandbox. |
-| `allowedDomains` | `[]` | With `network` on and a non-empty list, a deny-by-default CONNECT allowlist is enforced (OCI backends only). |
+| `allowedDomains` | `[]` | A non-empty list enforces a deny-by-default CONNECT allowlist (container backends only; rejected on `docker`). |
 | `command` | `""` | Command template for the `custom` backend. |
 | `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
 
 ### Backend classes
 
-- **OCI engines** (`docker`, `podman`, `nerdctl`): per-session container, image-based,
-  network allowlist support. The most common production choice.
+- **Docker Sandboxes** (`docker`): a per-session microVM with its own kernel and Docker engine, via
+  the `sbx` CLI (Windows 11, macOS on Apple silicon, Ubuntu 24.04+). Needs `sbx login`. No strict domain
+  allowlist: `network` is off (no egress) or on (your global `sbx policy`).
+- **OCI engines** (`docker-container`, `podman`, `nerdctl`): per-session container, image-based,
+  network allowlist support. `docker-container` (or `docker-legacy`) is the plain Docker container
+  path that `docker` meant before v0.15.1.
 - **Hardened OCI** (`gvisor`, `kata`): gVisor user-space kernel or Kata microVM for stronger
   isolation than a plain container. `kata` typically pairs with `runtime: "kata-runtime"`.
 - **Process wrappers** (`bwrap`, `firejail` on Linux; `sandbox-exec` on macOS): lightweight
@@ -51,7 +55,7 @@ state, so agents know whether their shell runs on the host or inside isolation.
 
 - **Config**: set `sandbox.backend` in `config.json` (persists).
 - **Startup flag**: `--sandbox [backend]` overrides at launch (bare `--sandbox` defaults to
-  `docker`); the choice is validated and synced back to config.
+  `docker`, the microVM); the choice is validated and synced back to config.
 - **Runtime**: `/sandbox` hot-swaps the backend inside a live session.
 
 ## Filesystem & shell security (`config.json`)
@@ -87,10 +91,10 @@ handling, hook execution gating, and daemon trigger isolation.
 - Enable `--mcp-strict` (default is non-strict since v0.14.1) so startup fails if required integrations are
   unavailable.
 - Keep filesystem allowed paths minimal and purpose-specific.
-- Route execution-heavy tasks through an OCI sandbox backend when possible; step up to
-  `gvisor` or `kata` when running untrusted or generated code.
+- Route execution-heavy tasks through a sandbox when possible. `docker` (a microVM) is the
+  strongest default; use `docker-container` + `gvisor`/`kata` on hosts without Docker Sandboxes.
 - Keep `sandbox.network` off unless the workload needs egress; when it does, prefer a tight
-  `allowedDomains` allowlist over open network.
+  `allowedDomains` allowlist (container backends) over open network.
 - Scope MCP servers narrowly by role.
 - Use environment variables for all credentials.
 - Prefer file-path-based deliverables so outputs remain inspectable.
