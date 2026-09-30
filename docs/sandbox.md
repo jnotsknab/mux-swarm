@@ -34,7 +34,7 @@ state, so agents know whether their shell runs on the host or inside isolation.
 | `network` | `false` | Allow network egress from the sandbox. |
 | `allowedDomains` | `[]` | A non-empty list enforces a deny-by-default CONNECT allowlist (container backends only; rejected on `docker`). |
 | `command` | `""` | Command template for the `custom` backend. |
-| `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
+| `runtime` | `""` | Optional `--runtime` passthrough for container backends (e.g. `kata-runtime`); ignored by `docker`. |
 
 ### Backend classes
 

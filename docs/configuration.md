@@ -146,7 +146,7 @@ Optionally run native shell + REPL execution inside a per-session sandbox. Hot-s
 | `network` | `false` | Allow network egress. With a non-empty `allowedDomains`, a deny-by-default CONNECT allowlist is enforced. |
 | `allowedDomains` | `[]` | Domains the sandbox may reach (container backends only; rejected on `docker`). |
 | `command` | - | Launch command template for the `custom` backend. |
-| `runtime` | `""` | Optional `--runtime` passthrough for OCI backends (e.g. `kata-runtime`). |
+| `runtime` | `""` | Optional `--runtime` passthrough for container backends (e.g. `kata-runtime`); ignored by `docker`. |
 
 ### User Info (`userInfo`)
 

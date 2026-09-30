@@ -196,7 +196,7 @@ Available at the top-level REPL.
 | `/verbose` | Toggle TUI tool output between compact and full panels |
 | `/subagentview` (`/sav`) | Toggle collapsed/expanded delegated sub-agent output |
 | `/daemonview` (`/dv`) | Toggle the daemon output view |
-| `/dockerexec` | Toggle Docker execution mode |
+| `/dockerexec` | Toggle the docker sandbox (microVM) on/off |
 | `/sandbox` | View or switch the execution sandbox backend (host/docker/docker-container/podman/gvisor/kata/...) |
 | `/login` | Sign in to a subscription provider via the CLIProxy sidecar OAuth flow |
 | `/ping` | Check sidecar + provider login readiness |

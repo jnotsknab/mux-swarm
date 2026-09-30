@@ -81,6 +81,13 @@ internal static class SandboxBackend
         return "sbx";
     }
 
+    /// <summary>
+    /// Mounts for the <c>docker</c> microVM: the usual allowed-path mounts minus network shares (UNC), which
+    /// sbx cannot mount. Dropped at resolve time so the preamble never lists a path that is not there.
+    /// </summary>
+    internal static IReadOnlyList<SandboxMount> SbxMounts(FilesystemConfig fs) =>
+        ResolveMounts(fs).Where(m => !UncDriveMapper.IsUnc(m.HostPath)).ToList();
+
     /// <summary>Canonical backend name: <c>docker-legacy</c> is an alias of <c>docker-container</c>.</summary>
     internal static string Canonical(string? backend)
     {
@@ -144,7 +151,7 @@ internal static class SandboxBackend
             return new SandboxSpec
             {
                 Kind = SandboxKind.Sbx, Backend = backend, Binary = sbx, Image = cfg.Image,
-                NetworkOpen = cfg.Network, Mounts = ResolveMounts(App.Config.Filesystem),
+                NetworkOpen = cfg.Network, Mounts = SbxMounts(App.Config.Filesystem),
             };
         }
 

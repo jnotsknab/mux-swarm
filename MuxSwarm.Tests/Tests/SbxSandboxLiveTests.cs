@@ -42,9 +42,10 @@ public class SbxSandboxLiveTests
     }
 
     [Theory]
-    [InlineData("docker")]
-    [InlineData("docker-container")]
-    public async Task Docker_Backends_RunShellAndPythonInsideTheSandbox(string backend)
+    [InlineData("docker", false)]
+    [InlineData("docker", true)]
+    [InlineData("docker-container", false)]
+    public async Task Docker_Backends_RunShellAndPythonInsideTheSandbox(string backend, bool network)
     {
         if (!Enabled) return;
         string root = Path.Combine(Path.GetTempPath(), "mux-sbx-live-" + Guid.NewGuid().ToString("N")[..6]);
@@ -52,7 +53,7 @@ public class SbxSandboxLiveTests
         string ro = Directory.CreateDirectory(Path.Combine(root, "refs")).FullName;
         File.WriteAllText(Path.Combine(ro, "ref.txt"), "reference");
         var prevFs = App.Config.Filesystem;
-        App.Config.Sandbox = new SandboxConfig { Backend = backend, Image = "python:3.12-slim", Network = false };
+        App.Config.Sandbox = new SandboxConfig { Backend = backend, Image = "python:3.12-slim", Network = network };
         App.Config.Filesystem = new FilesystemConfig { SecurityMode = "standard", AllowedPaths = { rw, ro } };
         string key = "live_" + Guid.NewGuid().ToString("N")[..6];
         try
@@ -73,14 +74,17 @@ public class SbxSandboxLiveTests
                 Assert.Equal("from-vm", File.ReadAllText(Path.Combine(rw, "out.txt")).Trim());
                 Assert.False(File.Exists(Path.Combine(ro, "no.txt")));
 
-                // network: false => egress denied.
-                string net = await RunJob("python -c \"import urllib.request as u; print(u.urlopen('https://pypi.org', timeout=8).status)\" || echo net-blocked");
-                Assert.Contains("net-blocked", net);
+                // network: false => egress denied; true => reachable.
+                string net = await RunJob("python -c \"import urllib.request as u; print('status', u.urlopen('https://pypi.org', timeout=15).status)\" || echo net-blocked");
+                Assert.Contains(network ? "status 200" : "net-blocked", net);
             }   // scope dispose tears the session (and its microVM) down
             if (backend == "docker")
             {
                 string ls = OciSandbox.Run(SandboxBackend.SbxBinary(), "ls --json", allowFail: true).outp;
                 Assert.DoesNotContain("mux-live-", ls);   // torn down with the session
+                // ...including the per-sandbox allow-all rule that network: true adds.
+                string rules = OciSandbox.Run(SandboxBackend.SbxBinary(), "policy ls --wide", allowFail: true).outp;
+                Assert.DoesNotContain("sandbox:mux-live-", rules);
             }
         }
         finally

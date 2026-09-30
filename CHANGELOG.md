@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CLI: its own kernel and Docker engine, on Windows 11, macOS (Apple silicon) and Ubuntu 24.04+. It needs
   `sbx login`; a missing or signed-out `sbx` is an error, never a fall back to a container or the host.
   `/work` and `/host/<leaf>` mounts work as before; `network: false` denies all egress.
-- **Upgrade note:** configs with `backend: docker` get the microVM. The previous container path is
+- **Upgrade note:** configs with `backend: docker` (and `/dockerexec`) get the microVM. The previous container path is
   `docker-container` (alias `docker-legacy`), unchanged. `allowedDomains` only works on container backends
   and is rejected on `docker` (sbx cannot express a strict allowlist).
 

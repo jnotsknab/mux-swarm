@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using MuxSwarm.Engine;
 using MuxSwarm.Engine.NativeTools;
 using Xunit;
@@ -220,6 +221,21 @@ public class SandboxBackendTests
         Assert.Equal(expected, name);
         Assert.DoesNotContain('_', name);
     }
+
+    [Fact]
+    public void SbxMounts_DropNetworkShares_KeepTheRest()
+    {
+        var m = SandboxBackend.SbxMounts(Fs("standard", @"C:\proj", @"\\nas\share\docs", "//nas/share/x", @"C:\refs"));
+        Assert.Equal(new[] { @"C:\proj", @"C:\refs" }, m.Select(x => x.HostPath));
+        Assert.False(m[0].ReadOnly);   // workspace posture is unchanged by the filter
+    }
+
+    [Theory]
+    [InlineData(true, false)]    // still listed: keep it
+    [InlineData(null, false)]    // `sbx ls` failed: unknown, keep it (never leak or split the session)
+    [InlineData(false, true)]    // confirmed gone: rebuild
+    public void SbxRebuild_OnlyWhenConfirmedGone(bool? exists, bool rebuild) =>
+        Assert.Equal(rebuild, SbxSandbox.ShouldRebuild(exists));
 
     [Fact]
     public void SbxName_IsLengthBounded()

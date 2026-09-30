@@ -230,7 +230,7 @@ host execution.
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
 | `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **Container backends only** (`docker-container`/`podman`/`nerdctl`/`gvisor`/`kata`); rejected on `docker`, see below. Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
-| `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for OCI backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by wrapper/custom/host. |
+| `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for container backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by `docker` (microVM) and wrapper/custom/host. |
 
 ### Isolation tiers (weakest -> strongest)
 
@@ -271,7 +271,7 @@ the Python worker `sbx exec` into it, the same model as the container backends. 
   `docker-container` for a strict allowlist, or manage hosts with `sbx policy`.
 - **Lifecycle:** created on first tool use (`mux-<session>-<id>`), removed when the session ends. Leftovers
   from a crash show in `sbx ls` and can be removed with `sbx rm --force <name>`.
-- **Upgrading from 0.15.0:** configs with `backend: docker` now get the microVM. Set
+- **Upgrading from 0.15.0:** configs with `backend: docker` (and `/dockerexec`) now get the microVM. Set
   `backend: docker-container` to keep the old container.
 
 ### microVM isolation (kata)
@@ -856,7 +856,7 @@ Flags can be combined. Common stacks:
 /set <key> <v>  Edit any config key (e.g. /set ultra.thinkingBudget 20000)
 /showreasoning  full | summary (shown, grey italic) | none (hidden); persists to config
 /sandbox [b][i] Show or swap the exec sandbox backend (host|docker|docker-container|podman|gvisor|kata|bwrap|...)
-/dockerexec     Toggle Docker execution mode
+/dockerexec     Toggle the docker sandbox (microVM) on/off
 /startargs <a>  Persist launch flags to run every start (clear with /startargs clear)
 /limits         Display current execution limits
 /maxp <n>       Max agents running in parallel (default 4)

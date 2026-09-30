@@ -144,7 +144,7 @@ internal static class TuiCommands
         new("/verbose",      "Toggle compact/full tool output", Scope.ReplOnly),
         new("/subagentview", "Toggle collapsed/expanded sub-agent output (/sav)", Scope.ReplOnly),
         new("/daemonview",   "Toggle collapsed/expanded daemon-fired goal output (/dv)", Scope.ReplOnly),
-        new("/dockerexec",   "Toggle Docker execution mode", Scope.ReplOnly),
+        new("/dockerexec",   "Toggle the docker sandbox (microVM) on/off", Scope.ReplOnly),
         new("/sandbox",      "Show or hot-swap the execution sandbox backend", Scope.ReplOnly),
         new("/login",        "Log in with Claude / ChatGPT (subscription OAuth; add 'headless' for remote/VPS)", Scope.ReplOnly),
         new("/ping",         "Test a configured provider\u0027s connectivity", Scope.ReplOnly),

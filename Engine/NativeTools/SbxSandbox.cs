@@ -45,8 +45,9 @@ internal sealed class SbxSandbox : ISessionSandbox
             if (_disposed) return;
             if (_started)
             {
-                if (Exists()) return;   // sbx exec restarts a stopped sandbox by itself
-                _started = false;       // removed out from under us: rebuild
+                if (!ShouldRebuild(Exists())) return;   // sbx exec restarts a stopped sandbox by itself
+                OciSandbox.Run(_spec.Binary, $"rm --force {_name}", allowFail: true);
+                _started = false;
                 _name = "";
             }
             if (_buildAttempts >= MaxBuildAttempts)
@@ -59,13 +60,8 @@ internal sealed class SbxSandbox : ISessionSandbox
             Directory.CreateDirectory(_hostWorkDir);
             _name = SandboxName(_key, Guid.NewGuid().ToString("N")[..6]);
 
-            var mounts = new List<SandboxMount>();
-            var skipped = new List<string>();
-            foreach (var m in _spec.Mounts)
-            {
-                if (UncDriveMapper.IsUnc(m.HostPath)) skipped.Add(m.HostPath);
-                else mounts.Add(m);
-            }
+            var mounts = _spec.Mounts;   // network shares were already dropped (SandboxBackend.SbxMounts)
+            var skipped = (App.Config.Filesystem?.AllowedPaths ?? []).Where(UncDriveMapper.IsUnc).ToList();
             if (skipped.Count > 0)
                 MuxConsole.WriteWarning($"[sandbox] skipped {skipped.Count} network-share path(s) the microVM cannot mount " +
                     $"(use /sandbox docker-container for these): {string.Join("; ", skipped)}");
@@ -96,21 +92,29 @@ internal sealed class SbxSandbox : ISessionSandbox
     /// <inheritdoc/>
     public (string File, string Args) ExecShell(string innerCommand)
     {
-        EnsureStarted();
+        if (!_started) EnsureStarted();   // callers health-check first; skip a second `sbx ls` per job
         return (_spec.Binary, $"exec -w {OciSandbox.GuestWorkDir} {_name} sh -c {OciSandbox.ShQuoteForArgv(innerCommand)}");
     }
 
     /// <inheritdoc/>
     public (string File, string Args) ExecPythonWorker(string guestWorkerPath)
     {
-        EnsureStarted();
+        if (!_started) EnsureStarted();
         return (_spec.Binary, $"exec -i -w {OciSandbox.GuestWorkDir} {_name} python {guestWorkerPath}");
     }
 
-    private bool Exists()
+    /// <summary>
+    /// Rebuild only when sbx confirmed the VM is gone (<paramref name="exists"/> false). Unknown (a failed
+    /// <c>sbx ls</c>) keeps the current VM: dropping it would leak it and split the session between the
+    /// Python worker (old VM) and new shell jobs (new VM).
+    /// </summary>
+    internal static bool ShouldRebuild(bool? exists) => exists == false;
+
+    /// <summary>Whether the VM still exists: null when <c>sbx ls</c> itself failed (unknown).</summary>
+    private bool? Exists()
     {
-        var (ok, outp, _) = OciSandbox.Run(_spec.Binary, "ls --json", allowFail: true);
-        return ok && ListContains(outp, _name);
+        var (ok, outp, _) = OciSandbox.Run(_spec.Binary, "ls --json", allowFail: true, timeoutMs: 30_000);
+        return ok ? ListContains(outp, _name) : null;
     }
 
     /// <summary>True when <c>sbx ls --json</c> output lists a sandbox named <paramref name="name"/>.</summary>

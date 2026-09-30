@@ -51,8 +51,9 @@ public static class CliCmdUtils
 
     public static void HandleDockerExec(string cfgPath)
     {
-        // /dockerexec is now shorthand for the sandbox backend: toggle between host and docker. The
-        // docker-sandbox directive skill set + the IsUsingDockerForExec flag track the backend.
+        // /dockerexec is shorthand for the sandbox backend: toggle between host and docker (the Docker
+        // Sandboxes microVM since v0.15.1). The docker-sandbox directive skill set + the
+        // IsUsingDockerForExec flag track the backend.
         bool turningOn = App.Config.Sandbox.Backend.Trim().ToLowerInvariant() is "host" or "" or "none";
         ApplySandboxBackend(turningOn ? "docker" : "host", image: null, cfgPath);
     }

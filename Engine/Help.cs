@@ -84,7 +84,7 @@ public struct Help
         "  /deep           Toggle deep memory on/off (/deep [off])",
         "  /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)",
         "  /sessions       List all saved sessions with type and agent count",
-        "  /dockerexec     Toggle Docker execution mode",
+        "  /dockerexec     Toggle the docker sandbox (microVM) on/off",
             "  /sandbox        Show/swap exec sandbox backend (host|docker|podman|gvisor|kata|bwrap|...)",
         "  /delimiter      Toggle multi-line input delimiter",
         "  /dbg            Enable tool call output (applies to stdio mode only)",
