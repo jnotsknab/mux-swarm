@@ -118,11 +118,11 @@ public static class PreambleBuilder
             // (within allowed paths), matching the docker-sandbox skill's "don't use the sandbox just to
             // write files" rule.
             preamble += "## Execution Sandbox (ACTIVE)\n"
-                + "Your shell commands and Python execution run INSIDE a sandbox container, not on the host. "
+                + "Your shell commands and Python execution run INSIDE a sandbox (container or microVM), not on the host. "
                 + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n";
             // Surface the allowed-path mounts so the agent knows WHERE its project files are inside the
             // sandbox and which are read-only (mapped from the filesystem security posture).
-            // Mounts come from the ACTIVE spec (only OCI backends bind /host/* paths; wrapper/custom
+            // Mounts come from the ACTIVE spec (only container/microVM backends bind /host/* paths; wrapper/custom
             // backends have none), so the list always matches what is really mounted in this session.
             var mounts = SandboxRuntime.Active?.Mounts;
             if (mounts is { Count: > 0 })

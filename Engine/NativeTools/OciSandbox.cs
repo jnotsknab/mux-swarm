@@ -17,7 +17,7 @@ namespace MuxSwarm.Engine.NativeTools;
 /// point at the sidecar, so it can reach listed domains only. The sidecar always runs from
 /// <see cref="ProxyImage"/>, never the sandbox image, so any sandbox image works with an allowlist.
 /// </summary>
-internal sealed class OciSandbox : IDisposable
+internal sealed class OciSandbox : ISessionSandbox
 {
     private readonly SandboxSpec _spec;
     private readonly string _hostWorkDir;
@@ -340,7 +340,7 @@ internal sealed class OciSandbox : IDisposable
     }
 
     // Quote a command for use as a single argv token after `sh -c` in the exec arg string.
-    private static string ShQuoteForArgv(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$") + "\"";
+    internal static string ShQuoteForArgv(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$") + "\"";
 
     // The injected filtering proxy. Deny-by-default CONNECT + HTTP Host filtering, suffix match on allowlist.
     private const string ProxyScript = @"

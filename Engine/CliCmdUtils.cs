@@ -85,7 +85,8 @@ public static class CliCmdUtils
             }
             var err = SandboxBackend.Validate(s);
             MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");
-            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
+            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|docker-container|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
+            MuxConsole.WriteMuted("  docker = Docker Sandboxes microVM (sbx); docker-container (or docker-legacy) = plain container");
             return;
         }
         string backend = parts[1].Trim().ToLowerInvariant();
@@ -103,6 +104,7 @@ public static class CliCmdUtils
             Network = App.Config.Sandbox.Network,
             AllowedDomains = App.Config.Sandbox.AllowedDomains,
             Command = App.Config.Sandbox.Command,
+            Runtime = App.Config.Sandbox.Runtime,
         };
         var err = SandboxBackend.Validate(candidate);
         if (err is not null)

@@ -10,7 +10,8 @@ namespace MuxSwarm.Engine.NativeTools;
 internal enum SandboxKind
 {
     Host,     // no wrap (current behavior)
-    Oci,      // docker/podman/nerdctl/gvisor - persistent container per session, exec into it
+    Oci,      // docker-container/podman/nerdctl/gvisor/kata - persistent container per session, exec into it
+    Sbx,      // docker - Docker Sandboxes microVM per session (sbx CLI), exec into it
     Wrapper,  // bwrap/firejail/sandbox-exec - re-wrap each command, no image, no persistent instance
     Custom    // user template string
 }
@@ -36,12 +37,14 @@ internal sealed class SandboxSpec
     /// <summary>
     /// Host allowed-paths to bind into the sandbox, with per-path read-only/read-write derived from the
     /// filesystem security posture (see <see cref="SandboxBackend.ResolveMounts"/>). Empty = only the
-    /// Mux-internal work dir is mounted (today's behavior). OCI backends only.
+    /// Mux-internal work dir is mounted (today's behavior). Container and microVM backends only.
     /// </summary>
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Array.Empty<SandboxMount>();
 
     public bool UsesAllowlist => AllowedDomains.Count > 0;
-    public bool IsOci => Kind == SandboxKind.Oci;
+
+    /// <summary>True for backends with a persistent per-session instance that tools exec into.</summary>
+    public bool IsSession => Kind is SandboxKind.Oci or SandboxKind.Sbx;
 }
 
 /// <summary>One host->guest bind for the sandbox. <paramref name="ReadOnly"/> derived from fs security mode.</summary>
@@ -61,7 +64,29 @@ internal sealed class SandboxException : Exception
 internal static class SandboxBackend
 {
     private static readonly HashSet<string> OciBackends =
-        new(StringComparer.OrdinalIgnoreCase) { "docker", "podman", "nerdctl", "gvisor", "kata" };
+        new(StringComparer.OrdinalIgnoreCase) { "docker-container", "podman", "nerdctl", "gvisor", "kata" };
+
+    /// <summary>
+    /// The Docker Sandboxes CLI. On Windows the per-user install adds its bin dir to the user PATH,
+    /// which an already-running process may not have picked up, so the default install path is the fallback.
+    /// </summary>
+    internal static string SbxBinary()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DockerSandboxes", "bin", "sbx.exe");
+            if (!BinaryOnPath("sbx", "version") && File.Exists(local)) return local;
+        }
+        return "sbx";
+    }
+
+    /// <summary>Canonical backend name: <c>docker-legacy</c> is an alias of <c>docker-container</c>.</summary>
+    internal static string Canonical(string? backend)
+    {
+        string b = (backend ?? "host").Trim().ToLowerInvariant();
+        return b == "docker-legacy" ? "docker-container" : b;
+    }
 
     private static readonly HashSet<string> WrapperBackends =
         new(StringComparer.OrdinalIgnoreCase) { "bwrap", "firejail", "sandbox-exec" };
@@ -73,7 +98,7 @@ internal static class SandboxBackend
     /// </summary>
     public static SandboxSpec? Resolve(SandboxConfig cfg)
     {
-        string backend = (cfg.Backend ?? "host").Trim().ToLowerInvariant();
+        string backend = Canonical(cfg.Backend);
         if (backend is "host" or "" or "none") return null;
 
         var allow = (cfg.AllowedDomains ?? new List<string>())
@@ -88,8 +113,8 @@ internal static class SandboxBackend
                 throw new SandboxException("sandbox.backend is 'custom' but sandbox.command (the template) is empty. " +
                     "Provide a template using {cmd}, {workdir}, {image} placeholders.");
             if (allow.Count > 0)
-                throw new SandboxException("sandbox.allowedDomains is only enforceable on OCI backends " +
-                    "(docker/podman/nerdctl/gvisor). A 'custom' backend manages its own network; remove allowedDomains.");
+                throw new SandboxException("sandbox.allowedDomains is only enforceable on container backends " +
+                    "(docker-container/podman/nerdctl/gvisor). A 'custom' backend manages its own network; remove allowedDomains.");
             return new SandboxSpec
             {
                 Kind = SandboxKind.Custom, Backend = backend, Binary = "",
@@ -97,14 +122,40 @@ internal static class SandboxBackend
             };
         }
 
-        // ----- OCI family -----
+        // ----- docker: Docker Sandboxes microVM (sbx) -----
+        if (backend == "docker")
+        {
+            if (allow.Count > 0)
+                throw new SandboxException("sandbox.allowedDomains is not supported on the 'docker' microVM backend: Docker " +
+                    "Sandboxes deny rules outrank allow rules, so a strict allowlist cannot be expressed. Use /sandbox " +
+                    "docker-container for a strict allowlist, or remove allowedDomains (network false = no egress, " +
+                    "true = your sbx policy).");
+            if (string.IsNullOrWhiteSpace(cfg.Image))
+                throw new SandboxException("sandbox.backend 'docker' requires sandbox.image to be set.");
+            string sbx = SbxBinary();
+            if (!BinaryOnPath(sbx, "version"))
+                throw new SandboxException("sandbox.backend 'docker' runs a Docker Sandboxes microVM and needs the 'sbx' CLI, " +
+                    "which was not found. Install it (https://docs.docker.com/ai/sandboxes/install/), run `sbx login`, " +
+                    "or use /sandbox docker-container for a plain container.");
+            var (ok, _, err) = OciSandbox.Run(sbx, "ls --json", allowFail: true, timeoutMs: 30_000);
+            if (!ok)
+                throw new SandboxException($"'sbx' is installed but not ready ({err.Trim()}). Run `sbx login` " +
+                    "(and `sbx policy init balanced` on first use), or use /sandbox docker-container.");
+            return new SandboxSpec
+            {
+                Kind = SandboxKind.Sbx, Backend = backend, Binary = sbx, Image = cfg.Image,
+                NetworkOpen = cfg.Network, Mounts = ResolveMounts(App.Config.Filesystem),
+            };
+        }
+
+        // ----- container family -----
         if (OciBackends.Contains(backend))
         {
             // gvisor + kata are runtimes layered on a base OCI engine (docker by default): gvisor =>
             // docker --runtime=runsc (user-space kernel); kata => docker --runtime=kata-runtime (true
             // microVM with its own guest kernel). Both reuse the persistent-container + `exec` lifecycle
             // (kata-agent over vsock services `exec`, like runsc) so the OciSandbox model is unchanged.
-            string binary = backend is "gvisor" or "kata" ? "docker" : backend;
+            string binary = backend is "gvisor" or "kata" or "docker-container" ? "docker" : backend;
             // Runtime resolution: an explicit sandbox.runtime wins (lets you layer any runtime onto any
             // base engine, e.g. podman + kata-runtime); otherwise the microVM/sandboxed-kernel backends
             // imply their canonical runtime, and plain docker/podman/nerdctl default to the engine default.
@@ -116,7 +167,7 @@ internal static class SandboxBackend
             {
                 if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                     throw new SandboxException("sandbox.backend 'kata' is a microVM runtime that requires Linux + KVM; " +
-                        "it is not available on this OS. Use docker/podman/nerdctl (containers) or gvisor (user-space kernel) instead.");
+                        "it is not available on this OS. Use docker (Docker Sandboxes microVM), docker-container/podman/nerdctl (containers) or gvisor (user-space kernel) instead.");
                 if (!File.Exists("/dev/kvm"))
                     throw new SandboxException("sandbox.backend 'kata' needs hardware virtualization (/dev/kvm) but it was not found. " +
                         "Enable KVM (and nested virtualization if inside a VM), install kata-containers, then retry.");
@@ -138,7 +189,7 @@ internal static class SandboxBackend
             if (allow.Count > 0)
                 throw new SandboxException($"sandbox.allowedDomains is not enforceable on the '{backend}' wrapper backend " +
                     "(namespace network isolation is all-or-nothing without privileged plumbing). Use an OCI backend " +
-                    "(docker/podman/nerdctl) for a domain allowlist, or set sandbox.network true/false.");
+                    "(docker-container/podman/nerdctl) for a domain allowlist, or set sandbox.network true/false.");
             if (backend == "sandbox-exec" && !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
                 throw new SandboxException("sandbox.backend 'sandbox-exec' is macOS-only.");
             if ((backend is "bwrap" or "firejail") && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -151,8 +202,8 @@ internal static class SandboxBackend
             };
         }
 
-        throw new SandboxException($"Unknown sandbox.backend '{cfg.Backend}'. Valid: host, docker, podman, nerdctl, " +
-            "gvisor, kata, bwrap, firejail, sandbox-exec, custom.");
+        throw new SandboxException($"Unknown sandbox.backend '{cfg.Backend}'. Valid: host, docker (microVM), " +
+            "docker-container (alias docker-legacy), podman, nerdctl, gvisor, kata, bwrap, firejail, sandbox-exec, custom.");
     }
 
     /// <summary>Validate WITHOUT throwing - returns the error string (or null if ok). For /sandbox + startup.</summary>
@@ -166,19 +217,19 @@ internal static class SandboxBackend
 
     private static void EnsureBinaryReady(string binary, bool ociDaemonCheck)
     {
-        if (!BinaryOnPath(binary))
+        if (!BinaryOnPath(binary, "--version"))
             throw new SandboxException($"sandbox backend needs '{binary}' but it was not found on PATH. Install it (or pick another backend).");
         if (ociDaemonCheck && !OciDaemonReady(binary))
             throw new SandboxException($"'{binary}' is installed but its daemon/runtime is not reachable ('{binary} info' failed). Start it and retry.");
     }
 
-    private static bool BinaryOnPath(string binary)
+    private static bool BinaryOnPath(string binary, string probeArgs)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = binary, Arguments = "--version",
+                FileName = binary, Arguments = probeArgs,
                 RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
             };

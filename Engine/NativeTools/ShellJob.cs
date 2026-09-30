@@ -42,7 +42,7 @@ internal sealed class ShellJob
 
     public ShellJob(string id, string command) { _id = id; _command = command; }
 
-    public void Start(string workDir, string? venvDir = null, SandboxSpec? spec = null, OciSandbox? oci = null)
+    public void Start(string workDir, string? venvDir = null, SandboxSpec? spec = null, ISessionSandbox? oci = null)
     {
         string file;
         string args;
@@ -51,9 +51,9 @@ internal sealed class ShellJob
             // Host execution (current behavior).
             (file, args) = SplitShell(_command);
         }
-        else if (spec.Kind == SandboxKind.Oci && oci is not null)
+        else if (spec.IsSession && oci is not null)
         {
-            // Run the command inside the per-session container via `<binary> exec`.
+            // Run the command inside the per-session container / microVM via `<binary> exec`.
             (file, args) = oci.ExecShell(_command);
         }
         else

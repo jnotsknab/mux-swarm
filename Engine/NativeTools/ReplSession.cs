@@ -70,9 +70,9 @@ internal sealed class ReplSession : IDisposable
     // ---- sandbox (null = host execution; non-null = shell jobs + python worker run inside it) ----
     private readonly SandboxSpec? _spec;
     private readonly string? _sandboxError;
-    private OciSandbox? _oci;
+    private ISessionSandbox? _oci;
     private bool Sandboxed => _spec is not null;
-    private bool OciSandboxed => _spec is { Kind: SandboxKind.Oci };
+    private bool OciSandboxed => _spec is { IsSession: true };
 
     public ReplSession(string key)
     {
@@ -86,7 +86,8 @@ internal sealed class ReplSession : IDisposable
         // from the ctor - so an invalid sandbox config fails loud at the tool, never silently to host.
         try { _spec = SandboxBackend.Resolve(App.Config.Sandbox); }
         catch (SandboxException ex) { _spec = null; _sandboxError = ex.Message; }
-        if (OciSandboxed) _oci = new OciSandbox(_spec!, _workDir, _key);
+        if (OciSandboxed)
+            _oci = _spec!.Kind == SandboxKind.Sbx ? new SbxSandbox(_spec, _workDir, _key) : new OciSandbox(_spec, _workDir, _key);
     }
 
     /// <summary>Non-null when the configured sandbox is unusable; tools return it instead of running on host.</summary>
