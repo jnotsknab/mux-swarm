@@ -61,7 +61,9 @@ public class SbxSandboxLiveTests
         File.WriteAllText(Path.Combine(ro, "ref.txt"), "reference");
         var prevFs = App.Config.Filesystem;
         App.Config.Sandbox = new SandboxConfig { Backend = backend, Image = "python:3.12-slim", Network = network };
-        App.Config.Filesystem = new FilesystemConfig { SecurityMode = "standard", AllowedPaths = { rw, ro } };
+        // A missing allowed path (common in real configs) must be skipped, not sent to `sbx create`,
+        // which would stop at a "(y/N)" prompt.
+        App.Config.Filesystem = new FilesystemConfig { SecurityMode = "standard", AllowedPaths = { rw, ro, Path.Combine(root, "missing") } };
         string key = "live_" + Guid.NewGuid().ToString("N")[..6];
         try
         {

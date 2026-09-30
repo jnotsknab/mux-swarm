@@ -223,11 +223,37 @@ public class SandboxBackendTests
     }
 
     [Fact]
-    public void SbxMounts_DropNetworkShares_KeepTheRest()
+    public void SbxMounts_DropNetworkSharesAndMissingPaths_KeepTheRest()
     {
-        var m = SandboxBackend.SbxMounts(Fs("standard", @"C:\proj", @"\\nas\share\docs", "//nas/share/x", @"C:\refs"));
-        Assert.Equal(new[] { @"C:\proj", @"C:\refs" }, m.Select(x => x.HostPath));
-        Assert.False(m[0].ReadOnly);   // workspace posture is unchanged by the filter
+        // sbx prompts "(y/N)" for a workspace that does not exist; a missing allowed path must never reach it.
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mux-sbxm-" + Guid.NewGuid().ToString("N")[..6]);
+        string proj = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "proj")).FullName;
+        string refs = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "refs")).FullName;
+        string gone = System.IO.Path.Combine(root, "gone");
+        try
+        {
+            var m = SandboxBackend.SbxMounts(Fs("standard", proj, @"\\nas\share\docs", "//nas/share/x", gone, refs));
+            Assert.Equal(new[] { proj, refs }, m.Select(x => x.HostPath));
+            Assert.False(m[0].ReadOnly);   // workspace posture is unchanged by the filter
+            Assert.True(m[1].ReadOnly);
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Run_NeverLetsTheChildWaitOnStdin()
+    {
+        // A CLI that asks a question and reads stdin (sbx: "workspace does not exist, create it? (y/N)")
+        // must see EOF at once. With stdin inherited it blocked on the user's console until the timeout,
+        // which froze the first tool call of every docker session.
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("powershell", "-NoProfile -Command \"$l = [Console]::In.ReadLine(); if ($null -eq $l) { 'eof' } else { 'got:' + $l }\"")
+            : ("/bin/sh", "-c \"read l && echo got:$l || echo eof\"");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (ok, outp, err) = OciSandbox.Run(file, args, allowFail: true, timeoutMs: 20_000);
+        Assert.True(ok, err);
+        Assert.Contains("eof", outp);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15), $"took {sw.Elapsed}");
     }
 
     [Theory]

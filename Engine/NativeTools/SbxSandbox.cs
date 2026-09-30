@@ -60,11 +60,12 @@ internal sealed class SbxSandbox : ISessionSandbox
             Directory.CreateDirectory(_hostWorkDir);
             _name = SandboxName(_key, Guid.NewGuid().ToString("N")[..6]);
 
-            var mounts = _spec.Mounts;   // network shares were already dropped (SandboxBackend.SbxMounts)
-            var skipped = (App.Config.Filesystem?.AllowedPaths ?? []).Where(UncDriveMapper.IsUnc).ToList();
+            var mounts = _spec.Mounts;   // network shares + missing paths were already dropped (SandboxBackend.SbxMounts)
+            var skipped = (App.Config.Filesystem?.AllowedPaths ?? [])
+                .Where(p => !string.IsNullOrWhiteSpace(p) && !mounts.Any(m => m.HostPath == p)).Distinct().ToList();
             if (skipped.Count > 0)
-                MuxConsole.WriteWarning($"[sandbox] skipped {skipped.Count} network-share path(s) the microVM cannot mount " +
-                    $"(use /sandbox docker-container for these): {string.Join("; ", skipped)}");
+                MuxConsole.WriteWarning($"[sandbox] not mounted in the microVM ({skipped.Count}: network shares or " +
+                    $"missing paths): {string.Join("; ", skipped)}");
 
             var (ok, _, err) = OciSandbox.Run(_spec.Binary, CreateArgs(_name, _spec.Image, _spec.NetworkOpen, _hostWorkDir, mounts),
                 allowFail: true, timeoutMs: 600_000);

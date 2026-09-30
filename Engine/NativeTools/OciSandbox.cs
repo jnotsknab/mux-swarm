@@ -294,6 +294,8 @@ internal sealed class OciSandbox : ISessionSandbox
     /// <summary>
     /// Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s). stdout and
     /// stderr are drained concurrently so the timeout is enforced and a full stderr pipe cannot deadlock.
+    /// stdin is an already-closed pipe: an inherited console stdin let a CLI prompt (sbx's "workspace
+    /// does not exist, create it? (y/N)") block on the user's terminal until the timeout.
     /// </summary>
     internal static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
     {
@@ -302,11 +304,12 @@ internal sealed class OciSandbox : ISessionSandbox
             var psi = new ProcessStartInfo
             {
                 FileName = file, Arguments = args,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
             };
             using var p = Process.Start(psi);
             if (p is null) return (false, "", "could not start " + file);
+            p.StandardInput.Close();   // EOF: any prompt gets "no answer" at once instead of waiting
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
             if (!p.WaitForExit(timeoutMs))

@@ -82,11 +82,13 @@ internal static class SandboxBackend
     }
 
     /// <summary>
-    /// Mounts for the <c>docker</c> microVM: the usual allowed-path mounts minus network shares (UNC), which
-    /// sbx cannot mount. Dropped at resolve time so the preamble never lists a path that is not there.
+    /// Mounts for the <c>docker</c> microVM: the usual allowed-path mounts minus network shares (UNC),
+    /// which sbx cannot mount, and paths that do not exist (sbx prompts to create a missing workspace, and
+    /// Mux must not create directories from config). Dropped at resolve time so the preamble never lists
+    /// a path that is not mounted.
     /// </summary>
     internal static IReadOnlyList<SandboxMount> SbxMounts(FilesystemConfig fs) =>
-        ResolveMounts(fs).Where(m => !UncDriveMapper.IsUnc(m.HostPath)).ToList();
+        ResolveMounts(fs).Where(m => !UncDriveMapper.IsUnc(m.HostPath) && Directory.Exists(m.HostPath)).ToList();
 
     /// <summary>Canonical backend name: <c>docker-legacy</c> is an alias of <c>docker-container</c>.</summary>
     internal static string Canonical(string? backend)
