@@ -1,3 +1,4 @@
+using System.Globalization;
 using MuxSwarm.Engine;
 using Xunit;
 
@@ -93,6 +94,44 @@ public class FirstTurnCommandGuardTests
     public void BareBang_IsGoal()
         => Assert.Equal(SingleAgentOrchestrator.FirstTurnInputKind.Goal,
             SingleAgentOrchestrator.ClassifyFirstTurnInput("!"));
+
+    // F1 (v0.15.0 /share audit): culture-sensitive StartsWith("!") ignores zero-width/format chars
+    // under ICU, so "\u200B!cmd" dispatched as a shell escape while the ordinal guest policy saw no
+    // '!'. The shell escape must require a LITERAL leading '!'.
+    [Theory]
+    [InlineData("\u200B!whoami")]  // zero-width space
+    [InlineData("\u00AD!whoami")]  // soft hyphen
+    [InlineData("\uFEFF!whoami")]  // BOM / zero-width no-break space
+    [InlineData("\u2060!whoami")]  // word joiner
+    [InlineData("\u200B!& whoami")]
+    public void ShellBang_RequiresLiteralLeadingBang(string input)
+    {
+        var prev = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = new CultureInfo("en-US");
+        try
+        {
+            // Prove the runtime would have reproduced the bug, else this test is vacuous.
+            Assert.True(input.StartsWith("!", StringComparison.CurrentCulture),
+                "runtime is not ICU-linguistic (invariant globalization?) - cannot observe the bug class");
+            Assert.False(SingleAgentOrchestrator.IsShellEscape(input.Trim()));
+            Assert.NotEqual(SingleAgentOrchestrator.FirstTurnInputKind.Shell,
+                SingleAgentOrchestrator.ClassifyFirstTurnInput(input));
+        }
+        finally { CultureInfo.CurrentCulture = prev; }
+    }
+
+    [Theory]
+    [InlineData("!git status")]
+    [InlineData("!dir")]
+    public void IsShellEscape_AcceptsLiteralBang(string input)
+        => Assert.True(SingleAgentOrchestrator.IsShellEscape(input));
+
+    [Theory]
+    [InlineData("!")]
+    [InlineData("")]
+    [InlineData("hi !x")]
+    public void IsShellEscape_RejectsNonCommands(string input)
+        => Assert.False(SingleAgentOrchestrator.IsShellEscape(input));
 
     // Session-agnostic commands handled UPSTREAM by MetaCommandDispatch never reach the
     // classifier in practice, but if they did they are still session-native per the command

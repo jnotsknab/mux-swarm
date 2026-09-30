@@ -283,7 +283,29 @@ public class RemoteInputTests
     [InlineData("/paste", false)]
     [InlineData("/setup", false)]
     [InlineData("/some-future-command", false)]
+    // F1 (v0.15.0 audit): invisible prefixes must not hide a shell escape or a blocked command.
+    [InlineData("\u200B!whoami", false)]
+    [InlineData("\u00AD!& whoami", false)]
+    [InlineData("\uFEFF\u2060!id", false)]
+    [InlineData("\u034F!id", false)]           // leading combining mark
+    [InlineData("\u200B /config x y", false)]
+    [InlineData("\u200B/daemon stop", false)]
+    [InlineData("\u200B/help", true)]          // still an allowlisted command once visible
+    [InlineData("\U000E0020!id", false)]       // supplementary-plane format char (tag space)
+    [InlineData("\U000E0020/daemon stop", false)]
+    [InlineData("\U000E0100!id", false)]       // supplementary-plane variation selector (Mn)
+    [InlineData("family \U0001F468\u200D\U0001F469\u200D\U0001F467 photo", true)]  // ZWJ in ordinary text
     public void Policy_Allowlists_Guest_Lines(string line, bool allowed) => Assert.Equal(allowed, RemotePolicy.IsAllowed(line));
+
+    [Fact]
+    public void Guest_ZeroWidth_Bang_From_Wire_Is_Refused()
+    {
+        // Decode keeps Cf chars (unchanged behaviour); the policy must still refuse the line.
+        string text = string.Concat(D("\u200B!& whoami").Select(e => e.Text));
+        Assert.Contains("\u200B", text);
+        Assert.False(RemotePolicy.IsAllowed(text));
+        Assert.Equal("a shell command (!)", RemotePolicy.Describe(text));
+    }
 
     [Fact]
     public void Guest_Key_Encoding_Round_Trips_Through_Host_Decode()

@@ -153,10 +153,12 @@ public static class SingleAgentOrchestrator
         GuardedSessionNative,
     }
 
+    internal static bool IsShellEscape(string t) => t.Length > 1 && t[0] == '!';
+
     internal static FirstTurnInputKind ClassifyFirstTurnInput(string? input)
     {
         var t = (input ?? "").Trim();
-        if (t.StartsWith("!") && t.Length > 1) return FirstTurnInputKind.Shell;
+        if (IsShellEscape(t)) return FirstTurnInputKind.Shell;
         if (t == "/" || t == "/?") return FirstTurnInputKind.Palette;
         if (t.Length == 0 || t[0] != '/') return FirstTurnInputKind.Goal;
         string cmd = t.Split(' ', 2)[0].ToLowerInvariant();
@@ -325,7 +327,7 @@ public static class SingleAgentOrchestrator
             }
             else
             {
-                var sep = content.Length > 0 && !content.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                var sep = content.Length > 0 && !content.EndsWith("\r\n", StringComparison.Ordinal) ? "\r\n\r\n" : "\r\n";
                 updated = content + sep + header + "\r\n" + stub + "\r\n";
             }
 
@@ -427,7 +429,7 @@ public static class SingleAgentOrchestrator
                 }
                 else
                 {
-                    var sep = existing.Length > 0 && !existing.EndsWith("\r\n") ? "\r\n\r\n" : "\r\n";
+                    var sep = existing.Length > 0 && !existing.EndsWith("\r\n", StringComparison.Ordinal) ? "\r\n\r\n" : "\r\n";
                     updated = existing + sep + header + "\r\n" + stub + "\r\n";
                 }
                 Directory.CreateDirectory(PlatformContext.ContextDirectory);
@@ -2516,7 +2518,7 @@ public static class SingleAgentOrchestrator
                 string metaCmd = nextInput!.Trim();
                 // !<command>: run a shell command, show its output, and inject "[ran: <cmd>]\n<output>"
                 // as the next user turn so the model sees the result. Intercepted before slash dispatch.
-                if (metaCmd.StartsWith("!") && metaCmd.Length > 1)
+                if (IsShellEscape(metaCmd))
                 {
                     string shellCmd = metaCmd[1..].Trim();
                     if (shellCmd.Length == 0) { MuxConsole.WriteMuted("Usage: !<command>"); }

@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.15.1-alpha] — Unreleased
+
+### Fixed
+- **`/share` guest typing:** an invisible format character (e.g. a zero-width space) before `!` or a
+  blocked `/command` hid it from the guest-input policy while the orchestrator still dispatched it. Command
+  prefixes (`!`, `/`) are now matched ordinally everywhere, and guest lines are classified on their visible
+  text. Guest text itself is not modified.
+
 ## [v0.15.0-alpha] — Unreleased
 
 Live session sharing, webhooks as request → run → result, and a working sandbox network allowlist.
