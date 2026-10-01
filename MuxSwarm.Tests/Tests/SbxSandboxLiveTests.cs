@@ -60,9 +60,9 @@ public class SbxSandboxLiveTests
         string rw = Directory.CreateDirectory(Path.Combine(root, "proj")).FullName;
         string ro = Directory.CreateDirectory(Path.Combine(root, "refs")).FullName;
         // A read-only allowed path that is an ANCESTOR of the session work dir (Jonathan's config: the home
-        // dir as a reference path). It must not flip /work or the rw workspace read-only.
-        string localData = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(OperatingSystem.IsWindows()
-            ? Environment.SpecialFolder.LocalApplicationData : Environment.SpecialFolder.UserProfile), ".."));
+        // dir as a reference path). It must not flip /work or the rw workspace read-only. The work dir lives
+        // under %LOCALAPPDATA% / ~/.local/share, both inside the user profile.
+        string localData = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         File.WriteAllText(Path.Combine(ro, "ref.txt"), "reference");
         var prevFs = App.Config.Filesystem;
         App.Config.Sandbox = new SandboxConfig { Backend = backend, Image = "python:3.12-slim", Network = network };

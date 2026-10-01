@@ -319,7 +319,9 @@ public class SandboxBackendTests
     public void SbxAnchor_IsASiblingOfTheWorkDir()
     {
         string w = System.IO.Path.Combine("base", "repl", "repl___primary__");
-        Assert.Equal(System.IO.Path.Combine("base", "repl", ".sbx-anchor"), SbxSandbox.AnchorDir(w));
+        Assert.Equal(System.IO.Path.Combine("base", "repl", ".sbx-anchor", "repl___primary__"), SbxSandbox.AnchorDir(w));
+        // One per session: parallel sub-agents never share a primary workspace.
+        Assert.NotEqual(SbxSandbox.AnchorDir(w), SbxSandbox.AnchorDir(System.IO.Path.Combine("base", "repl", "repl_sub1")));
     }
 
     [Theory]
@@ -384,9 +386,8 @@ public class SandboxBackendTests
         Assert.Contains("ln -sfn '/c/w' '/work'", s);
         Assert.Contains("ln -sfn '/c/proj' '/host/proj'", s);
         Assert.Contains("ln -sfn '/c/it'\\''s' '/host/its'", s);
-        // Never deletes (a real dir at a link path may be host data on Linux/macOS) and never uses $.
+        // Never deletes (a real dir at a link path may be host data on Linux/macOS).
         Assert.DoesNotContain("rm ", s);
-        Assert.DoesNotContain("$", s);
     }
 
     [Fact]

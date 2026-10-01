@@ -149,12 +149,15 @@ internal sealed class SbxSandbox : ISessionSandbox
     }
 
     /// <summary>
-    /// The empty Mux-owned dir passed as sbx's primary workspace (next to the session work dir, never
-    /// inside an allowed path's tree on purpose). sbx requires the primary to be read-write and keeps it
-    /// first, so it must not be a real path whose access mode depends on ordering.
+    /// The empty Mux-owned dir passed as sbx's primary workspace, one per session
+    /// (<c>repl/.sbx-anchor/&lt;session dir&gt;</c>). sbx requires the primary to be read-write and keeps it
+    /// first, so it must not be a real path whose access mode depends on ordering. Nothing is written to it.
     /// </summary>
-    internal static string AnchorDir(string hostWorkDir) =>
-        Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(hostWorkDir)) ?? hostWorkDir, ".sbx-anchor");
+    internal static string AnchorDir(string hostWorkDir)
+    {
+        string w = Path.TrimEndingDirectorySeparator(hostWorkDir);
+        return Path.Combine(Path.GetDirectoryName(w) ?? w, ".sbx-anchor", Path.GetFileName(w));
+    }
 
     /// <summary>
     /// <c>sbx create</c> arguments: the <c>shell</c> agent on <paramref name="image"/>, the

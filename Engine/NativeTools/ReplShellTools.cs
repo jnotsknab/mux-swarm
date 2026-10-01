@@ -131,7 +131,8 @@ for line in sys.stdin:
     private static void EnsureExitHook()
     {
         if (Interlocked.Exchange(ref _exitHooked, 1) == 1) return;
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => DisposeAll();
+        // Bounded: a sandbox mid-create holds its gate for up to the create timeout; exit must not wait on it.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Task.Run(DisposeAll).Wait(TimeSpan.FromSeconds(15));
     }
 
     /// <summary>Dispose and forget every live session (workers, shell jobs, sandbox instances).</summary>
