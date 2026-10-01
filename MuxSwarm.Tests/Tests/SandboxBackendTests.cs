@@ -284,10 +284,96 @@ public class SandboxBackendTests
     public void SbxCreateArgs_DeniesEgress_UnlessNetworkOpen_AndMarksReadOnlyMounts()
     {
         var mounts = new[] { new SandboxMount(@"C:\proj", "/host/proj", false), new SandboxMount(@"C:\refs", "/host/refs", true) };
-        string closed = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", false, @"C:\w", mounts);
-        Assert.Equal("create --name mux-x-1 -q --pull missing -t python:3.12-slim --deny-network \"**\" shell \"C:\\w\" \"C:\\proj\" \"C:\\refs:ro\"", closed);
-        string open = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", true, @"C:\w", mounts);
+        string closed = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", false, @"C:\a", @"C:\w", mounts);
+        Assert.Equal("create --name mux-x-1 -q --pull missing -t python:3.12-slim --deny-network \"**\" shell \"C:\\a\" \"C:\\w\" \"C:\\proj\" \"C:\\refs:ro\"", closed);
+        string open = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", true, @"C:\a", @"C:\w", mounts);
         Assert.DoesNotContain("--deny-network", open);
+    }
+
+    [Fact]
+    public void SbxCreateArgs_ReadOnlyParentNeverFollowsAWritableChild()
+    {
+        // sbx applies workspaces in order and the later one wins for the paths it covers. Jonathan's config:
+        // sandboxPath (rw) under the home dir (ro reference path), work dir also under home. Listed child-first,
+        // `C:\Users\me:ro` made /work and the workspace read-only. Order must be shallowest first.
+        var mounts = new[]
+        {
+            new SandboxMount(@"C:\Users\me\build\ws", "/host/ws", false),
+            new SandboxMount(@"C:\Users\me", "/host/me", true),
+            new SandboxMount(@"C:\Users\me\build\ws\Configs", "/host/Configs", true),
+            new SandboxMount(@"C:\Users\me\Dev", "/host/Dev", true),
+        };
+        string a = SbxSandbox.CreateArgs("n", "img", false, @"C:\Users\me\AppData\repl\.sbx-anchor", @"C:\Users\me\AppData\repl\w", mounts);
+        string ws = a[(a.IndexOf(" shell ", StringComparison.Ordinal) + 7)..];
+        Assert.Equal("\"C:\\Users\\me\\AppData\\repl\\.sbx-anchor\" \"C:\\Users\\me:ro\" \"C:\\Users\\me\\Dev:ro\" " +
+                     "\"C:\\Users\\me\\build\\ws\" \"C:\\Users\\me\\AppData\\repl\\w\" \"C:\\Users\\me\\build\\ws\\Configs:ro\"", ws);
+    }
+
+    [Theory]
+    [InlineData(@"C:\a\b\", 3)]
+    [InlineData("/home/me/x", 3)]
+    [InlineData(@"C:\", 1)]
+    public void SbxDepth_CountsSegments(string p, int d) => Assert.Equal(d, SbxSandbox.Depth(p));
+
+    [Fact]
+    public void SbxAnchor_IsASiblingOfTheWorkDir()
+    {
+        string w = System.IO.Path.Combine("base", "repl", "repl___primary__");
+        Assert.Equal(System.IO.Path.Combine("base", "repl", ".sbx-anchor"), SbxSandbox.AnchorDir(w));
+    }
+
+    [Theory]
+    [InlineData("for d in /tmp /etc; do echo $d; done")]
+    [InlineData("x=1; echo ${x}x \"$HOME\" 'single'")]
+    [InlineData(@"echo a\b \""q\"" end\")]
+    [InlineData("")]
+    public void ShQuoteForArgv_RoundTripsThroughTheCommandLine(string script)
+    {
+        // The guest shell must receive the script byte-for-byte. The old quoting escaped every $ and doubled
+        // every backslash, so `$d` arrived as `\$d` and never expanded (seen in Jonathan's session).
+        string cmdline = "x " + OciSandbox.ShQuoteForArgv(script);
+        var argv = CommandLineSplit(cmdline);
+        Assert.Equal(2, argv.Count);
+        Assert.Equal(script, argv[1]);
+    }
+
+    // The documented .NET/MSVCRT argv parsing (what a spawned sbx/docker process sees), so the test is
+    // OS-independent: 2N backslashes + quote -> N backslashes and a quote toggle; 2N+1 -> N and a literal quote.
+    private static List<string> CommandLineSplit(string s)
+    {
+        var args = new List<string>(); var cur = new System.Text.StringBuilder(); bool inQ = false, any = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\\')
+            {
+                int n = 0; while (i < s.Length && s[i] == '\\') { n++; i++; }
+                if (i < s.Length && s[i] == '"') { cur.Append('\\', n / 2); if (n % 2 == 1) cur.Append('"'); else { inQ = !inQ; any = true; } }
+                else { cur.Append('\\', n); i--; }
+                continue;
+            }
+            if (c == '"') { inQ = !inQ; any = true; continue; }
+            if (c == ' ' && !inQ) { if (cur.Length > 0 || any) { args.Add(cur.ToString()); cur.Clear(); any = false; } continue; }
+            cur.Append(c);
+        }
+        if (cur.Length > 0 || any) args.Add(cur.ToString());
+        return args;
+    }
+
+    [Fact]
+    public void ListAllowed_ShowsHowEachHostPathAppearsInTheSandbox()
+    {
+        var spec = new SandboxSpec
+        {
+            Kind = SandboxKind.Sbx, Backend = "docker", Binary = "sbx", Image = "img",
+            Mounts = new[] { new SandboxMount(@"C:\ws", "/host/ws", false), new SandboxMount(@"C:\refs", "/host/refs", true) },
+        };
+        string m = FilesystemTools.SandboxMapping(spec, new[] { @"C:\ws", @"C:\refs", @"C:\gone" });
+        Assert.Contains("/work", m);
+        Assert.Contains(@"C:\ws  ->  /host/ws (rw)", m);
+        Assert.Contains(@"C:\refs  ->  /host/refs (ro)", m);
+        Assert.Contains(@"C:\gone  ->  not mounted in the sandbox", m);
+        Assert.Equal("", FilesystemTools.SandboxMapping(null, new[] { @"C:\ws" }));   // host execution: unchanged
     }
 
     [Fact]

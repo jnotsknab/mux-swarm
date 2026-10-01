@@ -59,12 +59,16 @@ public class SbxSandboxLiveTests
         string root = Path.Combine(Path.GetTempPath(), "mux-sbx-live-" + Guid.NewGuid().ToString("N")[..6]);
         string rw = Directory.CreateDirectory(Path.Combine(root, "proj")).FullName;
         string ro = Directory.CreateDirectory(Path.Combine(root, "refs")).FullName;
+        // A read-only allowed path that is an ANCESTOR of the session work dir (Jonathan's config: the home
+        // dir as a reference path). It must not flip /work or the rw workspace read-only.
+        string localData = Path.GetFullPath(Path.Combine(Environment.GetFolderPath(OperatingSystem.IsWindows()
+            ? Environment.SpecialFolder.LocalApplicationData : Environment.SpecialFolder.UserProfile), ".."));
         File.WriteAllText(Path.Combine(ro, "ref.txt"), "reference");
         var prevFs = App.Config.Filesystem;
         App.Config.Sandbox = new SandboxConfig { Backend = backend, Image = "python:3.12-slim", Network = network };
         // A missing allowed path (common in real configs) must be skipped, not sent to `sbx create`,
         // which would stop at a "(y/N)" prompt.
-        App.Config.Filesystem = new FilesystemConfig { SecurityMode = "standard", AllowedPaths = { rw, ro, Path.Combine(root, "missing") } };
+        App.Config.Filesystem = new FilesystemConfig { SecurityMode = "standard", AllowedPaths = { rw, ro, Path.Combine(root, "missing"), localData } };
         string key = "live_" + Guid.NewGuid().ToString("N")[..6];
         try
         {
@@ -72,15 +76,20 @@ public class SbxSandboxLiveTests
             {
                 // Python worker runs in the VM: own kernel, cwd /work, state persists across calls.
                 // /work is a link to the session work dir, so the worker's cwd is that dir's guest path.
-                string py = await Call("repl_shell_exec", new { code = "import os, platform\nx = 41\nopen('/work/py.txt', 'w').write('py')\nprint(platform.release(), os.getcwd() == os.path.realpath('/work'))" });
+                // /work must really be writable (statvfs + a real write; /proc/mounts can say rw when it is not).
+                string py = await Call("repl_shell_exec", new { code = "import os, platform\nx = 41\nopen('/work/py.txt', 'w').write('py')\nprint(platform.release(), os.getcwd() == os.path.realpath('/work'), 'work_ro=' + str(bool(os.statvfs('/work').f_flag & 1)))" });
                 Assert.DoesNotContain("SANDBOX ERROR", py);
                 Assert.Contains("True", py);
+                Assert.Contains("work_ro=False", py);
                 Assert.Contains("42", await Call("repl_shell_exec", new { code = "print(x + 1)" }));
 
                 // Shell job: writes land on the host through /host/<leaf>; the read-only mount rejects writes.
-                string sh = await RunJob("echo from-vm > /host/proj/out.txt && cat /host/refs/ref.txt && (echo x > /host/refs/no.txt || echo ro-denied)");
+                // `$d` must reach the guest shell unescaped (the old exec quoting turned it into `\$d`).
+                string sh = await RunJob("echo from-vm > /host/proj/out.txt && cat /host/refs/ref.txt && (echo x > /host/refs/no.txt || echo ro-denied) && for d in a b; do echo \"var-$d\"; done");
                 Assert.Contains("reference", sh);
                 Assert.Contains("ro-denied", sh);
+                Assert.Contains("var-a", sh);
+                Assert.Contains("var-b", sh);
                 Assert.Equal("from-vm", File.ReadAllText(Path.Combine(rw, "out.txt")).Trim());
                 Assert.False(File.Exists(Path.Combine(ro, "no.txt")));
 

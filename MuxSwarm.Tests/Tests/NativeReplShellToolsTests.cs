@@ -1,4 +1,4 @@
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using System.Threading;
 using Microsoft.Extensions.AI;
 using System.Linq;
@@ -42,6 +42,19 @@ public class NativeReplShellToolsTests
         Assert.Contains("install_package_async", names);
         Assert.Contains("wait_job_progress", names);
         Assert.Contains("wait_python_progress", names);
+    }
+
+    [Fact]
+    public async Task DisposeAll_TearsDownThePrimarySession()
+    {
+        // The unscoped primary session has no owner; on exit DisposeAll must remove it (and its sandbox).
+        // Before the fix nothing disposed it, so a docker-backend run leaked one mux-primary-* VM per exit.
+        var r1 = await Call("repl_shell_exec", new { code = "leak_marker = 7\nprint('ok')" });
+        Assert.Contains("ok", r1);
+        ReplShellTools.DisposeAll();
+        var r2 = await Call("repl_shell_exec", new { code = "print('gone' if 'leak_marker' not in dir() else 'still')" });
+        Assert.Contains("gone", r2);   // a fresh session: the old worker (and its sandbox) was disposed
+        ReplShellTools.DisposeAll();
     }
 
     [Fact]
