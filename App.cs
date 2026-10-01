@@ -457,6 +457,7 @@ internal class App
             {
                 Backend = sbxBackend, Image = Config.Sandbox.Image, Network = Config.Sandbox.Network,
                 AllowedDomains = Config.Sandbox.AllowedDomains, Command = Config.Sandbox.Command,
+                Runtime = Config.Sandbox.Runtime,
             };
             var sbxErr = SandboxBackend.Validate(candidate);
             if (sbxErr is null)

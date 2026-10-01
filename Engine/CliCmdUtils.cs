@@ -51,8 +51,9 @@ public static class CliCmdUtils
 
     public static void HandleDockerExec(string cfgPath)
     {
-        // /dockerexec is now shorthand for the sandbox backend: toggle between host and docker. The
-        // docker-sandbox directive skill set + the IsUsingDockerForExec flag track the backend.
+        // /dockerexec is shorthand for the sandbox backend: toggle between host and docker (the Docker
+        // Sandboxes microVM since v0.15.1). The docker-sandbox directive skill set + the
+        // IsUsingDockerForExec flag track the backend.
         bool turningOn = App.Config.Sandbox.Backend.Trim().ToLowerInvariant() is "host" or "" or "none";
         ApplySandboxBackend(turningOn ? "docker" : "host", image: null, cfgPath);
     }
@@ -85,7 +86,8 @@ public static class CliCmdUtils
             }
             var err = SandboxBackend.Validate(s);
             MuxConsole.WriteMuted(err is null ? "  status: ready" : $"  status: NOT READY - {err}");
-            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
+            MuxConsole.WriteMuted("Usage: /sandbox <host|docker|docker-container|podman|nerdctl|gvisor|kata|bwrap|firejail|sandbox-exec|custom> [image]");
+            MuxConsole.WriteMuted("  docker = Docker Sandboxes microVM (sbx); docker-container (or docker-legacy) = plain container");
             return;
         }
         string backend = parts[1].Trim().ToLowerInvariant();
@@ -103,6 +105,7 @@ public static class CliCmdUtils
             Network = App.Config.Sandbox.Network,
             AllowedDomains = App.Config.Sandbox.AllowedDomains,
             Command = App.Config.Sandbox.Command,
+            Runtime = App.Config.Sandbox.Runtime,
         };
         var err = SandboxBackend.Validate(candidate);
         if (err is not null)

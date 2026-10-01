@@ -115,7 +115,33 @@ for line in sys.stdin:
         return new ScopeHandle(sessionKey, prev);
     }
 
-    private static ReplSession Session() => _sessions.GetOrAdd(CurrentKey, k => new ReplSession(k));
+    private static ReplSession Session()
+    {
+        EnsureExitHook();
+        return _sessions.GetOrAdd(CurrentKey, k => new ReplSession(k));
+    }
+
+    private static int _exitHooked;
+
+    /// <summary>
+    /// Dispose every live session when the process exits. Scoped sessions (sub-agents) are disposed by
+    /// their scope; the unscoped primary session had no owner, so its sandbox container/microVM outlived
+    /// Mux (one leaked <c>mux-primary-*</c> VM per exit). Ctrl+C exits through ProcessExit too.
+    /// </summary>
+    private static void EnsureExitHook()
+    {
+        if (Interlocked.Exchange(ref _exitHooked, 1) == 1) return;
+        // Bounded: a sandbox mid-create holds its gate for up to the create timeout; exit must not wait on it.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => Task.Run(DisposeAll).Wait(TimeSpan.FromSeconds(15));
+    }
+
+    /// <summary>Dispose and forget every live session (workers, shell jobs, sandbox instances).</summary>
+    internal static void DisposeAll()
+    {
+        foreach (var key in _sessions.Keys)
+            if (_sessions.TryRemove(key, out var s))
+                try { s.Dispose(); } catch { /* best effort at exit */ }
+    }
 
     private sealed class ScopeHandle : IDisposable
     {

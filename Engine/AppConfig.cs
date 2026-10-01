@@ -143,13 +143,14 @@ public class ShellConfig
 ///
 /// Backends:
 ///   "host"                       - no sandbox (default; current behavior).
-///   "docker" / "podman" / "nerdctl" - OCI container per session (image mounted at the work dir).
+///   "docker"                     - Docker Sandboxes microVM per session via the sbx CLI (own kernel).
+///   "docker-container" / "podman" / "nerdctl" - OCI container per session ("docker-legacy" = docker-container).
 ///   "gvisor"                     - docker + the runsc runtime (userspace-kernel isolation).
 ///   "bwrap" / "firejail" / "sandbox-exec" - lightweight OS-native wrapper (Linux/macOS; no image).
 ///   "custom"                     - render Command as a template ({cmd},{workdir},{image}); drive any
 ///                                  containerization service we did not hardcode.
 ///
-/// Network: AllowedDomains non-empty => enforced proxy allowlist (OCI backends only; the sandbox has
+/// Network: AllowedDomains non-empty => enforced proxy allowlist (container backends only; the sandbox has
 /// NO direct egress and reaches only listed domains via an injected filtering proxy). Empty +
 /// Network=true => open. Empty + Network=false => fully air-gapped. An allowlist on a non-OCI backend
 /// is a hard validation error (no silent false-confidence). Unknown backend / missing binary / custom
@@ -161,7 +162,7 @@ public class SandboxConfig
     [JsonPropertyName("backend")]
     public string Backend { get; set; } = "host";
 
-    /// <summary>Container image for OCI backends. Ignored by wrapper/host backends.</summary>
+    /// <summary>Image for the docker (microVM) and container backends. Ignored by wrapper/host backends.</summary>
     [JsonPropertyName("image")]
     public string Image { get; set; } = "python:3.12-slim";
 

@@ -25,7 +25,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--watchdog` | External watchdog (auto-restart on crash) |
 | `--mcp-strict <bool>` | Require ALL MCP servers to connect or exit (default false: failed servers are skipped with a warning badge; exits only if every enabled server fails). Opt in via flag or `MUXSWARM_MCP_STRICT=1` |
 | `--docker-exec <bool>` | Route execution through Docker skills |
-| `--sandbox [backend]` | Startup sandbox backend override (default argument `docker`); validated and synced to config |
+| `--sandbox [backend]` | Startup sandbox backend override (default argument `docker`, the Docker Sandboxes microVM); validated and synced to config |
 | `--agent <name>` | Pick the lead and boot into the main agentic interface (or the agent for a goal/machine run) |
 | `--agent-mode` | Boot straight into the main agentic interface (pair with `--agent`) |
 | `--plan` | Plan mode (approve before executing) |
@@ -196,8 +196,8 @@ Available at the top-level REPL.
 | `/verbose` | Toggle TUI tool output between compact and full panels |
 | `/subagentview` (`/sav`) | Toggle collapsed/expanded delegated sub-agent output |
 | `/daemonview` (`/dv`) | Toggle the daemon output view |
-| `/dockerexec` | Toggle Docker execution mode |
-| `/sandbox` | View or switch the execution sandbox backend (host/docker/podman/gvisor/kata/...) |
+| `/dockerexec` | Toggle the docker sandbox (microVM) on/off |
+| `/sandbox` | View or switch the execution sandbox backend (host/docker/docker-container/podman/gvisor/kata/...) |
 | `/login` | Sign in to a subscription provider via the CLIProxy sidecar OAuth flow |
 | `/ping` | Check sidecar + provider login readiness |
 | `/proxy status\|update\|restart` | Manage the bundled CLIProxyAPI sidecar |

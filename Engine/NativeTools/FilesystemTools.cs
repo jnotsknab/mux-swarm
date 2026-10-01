@@ -297,13 +297,37 @@ public static class FilesystemTools
 
     private static string ListAllowedDirectories()
     {
-        if (Mode == "none") return "Security mode 'none': all paths permitted.";
-        if (Mode is "lax" or "yolo")
-            return "Security mode 'lax': all paths permitted except system/sensitive directories. " +
+        string text;
+        if (Mode == "none") text = "Security mode 'none': all paths permitted.";
+        else if (Mode is "lax" or "yolo")
+            text = "Security mode 'lax': all paths permitted except system/sensitive directories. " +
                    (Allowed.Count > 0 ? "Explicitly allowed: " + string.Join(", ", Allowed) : "");
-        return Allowed.Count == 0
+        else text = Allowed.Count == 0
             ? "No allowed directories configured."
             : "Allowed directories:\n" + string.Join("\n", Allowed);
+        return text + SandboxMapping(SandboxRuntime.Active, Allowed);
+    }
+
+    /// <summary>
+    /// When a container/microVM sandbox is active, how each allowed host path appears inside it. These
+    /// tools run on the host and take HOST paths; shell/Python run in the sandbox and see the guest paths.
+    /// Empty when there is no session sandbox.
+    /// </summary>
+    internal static string SandboxMapping(SandboxSpec? spec, IReadOnlyList<string> allowed)
+    {
+        if (spec is not { IsSession: true }) return "";
+        var sb = new StringBuilder("\n\nSandbox (").Append(spec.Backend)
+            .Append(") is active. These Filesystem tools run on the HOST and take the host paths above; ")
+            .Append("shell and Python run in the sandbox and see:\n")
+            .Append("  ").Append(OciSandbox.GuestWorkDir).Append("  (session scratch dir, rw)\n");
+        foreach (var p in allowed.Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var m = spec.Mounts.FirstOrDefault(x => string.Equals(x.HostPath, p, StringComparison.OrdinalIgnoreCase));
+            sb.Append("  ").Append(p).Append("  ->  ")
+              .Append(m.HostPath is null ? "not mounted in the sandbox" : $"{m.GuestPath} ({(m.ReadOnly ? "ro" : "rw")})")
+              .Append('\n');
+        }
+        return sb.ToString().TrimEnd();
     }
 
     // ---- helpers ------------------------------------------------------------------------------

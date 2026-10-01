@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using MuxSwarm.Engine;
 using MuxSwarm.Engine.NativeTools;
 using Xunit;
@@ -108,7 +109,7 @@ public class SandboxBackendTests
     {
         var err = SandboxBackend.Validate(Cfg("custom", command: "x {cmd}", allow: new() { "pypi.org" }));
         Assert.NotNull(err);
-        Assert.Contains("OCI", err);
+        Assert.Contains("container backends", err);
     }
 
     [Fact]
@@ -145,18 +146,278 @@ public class SandboxBackendTests
         Assert.Contains("echo hi", args);
     }
 
-    [Fact]
-    public void OciBackend_MissingBinary_IsHardError_NeverSilentHost()
+    [Theory]
+    [InlineData("docker-container")]
+    [InlineData("docker-legacy")]
+    public void OciBackend_MissingBinary_IsHardError_NeverSilentHost(string backend)
     {
         // If docker is not installed/ready on the test host, validation MUST return an error (the
         // anti-silent-fallback contract). If docker IS present+ready, it validates - both are correct;
         // the invariant is "never null-with-an-unusable-backend".
-        var err = SandboxBackend.Validate(Cfg("docker"));
+        var err = SandboxBackend.Validate(Cfg(backend));
         if (err is not null)
             Assert.True(err.Contains("docker", StringComparison.OrdinalIgnoreCase));
         else
-            Assert.NotNull(SandboxBackend.Resolve(Cfg("docker"))); // present => resolves to a real spec
+        {
+            var spec = SandboxBackend.Resolve(Cfg(backend))!;
+            Assert.Equal(SandboxKind.Oci, spec.Kind);
+            Assert.Equal("docker-container", spec.Backend);   // docker-legacy is an alias
+            Assert.Equal("docker", spec.Binary);
+        }
     }
+
+    [Fact]
+    public void Docker_IsTheSbxMicroVm_OrAHardError()
+    {
+        // `docker` is the Docker Sandboxes microVM. Without a ready sbx it is an error naming sbx and the
+        // container escape hatch - never a silent fall back to a plain container or the host.
+        var err = SandboxBackend.Validate(Cfg("docker"));
+        if (err is not null)
+        {
+            Assert.Contains("sbx", err);
+            Assert.Contains("docker-container", err);
+        }
+        else
+            Assert.Equal(SandboxKind.Sbx, SandboxBackend.Resolve(Cfg("docker"))!.Kind);
+    }
+
+    [Fact]
+    public void Docker_RejectsAllowlist_BeforeProbingSbx()
+    {
+        // sbx deny rules outrank allow rules, so a strict allowlist is not expressible: fail loud.
+        var err = SandboxBackend.Validate(Cfg("docker", allow: new() { "pypi.org" }));
+        Assert.NotNull(err);
+        Assert.Contains("allowedDomains", err);
+        Assert.Contains("docker-container", err);
+    }
+
+    [Theory]
+    [InlineData("docker-legacy", "docker-container")]
+    [InlineData(" Docker-Legacy ", "docker-container")]
+    [InlineData("docker", "docker")]
+    [InlineData(null, "host")]
+    public void Canonical_MapsLegacyAlias(string? input, string expected) =>
+        Assert.Equal(expected, SandboxBackend.Canonical(input));
+
+    [Theory]
+    [InlineData("gvisor")]
+    [InlineData("kata")]
+    public void HardenedRuntimes_StayOnTheContainerEngine(string backend)
+    {
+        // gvisor/kata layer a runtime onto docker containers; they must not route to sbx.
+        var err = SandboxBackend.Validate(Cfg(backend));
+        if (err is null) Assert.Equal(SandboxKind.Oci, SandboxBackend.Resolve(Cfg(backend))!.Kind);
+        else Assert.DoesNotContain("sbx", err);
+    }
+
+    [Theory]
+    [InlineData("repl_abc", "mux-repl-abc-1a2b3c")]
+    [InlineData("__primary__", "mux-primary-1a2b3c")]
+    [InlineData("", "mux-s-1a2b3c")]
+    [InlineData("Web Agent/#2", "mux-web-agent--2-1a2b3c")]
+    public void SbxName_IsLowercaseHyphenated_NoUnderscores(string key, string expected)
+    {
+        string name = SbxSandbox.SandboxName(key, "1a2b3c");
+        Assert.Equal(expected, name);
+        Assert.DoesNotContain('_', name);
+    }
+
+    [Fact]
+    public void SbxMounts_DropNetworkSharesAndMissingPaths_KeepTheRest()
+    {
+        // sbx prompts "(y/N)" for a workspace that does not exist; a missing allowed path must never reach it.
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mux-sbxm-" + Guid.NewGuid().ToString("N")[..6]);
+        string proj = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "proj")).FullName;
+        string refs = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "refs")).FullName;
+        string gone = System.IO.Path.Combine(root, "gone");
+        try
+        {
+            var m = SandboxBackend.SbxMounts(Fs("standard", proj, @"\\nas\share\docs", "//nas/share/x", gone, refs));
+            Assert.Equal(new[] { proj, refs }, m.Select(x => x.HostPath));
+            Assert.False(m[0].ReadOnly);   // workspace posture is unchanged by the filter
+            Assert.True(m[1].ReadOnly);
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void Run_NeverLetsTheChildWaitOnStdin()
+    {
+        // A CLI that asks a question and reads stdin (sbx: "workspace does not exist, create it? (y/N)")
+        // must see EOF at once. With stdin inherited it blocked on the user's console until the timeout,
+        // which froze the first tool call of every docker session. Note: under `dotnet test` the host's own
+        // stdin is usually not a console, so this pins the contract (EOF, fast) rather than reproducing the
+        // console hang; the console repro is in the PR evidence.
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("powershell", "-NoProfile -Command \"$l = [Console]::In.ReadLine(); if ($null -eq $l) { 'eof' } else { 'got:' + $l }\"")
+            : ("/bin/sh", "-c \"read l && echo got:$l || echo eof\"");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var (ok, outp, err) = OciSandbox.Run(file, args, allowFail: true, timeoutMs: 20_000);
+        Assert.True(ok, err);
+        Assert.Contains("eof", outp);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15), $"took {sw.Elapsed}");
+    }
+
+    [Theory]
+    [InlineData(true, false)]    // still listed: keep it
+    [InlineData(null, false)]    // `sbx ls` failed: unknown, keep it (never leak or split the session)
+    [InlineData(false, true)]    // confirmed gone: rebuild
+    public void SbxRebuild_OnlyWhenConfirmedGone(bool? exists, bool rebuild) =>
+        Assert.Equal(rebuild, SbxSandbox.ShouldRebuild(exists));
+
+    [Fact]
+    public void SbxName_IsLengthBounded()
+    {
+        string name = SbxSandbox.SandboxName(new string('a', 200), "1a2b3c");
+        Assert.True(name.Length <= "mux-".Length + 24 + "-1a2b3c".Length);
+    }
+
+    [Theory]
+    [InlineData(@"C:\Users\me\work", true, "/c/Users/me/work")]
+    [InlineData(@"D:\proj\", true, "/d/proj")]
+    [InlineData(@"E:\", true, "/e")]
+    [InlineData("/home/me/work", false, "/home/me/work")]
+    public void SbxGuestPath_MirrorsHostPath(string host, bool windows, string expected) =>
+        Assert.Equal(expected, SbxSandbox.GuestPath(host, windows));
+
+    [Fact]
+    public void SbxCreateArgs_DeniesEgress_UnlessNetworkOpen_AndMarksReadOnlyMounts()
+    {
+        var mounts = new[] { new SandboxMount(@"C:\proj", "/host/proj", false), new SandboxMount(@"C:\refs", "/host/refs", true) };
+        string closed = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", false, @"C:\a", @"C:\w", mounts);
+        Assert.Equal("create --name mux-x-1 -q --pull missing -t python:3.12-slim --deny-network \"**\" shell \"C:\\a\" \"C:\\w\" \"C:\\proj\" \"C:\\refs:ro\"", closed);
+        string open = SbxSandbox.CreateArgs("mux-x-1", "python:3.12-slim", true, @"C:\a", @"C:\w", mounts);
+        Assert.DoesNotContain("--deny-network", open);
+    }
+
+    [Fact]
+    public void SbxCreateArgs_ReadOnlyParentNeverFollowsAWritableChild()
+    {
+        // sbx applies workspaces in order and the later one wins for the paths it covers. Jonathan's config:
+        // sandboxPath (rw) under the home dir (ro reference path), work dir also under home. Listed child-first,
+        // `C:\Users\me:ro` made /work and the workspace read-only. Order must be shallowest first.
+        var mounts = new[]
+        {
+            new SandboxMount(@"C:\Users\me\build\ws", "/host/ws", false),
+            new SandboxMount(@"C:\Users\me", "/host/me", true),
+            new SandboxMount(@"C:\Users\me\build\ws\Configs", "/host/Configs", true),
+            new SandboxMount(@"C:\Users\me\Dev", "/host/Dev", true),
+        };
+        string a = SbxSandbox.CreateArgs("n", "img", false, @"C:\Users\me\AppData\repl\.sbx-anchor", @"C:\Users\me\AppData\repl\w", mounts);
+        string ws = a[(a.IndexOf(" shell ", StringComparison.Ordinal) + 7)..];
+        Assert.Equal("\"C:\\Users\\me\\AppData\\repl\\.sbx-anchor\" \"C:\\Users\\me:ro\" \"C:\\Users\\me\\Dev:ro\" " +
+                     "\"C:\\Users\\me\\build\\ws\" \"C:\\Users\\me\\AppData\\repl\\w\" \"C:\\Users\\me\\build\\ws\\Configs:ro\"", ws);
+    }
+
+    [Theory]
+    [InlineData(@"C:\a\b\", 3)]
+    [InlineData("/home/me/x", 3)]
+    [InlineData(@"C:\", 1)]
+    public void SbxDepth_CountsSegments(string p, int d) => Assert.Equal(d, SbxSandbox.Depth(p));
+
+    [Fact]
+    public void SbxAnchor_IsASiblingOfTheWorkDir()
+    {
+        string w = System.IO.Path.Combine("base", "repl", "repl___primary__");
+        Assert.Equal(System.IO.Path.Combine("base", "repl", ".sbx-anchor", "repl___primary__"), SbxSandbox.AnchorDir(w));
+        // One per session: parallel sub-agents never share a primary workspace.
+        Assert.NotEqual(SbxSandbox.AnchorDir(w), SbxSandbox.AnchorDir(System.IO.Path.Combine("base", "repl", "repl_sub1")));
+    }
+
+    [Theory]
+    [InlineData("for d in /tmp /etc; do echo $d; done")]
+    [InlineData("x=1; echo ${x}x \"$HOME\" 'single'")]
+    [InlineData(@"echo a\b \""q\"" end\")]
+    [InlineData("")]
+    public void ShQuoteForArgv_RoundTripsThroughTheCommandLine(string script)
+    {
+        // The guest shell must receive the script byte-for-byte. The old quoting escaped every $ and doubled
+        // every backslash, so `$d` arrived as `\$d` and never expanded (seen in Jonathan's session).
+        string cmdline = "x " + OciSandbox.ShQuoteForArgv(script);
+        var argv = CommandLineSplit(cmdline);
+        Assert.Equal(2, argv.Count);
+        Assert.Equal(script, argv[1]);
+    }
+
+    // The documented .NET/MSVCRT argv parsing (what a spawned sbx/docker process sees), so the test is
+    // OS-independent: 2N backslashes + quote -> N backslashes and a quote toggle; 2N+1 -> N and a literal quote.
+    private static List<string> CommandLineSplit(string s)
+    {
+        var args = new List<string>(); var cur = new System.Text.StringBuilder(); bool inQ = false, any = false;
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\\')
+            {
+                int n = 0; while (i < s.Length && s[i] == '\\') { n++; i++; }
+                if (i < s.Length && s[i] == '"') { cur.Append('\\', n / 2); if (n % 2 == 1) cur.Append('"'); else { inQ = !inQ; any = true; } }
+                else { cur.Append('\\', n); i--; }
+                continue;
+            }
+            if (c == '"') { inQ = !inQ; any = true; continue; }
+            if (c == ' ' && !inQ) { if (cur.Length > 0 || any) { args.Add(cur.ToString()); cur.Clear(); any = false; } continue; }
+            cur.Append(c);
+        }
+        if (cur.Length > 0 || any) args.Add(cur.ToString());
+        return args;
+    }
+
+    [Fact]
+    public void ListAllowed_ShowsHowEachHostPathAppearsInTheSandbox()
+    {
+        var spec = new SandboxSpec
+        {
+            Kind = SandboxKind.Sbx, Backend = "docker", Binary = "sbx", Image = "img",
+            Mounts = new[] { new SandboxMount(@"C:\ws", "/host/ws", false), new SandboxMount(@"C:\refs", "/host/refs", true) },
+        };
+        string m = FilesystemTools.SandboxMapping(spec, new[] { @"C:\ws", @"C:\refs", @"C:\gone" });
+        Assert.Contains("/work", m);
+        Assert.Contains(@"C:\ws  ->  /host/ws (rw)", m);
+        Assert.Contains(@"C:\refs  ->  /host/refs (ro)", m);
+        Assert.Contains(@"C:\gone  ->  not mounted in the sandbox", m);
+        Assert.Equal("", FilesystemTools.SandboxMapping(null, new[] { @"C:\ws" }));   // host execution: unchanged
+    }
+
+    [Fact]
+    public void SbxLayoutScript_LinksWorkAndHostMounts_WithoutDeleting()
+    {
+        string s = SbxSandbox.LayoutScript("/c/w", new[] { ("/c/proj", "/host/proj"), ("/c/it's", "/host/its") });
+        Assert.StartsWith("mkdir -p /host && ", s);
+        Assert.Contains("ln -sfn '/c/w' '/work'", s);
+        Assert.Contains("ln -sfn '/c/proj' '/host/proj'", s);
+        Assert.Contains("ln -sfn '/c/it'\\''s' '/host/its'", s);
+        // Never deletes (a real dir at a link path may be host data on Linux/macOS).
+        Assert.DoesNotContain("rm ", s);
+    }
+
+    [Fact]
+    public void SbxLayoutScript_RefusesToShadowARealDirectory()
+    {
+        if (OperatingSystem.IsWindows()) return;   // runs the script under a real POSIX sh
+        string root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "mux-layout-" + Guid.NewGuid().ToString("N")[..6]);
+        string realDir = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "work")).FullName;
+        System.IO.File.WriteAllText(System.IO.Path.Combine(realDir, "keep.txt"), "host data");
+        try
+        {
+            // Swap the fixed /work and /host targets for temp paths so the real script body runs safely.
+            string script = SbxSandbox.LayoutScript("/tmp", Array.Empty<(string, string)>())
+                .Replace("'/work'", "'" + realDir + "'").Replace("mkdir -p /host", "mkdir -p '" + root + "/host'");
+            var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("/bin/sh")
+                { ArgumentList = { "-c", script }, RedirectStandardError = true })!;
+            p.WaitForExit();
+            Assert.NotEqual(0, p.ExitCode);
+            Assert.Equal("host data", System.IO.File.ReadAllText(System.IO.Path.Combine(realDir, "keep.txt")));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("{\"sandboxes\":[{\"name\":\"mux-a-1\",\"status\":\"stopped\"}]}", "mux-a-1", true)]
+    [InlineData("{\"sandboxes\":[]}", "mux-a-1", false)]
+    [InlineData("not json", "mux-a-1", false)]
+    public void SbxListContains_ParsesLsJson(string json, string name, bool expected) =>
+        Assert.Equal(expected, SbxSandbox.ListContains(json, name));
+
     private static FilesystemConfig Fs(string mode, params string[] paths) =>
         new() { SecurityMode = mode, AllowedPaths = new List<string>(paths) };
 

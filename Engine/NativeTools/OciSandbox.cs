@@ -17,7 +17,7 @@ namespace MuxSwarm.Engine.NativeTools;
 /// point at the sidecar, so it can reach listed domains only. The sidecar always runs from
 /// <see cref="ProxyImage"/>, never the sandbox image, so any sandbox image works with an allowlist.
 /// </summary>
-internal sealed class OciSandbox : IDisposable
+internal sealed class OciSandbox : ISessionSandbox
 {
     private readonly SandboxSpec _spec;
     private readonly string _hostWorkDir;
@@ -294,6 +294,8 @@ internal sealed class OciSandbox : IDisposable
     /// <summary>
     /// Run a backend CLI command, killed after <paramref name="timeoutMs"/> (default 60 s). stdout and
     /// stderr are drained concurrently so the timeout is enforced and a full stderr pipe cannot deadlock.
+    /// stdin is an already-closed pipe: an inherited console stdin let a CLI prompt (sbx's "workspace
+    /// does not exist, create it? (y/N)") block on the user's terminal until the timeout.
     /// </summary>
     internal static (bool ok, string outp, string err) Run(string file, string args, bool allowFail, int timeoutMs = 60_000)
     {
@@ -302,11 +304,12 @@ internal sealed class OciSandbox : IDisposable
             var psi = new ProcessStartInfo
             {
                 FileName = file, Arguments = args,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
                 UseShellExecute = false, CreateNoWindow = true,
             };
             using var p = Process.Start(psi);
             if (p is null) return (false, "", "could not start " + file);
+            p.StandardInput.Close();   // EOF: any prompt gets "no answer" at once instead of waiting
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
             if (!p.WaitForExit(timeoutMs))
@@ -339,8 +342,26 @@ internal sealed class OciSandbox : IDisposable
         return sb.Length == 0 ? "s" : sb.ToString().ToLowerInvariant();
     }
 
-    // Quote a command for use as a single argv token after `sh -c` in the exec arg string.
-    private static string ShQuoteForArgv(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$") + "\"";
+    /// <summary>
+    /// Quote <paramref name="s"/> as ONE argv token (the script after <c>sh -c</c>) in a process argument
+    /// string, using the standard Windows/.NET command-line rules: backslashes are literal unless they
+    /// precede a quote. The text reaches the guest shell byte-for-byte, so <c>$var</c>, quotes and
+    /// backslashes work as written. (The old version escaped every <c>$</c> and doubled every
+    /// backslash, so <c>$d</c> arrived as <c>\$d</c> and was never expanded.)
+    /// </summary>
+    internal static string ShQuoteForArgv(string s)
+    {
+        var sb = new StringBuilder(s.Length + 2).Append('"');
+        int backslashes = 0;
+        foreach (char c in s)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') { sb.Append('\\', backslashes * 2 + 1).Append('"'); backslashes = 0; continue; }
+            sb.Append('\\', backslashes).Append(c);
+            backslashes = 0;
+        }
+        return sb.Append('\\', backslashes * 2).Append('"').ToString();
+    }
 
     // The injected filtering proxy. Deny-by-default CONNECT + HTTP Host filtering, suffix match on allowlist.
     private const string ProxyScript = @"

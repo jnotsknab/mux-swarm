@@ -225,12 +225,12 @@ host execution.
 
 | Field | Meaning |
 |---|---|
-| `backend` | `host` (default, no sandbox) \| `docker` \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
-| `image` | Container image for OCI backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
+| `backend` | `host` (default, no sandbox) \| `docker` (Docker Sandboxes microVM) \| `docker-container` (alias `docker-legacy`) \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
+| `image` | Image for the `docker` microVM and container backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
-| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **OCI backends only.** Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
+| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **Container backends only** (`docker-container`/`podman`/`nerdctl`/`gvisor`/`kata`); rejected on `docker`, see below. Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
-| `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for OCI backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by wrapper/custom/host. |
+| `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for container backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by `docker` (microVM) and wrapper/custom/host. |
 
 ### Isolation tiers (weakest -> strongest)
 
@@ -239,16 +239,44 @@ host execution.
 | `host` | none | no isolation (runs natively) |
 | `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only) |
 | `sandbox-exec` | macOS Seatbelt (SBPL) | OS-native (macOS only) |
-| `docker` / `podman` / `nerdctl` | OCI container (namespaces/cgroups) | container |
+| `docker-container` / `podman` / `nerdctl` | OCI container (namespaces/cgroups) | container |
 | `gvisor` | docker + `--runtime=runsc` | user-space kernel (syscall interposition) |
-| `kata` | docker/podman + `--runtime=kata-runtime` | **microVM** -- a real guest kernel via hardware virtualization |
+| `docker` | Docker Sandboxes (`sbx`) | **microVM** -- own guest kernel and Docker engine; Windows, macOS, Linux |
+| `kata` | docker/podman + `--runtime=kata-runtime` | **microVM** -- a real guest kernel via hardware virtualization (Linux + KVM) |
 | `custom` | user template | whatever the template points at |
 
-OCI backends run a persistent per-session container (`sleep infinity`) that the session's shell jobs and
+Container backends run a persistent per-session container (`sleep infinity`) that the session's shell jobs and
 Python worker `exec` into. `gvisor` and `kata` reuse that exact lifecycle -- they only change the OCI
 runtime, so all of the OCI features (network allowlist proxy, allowed-path bind mounts mapped to
 `filesystem.securityMode`, OCI hardening `--cap-drop=ALL --security-opt=no-new-privileges`, self-heal,
 Windows UNC drive-mapping) apply unchanged.
+
+### Docker Sandboxes microVM (docker)
+
+Since v0.15.1, `docker` means a [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) microVM, driven
+through the `sbx` CLI: each session gets its own VM with its own kernel and Docker engine. Shell jobs and
+the Python worker `sbx exec` into it, the same model as the container backends. The plain container path is
+`docker-container` (alias `docker-legacy`), unchanged from earlier releases.
+
+- **Requirements:** the `sbx` CLI, signed in (`sbx login`), and a global policy (`sbx policy init balanced`
+  on first use). Windows 11 needs Windows Hypervisor Platform; macOS needs Apple silicon; Linux needs
+  Ubuntu 24.04+ with KVM. Local sandboxes are free. Docker Desktop is not required. A missing or signed-out
+  `sbx` is a hard, legible error; it never falls back to a container or the host.
+- **Layout:** the session work dir is `/work` (always rw) and allowed paths are `/host/<leaf>`, as with
+  containers. Mount mode follows `filesystem.securityMode`: `standard` = first allowed path rw, the rest
+  ro; `lax`/`none` = all rw; `secure` = all ro. Mounts are fixed when the session's sandbox starts, so
+  restart after changing the mode. Nested allowed paths keep their own mode (a read-write
+  workspace under a read-only reference path, e.g. your home dir, stays writable). Network-share (UNC)
+  and missing allowed paths are skipped with a warning; use `docker-container` if you need shares.
+  `Filesystem_list_allowed_directories` lists each host path with its sandbox path and mode.
+- **Network:** `network: false` denies all egress. `network: true` allows everything your global sbx
+  policy allows (the per-sandbox rule is allow-all, but global deny rules still apply). `allowedDomains` is
+  **rejected**: sbx deny rules outrank allow rules, so a strict allowlist cannot be expressed. Use
+  `docker-container` for a strict allowlist, or manage hosts with `sbx policy`.
+- **Lifecycle:** created on first tool use (`mux-<session>-<id>`), removed when the session ends. Leftovers
+  from a crash show in `sbx ls` and can be removed with `sbx rm --force <name>`.
+- **Upgrading from 0.15.0:** configs with `backend: docker` (and `/dockerexec`) now get the microVM. Set
+  `backend: docker-container` to keep the old container.
 
 ### microVM isolation (kata)
 
@@ -705,7 +733,7 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --model <id>               Override single-agent model
 --mcp-strict [true|false]  Require all MCP servers
 --docker-exec [true|false] Route execution through Docker
---sandbox [backend [img]]  Run shell/REPL exec inside a sandbox (host|docker|podman|gvisor|kata|bwrap|...)
+--sandbox [backend [img]]  Run shell/REPL exec inside a sandbox (host|docker|docker-container|podman|gvisor|kata|bwrap|...)
 --acp                      Zed Agent Client Protocol transport (JSON-RPC over stdio)
 --stateless                Boot straight into a stateless single-agent loop
 --agent-mode               Boot straight into the standard single-agent loop
@@ -831,8 +859,8 @@ Flags can be combined. Common stacks:
 /config         Show ALL config settings (every key is /set-able)
 /set <key> <v>  Edit any config key (e.g. /set ultra.thinkingBudget 20000)
 /showreasoning  full | summary (shown, grey italic) | none (hidden); persists to config
-/sandbox [b][i] Show or swap the exec sandbox backend (host|docker|podman|gvisor|kata|bwrap|...)
-/dockerexec     Toggle Docker execution mode
+/sandbox [b][i] Show or swap the exec sandbox backend (host|docker|docker-container|podman|gvisor|kata|bwrap|...)
+/dockerexec     Toggle the docker sandbox (microVM) on/off
 /startargs <a>  Persist launch flags to run every start (clear with /startargs clear)
 /limits         Display current execution limits
 /maxp <n>       Max agents running in parallel (default 4)
