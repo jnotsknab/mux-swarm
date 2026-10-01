@@ -58,6 +58,7 @@ internal sealed class SbxSandbox : ISessionSandbox
             _buildAttempts++;
 
             Directory.CreateDirectory(_hostWorkDir);
+            string anchor = Directory.CreateDirectory(AnchorDir(_hostWorkDir)).FullName;
             _name = SandboxName(_key, Guid.NewGuid().ToString("N")[..6]);
 
             var mounts = _spec.Mounts;   // network shares + missing paths were already dropped (SandboxBackend.SbxMounts)
@@ -68,7 +69,7 @@ internal sealed class SbxSandbox : ISessionSandbox
                 MuxConsole.WriteWarning($"[sandbox] not mounted in the microVM ({skipped.Count}: network shares or " +
                     $"missing paths): {string.Join("; ", skipped)}");
 
-            var (ok, _, err) = OciSandbox.Run(_spec.Binary, CreateArgs(_name, _spec.Image, _spec.NetworkOpen, _hostWorkDir, mounts),
+            var (ok, _, err) = OciSandbox.Run(_spec.Binary, CreateArgs(_name, _spec.Image, _spec.NetworkOpen, anchor, _hostWorkDir, mounts),
                 allowFail: true, timeoutMs: 600_000);
             if (ok && _spec.NetworkOpen)
                 (ok, _, err) = OciSandbox.Run(_spec.Binary, $"policy allow network --sandbox {_name} \"**\"", allowFail: true);
@@ -148,18 +149,36 @@ internal sealed class SbxSandbox : ISessionSandbox
     }
 
     /// <summary>
-    /// <c>sbx create</c> arguments: the <c>shell</c> agent on <paramref name="image"/>, the work dir as
-    /// the read-write workspace, each mount as an extra workspace (<c>:ro</c> when read-only), and all
-    /// egress denied unless <paramref name="networkOpen"/>.
+    /// The empty Mux-owned dir passed as sbx's primary workspace (next to the session work dir, never
+    /// inside an allowed path's tree on purpose). sbx requires the primary to be read-write and keeps it
+    /// first, so it must not be a real path whose access mode depends on ordering.
     /// </summary>
-    internal static string CreateArgs(string name, string image, bool networkOpen, string workDir, IEnumerable<SandboxMount> mounts)
+    internal static string AnchorDir(string hostWorkDir) =>
+        Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(hostWorkDir)) ?? hostWorkDir, ".sbx-anchor");
+
+    /// <summary>
+    /// <c>sbx create</c> arguments: the <c>shell</c> agent on <paramref name="image"/>, the
+    /// <paramref name="anchor"/> as the primary workspace, then the work dir (read-write) and each mount
+    /// (<c>:ro</c> when read-only) <b>shallowest first</b>, and all egress denied unless
+    /// <paramref name="networkOpen"/>. sbx applies workspaces in order and a later one wins for the paths
+    /// it covers, so a read-only parent listed after a read-write child (e.g. the home dir as a
+    /// reference path, the work dir under it) made the child read-only. Shallowest-first lets every
+    /// deeper workspace keep its own mode.
+    /// </summary>
+    internal static string CreateArgs(string name, string image, bool networkOpen, string anchor, string workDir, IEnumerable<SandboxMount> mounts)
     {
         var sb = new StringBuilder($"create --name {name} -q --pull missing -t {image}");
         if (!networkOpen) sb.Append(" --deny-network \"**\"");
-        sb.Append(" shell ").Append(Q(workDir));
-        foreach (var m in mounts) sb.Append(' ').Append(Q(m.HostPath + (m.ReadOnly ? ":ro" : "")));
+        sb.Append(" shell ").Append(Q(anchor));
+        var ordered = mounts.Select(m => (Path: m.HostPath, Ro: m.ReadOnly)).Prepend((Path: workDir, Ro: false))
+            .OrderBy(w => Depth(w.Path));   // stable: equal depth keeps config order
+        foreach (var (path, ro) in ordered) sb.Append(' ').Append(Q(path + (ro ? ":ro" : "")));
         return sb.ToString();
     }
+
+    /// <summary>Path depth in segments (separator-agnostic, trailing separator ignored).</summary>
+    internal static int Depth(string path) =>
+        path.Replace('\\', '/').TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries).Length;
 
     /// <summary>
     /// Where sbx mounts a host path inside the VM: the same path on Linux/macOS; on Windows the drive
@@ -176,7 +195,6 @@ internal sealed class SbxSandbox : ISessionSandbox
     /// Root shell script that links the work dir to /work and each mount to its /host/&lt;leaf&gt;. It never
     /// deletes anything: sbx mounts workspaces at their host paths, so on Linux/macOS a real directory at a
     /// link path can be host data. A link path that exists and is not a symlink fails the setup instead.
-    /// No <c>$</c> in the script: the argv quoting escapes it.
     /// </summary>
     internal static string LayoutScript(string guestWorkDir, IEnumerable<(string Source, string Link)> links)
     {
