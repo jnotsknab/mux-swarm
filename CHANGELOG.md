@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and is rejected on `docker` (sbx cannot express a strict allowlist).
 
 ### Fixed
+- Sandbox shell commands (`docker-container`, podman, nerdctl, gvisor, kata, and `docker`) received `$` as
+  `\$` and doubled backslashes, so `$var`/`${x}` never expanded. Commands now reach `sh -c` unchanged.
+- The primary session's sandbox container/microVM is now removed when Mux exits (it outlived every run).
 - `/sandbox` and `--sandbox` no longer clear a configured `sandbox.runtime` (e.g. `kata-runtime` on podman)
   when switching backends.
 - **`/share` guest typing:** an invisible format character (e.g. a zero-width space) before `!` or a

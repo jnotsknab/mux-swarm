@@ -263,8 +263,10 @@ the Python worker `sbx exec` into it, the same model as the container backends. 
   Ubuntu 24.04+ with KVM. Local sandboxes are free. Docker Desktop is not required. A missing or signed-out
   `sbx` is a hard, legible error; it never falls back to a container or the host.
 - **Layout:** the session work dir is `/work` and allowed paths are `/host/<leaf>` (read-only per
-  `filesystem.securityMode`), as with containers. Network-share (UNC) allowed paths are skipped with a
-  warning; use `docker-container` if you need them in the sandbox.
+  `filesystem.securityMode`), as with containers. Nested allowed paths keep their own mode (a read-write
+  workspace under a read-only reference path, e.g. your home dir, stays writable). Network-share (UNC)
+  and missing allowed paths are skipped with a warning; use `docker-container` if you need shares.
+  `Filesystem_list_allowed_directories` lists each host path with its sandbox path and mode.
 - **Network:** `network: false` denies all egress. `network: true` allows everything your global sbx
   policy allows (the per-sandbox rule is allow-all, but global deny rules still apply). `allowedDomains` is
   **rejected**: sbx deny rules outrank allow rules, so a strict allowlist cannot be expressed. Use
