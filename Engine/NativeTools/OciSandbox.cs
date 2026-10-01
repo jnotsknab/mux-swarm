@@ -342,8 +342,26 @@ internal sealed class OciSandbox : ISessionSandbox
         return sb.Length == 0 ? "s" : sb.ToString().ToLowerInvariant();
     }
 
-    // Quote a command for use as a single argv token after `sh -c` in the exec arg string.
-    internal static string ShQuoteForArgv(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("$", "\\$") + "\"";
+    /// <summary>
+    /// Quote <paramref name="s"/> as ONE argv token (the script after <c>sh -c</c>) in a process argument
+    /// string, using the standard Windows/.NET command-line rules: backslashes are literal unless they
+    /// precede a quote. The text reaches the guest shell byte-for-byte, so <c>$var</c>, quotes and
+    /// backslashes work as written. (The old version escaped every <c>$</c> and doubled every
+    /// backslash, so <c>$d</c> arrived as <c>\$d</c> and was never expanded.)
+    /// </summary>
+    internal static string ShQuoteForArgv(string s)
+    {
+        var sb = new StringBuilder(s.Length + 2).Append('"');
+        int backslashes = 0;
+        foreach (char c in s)
+        {
+            if (c == '\\') { backslashes++; continue; }
+            if (c == '"') { sb.Append('\\', backslashes * 2 + 1).Append('"'); backslashes = 0; continue; }
+            sb.Append('\\', backslashes).Append(c);
+            backslashes = 0;
+        }
+        return sb.Append('\\', backslashes * 2).Append('"').ToString();
+    }
 
     // The injected filtering proxy. Deny-by-default CONNECT + HTTP Host filtering, suffix match on allowlist.
     private const string ProxyScript = @"
