@@ -262,8 +262,10 @@ the Python worker `sbx exec` into it, the same model as the container backends. 
   on first use). Windows 11 needs Windows Hypervisor Platform; macOS needs Apple silicon; Linux needs
   Ubuntu 24.04+ with KVM. Local sandboxes are free. Docker Desktop is not required. A missing or signed-out
   `sbx` is a hard, legible error; it never falls back to a container or the host.
-- **Layout:** the session work dir is `/work` and allowed paths are `/host/<leaf>` (read-only per
-  `filesystem.securityMode`), as with containers. Nested allowed paths keep their own mode (a read-write
+- **Layout:** the session work dir is `/work` (always rw) and allowed paths are `/host/<leaf>`, as with
+  containers. Mount mode follows `filesystem.securityMode`: `standard` = first allowed path rw, the rest
+  ro; `lax`/`none` = all rw; `secure` = all ro. Mounts are fixed when the session's sandbox starts, so
+  restart after changing the mode. Nested allowed paths keep their own mode (a read-write
   workspace under a read-only reference path, e.g. your home dir, stays writable). Network-share (UNC)
   and missing allowed paths are skipped with a warning; use `docker-container` if you need shares.
   `Filesystem_list_allowed_directories` lists each host path with its sandbox path and mode.

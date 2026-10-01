@@ -70,7 +70,7 @@ independent of any MCP server:
 
 | Key | Values | Description |
 |-----|--------|-------------|
-| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. |
+| `filesystem.securityMode` | `standard` (default), `secure`, `lax`, `none` | Enforcement level for native filesystem tools. `standard` honors `allowedPaths`; `secure` is strictest; `lax`/`none` relax checks. Inside a container/microVM sandbox it also sets mount modes: `standard` = first allowed path rw, rest ro; `lax`/`none` = all rw; `secure` = all ro (`/work` is always rw). |
 | `shell.securityMode` | `off` (default), `prompt`, `allowlist` | Gate on native Shell/REPL execution. `off` runs commands ungated (default, run-anything); `prompt` asks for confirmation on every command; `allowlist` runs commands whose first token is in `allowedCommands` and prompts for anything else. Non-interactive sessions auto-deny a prompt. |
 | `shell.allowedCommands` | string[] | Commands permitted when `securityMode` is `allowlist`. |
 
