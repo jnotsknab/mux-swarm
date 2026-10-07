@@ -362,6 +362,79 @@ public class SandboxBackendTests
         return args;
     }
 
+    // ---- wrapper argv (v0.15.2 #2): ProcessStartInfo.Arguments is split with .NET/MSVCRT rules on every
+    // OS, so POSIX single-quoting broke every multi-word command under bwrap/firejail/sandbox-exec. The
+    // wrapper must receive the inner argv byte-for-byte.
+
+    private static SandboxSpec WrapperSpec(string backend, bool net = false) =>
+        new() { Kind = SandboxKind.Wrapper, Backend = backend, Binary = backend, Image = "", NetworkOpen = net };
+
+    [Theory]
+    [InlineData("bwrap")]
+    [InlineData("firejail")]
+    [InlineData("sandbox-exec")]
+    public void WrapShellCommand_Wrapper_PassesCommandAsOneShArgument(string backend)
+    {
+        foreach (var cmd in new[] { "echo 'quoted test'", "hostname", "printf \"%s\\n\" \"$HOME\" a\\b", "" })
+        {
+            var (file, args) = SandboxBackend.WrapShellCommand(WrapperSpec(backend), cmd, "/work/my dir");
+            Assert.Equal(backend, file);
+            var argv = CommandLineSplit(args);
+            Assert.Equal(new[] { "/bin/sh", "-c", cmd }, argv.Skip(argv.Count - 3).ToArray());
+        }
+    }
+
+    [Fact]
+    public void WrapProcess_Bwrap_KeepsWorkDirWithSpacesAsOneToken_AndNetworkFlag()
+    {
+        string wd = "/home/u/my work";
+        var argv = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("bwrap"), new[] { "python", "-u", "worker.py" }, wd).Args);
+        int i = argv.IndexOf("--bind");
+        Assert.Equal(wd, argv[i + 1]);
+        Assert.Equal(wd, argv[i + 2]);
+        Assert.Equal(wd, argv[argv.IndexOf("--chdir") + 1]);
+        Assert.DoesNotContain("--share-net", argv);
+        Assert.Equal(new[] { "python", "-u", "worker.py" }, argv.Skip(argv.Count - 3).ToArray());
+        Assert.Contains("--share-net", CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("bwrap", net: true), new[] { "x" }, wd).Args));
+    }
+
+    [Fact]
+    public void WrapProcess_Firejail_WhitelistAndNetNone()
+    {
+        var argv = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("firejail"), new[] { "x" }, "/w d").Args);
+        Assert.Contains("--whitelist=/w d", argv);
+        Assert.Contains("--net=none", argv);
+        Assert.DoesNotContain("--net=none", CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("firejail", net: true), new[] { "x" }, "/w").Args));
+    }
+
+    [Fact]
+    public void WrapProcess_SandboxExec_ProfileIsOneToken()
+    {
+        var argv = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("sandbox-exec"), new[] { "/bin/sh", "-c", "ls" }, "/Users/u/w").Args);
+        Assert.Equal("-p", argv[0]);
+        Assert.StartsWith("(version 1)(deny default)", argv[1]);
+        Assert.Contains("(subpath \"/Users/u/w\")", argv[1]);
+        Assert.DoesNotContain("(allow network*)", argv[1]);
+        Assert.Equal(new[] { "/bin/sh", "-c", "ls" }, argv.Skip(2).ToArray());
+    }
+
+    [Fact]
+    public void WrapProcess_RejectsNonWrapperSpecs()
+    {
+        var custom = new SandboxSpec { Kind = SandboxKind.Custom, Backend = "custom", Binary = "", Image = "", CustomTemplate = "{cmd}" };
+        Assert.Throws<SandboxException>(() => SandboxBackend.WrapProcess(custom, new[] { "x" }, "/w"));
+    }
+
+    [Fact]
+    public void WrapShellCommand_CustomOnUnix_PassesRenderedTemplateAsOneShArgument()
+    {
+        if (OperatingSystem.IsWindows()) return;   // Windows renders via cmd.exe /c (unchanged)
+        var spec = new SandboxSpec { Kind = SandboxKind.Custom, Backend = "custom", Binary = "", Image = "img", CustomTemplate = "run {image} sh -c {cmd}" };
+        var (file, args) = SandboxBackend.WrapShellCommand(spec, "echo 'a b'", "/w");
+        Assert.Equal("/bin/sh", file);
+        Assert.Equal(new[] { "-c", "run img sh -c echo 'a b'" }, CommandLineSplit(args).ToArray());
+    }
+
     [Fact]
     public void ListAllowed_ShowsHowEachHostPathAppearsInTheSandbox()
     {

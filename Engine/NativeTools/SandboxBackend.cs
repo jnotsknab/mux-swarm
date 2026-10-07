@@ -279,39 +279,14 @@ internal static class SandboxBackend
     /// </summary>
     public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir)
     {
-        // The inner command is always run through a POSIX shell inside the sandbox (wrapper backends are
-        // Linux/macOS only; custom is user-defined). Quote the whole command as one -c argument.
-        string shell = "/bin/sh";
-        string shArgs = "-c " + ShQuote(innerCommand);
-
         switch (spec.Kind)
         {
             case SandboxKind.Wrapper:
-                return spec.Backend switch
-                {
-                    "bwrap" => ("bwrap", string.Join(' ',
-                        "--ro-bind / /",
-                        "--bind", Q(workDir), Q(workDir),
-                        "--chdir", Q(workDir),
-                        "--proc /proc --dev /dev --tmpfs /tmp",
-                        "--unshare-all",
-                        spec.NetworkOpen ? "--share-net" : "",
-                        "--die-with-parent",
-                        shell, shArgs)),
-                    "firejail" => ("firejail", string.Join(' ',
-                        "--quiet",
-                        spec.NetworkOpen ? "" : "--net=none",
-                        "--whitelist=" + Q(workDir),
-                        "--caps.drop=all --nonewprivs --seccomp",
-                        shell, shArgs)),
-                    "sandbox-exec" => ("sandbox-exec", string.Join(' ',
-                        "-p", SeatbeltProfile(workDir, spec.NetworkOpen),
-                        shell, shArgs)),
-                    _ => throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'"),
-                };
+                // Wrapper backends are Linux/macOS only: run the command through a POSIX shell in the sandbox.
+                return WrapProcess(spec, new[] { "/bin/sh", "-c", innerCommand }, workDir);
 
             case SandboxKind.Custom:
-                // Render the user template. {cmd} = the shell-quoted inner command, {workdir}, {image}.
+                // Render the user template. {cmd} = the raw inner command, {workdir}, {image}.
                 string rendered = spec.CustomTemplate
                     .Replace("{cmd}", innerCommand)
                     .Replace("{workdir}", workDir)
@@ -319,27 +294,64 @@ internal static class SandboxBackend
                 // Run the rendered template via the host shell so users can write a full pipeline.
                 if (OperatingSystem.IsWindows())
                     return ("cmd.exe", "/c " + rendered);
-                return ("/bin/sh", "-c " + ShQuote(rendered));
+                return ("/bin/sh", "-c " + ArgvToken(rendered));
 
             default:
                 throw new SandboxException("WrapShellCommand is only valid for Wrapper/Custom backends.");
         }
     }
 
+    /// <summary>
+    /// Render the (file, argv-string) that runs the process <paramref name="innerArgv"/> (program + args)
+    /// inside a wrapper backend (bwrap/firejail/sandbox-exec), confined to <paramref name="workDir"/>.
+    /// Every token is quoted for <see cref="ProcessStartInfo.Arguments"/>, so the wrapper receives exactly
+    /// <paramref name="innerArgv"/>, byte-for-byte. Only valid for <see cref="SandboxKind.Wrapper"/>.
+    /// </summary>
+    public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir)
+    {
+        if (spec.Kind != SandboxKind.Wrapper)
+            throw new SandboxException("WrapProcess is only valid for wrapper backends.");
+        var argv = new List<string>();
+        switch (spec.Backend)
+        {
+            case "bwrap":
+                argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
+                    "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
+                if (spec.NetworkOpen) argv.Add("--share-net");
+                argv.Add("--die-with-parent");
+                break;
+            case "firejail":
+                argv.Add("--quiet");
+                if (!spec.NetworkOpen) argv.Add("--net=none");
+                argv.AddRange(new[] { "--whitelist=" + workDir, "--caps.drop=all", "--nonewprivs", "--seccomp" });
+                break;
+            case "sandbox-exec":
+                argv.Add("-p");
+                argv.Add(SeatbeltProfile(workDir, spec.NetworkOpen));
+                break;
+            default:
+                throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'");
+        }
+        argv.AddRange(innerArgv);
+        var args = new List<string>(argv.Count);
+        foreach (var a in argv) args.Add(ArgvToken(a));
+        return (spec.Backend, string.Join(' ', args));
+    }
+
     private static string SeatbeltProfile(string workDir, bool net)
     {
         // Minimal Seatbelt SBPL: deny by default, allow exec + read of system, rw on the workdir, network optional.
-        string p = "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
-                   "(allow file-read* (subpath \\\"/usr\\\")(subpath \\\"/System\\\")(subpath \\\"/Library\\\")(subpath \\\"/bin\\\")(subpath \\\"/sbin\\\")(subpath \\\"/private/var\\\")(subpath \\\"/etc\\\"))" +
-                   "(allow file-read* file-write* (subpath \\\"" + workDir + "\\\")(subpath \\\"/tmp\\\")(subpath \\\"/private/tmp\\\"))" +
-                   (net ? "(allow network*)" : "");
-        return "'" + p.Replace("\\\"", "\"") + "'";
+        return "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
+               "(allow file-read* (subpath \"/usr\")(subpath \"/System\")(subpath \"/Library\")(subpath \"/bin\")(subpath \"/sbin\")(subpath \"/private/var\")(subpath \"/etc\"))" +
+               "(allow file-read* file-write* (subpath \"" + workDir + "\")(subpath \"/tmp\")(subpath \"/private/tmp\"))" +
+               (net ? "(allow network*)" : "");
     }
 
-    // POSIX single-quote escaping for a whole command passed to `sh -c`.
-    private static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
-    // Quote a path arg that may contain spaces (double-quote form for argv tokens).
-    private static string Q(string s) => s.Contains(' ') ? "\"" + s + "\"" : s;
+    // One argv token for ProcessStartInfo.Arguments, which .NET parses with Windows/MSVCRT rules on EVERY
+    // OS (not POSIX shell rules). Plain tokens pass through unchanged; anything else is quoted exactly.
+    internal static string ArgvToken(string s) =>
+        s.Length > 0 && s.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '"', '\'', '\\' }) < 0
+            ? s : OciSandbox.ShQuoteForArgv(s);
 
     // ---- allowed-path mounts mapped from the filesystem security posture --------------------
     //
