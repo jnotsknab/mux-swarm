@@ -204,6 +204,12 @@ internal static class SandboxBackend
             if ((backend is "bwrap" or "firejail") && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 throw new SandboxException($"sandbox.backend '{backend}' is Linux-only.");
             EnsureBinaryReady(backend, ociDaemonCheck: false);
+            // firejail does NOT fail when it can't sandbox: nested in another sandbox (WSL, a container) it
+            // warns "an existing sandbox was detected", runs the program unconfined and exits 0 - and our
+            // --quiet hides the warning. Probe once, without --quiet, so that case is a hard error.
+            if (backend == "firejail" && FirejailDegraded(ProbeOutput("firejail", "--noprofile /bin/true", stderr: true)))
+                throw new SandboxException("firejail detected an existing sandbox (e.g. WSL or a container) and would run " +
+                    "commands WITHOUT confinement. Use bwrap, a container backend, or run Mux outside the nested environment.");
             return new SandboxSpec
             {
                 Kind = SandboxKind.Wrapper, Backend = backend, Binary = backend,
@@ -248,6 +254,32 @@ internal static class SandboxBackend
             return p.ExitCode == 0;
         }
         catch { return false; }
+    }
+
+    /// <summary>True when firejail's output says it fell back to running the program without a sandbox.</summary>
+    internal static bool FirejailDegraded(string? output) =>
+        output is not null && output.Contains("existing sandbox was detected", StringComparison.OrdinalIgnoreCase);
+
+    // Combined stdout(+stderr) of a short read-only probe, stdin closed; null on failure/timeout.
+    private static string? ProbeOutput(string binary, string args, bool stderr = false)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = binary, Arguments = args,
+                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true,
+            };
+            using var p = Process.Start(psi);
+            if (p is null) return null;
+            p.StandardInput.Close();
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } return null; }
+            return stderr ? outTask.Result + errTask.Result : outTask.Result;
+        }
+        catch { return null; }
     }
 
     private static bool OciDaemonReady(string binary)

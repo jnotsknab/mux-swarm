@@ -435,6 +435,14 @@ public class SandboxBackendTests
         Assert.Equal(new[] { "-c", "run img sh -c echo 'a b'" }, CommandLineSplit(args).ToArray());
     }
 
+    [Theory]
+    [InlineData("Warning: an existing sandbox was detected. /bin/true will run without any additional sandboxing features", true)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    [InlineData("Parent pid 12, child pid 13\nChild process initialized", false)]
+    public void FirejailDegraded_DetectsUnconfinedFallback(string? output, bool expected) =>
+        Assert.Equal(expected, SandboxBackend.FirejailDegraded(output));
+
     [Fact]
     public void ListAllowed_ShowsHowEachHostPathAppearsInTheSandbox()
     {
