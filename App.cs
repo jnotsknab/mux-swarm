@@ -64,6 +64,11 @@ internal class App
     public static int ServePort;
     public static DaemonRunner? DaemonRunner;
 
+    /// <summary>True from startup (when <c>--daemon</c> is requested and enabled) until
+    /// <see cref="DaemonRunner"/> is created, so <c>/api/health</c> reports <c>daemon: "starting"</c>
+    /// during the boot window instead of <c>"off"</c>.</summary>
+    public static volatile bool DaemonPending;
+
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
@@ -411,6 +416,7 @@ internal class App
         if (_watchDogEnabled)
             Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
         
+        DaemonPending = parsed.DaemonMode && Config.Daemon is { Enabled: true };
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
@@ -509,6 +515,7 @@ internal class App
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
             DaemonRunner = new DaemonRunner(Config.Daemon);
+            DaemonPending = false;   // health now tracks DaemonRunner.TriggersReady
             
             if (ServePort > 0)
             {

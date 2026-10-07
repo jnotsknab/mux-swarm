@@ -214,8 +214,21 @@ public static partial class ServeMode
             mode = ActiveMode,
             agentCount,
             tip = new { label = tipLabel, text = tipText },
+            daemon = DaemonHealth(App.DaemonRunner, App.DaemonPending),
         });
     }
+
+    /// <summary>
+    /// Daemon readiness reported by <c>GET /api/health</c> as <c>daemon</c>: <c>"off"</c> = no daemon,
+    /// <c>"starting"</c> = daemon requested but its triggers are not registered yet (a
+    /// <c>POST /api/hook/{id}</c> can still 404), <c>"ready"</c> = all boot triggers are registered.
+    /// </summary>
+    internal static string DaemonHealth(MuxSwarm.State.DaemonRunner? runner, bool pending) => runner switch
+    {
+        { TriggersReady: true } => "ready",
+        not null => "starting",
+        null => pending ? "starting" : "off",
+    };
 
     // A2 -- GET /api/agents
     private static async Task HandleAgents(HttpContext context)

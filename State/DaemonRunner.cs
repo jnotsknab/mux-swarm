@@ -115,7 +115,18 @@ public sealed class DaemonRunner : IAsyncDisposable
 
             _workers.Add(worker);
         }
+
+        // Each loop above registers itself (e.g. a webhook's queue) synchronously before its first
+        // await, so every boot trigger is live once the loop has run.
+        _triggersReady = true;
     }
+
+    private volatile bool _triggersReady;
+
+    /// <summary>True once <see cref="Start"/> has registered every boot trigger, so
+    /// <c>POST /api/hook/{id}</c> resolves configured webhooks. Unlike <see cref="IsStarted"/>, which
+    /// flips before the triggers are registered.</summary>
+    public bool TriggersReady => _triggersReady;
 
     /// <summary>True once <see cref="Start"/> has wired up the execution dependencies (needed before
     /// a runtime trigger can fire a goal).</summary>
