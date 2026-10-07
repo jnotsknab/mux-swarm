@@ -587,7 +587,8 @@ public static class SingleAgentOrchestrator
     // summary computed in C# (no model call - cheap and offline).
     private static void HandleDoctor()
     {
-        var snapshot = SystemDiagnostics.BuildSnapshot();
+        var sandbox = SystemDiagnostics.ProbeSandbox(App.Config?.Sandbox);
+        var snapshot = SystemDiagnostics.BuildSnapshot(sandbox);
 
         var warns = new List<string>();
         if (App.ActiveProvider is null)
@@ -598,12 +599,14 @@ public static class SingleAgentOrchestrator
                 warns.Add($"MCP '{server.Name}' NOT CONNECTED");
         if (SkillLoader.GetSkillMetadata().Count == 0)
             warns.Add("no skills loaded");
+        if (!sandbox.Usable)
+            warns.Add($"sandbox '{App.Config?.Sandbox?.Backend}' is not usable: {sandbox.Detail}");
 
         var sb = new System.Text.StringBuilder();
         sb.Append(snapshot.TrimEnd());
         sb.Append("\n\n## Health\n");
         if (warns.Count == 0)
-            sb.Append("PASS - providers, MCP servers, skills, and sandbox all look healthy.");
+            sb.Append($"PASS - provider, MCP servers and skills look healthy. Sandbox: {sandbox.Detail}.");
         else
         {
             sb.Append($"WARN - {warns.Count} issue(s):\n");

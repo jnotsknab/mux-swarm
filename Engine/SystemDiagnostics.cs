@@ -21,9 +21,13 @@ public static class SystemDiagnostics
 {
     /// <summary>
     /// Build a compact, model-readable snapshot of current runtime state. Pure string assembly off
-    /// the App.* statics; no side effects.
+    /// the App.* statics; no side effects. When <paramref name="sandboxStatus"/> is null (e.g. /fix) the
+    /// sandbox is reported as not probed; /doctor passes a <see cref="ProbeSandbox"/> result.
     /// </summary>
-    public static string BuildSnapshot()
+    public static string BuildSnapshot() => BuildSnapshot(null);
+
+    /// <summary>Snapshot including a sandbox readiness result (see <see cref="ProbeSandbox"/>).</summary>
+    internal static string BuildSnapshot(SandboxStatus? sandboxStatus)
     {
         var sb = new StringBuilder();
         sb.AppendLine("# Mux-Swarm runtime snapshot");
@@ -91,6 +95,9 @@ public static class SystemDiagnostics
         sb.AppendLine($"resolvedActive: {SandboxRuntime.IsActive}");
         if (SandboxRuntime.Active is { } spec)
             sb.AppendLine($"resolvedBackend: {spec.Backend}");
+        sb.AppendLine(sandboxStatus is null
+            ? "status: not probed (run /doctor for a live check)"
+            : $"status: {(sandboxStatus.Configured ? sandboxStatus.Usable ? "usable" : "NOT USABLE" : "none")} -- {sandboxStatus.Detail}");
         sb.AppendLine();
 
         // Filesystem + limits
@@ -104,6 +111,55 @@ public static class SystemDiagnostics
         sb.AppendLine($"maxToolIterationsPerTurn: {lim.MaxToolIterationsPerTurn}");
 
         return sb.ToString();
+    }
+
+    /// <summary>Result of a live sandbox readiness check. <c>Configured</c> is false for host execution.</summary>
+    internal sealed record SandboxStatus(bool Configured, bool Usable, string Detail);
+
+    /// <summary>
+    /// Live readiness check of the configured sandbox backend for /doctor. Reuses
+    /// <see cref="SandboxBackend.Resolve"/> (the same read-only probes a session runs: binary
+    /// <c>--version</c>, engine <c>info</c>, <c>sbx ls</c>, OS/KVM gates), plus a check that an explicit
+    /// OCI runtime (e.g. runsc) is known to the engine. Never creates a sandbox, container or VM.
+    /// </summary>
+    internal static SandboxStatus ProbeSandbox(SandboxConfig? cfg)
+    {
+        string backend = SandboxBackend.Canonical(cfg?.Backend);
+        if (cfg is null || backend is "host" or "" or "none")
+            return new(false, true, "no sandbox configured; shell and Python run directly on the host");
+        SandboxSpec? spec;
+        try { spec = SandboxBackend.Resolve(cfg); }
+        catch (SandboxException ex) { return new(true, false, ex.Message); }
+        if (spec is null)
+            return new(false, true, "no sandbox configured; shell and Python run directly on the host");
+        if (spec.Kind == SandboxKind.Oci && spec.Runtime is { } rt)
+        {
+            string? info = Path.IsPathRooted(rt) ? null : OciSandbox.Run(spec.Binary, "info", allowFail: true, timeoutMs: 10_000).outp;
+            if (RuntimeProblem(spec.Binary, rt, info) is { } problem) return new(true, false, problem);
+        }
+        string what = spec.Kind switch
+        {
+            SandboxKind.Custom => "template set (custom backends are not probed)",
+            SandboxKind.Wrapper => $"'{spec.Binary}' found",
+            _ => $"'{spec.Binary}' found and reachable{(spec.Runtime is { } r ? $", runtime '{r}'" : "")}",
+        };
+        return new(true, true, $"backend '{spec.Backend}' ready: {what}");
+    }
+
+    /// <summary>
+    /// Reason an explicit OCI runtime is unusable, or null when it looks present (or cannot be checked).
+    /// An absolute path must exist; a runtime name is checked against <c>docker info</c> output, which
+    /// lists registered runtimes. Other engines do not list runtimes reliably, so they are not checked.
+    /// </summary>
+    internal static string? RuntimeProblem(string binary, string runtime, string? infoOutput)
+    {
+        if (Path.IsPathRooted(runtime))
+            return File.Exists(runtime) ? null : $"OCI runtime '{runtime}' does not exist";
+        if (binary == "docker" && infoOutput is { Length: > 0 }
+            && !infoOutput.Contains(runtime, StringComparison.OrdinalIgnoreCase))
+            return $"OCI runtime '{runtime}' is not registered with docker ('docker info' does not list it). " +
+                   "Install it and register it in the docker daemon config, then restart docker.";
+        return null;
     }
 
     /// <summary>One configured entry's effective transport status, not per-agent tool access.</summary>

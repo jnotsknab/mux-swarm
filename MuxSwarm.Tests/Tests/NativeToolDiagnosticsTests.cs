@@ -173,4 +173,52 @@ public class NativeToolDiagnosticsTests
             App.ActiveProvider = provider;
         }
     }
+
+    private static string RunDoctor(SandboxConfig sandbox)
+    {
+        var config = App.Config;
+        var provider = App.ActiveProvider;
+        bool stdio = MuxConsole.StdioMode;
+        var output = Console.Out;
+        using var capture = new StringWriter();
+        try
+        {
+            App.Config = new AppConfig { Sandbox = sandbox };
+            App.ActiveProvider = new ProviderConfig { Name = "test-provider", Endpoint = "https://provider.example/v1" };
+            MuxConsole.StdioMode = true;
+            Console.SetOut(capture);
+            typeof(SingleAgentOrchestrator).GetMethod("HandleDoctor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+                .Invoke(null, null);
+            var events = capture.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            using var doc = System.Text.Json.JsonDocument.Parse(events[^1]);
+            return doc.RootElement.GetProperty("content").GetString()!;
+        }
+        finally
+        {
+            Console.SetOut(output);
+            MuxConsole.StdioMode = stdio;
+            App.Config = config;
+            App.ActiveProvider = provider;
+        }
+    }
+
+    [Fact]
+    public void Doctor_UnusableSandbox_ReportsReason_AndDoesNotClaimHealthy()
+    {
+        // custom with no template fails Resolve on every OS without spawning anything.
+        string rendered = RunDoctor(new SandboxConfig { Backend = "custom", Command = "" });
+        Assert.Contains("sandbox 'custom' is not usable", rendered);
+        Assert.Contains("sandbox.command", rendered);
+        Assert.Contains("status: NOT USABLE", rendered);
+        Assert.DoesNotContain("sandbox all look healthy", rendered);
+    }
+
+    [Fact]
+    public void Doctor_NoSandbox_SaysSoPlainly()
+    {
+        string rendered = RunDoctor(new SandboxConfig { Backend = "host" });
+        Assert.Contains("no sandbox configured", rendered);
+        Assert.DoesNotContain("sandbox all look healthy", rendered);
+        Assert.DoesNotContain("not usable", rendered);
+    }
 }
