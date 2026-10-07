@@ -350,7 +350,9 @@ internal static class SandboxBackend
                 argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
                     "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
                 if (spec.NetworkOpen) argv.Add("--share-net");
-                argv.Add("--die-with-parent");
+                // No --die-with-parent: it is PR_SET_PDEATHSIG, which fires when the spawning THREAD exits.
+                // .NET starts processes from short-lived pool threads, so it SIGKILLed (137) any job that
+                // ran longer than about a second. Mux kills its jobs/worker itself on dispose.
                 break;
             case "firejail":
                 argv.Add("--quiet");

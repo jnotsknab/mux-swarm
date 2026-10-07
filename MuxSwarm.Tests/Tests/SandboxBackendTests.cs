@@ -399,6 +399,13 @@ public class SandboxBackendTests
     }
 
     [Fact]
+    public void WrapProcess_Bwrap_DoesNotTieTheJobToTheSpawningThread()
+    {
+        // --die-with-parent = PR_SET_PDEATHSIG, which fires on spawning-THREAD exit: long jobs died with 137.
+        Assert.DoesNotContain("--die-with-parent", CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("bwrap"), new[] { "x" }, "/w").Args));
+    }
+
+    [Fact]
     public void WrapProcess_Firejail_WhitelistAndNetNone()
     {
         var argv = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("firejail"), new[] { "x" }, "/w d").Args);
