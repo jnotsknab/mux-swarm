@@ -196,11 +196,13 @@ internal sealed class OciSandbox : ISessionSandbox
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
         if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
-        // give the proxy a normal egress path too (second network with default bridge).
-        // Known limit (unverified): podman names its default network `podman`, not `bridge`, so this
-        // connect may fail there and leave the proxy without egress.
-        Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
+        // give the proxy a normal egress path too: the engine's default network (podman names it `podman`,
+        // docker and nerdctl `bridge`).
+        Run(_spec.Binary, $"network connect {DefaultNetwork(_spec.Binary)} {_proxyName}", allowFail: true);
     }
+
+    /// <summary>The engine's default (egress) network name: <c>podman</c> for podman, <c>bridge</c> otherwise.</summary>
+    internal static string DefaultNetwork(string binary) => binary == "podman" ? "podman" : "bridge";
 
     /// <summary>
     /// Pull <paramref name="image"/> as its own step when it is not present locally, with a 10 min timeout:
