@@ -450,6 +450,82 @@ public class SandboxBackendTests
     public void FirejailDegraded_DetectsUnconfinedFallback(string? output, bool expected) =>
         Assert.Equal(expected, SandboxBackend.FirejailDegraded(output));
 
+    // ---- REPL worker under wrapper/custom backends (v0.15.2 #1, security): the worker used to start on the
+    // HOST for every non-container backend. It must now run as a wrapped process, or refuse (custom w/o opt-in).
+
+    [Theory]
+    [InlineData("bwrap")]
+    [InlineData("firejail")]
+    [InlineData("sandbox-exec")]
+    public void ReplWorker_UnderWrapper_RunsThroughTheWrapper(string backend)
+    {
+        var (file, args) = ReplSession.WorkerCommand(WrapperSpec(backend), "/w d/.venv/bin/python", "/w d/worker.py", "/w d");
+        Assert.Equal(backend, file);
+        var argv = CommandLineSplit(args);
+        Assert.Equal(new[] { "/w d/.venv/bin/python", "/w d/worker.py" }, argv.Skip(argv.Count - 2).ToArray());
+    }
+
+    [Fact]
+    public void ReplWorker_OnHost_IsUnchanged()
+    {
+        var (file, args) = ReplSession.WorkerCommand(null, "python3", "/w/worker.py", "/w");
+        Assert.Equal("python3", file);
+        Assert.Equal("/w/worker.py", args);
+    }
+
+    [Fact]
+    public void ReplWorker_UnderCustomWithReplStdio_RunsThroughTheTemplate()
+    {
+        var spec = new SandboxSpec { Kind = SandboxKind.Custom, Backend = "custom", Binary = "", Image = "img",
+            CustomTemplate = "wrap -i {cmd}", CustomReplStdio = true };
+        var (file, args) = ReplSession.WorkerCommand(spec, "/v/python", "/w/worker.py", "/w");
+        Assert.NotEqual("/v/python", file);
+        Assert.Contains("wrap -i", args);
+        Assert.Contains("/w/worker.py", args);
+    }
+
+    [Fact]
+    public void Custom_ReplStdio_FlowsFromConfigToSpec()
+    {
+        var on = SandboxBackend.Resolve(new SandboxConfig { Backend = "custom", Command = "x {cmd}", ReplStdio = true });
+        var off = SandboxBackend.Resolve(new SandboxConfig { Backend = "custom", Command = "x {cmd}" });
+        Assert.True(on!.CustomReplStdio);
+        Assert.False(off!.CustomReplStdio);
+    }
+
+    [Fact]
+    public void WrapProcess_ExposesReadOnlyPaths_ForFirejailAndSeatbelt()
+    {
+        string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd('/');
+        string py = home + "/.local/share/uv/python/cpython-3.12";
+        var fj = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("firejail"), new[] { "x" }, "/w", new[] { py }).Args);
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Contains("--whitelist=" + py, fj);
+            Assert.Contains("--read-only=" + py, fj);
+        }
+        var sb = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("sandbox-exec"), new[] { "x" }, "/w", new[] { "/opt/homebrew/py" }).Args);
+        Assert.Contains("(subpath \"/opt/homebrew/py\")", sb[1]);
+        Assert.DoesNotContain("file-write* (subpath \"/opt/homebrew/py\")", sb[1]);
+    }
+
+    [Fact]
+    public void PythonReadPaths_ReadsVenvHomePrefix()
+    {
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "muxvenv_" + Guid.NewGuid().ToString("N"));
+        string bin = System.IO.Path.Combine(dir, "bin");
+        System.IO.Directory.CreateDirectory(bin);
+        try
+        {
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "pyvenv.cfg"), "home = /opt/py/cpython-3.12/bin\nversion = 3.12\n");
+            var paths = ReplSession.PythonReadPaths(System.IO.Path.Combine(bin, "python"));
+            Assert.Single(paths);
+            Assert.Equal("/opt/py/cpython-3.12", paths[0].Replace('\\', '/'));
+            Assert.Empty(ReplSession.PythonReadPaths("/nonexistent/bin/python"));
+        }
+        finally { System.IO.Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public void ListAllowed_ShowsHowEachHostPathAppearsInTheSandbox()
     {

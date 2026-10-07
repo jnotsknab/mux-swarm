@@ -45,6 +45,38 @@ public class NativeReplShellToolsTests
     }
 
     [Fact]
+    public async Task Repl_UnderCustomWithoutReplStdio_RefusesInsteadOfRunningOnHost()
+    {
+        // v0.15.2 #1 (security): any non-container backend used to start the worker on the HOST.
+        ReplShellTools.DisposeAll();
+        MuxSwarm.App.Config.Sandbox = new SandboxConfig { Backend = "custom", Command = "{cmd}" };
+        try
+        {
+            var r = await Call("repl_shell_exec", new { code = "print('ran-on-host')" });
+            Assert.Contains("SANDBOX ERROR", r);
+            Assert.Contains("replStdio", r);
+            Assert.DoesNotContain("ran-on-host", r);
+            Assert.Contains("SANDBOX ERROR", await Call("list_variables", new { }));
+        }
+        finally { MuxSwarm.App.Config.Sandbox = new SandboxConfig(); ReplShellTools.DisposeAll(); }
+    }
+
+    [Fact]
+    public async Task Repl_UnderCustomWithReplStdio_RunsTheWorkerThroughTheTemplate_AndKeepsState()
+    {
+        // A pass-through template ("{cmd}" via sh/cmd.exe) proves the stdio JSON protocol survives the
+        // wrapper: state persists across calls exactly as on host.
+        ReplShellTools.DisposeAll();
+        MuxSwarm.App.Config.Sandbox = new SandboxConfig { Backend = "custom", Command = "{cmd}", ReplStdio = true };
+        try
+        {
+            Assert.Contains("ok", await Call("repl_shell_exec", new { code = "wrapped_v = 41\nprint('ok')" }));
+            Assert.Contains("42", await Call("repl_shell_exec", new { code = "print(wrapped_v + 1)" }));
+        }
+        finally { MuxSwarm.App.Config.Sandbox = new SandboxConfig(); ReplShellTools.DisposeAll(); }
+    }
+
+    [Fact]
     public async Task DisposeAll_TearsDownThePrimarySession()
     {
         // The unscoped primary session has no owner; on exit DisposeAll must remove it (and its sandbox).

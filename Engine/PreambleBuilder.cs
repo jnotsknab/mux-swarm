@@ -117,9 +117,13 @@ public static class PreambleBuilder
             // want to keep must land in the mounted work dir. Filesystem tools still operate on the host
             // (within allowed paths), matching the docker-sandbox skill's "don't use the sandbox just to
             // write files" rule.
+            bool wrapped = SandboxRuntime.Active?.Kind is SandboxKind.Wrapper or SandboxKind.Custom;
             preamble += "## Execution Sandbox (ACTIVE)\n"
-                + "Your shell commands and Python execution run INSIDE a sandbox (container or microVM), not on the host. "
-                + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n";
+                + (wrapped
+                    ? "Your shell commands and Python execution run INSIDE a process sandbox, not directly on the host. "
+                      + "This is enforced by the runtime. Your scratch working directory is the current directory (always writable).\n"
+                    : "Your shell commands and Python execution run INSIDE a sandbox (container or microVM), not on the host. "
+                      + "This is enforced by the runtime. Your scratch working directory is /work (always writable).\n");
             // Surface the allowed-path mounts so the agent knows WHERE its project files are inside the
             // sandbox and which are read-only (mapped from the filesystem security posture).
             // Mounts come from the ACTIVE spec (only container/microVM backends bind /host/* paths; wrapper/custom

@@ -32,6 +32,9 @@ internal sealed class SandboxSpec
     public bool NetworkOpen { get; init; }
     public IReadOnlyList<string> AllowedDomains { get; init; } = Array.Empty<string>();
     public string CustomTemplate { get; init; } = "";
+
+    /// <summary>Custom backend only: the template can host the stdio Python REPL worker (sandbox.replStdio).</summary>
+    public bool CustomReplStdio { get; init; }
     public string? Runtime { get; init; }              // e.g. "runsc" for gvisor
 
     /// <summary>
@@ -128,6 +131,7 @@ internal static class SandboxBackend
             {
                 Kind = SandboxKind.Custom, Backend = backend, Binary = "",
                 Image = cfg.Image ?? "", NetworkOpen = cfg.Network, CustomTemplate = cfg.Command,
+                CustomReplStdio = cfg.ReplStdio,
             };
         }
 
@@ -339,8 +343,12 @@ internal static class SandboxBackend
     /// Every token is quoted for <see cref="ProcessStartInfo.Arguments"/>, so the wrapper receives exactly
     /// <paramref name="innerArgv"/>, byte-for-byte. Only valid for <see cref="SandboxKind.Wrapper"/>.
     /// </summary>
-    public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir)
+    /// <param name="readOnlyPaths">Extra host paths the process must be able to read (e.g. the Python
+    /// installation behind a venv). bwrap already binds / read-only, so it needs none.</param>
+    public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir,
+        IReadOnlyList<string>? readOnlyPaths = null)
     {
+        readOnlyPaths ??= Array.Empty<string>();
         if (spec.Kind != SandboxKind.Wrapper)
             throw new SandboxException("WrapProcess is only valid for wrapper backends.");
         var argv = new List<string>();
@@ -358,10 +366,15 @@ internal static class SandboxBackend
                 argv.Add("--quiet");
                 if (!spec.NetworkOpen) argv.Add("--net=none");
                 argv.AddRange(new[] { "--whitelist=" + workDir, "--caps.drop=all", "--nonewprivs", "--seccomp" });
+                // A whitelist hides the rest of $HOME, so expose extra paths that live there, read-only.
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                foreach (var p in readOnlyPaths)
+                    if (home.Length > 0 && p.StartsWith(home.TrimEnd('/') + "/", StringComparison.Ordinal))
+                        argv.AddRange(new[] { "--whitelist=" + p, "--read-only=" + p });
                 break;
             case "sandbox-exec":
                 argv.Add("-p");
-                argv.Add(SeatbeltProfile(workDir, spec.NetworkOpen));
+                argv.Add(SeatbeltProfile(workDir, spec.NetworkOpen, readOnlyPaths));
                 break;
             default:
                 throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'");
@@ -372,11 +385,13 @@ internal static class SandboxBackend
         return (spec.Backend, string.Join(' ', args));
     }
 
-    private static string SeatbeltProfile(string workDir, bool net)
+    private static string SeatbeltProfile(string workDir, bool net, IReadOnlyList<string>? readOnlyPaths = null)
     {
         // Minimal Seatbelt SBPL: deny by default, allow exec + read of system, rw on the workdir, network optional.
+        string extra = "";
+        foreach (var p in readOnlyPaths ?? Array.Empty<string>()) extra += "(subpath \"" + p + "\")";
         return "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
-               "(allow file-read* (subpath \"/usr\")(subpath \"/System\")(subpath \"/Library\")(subpath \"/bin\")(subpath \"/sbin\")(subpath \"/private/var\")(subpath \"/etc\"))" +
+               "(allow file-read* (subpath \"/usr\")(subpath \"/System\")(subpath \"/Library\")(subpath \"/bin\")(subpath \"/sbin\")(subpath \"/private/var\")(subpath \"/etc\")" + extra + ")" +
                "(allow file-read* file-write* (subpath \"" + workDir + "\")(subpath \"/tmp\")(subpath \"/private/tmp\"))" +
                (net ? "(allow network*)" : "");
     }

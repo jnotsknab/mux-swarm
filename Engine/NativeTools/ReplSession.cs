@@ -295,7 +295,9 @@ internal sealed class ReplSession : IDisposable
 
     public async Task<string> ListVariablesAsync(CancellationToken ct)
     {
-        await EnsureWorkerAsync(ct);
+        if (SandboxGuard() is { } guard) return guard;
+        try { await EnsureWorkerAsync(ct); }
+        catch (SandboxException ex) { return $"[SANDBOX ERROR] {ex.Message}"; }
         TaskCompletionSource<List<string>> tcs;
         lock (_lock) { _varsTcs = tcs = new TaskCompletionSource<List<string>>(TaskCreationOptions.RunContinuationsAsynchronously); }
         WriteWorker(new Dictionary<string, object?> { ["cmd"] = "list_vars" });
@@ -330,6 +332,13 @@ internal sealed class ReplSession : IDisposable
         bool needStart;
         lock (_lock) needStart = _worker is null || _worker.HasExited;
         if (!needStart) return;
+
+        // A custom template is opaque: only run the long-lived stdio worker through it when the user
+        // declared it can host one. Otherwise refuse - never a silent host fallback.
+        if (_spec is { Kind: SandboxKind.Custom, CustomReplStdio: false })
+            throw new SandboxException("the Python REPL cannot run under sandbox.backend 'custom' unless the template " +
+                "passes stdin/stdout through to {cmd}. If it does, set sandbox.replStdio true; otherwise use the shell " +
+                "tools (they run through the template) or another backend.");
 
         if (OciSandboxed)
             _oci!.EnsureStarted();   // python lives in the container; no host venv needed
@@ -369,10 +378,12 @@ internal sealed class ReplSession : IDisposable
             }
             else
             {
+                string py = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3");
+                var (file, args) = WorkerCommand(_spec, py, _workerFile, _workDir);
                 psi = new ProcessStartInfo
                 {
-                    FileName = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3"),
-                    Arguments = QuoteArg(_workerFile),
+                    FileName = file,
+                    Arguments = args,
                     RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
@@ -552,6 +563,10 @@ internal sealed class ReplSession : IDisposable
         await EnsureVenvAsync(ct);
         string py = File.Exists(VenvPython) ? VenvPython : (OperatingSystem.IsWindows() ? "python" : "python3");
         string cmd = $"uv pip install --python {QuoteArg(py)} {package}";
+        // Wrapper backends run this as a wrapped shell job (network limits apply). The user's uv cache
+        // (~/.cache/uv) is read-only or hidden inside the wrapper, so keep the cache in the session work dir.
+        if (_spec is { Kind: SandboxKind.Wrapper })
+            cmd = $"UV_CACHE_DIR={QuoteArg(Path.Combine(_workDir, ".uv-cache"))} " + cmd;
         return StartShellJob(cmd);
     }
 
@@ -607,6 +622,50 @@ internal sealed class ReplSession : IDisposable
     }
 
     private static string QuoteArg(string s) => s.Contains(' ') ? $"\"{s}\"" : s;
+
+    /// <summary>
+    /// Host paths a wrapped venv interpreter must read: the base Python install the venv points at
+    /// (<c>home</c> in pyvenv.cfg, e.g. a uv-managed CPython under ~/.local/share/uv). Wrappers that hide
+    /// $HOME (firejail) or deny by default (sandbox-exec) would otherwise break the interpreter.
+    /// </summary>
+    internal static IReadOnlyList<string> PythonReadPaths(string python)
+    {
+        try
+        {
+            string? venv = Path.GetDirectoryName(Path.GetDirectoryName(python));
+            string cfg = venv is null ? "" : Path.Combine(venv, "pyvenv.cfg");
+            if (!File.Exists(cfg)) return Array.Empty<string>();
+            foreach (var line in File.ReadLines(cfg))
+            {
+                int eq = line.IndexOf('=');
+                if (eq < 0 || line[..eq].Trim() != "home") continue;
+                string? prefix = Path.GetDirectoryName(line[(eq + 1)..].Trim().TrimEnd('/'));   // <prefix>/bin -> <prefix>
+                return string.IsNullOrEmpty(prefix) || prefix == "/" ? Array.Empty<string>() : new[] { prefix };
+            }
+        }
+        catch { /* unreadable cfg: no extra paths */ }
+        return Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// The (file, args) that start the host-side Python worker. Host: the interpreter directly. Wrapper and
+    /// opted-in custom backends: the worker process itself runs inside the sandbox, exactly like shell jobs,
+    /// and its stdin/stdout JSON line protocol passes straight through the wrapper. Container/microVM
+    /// backends never reach here (they exec into their session instance).
+    /// </summary>
+    internal static (string File, string Args) WorkerCommand(SandboxSpec? spec, string python, string workerFile, string workDir)
+    {
+        if (spec is { Kind: SandboxKind.Wrapper })
+            return SandboxBackend.WrapProcess(spec, new[] { python, workerFile }, workDir, PythonReadPaths(python));
+        if (spec is { Kind: SandboxKind.Custom, CustomReplStdio: true })
+            return SandboxBackend.WrapShellCommand(spec, ShellWord(python) + " " + ShellWord(workerFile), workDir);
+        return (python, QuoteArg(workerFile));
+    }
+
+    // One word for a custom template's {cmd}, which runs via sh (Unix) or cmd.exe (Windows).
+    private static string ShellWord(string s) => OperatingSystem.IsWindows()
+        ? QuoteArg(s)
+        : "'" + s.Replace("'", "'\\''") + "'";
 
     public void Dispose()
     {
