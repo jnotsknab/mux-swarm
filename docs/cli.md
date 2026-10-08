@@ -422,6 +422,12 @@ folder before resuming there; do not overwrite a session you want to keep). `/un
 exchange, not the prune operation. Recovery publication is atomic on supported filesystems, not a
 universal power-loss or adversarial filesystem-race guarantee.
 
+`/compact` (and automatic or mid-turn compaction) writes the same kind of snapshot first, named
+`pre-compact-*.muxprune`, and appends its path to the summary so the agent can search it for a detail
+that was summarized away. Snapshots are indented JSON (one field per line) so `rg`/`grep` returns
+matching lines rather than the whole file. If no allowed sandbox is configured, compaction proceeds
+without a snapshot and prints a warning.
+
 ## Agent picker (`/swap`)
 
 In docked TUI (frame or inline), `/swap` opens a dedicated searchable agent list. The current

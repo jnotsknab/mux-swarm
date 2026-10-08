@@ -8,6 +8,13 @@ namespace MuxSwarm.Engine;
 /// <summary>Idle-session pruning transaction: plan, recoverable snapshot, then install typed context.</summary>
 internal static class ContextPruneSession
 {
+    // Relaxed escaping keeps non-ASCII text greppable as written (quotes/control chars are still escaped).
+    private static readonly JsonSerializerOptions IndentedJson = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
     internal sealed record Result(ContextPruner.Plan Plan, string? RecoveryPath);
 
     /// <summary>Apply only after a complete pre-prune snapshot has been atomically published.
@@ -33,9 +40,18 @@ internal static class ContextPruneSession
         return new Result(plan, recovery);
     }
 
+    /// <summary>Context note appended to the compaction summary: where the full pre-compaction history lives,
+    /// and to search it rather than load it (reading it whole would undo the compaction).</summary>
+    internal static string CompactionSnapshotNote(string snapshotPath) =>
+        $"[Pre-compaction history snapshot: {snapshotPath}]\n" +
+        "Do not read this file whole; that would undo the compaction. If you need a detail that was summarized away, " +
+        "search it for specific terms (e.g. rg/grep for a file name, ID, error text or phrase) and read only the matching lines.";
+
     /// <summary>Publish the original serialized session under an allowed sandbox without overwriting any file.
-    /// Non-json suffix avoids changing legacy session discovery. Existing symlink/junction ancestors are rejected.</summary>
-    internal static string SaveSnapshot(JsonElement serialized, string sandbox, IReadOnlyList<string> allowed)
+    /// Non-json suffix avoids changing legacy session discovery. Existing symlink/junction ancestors are rejected.
+    /// Written indented (one field per line) so an agent can grep it for a detail instead of reading it whole.
+    /// <paramref name="prefix"/> names the cause (<c>pre-prune</c>, <c>pre-compact</c>).</summary>
+    internal static string SaveSnapshot(JsonElement serialized, string sandbox, IReadOnlyList<string> allowed, string prefix = "pre-prune")
     {
         if (string.IsNullOrWhiteSpace(sandbox)) throw new IOException("Configure a sandbox for prune recovery snapshots.");
         string root = Path.GetFullPath(sandbox);
@@ -51,14 +67,14 @@ internal static class ContextPruneSession
         VerifyAncestors();
         Directory.CreateDirectory(dir);
         VerifyAncestors();
-        string destination = Path.Combine(dir, $"pre-prune-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.muxprune");
+        string destination = Path.Combine(dir, $"{prefix}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.muxprune");
         string temporary = destination + ".partial";
         try
         {
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(file, new UTF8Encoding(false), leaveOpen: true))
             {
-                writer.Write(serialized.GetRawText());
+                writer.Write(JsonSerializer.Serialize(serialized, IndentedJson));
                 writer.Flush(); file.Flush(true);
             }
             File.Move(temporary, destination, overwrite: false);
