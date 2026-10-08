@@ -176,14 +176,20 @@ public static class ResultCompactor
                     Compress the following conversation into a structured context summary under {charBudget} characters.
                     
                     MUST preserve:
-                    - All key decisions made and their reasoning
+                    - Decisions, attributed. Keep separate sections for:
+                      "User decided / instructed" (only what the USER explicitly said or approved), and
+                      "Agent proposed, not confirmed by the user" (suggestions, plans or assumptions the user did not approve).
+                      Never promote an agent suggestion to a user decision.
                     - File paths, artifact locations, and outputs produced
                     - Current state of work and next steps discussed
                     - User preferences, constraints, and corrections expressed
                     - Technical details: model names, config values, tool names, error messages
                     - Any unresolved issues or open questions
-                    
+
                     Drop: greetings, pleasantries, reasoning chains, verbose tool call details, repeated information, markdown formatting.
+                    Also drop anything the agent is given again every turn: its system prompt, role, capabilities, tool lists,
+                    operating principles, and injected BRAIN.md / MEMORY.md / user-context blocks. Spend the budget on facts
+                    specific to this conversation. A tool-call manifest is appended separately, so do not list tool calls.
                     
                     Format as a structured summary with labeled sections. Output ONLY the summary wrapped in:
                     [CONTEXT SUMMARY — prior conversation compacted]

@@ -1674,13 +1674,15 @@ public static class SingleAgentOrchestrator
         _pendingCompaction = false;
 
         // Best effort: a missing/disallowed sandbox skips the backup with a warning, never blocks compaction.
-        async Task<string?> SavePreCompactionSnapshotAsync()
+        // Snapshots are tagged with the session id so every compaction of this session stays findable by pattern.
+        async Task<string?> SavePreCompactionSnapshotAsync(IReadOnlyList<ChatMessage> typedHistory)
         {
             try
             {
                 var fs = App.Config.Filesystem;
                 var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ExecutionCancellation.Current);
-                string path = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [], "pre-compact");
+                string path = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [],
+                    $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}", SessionSnapshotText.FullText(typedHistory));
                 MuxConsole.WriteInfo($"Pre-compaction snapshot: {path}");
                 return path;
             }
@@ -1718,14 +1720,23 @@ public static class SingleAgentOrchestrator
                     compactedMsg = await ResultCompactor.CompactConversationAsync(
                         conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
                     // Compaction replaces the session; keep a recoverable copy of the full pre-compaction
-                    // history first (same writer as /prune) and point the agent at it.
-                    string? snapshotPath = await SavePreCompactionSnapshotAsync();
+                    // history first (same writer as /prune) and point the agent at it. The typed session
+                    // history (with tool calls) feeds the deterministic manifest; conversationHistory is text-only.
+                    IReadOnlyList<ChatMessage> typedHistory =
+                        session.TryGetInMemoryChatHistory(out var th) && th is not null ? th.ToList() : conversationHistory.ToList();
+                    string? snapshotPath = await SavePreCompactionSnapshotAsync(typedHistory);
+                    string summaryText = compactedMsg.Text;
+                    string manifest = SessionSnapshotText.Manifest(typedHistory,
+                        snapshotPath is null ? null : Path.ChangeExtension(snapshotPath, ".txt"));
+                    if (manifest.Length > 0) summaryText += "\n\n" + manifest;
+                    if (snapshotPath is not null)
+                        summaryText += "\n\n" + ContextPruneSession.CompactionSnapshotNote(snapshotPath,
+                            $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}-*");
                     var replacement = await agent.CreateSessionAsync(cancellationToken: ExecutionCancellation.Current);
                     ExecutionCancellation.Current.ThrowIfCancellationRequested();
                     session = replacement;
                     conversationHistory.Clear();
-                    conversationHistory.Add(new ChatMessage(ChatRole.User,
-                        snapshotPath is null ? compactedMsg.Text : compactedMsg.Text + "\n\n" + ContextPruneSession.CompactionSnapshotNote(snapshotPath)));
+                    conversationHistory.Add(new ChatMessage(ChatRole.User, summaryText));
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
                         "Context restored. Ready to continue."));
                 });

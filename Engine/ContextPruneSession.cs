@@ -34,24 +34,37 @@ internal static class ContextPruneSession
         if (!session.TryGetInMemoryChatHistory(out var current) || current is null || current.Count != originals.Length
             || !current.SequenceEqual(originals, ReferenceEqualityComparer.Instance))
             throw new InvalidOperationException("Session changed while preparing pruning. Retry at its idle prompt.");
-        string recovery = SaveSnapshot(serialized, sandbox, allowed);
+        string recovery = SaveSnapshot(serialized, sandbox, allowed, plainText: SessionSnapshotText.FullText(originals));
         cancellationToken.ThrowIfCancellationRequested();
         session.SetInMemoryChatHistory(plan.Messages.ToList());
         return new Result(plan, recovery);
     }
 
-    /// <summary>Context note appended to the compaction summary: where the full pre-compaction history lives,
-    /// and to search it rather than load it (reading it whole would undo the compaction).</summary>
-    internal static string CompactionSnapshotNote(string snapshotPath) =>
-        $"[Pre-compaction history snapshot: {snapshotPath}]\n" +
-        "Do not read this file whole; that would undo the compaction. If you need a detail that was summarized away, " +
-        "search it for specific terms (e.g. rg/grep for a file name, ID, error text or phrase) and read only the matching lines.";
+    /// <summary>Context note appended to the compaction summary: where the full pre-compaction history lives
+    /// (JSON for exact restore, .txt for searching), the pattern that finds EVERY snapshot of this session
+    /// across repeated compactions, and to search rather than load (reading it whole would undo the compaction).</summary>
+    internal static string CompactionSnapshotNote(string snapshotPath, string sessionPattern)
+    {
+        string txt = Path.ChangeExtension(snapshotPath, ".txt");
+        string dir = Path.GetDirectoryName(snapshotPath) ?? "";
+        return $"[Pre-compaction history: {txt} (plain text: tool manifest + transcript) and {snapshotPath} (JSON, exact restore copy)]\n" +
+               $"Earlier compactions of this session: {Path.Combine(dir, sessionPattern)} (all snapshots live in {dir}).\n" +
+               "Do not read these files whole; that would undo the compaction. If you need a detail that was summarized away, " +
+               "search the .txt for specific terms (e.g. rg/grep for a file name, callId, error text or phrase) and read only the matching lines.";
+    }
+
+    /// <summary>File-name-safe tag naming the session a snapshot belongs to, so repeated compactions stay findable.</summary>
+    internal static string SessionTag(string sessionId) =>
+        string.IsNullOrWhiteSpace(sessionId) ? "session"
+            : string.Concat(sessionId.Select(c => char.IsLetterOrDigit(c) || c is '-' or '_' ? c : '_'));
 
     /// <summary>Publish the original serialized session under an allowed sandbox without overwriting any file.
     /// Non-json suffix avoids changing legacy session discovery. Existing symlink/junction ancestors are rejected.
-    /// Written indented (one field per line) so an agent can grep it for a detail instead of reading it whole.
-    /// <paramref name="prefix"/> names the cause (<c>pre-prune</c>, <c>pre-compact</c>).</summary>
-    internal static string SaveSnapshot(JsonElement serialized, string sandbox, IReadOnlyList<string> allowed, string prefix = "pre-prune")
+    /// Written indented (one field per line). When <paramref name="plainText"/> is given, a same-named <c>.txt</c>
+    /// (manifest + unescaped transcript) is published next to it for searching. <paramref name="prefix"/> names
+    /// the cause and session (<c>pre-prune</c>, <c>pre-compact-&lt;session&gt;</c>).</summary>
+    internal static string SaveSnapshot(JsonElement serialized, string sandbox, IReadOnlyList<string> allowed,
+        string prefix = "pre-prune", string? plainText = null)
     {
         if (string.IsNullOrWhiteSpace(sandbox)) throw new IOException("Configure a sandbox for prune recovery snapshots.");
         string root = Path.GetFullPath(sandbox);
@@ -68,17 +81,26 @@ internal static class ContextPruneSession
         Directory.CreateDirectory(dir);
         VerifyAncestors();
         string destination = Path.Combine(dir, $"{prefix}-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.muxprune");
+        Publish(destination, JsonSerializer.Serialize(serialized, IndentedJson));
+        // The text copy is a convenience for searching; the JSON is the recovery copy and is already published.
+        if (plainText is not null)
+            try { Publish(Path.ChangeExtension(destination, ".txt"), plainText); }
+            catch (IOException) { /* best effort */ }
+        return destination;
+    }
+
+    private static void Publish(string destination, string text)
+    {
         string temporary = destination + ".partial";
         try
         {
             using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             using (var writer = new StreamWriter(file, new UTF8Encoding(false), leaveOpen: true))
             {
-                writer.Write(JsonSerializer.Serialize(serialized, IndentedJson));
+                writer.Write(text);
                 writer.Flush(); file.Flush(true);
             }
             File.Move(temporary, destination, overwrite: false);
-            return destination;
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
     }
