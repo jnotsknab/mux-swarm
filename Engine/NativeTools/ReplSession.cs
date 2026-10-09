@@ -537,10 +537,10 @@ internal sealed class ReplSession : IDisposable
         return StartShellJob(command);
     }
 
-    private string StartShellJob(string command)
+    private string StartShellJob(string command, IReadOnlyList<string>? readOnlyPaths = null)
     {
         string id = "job_" + Interlocked.Increment(ref _shellSeq);
-        var job = new ShellJob(id, command);
+        var job = new ShellJob(id, command, readOnlyPaths);
         _shellJobs[id] = job;
         // Host path passes the venv dir to activate it; sandbox paths route the command through the
         // backend (container exec / wrapper / custom) instead - see ShellJob.Start.
@@ -566,7 +566,11 @@ internal sealed class ReplSession : IDisposable
         // Wrapper backends run this as a wrapped shell job (network limits apply). The user's uv cache
         // (~/.cache/uv) is read-only or hidden inside the wrapper, so keep the cache in the session work dir.
         if (_spec is { Kind: SandboxKind.Wrapper })
+        {
             cmd = $"UV_CACHE_DIR={QuoteArg(Path.Combine(_workDir, ".uv-cache"))} " + cmd;
+            // firejail hides ~ and Seatbelt denies by default: expose the host uv binary + base interpreter, read-only.
+            return StartShellJob(cmd, InstallReadPaths(py));
+        }
         return StartShellJob(cmd);
     }
 
@@ -627,24 +631,93 @@ internal sealed class ReplSession : IDisposable
     /// Host paths a wrapped venv interpreter must read: the base Python install the venv points at
     /// (<c>home</c> in pyvenv.cfg, e.g. a uv-managed CPython under ~/.local/share/uv). Wrappers that hide
     /// $HOME (firejail) or deny by default (sandbox-exec) would otherwise break the interpreter.
+    /// pyvenv.cfg lives in the sandbox's WRITABLE work dir, so its value is untrusted: it is only used when it
+    /// names an existing, normalized directory under a host-derived Python root (<see cref="TrustedPythonRoots"/>).
+    /// Anything else exposes nothing extra (the interpreter may then fail to start; it never widens the sandbox).
     /// </summary>
-    internal static IReadOnlyList<string> PythonReadPaths(string python)
+    internal static IReadOnlyList<string> PythonReadPaths(string python, IReadOnlyList<string>? trustedRoots = null)
     {
+        string? venv = Path.GetDirectoryName(Path.GetDirectoryName(python));
+        string cfg = venv is null ? "" : Path.Combine(venv, "pyvenv.cfg");
+        if (!File.Exists(cfg)) return Array.Empty<string>();
+        string? home = null;
         try
         {
-            string? venv = Path.GetDirectoryName(Path.GetDirectoryName(python));
-            string cfg = venv is null ? "" : Path.Combine(venv, "pyvenv.cfg");
-            if (!File.Exists(cfg)) return Array.Empty<string>();
             foreach (var line in File.ReadLines(cfg))
             {
                 int eq = line.IndexOf('=');
-                if (eq < 0 || line[..eq].Trim() != "home") continue;
-                string? prefix = Path.GetDirectoryName(line[(eq + 1)..].Trim().TrimEnd('/'));   // <prefix>/bin -> <prefix>
-                return string.IsNullOrEmpty(prefix) || prefix == "/" ? Array.Empty<string>() : new[] { prefix };
+                if (eq >= 0 && line[..eq].Trim() == "home") { home = line[(eq + 1)..].Trim(); break; }
             }
         }
-        catch { /* unreadable cfg: no extra paths */ }
-        return Array.Empty<string>();
+        catch (IOException) { return Array.Empty<string>(); }
+        catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
+        string? prefix = home is null ? null : Path.GetDirectoryName(home.TrimEnd('/'));   // <prefix>/bin -> <prefix>
+        return prefix is not null && IsTrustedPythonPrefix(prefix, trustedRoots ?? TrustedPythonRoots())
+            ? new[] { prefix } : Array.Empty<string>();
+    }
+
+    /// <summary>
+    /// Where a venv's base interpreter may legitimately live, derived from the HOST (never from sandbox-writable
+    /// files): uv's managed-Python dir (<c>UV_PYTHON_INSTALL_DIR</c>, else <c>$XDG_DATA_HOME/uv/python</c>, else
+    /// <c>~/.local/share/uv/python</c>) and, on macOS, Homebrew (<c>/opt/homebrew</c>, <c>/usr/local</c>).
+    /// System locations (/usr, /System) are already readable inside every wrapper, so they are not listed.
+    /// </summary>
+    internal static IReadOnlyList<string> TrustedPythonRoots()
+    {
+        var roots = new List<string>();
+        string? uvDir = Environment.GetEnvironmentVariable("UV_PYTHON_INSTALL_DIR");
+        if (string.IsNullOrWhiteSpace(uvDir))
+        {
+            string? xdg = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            uvDir = !string.IsNullOrWhiteSpace(xdg) ? Path.Combine(xdg, "uv", "python")
+                : home.Length > 0 ? Path.Combine(home, ".local", "share", "uv", "python") : null;
+        }
+        if (!string.IsNullOrWhiteSpace(uvDir)) roots.Add(uvDir);
+        if (OperatingSystem.IsMacOS()) { roots.Add("/opt/homebrew"); roots.Add("/usr/local"); }
+        return roots;
+    }
+
+    /// <summary>True when <paramref name="prefix"/> is an absolute, already-normalized, existing directory with no
+    /// quote/backslash/control characters, strictly inside one of <paramref name="roots"/>.</summary>
+    internal static bool IsTrustedPythonPrefix(string prefix, IReadOnlyList<string> roots)
+    {
+        if (!Path.IsPathRooted(prefix) || !SandboxBackend.IsSafeSandboxPath(prefix)) return false;
+        string full = Path.GetFullPath(prefix);
+        if (!string.Equals(full.TrimEnd('/'), prefix.TrimEnd('/'), StringComparison.Ordinal)) return false;   // no ., .., //
+        if (!Directory.Exists(full)) return false;
+        foreach (var r in roots)
+        {
+            if (string.IsNullOrWhiteSpace(r)) continue;
+            string root = Path.GetFullPath(r).TrimEnd('/');
+            if (full.StartsWith(root + "/", StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Host paths an install job (<c>uv pip install</c>) needs readable inside a wrapper: the directory of the host
+    /// <c>uv</c> binary and the venv's validated base interpreter. Resolved on the host, never from the work dir.
+    /// </summary>
+    internal static IReadOnlyList<string> InstallReadPaths(string python, string? uvPath = null)
+    {
+        var paths = new List<string>(PythonReadPaths(python));
+        string? uv = uvPath ?? FindOnPath("uv");
+        string? uvDir = uv is null ? null : Path.GetDirectoryName(uv);
+        if (uvDir is not null && Path.IsPathRooted(uvDir) && SandboxBackend.IsSafeSandboxPath(uvDir) && !paths.Contains(uvDir))
+            paths.Add(uvDir);
+        return paths;
+    }
+
+    private static string? FindOnPath(string name)
+    {
+        foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
+        {
+            if (string.IsNullOrWhiteSpace(dir)) continue;
+            string candidate = Path.Combine(dir, name);
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+        return null;
     }
 
     /// <summary>

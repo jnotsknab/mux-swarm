@@ -326,13 +326,15 @@ internal static class SandboxBackend
     /// Render the (file, argv-string) to execute <paramref name="innerCommand"/> via a shell, wrapped by
     /// the wrapper/custom backend, confined to <paramref name="workDir"/>. Only valid for Wrapper/Custom.
     /// </summary>
-    public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir)
+    /// <param name="readOnlyPaths">Wrapper backends only: extra host paths the command must read (see <see cref="WrapProcess"/>).</param>
+    public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir,
+        IReadOnlyList<string>? readOnlyPaths = null)
     {
         switch (spec.Kind)
         {
             case SandboxKind.Wrapper:
                 // Wrapper backends are Linux/macOS only: run the command through a POSIX shell in the sandbox.
-                return WrapProcess(spec, new[] { "/bin/sh", "-c", innerCommand }, workDir);
+                return WrapProcess(spec, new[] { "/bin/sh", "-c", innerCommand }, workDir, readOnlyPaths);
 
             case SandboxKind.Custom:
                 // Render the user template. {cmd} = the raw inner command, {workdir}, {image}.
@@ -364,6 +366,11 @@ internal static class SandboxBackend
         readOnlyPaths ??= Array.Empty<string>();
         if (spec.Kind != SandboxKind.Wrapper)
             throw new SandboxException("WrapProcess is only valid for wrapper backends.");
+        // Paths are spliced into firejail flags and the Seatbelt (SBPL) string literal: refuse anything that
+        // could break out of them instead of trying to escape it.
+        if (!IsSafeSandboxPath(workDir))
+            throw new SandboxException($"sandbox work dir contains characters that cannot be confined safely: {workDir}");
+        readOnlyPaths = readOnlyPaths.Where(IsSafeSandboxPath).ToList();
         var argv = new List<string>();
         switch (spec.Backend)
         {
@@ -397,6 +404,11 @@ internal static class SandboxBackend
         foreach (var a in argv) args.Add(ArgvToken(a));
         return (spec.Backend, string.Join(' ', args));
     }
+
+    /// <summary>True when a host path can be placed in a wrapper flag or an SBPL string literal as-is: no
+    /// <c>"</c>, <c>\</c> or control characters (the SBPL string escapes), not empty.</summary>
+    internal static bool IsSafeSandboxPath(string path) =>
+        !string.IsNullOrEmpty(path) && !path.Any(c => c is '"' or '\\' || char.IsControl(c));
 
     private static string SeatbeltProfile(string workDir, bool net, IReadOnlyList<string>? readOnlyPaths = null)
     {

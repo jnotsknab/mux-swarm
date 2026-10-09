@@ -40,7 +40,12 @@ internal sealed class ShellJob
 
     public string Status => _status;
 
-    public ShellJob(string id, string command) { _id = id; _command = command; }
+    private readonly IReadOnlyList<string>? _readOnlyPaths;
+
+    /// <param name="readOnlyPaths">Extra host paths a wrapper-backend job must be able to read (see
+    /// <see cref="SandboxBackend.WrapShellCommand"/>); ignored on the host and container paths.</param>
+    public ShellJob(string id, string command, IReadOnlyList<string>? readOnlyPaths = null)
+    { _id = id; _command = command; _readOnlyPaths = readOnlyPaths; }
 
     public void Start(string workDir, string? venvDir = null, SandboxSpec? spec = null, ISessionSandbox? oci = null)
     {
@@ -59,7 +64,7 @@ internal sealed class ShellJob
         else
         {
             // Wrapper (bwrap/firejail/sandbox-exec) or custom backend: re-wrap each command.
-            (file, args) = SandboxBackend.WrapShellCommand(spec, _command, workDir);
+            (file, args) = SandboxBackend.WrapShellCommand(spec, _command, workDir, _readOnlyPaths);
         }
         var psi = new ProcessStartInfo
         {

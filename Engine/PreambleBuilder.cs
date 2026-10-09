@@ -118,8 +118,13 @@ public static class PreambleBuilder
             // (within allowed paths), matching the docker-sandbox skill's "don't use the sandbox just to
             // write files" rule.
             bool wrapped = SandboxRuntime.Active?.Kind is SandboxKind.Wrapper or SandboxKind.Custom;
+            bool replUnavailable = SandboxRuntime.Active is { Kind: SandboxKind.Custom, CustomReplStdio: false };
             preamble += "## Execution Sandbox (ACTIVE)\n"
-                + (wrapped
+                + (replUnavailable
+                    ? "Your shell commands run INSIDE a custom sandbox, not directly on the host. The Python REPL tools are "
+                      + "UNAVAILABLE in this configuration (sandbox.replStdio is not enabled); run Python through shell commands "
+                      + "instead. This is enforced by the runtime. Your scratch working directory is the current directory (always writable).\n"
+                    : wrapped
                     ? "Your shell commands and Python execution run INSIDE a process sandbox, not directly on the host. "
                       + "This is enforced by the runtime. Your scratch working directory is the current directory (always writable).\n"
                     : "Your shell commands and Python execution run INSIDE a sandbox (container or microVM), not on the host. "

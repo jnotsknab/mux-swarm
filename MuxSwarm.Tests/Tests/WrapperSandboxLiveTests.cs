@@ -104,10 +104,13 @@ public class WrapperSandboxLiveTests
             MuxSwarm.App.Config.Sandbox = new SandboxConfig { Backend = "bwrap", Network = net };
             try
             {
+                // Start each pass without the package. The venv persists across runs and uv venvs have no pip, so
+                // delete the installed files directly (works inside any wrapper, no uv/pip needed in the sandbox).
                 Assert.Contains("ok", await Call("repl_shell_exec", new { code =
-                    "import shutil, os, subprocess, sys\n" +
+                    "import shutil, os, glob, sysconfig\n" +
                     "shutil.rmtree(os.path.join(os.getcwd(), '.uv-cache'), ignore_errors=True)\n" +
-                    $"subprocess.run([sys.executable, '-m', 'pip', 'uninstall', '-y', '{pkg}'], capture_output=True)\n" +
+                    "site = sysconfig.get_paths()['purelib']\n" +
+                    "for p in glob.glob(os.path.join(site, 'tomli_w*')): shutil.rmtree(p, ignore_errors=True)\n" +
                     "print('ok')" }));
                 string s = await Call("install_package_async", new { package = pkg });
                 string id = s.Split('\n')[0].Replace("Job ID:", "").Trim();

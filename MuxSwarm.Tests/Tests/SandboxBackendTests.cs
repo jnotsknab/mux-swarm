@@ -508,21 +508,107 @@ public class SandboxBackendTests
         Assert.DoesNotContain("file-write* (subpath \"/opt/homebrew/py\")", sb[1]);
     }
 
-    [Fact]
-    public void PythonReadPaths_ReadsVenvHomePrefix()
+    // Review #100 P0: pyvenv.cfg sits in the sandbox's WRITABLE work dir, so its `home` is attacker-controlled.
+    // It may only ever name an existing directory under a host-derived Python root. (POSIX paths: wrapper
+    // backends are Linux/macOS only, and the validation is POSIX-path based.)
+    private static (string venvPython, string root, string prefix, Action cleanup) TamperFixture()
     {
-        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "muxvenv_" + Guid.NewGuid().ToString("N"));
-        string bin = System.IO.Path.Combine(dir, "bin");
-        System.IO.Directory.CreateDirectory(bin);
+        string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "muxvenv_" + Guid.NewGuid().ToString("N"));
+        string root = System.IO.Path.Combine(tmp, "uvpython");
+        string prefix = System.IO.Path.Combine(root, "cpython-3.12");
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(prefix, "bin"));
+        string venv = System.IO.Path.Combine(tmp, "work", ".venv");
+        System.IO.Directory.CreateDirectory(System.IO.Path.Combine(venv, "bin"));
+        return (System.IO.Path.Combine(venv, "bin", "python"), root, prefix, () => System.IO.Directory.Delete(tmp, true));
+    }
+
+    private static void WriteHome(string venvPython, string home) =>
+        System.IO.File.WriteAllText(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(venvPython))!, "pyvenv.cfg"),
+            $"home = {home}\nversion = 3.12\n");
+
+    [Fact]
+    public void PythonReadPaths_TrustedPrefix_IsExposed()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (py, root, prefix, cleanup) = TamperFixture();
         try
         {
-            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "pyvenv.cfg"), "home = /opt/py/cpython-3.12/bin\nversion = 3.12\n");
-            var paths = ReplSession.PythonReadPaths(System.IO.Path.Combine(bin, "python"));
-            Assert.Single(paths);
-            Assert.Equal("/opt/py/cpython-3.12", paths[0].Replace('\\', '/'));
-            Assert.Empty(ReplSession.PythonReadPaths("/nonexistent/bin/python"));
+            WriteHome(py, prefix + "/bin");
+            Assert.Equal(new[] { prefix }, ReplSession.PythonReadPaths(py, new[] { root }));
+            Assert.Empty(ReplSession.PythonReadPaths("/nonexistent/bin/python", new[] { root }));
         }
-        finally { System.IO.Directory.Delete(dir, true); }
+        finally { cleanup(); }
+    }
+
+    [Theory]
+    [InlineData("HOME")]          // the attack: whitelist all of ~ under firejail / Seatbelt
+    [InlineData("OUTSIDE")]       // an existing dir outside every trusted root
+    [InlineData("DOTDOT")]        // escapes the root via ..
+    [InlineData("QUOTE")]         // SBPL string-literal injection
+    [InlineData("MISSING")]       // under the root but does not exist
+    [InlineData("RELATIVE")]
+    public void PythonReadPaths_TamperedPyvenvCfg_ExposesNothing(string kind)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (py, root, prefix, cleanup) = TamperFixture();
+        try
+        {
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            string value = kind switch
+            {
+                "HOME" => home + "/x/bin",
+                "OUTSIDE" => System.IO.Path.GetTempPath().TrimEnd('/') + "/bin",
+                "DOTDOT" => prefix + "/../../../etc/bin",
+                "QUOTE" => root + "/a\"))(allow default)(x/bin",
+                "MISSING" => root + "/nope/bin",
+                _ => "rel/cpython/bin",
+            };
+            WriteHome(py, value);
+            Assert.Empty(ReplSession.PythonReadPaths(py, new[] { root }));
+        }
+        finally { cleanup(); }
+    }
+
+    [Theory]
+    [InlineData("/ok/path", true)]
+    [InlineData("/a\"))(allow default)", false)]
+    [InlineData("/a\\b", false)]
+    [InlineData("/a\nb", false)]
+    [InlineData("", false)]
+    public void IsSafeSandboxPath_RejectsSbplBreakers(string path, bool expected) =>
+        Assert.Equal(expected, SandboxBackend.IsSafeSandboxPath(path));
+
+    [Fact]
+    public void WrapProcess_DropsUnsafeReadOnlyPaths_AndRefusesUnsafeWorkDir()
+    {
+        var sb = CommandLineSplit(SandboxBackend.WrapProcess(WrapperSpec("sandbox-exec"), new[] { "x" }, "/w",
+            new[] { "/opt/homebrew/ok", "/a\"))(allow default)(" }).Args);
+        Assert.Contains("(subpath \"/opt/homebrew/ok\")", sb[1]);
+        Assert.DoesNotContain("allow default", sb[1]);
+        Assert.Throws<SandboxException>(() => SandboxBackend.WrapProcess(WrapperSpec("sandbox-exec"), new[] { "x" }, "/w\"x", null));
+    }
+
+    // Review #100 P2: install_package's wrapped job must get the read-only paths (uv binary + base interpreter).
+    [Fact]
+    public void WrapShellCommand_PassesReadOnlyPaths_ToTheWrapper()
+    {
+        var sb = CommandLineSplit(SandboxBackend.WrapShellCommand(WrapperSpec("sandbox-exec"), "uv pip install x", "/w",
+            new[] { "/opt/homebrew/bin" }).Args);
+        Assert.Contains("(subpath \"/opt/homebrew/bin\")", sb[1]);
+        Assert.Equal(new[] { "/bin/sh", "-c", "uv pip install x" }, sb.Skip(sb.Count - 3).ToArray());
+    }
+
+    [Fact]
+    public void InstallReadPaths_IncludesTheHostUvDirectory()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (py, root, prefix, cleanup) = TamperFixture();
+        try
+        {
+            var paths = ReplSession.InstallReadPaths(py, uvPath: "/home/u/.local/bin/uv");
+            Assert.Contains("/home/u/.local/bin", paths);
+        }
+        finally { cleanup(); }
     }
 
     // Review #99: a probe that cannot run must fail closed (it used to return null, which read as "not degraded").
