@@ -40,8 +40,8 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--clear` | Clear the console at startup |
 | `--report [session-id]` | Generate audit report(s) and exit (no id = all sessions) |
 | `--provider <name>` | Set the active LLM provider on launch |
-| `--cfg <path>` | Override the Config.json path (scoped instance). A relative path resolves against the directory you launched from |
-| `--swarmcfg <path>` | Override the Swarm.json path (scoped instance). A relative path resolves against the directory you launched from |
+| `--cfg <path>` | Override the Config.json path (scoped instance). A relative path resolves against the directory you launched from (falls back to the current directory if the file is not found there) |
+| `--swarmcfg <path>` | Override the Swarm.json path (scoped instance). A relative path resolves against the directory you launched from (falls back to the current directory if the file is not found there) |
 | `--workspace <path>` / `--ws` | Set the @-file workspace root |
 | `--workflow <file>` / `--wf` | Load and run a workflow file |
 | `--serve [port]` | Embedded web UI (default 6723) |

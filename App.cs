@@ -1901,6 +1901,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             switch (a.ToLowerInvariant())
             {
+                // Command-line --help/-h exits early in Program.Main; this only handles StartupArgs.
                 case "--help":
                 case "-h":
                     MuxConsole.PrintHelp(Help.HelpText);

@@ -745,8 +745,8 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --ultra / --ultraplan      Interactive deep-reasoning mode (plan + max reasoning + heavy delegation)
 --verbose                  Verbose MCP/init logging
 --report [session-id]      Generate report(s) and exit
---cfg <path>               Override config.json path (relative = launch dir)
---swarmcfg <path>          Override swarm.json path (relative = launch dir)
+--cfg <path>               Override config.json path (relative = launch dir; falls back to the current directory if the file is not found there)
+--swarmcfg <path>          Override swarm.json path (relative = launch dir; falls back to the current directory if the file is not found there)
 --workspace / --ws <path>  Set the @-file workspace root
 --workflow / --wf <file>   Run workflow file
 --classic / --tui          Force classic line renderer or live TUI

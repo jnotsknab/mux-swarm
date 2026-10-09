@@ -16,6 +16,8 @@ public class CliEarlyFlagsAndCfgPathTests
     [Theory]
     [InlineData("--version")]
     [InlineData("-V")]
+    [InlineData("--Version")]
+    [InlineData("--VERSION")]
     public void Version_PrintsVersionAndExitsZero(string flag)
     {
         var sw = new StringWriter();
@@ -26,11 +28,16 @@ public class CliEarlyFlagsAndCfgPathTests
     [Theory]
     [InlineData("--help")]
     [InlineData("-h")]
+    [InlineData("--HELP")]
+    [InlineData("--Help")]
     public void Help_PrintsHelpTextAndExitsZero(string flag)
     {
-        var sw = new StringWriter();
+        var sw = new StringWriter { NewLine = Environment.NewLine };
         Assert.Equal(0, Program.TryHandleEarlyFlag(new[] { "--serve", flag }, sw));
-        Assert.Equal(Help.HelpText, sw.ToString().TrimEnd('\r', '\n'));
+        var expected = Help.HelpText.Replace("\r\n", "\n").Replace("\n", Environment.NewLine) + Environment.NewLine;
+        Assert.Equal(expected, sw.ToString());
+        if (Environment.NewLine == "\n")
+            Assert.DoesNotContain("\r", sw.ToString());
     }
 
     [Theory]
@@ -38,6 +45,7 @@ public class CliEarlyFlagsAndCfgPathTests
     [InlineData("--serve", "6723")]
     [InlineData("--bogus-flag")]          // unknown flags stay a warning in ParseArgs, not an early exit
     [InlineData("-v")]                    // case-sensitive: -V only
+    [InlineData("-H")]                    // short flags stay case-sensitive
     public void OtherArgs_ContinueNormalStartup(params string[] args)
     {
         var sw = new StringWriter();

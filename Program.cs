@@ -7,25 +7,19 @@ namespace MuxSwarm
 {
     internal static class Program
     {
-        /// <summary>
-        /// Handles flags that must exit before any runtime init: <c>--version</c>/<c>-V</c> prints
-        /// "mux-swarm &lt;version&gt;", <c>--help</c>/<c>-h</c> prints the help text. Returns the exit code (0)
-        /// when one of them is present, or null to continue normal startup. Touches no config or console state.
-        /// </summary>
         internal static int? TryHandleEarlyFlag(string[] args, TextWriter output)
         {
             foreach (var a in args)
             {
-                switch (a)
+                if (a == "-V" || a.Equals("--version", StringComparison.OrdinalIgnoreCase))
                 {
-                    case "--version":
-                    case "-V":
-                        output.WriteLine($"mux-swarm {App.Version}");
-                        return 0;
-                    case "--help":
-                    case "-h":
-                        output.WriteLine(Help.HelpText);
-                        return 0;
+                    output.WriteLine($"mux-swarm {App.Version}");
+                    return 0;
+                }
+                if (a == "-h" || a.Equals("--help", StringComparison.OrdinalIgnoreCase))
+                {
+                    output.WriteLine(Help.HelpText.Replace("\r\n", "\n").Replace("\n", Environment.NewLine));
+                    return 0;
                 }
             }
             return null;
