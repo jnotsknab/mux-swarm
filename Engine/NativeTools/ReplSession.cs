@@ -693,40 +693,51 @@ internal sealed class ReplSession : IDisposable
         string full = Path.GetFullPath(prefix);
         if (!string.Equals(full.TrimEnd('/'), prefix.TrimEnd('/'), StringComparison.Ordinal)) return null;   // no ., .., //
         if (!Directory.Exists(full)) return null;
-        string real = RealPath(full);
-        if (!SandboxBackend.IsSafeSandboxPath(real)) return null;
+        string? real = RealPath(full);
+        if (real is null || !SandboxBackend.IsSafeSandboxPath(real)) return null;   // null = symlink loop
         // Only a real interpreter install: a tampered `home` must not name an arbitrary directory under a root
         // (e.g. /opt/homebrew/var holds service data).
         if (!File.Exists(Path.Combine(real, "bin", "python3")) && !File.Exists(Path.Combine(real, "bin", "python"))) return null;
         foreach (var r in roots)
         {
             if (string.IsNullOrWhiteSpace(r) || !Path.IsPathRooted(r)) continue;
-            string root = RealPath(Path.GetFullPath(r)).TrimEnd('/');
-            if (real.StartsWith(root + "/", StringComparison.Ordinal)) return real;
+            string? root = RealPath(Path.GetFullPath(r))?.TrimEnd('/');
+            if (root is not null && real.StartsWith(root + "/", StringComparison.Ordinal)) return real;
         }
         return null;
     }
 
-    /// <summary>Fully resolves symlinks in <paramref name="path"/> component by component (like realpath); a
-    /// component that does not exist is kept as written.</summary>
-    internal static string RealPath(string path)
+    /// <summary>Fully resolves symlinks in <paramref name="path"/> like realpath(3): one link at a time, with each
+    /// link's target (including any <c>..</c>) re-walked against the directory it sits in. Returns null after
+    /// <paramref name="maxHops"/> links (a loop, like ELOOP). Components that do not exist are kept as written.
+    /// Iterative: link targets can be sandbox-controlled, so this must never recurse without bound.</summary>
+    internal static string? RealPath(string path, int maxHops = 40)
     {
-        string full = Path.GetFullPath(path);
+        // No Path.GetFullPath: it collapses ".." lexically BEFORE links are resolved (realpath resolves first).
+        string full = Path.IsPathRooted(path) ? path : Path.Combine(Directory.GetCurrentDirectory(), path);
         string? root = Path.GetPathRoot(full);
         if (string.IsNullOrEmpty(root)) return full;
+        var pending = new Stack<string>(full[root.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries).Reverse());
         string current = root;
-        foreach (var part in full[root.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries))
+        int hops = 0;
+        while (pending.Count > 0)
         {
+            string part = pending.Pop();
+            if (part == ".") continue;
+            if (part == "..") { current = Path.GetDirectoryName(current.TrimEnd('/')) is { Length: > 0 } up ? up : root; continue; }
             string next = Path.Combine(current, part);
+            string? target = null;
             try
             {
                 FileSystemInfo info = Directory.Exists(next) ? new DirectoryInfo(next) : new FileInfo(next);
-                if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
-                    next = RealPath(target.FullName);
+                target = info.LinkTarget;
             }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            current = next;
+            if (target is null) { current = next; continue; }
+            if (++hops > maxHops) return null;
+            if (Path.IsPathRooted(target)) current = Path.GetPathRoot(target) ?? root;
+            foreach (var t in target.Split('/', StringSplitOptions.RemoveEmptyEntries).Reverse()) pending.Push(t);
         }
         return current;
     }
@@ -740,7 +751,8 @@ internal sealed class ReplSession : IDisposable
         var paths = new List<string>(PythonReadPaths(python));
         string? uv = uvPath ?? FindOnPath("uv");
         // The real binary's directory: sandbox-exec matches resolved paths, and /opt/homebrew/bin/uv is a symlink.
-        string? uvDir = uv is null ? null : Path.GetDirectoryName(RealPath(uv));
+        string? uvReal = uv is null ? null : RealPath(uv);
+        string? uvDir = uvReal is null ? null : Path.GetDirectoryName(uvReal);
         if (uvDir is not null && Path.IsPathRooted(uvDir) && SandboxBackend.IsSafeSandboxPath(uvDir) && !paths.Contains(uvDir))
             paths.Add(uvDir);
         return paths;

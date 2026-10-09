@@ -599,6 +599,34 @@ public class SandboxBackendTests
         finally { cleanup(); }
     }
 
+    // Review #100 round 3 (P0): link targets are sandbox-controlled, so RealPath must not recurse forever. Mux Bud's
+    // repro: t -> real/deep, s -> t/../s/q (the kernel resolves s to real/s/q; a naive resolver loops on s).
+    [Fact]
+    public void RealPath_SandboxCraftedLinks_ResolveLikeTheKernel_AndLoopsReturnNull()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (py, root, prefix, cleanup) = TamperFixture();
+        try
+        {
+            string w = System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(py))!)!;
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(w, "real", "deep"));
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(w, "real", "s", "q"));
+            System.IO.Directory.CreateSymbolicLink(System.IO.Path.Combine(w, "t"), "real/deep");
+            System.IO.Directory.CreateSymbolicLink(System.IO.Path.Combine(w, "s"), "t/../s/q");
+            Assert.Equal(System.IO.Path.Combine(w, "real", "s", "q"), ReplSession.RealPath(System.IO.Path.Combine(w, "s")));
+
+            WriteHome(py, System.IO.Path.Combine(w, "s") + "/bin");
+            Assert.Empty(ReplSession.PythonReadPaths(py, new[] { root }));   // survives, exposes nothing
+
+            System.IO.File.CreateSymbolicLink(System.IO.Path.Combine(w, "a"), "b");
+            System.IO.File.CreateSymbolicLink(System.IO.Path.Combine(w, "b"), "a");
+            Assert.Null(ReplSession.RealPath(System.IO.Path.Combine(w, "a")));
+            WriteHome(py, System.IO.Path.Combine(w, "a") + "/bin");
+            Assert.Empty(ReplSession.PythonReadPaths(py, new[] { root }));
+        }
+        finally { cleanup(); }
+    }
+
     [Theory]
     [InlineData("/ok/path", true)]
     [InlineData("/a\"))(allow default)", false)]
