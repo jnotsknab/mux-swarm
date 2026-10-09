@@ -1566,8 +1566,7 @@ public static class ParallelSwarmOrchestrator
 
                         if (content is FunctionCallContent fc)
                         {
-                            // Tool work is activity; ask_user waits on a human and must not count against the watchdog.
-                            activityTimeout.Ping();
+                            // ask_user waits on a human and must not count against the watchdog.
                             if (fc.Name == "ask_user") { pendingAskUser.Add(fc.CallId); activityTimeout.Suspend(); }
 
                             lastToolName = fc.Name;

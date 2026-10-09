@@ -37,10 +37,27 @@ internal static class SessionSnapshotText
         return files;
     }
 
-    /// <summary>Full plain-text dump: manifest of every tool call, then the role-labelled transcript.</summary>
-    internal static string FullText(IReadOnlyList<ChatMessage> history)
+    /// <summary>Section for a turn interrupted by mid-turn compaction: its messages are not committed to the
+    /// session yet, so the goal and the tools it ran so far are listed explicitly. Empty when not mid-turn.</summary>
+    internal static string InProgress(string? goal, IReadOnlyList<string>? toolNames)
+    {
+        if (string.IsNullOrWhiteSpace(goal) && (toolNames is null || toolNames.Count == 0)) return "";
+        var sb = new StringBuilder();
+        sb.AppendLine("[IN-PROGRESS TURN at compaction (not yet in the session history)]");
+        if (!string.IsNullOrWhiteSpace(goal)) sb.AppendLine("Goal: " + Cut(OneLine(goal), 500));
+        if (toolNames is { Count: > 0 })
+            sb.AppendLine($"Tools run so far ({toolNames.Count}): " + string.Join(", ",
+                toolNames.GroupBy(n => n, StringComparer.Ordinal).Select(g => g.Count() > 1 ? $"{g.Key} x{g.Count()}" : g.Key)));
+        sb.Append("[END IN-PROGRESS TURN]");
+        return sb.ToString();
+    }
+
+    /// <summary>Full plain-text dump: manifest of every tool call, then the role-labelled transcript.
+    /// <paramref name="inProgress"/> (see <see cref="InProgress"/>) is placed first when present.</summary>
+    internal static string FullText(IReadOnlyList<ChatMessage> history, string? inProgress = null)
     {
         var sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(inProgress)) sb.AppendLine(inProgress);
         var calls = ToolCalls(history);
         sb.AppendLine($"# Session snapshot: {history.Count} messages, {calls.Count} tool calls");
         sb.AppendLine("## Tool calls (name | callId | args)");

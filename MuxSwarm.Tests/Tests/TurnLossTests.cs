@@ -216,6 +216,17 @@ public class TurnLossTests
     }
 
     [Fact]
+    public void InProgress_RecordsTheUncommittedTurn_AndLeadsTheTextSnapshot()
+    {
+        string ip = SessionSnapshotText.InProgress("fact-check the Tao story", new[] { "repl_shell_exec", "repl_shell_exec", "web_fetch" });
+        Assert.Contains("Goal: fact-check the Tao story", ip);
+        Assert.Contains("Tools run so far (3): repl_shell_exec x2, web_fetch", ip);
+        Assert.Equal("", SessionSnapshotText.InProgress(null, Array.Empty<string>()));
+        string txt = SessionSnapshotText.FullText(ToolHistory(1), ip);
+        Assert.StartsWith("[IN-PROGRESS TURN", txt);
+    }
+
+    [Fact]
     public void FullText_HasManifestOfEveryCall_AndUnescapedMultilineTranscript()
     {
         string txt = SessionSnapshotText.FullText(ToolHistory(3));
@@ -350,6 +361,25 @@ public class CompactionPromptTests
         Assert.DoesNotContain("Pre-compaction history", s);
         Assert.DoesNotContain("Do not read these files whole", s);
         Assert.Equal("plain [text] stays", ResultCompactor.StripEngineBlocks("plain [text] stays"));
+    }
+
+    [Fact]
+    public void CompactionPrompt_ManifestLine_OnlyWhenTheCallerAppendsOne()
+    {
+        // Team-member compaction shares this prompt but appends no manifest, so it must keep its tool record.
+        Assert.Contains("do not list tool calls", ResultCompactor.CompactionSystemPrompt(12000, null, toolManifestAppended: true));
+        string team = ResultCompactor.CompactionSystemPrompt(12000, null);
+        Assert.DoesNotContain("do not list tool calls", team);
+        Assert.Contains("record of the tools used", team);
+    }
+
+    [Fact]
+    public void StripEngineBlocks_AlsoDropsTheInProgressBlock()
+    {
+        string s = ResultCompactor.StripEngineBlocks("[CONTEXT SUMMARY]\nx\n[END SUMMARY]\n\n" +
+            SessionSnapshotText.InProgress("fetch the news", new[] { "repl_shell_exec", "repl_shell_exec" }));
+        Assert.DoesNotContain("IN-PROGRESS TURN", s);
+        Assert.Contains("[END SUMMARY]", s);
     }
 
     [Fact]

@@ -1675,25 +1675,28 @@ public static class SingleAgentOrchestrator
 
         // Best effort: a missing/disallowed sandbox skips the backup with a warning, never blocks compaction.
         // Snapshots are tagged with the session id so every compaction of this session stays findable by pattern.
-        async Task<string?> SavePreCompactionSnapshotAsync(IReadOnlyList<ChatMessage> typedHistory)
+        async Task<string?> SavePreCompactionSnapshotAsync(IReadOnlyList<ChatMessage> typedHistory, string inProgress)
         {
             try
             {
                 var fs = App.Config.Filesystem;
                 var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ExecutionCancellation.Current);
                 string path = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [],
-                    $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}", SessionSnapshotText.FullText(typedHistory));
+                    $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}", SessionSnapshotText.FullText(typedHistory, inProgress));
                 MuxConsole.WriteInfo($"Pre-compaction snapshot: {path}");
                 return path;
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                           or System.Text.Json.JsonException or ArgumentException or NotSupportedException)
             {
                 MuxConsole.WriteWarning($"Pre-compaction snapshot skipped ({ex.Message}); compacting without a backup.");
                 return null;
             }
         }
 
-        async Task<bool> TryCompactAsync(string? instruction = null)
+        // midTurnGoal/midTurnTools: set only for mid-turn compaction, whose current turn is not committed to the
+        // session yet; they are recorded in the snapshot .txt and the summary so the turn is not lost from view.
+        async Task<bool> TryCompactAsync(string? instruction = null, string? midTurnGoal = null, IReadOnlyList<string>? midTurnTools = null)
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -1718,14 +1721,17 @@ public static class SingleAgentOrchestrator
                 await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
                 {
                     compactedMsg = await ResultCompactor.CompactConversationAsync(
-                        conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
+                        conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction,
+                        toolManifestAppended: true);
                     // Compaction replaces the session; keep a recoverable copy of the full pre-compaction
                     // history first (same writer as /prune) and point the agent at it. The typed session
                     // history (with tool calls) feeds the deterministic manifest; conversationHistory is text-only.
                     IReadOnlyList<ChatMessage> typedHistory =
                         session.TryGetInMemoryChatHistory(out var th) && th is not null ? th.ToList() : conversationHistory.ToList();
-                    string? snapshotPath = await SavePreCompactionSnapshotAsync(typedHistory);
+                    string inProgress = SessionSnapshotText.InProgress(midTurnGoal, midTurnTools);
+                    string? snapshotPath = await SavePreCompactionSnapshotAsync(typedHistory, inProgress);
                     string summaryText = compactedMsg.Text;
+                    if (inProgress.Length > 0) summaryText += "\n\n" + inProgress;
                     string manifest = SessionSnapshotText.Manifest(typedHistory,
                         snapshotPath is null ? null : Path.ChangeExtension(snapshotPath, ".txt"));
                     if (manifest.Length > 0) summaryText += "\n\n" + manifest;
@@ -2144,9 +2150,8 @@ public static class SingleAgentOrchestrator
                                 {
                                     lastToolName = functionCall.Name;
                                     turnToolNames.Add(functionCall.Name);
-                                    // Tool work is activity: re-arm the watchdog, and stop it entirely while
-                                    // ask_user waits on the human (a slow answer is not a stalled stream).
-                                    activityTimeout.Ping();
+                                    // Every update already re-arms the watchdog (top of the loop); while ask_user
+                                    // waits on the human, stop it entirely (a slow answer is not a stalled stream).
                                     if (functionCall.Name == "ask_user")
                                     {
                                         pendingAskUser.Add(functionCall.CallId);
@@ -2312,7 +2317,7 @@ public static class SingleAgentOrchestrator
                             responseText.Clear();
 
                             MuxConsole.WriteInfo($"Context crossed limit mid-turn (~{_sessionTokens:N0} tokens). Auto-compacting...");
-                            bool mtcOk = await TryCompactAsync();
+                            bool mtcOk = await TryCompactAsync(midTurnGoal: currentGoal, midTurnTools: turnToolNames.ToList());
 
                             if (mtcOk)
                             {

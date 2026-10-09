@@ -85,7 +85,7 @@ internal static class ContextPruneSession
         // The text copy is a convenience for searching; the JSON is the recovery copy and is already published.
         if (plainText is not null)
             try { Publish(Path.ChangeExtension(destination, ".txt"), plainText); }
-            catch (IOException) { /* best effort */ }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* best effort */ }
         return destination;
     }
 
