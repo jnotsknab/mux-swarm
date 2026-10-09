@@ -437,6 +437,7 @@ internal class App
             // This lets the ACP handshake (initialize / session/new) respond in milliseconds
             // instead of blocking ~15s on MCP subprocess spawns.
             StdinCancelMonitor.Start(startPaused: true);
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             return await RunAcpAsync();
         }
 
@@ -501,6 +502,7 @@ internal class App
         
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
@@ -509,6 +511,7 @@ internal class App
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
+            DaemonPending = false;
             return Environment.ExitCode;
         }
         

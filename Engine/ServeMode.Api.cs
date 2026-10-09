@@ -205,6 +205,11 @@ public static partial class ServeMode
         // of a static tagline. Additive; older clients simply ignore the field.
         var (tipLabel, tipText) = SplashMessages.Pick();
 
+        // Read the volatile pending flag BEFORE the runner: App writes runner then clears the flag,
+        // so pending == false here guarantees the runner assignment is visible (never a false "off").
+        bool daemonPending = App.DaemonPending;
+        var daemonRunner = App.DaemonRunner;
+
         await WriteJson(context, 200, new
         {
             version = App.Version,
@@ -214,7 +219,7 @@ public static partial class ServeMode
             mode = ActiveMode,
             agentCount,
             tip = new { label = tipLabel, text = tipText },
-            daemon = DaemonHealth(App.DaemonRunner, App.DaemonPending),
+            daemon = DaemonHealth(daemonRunner, daemonPending),
         });
     }
 
