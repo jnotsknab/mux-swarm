@@ -517,6 +517,7 @@ public class SandboxBackendTests
         string root = System.IO.Path.Combine(tmp, "uvpython");
         string prefix = System.IO.Path.Combine(root, "cpython-3.12");
         System.IO.Directory.CreateDirectory(System.IO.Path.Combine(prefix, "bin"));
+        System.IO.File.WriteAllText(System.IO.Path.Combine(prefix, "bin", "python3"), "");   // a real install prefix
         string venv = System.IO.Path.Combine(tmp, "work", ".venv");
         System.IO.Directory.CreateDirectory(System.IO.Path.Combine(venv, "bin"));
         return (System.IO.Path.Combine(venv, "bin", "python"), root, prefix, () => System.IO.Directory.Delete(tmp, true));
@@ -546,6 +547,7 @@ public class SandboxBackendTests
     [InlineData("DOTDOT")]        // escapes the root via ..
     [InlineData("QUOTE")]         // SBPL string-literal injection
     [InlineData("MISSING")]       // under the root but does not exist
+    [InlineData("NOINTERP")]      // under the root, exists, but holds no interpreter
     [InlineData("RELATIVE")]
     public void PythonReadPaths_TamperedPyvenvCfg_ExposesNothing(string kind)
     {
@@ -556,14 +558,42 @@ public class SandboxBackendTests
             string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
             string value = kind switch
             {
-                "HOME" => home + "/x/bin",
+                "HOME" => home + "/bin",      // prefix = ~ itself, which exists: rejected by the root check
                 "OUTSIDE" => System.IO.Path.GetTempPath().TrimEnd('/') + "/bin",
                 "DOTDOT" => prefix + "/../../../etc/bin",
                 "QUOTE" => root + "/a\"))(allow default)(x/bin",
                 "MISSING" => root + "/nope/bin",
+                "NOINTERP" => root + "/data/bin",   // exists under the root but is not a Python install (e.g. homebrew/var)
                 _ => "rel/cpython/bin",
             };
+            if (kind == "NOINTERP") System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "data", "bin"));
             WriteHome(py, value);
+            Assert.Empty(ReplSession.PythonReadPaths(py, new[] { root }));
+        }
+        finally { cleanup(); }
+    }
+
+    // Review #100 round 2: sandbox-exec matches RESOLVED paths and Homebrew prefixes are symlinks into Cellar,
+    // so the exposed path must be the real one, and a link inside a root must not reach outside it.
+    [Fact]
+    public void PythonReadPaths_SymlinkedPrefix_ExposesTheRealPath_AndALinkOutOfTheRootIsRejected()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var (py, root, prefix, cleanup) = TamperFixture();
+        try
+        {
+            string link = System.IO.Path.Combine(root, "opt-python");
+            System.IO.Directory.CreateSymbolicLink(link, prefix);
+            WriteHome(py, link + "/bin");
+            Assert.Equal(new[] { prefix }, ReplSession.PythonReadPaths(py, new[] { root }));
+
+            // A link under the root that points OUTSIDE it (at a dir with an interpreter) is not trusted.
+            string outside = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(root)!, "elsewhere");
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(outside, "bin"));
+            System.IO.File.WriteAllText(System.IO.Path.Combine(outside, "bin", "python3"), "");
+            string escape = System.IO.Path.Combine(root, "escape");
+            System.IO.Directory.CreateSymbolicLink(escape, outside);
+            WriteHome(py, escape + "/bin");
             Assert.Empty(ReplSession.PythonReadPaths(py, new[] { root }));
         }
         finally { cleanup(); }

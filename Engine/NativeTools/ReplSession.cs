@@ -652,8 +652,8 @@ internal sealed class ReplSession : IDisposable
         catch (IOException) { return Array.Empty<string>(); }
         catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
         string? prefix = home is null ? null : Path.GetDirectoryName(home.TrimEnd('/'));   // <prefix>/bin -> <prefix>
-        return prefix is not null && IsTrustedPythonPrefix(prefix, trustedRoots ?? TrustedPythonRoots())
-            ? new[] { prefix } : Array.Empty<string>();
+        string? trusted = prefix is null ? null : TrustedPythonPrefix(prefix, trustedRoots ?? TrustedPythonRoots());
+        return trusted is not null ? new[] { trusted } : Array.Empty<string>();
     }
 
     /// <summary>
@@ -678,21 +678,57 @@ internal sealed class ReplSession : IDisposable
         return roots;
     }
 
-    /// <summary>True when <paramref name="prefix"/> is an absolute, already-normalized, existing directory with no
-    /// quote/backslash/control characters, strictly inside one of <paramref name="roots"/>.</summary>
-    internal static bool IsTrustedPythonPrefix(string prefix, IReadOnlyList<string> roots)
+    /// <summary>True when <paramref name="prefix"/> is an absolute, already-normalized, existing Python install prefix
+    /// (it holds <c>bin/python3</c> or <c>bin/python</c>) with no quote/backslash/control characters, strictly inside
+    /// one of <paramref name="roots"/>. Use <see cref="TrustedPythonPrefix"/> to get the symlink-resolved path.</summary>
+    internal static bool IsTrustedPythonPrefix(string prefix, IReadOnlyList<string> roots) =>
+        TrustedPythonPrefix(prefix, roots) is not null;
+
+    /// <summary>The symlink-resolved form of <paramref name="prefix"/> when it is a trusted Python install prefix (see
+    /// <see cref="IsTrustedPythonPrefix"/>), else null. Resolved BEFORE the root check (sandbox-exec matches real paths,
+    /// and Homebrew prefixes are symlinks into Cellar); roots are resolved the same way.</summary>
+    internal static string? TrustedPythonPrefix(string prefix, IReadOnlyList<string> roots)
     {
-        if (!Path.IsPathRooted(prefix) || !SandboxBackend.IsSafeSandboxPath(prefix)) return false;
+        if (!Path.IsPathRooted(prefix) || !SandboxBackend.IsSafeSandboxPath(prefix)) return null;
         string full = Path.GetFullPath(prefix);
-        if (!string.Equals(full.TrimEnd('/'), prefix.TrimEnd('/'), StringComparison.Ordinal)) return false;   // no ., .., //
-        if (!Directory.Exists(full)) return false;
+        if (!string.Equals(full.TrimEnd('/'), prefix.TrimEnd('/'), StringComparison.Ordinal)) return null;   // no ., .., //
+        if (!Directory.Exists(full)) return null;
+        string real = RealPath(full);
+        if (!SandboxBackend.IsSafeSandboxPath(real)) return null;
+        // Only a real interpreter install: a tampered `home` must not name an arbitrary directory under a root
+        // (e.g. /opt/homebrew/var holds service data).
+        if (!File.Exists(Path.Combine(real, "bin", "python3")) && !File.Exists(Path.Combine(real, "bin", "python"))) return null;
         foreach (var r in roots)
         {
-            if (string.IsNullOrWhiteSpace(r)) continue;
-            string root = Path.GetFullPath(r).TrimEnd('/');
-            if (full.StartsWith(root + "/", StringComparison.Ordinal)) return true;
+            if (string.IsNullOrWhiteSpace(r) || !Path.IsPathRooted(r)) continue;
+            string root = RealPath(Path.GetFullPath(r)).TrimEnd('/');
+            if (real.StartsWith(root + "/", StringComparison.Ordinal)) return real;
         }
-        return false;
+        return null;
+    }
+
+    /// <summary>Fully resolves symlinks in <paramref name="path"/> component by component (like realpath); a
+    /// component that does not exist is kept as written.</summary>
+    internal static string RealPath(string path)
+    {
+        string full = Path.GetFullPath(path);
+        string? root = Path.GetPathRoot(full);
+        if (string.IsNullOrEmpty(root)) return full;
+        string current = root;
+        foreach (var part in full[root.Length..].Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string next = Path.Combine(current, part);
+            try
+            {
+                FileSystemInfo info = Directory.Exists(next) ? new DirectoryInfo(next) : new FileInfo(next);
+                if (info.LinkTarget is not null && info.ResolveLinkTarget(returnFinalTarget: true) is { } target)
+                    next = RealPath(target.FullName);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            current = next;
+        }
+        return current;
     }
 
     /// <summary>
@@ -703,7 +739,8 @@ internal sealed class ReplSession : IDisposable
     {
         var paths = new List<string>(PythonReadPaths(python));
         string? uv = uvPath ?? FindOnPath("uv");
-        string? uvDir = uv is null ? null : Path.GetDirectoryName(uv);
+        // The real binary's directory: sandbox-exec matches resolved paths, and /opt/homebrew/bin/uv is a symlink.
+        string? uvDir = uv is null ? null : Path.GetDirectoryName(RealPath(uv));
         if (uvDir is not null && Path.IsPathRooted(uvDir) && SandboxBackend.IsSafeSandboxPath(uvDir) && !paths.Contains(uvDir))
             paths.Add(uvDir);
         return paths;
