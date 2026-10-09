@@ -326,7 +326,9 @@ A `webhook` trigger is exposed at `POST /api/hook/{id}` (excluded from the serve
 authenticates per-trigger via HMAC `secret` or, if none is set, the serve bearer token). External systems
 POST a payload to start a run; the 202 body carries a `deliveryId`. Webhook runs are stateless (no session dir) and
 a run's `agent` override applies to that run only (an unknown agent fails the delivery). Webhook triggers added at
-runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. `/createhook` saves a
+runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. With `--serve --daemon`,
+the HTTP server starts before the daemon finishes registering triggers: poll `GET /api/health` until
+`daemon` is `ready` (`off` = no daemon, `starting` = triggers not registered yet) before the first webhook POST. `/createhook` saves a
 trigger to config; it takes effect on the next daemon start. One process serves any number of webhooks: agent-mode
 triggers run concurrently, daemon-fired swarm/pswarm runs are serialized with each other (an interactive `/swarm` at
 the same time is not covered), and deliveries to the same
