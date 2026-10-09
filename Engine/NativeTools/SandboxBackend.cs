@@ -262,29 +262,42 @@ internal static class SandboxBackend
     }
 
     /// <summary>True when firejail's output says it fell back to running the program without a sandbox.</summary>
-    internal static bool FirejailDegraded(string? output) =>
-        output is not null && output.Contains("existing sandbox was detected", StringComparison.OrdinalIgnoreCase);
+    internal static bool FirejailDegraded(string output) =>
+        output.Contains("existing sandbox was detected", StringComparison.OrdinalIgnoreCase);
 
-    // Combined stdout(+stderr) of a short read-only probe, stdin closed; null on failure/timeout.
-    private static string? ProbeOutput(string binary, string args, bool stderr = false)
+    /// <summary>
+    /// Combined stdout(+stderr) of a short read-only probe, stdin closed. A probe that cannot start or does not
+    /// finish within <paramref name="timeoutMs"/> throws <see cref="SandboxException"/> with the reason: callers
+    /// gate confinement on the output, so a failed probe must never read as "nothing to worry about".
+    /// </summary>
+    internal static string ProbeOutput(string binary, string args, bool stderr = false, int timeoutMs = 5000)
     {
-        try
+        var psi = new ProcessStartInfo
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = binary, Arguments = args,
-                RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
-                UseShellExecute = false, CreateNoWindow = true,
-            };
-            using var p = Process.Start(psi);
-            if (p is null) return null;
+            FileName = binary, Arguments = args,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        };
+        Process? p;
+        try { p = Process.Start(psi); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            throw new SandboxException($"could not run '{binary} {args}' to check the sandbox: {ex.Message}");
+        }
+        using (p)
+        {
+            if (p is null) throw new SandboxException($"could not run '{binary} {args}' to check the sandbox.");
             p.StandardInput.Close();
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
-            if (!p.WaitForExit(5000)) { try { p.Kill(true); } catch { } return null; }
+            if (!p.WaitForExit(timeoutMs))
+            {
+                // Best-effort cleanup of a hung probe; the timeout itself is what we report.
+                try { p.Kill(true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* exited or not killable; the timeout is reported below */ }
+                throw new SandboxException($"'{binary} {args}' did not finish within {timeoutMs / 1000}s while checking the sandbox.");
+            }
             return stderr ? outTask.Result + errTask.Result : outTask.Result;
         }
-        catch { return null; }
     }
 
     /// <summary>Major version from <c>podman --version</c> output ("podman version 3.4.4"), or null if unparsable.</summary>
