@@ -584,9 +584,11 @@ public static class SingleAgentOrchestrator
     }
 
     // /doctor: non-LLM health rollup. Prints the SystemDiagnostics snapshot plus a terse PASS/WARN
-    // summary computed in C# (no model call - cheap and offline).
+    // summary computed in C# (no model call). The sandbox probe spawns the engine CLIs and can block
+    // for its bounded timeouts, so a muted line says so first.
     private static void HandleDoctor()
     {
+        MuxConsole.WriteMuted("probing sandbox...");
         var sandbox = SystemDiagnostics.ProbeSandbox(App.Config?.Sandbox);
         var snapshot = SystemDiagnostics.BuildSnapshot(sandbox);
 
@@ -600,7 +602,7 @@ public static class SingleAgentOrchestrator
         if (SkillLoader.GetSkillMetadata().Count == 0)
             warns.Add("no skills loaded");
         if (!sandbox.Usable)
-            warns.Add($"sandbox '{App.Config?.Sandbox?.Backend}' is not usable: {sandbox.Detail}");
+            warns.Add($"sandbox '{SandboxBackend.Canonical(App.Config?.Sandbox?.Backend)}' is not usable: {sandbox.Detail}");
 
         var sb = new System.Text.StringBuilder();
         sb.Append(snapshot.TrimEnd());

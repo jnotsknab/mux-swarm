@@ -97,7 +97,7 @@ public static class SystemDiagnostics
             sb.AppendLine($"resolvedBackend: {spec.Backend}");
         sb.AppendLine(sandboxStatus is null
             ? "status: not probed (run /doctor for a live check)"
-            : $"status: {(sandboxStatus.Configured ? sandboxStatus.Usable ? "usable" : "NOT USABLE" : "none")} -- {sandboxStatus.Detail}");
+            : $"status: {(!sandboxStatus.Configured ? "none" : !sandboxStatus.Probed ? "not probed" : sandboxStatus.Usable ? "usable" : "NOT USABLE")} -- {sandboxStatus.Detail}");
         sb.AppendLine();
 
         // Filesystem + limits
@@ -113,14 +113,16 @@ public static class SystemDiagnostics
         return sb.ToString();
     }
 
-    /// <summary>Result of a live sandbox readiness check. <c>Configured</c> is false for host execution.</summary>
-    internal sealed record SandboxStatus(bool Configured, bool Usable, string Detail);
+    /// <summary>Result of a live sandbox readiness check. <c>Configured</c> is false for host execution;
+    /// <c>Probed</c> is false when the backend cannot be checked (custom templates).</summary>
+    internal sealed record SandboxStatus(bool Configured, bool Usable, string Detail, bool Probed = true);
 
     /// <summary>
     /// Live readiness check of the configured sandbox backend for /doctor. Reuses
     /// <see cref="SandboxBackend.Resolve"/> (the same read-only probes a session runs: binary
     /// <c>--version</c>, engine <c>info</c>, <c>sbx ls</c>, OS/KVM gates), plus a check that an explicit
-    /// OCI runtime (e.g. runsc) is known to the engine. Never creates a sandbox, container or VM.
+    /// OCI runtime (e.g. runsc) is known to the engine. Custom backends are reported as not probed.
+    /// Blocking: spawns the probes above (bounded timeouts). Never creates a sandbox, container or VM.
     /// </summary>
     internal static SandboxStatus ProbeSandbox(SandboxConfig? cfg)
     {
@@ -132,34 +134,57 @@ public static class SystemDiagnostics
         catch (SandboxException ex) { return new(true, false, ex.Message); }
         if (spec is null)
             return new(false, true, "no sandbox configured; shell and Python run directly on the host");
+        if (spec.Kind == SandboxKind.Custom)
+            return new(true, true, $"backend '{spec.Backend}': template set (custom backends are not probed)", Probed: false);
         if (spec.Kind == SandboxKind.Oci && spec.Runtime is { } rt)
         {
-            string? info = Path.IsPathRooted(rt) ? null : OciSandbox.Run(spec.Binary, "info", allowFail: true, timeoutMs: 10_000).outp;
-            if (RuntimeProblem(spec.Binary, rt, info) is { } problem) return new(true, false, problem);
+            // Resolve already ran the engine's `info`; only a docker runtime name needs the (narrow) runtime list.
+            string? runtimes = NeedsRuntimeList(spec.Binary, rt)
+                ? OciSandbox.Run(spec.Binary, "info --format \"{{json .Runtimes}}\"", allowFail: true, timeoutMs: 10_000).outp
+                : null;
+            if (RuntimeProblem(spec.Binary, rt, runtimes, OperatingSystem.IsLinux()) is { } problem) return new(true, false, problem);
         }
-        string what = spec.Kind switch
-        {
-            SandboxKind.Custom => "template set (custom backends are not probed)",
-            SandboxKind.Wrapper => $"'{spec.Binary}' found",
-            _ => $"'{spec.Binary}' found and reachable{(spec.Runtime is { } r ? $", runtime '{r}'" : "")}",
-        };
+        string what = spec.Kind == SandboxKind.Wrapper
+            ? $"'{spec.Binary}' found"
+            : $"'{spec.Binary}' found and reachable{(spec.Runtime is { } r ? $", runtime '{r}'" : "")}";
         return new(true, true, $"backend '{spec.Backend}' ready: {what}");
     }
 
+    /// <summary>True when <see cref="RuntimeProblem"/> can use docker's registered-runtime list for this runtime:
+    /// a docker runtime name that is not a path and not a containerd shim name (<c>io.containerd.*</c>,
+    /// which docker accepts without registration).</summary>
+    internal static bool NeedsRuntimeList(string binary, string runtime) =>
+        binary == "docker" && !Path.IsPathRooted(runtime) && !runtime.StartsWith("io.containerd.", StringComparison.Ordinal);
+
     /// <summary>
     /// Reason an explicit OCI runtime is unusable, or null when it looks present (or cannot be checked).
-    /// An absolute path must exist; a runtime name is checked against <c>docker info</c> output, which
-    /// lists registered runtimes. Other engines do not list runtimes reliably, so they are not checked.
+    /// An absolute path is checked only on Linux, where the engine runs on this host (on macOS/Windows it
+    /// runs in a VM whose filesystem Mux cannot see). A docker runtime name must be an exact key of
+    /// <paramref name="runtimesJson"/> (<c>docker info --format "{{json .Runtimes}}"</c>); containerd shim
+    /// names, other engines, and missing or malformed output are not checked.
     /// </summary>
-    internal static string? RuntimeProblem(string binary, string runtime, string? infoOutput)
+    internal static string? RuntimeProblem(string binary, string runtime, string? runtimesJson, bool isLinux)
     {
         if (Path.IsPathRooted(runtime))
-            return File.Exists(runtime) ? null : $"OCI runtime '{runtime}' does not exist";
-        if (binary == "docker" && infoOutput is { Length: > 0 }
-            && !infoOutput.Contains(runtime, StringComparison.OrdinalIgnoreCase))
-            return $"OCI runtime '{runtime}' is not registered with docker ('docker info' does not list it). " +
-                   "Install it and register it in the docker daemon config, then restart docker.";
-        return null;
+            return !isLinux || File.Exists(runtime) ? null : $"OCI runtime '{runtime}' does not exist";
+        if (!NeedsRuntimeList(binary, runtime) || RegisteredRuntimes(runtimesJson) is not { } registered)
+            return null;
+        return registered.Contains(runtime) ? null
+            : $"OCI runtime '{runtime}' is not registered with docker ('docker info' does not list it). " +
+              "Install it and register it in the docker daemon config, then restart docker.";
+    }
+
+    /// <summary>Runtime names (exact, ordinal) from a <c>{{json .Runtimes}}</c> object, or null when unparseable.</summary>
+    private static HashSet<string>? RegisteredRuntimes(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+            return doc.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+        }
+        catch (System.Text.Json.JsonException) { return null; }
     }
 
     /// <summary>One configured entry's effective transport status, not per-agent tool access.</summary>

@@ -156,8 +156,9 @@ public class NativeToolDiagnosticsTests
             typeof(SingleAgentOrchestrator).GetMethod("HandleDoctor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
                 .Invoke(null, null);
             var events = capture.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
-            Assert.Single(events);
-            using var doc = System.Text.Json.JsonDocument.Parse(events[0]);
+            Assert.Equal(2, events.Length);   // muted "probing sandbox..." then the report panel
+            Assert.Contains("probing sandbox", events[0]);
+            using var doc = System.Text.Json.JsonDocument.Parse(events[1]);
             string rendered = doc.RootElement.GetProperty("content").GetString()!;
             Assert.Contains(external, rendered);
             Assert.Contains("NOT CONNECTED", rendered);
@@ -220,5 +221,14 @@ public class NativeToolDiagnosticsTests
         Assert.Contains("no sandbox configured", rendered);
         Assert.DoesNotContain("sandbox all look healthy", rendered);
         Assert.DoesNotContain("not usable", rendered);
+    }
+
+    [Fact]
+    public void Doctor_Warning_UsesCanonicalBackendName()
+    {
+        // The warning names the canonical backend (trimmed, lower-case, aliases folded), not the raw config text.
+        string rendered = RunDoctor(new SandboxConfig { Backend = " CUSTOM ", Command = "" });
+        Assert.Contains("sandbox 'custom' is not usable", rendered);
+        Assert.DoesNotContain("sandbox ' CUSTOM ' is not usable", rendered);
     }
 }
