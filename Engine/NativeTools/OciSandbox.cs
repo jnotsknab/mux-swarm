@@ -99,7 +99,15 @@ internal sealed class OciSandbox : ISessionSandbox
                 Run(_spec.Binary, $"network create --internal {_netName}", allowFail: false);
                 // 2) the filtering proxy sidecar: on the internal net AND a normal (egress) net.
                 _proxyName = "mux_sbxproxy_" + sfx;
-                StartProxy(sfx);
+                try { StartProxy(sfx); }
+                catch (SandboxException ex)
+                {
+                    // Same as a failed container run below: remove the proxy/network this attempt created, so a
+                    // retry (new suffix) does not orphan them where Dispose can no longer find them.
+                    _lastBuildError = ex.Message;
+                    RebuildTeardown_NoLock();
+                    throw;
+                }
                 netArg = $"--network {_netName}";
             }
             else
