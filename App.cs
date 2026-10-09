@@ -19,7 +19,9 @@ namespace MuxSwarm;
 
 internal class App
 {
-    public static readonly string Version = "0.15.1";
+    /// <summary>Product version string surfaced by <c>--version</c>, the splash, <c>/api/health</c> and the updater.
+    /// A const so it can be read before <see cref="App"/> (and its config-loading static state) is touched.</summary>
+    public const string Version = "0.15.1";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -1899,6 +1901,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             switch (a.ToLowerInvariant())
             {
+                // Command-line --help/-h exits early in Program.Main; this only handles StartupArgs.
                 case "--help":
                 case "-h":
                     MuxConsole.PrintHelp(Help.HelpText);

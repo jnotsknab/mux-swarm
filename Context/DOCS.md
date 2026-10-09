@@ -745,15 +745,16 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --ultra / --ultraplan      Interactive deep-reasoning mode (plan + max reasoning + heavy delegation)
 --verbose                  Verbose MCP/init logging
 --report [session-id]      Generate report(s) and exit
---cfg <path>               Override config.json path
---swarmcfg <path>          Override swarm.json path
+--cfg <path>               Override config.json path (relative = launch dir; falls back to the current directory if the file is not found there)
+--swarmcfg <path>          Override swarm.json path (relative = launch dir; falls back to the current directory if the file is not found there)
 --workspace / --ws <path>  Set the @-file workspace root
 --workflow / --wf <file>   Run workflow file
 --classic / --tui          Force classic line renderer or live TUI
 --prod                     Prod mode (orchestrator [[MARKER]] output)
 --update                   Self-update from the latest GitHub release, then exit
 --clear                    Clear terminal
---help, -h                 Show help
+--help, -h                 Show help and exit (no config read/write, no setup)
+--version, -V              Print the version and exit (no config read/write, no setup)
 ```
 
 Persist any combination of launch flags so they apply every start with `/startargs <args>`

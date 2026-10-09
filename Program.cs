@@ -7,6 +7,24 @@ namespace MuxSwarm
 {
     internal static class Program
     {
+        internal static int? TryHandleEarlyFlag(string[] args, TextWriter output)
+        {
+            foreach (var a in args)
+            {
+                if (a == "-V" || a.Equals("--version", StringComparison.OrdinalIgnoreCase))
+                {
+                    output.WriteLine($"mux-swarm {App.Version}");
+                    return 0;
+                }
+                if (a == "-h" || a.Equals("--help", StringComparison.OrdinalIgnoreCase))
+                {
+                    output.WriteLine(Help.HelpText.Replace("\r\n", "\n").Replace("\n", Environment.NewLine));
+                    return 0;
+                }
+            }
+            return null;
+        }
+
         static async Task<int> Main(string[] args)
         {
             try
@@ -15,6 +33,10 @@ namespace MuxSwarm
                 Console.OutputEncoding = Encoding.UTF8;
                 AnsiConsole.Profile.Encoding = Encoding.UTF8;
                 AnsiConsole.Profile.Capabilities.Unicode = true;
+
+                // --version / --help: print and exit BEFORE any init (no Configs/ write, no setup, no hooks).
+                if (TryHandleEarlyFlag(args, Console.Out) is { } earlyExit)
+                    return earlyExit;
 
                 static string? ArgValue(string[] args, string flag)
                     => Array.IndexOf(args, flag) is >= 0 and var i && i + 1 < args.Length ? args[i + 1] : null;
