@@ -514,6 +514,9 @@ public class SandboxBackendTests
     private static (string venvPython, string root, string prefix, Action cleanup) TamperFixture()
     {
         string tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "muxvenv_" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(tmp);
+        // The fixture is compared with RESOLVED paths, so resolve the temp dir once (macOS: /var -> /private/var).
+        tmp = OperatingSystem.IsWindows() ? tmp : ReplSession.RealPath(tmp)!;
         string root = System.IO.Path.Combine(tmp, "uvpython");
         string prefix = System.IO.Path.Combine(root, "cpython-3.12");
         System.IO.Directory.CreateDirectory(System.IO.Path.Combine(prefix, "bin"));
