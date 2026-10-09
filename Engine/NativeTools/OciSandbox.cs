@@ -197,8 +197,12 @@ internal sealed class OciSandbox : ISessionSandbox
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
         if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
         // give the proxy a normal egress path too: the engine's default network (podman names it `podman`,
-        // docker and nerdctl `bridge`).
-        Run(_spec.Binary, $"network connect {DefaultNetwork(_spec.Binary)} {_proxyName}", allowFail: true);
+        // docker and nerdctl `bridge`). A failure here used to be ignored, leaving a proxy with no internet and
+        // every allowlisted domain failing later with no clear cause: fail now, with the engine's reason.
+        string egressNet = DefaultNetwork(_spec.Binary);
+        var (egressOk, _, egressErr) = Run(_spec.Binary, $"network connect {egressNet} {_proxyName}", allowFail: true);
+        if (!egressOk)
+            throw new SandboxException($"failed to give the sandbox proxy egress via network '{egressNet}': {egressErr.Trim()}");
     }
 
     /// <summary>The engine's default (egress) network name: <c>podman</c> for podman, <c>bridge</c> otherwise.</summary>
