@@ -189,6 +189,17 @@ public class SandboxConfig
     public string Command { get; set; } = "";
 
     /// <summary>
+    /// Custom backend only: declare that the <see cref="Command"/> template runs <c>{cmd}</c> as a process
+    /// wrapper that passes stdin/stdout through (e.g. <c>bwrap ... {cmd}</c>, <c>docker run -i ...</c>).
+    /// When true, the persistent Python REPL worker runs THROUGH the template like shell commands do.
+    /// When false (default), the Python REPL tools refuse to run under a custom backend - Mux cannot know
+    /// whether an arbitrary template can host a long-lived stdio worker, and it never falls back to the host.
+    /// Ignored by every other backend. Additive: absent in older configs =&gt; false.
+    /// </summary>
+    [JsonPropertyName("replStdio")]
+    public bool ReplStdio { get; set; } = false;
+
+    /// <summary>
     /// Explicit OCI runtime to pass as <c>--runtime=&lt;value&gt;</c> for OCI backends (docker/podman/
     /// nerdctl/gvisor/kata). Optional. When empty the backend's default runtime is used, except the
     /// microVM / sandboxed-kernel backends which imply their runtime (gvisor =&gt; runsc, kata =&gt;

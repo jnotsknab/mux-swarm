@@ -230,6 +230,7 @@ host execution.
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
 | `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **Container backends only** (`docker-container`/`podman`/`nerdctl`/`gvisor`/`kata`); rejected on `docker`, see below. Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
+| `replStdio` | `custom` only (default `false`): `true` declares the template runs `{cmd}` with stdin/stdout passed through, so the Python REPL worker runs through it. `false` => the Python REPL tools refuse under `custom` (never a host fallback); shell tools still use the template. |
 | `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for container backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by `docker` (microVM) and wrapper/custom/host. |
 
 ### Isolation tiers (weakest -> strongest)
@@ -250,6 +251,12 @@ Python worker `exec` into. `gvisor` and `kata` reuse that exact lifecycle -- the
 runtime, so all of the OCI features (network allowlist proxy, allowed-path bind mounts mapped to
 `filesystem.securityMode`, OCI hardening `--cap-drop=ALL --security-opt=no-new-privileges`, self-heal,
 Windows UNC drive-mapping) apply unchanged.
+
+Wrapper backends (`bwrap`, `firejail`, `sandbox-exec`) have no persistent instance: each shell command AND
+the persistent Python REPL worker are started as wrapped processes, so both get the same confinement (the
+worker's stdin/stdout protocol passes through the wrapper). The venv's base interpreter is exposed
+read-only when the wrapper would otherwise hide it (firejail home whitelist, Seatbelt deny-default).
+`install_package_async` runs as a wrapped shell job, so `network: false` also blocks package downloads.
 
 ### Docker Sandboxes microVM (docker)
 
