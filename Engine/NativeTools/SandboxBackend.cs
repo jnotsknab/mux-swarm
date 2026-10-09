@@ -204,6 +204,12 @@ internal static class SandboxBackend
             if ((backend is "bwrap" or "firejail") && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 throw new SandboxException($"sandbox.backend '{backend}' is Linux-only.");
             EnsureBinaryReady(backend, ociDaemonCheck: false);
+            // firejail does NOT fail when it can't sandbox: nested in another sandbox (WSL, a container) it
+            // warns "an existing sandbox was detected", runs the program unconfined and exits 0 - and our
+            // --quiet hides the warning. Probe once, without --quiet, so that case is a hard error.
+            if (backend == "firejail" && FirejailDegraded(ProbeOutput("firejail", "--noprofile /bin/true", stderr: true)))
+                throw new SandboxException("firejail detected an existing sandbox (e.g. WSL or a container) and would run " +
+                    "commands WITHOUT confinement. Use bwrap, a container backend, or run Mux outside the nested environment.");
             return new SandboxSpec
             {
                 Kind = SandboxKind.Wrapper, Backend = backend, Binary = backend,
@@ -250,6 +256,45 @@ internal static class SandboxBackend
         catch { return false; }
     }
 
+    /// <summary>True when firejail's output says it fell back to running the program without a sandbox.</summary>
+    internal static bool FirejailDegraded(string output) =>
+        output.Contains("existing sandbox was detected", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Combined stdout(+stderr) of a short read-only probe, stdin closed. A probe that cannot start or does not
+    /// finish within <paramref name="timeoutMs"/> throws <see cref="SandboxException"/> with the reason: callers
+    /// gate confinement on the output, so a failed probe must never read as "nothing to worry about".
+    /// </summary>
+    internal static string ProbeOutput(string binary, string args, bool stderr = false, int timeoutMs = 5000)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = binary, Arguments = args,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        };
+        Process? p;
+        try { p = Process.Start(psi); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            throw new SandboxException($"could not run '{binary} {args}' to check the sandbox: {ex.Message}");
+        }
+        using (p)
+        {
+            if (p is null) throw new SandboxException($"could not run '{binary} {args}' to check the sandbox.");
+            p.StandardInput.Close();
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                // Best-effort cleanup of a hung probe; the timeout itself is what we report.
+                try { p.Kill(true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* exited or not killable; the timeout is reported below */ }
+                throw new SandboxException($"'{binary} {args}' did not finish within {timeoutMs / 1000}s while checking the sandbox.");
+            }
+            return stderr ? outTask.Result + errTask.Result : outTask.Result;
+        }
+    }
+
     private static bool OciDaemonReady(string binary)
     {
         try
@@ -279,39 +324,14 @@ internal static class SandboxBackend
     /// </summary>
     public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir)
     {
-        // The inner command is always run through a POSIX shell inside the sandbox (wrapper backends are
-        // Linux/macOS only; custom is user-defined). Quote the whole command as one -c argument.
-        string shell = "/bin/sh";
-        string shArgs = "-c " + ShQuote(innerCommand);
-
         switch (spec.Kind)
         {
             case SandboxKind.Wrapper:
-                return spec.Backend switch
-                {
-                    "bwrap" => ("bwrap", string.Join(' ',
-                        "--ro-bind / /",
-                        "--bind", Q(workDir), Q(workDir),
-                        "--chdir", Q(workDir),
-                        "--proc /proc --dev /dev --tmpfs /tmp",
-                        "--unshare-all",
-                        spec.NetworkOpen ? "--share-net" : "",
-                        "--die-with-parent",
-                        shell, shArgs)),
-                    "firejail" => ("firejail", string.Join(' ',
-                        "--quiet",
-                        spec.NetworkOpen ? "" : "--net=none",
-                        "--whitelist=" + Q(workDir),
-                        "--caps.drop=all --nonewprivs --seccomp",
-                        shell, shArgs)),
-                    "sandbox-exec" => ("sandbox-exec", string.Join(' ',
-                        "-p", SeatbeltProfile(workDir, spec.NetworkOpen),
-                        shell, shArgs)),
-                    _ => throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'"),
-                };
+                // Wrapper backends are Linux/macOS only: run the command through a POSIX shell in the sandbox.
+                return WrapProcess(spec, new[] { "/bin/sh", "-c", innerCommand }, workDir);
 
             case SandboxKind.Custom:
-                // Render the user template. {cmd} = the shell-quoted inner command, {workdir}, {image}.
+                // Render the user template. {cmd} = the raw inner command, {workdir}, {image}.
                 string rendered = spec.CustomTemplate
                     .Replace("{cmd}", innerCommand)
                     .Replace("{workdir}", workDir)
@@ -319,27 +339,66 @@ internal static class SandboxBackend
                 // Run the rendered template via the host shell so users can write a full pipeline.
                 if (OperatingSystem.IsWindows())
                     return ("cmd.exe", "/c " + rendered);
-                return ("/bin/sh", "-c " + ShQuote(rendered));
+                return ("/bin/sh", "-c " + ArgvToken(rendered));
 
             default:
                 throw new SandboxException("WrapShellCommand is only valid for Wrapper/Custom backends.");
         }
     }
 
+    /// <summary>
+    /// Render the (file, argv-string) that runs the process <paramref name="innerArgv"/> (program + args)
+    /// inside a wrapper backend (bwrap/firejail/sandbox-exec), confined to <paramref name="workDir"/>.
+    /// Every token is quoted for <see cref="ProcessStartInfo.Arguments"/>, so the wrapper receives exactly
+    /// <paramref name="innerArgv"/>, byte-for-byte. Only valid for <see cref="SandboxKind.Wrapper"/>.
+    /// </summary>
+    public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir)
+    {
+        if (spec.Kind != SandboxKind.Wrapper)
+            throw new SandboxException("WrapProcess is only valid for wrapper backends.");
+        var argv = new List<string>();
+        switch (spec.Backend)
+        {
+            case "bwrap":
+                argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
+                    "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
+                if (spec.NetworkOpen) argv.Add("--share-net");
+                // No --die-with-parent: it is PR_SET_PDEATHSIG, which fires when the spawning THREAD exits.
+                // .NET starts processes from short-lived pool threads, so it SIGKILLed (137) any job that
+                // ran longer than about a second. Mux kills its jobs/worker itself on dispose.
+                break;
+            case "firejail":
+                argv.Add("--quiet");
+                if (!spec.NetworkOpen) argv.Add("--net=none");
+                argv.AddRange(new[] { "--whitelist=" + workDir, "--caps.drop=all", "--nonewprivs", "--seccomp" });
+                break;
+            case "sandbox-exec":
+                argv.Add("-p");
+                argv.Add(SeatbeltProfile(workDir, spec.NetworkOpen));
+                break;
+            default:
+                throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'");
+        }
+        argv.AddRange(innerArgv);
+        var args = new List<string>(argv.Count);
+        foreach (var a in argv) args.Add(ArgvToken(a));
+        return (spec.Backend, string.Join(' ', args));
+    }
+
     private static string SeatbeltProfile(string workDir, bool net)
     {
         // Minimal Seatbelt SBPL: deny by default, allow exec + read of system, rw on the workdir, network optional.
-        string p = "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
-                   "(allow file-read* (subpath \\\"/usr\\\")(subpath \\\"/System\\\")(subpath \\\"/Library\\\")(subpath \\\"/bin\\\")(subpath \\\"/sbin\\\")(subpath \\\"/private/var\\\")(subpath \\\"/etc\\\"))" +
-                   "(allow file-read* file-write* (subpath \\\"" + workDir + "\\\")(subpath \\\"/tmp\\\")(subpath \\\"/private/tmp\\\"))" +
-                   (net ? "(allow network*)" : "");
-        return "'" + p.Replace("\\\"", "\"") + "'";
+        return "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
+               "(allow file-read* (subpath \"/usr\")(subpath \"/System\")(subpath \"/Library\")(subpath \"/bin\")(subpath \"/sbin\")(subpath \"/private/var\")(subpath \"/etc\"))" +
+               "(allow file-read* file-write* (subpath \"" + workDir + "\")(subpath \"/tmp\")(subpath \"/private/tmp\"))" +
+               (net ? "(allow network*)" : "");
     }
 
-    // POSIX single-quote escaping for a whole command passed to `sh -c`.
-    private static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
-    // Quote a path arg that may contain spaces (double-quote form for argv tokens).
-    private static string Q(string s) => s.Contains(' ') ? "\"" + s + "\"" : s;
+    // One argv token for ProcessStartInfo.Arguments, which .NET parses with Windows/MSVCRT rules on EVERY
+    // OS (not POSIX shell rules). Plain tokens pass through unchanged; anything else is quoted exactly.
+    internal static string ArgvToken(string s) =>
+        s.Length > 0 && s.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '"', '\'', '\\' }) < 0
+            ? s : OciSandbox.ShQuoteForArgv(s);
 
     // ---- allowed-path mounts mapped from the filesystem security posture --------------------
     //

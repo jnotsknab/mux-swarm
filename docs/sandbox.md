@@ -47,7 +47,9 @@ state, so agents know whether their shell runs on the host or inside isolation.
 - **Hardened OCI** (`gvisor`, `kata`): gVisor user-space kernel or Kata microVM for stronger
   isolation than a plain container. `kata` typically pairs with `runtime: "kata-runtime"`.
 - **Process wrappers** (`bwrap`, `firejail` on Linux; `sandbox-exec` on macOS): lightweight
-  namespace/profile isolation without a container engine.
+  namespace/profile isolation without a container engine. `firejail` is refused where it would run
+  unconfined (nested inside WSL or a container), and when its confinement check cannot run. Wrapped jobs
+  are stopped by Mux on exit; if Mux itself is SIGKILLed, a running bwrap job keeps running.
 - **`custom`**: bring your own wrapper via `command`.
 - **`host`**: no sandbox; execution runs directly on the machine (default).
 
