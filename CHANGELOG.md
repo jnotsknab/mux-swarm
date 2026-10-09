@@ -13,6 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.15.2-alpha] — Unreleased
+
+### Security
+- **Python REPL ran on the host under wrapper sandboxes.** With `sandbox.backend` set to `bwrap`, `firejail`,
+  `sandbox-exec` or `custom`, shell commands were confined but the Python REPL tool (`repl_shell_exec`,
+  `install_package_async`) ran unconfined on the host in v0.15.1 and earlier. The REPL worker now runs through
+  the same wrapper. `custom` backends must declare `sandbox.replStdio: true` (template keeps stdin/stdout open)
+  to get a REPL; otherwise REPL calls are refused. There is never a host fallback. (#100)
+
+### Fixed
+- Wrapper backends (bwrap, firejail, sandbox-exec, custom on Unix) passed commands as one re-split string,
+  breaking any multi-word or quoted command; they now pass exact argv. bwrap jobs no longer die when the
+  spawning thread exits. firejail is refused where it cannot confine (e.g. inside WSL/containers). (#99)
+- podman `allowedDomains` requires podman 4+ (clear error on 3.x); the allowlist proxy now joins podman's own
+  network for egress. (#101)
+- `--version` / `-V` and `--help` exit before any setup (no `Configs/` written, no hang without a TTY). Relative
+  `--cfg` / `--swarmcfg` resolve against the directory you launched from, also through the install shims. (#102)
+- **A turn could vanish from the saved session.** A tool wait longer than `activityTimeoutSeconds` (e.g. a slow
+  `ask_user` answer) tripped the watchdog, and the failed turn was saved as the pre-turn history. The watchdog
+  now resets on tool calls/results and pauses during `ask_user`; a timed-out or failed turn is recorded as your
+  message + `[turn ended: <reason>]` with the tools that ran. (#105)
+
+### Added
+- `/api/health` reports daemon trigger readiness (`daemon: off | starting | ready`). (#103)
+- `/doctor` checks the configured sandbox backend for real; docs: podman + gVisor recipe, snap Docker FAQ. (#104)
+- Compaction first saves the full session to `<sandbox>/prune-recovery/pre-compact-<session>-*.muxprune` plus a
+  searchable `.txt` (tool manifest + transcript), appends a deterministic tool manifest to the summary, and
+  points the agent at the snapshots. `/prune` snapshots get the `.txt` too. Re-compaction strips engine blocks
+  and a non-summary reply falls back to a marked extractive summary. (#105)
+
 ## [v0.15.1-alpha] — Unreleased
 
 ### Changed
