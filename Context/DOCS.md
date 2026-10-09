@@ -291,6 +291,17 @@ when running untrusted code on a multi-tenant host (a container/gVisor boundary 
   podman/nerdctl, keep `backend` as that engine and set `runtime` to the engine's kata runtime
   (e.g. `io.containerd.kata.v2` for nerdctl/containerd).
 
+### gVisor on podman, and snap Docker
+
+- **podman + gVisor:** the `gvisor` backend is docker only. For podman use `backend: podman` with
+  `runtime: /usr/local/bin/runsc` (absolute path; podman may not resolve runsc from `PATH`). Install runsc
+  from https://gvisor.dev/docs/user_guide/install/ (releases ship as an archive; keep `gvisor-bin/` next to
+  `runsc`). Rootless podman 3.x may need a wrapper script as the `runtime` that adds `--ignore-cgroups`.
+- **snap Docker:** snap-packaged Docker on Ubuntu rejects `--security-opt=no-new-privileges` (snap
+  confinement), so every container backend fails to start. Use Docker from Docker's apt repository, or podman.
+- `/doctor` reports whether the configured backend is usable and why not (read-only probes; never starts a
+  sandbox).
+
 **Deliberately NOT supported (deferred):** `libkrun`/`krun` and direct Firecracker/Cloud-Hypervisor/E2B
 control planes. The sandbox lifecycle is built on container `exec`; `krun` microVMs do not service
 `exec` into the guest (exec runs on the host kernel), and the VM-direct platforms have no `exec`

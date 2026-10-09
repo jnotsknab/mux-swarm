@@ -58,6 +58,30 @@ state, so agents know whether their shell runs on the host or inside isolation.
   `docker`, the microVM); the choice is validated and synced back to config.
 - **Runtime**: `/sandbox` hot-swaps the backend inside a live session.
 
+`/doctor` checks the configured backend (binary, engine `info`, OS/KVM gates, an explicit `runtime`)
+without starting a sandbox, and reports why it is unusable.
+
+### gVisor on podman
+
+The `gvisor` backend is docker with `--runtime=runsc`. To use gVisor with podman instead, keep the
+podman backend and point `runtime` at runsc:
+
+```json
+"sandbox": { "backend": "podman", "runtime": "/usr/local/bin/runsc" }
+```
+
+- Install runsc from the [gVisor install guide](https://gvisor.dev/docs/user_guide/install/). Releases
+  ship as an archive: keep the `gvisor-bin/` directory next to `runsc`.
+- Use an absolute path: podman may not resolve runsc from your `PATH`.
+- Rootless podman 3.x may need a small wrapper script as the `runtime` that calls runsc with
+  `--ignore-cgroups`.
+
+### FAQ: containers fail with `no-new-privileges` on Ubuntu
+
+Container backends start with `--security-opt=no-new-privileges`. Snap-packaged Docker (`snap install
+docker`) rejects that under snap confinement, so every container fails to start. Use Docker from
+Docker's apt repository ([docs.docker.com](https://docs.docker.com/engine/install/ubuntu/)) or podman.
+
 ## Filesystem & shell security (`config.json`)
 
 The native in-process Filesystem and Shell/REPL tools enforce configurable security postures
