@@ -50,6 +50,9 @@ state, so agents know whether their shell runs on the host or inside isolation.
 - **Process wrappers** (`bwrap`, `firejail` on Linux; `sandbox-exec` on macOS): lightweight
   namespace/profile isolation without a container engine. Every shell command AND the persistent
   Python REPL worker run as wrapped processes (same filesystem, network and privilege limits).
+  `firejail` is refused where it would run unconfined (nested inside WSL or a container), and when its
+  confinement check cannot run. Wrapped jobs are stopped by Mux on exit; if Mux itself is SIGKILLed, a
+  running bwrap job keeps running.
 - **`custom`**: bring your own wrapper via `command`. Shell commands always run through the template;
   the Python REPL runs through it only with `replStdio: true` (Mux can't tell whether an arbitrary
   template keeps stdin/stdout open for a long-lived worker), otherwise it refuses rather than run on the host.

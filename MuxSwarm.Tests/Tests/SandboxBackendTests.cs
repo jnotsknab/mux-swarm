@@ -445,9 +445,8 @@ public class SandboxBackendTests
     [Theory]
     [InlineData("Warning: an existing sandbox was detected. /bin/true will run without any additional sandboxing features", true)]
     [InlineData("", false)]
-    [InlineData(null, false)]
     [InlineData("Parent pid 12, child pid 13\nChild process initialized", false)]
-    public void FirejailDegraded_DetectsUnconfinedFallback(string? output, bool expected) =>
+    public void FirejailDegraded_DetectsUnconfinedFallback(string output, bool expected) =>
         Assert.Equal(expected, SandboxBackend.FirejailDegraded(output));
 
     // ---- REPL worker under wrapper/custom backends (v0.15.2 #1, security): the worker used to start on the
@@ -524,6 +523,25 @@ public class SandboxBackendTests
             Assert.Empty(ReplSession.PythonReadPaths("/nonexistent/bin/python"));
         }
         finally { System.IO.Directory.Delete(dir, true); }
+    }
+
+    // Review #99: a probe that cannot run must fail closed (it used to return null, which read as "not degraded").
+    [Fact]
+    public void ProbeOutput_MissingBinary_Throws_InsteadOfReturningNull()
+    {
+        var ex = Assert.Throws<SandboxException>(() =>
+            SandboxBackend.ProbeOutput("mux-no-such-binary-" + Guid.NewGuid().ToString("N"), "--version"));
+        Assert.Contains("could not run", ex.Message);
+    }
+
+    [Fact]
+    public void ProbeOutput_HungProbe_Throws_InsteadOfReturningNull()
+    {
+        var (file, args) = OperatingSystem.IsWindows()
+            ? ("powershell", "-NoProfile -Command Start-Sleep -Seconds 10")
+            : ("sleep", "10");
+        var ex = Assert.Throws<SandboxException>(() => SandboxBackend.ProbeOutput(file, args, timeoutMs: 300));
+        Assert.Contains("did not finish", ex.Message);
     }
 
     [Fact]
