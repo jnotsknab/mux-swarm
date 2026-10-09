@@ -99,7 +99,15 @@ internal sealed class OciSandbox : ISessionSandbox
                 Run(_spec.Binary, $"network create --internal {_netName}", allowFail: false);
                 // 2) the filtering proxy sidecar: on the internal net AND a normal (egress) net.
                 _proxyName = "mux_sbxproxy_" + sfx;
-                StartProxy(sfx);
+                try { StartProxy(sfx); }
+                catch (SandboxException ex)
+                {
+                    // Same as a failed container run below: remove the proxy/network this attempt created, so a
+                    // retry (new suffix) does not orphan them where Dispose can no longer find them.
+                    _lastBuildError = ex.Message;
+                    RebuildTeardown_NoLock();
+                    throw;
+                }
                 netArg = $"--network {_netName}";
             }
             else
@@ -196,11 +204,17 @@ internal sealed class OciSandbox : ISessionSandbox
         // proxy joins the internal net (alias used by the sandbox) AND gets normal egress via a second net.
         var (ok, _, err) = Run(_spec.Binary, ProxyRunArgs(_proxyName, _netName, b64), allowFail: true);
         if (!ok) throw new SandboxException($"failed to start sandbox network proxy from {ProxyImage}: {err.Trim()}");
-        // give the proxy a normal egress path too (second network with default bridge).
-        // Known limit (unverified): podman names its default network `podman`, not `bridge`, so this
-        // connect may fail there and leave the proxy without egress.
-        Run(_spec.Binary, $"network connect bridge {_proxyName}", allowFail: true);
+        // give the proxy a normal egress path too: the engine's default network (podman names it `podman`,
+        // docker and nerdctl `bridge`). A failure here used to be ignored, leaving a proxy with no internet and
+        // every allowlisted domain failing later with no clear cause: fail now, with the engine's reason.
+        string egressNet = DefaultNetwork(_spec.Binary);
+        var (egressOk, _, egressErr) = Run(_spec.Binary, $"network connect {egressNet} {_proxyName}", allowFail: true);
+        if (!egressOk)
+            throw new SandboxException($"failed to give the sandbox proxy egress via network '{egressNet}': {egressErr.Trim()}");
     }
+
+    /// <summary>The engine's default (egress) network name: <c>podman</c> for podman, <c>bridge</c> otherwise.</summary>
+    internal static string DefaultNetwork(string binary) => binary == "podman" ? "podman" : "bridge";
 
     /// <summary>
     /// Pull <paramref name="image"/> as its own step when it is not present locally, with a 10 min timeout:

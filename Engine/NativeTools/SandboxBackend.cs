@@ -182,6 +182,11 @@ internal static class SandboxBackend
                         "Enable KVM (and nested virtualization if inside a VM), install kata-containers, then retry.");
             }
             EnsureBinaryReady(binary, ociDaemonCheck: true);
+            // The allowlist proxy is reached by container name on an --internal network. podman < 4 (CNI
+            // networking) has no DNS on internal networks, so the sandbox could never resolve the proxy.
+            if (allow.Count > 0 && binary == "podman" && PodmanMajor(ProbeOutput("podman", "--version")) is < 4 and var major)
+                throw new SandboxException($"sandbox.allowedDomains on podman needs podman >= 4 (netavark networking); " +
+                    $"found podman {major}. Upgrade podman, use docker-container, or drop allowedDomains (network true/false).");
             if (string.IsNullOrWhiteSpace(cfg.Image))
                 throw new SandboxException($"sandbox.backend '{backend}' requires sandbox.image to be set.");
             return new SandboxSpec
@@ -293,6 +298,13 @@ internal static class SandboxBackend
             }
             return stderr ? outTask.Result + errTask.Result : outTask.Result;
         }
+    }
+
+    /// <summary>Major version from <c>podman --version</c> output ("podman version 3.4.4"), or null if unparsable.</summary>
+    internal static int? PodmanMajor(string? versionOutput)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(versionOutput ?? "", @"version\s+(\d+)\.");
+        return m.Success && int.TryParse(m.Groups[1].Value, out int v) ? v : null;
     }
 
     private static bool OciDaemonReady(string binary)

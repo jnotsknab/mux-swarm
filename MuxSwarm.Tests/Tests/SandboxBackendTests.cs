@@ -449,6 +449,24 @@ public class SandboxBackendTests
     public void FirejailDegraded_DetectsUnconfinedFallback(string output, bool expected) =>
         Assert.Equal(expected, SandboxBackend.FirejailDegraded(output));
 
+    // ---- podman allowlist (v0.15.2 #3) ----
+
+    [Theory]
+    [InlineData("podman version 3.4.4", 3)]
+    [InlineData("podman version 4.9.3\n", 4)]
+    [InlineData("podman version 5.2.0-dev", 5)]
+    [InlineData("", null)]
+    [InlineData("garbage", null)]
+    public void PodmanMajor_ParsesVersionOutput(string output, int? expected) =>
+        Assert.Equal(expected, SandboxBackend.PodmanMajor(output));
+
+    [Theory]
+    [InlineData("podman", "podman")]
+    [InlineData("docker", "bridge")]
+    [InlineData("nerdctl", "bridge")]
+    public void AllowlistProxy_JoinsTheEnginesDefaultNetwork(string binary, string expected) =>
+        Assert.Equal(expected, OciSandbox.DefaultNetwork(binary));
+
     // Review #99: a probe that cannot run must fail closed (it used to return null, which read as "not degraded").
     [Fact]
     public void ProbeOutput_MissingBinary_Throws_InsteadOfReturningNull()

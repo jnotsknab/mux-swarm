@@ -32,7 +32,7 @@ state, so agents know whether their shell runs on the host or inside isolation.
 | `backend` | `host` | `host` (no sandbox), `docker` (Docker Sandboxes microVM), `docker-container` (alias `docker-legacy`), `podman`, `nerdctl`, `gvisor`, `kata` (microVM), `bwrap` / `firejail` / `sandbox-exec` (process wrappers), or `custom`. |
 | `image` | `python:3.12-slim` | Image for the `docker` microVM and container backends. |
 | `network` | `false` | Allow network egress from the sandbox. |
-| `allowedDomains` | `[]` | A non-empty list enforces a deny-by-default CONNECT allowlist (container backends only; rejected on `docker`). |
+| `allowedDomains` | `[]` | A non-empty list enforces a deny-by-default CONNECT allowlist (container backends only; rejected on `docker`; `podman` needs version 4 or later). |
 | `command` | `""` | Command template for the `custom` backend. |
 | `runtime` | `""` | Optional `--runtime` passthrough for container backends (e.g. `kata-runtime`); ignored by `docker`. |
 
