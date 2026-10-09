@@ -422,6 +422,17 @@ folder before resuming there; do not overwrite a session you want to keep). `/un
 exchange, not the prune operation. Recovery publication is atomic on supported filesystems, not a
 universal power-loss or adversarial filesystem-race guarantee.
 
+Each snapshot also gets a same-named `.txt`: every tool call (`name | callId | args`), the files
+referenced, and the transcript with real newlines, so a phrase search works without JSON escaping.
+The `.muxprune` JSON (indented) stays the exact restore copy.
+
+`/compact` (and automatic or mid-turn compaction) writes the same kind of snapshot first, named
+`pre-compact-<session>-*.muxprune` + `.txt`. After the summary the engine appends a tool manifest
+(generated from the session, not by the model) and the snapshot paths, including the
+`pre-compact-<session>-*` pattern that finds every earlier compaction of the session, so the agent
+knows a detail exists before searching for it. If no allowed sandbox is configured, compaction
+proceeds without a snapshot and prints a warning.
+
 ## Agent picker (`/swap`)
 
 In docked TUI (frame or inline), `/swap` opens a dedicated searchable agent list. The current

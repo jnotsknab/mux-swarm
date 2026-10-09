@@ -10,6 +10,7 @@ public sealed class ActivityTimeout : IDisposable
     private readonly Timer _timer;
     private readonly TimeSpan _timeout;
     private int _disposed;
+    private volatile bool _suspended;
 
     private ActivityTimeout(CancellationTokenSource cts, Timer timer, TimeSpan timeout)
     {
@@ -35,9 +36,32 @@ public sealed class ActivityTimeout : IDisposable
 
     public void Ping()
     {
+        if (_suspended) return;
         try { _timer.Change(_timeout, Timeout.InfiniteTimeSpan); }
         catch { /* disposed race — harmless */ }
     }
+
+    /// <summary>
+    /// Stops the countdown until <see cref="Resume"/>, e.g. while a tool waits on the user (ask_user):
+    /// a slow human is not a stalled stream. Pings are ignored while suspended so trailing stream
+    /// updates cannot re-arm it early.
+    /// </summary>
+    public void Suspend()
+    {
+        _suspended = true;
+        try { _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
+        catch { /* disposed race — harmless */ }
+    }
+
+    /// <summary>Re-arms the full timeout. Safe to call when not suspended (acts like <see cref="Ping"/>).</summary>
+    public void Resume()
+    {
+        _suspended = false;
+        Ping();
+    }
+
+    /// <summary>True once the watchdog (or its linked parent token) cancelled the stream token. Safe after Dispose.</summary>
+    public bool Expired => _cts.IsCancellationRequested;
 
     public void Dispose()
     {

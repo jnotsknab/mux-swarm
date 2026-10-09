@@ -1506,6 +1506,7 @@ public static class ParallelSwarmOrchestrator
                 turnSpan?.SetTag("iteration", i);
 
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
+                var pendingAskUser = new HashSet<string>();
 
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
@@ -1565,6 +1566,8 @@ public static class ParallelSwarmOrchestrator
 
                         if (content is FunctionCallContent fc)
                         {
+                            // ask_user waits on a human and must not count against the watchdog.
+                            if (fc.Name == "ask_user") { pendingAskUser.Add(fc.CallId); activityTimeout.Suspend(); }
 
                             lastToolName = fc.Name;
                             Telemetry.TelemetrySink.RecordToolCall(specialist.Agent.Id, specialist.Def.Name, fc.Name);
@@ -1614,6 +1617,8 @@ public static class ParallelSwarmOrchestrator
                         }
                         else if (content is FunctionResultContent fr)
                         {
+                            pendingAskUser.Remove(fr.CallId);
+                            if (pendingAskUser.Count == 0) activityTimeout.Resume();
 
                             var resultText = fr.Result?.ToString();
 

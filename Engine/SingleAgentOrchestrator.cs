@@ -1672,7 +1672,31 @@ public static class SingleAgentOrchestrator
         }
 
         _pendingCompaction = false;
-        async Task<bool> TryCompactAsync(string? instruction = null)
+
+        // Best effort: a missing/disallowed sandbox skips the backup with a warning, never blocks compaction.
+        // Snapshots are tagged with the session id so every compaction of this session stays findable by pattern.
+        async Task<string?> SavePreCompactionSnapshotAsync(IReadOnlyList<ChatMessage> typedHistory, string inProgress)
+        {
+            try
+            {
+                var fs = App.Config.Filesystem;
+                var serialized = await agent.SerializeSessionAsync(session, cancellationToken: ExecutionCancellation.Current);
+                string path = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [],
+                    $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}", SessionSnapshotText.FullText(typedHistory, inProgress));
+                MuxConsole.WriteInfo($"Pre-compaction snapshot: {path}");
+                return path;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException
+                                           or System.Text.Json.JsonException or ArgumentException or NotSupportedException)
+            {
+                MuxConsole.WriteWarning($"Pre-compaction snapshot skipped ({ex.Message}); compacting without a backup.");
+                return null;
+            }
+        }
+
+        // midTurnGoal/midTurnTools: set only for mid-turn compaction, whose current turn is not committed to the
+        // session yet; they are recorded in the snapshot .txt and the summary so the turn is not lost from view.
+        async Task<bool> TryCompactAsync(string? instruction = null, string? midTurnGoal = null, IReadOnlyList<string>? midTurnTools = null)
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -1697,12 +1721,28 @@ public static class SingleAgentOrchestrator
                 await MuxConsole.WithSpinnerAsync("Compacting conversation history", async () =>
                 {
                     compactedMsg = await ResultCompactor.CompactConversationAsync(
-                        conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction);
+                        conversationHistory, cc, chatOptions: compactionChatOptions, instruction: instruction,
+                        toolManifestAppended: true);
+                    // Compaction replaces the session; keep a recoverable copy of the full pre-compaction
+                    // history first (same writer as /prune) and point the agent at it. The typed session
+                    // history (with tool calls) feeds the deterministic manifest; conversationHistory is text-only.
+                    IReadOnlyList<ChatMessage> typedHistory =
+                        session.TryGetInMemoryChatHistory(out var th) && th is not null ? th.ToList() : conversationHistory.ToList();
+                    string inProgress = SessionSnapshotText.InProgress(midTurnGoal, midTurnTools);
+                    string? snapshotPath = await SavePreCompactionSnapshotAsync(typedHistory, inProgress);
+                    string summaryText = compactedMsg.Text;
+                    if (inProgress.Length > 0) summaryText += "\n\n" + inProgress;
+                    string manifest = SessionSnapshotText.Manifest(typedHistory,
+                        snapshotPath is null ? null : Path.ChangeExtension(snapshotPath, ".txt"));
+                    if (manifest.Length > 0) summaryText += "\n\n" + manifest;
+                    if (snapshotPath is not null)
+                        summaryText += "\n\n" + ContextPruneSession.CompactionSnapshotNote(snapshotPath,
+                            $"pre-compact-{ContextPruneSession.SessionTag(sessionTimestamp)}-*");
                     var replacement = await agent.CreateSessionAsync(cancellationToken: ExecutionCancellation.Current);
                     ExecutionCancellation.Current.ThrowIfCancellationRequested();
                     session = replacement;
                     conversationHistory.Clear();
-                    conversationHistory.Add(new ChatMessage(ChatRole.User, compactedMsg.Text));
+                    conversationHistory.Add(new ChatMessage(ChatRole.User, summaryText));
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
                         "Context restored. Ready to continue."));
                 });
@@ -1969,6 +2009,10 @@ public static class SingleAgentOrchestrator
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
+            bool timedOut = false;           // the activity watchdog (not the user) ended the turn
+            bool turnFailed = false;         // ended by an exception other than a user interrupt
+            var turnToolNames = new List<string>(); // for the failure note if the turn does not complete
+            int preTurnHistoryCount = TurnFailureRecord.Count(session); // after the checkpoint restore above
             StringBuilder responseText = new();
             try
             {
@@ -1990,6 +2034,8 @@ public static class SingleAgentOrchestrator
                     bool startedStreaming = false;
                     bool currentlyStreaming = false;
                     ResetLiveTokenEstimate();
+                    // Hoisted out of the try so the finally can observe a watchdog expiry.
+                    using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
 
                     try
                     {
@@ -1997,8 +2043,7 @@ public static class SingleAgentOrchestrator
 
                         var calledTools = new List<string>();
                         string? lastToolName = null;
-
-                        using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), turnCts.Token);
+                        var pendingAskUser = new HashSet<string>();
 
                         if (_pendingCompaction)
                         {
@@ -2104,6 +2149,14 @@ public static class SingleAgentOrchestrator
                                 if (content is FunctionCallContent functionCall)
                                 {
                                     lastToolName = functionCall.Name;
+                                    turnToolNames.Add(functionCall.Name);
+                                    // Every update already re-arms the watchdog (top of the loop); while ask_user
+                                    // waits on the human, stop it entirely (a slow answer is not a stalled stream).
+                                    if (functionCall.Name == "ask_user")
+                                    {
+                                        pendingAskUser.Add(functionCall.CallId);
+                                        activityTimeout.Suspend();
+                                    }
                                     CostLedger.RecordToolCall(resolvedModelId, singleAgentDef.Name, functionCall.Name);
                                     MuxConsole.SetTuiToolCalls(++_sessionToolCalls);
                                     // Stdio parity: the SDK event enum has TOOL_CALL but the engine
@@ -2153,6 +2206,8 @@ public static class SingleAgentOrchestrator
                                 }
                                 else if (content is FunctionResultContent functionResult)
                                 {
+                                    pendingAskUser.Remove(functionResult.CallId);
+                                    if (pendingAskUser.Count == 0) activityTimeout.Resume();
                                     var resultText = functionResult.Result?.ToString();
                                     // NOTE: do NOT tick the live meter on tool-result text -- like tool-call args it is
                                     // folded into the provider's InputTokenCount on the next iteration, so char-ticking
@@ -2262,10 +2317,11 @@ public static class SingleAgentOrchestrator
                             responseText.Clear();
 
                             MuxConsole.WriteInfo($"Context crossed limit mid-turn (~{_sessionTokens:N0} tokens). Auto-compacting...");
-                            bool mtcOk = await TryCompactAsync();
+                            bool mtcOk = await TryCompactAsync(midTurnGoal: currentGoal, midTurnTools: turnToolNames.ToList());
 
                             if (mtcOk)
                             {
+                                preTurnHistoryCount = TurnFailureRecord.Count(session); // fresh session after compaction
                                 // TryCompactAsync set _pendingCompaction and reset conversationHistory to
                                 // [summary, "Context restored..."]. Rebuild the turn payload from scratch on
                                 // the fresh session: the two reseed messages plus a nudge to continue.
@@ -2313,6 +2369,11 @@ public static class SingleAgentOrchestrator
                     }
                     finally
                     {
+                        // Record a watchdog expiry before the timeout is disposed, so the catch below can
+                        // tell "timed out" from "user interrupted" / "failed" (turnCts is NOT cancelled by it).
+                        if (activityTimeout.Expired && !turnCts.IsCancellationRequested)
+                            timedOut = true;
+
                         if (currentlyStreaming)
                         {
                             try { MuxConsole.EndStreaming(); } catch { /* ignore */ }
@@ -2400,11 +2461,7 @@ public static class SingleAgentOrchestrator
                 // so neither the user goal nor the partial response would survive
                 // persistence/resume. Inject both into the session's in-memory history
                 // (preserving prior tool-rich turns) so the interrupted exchange is durable.
-                if (!session.TryGetInMemoryChatHistory(out var sessionHistory) || sessionHistory is null)
-                    sessionHistory = new List<ChatMessage>();
-                sessionHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
-                sessionHistory.Add(new ChatMessage(ChatRole.Assistant, interruptedAssistant));
-                session.SetInMemoryChatHistory(sessionHistory);
+                TurnFailureRecord.Append(session, currentGoal, interruptedAssistant, preTurnHistoryCount);
 
                 // conversationHistory feeds compaction; keep the partial there too.
                 if (!string.IsNullOrWhiteSpace(partial))
@@ -2415,8 +2472,23 @@ public static class SingleAgentOrchestrator
             }
             catch (Exception ex)
             {
-                MuxConsole.WriteError(ex.Message);
-                RunResult.ReportError(ex.Message);   // daemon/webhook callback reports status=error (no-op otherwise)
+                // Any other exit (watchdog timeout, provider error, tool pipeline failure) used to only
+                // print the error. The framework never commits a failed run and the pre-turn checkpoint
+                // restored the prior history, so the end-of-turn persist below then wrote the PRE-TURN
+                // session over the file and the whole turn vanished. Record what happened instead.
+                turnFailed = true;
+                string reason = timedOut
+                    ? $"timed out after {ExecutionLimits.Current.ActivityTimeoutSeconds}s with no model or tool activity"
+                    : cancellationToken.IsCancellationRequested ? "cancelled (session ending)" : $"failed: {ex.Message}";
+                string note = TurnFailureRecord.Note(reason, responseText.ToString(), turnToolNames);
+                TurnFailureRecord.Append(session, currentGoal, note, preTurnHistoryCount);
+                conversationHistory.Add(new ChatMessage(ChatRole.Assistant, note));
+
+                if (timedOut)
+                    MuxConsole.WriteWarning($"Turn timed out after {ExecutionLimits.Current.ActivityTimeoutSeconds}s of inactivity (executionLimits.activityTimeoutSeconds); recorded in the session.");
+                else
+                    MuxConsole.WriteError(ex.Message);
+                RunResult.ReportError(timedOut ? reason : ex.Message);   // daemon/webhook callback reports status=error (no-op otherwise)
             }
             finally
             {
@@ -2430,7 +2502,7 @@ public static class SingleAgentOrchestrator
             // reconstruction along with the completed turn. Saving first makes every exit path
             // durable; the throw still unwinds immediately afterwards.
             bool shouldPersist = persistSession;
-            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted && !cancellationToken.IsCancellationRequested)
+            if (shouldPersist && persistIntervalSeconds > 0 && !wasInterrupted && !turnFailed && !cancellationToken.IsCancellationRequested)
                 shouldPersist = (DateTime.UtcNow - lastPersistTime).TotalSeconds >= persistIntervalSeconds;
 
             if (shouldPersist)
