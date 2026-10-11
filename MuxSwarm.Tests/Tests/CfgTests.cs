@@ -142,6 +142,54 @@ public class CfgTests
     }
 
     [Fact]
+    public void EnsureDefaultsPresent_ChromaDb_PinsPydanticBelow214()
+    {
+        // chroma-mcp 0.2.6 pins mcp==1.6.0, which crashes on pydantic 2.14 (ImportError eval_type_backport).
+        // uvx needs --with BEFORE the package name.
+        var config = new AppConfig();
+        McpServerDefaults.EnsureDefaultsPresent(config);
+
+        Assert.Equal(
+            new[] { "--with", "pydantic<2.14", "chroma-mcp", "--client-type", "persistent", "--data-dir", "chroma-db" },
+            config.McpServers["ChromaDB"].Args);
+    }
+
+    [Fact]
+    public void ChromaArgs_UsesGivenDataDirWithPin()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "mux chroma");
+        var args = McpServerDefaults.ChromaArgs(dir);
+
+        Assert.Equal(new[] { "--with", "pydantic<2.14", "chroma-mcp" }, args.Take(3));
+        Assert.Equal(dir, args[^1]);
+        Assert.Equal("--data-dir", args[^2]);
+    }
+
+    [Fact]
+    public void ApplyChromaDbPath_ExistingUnpinnedConfig_GetsPinnedArgs()
+    {
+        // Existing installs carry the old unpinned args in Config.json; startup must rebuild them.
+        var dir = Path.Combine(Path.GetTempPath(), "mux-chroma-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var config = new AppConfig { Filesystem = new FilesystemConfig { ChromaDbPath = dir } };
+            McpServerDefaults.EnsureDefaultsPresent(config);
+            config.McpServers["ChromaDB"].Args = new[] { "chroma-mcp", "--client-type", "persistent", "--data-dir", dir };
+
+            App.ApplyChromaDbPath(config);
+
+            Assert.Equal(
+                new[] { "--with", "pydantic<2.14", "chroma-mcp", "--client-type", "persistent", "--data-dir", dir },
+                config.McpServers["ChromaDB"].Args);
+            Assert.True(Directory.Exists(dir));
+        }
+        finally
+        {
+            if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        }
+    }
+
+    [Fact]
     public void PatchCommandsFromDepResults_FetchIsNpx_PatchedToAbsoluteNpxPath()
     {
         var config = new AppConfig();
