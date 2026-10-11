@@ -237,7 +237,7 @@ host execution.
 | Backend | Mechanism | Isolation |
 |---|---|---|
 | `host` | none | no isolation (runs natively) |
-| `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only) |
+| `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only). `firejail` is refused when nested (WSL/containers) or when its check can't run |
 | `sandbox-exec` | macOS Seatbelt (SBPL) | OS-native (macOS only) |
 | `docker-container` / `podman` / `nerdctl` | OCI container (namespaces/cgroups) | container |
 | `gvisor` | docker + `--runtime=runsc` | user-space kernel (syscall interposition) |
