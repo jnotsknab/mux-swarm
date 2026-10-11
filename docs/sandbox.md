@@ -34,6 +34,7 @@ state, so agents know whether their shell runs on the host or inside isolation.
 | `network` | `false` | Allow network egress from the sandbox. |
 | `allowedDomains` | `[]` | A non-empty list enforces a deny-by-default CONNECT allowlist (container backends only; rejected on `docker`). |
 | `command` | `""` | Command template for the `custom` backend. |
+| `replStdio` | `false` | `custom` only: set `true` when the template runs `{cmd}` with stdin/stdout passed through, so the Python REPL worker can run through it. When `false`, the Python REPL tools refuse to run under `custom` (shell tools still use the template). |
 | `runtime` | `""` | Optional `--runtime` passthrough for container backends (e.g. `kata-runtime`); ignored by `docker`. |
 
 ### Backend classes
@@ -47,10 +48,18 @@ state, so agents know whether their shell runs on the host or inside isolation.
 - **Hardened OCI** (`gvisor`, `kata`): gVisor user-space kernel or Kata microVM for stronger
   isolation than a plain container. `kata` typically pairs with `runtime: "kata-runtime"`.
 - **Process wrappers** (`bwrap`, `firejail` on Linux; `sandbox-exec` on macOS): lightweight
-  namespace/profile isolation without a container engine. `firejail` is refused where it would run
-  unconfined (nested inside WSL or a container), and when its confinement check cannot run. Wrapped jobs
-  are stopped by Mux on exit; if Mux itself is SIGKILLed, a running bwrap job keeps running.
-- **`custom`**: bring your own wrapper via `command`.
+  namespace/profile isolation without a container engine. Every shell command AND the persistent
+  Python REPL worker run as wrapped processes (same filesystem, network and privilege limits).
+  On firejail/sandbox-exec, the venv's base interpreter (only from uv's Python dir or, on macOS, Homebrew)
+  and the host `uv` binary are exposed read-only so the REPL and `install_package` work.
+  `firejail` is refused where it would run unconfined (nested inside WSL or a container), and when its
+  confinement check cannot run. Wrapped jobs are stopped by Mux on exit; if Mux itself is SIGKILLed, a
+  running bwrap job keeps running.
+- **`custom`**: bring your own wrapper via `command`. Shell commands always run through the template;
+  the Python REPL runs through it only with `replStdio: true` (Mux can't tell whether an arbitrary
+  template keeps stdin/stdout open for a long-lived worker), otherwise it refuses rather than run on the host.
+  `{cmd}` carries HOST paths (the session venv's python and the work dir), so a template that runs it in a
+  container (e.g. `docker run -i ...`) must also mount those paths at the same location.
 - **`host`**: no sandbox; execution runs directly on the machine (default).
 
 ## Selecting a backend
