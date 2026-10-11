@@ -66,6 +66,11 @@ internal class App
     public static int ServePort;
     public static DaemonRunner? DaemonRunner;
 
+    /// <summary>True from startup (when <c>--daemon</c> is requested and enabled) until
+    /// <see cref="DaemonRunner"/> is created, so <c>/api/health</c> reports <c>daemon: "starting"</c>
+    /// during the boot window instead of <c>"off"</c>.</summary>
+    public static volatile bool DaemonPending;
+
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
     public static SwarmConfig? SwarmConfig = new();
@@ -413,6 +418,7 @@ internal class App
         if (_watchDogEnabled)
             Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
         
+        DaemonPending = parsed.DaemonMode && Config.Daemon is { Enabled: true };
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
@@ -433,6 +439,7 @@ internal class App
             // This lets the ACP handshake (initialize / session/new) respond in milliseconds
             // instead of blocking ~15s on MCP subprocess spawns.
             StdinCancelMonitor.Start(startPaused: true);
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             return await RunAcpAsync();
         }
 
@@ -497,6 +504,7 @@ internal class App
         
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
@@ -505,12 +513,14 @@ internal class App
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
+            DaemonPending = false;
             return Environment.ExitCode;
         }
         
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
             DaemonRunner = new DaemonRunner(Config.Daemon);
+            DaemonPending = false;   // health now tracks DaemonRunner.TriggersReady
             
             if (ServePort > 0)
             {
