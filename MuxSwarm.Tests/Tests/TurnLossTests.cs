@@ -52,6 +52,24 @@ public class TurnLossTests
     }
 
     [Fact]
+    public void Fire_ThrowingCancellationCallback_IsContained_AndTheTokenIsStillCancelled()
+    {
+        // Runs on a timer (thread-pool) thread in production: an escaping AggregateException would crash Mux.
+        using var cts = new CancellationTokenSource();
+        cts.Token.Register(() => throw new InvalidOperationException("boom"));
+        ActivityTimeout.Fire(cts);
+        Assert.True(cts.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void Fire_AfterDispose_DoesNotThrow()
+    {
+        var cts = new CancellationTokenSource();
+        cts.Dispose();
+        ActivityTimeout.Fire(cts);
+    }
+
+    [Fact]
     public async Task Unsuspended_Watchdog_StillFires()
     {
         using var t = ActivityTimeout.Start(TimeSpan.FromMilliseconds(100), CancellationToken.None);

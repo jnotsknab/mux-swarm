@@ -23,13 +23,25 @@ public sealed class ActivityTimeout : IDisposable
     {
         var cts = CancellationTokenSource.CreateLinkedTokenSource(innerToken);
 
-        var timer = new Timer(
-            _ => { try { cts.Cancel(); } catch (ObjectDisposedException) { /* fired after Dispose */ } },
-            null,
-            timeout,
-            Timeout.InfiniteTimeSpan);
+        var timer = new Timer(_ => Fire(cts), null, timeout, Timeout.InfiniteTimeSpan);
 
         return new ActivityTimeout(cts, timer, timeout);
+    }
+
+    /// <summary>
+    /// Timer callback. It runs on a thread-pool thread with no caller, so an escaping exception would crash the
+    /// process. Cancel() throws AggregateException when a callback registered on the token throws; the token is
+    /// still cancelled (the turn times out as intended), so that is logged, not rethrown.
+    /// </summary>
+    internal static void Fire(CancellationTokenSource cts)
+    {
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { /* fired after Dispose */ }
+        catch (AggregateException ex)
+        {
+            try { OtelLogger.Warn($"ActivityTimeout: a cancellation callback threw: {ex.InnerException?.Message ?? ex.Message}"); }
+            catch (Exception) { /* logging must never take the process down from a timer thread */ }
+        }
     }
 
     public CancellationToken Token => _cts.Token;
