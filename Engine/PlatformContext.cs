@@ -97,21 +97,46 @@ public static class PlatformContext
     public static string ConfigPath => _configPathOverride ?? Path.Combine(ConfigDirectory, "Config.json");
     public static string SwarmPath => _swarmPathOverride ?? Path.Combine(ConfigDirectory, "Swarm.json");
 
+    /// <summary>
+    /// Apply the <c>--cfg</c> / <c>--swarmcfg</c> overrides. Relative paths resolve against the directory the
+    /// user launched from (see <see cref="ResolveUserPath(string)"/>); a missing file throws with the full
+    /// resolved path.
+    /// </summary>
     public static void ApplyOverrides(string? configPath = null, string? swarmPath = null)
     {
         if (!string.IsNullOrWhiteSpace(configPath))
         {
-            if (!File.Exists(configPath))
-                throw new FileNotFoundException($"--cfg path does not exist: {configPath}", configPath);
-            _configPathOverride = Path.GetFullPath(configPath);
+            var full = ResolveUserPath(configPath);
+            if (!File.Exists(full))
+                throw new FileNotFoundException($"--cfg path does not exist: {full}", full);
+            _configPathOverride = full;
         }
 
         if (!string.IsNullOrWhiteSpace(swarmPath))
         {
-            if (!File.Exists(swarmPath))
-                throw new FileNotFoundException($"--swarmcfg path does not exist: {swarmPath}", swarmPath);
-            _swarmPathOverride = Path.GetFullPath(swarmPath);
+            var full = ResolveUserPath(swarmPath);
+            if (!File.Exists(full))
+                throw new FileNotFoundException($"--swarmcfg path does not exist: {full}", full);
+            _swarmPathOverride = full;
         }
+    }
+
+    /// <summary>
+    /// Full path for a user-supplied CLI path. Relative paths resolve against the real launch dir
+    /// (<see cref="ResolveLaunchCwd()"/>: the install shim cd's into the install dir first), falling back
+    /// to the process CWD when the file only exists there.
+    /// </summary>
+    internal static string ResolveUserPath(string path) =>
+        ResolveUserPath(path, ResolveLaunchCwd(), Directory.GetCurrentDirectory(), File.Exists);
+
+    /// <summary>Pure resolution used by <see cref="ResolveUserPath(string)"/> (seams injected for testing).</summary>
+    internal static string ResolveUserPath(string path, string launchDir, string cwd, Func<string, bool> fileExists)
+    {
+        if (Path.IsPathRooted(path)) return Path.GetFullPath(path);
+        var fromLaunch = Path.GetFullPath(path, launchDir);
+        if (fileExists(fromLaunch)) return fromLaunch;
+        var fromCwd = Path.GetFullPath(path, cwd);
+        return fileExists(fromCwd) ? fromCwd : fromLaunch;
     }
 
     public static string PathSeparator => IsWindows ? "\\" : "/";
