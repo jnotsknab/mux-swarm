@@ -19,6 +19,17 @@ public class VersionMetadataTests
     }
 
     [Fact]
+    public void LicenseMetadata_MatchesTheRepoLicense()
+    {
+        // Shown in the exe's file properties; must state the repo's actual license (LICENSE = GNU GPL v3).
+        string root = FindRepositoryRoot();
+        Assert.StartsWith("GNU GENERAL PUBLIC LICENSE", File.ReadAllText(Path.Combine(root, "LICENSE")).TrimStart());
+        var p = XDocument.Load(Path.Combine(root, "MuxSwarm.csproj")).Descendants("PropertyGroup").First();
+        Assert.Equal("GPL-3.0-only", (string?)p.Element("PackageLicenseExpression"));
+        Assert.Contains("GPL-3.0", (string?)p.Element("Copyright"));
+    }
+
+    [Fact]
     public void ApplicationIcon_IsCommitted_AndHasTheStandardSizes()
     {
         string root = FindRepositoryRoot();

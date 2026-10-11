@@ -15,8 +15,8 @@
         <Product>Mux-Swarm</Product>
         <Company>github.com/jnotsknab</Company>
         <Description>Highly Configurable Agentic Swarm OS Harness</Description>
-        <Copyright>Copyright (c) jnotsknab. Licensed under Apache-2.0.</Copyright>
-        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <Copyright>Copyright (c) jnotsknab. Licensed under GPL-3.0.</Copyright>
+        <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
         <AssemblyTitle>Mux-Swarm Engine</AssemblyTitle>
         <RepositoryUrl>https://github.com/jnotsknab/mux-swarm</RepositoryUrl>
         <PackageProjectUrl>https://github.com/jnotsknab/mux-swarm</PackageProjectUrl>
