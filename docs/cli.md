@@ -8,7 +8,8 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 
 | Flag | Description |
 |---|---|
-| `--help` / `-h` | Print help and exit |
+| `--help` / `-h` | Print help and exit. Handled before any init: no config is read or written and setup never starts |
+| `--version` / `-V` | Print the bare version (`x.y.z`, e.g. `0.15.2`) and exit 0. Handled before any init, like `--help` |
 | `--goal <text\|file>` | Explicit goal (also accepted as a bare positional argument) |
 | `--goal-id <id>` | Attach a persistent goal/session identifier |
 | `--continuous` | Continuous autonomous mode |
@@ -39,8 +40,8 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--clear` | Clear the console at startup |
 | `--report [session-id]` | Generate audit report(s) and exit (no id = all sessions) |
 | `--provider <name>` | Set the active LLM provider on launch |
-| `--cfg <path>` | Override the Config.json path (scoped instance) |
-| `--swarmcfg <path>` | Override the Swarm.json path (scoped instance) |
+| `--cfg <path>` | Override the Config.json path (scoped instance). A relative path resolves against the directory you launched from (falls back to the current directory if the file is not found there) |
+| `--swarmcfg <path>` | Override the Swarm.json path (scoped instance). A relative path resolves against the directory you launched from (falls back to the current directory if the file is not found there) |
 | `--workspace <path>` / `--ws` | Set the @-file workspace root |
 | `--workflow <file>` / `--wf` | Load and run a workflow file |
 | `--serve [port]` | Embedded web UI (default 6723) |
@@ -421,6 +422,17 @@ original serialized session for manual recovery (copy it to `agent_session.json`
 folder before resuming there; do not overwrite a session you want to keep). `/undo` still undoes an
 exchange, not the prune operation. Recovery publication is atomic on supported filesystems, not a
 universal power-loss or adversarial filesystem-race guarantee.
+
+Each snapshot also gets a same-named `.txt`: every tool call (`name | callId | args`), the files
+referenced, and the transcript with real newlines, so a phrase search works without JSON escaping.
+The `.muxprune` JSON (indented) stays the exact restore copy.
+
+`/compact` (and automatic or mid-turn compaction) writes the same kind of snapshot first, named
+`pre-compact-<session>-*.muxprune` + `.txt`. After the summary the engine appends a tool manifest
+(generated from the session, not by the model) and the snapshot paths, including the
+`pre-compact-<session>-*` pattern that finds every earlier compaction of the session, so the agent
+knows a detail exists before searching for it. If no allowed sandbox is configured, compaction
+proceeds without a snapshot and prints a warning.
 
 ## Agent picker (`/swap`)
 

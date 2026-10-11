@@ -19,7 +19,9 @@ namespace MuxSwarm;
 
 internal class App
 {
-    public static readonly string Version = "0.15.2";
+    /// <summary>Product version string surfaced by <c>--version</c>, the splash, <c>/api/health</c> and the updater.
+    /// A const so it can be read before <see cref="App"/> (and its config-loading static state) is touched.</summary>
+    public const string Version = "0.15.2";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -63,6 +65,11 @@ internal class App
     private static readonly Lock CtsLock = new();
     public static int ServePort;
     public static DaemonRunner? DaemonRunner;
+
+    /// <summary>True from startup (when <c>--daemon</c> is requested and enabled) until
+    /// <see cref="DaemonRunner"/> is created, so <c>/api/health</c> reports <c>daemon: "starting"</c>
+    /// during the boot window instead of <c>"off"</c>.</summary>
+    public static volatile bool DaemonPending;
 
     public static readonly Dictionary<string, McpClient> McpClients = new();
     public static AppConfig Config = new();
@@ -411,6 +418,7 @@ internal class App
         if (_watchDogEnabled)
             Common.StartExternalWatchdog(args: args, baseDir: BaseDir, cts: new CancellationTokenSource());
         
+        DaemonPending = parsed.DaemonMode && Config.Daemon is { Enabled: true };
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
@@ -431,6 +439,7 @@ internal class App
             // This lets the ACP handshake (initialize / session/new) respond in milliseconds
             // instead of blocking ~15s on MCP subprocess spawns.
             StdinCancelMonitor.Start(startPaused: true);
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             return await RunAcpAsync();
         }
 
@@ -495,6 +504,7 @@ internal class App
         
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
+            DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
@@ -503,12 +513,14 @@ internal class App
         {
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
+            DaemonPending = false;
             return Environment.ExitCode;
         }
         
         if (parsed.DaemonMode && Config.Daemon is { Enabled: true })
         {
             DaemonRunner = new DaemonRunner(Config.Daemon);
+            DaemonPending = false;   // health now tracks DaemonRunner.TriggersReady
             
             if (ServePort > 0)
             {
@@ -1899,6 +1911,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             switch (a.ToLowerInvariant())
             {
+                // Command-line --help/-h exits early in Program.Main; this only handles StartupArgs.
                 case "--help":
                 case "-h":
                     MuxConsole.PrintHelp(Help.HelpText);
