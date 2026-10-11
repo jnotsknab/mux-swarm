@@ -8,12 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > **A note on versions.** Every release so far has been tagged `-alpha`. Git tag names and the
 > version string the binary reports (`App.Version`) drifted apart during the 0.12 era — see
 > [Version/tag drift](#versiontag-drift) at the bottom. Entries below are grouped by **git tag**,
-> with the reported version noted where the two disagree. The `<Version>` field in `MuxSwarm.csproj`
-> has never been maintained and is not a version source.
+> with the reported version noted where the two disagree. Before v0.15.2 the `<Version>` field in
+> `MuxSwarm.csproj` was not maintained; since v0.15.2 it matches `App.Version` (enforced by a test).
 
-## [Unreleased]
+## [v0.15.2-alpha]
 
-## [v0.15.1-alpha] — Unreleased
+### Security
+- **Python REPL ran on the host under wrapper sandboxes.** With `sandbox.backend` set to `bwrap`, `firejail`,
+  `sandbox-exec` or `custom`, shell commands were confined but the Python REPL tool (`repl_shell_exec`,
+  `install_package_async`) ran unconfined on the host in v0.15.1 and earlier. The REPL worker now runs through
+  the same wrapper. `custom` backends must declare `sandbox.replStdio: true` (template keeps stdin/stdout open)
+  to get a REPL; otherwise REPL calls are refused. There is never a host fallback. (#100)
+
+### Fixed
+- Wrapper backends (bwrap, firejail, sandbox-exec, custom on Unix) passed commands as one re-split string,
+  breaking any multi-word or quoted command; they now pass exact argv. bwrap jobs no longer die when the
+  spawning thread exits. firejail is refused where it cannot confine (e.g. inside WSL/containers). (#99)
+- podman `allowedDomains` requires podman 4+ (clear error on 3.x); the allowlist proxy now joins podman's own
+  network for egress. (#101)
+- `--version` / `-V` print the bare version (`0.15.2`) and, like `--help`, exit before any setup (no `Configs/` written, no hang without a TTY). Relative
+  `--cfg` / `--swarmcfg` resolve against the directory you launched from, also through the install shims. (#102)
+- **A turn could vanish from the saved session.** A tool wait longer than `activityTimeoutSeconds` (e.g. a slow
+  `ask_user` answer) tripped the watchdog, and the failed turn was saved as the pre-turn history. The watchdog
+  now resets on tool calls/results and pauses during `ask_user`; a timed-out or failed turn is recorded as your
+  message + `[turn ended: <reason>]` with the tools that ran. (#105)
+
+### Added
+- `/api/health` reports daemon trigger readiness (`daemon: off | starting | ready`). (#103)
+- `/doctor` checks the configured sandbox backend for real; docs: podman + gVisor recipe, snap Docker FAQ. (#104)
+- The Windows executable has the Mux icon (the web UI favicon, now also at `Assets/mux-logo.svg` / `.png` / `.ico`) and
+  correct file-version metadata (`0.15.2`, previously `0.9.5`) with the repository URL. Linux/macOS binaries carry no
+  icon (ELF/Mach-O); the image files are in the repo for packagers.
+- Compaction first saves the full session to `<sandbox>/prune-recovery/pre-compact-<session>-*.muxprune` plus a
+  searchable `.txt` (tool manifest + transcript), appends a deterministic tool manifest to the summary, and
+  points the agent at the snapshots. `/prune` snapshots get the `.txt` too. Re-compaction strips engine blocks
+  and a non-summary reply falls back to a marked extractive summary. (#105)
+
+## [v0.15.1-alpha] —
 
 ### Changed
 - **`docker` sandbox is now a microVM.** `sandbox.backend: docker` (and `/sandbox docker`, bare `--sandbox`)
@@ -36,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefixes (`!`, `/`) are now matched ordinally everywhere, and guest lines are classified on their visible
   text. Guest text itself is not modified.
 
-## [v0.15.0-alpha] — Unreleased
+## [v0.15.0-alpha]
 
 Live session sharing, webhooks as request → run → result, and a working sandbox network allowlist.
 
@@ -388,5 +419,5 @@ When reading history, trust the tag for *what shipped* and this table for *what 
 | `v0.12.2-alpha` | `0.12.1` | Version not bumped. |
 | `v0.12.4-alpha` | `0.12.3` | Version not bumped. |
 
-`MuxSwarm.csproj`'s `<Version>` field has never tracked releases (it has read `0.9.5` since the 0.9
-era) and is not a version source. The surfaced string is `App.Version` in `App.cs`.
+Before v0.15.2, `MuxSwarm.csproj`'s `<Version>` field did not track releases (it read `0.9.5` since the 0.9
+era). The surfaced string is `App.Version` in `App.cs`; since v0.15.2 the csproj matches it (test-enforced).
