@@ -228,8 +228,9 @@ host execution.
 | `backend` | `host` (default, no sandbox) \| `docker` (Docker Sandboxes microVM) \| `docker-container` (alias `docker-legacy`) \| `podman` \| `nerdctl` \| `gvisor` \| `kata` \| `bwrap` \| `firejail` \| `sandbox-exec` \| `custom`. |
 | `image` | Image for the `docker` microVM and container backends. Ignored by wrapper/host. Default `python:3.12-slim`. |
 | `network` | When `allowedDomains` is empty: `true` = open egress, `false` = air-gapped. Ignored when an allowlist is set. |
-| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **Container backends only** (`docker-container`/`podman`/`nerdctl`/`gvisor`/`kata`); rejected on `docker`, see below. Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` the proxy's egress is unverified: it attaches to the `bridge` network, but podman's default network is named `podman`. |
+| `allowedDomains` | Non-empty => the sandbox reaches ONLY these hosts via an injected CONNECT-filtering proxy on an internal (egress-less) network. **Container backends only** (`docker-container`/`podman`/`nerdctl`/`gvisor`/`kata`); rejected on `docker`, see below. Deny-by-default. The proxy runs from `python:3.12-alpine` (pulled on first use), so any sandbox `image` works. On `podman` this needs podman >= 4 (netavark: DNS on internal networks); podman 3.x is rejected with a clear error. |
 | `command` | Template for the `custom` backend. Placeholders `{cmd}` `{workdir}` `{image}`. Required when `backend: custom`. |
+| `replStdio` | `custom` only (default `false`): `true` declares the template runs `{cmd}` with stdin/stdout passed through, so the Python REPL worker runs through it. `false` => the Python REPL tools refuse under `custom` (never a host fallback); shell tools still use the template. |
 | `runtime` | Explicit OCI runtime passed as `--runtime=<value>` for container backends. Empty => engine default, except `gvisor`=>`runsc` and `kata`=>`kata-runtime` which imply their runtime. Lets you layer a microVM runtime onto a base engine (e.g. `backend: podman`, `runtime: kata-runtime`). Ignored by `docker` (microVM) and wrapper/custom/host. |
 
 ### Isolation tiers (weakest -> strongest)
@@ -237,7 +238,7 @@ host execution.
 | Backend | Mechanism | Isolation |
 |---|---|---|
 | `host` | none | no isolation (runs natively) |
-| `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only) |
+| `bwrap` / `firejail` | Linux namespaces + seccomp | OS-native (Linux only). `firejail` is refused when nested (WSL/containers) or when its check can't run |
 | `sandbox-exec` | macOS Seatbelt (SBPL) | OS-native (macOS only) |
 | `docker-container` / `podman` / `nerdctl` | OCI container (namespaces/cgroups) | container |
 | `gvisor` | docker + `--runtime=runsc` | user-space kernel (syscall interposition) |
@@ -250,6 +251,12 @@ Python worker `exec` into. `gvisor` and `kata` reuse that exact lifecycle -- the
 runtime, so all of the OCI features (network allowlist proxy, allowed-path bind mounts mapped to
 `filesystem.securityMode`, OCI hardening `--cap-drop=ALL --security-opt=no-new-privileges`, self-heal,
 Windows UNC drive-mapping) apply unchanged.
+
+Wrapper backends (`bwrap`, `firejail`, `sandbox-exec`) have no persistent instance: each shell command AND
+the persistent Python REPL worker are started as wrapped processes, so both get the same confinement (the
+worker's stdin/stdout protocol passes through the wrapper). The venv's base interpreter is exposed
+read-only when the wrapper would otherwise hide it (firejail home whitelist, Seatbelt deny-default).
+`install_package_async` runs as a wrapped shell job, so `network: false` also blocks package downloads.
 
 ### Docker Sandboxes microVM (docker)
 
@@ -291,6 +298,17 @@ when running untrusted code on a multi-tenant host (a container/gVisor boundary 
   podman/nerdctl, keep `backend` as that engine and set `runtime` to the engine's kata runtime
   (e.g. `io.containerd.kata.v2` for nerdctl/containerd).
 
+### gVisor on podman, and snap Docker
+
+- **podman + gVisor:** the `gvisor` backend is docker only. For podman use `backend: podman` with
+  `runtime: /usr/local/bin/runsc` (absolute path; podman may not resolve runsc from `PATH`). Install runsc
+  from https://gvisor.dev/docs/user_guide/install/ (releases ship as an archive; keep `gvisor-bin/` next to
+  `runsc`). Rootless podman 3.x may need a wrapper script as the `runtime` that adds `--ignore-cgroups`.
+- **snap Docker:** snap-packaged Docker on Ubuntu rejects `--security-opt=no-new-privileges` (snap
+  confinement), so every container backend fails to start. Use Docker from Docker's apt repository, or podman.
+- `/doctor` reports whether the configured backend is usable and why not (read-only probes; never starts a
+  sandbox).
+
 **Deliberately NOT supported (deferred):** `libkrun`/`krun` and direct Firecracker/Cloud-Hypervisor/E2B
 control planes. The sandbox lifecycle is built on container `exec`; `krun` microVMs do not service
 `exec` into the guest (exec runs on the host kernel), and the VM-direct platforms have no `exec`
@@ -326,7 +344,9 @@ A `webhook` trigger is exposed at `POST /api/hook/{id}` (excluded from the serve
 authenticates per-trigger via HMAC `secret` or, if none is set, the serve bearer token). External systems
 POST a payload to start a run; the 202 body carries a `deliveryId`. Webhook runs are stateless (no session dir) and
 a run's `agent` override applies to that run only (an unknown agent fails the delivery). Webhook triggers added at
-runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. `/createhook` saves a
+runtime (web UI or `POST /api/daemon/trigger`) are live immediately; deleting one stops it. With `--serve --daemon`,
+the HTTP server starts before the daemon finishes registering triggers: poll `GET /api/health` until
+`daemon` is `ready` (`off` = no daemon, `starting` = triggers not registered yet) before the first webhook POST. `/createhook` saves a
 trigger to config; it takes effect on the next daemon start. One process serves any number of webhooks: agent-mode
 triggers run concurrently, daemon-fired swarm/pswarm runs are serialized with each other (an interactive `/swarm` at
 the same time is not covered), and deliveries to the same
@@ -746,15 +766,16 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --ultra / --ultraplan      Interactive deep-reasoning mode (plan + max reasoning + heavy delegation)
 --verbose                  Verbose MCP/init logging
 --report [session-id]      Generate report(s) and exit
---cfg <path>               Override config.json path
---swarmcfg <path>          Override swarm.json path
+--cfg <path>               Override config.json path (relative = launch dir; falls back to the current directory if the file is not found there)
+--swarmcfg <path>          Override swarm.json path (relative = launch dir; falls back to the current directory if the file is not found there)
 --workspace / --ws <path>  Set the @-file workspace root
 --workflow / --wf <file>   Run workflow file
 --classic / --tui          Force classic line renderer or live TUI
 --prod                     Prod mode (orchestrator [[MARKER]] output)
 --update                   Self-update from the latest GitHub release, then exit
 --clear                    Clear terminal
---help, -h                 Show help
+--help, -h                 Show help and exit (no config read/write, no setup)
+--version, -V              Print the bare version (x.y.z) and exit (no config read/write, no setup)
 ```
 
 Persist any combination of launch flags so they apply every start with `/startargs <args>`

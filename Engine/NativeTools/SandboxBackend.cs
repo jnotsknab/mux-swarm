@@ -32,6 +32,9 @@ internal sealed class SandboxSpec
     public bool NetworkOpen { get; init; }
     public IReadOnlyList<string> AllowedDomains { get; init; } = Array.Empty<string>();
     public string CustomTemplate { get; init; } = "";
+
+    /// <summary>Custom backend only: the template can host the stdio Python REPL worker (sandbox.replStdio).</summary>
+    public bool CustomReplStdio { get; init; }
     public string? Runtime { get; init; }              // e.g. "runsc" for gvisor
 
     /// <summary>
@@ -128,6 +131,7 @@ internal static class SandboxBackend
             {
                 Kind = SandboxKind.Custom, Backend = backend, Binary = "",
                 Image = cfg.Image ?? "", NetworkOpen = cfg.Network, CustomTemplate = cfg.Command,
+                CustomReplStdio = cfg.ReplStdio,
             };
         }
 
@@ -182,6 +186,11 @@ internal static class SandboxBackend
                         "Enable KVM (and nested virtualization if inside a VM), install kata-containers, then retry.");
             }
             EnsureBinaryReady(binary, ociDaemonCheck: true);
+            // The allowlist proxy is reached by container name on an --internal network. podman < 4 (CNI
+            // networking) has no DNS on internal networks, so the sandbox could never resolve the proxy.
+            if (allow.Count > 0 && binary == "podman" && PodmanMajor(ProbeOutput("podman", "--version")) is < 4 and var major)
+                throw new SandboxException($"sandbox.allowedDomains on podman needs podman >= 4 (netavark networking); " +
+                    $"found podman {major}. Upgrade podman, use docker-container, or drop allowedDomains (network true/false).");
             if (string.IsNullOrWhiteSpace(cfg.Image))
                 throw new SandboxException($"sandbox.backend '{backend}' requires sandbox.image to be set.");
             return new SandboxSpec
@@ -204,6 +213,12 @@ internal static class SandboxBackend
             if ((backend is "bwrap" or "firejail") && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 throw new SandboxException($"sandbox.backend '{backend}' is Linux-only.");
             EnsureBinaryReady(backend, ociDaemonCheck: false);
+            // firejail does NOT fail when it can't sandbox: nested in another sandbox (WSL, a container) it
+            // warns "an existing sandbox was detected", runs the program unconfined and exits 0 - and our
+            // --quiet hides the warning. Probe once, without --quiet, so that case is a hard error.
+            if (backend == "firejail" && FirejailDegraded(ProbeOutput("firejail", "--noprofile /bin/true", stderr: true)))
+                throw new SandboxException("firejail detected an existing sandbox (e.g. WSL or a container) and would run " +
+                    "commands WITHOUT confinement. Use bwrap, a container backend, or run Mux outside the nested environment.");
             return new SandboxSpec
             {
                 Kind = SandboxKind.Wrapper, Backend = backend, Binary = backend,
@@ -250,6 +265,53 @@ internal static class SandboxBackend
         catch { return false; }
     }
 
+    /// <summary>True when firejail's output says it fell back to running the program without a sandbox.</summary>
+    internal static bool FirejailDegraded(string output) =>
+        output.Contains("existing sandbox was detected", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Combined stdout(+stderr) of a short read-only probe, stdin closed. A probe that cannot start or does not
+    /// finish within <paramref name="timeoutMs"/> throws <see cref="SandboxException"/> with the reason: callers
+    /// gate confinement on the output, so a failed probe must never read as "nothing to worry about".
+    /// </summary>
+    internal static string ProbeOutput(string binary, string args, bool stderr = false, int timeoutMs = 5000)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = binary, Arguments = args,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true,
+        };
+        Process? p;
+        try { p = Process.Start(psi); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException
+                                       or ObjectDisposedException or PlatformNotSupportedException)
+        {
+            throw new SandboxException($"could not run '{binary} {args}' to check the sandbox: {ex.Message}");
+        }
+        using (p)
+        {
+            if (p is null) throw new SandboxException($"could not run '{binary} {args}' to check the sandbox.");
+            p.StandardInput.Close();
+            var outTask = p.StandardOutput.ReadToEndAsync();
+            var errTask = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(timeoutMs))
+            {
+                // Best-effort cleanup of a hung probe; the timeout itself is what we report.
+                try { p.Kill(true); } catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { /* exited or not killable; the timeout is reported below */ }
+                throw new SandboxException($"'{binary} {args}' did not finish within {timeoutMs / 1000}s while checking the sandbox.");
+            }
+            return stderr ? outTask.Result + errTask.Result : outTask.Result;
+        }
+    }
+
+    /// <summary>Major version from <c>podman --version</c> output ("podman version 3.4.4"), or null if unparsable.</summary>
+    internal static int? PodmanMajor(string? versionOutput)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(versionOutput ?? "", @"version\s+(\d+)\.");
+        return m.Success && int.TryParse(m.Groups[1].Value, out int v) ? v : null;
+    }
+
     private static bool OciDaemonReady(string binary)
     {
         try
@@ -277,41 +339,18 @@ internal static class SandboxBackend
     /// Render the (file, argv-string) to execute <paramref name="innerCommand"/> via a shell, wrapped by
     /// the wrapper/custom backend, confined to <paramref name="workDir"/>. Only valid for Wrapper/Custom.
     /// </summary>
-    public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir)
+    /// <param name="readOnlyPaths">Wrapper backends only: extra host paths the command must read (see <see cref="WrapProcess"/>).</param>
+    public static (string File, string Args) WrapShellCommand(SandboxSpec spec, string innerCommand, string workDir,
+        IReadOnlyList<string>? readOnlyPaths = null)
     {
-        // The inner command is always run through a POSIX shell inside the sandbox (wrapper backends are
-        // Linux/macOS only; custom is user-defined). Quote the whole command as one -c argument.
-        string shell = "/bin/sh";
-        string shArgs = "-c " + ShQuote(innerCommand);
-
         switch (spec.Kind)
         {
             case SandboxKind.Wrapper:
-                return spec.Backend switch
-                {
-                    "bwrap" => ("bwrap", string.Join(' ',
-                        "--ro-bind / /",
-                        "--bind", Q(workDir), Q(workDir),
-                        "--chdir", Q(workDir),
-                        "--proc /proc --dev /dev --tmpfs /tmp",
-                        "--unshare-all",
-                        spec.NetworkOpen ? "--share-net" : "",
-                        "--die-with-parent",
-                        shell, shArgs)),
-                    "firejail" => ("firejail", string.Join(' ',
-                        "--quiet",
-                        spec.NetworkOpen ? "" : "--net=none",
-                        "--whitelist=" + Q(workDir),
-                        "--caps.drop=all --nonewprivs --seccomp",
-                        shell, shArgs)),
-                    "sandbox-exec" => ("sandbox-exec", string.Join(' ',
-                        "-p", SeatbeltProfile(workDir, spec.NetworkOpen),
-                        shell, shArgs)),
-                    _ => throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'"),
-                };
+                // Wrapper backends are Linux/macOS only: run the command through a POSIX shell in the sandbox.
+                return WrapProcess(spec, new[] { "/bin/sh", "-c", innerCommand }, workDir, readOnlyPaths);
 
             case SandboxKind.Custom:
-                // Render the user template. {cmd} = the shell-quoted inner command, {workdir}, {image}.
+                // Render the user template. {cmd} = the raw inner command, {workdir}, {image}.
                 string rendered = spec.CustomTemplate
                     .Replace("{cmd}", innerCommand)
                     .Replace("{workdir}", workDir)
@@ -319,27 +358,87 @@ internal static class SandboxBackend
                 // Run the rendered template via the host shell so users can write a full pipeline.
                 if (OperatingSystem.IsWindows())
                     return ("cmd.exe", "/c " + rendered);
-                return ("/bin/sh", "-c " + ShQuote(rendered));
+                return ("/bin/sh", "-c " + ArgvToken(rendered));
 
             default:
                 throw new SandboxException("WrapShellCommand is only valid for Wrapper/Custom backends.");
         }
     }
 
-    private static string SeatbeltProfile(string workDir, bool net)
+    /// <summary>
+    /// Render the (file, argv-string) that runs the process <paramref name="innerArgv"/> (program + args)
+    /// inside a wrapper backend (bwrap/firejail/sandbox-exec), confined to <paramref name="workDir"/>.
+    /// Every token is quoted for <see cref="ProcessStartInfo.Arguments"/>, so the wrapper receives exactly
+    /// <paramref name="innerArgv"/>, byte-for-byte. Only valid for <see cref="SandboxKind.Wrapper"/>.
+    /// </summary>
+    /// <param name="readOnlyPaths">Extra host paths the process must be able to read (e.g. the Python
+    /// installation behind a venv). bwrap already binds / read-only, so it needs none.</param>
+    public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir,
+        IReadOnlyList<string>? readOnlyPaths = null)
     {
-        // Minimal Seatbelt SBPL: deny by default, allow exec + read of system, rw on the workdir, network optional.
-        string p = "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
-                   "(allow file-read* (subpath \\\"/usr\\\")(subpath \\\"/System\\\")(subpath \\\"/Library\\\")(subpath \\\"/bin\\\")(subpath \\\"/sbin\\\")(subpath \\\"/private/var\\\")(subpath \\\"/etc\\\"))" +
-                   "(allow file-read* file-write* (subpath \\\"" + workDir + "\\\")(subpath \\\"/tmp\\\")(subpath \\\"/private/tmp\\\"))" +
-                   (net ? "(allow network*)" : "");
-        return "'" + p.Replace("\\\"", "\"") + "'";
+        readOnlyPaths ??= Array.Empty<string>();
+        if (spec.Kind != SandboxKind.Wrapper)
+            throw new SandboxException("WrapProcess is only valid for wrapper backends.");
+        // Paths are spliced into firejail flags and the Seatbelt (SBPL) string literal: refuse anything that
+        // could break out of them instead of trying to escape it.
+        if (!IsSafeSandboxPath(workDir))
+            throw new SandboxException($"sandbox work dir contains characters that cannot be confined safely: {workDir}");
+        readOnlyPaths = readOnlyPaths.Where(IsSafeSandboxPath).ToList();
+        var argv = new List<string>();
+        switch (spec.Backend)
+        {
+            case "bwrap":
+                argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
+                    "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
+                if (spec.NetworkOpen) argv.Add("--share-net");
+                // No --die-with-parent: it is PR_SET_PDEATHSIG, which fires when the spawning THREAD exits.
+                // .NET starts processes from short-lived pool threads, so it SIGKILLed (137) any job that
+                // ran longer than about a second. Mux kills its jobs/worker itself on dispose.
+                break;
+            case "firejail":
+                argv.Add("--quiet");
+                if (!spec.NetworkOpen) argv.Add("--net=none");
+                argv.AddRange(new[] { "--whitelist=" + workDir, "--caps.drop=all", "--nonewprivs", "--seccomp" });
+                // A whitelist hides the rest of $HOME, so expose extra paths that live there, read-only.
+                string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                foreach (var p in readOnlyPaths)
+                    if (home.Length > 0 && p.StartsWith(home.TrimEnd('/') + "/", StringComparison.Ordinal))
+                        argv.AddRange(new[] { "--whitelist=" + p, "--read-only=" + p });
+                break;
+            case "sandbox-exec":
+                argv.Add("-p");
+                argv.Add(SeatbeltProfile(workDir, spec.NetworkOpen, readOnlyPaths));
+                break;
+            default:
+                throw new SandboxException($"unhandled wrapper backend '{spec.Backend}'");
+        }
+        argv.AddRange(innerArgv);
+        var args = new List<string>(argv.Count);
+        foreach (var a in argv) args.Add(ArgvToken(a));
+        return (spec.Backend, string.Join(' ', args));
     }
 
-    // POSIX single-quote escaping for a whole command passed to `sh -c`.
-    private static string ShQuote(string s) => "'" + s.Replace("'", "'\\''") + "'";
-    // Quote a path arg that may contain spaces (double-quote form for argv tokens).
-    private static string Q(string s) => s.Contains(' ') ? "\"" + s + "\"" : s;
+    /// <summary>True when a host path can be placed in a wrapper flag or an SBPL string literal as-is: no
+    /// <c>"</c>, <c>\</c> or control characters (the SBPL string escapes), not empty.</summary>
+    internal static bool IsSafeSandboxPath(string path) =>
+        !string.IsNullOrEmpty(path) && !path.Any(c => c is '"' or '\\' || char.IsControl(c));
+
+    private static string SeatbeltProfile(string workDir, bool net, IReadOnlyList<string>? readOnlyPaths = null)
+    {
+        // Minimal Seatbelt SBPL: deny by default, allow exec + read of system, rw on the workdir, network optional.
+        string extra = "";
+        foreach (var p in readOnlyPaths ?? Array.Empty<string>()) extra += "(subpath \"" + p + "\")";
+        return "(version 1)(deny default)(allow process-fork)(allow process-exec)" +
+               "(allow file-read* (subpath \"/usr\")(subpath \"/System\")(subpath \"/Library\")(subpath \"/bin\")(subpath \"/sbin\")(subpath \"/private/var\")(subpath \"/etc\")" + extra + ")" +
+               "(allow file-read* file-write* (subpath \"" + workDir + "\")(subpath \"/tmp\")(subpath \"/private/tmp\"))" +
+               (net ? "(allow network*)" : "");
+    }
+
+    // One argv token for ProcessStartInfo.Arguments, which .NET parses with Windows/MSVCRT rules on EVERY
+    // OS (not POSIX shell rules). Plain tokens pass through unchanged; anything else is quoted exactly.
+    internal static string ArgvToken(string s) =>
+        s.Length > 0 && s.IndexOfAny(new[] { ' ', '\t', '\n', '\r', '"', '\'', '\\' }) < 0
+            ? s : OciSandbox.ShQuoteForArgv(s);
 
     // ---- allowed-path mounts mapped from the filesystem security posture --------------------
     //
