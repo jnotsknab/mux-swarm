@@ -24,7 +24,7 @@ public sealed class ActivityTimeout : IDisposable
         var cts = CancellationTokenSource.CreateLinkedTokenSource(innerToken);
 
         var timer = new Timer(
-            _ => { try { cts.Cancel(); } catch { /* already disposed */ } },
+            _ => { try { cts.Cancel(); } catch (ObjectDisposedException) { /* fired after Dispose */ } },
             null,
             timeout,
             Timeout.InfiniteTimeSpan);
@@ -38,7 +38,7 @@ public sealed class ActivityTimeout : IDisposable
     {
         if (_suspended) return;
         try { _timer.Change(_timeout, Timeout.InfiniteTimeSpan); }
-        catch { /* disposed race — harmless */ }
+        catch (ObjectDisposedException) { /* ping raced Dispose */ }
     }
 
     /// <summary>
@@ -50,7 +50,7 @@ public sealed class ActivityTimeout : IDisposable
     {
         _suspended = true;
         try { _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan); }
-        catch { /* disposed race — harmless */ }
+        catch (ObjectDisposedException) { /* suspend raced Dispose */ }
     }
 
     /// <summary>Re-arms the full timeout. Safe to call when not suspended (acts like <see cref="Ping"/>).</summary>

@@ -43,6 +43,15 @@ public class TurnLossTests
     }
 
     [Fact]
+    public void PingSuspendResume_AfterDispose_DoNotThrow()
+    {
+        var t = ActivityTimeout.Start(TimeSpan.FromSeconds(30), CancellationToken.None);
+        t.Dispose();
+        t.Ping(); t.Suspend(); t.Resume();   // a late tool event after the turn ended must not throw
+        _ = t.Expired;
+    }
+
+    [Fact]
     public async Task Unsuspended_Watchdog_StillFires()
     {
         using var t = ActivityTimeout.Start(TimeSpan.FromMilliseconds(100), CancellationToken.None);
