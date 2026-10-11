@@ -2284,16 +2284,23 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     /// <summary>
     /// Rebuilds the enabled ChromaDB server's args from <c>filesystem.chromaDbPath</c> (creating the directory),
-    /// so every start uses the current bundled args, including the pydantic pin. No-op when the path is unset.
+    /// so every start uses the current bundled args, including the pydantic pin. Without a path, only the old
+    /// unpinned default args are upgraded; custom args are left alone.
     /// </summary>
     internal static void ApplyChromaDbPath(AppConfig config)
     {
-        if (string.IsNullOrEmpty(config.Filesystem?.ChromaDbPath)) return;
+        if (!config.McpServers.TryGetValue("ChromaDB", out var chromaCfg) || !chromaCfg.Enabled) return;
+
+        if (string.IsNullOrEmpty(config.Filesystem?.ChromaDbPath))
+        {
+            string[] oldDefault = ["chroma-mcp", "--client-type", "persistent", "--data-dir", "chroma-db"];
+            if (chromaCfg.Args is { } args && args.SequenceEqual(oldDefault))
+                chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs("chroma-db");
+            return;
+        }
 
         Directory.CreateDirectory(config.Filesystem.ChromaDbPath);
-
-        if (config.McpServers.TryGetValue("ChromaDB", out var chromaCfg) && chromaCfg.Enabled)
-            chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
+        chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
     }
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)

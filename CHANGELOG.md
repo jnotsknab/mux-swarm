@@ -35,7 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ChromaDB MCP failed to start.** `chroma-mcp` 0.2.6 pins `mcp==1.6.0`, which breaks on pydantic 2.14
   (`ImportError: eval_type_backport`), so semantic memory was silently missing. The bundled server now runs as
   `uvx --with "pydantic<2.14" chroma-mcp ...`. Existing installs pick it up on the next start (the args are
-  rebuilt from `filesystem.chromaDbPath`).
+  rebuilt from `filesystem.chromaDbPath`; without a path, the old default args are upgraded and custom args
+  are left alone).
 
 ### Added
 - `/api/health` reports daemon trigger readiness (`daemon: off | starting | ready`). (#103)

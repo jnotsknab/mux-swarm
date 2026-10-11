@@ -190,6 +190,26 @@ public class CfgTests
     }
 
     [Fact]
+    public void ApplyChromaDbPath_NoPath_UpgradesOnlyOldDefaultArgs()
+    {
+        // Configs written by the no-config path have no chromaDbPath; the old default must still get the pin.
+        var config = new AppConfig();
+        McpServerDefaults.EnsureDefaultsPresent(config);
+        config.McpServers["ChromaDB"].Args = new[] { "chroma-mcp", "--client-type", "persistent", "--data-dir", "chroma-db" };
+
+        App.ApplyChromaDbPath(config);
+
+        Assert.Equal(
+            new[] { "--with", "pydantic<2.14", "chroma-mcp", "--client-type", "persistent", "--data-dir", "chroma-db" },
+            config.McpServers["ChromaDB"].Args);
+
+        var custom = new[] { "chroma-mcp", "--client-type", "http", "--host", "localhost" };
+        config.McpServers["ChromaDB"].Args = custom;
+        App.ApplyChromaDbPath(config);
+        Assert.Equal(custom, config.McpServers["ChromaDB"].Args);
+    }
+
+    [Fact]
     public void PatchCommandsFromDepResults_FetchIsNpx_PatchedToAbsoluteNpxPath()
     {
         var config = new AppConfig();
