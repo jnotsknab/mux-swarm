@@ -32,6 +32,8 @@ prance = ">=0.22.0"
 openapi-spec-validator = ">=0.7.0"
 jinja2 = ">=3.1.0"
 pyyaml = ">=6.0"
+# Transitive (prance -> requests -> urllib3); floor pinned past CVE fixes (chunked/deflate DoS, proxy TLS bypass).
+urllib3 = ">=2.8.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.0.0"
