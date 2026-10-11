@@ -56,7 +56,8 @@ Thank you for your interest in contributing to Mux-Swarm. This document covers e
 - **Feature/fix PRs into `development`:** squash is fine.
 - **Syncing `development` into `main`:** always **"Create a merge commit"**, never squash or rebase. A squash creates a
   new commit that `development` never sees, so git loses track of what `main` already contains and every later sync
-  re-conflicts on code that is already there. A ruleset on `main` allows only merge commits to enforce this.
+  re-conflicts on code that is already there. The `main` rulesets allow only merge commits (no linear-history rule)
+  to enforce this; `development` allows merge, squash and rebase.
 - **A PR that other PRs are stacked on:** merge it with a merge commit (or retarget the stacked PRs to `development`
   before merging them), otherwise they land in a deleted branch.
 - If `main` was ever squash-synced, record it once with `git merge -s ours origin/main` on a branch off
