@@ -584,10 +584,13 @@ public static class SingleAgentOrchestrator
     }
 
     // /doctor: non-LLM health rollup. Prints the SystemDiagnostics snapshot plus a terse PASS/WARN
-    // summary computed in C# (no model call - cheap and offline).
+    // summary computed in C# (no model call). The sandbox probe spawns the engine CLIs and can block
+    // for its bounded timeouts, so a muted line says so first.
     private static void HandleDoctor()
     {
-        var snapshot = SystemDiagnostics.BuildSnapshot();
+        MuxConsole.WriteMuted("probing sandbox...");
+        var sandbox = SystemDiagnostics.ProbeSandbox(App.Config?.Sandbox);
+        var snapshot = SystemDiagnostics.BuildSnapshot(sandbox);
 
         var warns = new List<string>();
         if (App.ActiveProvider is null)
@@ -598,12 +601,14 @@ public static class SingleAgentOrchestrator
                 warns.Add($"MCP '{server.Name}' NOT CONNECTED");
         if (SkillLoader.GetSkillMetadata().Count == 0)
             warns.Add("no skills loaded");
+        if (!sandbox.Usable)
+            warns.Add($"sandbox '{SandboxBackend.Canonical(App.Config?.Sandbox?.Backend)}' is not usable: {sandbox.Detail}");
 
         var sb = new System.Text.StringBuilder();
         sb.Append(snapshot.TrimEnd());
         sb.Append("\n\n## Health\n");
         if (warns.Count == 0)
-            sb.Append("PASS - providers, MCP servers, skills, and sandbox all look healthy.");
+            sb.Append($"PASS - provider, MCP servers and skills look healthy. Sandbox: {sandbox.Detail}.");
         else
         {
             sb.Append($"WARN - {warns.Count} issue(s):\n");
