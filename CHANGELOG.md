@@ -11,9 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > with the reported version noted where the two disagree. Before v0.15.2 the `<Version>` field in
 > `MuxSwarm.csproj` was not maintained; since v0.15.2 it matches `App.Version` (enforced by a test).
 
-## [Unreleased]
-
-## [v0.15.2-alpha] — Unreleased
+## [v0.15.2-alpha]
 
 ### Security
 - **Python REPL ran on the host under wrapper sandboxes.** With `sandbox.backend` set to `bwrap`, `firejail`,
@@ -46,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   points the agent at the snapshots. `/prune` snapshots get the `.txt` too. Re-compaction strips engine blocks
   and a non-summary reply falls back to a marked extractive summary. (#105)
 
-## [v0.15.1-alpha] — Unreleased
+## [v0.15.1-alpha] —
 
 ### Changed
 - **`docker` sandbox is now a microVM.** `sandbox.backend: docker` (and `/sandbox docker`, bare `--sandbox`)
@@ -69,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prefixes (`!`, `/`) are now matched ordinally everywhere, and guest lines are classified on their visible
   text. Guest text itself is not modified.
 
-## [v0.15.0-alpha] — Unreleased
+## [v0.15.0-alpha]
 
 Live session sharing, webhooks as request → run → result, and a working sandbox network allowlist.
 
