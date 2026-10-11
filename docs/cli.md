@@ -9,7 +9,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | Flag | Description |
 |---|---|
 | `--help` / `-h` | Print help and exit. Handled before any init: no config is read or written and setup never starts |
-| `--version` / `-V` | Print `mux-swarm <version>` and exit 0. Handled before any init, like `--help` |
+| `--version` / `-V` | Print the bare version (`x.y.z`, e.g. `0.15.2`) and exit 0. Handled before any init, like `--help` |
 | `--goal <text\|file>` | Explicit goal (also accepted as a bare positional argument) |
 | `--goal-id <id>` | Attach a persistent goal/session identifier |
 | `--continuous` | Continuous autonomous mode |

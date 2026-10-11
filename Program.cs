@@ -13,7 +13,7 @@ namespace MuxSwarm
             {
                 if (a == "-V" || a.Equals("--version", StringComparison.OrdinalIgnoreCase))
                 {
-                    output.WriteLine($"mux-swarm {App.Version}");
+                    output.WriteLine(App.Version);
                     return 0;
                 }
                 if (a == "-h" || a.Equals("--help", StringComparison.OrdinalIgnoreCase))

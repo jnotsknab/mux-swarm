@@ -754,7 +754,7 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --update                   Self-update from the latest GitHub release, then exit
 --clear                    Clear terminal
 --help, -h                 Show help and exit (no config read/write, no setup)
---version, -V              Print the version and exit (no config read/write, no setup)
+--version, -V              Print the bare version (x.y.z) and exit (no config read/write, no setup)
 ```
 
 Persist any combination of launch flags so they apply every start with `/startargs <args>`

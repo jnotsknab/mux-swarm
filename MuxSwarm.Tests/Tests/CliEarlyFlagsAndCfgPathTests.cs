@@ -22,7 +22,8 @@ public class CliEarlyFlagsAndCfgPathTests
     {
         var sw = new StringWriter();
         Assert.Equal(0, Program.TryHandleEarlyFlag(new[] { flag }, sw));
-        Assert.Equal($"mux-swarm {App.Version}", sw.ToString().Trim());
+        Assert.Equal(App.Version + Environment.NewLine, sw.ToString());   // bare x.y.z, nothing else
+        Assert.Matches(@"^\d+\.\d+\.\d+$", App.Version);
     }
 
     [Theory]
