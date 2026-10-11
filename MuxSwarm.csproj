@@ -7,15 +7,21 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
-        <Version>0.9.5</Version>
-        <FileVersion>0.9.5</FileVersion>
-        <AssemblyVersion>0.9.0</AssemblyVersion>
+        <!-- Keep in sync with App.Version (VersionMetadataTests enforces it). Shown in Windows file properties. -->
+        <Version>0.15.2</Version>
+        <FileVersion>0.15.2</FileVersion>
+        <AssemblyVersion>0.15.2.0</AssemblyVersion>
 
         <Product>Mux-Swarm</Product>
         <Company>github.com/jnotsknab</Company>
         <Description>Highly Configurable Agentic Swarm OS Harness</Description>
+        <Copyright>Copyright (c) jnotsknab. Licensed under Apache-2.0.</Copyright>
         <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <AssemblyTitle>Mux-Swarm Engine</AssemblyTitle>
+        <RepositoryUrl>https://github.com/jnotsknab/mux-swarm</RepositoryUrl>
+        <PackageProjectUrl>https://github.com/jnotsknab/mux-swarm</PackageProjectUrl>
+        <!-- Windows executable icon (the web UI favicon, Assets/mux-logo.svg). PE-only: Linux/macOS binaries carry no icon. -->
+        <ApplicationIcon>Assets\mux.ico</ApplicationIcon>
     </PropertyGroup>
 
   <ItemGroup>
