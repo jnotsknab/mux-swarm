@@ -279,7 +279,8 @@ internal static class SandboxBackend
         };
         Process? p;
         try { p = Process.Start(psi); }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException
+                                       or ObjectDisposedException or PlatformNotSupportedException)
         {
             throw new SandboxException($"could not run '{binary} {args}' to check the sandbox: {ex.Message}");
         }
