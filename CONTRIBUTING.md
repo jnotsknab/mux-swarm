@@ -51,6 +51,17 @@ Thank you for your interest in contributing to Mux-Swarm. This document covers e
 
 **Important:** Contributor branches are deleted after their PR is merged. Keep your branches focused on a single change - this makes review faster and keeps the history clean.
 
+### Merge methods (maintainers)
+
+- **Feature/fix PRs into `development`:** squash is fine.
+- **Syncing `development` into `main`:** always **"Create a merge commit"**, never squash or rebase. A squash creates a
+  new commit that `development` never sees, so git loses track of what `main` already contains and every later sync
+  re-conflicts on code that is already there. A ruleset on `main` allows only merge commits to enforce this.
+- **A PR that other PRs are stacked on:** merge it with a merge commit (or retarget the stacked PRs to `development`
+  before merging them), otherwise they land in a deleted branch.
+- If `main` was ever squash-synced, record it once with `git merge -s ours origin/main` on a branch off
+  `development` (merged into `development` with a merge commit). That adds history only, no file changes.
+
 ## Making Changes
 
 - Keep changes focused. One PR per feature or fix.
