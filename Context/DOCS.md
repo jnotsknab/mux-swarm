@@ -679,8 +679,8 @@ The per-member context ceiling lives on `compactionAgent` (next to `autoCompactT
 
 - `memberAutoCompactTokenThreshold` - when a persistent member's session is estimated past this many
   tokens, its history is summarized and reseeded (the same mechanism the single-agent loop uses).
-  Members get their own knob so they can run tighter than the lead. `0` (default) falls back to a
-  bounded runtime default (never unbounded).
+  Members get their own knob so they can run tighter than the lead. `0` (default) falls back to
+  200,000 tokens (never unbounded). Checked after each task, not mid-task.
 
 ### modelOpts
 
