@@ -727,7 +727,7 @@ internal class App
                     MuxConsole.ResetTuiTurnClock();   // fresh interface - clear any stale turn-clock chips
                     try {
                     await SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateChatClient(teamLeadModel),
+                        client: CreateLeadChatClient(teamLeadModel),
                         teamsCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -864,7 +864,7 @@ internal class App
                     var statelessHandle = InteractiveSessionRegistry.Create(
                         "stateless", "stateless");
                     statelessHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateChatClient(statelessAgent),
+                        client: CreateLeadChatClient(statelessAgent),
                         statelessAgentCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -980,7 +980,7 @@ internal class App
                         ServeMode.ActiveMode = "agent";
                         try {
                         await SingleAgentOrchestrator.ChatAgentAsync(
-                            client: CreateChatClient(resumeModel),
+                            client: CreateLeadChatClient(resumeModel),
                             resumeCts.Token,
                             maxIterations: 3,
                             mcpTools: McpTools,
@@ -1720,7 +1720,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 try
                 {
                     handle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateChatClient(model),
+                        client: CreateLeadChatClient(model),
                         acpCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -2683,13 +2683,23 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         => CreateChatClient(modelId, chatOptions, wrapMidTurnReflection: false, reflectionAgentName: null);
 
     /// <summary>
+    /// Chat client for a lead single-agent session other than /agent (/teams lead, stateless, resume, ACP,
+    /// --agent): the plain client plus the /insight line. The session checks the client for
+    /// <c>InsightClient</c> before promising the agent a context line, so a lead path built elsewhere simply
+    /// gets no insight.
+    /// </summary>
+    public static IChatClient CreateLeadChatClient(string modelId)
+        => CreateChatClient(modelId, null, wrapMidTurnReflection: false, reflectionAgentName: null, insight: true);
+
+    /// <summary>
     /// Build a chat client. When <paramref name="wrapMidTurnReflection"/> is true the client is
     /// wrapped (INSIDE the function-invocation middleware) so freshly-gathered deep-memory deltas are
     /// injected on every model<->tool round-trip, not just at user-turn boundaries. Used for the LEAD
-    /// single-agent client only; no-op pass-through in standard mode.
+    /// single-agent client only; no-op pass-through in standard mode. <paramref name="insight"/> adds only the
+    /// /insight line (implied by <paramref name="wrapMidTurnReflection"/>).
     /// </summary>
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions,
-        bool wrapMidTurnReflection, string? reflectionAgentName)
+        bool wrapMidTurnReflection, string? reflectionAgentName, bool insight = false)
     {
         // Cap the function-invocation middleware's model->tool round-trips per turn. The default
         // (unbounded-ish SDK default) made long autonomous tool chains stop mid-task with no error
@@ -2718,11 +2728,11 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // the agent sees it before finishing instead of at the turn boundary. Same in-place
             // mechanism as the deep-memory MidTurnReflectionClient, but sourced from the user and
             // re-checked each round-trip. Inert pass-through when no steer is queued (the common case).
-            // INSIDE function-invocation (lead single-agent only): /insight context line, stamped in place
+            // INSIDE function-invocation (lead single-agent sessions): /insight context line, stamped in place
             // onto the newest message of every model call so the session replays it (prompt cache intact).
             // Inert while insight is off. Outside the steer client, so the line lands on the tool result
             // or the user's prompt rather than on a mid-turn steer note.
-            .Use(inner => wrapMidTurnReflection
+            .Use(inner => wrapMidTurnReflection || insight
                 ? new Engine.Insight.InsightClient(inner, () => Engine.Insight.InsightLevels.Current)
                 : inner)
             .Use(inner => wrapMidTurnReflection
@@ -2768,7 +2778,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             var mId = agentModels.GetValueOrDefault(matched.Name, agentModels["Orchestrator"]);
 
             await SingleAgentOrchestrator.ChatAgentAsync(
-                client: CreateChatClient(mId),
+                client: CreateLeadChatClient(mId),
                 cancellationToken: cliCts.Token,
                 mcpTools: McpTools,
                 chatClientFactory: modelId => CreateChatClient(modelId),

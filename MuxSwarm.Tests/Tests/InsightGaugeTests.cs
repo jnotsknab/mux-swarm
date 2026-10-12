@@ -163,6 +163,40 @@ public class InsightGaugeTests
     }
 
     [Fact]
+    public void InsightClient_IsFoundThroughTheBuiltPipeline()
+    {
+        // The prompt note and the max tools are gated on client.GetService(typeof(InsightClient)): it must see the
+        // wrapper inside function invocation and under further wrappers, and report null when it is absent.
+        IChatClient inner = new RecordingModel();
+        var wrapped = new DelegatingChatClientStub(inner.AsBuilder().UseFunctionInvocation()
+            .Use(i => new InsightClient(i, () => InsightLevel.Basic)).Build());
+        Assert.NotNull(wrapped.GetService(typeof(InsightClient)));
+        Assert.Null(inner.AsBuilder().UseFunctionInvocation().Build().GetService(typeof(InsightClient)));
+    }
+
+    /// <summary>
+    /// Every lead entry point in App.cs builds its client with insight (CreateLeadChatClient, or the /agent wrap).
+    /// A plain CreateChatClient(...) passed to ChatAgentAsync would get no line and no note.
+    /// </summary>
+    [Fact]
+    public void AllLeadEntryPoints_UseAnInsightClient()
+    {
+        string app = File.ReadAllText(Path.Combine(RepoRoot(), "App.cs"));
+        var plain = System.Text.RegularExpressions.Regex.Matches(app, @"ChatAgentAsync\(\s*client:\s*CreateChatClient\((\w+)\)");
+        Assert.All(plain, m => Assert.StartsWith("helperModel", m.Groups[1].Value));   // /newagent,/createhook helpers only
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(app, @"client:\s*CreateLeadChatClient\(").Count >= 5);
+    }
+
+    private static string RepoRoot()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) return d.FullName;
+        throw new DirectoryNotFoundException("MuxSwarm.csproj not found above the test output");
+    }
+
+    private sealed class DelegatingChatClientStub(IChatClient inner) : DelegatingChatClient(inner);
+
+    [Fact]
     public void PromptNote_NamesTheMarker()
     {
         Assert.Contains(InsightClient.Marker, InsightPrompt.Note(InsightLevel.Full));

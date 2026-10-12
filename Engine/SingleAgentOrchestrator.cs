@@ -1088,9 +1088,10 @@ public static class SingleAgentOrchestrator
             App.UltraMode);
 
         systemPrompt = preamble + "\r\n\r\n" + systemPrompt;
-        // /insight: tell the agent what the context line means (only when on, so prompts are unchanged when off).
-        // Fixed at session start: changing the level mid-session changes the line, not the system prompt.
-        if (Insight.InsightLevels.Current != Insight.InsightLevel.Off)
+        // /insight: tell the agent what the context line means - only when on AND this client actually carries the
+        // insight wrapper (lead clients built via App.CreateLeadChatClient), so no agent is promised a line it never
+        // gets. Fixed at session start: changing the level mid-session changes the line, not the system prompt.
+        if (Insight.InsightLevels.Current != Insight.InsightLevel.Off && client?.GetService(typeof(Insight.InsightClient)) is not null)
             systemPrompt += Insight.InsightPrompt.Note(Insight.InsightLevels.Current);
 
         var listSkillsTool = AIFunctionFactory.Create(
