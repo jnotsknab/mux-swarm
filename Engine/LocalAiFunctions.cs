@@ -207,6 +207,7 @@ public static class LocalAiFunctions
                 {
                     App.Config = Setup.Setup.LoadConfig(App.ConfigPath);
                     App.SwarmConfig = Setup.Setup.LoadSwarm();
+                    App.LoadExtensions(announce: false);
                 }
 
                 if (refreshDaemon)

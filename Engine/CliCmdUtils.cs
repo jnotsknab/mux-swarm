@@ -1904,11 +1904,37 @@ public static class CliCmdUtils
         RenderThemePreview(theme);
     }
 
+    /// <summary>
+    /// /extensions -> show whether extensions are enabled, where Mux looks, and each loaded
+    /// extension with its contributions. Read-only; enable with /set extensions.enabled on + /refresh.
+    /// </summary>
+    public static void HandleExtensions()
+    {
+        var cfg = App.Config.Extensions;
+        if (!cfg.Enabled)
+        {
+            MuxConsole.WriteInfo("Extensions are off. Enable with /set extensions.enabled on, then /refresh.");
+            return;
+        }
+        var loaded = Extensions.ExtensionRegistry.Loaded;
+        MuxConsole.WriteInfo($"Extensions: {loaded.Extensions.Count} loaded. Search path:");
+        foreach (var dir in Extensions.ExtensionRegistry.SearchDirectories(cfg))
+            MuxConsole.WriteMuted($"  {dir}{(Directory.Exists(dir) ? "" : " (missing)")}");
+        foreach (var ext in loaded.Extensions)
+        {
+            var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
+            var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
+            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}");
+            if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
+        }
+        foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
+    }
+
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
     private static void ShowThemeGallery()
     {
         MuxConsole.WriteInfo($"Themes (active: {Theme.Active.Name}). Apply with /theme <name>:");
-        foreach (var t in Theme.Presets)
+        foreach (var t in Theme.All)
         {
             string mark = t.Name == Theme.Active.Name ? "*" : " ";
             string swatch =
