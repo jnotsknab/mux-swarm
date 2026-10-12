@@ -11,6 +11,10 @@ internal static class ContextGauge
 {
     private static readonly object Gate = new();
     private static uint _promptBaseline, _lastPromptDelta;
+    private static int _dropped;
+
+    /// <summary>Blocks the agent dropped this session (insight max); reset when a session starts.</summary>
+    internal static int Dropped { get => Volatile.Read(ref _dropped); set => Volatile.Write(ref _dropped, value); }
 
     /// <summary>Percent of <paramref name="threshold"/> used by <paramref name="tokens"/> (0 when there is no threshold).</summary>
     internal static double Percent(uint tokens, int threshold) => threshold > 0 ? (double)tokens / threshold * 100.0 : 0;
@@ -49,6 +53,7 @@ internal static class ContextGauge
             line += $" | prev turn +{K(delta)}";
             if (messages is not null) line += $" | tool output {ToolShare(messages):0}%";
             line += $" | compactions {CostLedger.Snapshot().Sum(r => r.SessCompactions)}";
+            if (level >= InsightLevel.Max) line += $" | dropped {Dropped}";
         }
         return line + "]";
     }
