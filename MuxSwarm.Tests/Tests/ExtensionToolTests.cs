@@ -125,4 +125,35 @@ public sealed class ExtensionToolTests : IDisposable
         Assert.Contains(result.Problems, p => p.Contains("duplicate tool 'a'"));
         Assert.Contains(result.Problems, p => p.Contains("tools need a process"));
     }
+
+    [Fact]
+    public void Agents_GrantsBypassSwarmJson_StarForAll_NamesForSome_OmittedStaysGated()
+    {
+        var process = ExtensionProcess.Start("ext", _root, new ExtensionProcessSpec { Command = Python, Args = ["-c", "import sys; sys.stdin.read()"] }, []);
+        try
+        {
+            AITool all = new ExtensionTool(process, new ExtensionToolSpec { Name = "all", Description = "d", Agents = ["*"] });
+            AITool some = new ExtensionTool(process, new ExtensionToolSpec { Name = "some", Description = "d", Agents = ["codeagent"] });
+            AITool none = new ExtensionTool(process, new ExtensionToolSpec { Name = "none", Description = "d" });
+            AITool mcp = AIFunctionFactory.Create(() => "x", "Other_tool");
+            IList<AITool> pool = [all, some, none, mcp];
+
+            var swarm = new SwarmConfig { Agents = [new AgentConfig { Name = "CodeAgent", McpServers = ["Other"] }, new AgentConfig { Name = "WebAgent" }] };
+            var defs = Common.ParseAgentDefinitions(swarm);
+            Assert.Equal(["ext_all", "ext_some", "Other_tool"], defs[0].ToolFilter(pool).Select(t => t.Name));
+            Assert.Equal(["ext_all"], defs[1].ToolFilter(pool).Select(t => t.Name));   // no mcpServers at all: grants still apply
+
+            Assert.Equal(["ext_all"], Common.ApplyToolFilter(pool, [], [], agentName: "Orchestrator").Select(t => t.Name));
+            Assert.Equal(["ext_all", "Other_tool"], Common.ApplyToolFilter(pool, ["Other"], [], agentName: "Orchestrator").Select(t => t.Name));
+            Assert.Equal(["ext_all", "ext_some", "ext_none"], Common.ApplyToolFilter(pool, ["ext"], [], agentName: "X").Select(t => t.Name));
+        }
+        finally { process.Dispose(); }
+    }
+
+    [Fact]
+    public void Scan_ReadsAgents()
+    {
+        AddExtension("pack", """{ "process": { "command": "x" }, "tools": [ { "name": "a", "description": "d", "agents": ["*", " ", "CodeAgent"] } ] }""");
+        Assert.Equal(["*", "CodeAgent"], Assert.Single(Assert.Single(ExtensionRegistry.Scan([_root]).Extensions).Tools).Agents);
+    }
 }

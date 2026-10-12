@@ -1257,6 +1257,7 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 // extension.json (tools)
 "tools": [
   { "name": "send", "description": "Send a desktop notification.", "timeoutSeconds": 10,
+    "agents": ["*"],                          // optional: "*" = every agent, or names like ["CodeAgent"]
     "parameters": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] } }
 ]
 ```
@@ -1264,6 +1265,9 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Tool names: `a-z`, `0-9`, `_`, starting with a letter (max 48). The model sees `{extension}_{name}`
   (e.g. `notify_send`), so an agent gets an extension's tools by listing the extension name in its
   `mcpServers` (exactly like an MCP server) or by a `toolPatterns` entry such as `notify_*`.
+- `agents` grants the tool without touching Swarm.json: `["*"]` gives it to every agent (single agent,
+  orchestrator, specialists, teams), a list of names gives it to those agents only. Omit it to rely on
+  Swarm.json alone.
 - Tools exist only while the trusted process runs. A session fixes its tool list when it starts, so new
   or changed tools appear in sessions started after `/refresh` (same as MCP servers).
 

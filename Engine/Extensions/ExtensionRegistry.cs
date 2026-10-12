@@ -183,6 +183,7 @@ internal static partial class ExtensionRegistry
                 Description = spec!.Description.Trim(),
                 Parameters = spec.Parameters.ValueKind == JsonValueKind.Object ? spec.Parameters.Clone() : EmptySchema,
                 TimeoutSeconds = spec.TimeoutSeconds ?? DefaultToolTimeoutSeconds,
+                Agents = spec.Agents?.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToList(),
             });
         }
         return ok;

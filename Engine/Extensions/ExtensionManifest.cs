@@ -72,6 +72,14 @@ internal sealed class ExtensionToolSpec
     /// <summary>Seconds to wait for the reply (default 60, max 600).</summary>
     [JsonPropertyName("timeoutSeconds")]
     public int? TimeoutSeconds { get; set; }
+
+    /// <summary>
+    /// Agents that get this tool without listing the extension in Swarm.json: <c>["*"]</c> = every
+    /// agent (including the orchestrator), or agent names (case-insensitive). Omitted = only agents
+    /// whose <c>mcpServers</c>/<c>toolPatterns</c> select it, like an MCP server.
+    /// </summary>
+    [JsonPropertyName("agents")]
+    public List<string>? Agents { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>
