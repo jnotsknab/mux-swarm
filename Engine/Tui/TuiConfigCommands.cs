@@ -1123,12 +1123,16 @@ internal static partial class TuiConfigCommands
             if (string.IsNullOrWhiteSpace(command)) return Bad("A command/script is required.");
         }
 
-        // Trigger event.
+        // Trigger event(s): pick one or more; the hook fires on any of them.
         var evChoices = new List<string>(HookEvents) { "(type a custom event name)" };
-        string ev = MuxConsole.Select("Fire on which event?", evChoices);
-        if (ev == "(type a custom event name)")
-            ev = MuxConsole.Prompt("Custom event name").Trim();
-        if (string.IsNullOrWhiteSpace(ev)) return Bad("A trigger event is required.");
+        var events = new List<string>();
+        foreach (var pick in MuxConsole.MultiSelect("Fire on which event(s)? (space to toggle, enter to confirm)", evChoices))
+        {
+            var name = pick == "(type a custom event name)" ? MuxConsole.Prompt("Custom event name").Trim() : pick;
+            if (!string.IsNullOrWhiteSpace(name) && !events.Contains(name)) events.Add(name);
+        }
+        if (events.Count == 0) return Bad("Pick at least one trigger event.");
+        string ev = string.Join(", ", events);
 
         // Optional filters.
         string? agentFilter = null;
@@ -1138,7 +1142,7 @@ internal static partial class TuiConfigCommands
             agentFilter = string.IsNullOrWhiteSpace(a) ? null : a;
         }
         string? toolFilter = null;
-        if (ev is "tool_call" or "tool_result" && MuxConsole.Confirm("Restrict to a specific tool?", false))
+        if (events.Exists(e => e is "tool_call" or "tool_result") && MuxConsole.Confirm("Restrict to a specific tool?", false))
         {
             var tname = MuxConsole.Prompt("Tool name (blank = any)").Trim();
             toolFilter = string.IsNullOrWhiteSpace(tname) ? null : tname;
@@ -1161,7 +1165,7 @@ internal static partial class TuiConfigCommands
                 Command = command,
                 Mode = blocking ? HookMode.Blocking : HookMode.Async,
                 TimeoutSeconds = timeout,
-                When = new HookClause { Event = ev, Agent = agentFilter, Tool = toolFilter },
+                When = new HookClause { Events = events, Agent = agentFilter, Tool = toolFilter },
             });
             SaveSwarm(swarm);
             return Ok(
