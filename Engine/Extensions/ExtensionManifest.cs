@@ -31,4 +31,23 @@ internal sealed class ExtensionManifest
     /// </summary>
     [JsonPropertyName("themes")]
     public List<Dictionary<string, string>> Themes { get; set; } = [];
+
+    /// <summary>Thinking-indicator spinner frames, replacing the built-in ones. 1-32 frames, each one terminal cell wide.</summary>
+    [JsonPropertyName("spinner")]
+    public List<string>? Spinner { get; set; }
+
+    /// <summary>Words cycled by the thinking indicator while the agent reasons ("Thinking", "Pondering", ...). Replaces the built-in list.</summary>
+    [JsonPropertyName("quips")]
+    public List<string>? Quips { get; set; }
+
+    /// <summary>
+    /// Tool-call action labels keyed by verb stem (the first word of a tool name after any server
+    /// prefix, e.g. <c>read</c>, <c>search</c>). Merged over the built-ins; the extension wins per key.
+    /// </summary>
+    [JsonPropertyName("toolLabels")]
+    public Dictionary<string, string>? ToolLabels { get; set; }
+
+    /// <summary>Startup splash lines. Replaces the whole built-in pool (quotes, facts, tips, taglines).</summary>
+    [JsonPropertyName("splash")]
+    public List<string>? Splash { get; set; }
 }
