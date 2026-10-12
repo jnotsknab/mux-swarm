@@ -762,8 +762,8 @@ internal static class TuiComponents
     /// report nothing.</summary>
     public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub, string? effort, bool modeCycleHint, uint cached, uint sysTokens, uint toolTokens, TimeSpan? sessionElapsed, bool giga, TimeSpan? turnElapsed, TimeSpan? lastTurn, uint toolCalls, string? model, int width, int pulseFrame, string? activeMode, List<(int Col, int Width, string Id)>? badges)
     {
-        var segments = FooterSegments(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached,
-            sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode);
+        var segments = ApplyFooterTemplate(FooterSegments(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached,
+            sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode), _footerTemplate);
         var (line, chosen) = ComposeFooter(segments, 0);
         if (width > 8)
             for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
@@ -883,6 +883,32 @@ internal static class TuiComponents
         if (!string.IsNullOrEmpty(effort)) segs.Add(new("effort", $"[{Warn}]\u25d0 {Esc(effort)}[/]", DropLevel: 7, BadgeId: BadgeEffort));
         if (modeCycleHint) segs.Add(new("hint", $"[{Dim}]\u21e7\u21b9[/]", DropLevel: 1));
         return segs;
+    }
+
+    /// <summary>Every footer segment id, in default render order: the ids a footer template may name.</summary>
+    internal static readonly IReadOnlyList<string> FooterSegmentIds =
+        ["share", "orchestration", "mode", "turn", "session", "context", "cached", "sys", "tools", "calls", "model", "effort", "hint"];
+
+    // Footer segment order from an extension (ExtensionRegistry). Null = built-in order. Swapped as a
+    // whole array (never mutated) because the footer paints on the ticker thread.
+    private static string[]? _footerTemplate;
+
+    /// <summary>Set the footer segment order (ids from <see cref="FooterSegmentIds"/>), or null for
+    /// the built-in layout. Called by the extension loader.</summary>
+    internal static void SetFooterTemplate(IReadOnlyList<string>? ids) => _footerTemplate = ids is null ? null : [.. ids];
+
+    /// <summary>
+    /// Keep only the segments whose id appears in <paramref name="template"/>, in template order.
+    /// Segments sharing an id keep their relative order. <c>share</c> is never dropped: when the
+    /// template omits it, it stays first, so a broadcast is always visible. Null = unchanged.
+    /// </summary>
+    internal static List<FooterSegment> ApplyFooterTemplate(List<FooterSegment> segments, IReadOnlyList<string>? template)
+    {
+        if (template is null) return segments;
+        var ordered = new List<FooterSegment>(segments.Count);
+        if (!template.Contains("share")) ordered.AddRange(segments.Where(s => s.Id == "share"));
+        foreach (var id in template.Distinct()) ordered.AddRange(segments.Where(s => s.Id == id));
+        return ordered;
     }
 
     /// <summary>Join the segments visible at <paramref name="level"/> with uniform middot

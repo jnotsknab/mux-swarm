@@ -17,10 +17,18 @@ internal static partial class ExtensionRegistry
     private const long MaxManifestBytes = 256 * 1024;
 
     /// <summary>One successfully loaded extension, for listing.</summary>
-    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes);
+    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes)
+    {
+        /// <summary>True when this extension's footer template is the one applied.</summary>
+        internal bool Footer { get; init; }
+    }
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
-    internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems);
+    internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
+    {
+        /// <summary>Footer segment ids in display order; null = built-in footer.</summary>
+        internal IReadOnlyList<string>? FooterTemplate { get; init; }
+    }
 
     private static readonly Result Empty = new([], [], []);
 
@@ -42,6 +50,7 @@ internal static partial class ExtensionRegistry
     {
         Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg)) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
+        Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
         return Loaded;
     }
 
@@ -106,6 +115,7 @@ internal static partial class ExtensionRegistry
 
         var extensions = new List<Extension>();
         var themes = new List<Theme>();
+        IReadOnlyList<string>? footer = null;
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
             var mine = new List<string>();
@@ -125,9 +135,19 @@ internal static partial class ExtensionRegistry
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
-            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine));
+            bool hasFooter = false;
+            if (manifest.Footer?.Template is { } template)
+            {
+                if (ParseFooterTemplate(template, problems, name) is { } ids)
+                {
+                    if (footer is not null) problems.Add($"{name}: footer template replaces the one from an earlier extension.");
+                    footer = ids;
+                    hasFooter = true;
+                }
+            }
+            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine) { Footer = hasFooter });
         }
-        return new Result(extensions, themes, problems);
+        return new Result(extensions, themes, problems) { FooterTemplate = footer };
     }
 
     // Theme color roles settable from a manifest: every string property except Name.
@@ -164,6 +184,29 @@ internal static partial class ExtensionRegistry
         }
         error = "";
         return theme;
+    }
+
+    [GeneratedRegex(@"\{([^{}]*)\}")]
+    private static partial Regex Placeholder();
+
+    /// <summary>
+    /// Read the <c>{id}</c> placeholders of a footer template in order. Unknown ids are reported to
+    /// <paramref name="problems"/> and ignored; repeats are dropped. Null when nothing usable remains.
+    /// </summary>
+    internal static IReadOnlyList<string>? ParseFooterTemplate(string template, List<string> problems, string extension)
+    {
+        if (template.Length > 512) { problems.Add($"{extension}: footer template is longer than 512 characters; skipped."); return null; }
+        var ids = new List<string>();
+        foreach (Match m in Placeholder().Matches(template))
+        {
+            var id = m.Groups[1].Value.Trim().ToLowerInvariant();
+            if (!Tui.TuiComponents.FooterSegmentIds.Contains(id))
+                problems.Add($"{extension}: footer template has unknown segment '{{{m.Groups[1].Value}}}'; ignored.");
+            else if (!ids.Contains(id)) ids.Add(id);
+        }
+        if (ids.Count > 0) return ids;
+        problems.Add($"{extension}: footer template names no known segment; skipped.");
+        return null;
     }
 
     // A single Spectre color token (hex, named color or "default"); rejects styles and markup.
