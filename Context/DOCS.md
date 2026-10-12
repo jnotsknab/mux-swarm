@@ -186,6 +186,8 @@ HTTP API.
 
 **Update** - `/update` (in-session or at the menu) or the `--update` CLI flag. The updater:
 1. Queries the latest GitHub release and compares its tag against the running version (semver core).
+   Nightly releases (`v*-nightly.*`) are only offered to builds that are themselves nightlies, so a stable
+   or alpha install never updates onto a nightly.
 2. Downloads the platform asset (`mux-swarm-win-x64.zip`, `-linux-x64.tar.gz`, `-osx-{arm64,x64}.tar.gz`).
 3. **Verifies the download against the SHA256 digest GitHub publishes on the asset** - a mismatch aborts.
 4. Extracts and replaces only *shipped* files whose content hash differs. **User-owned paths are never

@@ -22,6 +22,24 @@ public class SelfUpdaterTests
         Assert.Equal(expected, SelfUpdater.IsNewer(latestTag, current));
     }
 
+    [Theory]
+    [InlineData("v0.16.0-nightly.20261012", "0.15.2", false)]                // stable never takes a nightly
+    [InlineData("v0.16.0-alpha", "0.15.2", true)]                            // stable/alpha releases still offered
+    [InlineData("v0.16.0-nightly.20261013", "0.16.0-nightly.20261012", true)] // a nightly follows nightlies
+    [InlineData("v0.16.0-alpha", "0.16.0-nightly.20261012", true)]           // ...and the matching release
+    public void IsCandidate_NightlyOnlyForNightlyBuilds(string tag, string current, bool expected)
+    {
+        Assert.Equal(expected, SelfUpdater.IsCandidate(tag, current));
+    }
+
+    [Fact]
+    public void PickRelease_SkipsNightliesForStableBuilds()
+    {
+        string[] newestFirst = ["v0.16.0-nightly.20261012", "v0.15.2-alpha", "v0.15.1-alpha"];
+        Assert.Equal("v0.15.2-alpha", SelfUpdater.PickRelease(newestFirst, "0.15.2"));
+        Assert.Equal("v0.16.0-nightly.20261012", SelfUpdater.PickRelease(newestFirst, "0.16.0-nightly.20261011"));
+    }
+
     [Fact]
     public void IsNewer_EqualCore_SameTag_IsNotNewer()
     {
