@@ -30,7 +30,7 @@ internal static class ExtensionHost
                 problems.Add($"{ext.Name}: process not started; add \"{ext.Name}\" to extensions.trusted to allow it.");
                 continue;
             }
-            try { started.Add(ExtensionProcess.Start(ext.Name, ext.Dir, spec, ext.Events)); }
+            try { started.Add(ExtensionProcess.Start(ext.Name, ext.Dir, spec, ext.Events, ext.Intercepts)); }
             catch (Exception ex) { problems.Add($"{ext.Name}: process failed to start: {ex.Message}"); }
         }
         _running = [.. started];
