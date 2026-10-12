@@ -1,4 +1,4 @@
-﻿# Mux-Swarm System Reference
+# Mux-Swarm System Reference
 
 Source repository: https://github.com/jnotsknab/mux-swarm
 
@@ -576,7 +576,7 @@ Any key may be omitted; missing keys inherit the built-in default shown above.
 - `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
 - `taskClaimTtlSeconds` - team TaskBoard claim time-to-live: a claimed task with no heartbeat past this window is reclaimed by the stale-reaper. Default 900.
 - `maxTaskAttempts` - bounded retry ceiling for a team task before the circuit-breaker marks it Failed. Default 3.
-- `midTurnCompaction` - compact mid-turn when the context crosses the threshold (the turn continues on the reseeded summary). Default true; false = compact only between turns.
+- `midTurnCompaction` - compact mid-turn when the context crosses the threshold: the tools the model just requested run, then the turn is compacted (its tool calls appear in the tool manifest; their full output is in the pre-compaction snapshot) and continues. A crossing on the final answer is not cut; the next turn compacts first. Needs a compaction model. Default true; false = compact only between turns.
 - Every compaction (auto, mid-turn, or `/compact`) first saves the full pre-compaction session to `<sandboxPath>/prune-recovery/pre-compact-<session>-<utc>-<id>.muxprune` (indented JSON, same writer as `/prune` snapshots, exact restore copy) plus a same-named `.txt` (every tool call as `name | callId | args`, files referenced, then the transcript with real newlines). After the model's summary the engine appends a deterministic tool manifest (calls per tool, up to 30 files, the last 40 calls with args cut to 120 chars) and a note giving the snapshot paths and the `pre-compact-<session>-*` pattern that finds every earlier compaction of the session; the agent is told to search the `.txt` rather than read it whole. The compaction prompt keeps "user decided" separate from "agent proposed, not confirmed", skips context that is re-injected every turn, and treats the transcript (fenced in `<transcript>`) as data, never a request; a reply that is not a summary is retried once, then replaced by a marked extractive summary. Engine-generated blocks from a previous compaction (tool manifest, snapshot note, and the extracted references when a model summary exists) are stripped before re-compacting. Mid-turn compaction also records the in-progress turn's goal and tools (not yet committed to the session) in the summary and the `.txt`. Team-member compaction shares the prompt but appends no manifest, so its summary keeps a short tool record. No sandbox configured = compaction proceeds without a snapshot (warning).
 - `autoAllowWorkspace` - add the launch/`--workspace` directory to `filesystem.allowedPaths` automatically. Default true; false = declare every allowed path explicitly.
 
