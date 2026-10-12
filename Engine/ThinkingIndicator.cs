@@ -29,12 +29,12 @@ public sealed class ThinkingIndicator : IDisposable
     private readonly ManualResetEventSlim _loopExited = new(true);
     private volatile bool _clearedExternally;
 
-    private static readonly string[] Frames =
+    private static readonly string[] BuiltInFrames =
         ["⠀", "⠄", "⠆", "⠦", "⠶", "⠷", "⣷", "⣿", "⣷", "⠷", "⠶", "⠦", "⠆", "⠄", "⠀"];
 
     // Quirky Claude-Code-style "working" gerunds, cycled (~every 2s) while the agent is
     // reasoning and no tool call is in flight. Purely cosmetic flavor for the live spinner.
-    private static readonly string[] QuipPool =
+    private static readonly string[] BuiltInQuips =
     [
         "Thinking", "Cogitating", "Percolating", "Ruminating", "Conjuring",
         "Noodling", "Finagling", "Marinating", "Crystallizing", "Pondering",
@@ -55,6 +55,24 @@ public sealed class ThinkingIndicator : IDisposable
     // shuffle is computed once (lazy) and reused; deterministic per user so it is unit-testable.
     private static string[]? _rotation;
     private static readonly object _rotationLock = new();
+
+    // Extension overrides (ExtensionRegistry). Null = built-ins. Swapped as whole arrays, never mutated.
+    private static string[]? _extensionFrames;
+    private static string[]? _extensionQuips;
+
+    /// <summary>Spinner frames contributed by an extension, or null when the built-ins are in use.</summary>
+    internal static IReadOnlyList<string>? ExtensionFrames => _extensionFrames;
+
+    /// <summary>Replace the spinner frames and quip pool (null = built-in). Called by the extension loader.</summary>
+    internal static void SetExtensionCosmetics(string[]? frames, string[]? quips)
+    {
+        _extensionFrames = frames;
+        lock (_rotationLock)
+        {
+            _extensionQuips = quips;
+            _rotation = null;   // rebuilt from the new pool on next use
+        }
+    }
 
     internal static int UserSeed()
     {
@@ -87,7 +105,7 @@ public sealed class ThinkingIndicator : IDisposable
         lock (_rotationLock)
         {
             if (_rotation != null) return _rotation;
-            _rotation = Shuffle(QuipPool, UserSeed());
+            _rotation = Shuffle(_extensionQuips ?? BuiltInQuips, UserSeed());
             return _rotation;
         }
     }
@@ -200,10 +218,11 @@ public sealed class ThinkingIndicator : IDisposable
             try
             {
                 int frame = 0;
+                var frames = _extensionFrames ?? BuiltInFrames;
 
                 while (!_cts.Token.IsCancellationRequested)
                 {
-                    string spinner = Frames[frame++ % Frames.Length];
+                    string spinner = frames[frame++ % frames.Length];
                     string linePrefix = $"  {spinner} {agentName} ";
 
                     int maxWidth = SafeWindowWidth() - 1;
