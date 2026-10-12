@@ -22,8 +22,8 @@ public class CliEarlyFlagsAndCfgPathTests
     {
         var sw = new StringWriter();
         Assert.Equal(0, Program.TryHandleEarlyFlag(new[] { flag }, sw));
-        Assert.Equal(App.Version + Environment.NewLine, sw.ToString());   // bare x.y.z, nothing else
-        Assert.Matches(@"^\d+\.\d+\.\d+$", App.Version);
+        Assert.Equal(App.Version + Environment.NewLine, sw.ToString());   // bare version, nothing else
+        Assert.Matches(@"^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$", App.Version);   // x.y.z or x.y.z-prerelease
     }
 
     [Theory]

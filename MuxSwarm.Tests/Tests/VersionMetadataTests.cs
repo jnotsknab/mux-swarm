@@ -13,9 +13,12 @@ public class VersionMetadataTests
     public void CsprojVersion_MatchesAppVersion()
     {
         var p = XDocument.Load(Path.Combine(FindRepositoryRoot(), "MuxSwarm.csproj")).Descendants("PropertyGroup").First();
+        // Version carries any prerelease suffix (e.g. 0.16.0-nightly.20261012); Windows file/assembly versions are
+        // numeric only, so they carry the numeric core.
+        string core = MuxSwarm.App.Version.Split('-')[0];
         Assert.Equal(MuxSwarm.App.Version, (string?)p.Element("Version"));
-        Assert.Equal(MuxSwarm.App.Version, (string?)p.Element("FileVersion"));
-        Assert.Equal(MuxSwarm.App.Version + ".0", (string?)p.Element("AssemblyVersion"));
+        Assert.Equal(core, (string?)p.Element("FileVersion"));
+        Assert.Equal(core + ".0", (string?)p.Element("AssemblyVersion"));
     }
 
     [Fact]

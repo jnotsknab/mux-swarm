@@ -8,9 +8,9 @@
         <Nullable>enable</Nullable>
         <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
         <!-- Keep in sync with App.Version (VersionMetadataTests enforces it). Shown in Windows file properties. -->
-        <Version>0.15.2</Version>
-        <FileVersion>0.15.2</FileVersion>
-        <AssemblyVersion>0.15.2.0</AssemblyVersion>
+        <Version>0.16.0-nightly.20261012</Version>
+        <FileVersion>0.16.0</FileVersion>
+        <AssemblyVersion>0.16.0.0</AssemblyVersion>
 
         <Product>Mux-Swarm</Product>
         <Company>github.com/jnotsknab</Company>
