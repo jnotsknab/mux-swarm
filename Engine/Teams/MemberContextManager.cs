@@ -24,9 +24,10 @@ namespace MuxSwarm.Engine.Teams;
 /// </summary>
 public sealed class MemberContextManager
 {
-    /// <summary>Fallback per-member context ceiling when none is configured (held tighter than the
-    /// lead's 80k default so a teammate pool stays cheap).</summary>
-    public const int DefaultThresholdTokens = 40_000;
+    /// <summary>Fallback per-member context ceiling when <c>memberAutoCompactTokenThreshold</c> is unset or 0:
+    /// a full 200k model window, so a persistent member keeps its context until it is actually needed.
+    /// Set the key to hold members tighter.</summary>
+    public const int DefaultThresholdTokens = 200_000;
 
     private readonly string _teamName;
     private readonly string _mode;            // "persistent" | "fresh"
