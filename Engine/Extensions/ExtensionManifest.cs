@@ -45,6 +45,10 @@ internal sealed class ExtensionManifest
     /// </summary>
     [JsonPropertyName("events")]
     public List<string> Events { get; set; } = [];
+
+    /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
+    [JsonPropertyName("footer")]
+    public FooterManifest? Footer { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>
@@ -57,4 +61,16 @@ internal sealed class ExtensionProcessSpec
     /// <summary>Arguments, passed one-for-one (no quoting or splitting).</summary>
     [JsonPropertyName("args")]
     public List<string> Args { get; set; } = [];
+}
+
+/// <summary>The <c>footer</c> block of an extension manifest.</summary>
+internal sealed class FooterManifest
+{
+    /// <summary>
+    /// Segment ids in braces, in display order, e.g. <c>"{mode} {context} {model}"</c>. Only the
+    /// placeholders matter: text between them is ignored and chips keep the standard separator.
+    /// Segments not named are hidden, except <c>share</c>, which always shows.
+    /// </summary>
+    [JsonPropertyName("template")]
+    public string? Template { get; set; }
 }

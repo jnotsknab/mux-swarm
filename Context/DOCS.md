@@ -1216,6 +1216,12 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   preset (default `default`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
+- **footer**: `{ "template": "{mode} {context} {model} {effort}" }` picks which TUI footer chips show and
+  in what order. Ids: `share orchestration mode turn session context cached sys tools calls model effort hint`.
+  Only the `{id}` placeholders count: text between them is ignored and chips keep the usual ` · `
+  separator. Chips you leave out are hidden, except `share`, which always shows (first) so a live
+  broadcast is never hidden. Unknown ids are skipped with a warning. Narrow terminals still drop chips
+  in the built-in priority order. If several extensions set a template, the later name wins.
 - Extensions load in name order. If two define the same theme, the later name wins (with a warning).
   Invalid manifests or entries are skipped with a warning; they never stop startup.
 - `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
