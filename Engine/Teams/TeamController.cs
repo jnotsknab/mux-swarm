@@ -859,7 +859,12 @@ public static class TeamController
         // routed to the unresolved alias lands in an inbox nobody reads (the giga lead-identity gap).
         var leadAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { leadName };
         if (!string.IsNullOrWhiteSpace(team.Lead)) leadAliases.Add(team.Lead!.Trim());
-        memberToolFactory = mailbox is null ? null : def =>
+        // /insight max (persistent members): their own context_map/context_drop. Fixed when the specialists are built.
+        Func<Common.AgentDefinition, IList<AITool>>? dropTools =
+            Insight.InsightLevels.Current == Insight.InsightLevel.Max && contextManager.IsPersistent
+                ? def => memberSet.Contains(def.Name) && contextManager.DropFor(def.Name) is { } d ? d.Tools().ToList() : []
+                : null;
+        Func<Common.AgentDefinition, IList<AITool>>? mailboxTools = mailbox is null ? null : def =>
         {
             var extra = new List<AITool>();
             if (!memberSet.Contains(def.Name)) return extra;
@@ -914,6 +919,8 @@ public static class TeamController
 
             return extra;
         };
+        memberToolFactory = mailboxTools is null && dropTools is null ? null
+            : def => [.. mailboxTools?.Invoke(def) ?? [], .. dropTools?.Invoke(def) ?? []];
 
         return tools;
     }
