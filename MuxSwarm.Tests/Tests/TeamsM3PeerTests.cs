@@ -40,7 +40,8 @@ public class TeamsM3PeerTests
     {
         var c = new CompacterConfig();
         Assert.Equal(0, c.MemberAutoCompactTokenThreshold);
-        // 0 -> the manager's bounded default, never "no limit".
+        // 0 -> the manager's bounded default (200k, matching a full model window), never "no limit".
+        Assert.Equal(200_000, MemberContextManager.DefaultThresholdTokens);
         Assert.Equal(MemberContextManager.DefaultThresholdTokens,
             MemberContextManager.EffectiveThreshold(c.MemberAutoCompactTokenThreshold));
         Assert.Equal(12345, MemberContextManager.EffectiveThreshold(12345));
