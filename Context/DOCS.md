@@ -1254,7 +1254,8 @@ A trusted process can gate tool calls for every agent, team and daemon run:
 
 ```jsonc
 "intercepts": [
-  { "tool": "Shell_*", "on": "before", "timeoutMs": 2000, "onTimeout": "deny" }, // name, or prefix ending in *
+  { "tool": "execute_command_async", "on": "before", "onTimeout": "deny" },        // name, or prefix ending in *
+  { "tool": "repl_shell_exec", "on": "before", "timeoutMs": 2000, "onTimeout": "deny" },
   { "tool": "*", "on": "after" }                                                  // on: before | after | both
 ]
 ```
@@ -1267,6 +1268,8 @@ A trusted process can gate tool calls for every agent, team and daemon run:
   to replace what the model sees (e.g. redact secrets); any other reply keeps the original.
 - No answer within `timeoutMs` (default 2000, max 30000), an `error` reply, or a dead process applies
   `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
+- Match the real tool names: the native shell tools are `execute_command_async` and `repl_shell_exec`
+  (MCP tools are `{server}_{tool}`). `/extensions` warns about patterns that match no loaded tool.
 
 ## Session Sharing (`/share`, `/join`)
 

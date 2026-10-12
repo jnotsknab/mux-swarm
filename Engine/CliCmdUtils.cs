@@ -1934,6 +1934,11 @@ public static class CliCmdUtils
             foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
+
+        var toolNames = (App.GetMcpTools() ?? []).Select(t => t.Name)
+            .Concat(NativeToolRegistry.BuildPool(App.Config).Select(t => t.Name)).ToList();
+        foreach (var warning in Extensions.ToolInterceptor.UnmatchedPatterns(loaded.Extensions, toolNames))
+            MuxConsole.WriteWarning(warning);
     }
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>

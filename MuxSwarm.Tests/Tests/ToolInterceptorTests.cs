@@ -199,4 +199,15 @@ public sealed class ToolInterceptorTests : IDisposable
         public object? GetService(Type serviceType, object? serviceKey = null) => null;
         public void Dispose() { }
     }
+
+    [Fact]
+    public void UnmatchedPatterns_FlagsOnlyPatternsWithoutAnyTool()
+    {
+        var ext = new ExtensionRegistry.Extension("guard", null, null, _dir, [])
+        {
+            Intercepts = [Rule("Shell_*"), Rule("execute_command_async"), Rule("repl_*")],
+        };
+        var warnings = ToolInterceptor.UnmatchedPatterns([ext], ["execute_command_async", "repl_shell_exec"]).ToList();
+        Assert.Contains("'Shell_*'", Assert.Single(warnings));
+    }
 }

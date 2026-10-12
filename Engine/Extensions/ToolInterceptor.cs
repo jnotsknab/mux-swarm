@@ -54,6 +54,16 @@ internal static class ToolInterceptor
         return result;
     }
 
+    /// <summary>
+    /// Intercept patterns that match none of <paramref name="toolNames"/>, as display warnings
+    /// (e.g. a guard written for <c>Shell_*</c> when the shell tools are <c>execute_command_async</c>).
+    /// Diagnostic only: patterns are still applied, since tools can appear later (MCP reconnect).
+    /// </summary>
+    internal static IEnumerable<string> UnmatchedPatterns(IEnumerable<ExtensionRegistry.Extension> extensions, IReadOnlyCollection<string> toolNames) =>
+        extensions.SelectMany(e => e.Intercepts
+            .Where(rule => !toolNames.Any(rule.Matches))
+            .Select(rule => $"{e.Name}: intercept '{rule.Tool}' matches no loaded tool (shell tools are execute_command_async / repl_shell_exec)."));
+
     internal enum Decision { Allow, Deny }
 
     /// <summary>
