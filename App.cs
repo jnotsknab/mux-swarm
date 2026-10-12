@@ -230,7 +230,7 @@ internal class App
         // splash is printed here synchronously, so if the theme is still Default the splash ignores
         // console.theme. (The frame splash is deferred via FrameSplashFactory and already resolved
         // post-theme.) Re-asserted later alongside the other render config (idempotent).
-        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
+        LoadExtensions(announce: false);
 
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
@@ -1257,6 +1257,11 @@ internal class App
                     Config = LoadConfig(ConfigPath);
                     SwarmConfig = LoadSwarm();
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
+                    LoadExtensions(announce: true);
+                    break;
+
+                case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
+                    CliCmdUtils.HandleExtensions();
                     break;
 
                 case var cmd when cmd.StartsWith("/report", StringComparison.Ordinal):
@@ -2301,6 +2306,21 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
         Directory.CreateDirectory(config.Filesystem.ChromaDbPath);
         chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
+    }
+
+    /// <summary>
+    /// (Re)load extensions from <c>extensions</c> in config.json and report problems. With
+    /// <paramref name="announce"/> it also prints a one-line summary (used by <c>/refresh</c>).
+    /// Re-applies <c>console.theme</c> so edited extension themes take effect and a theme whose
+    /// extension is gone falls back to the default.
+    /// </summary>
+    internal static void LoadExtensions(bool announce)
+    {
+        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
+        foreach (var problem in result.Problems) MuxConsole.WriteWarning($"Extension: {problem}");
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
+        if (announce && Config.Extensions.Enabled)
+            MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s).");
     }
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)

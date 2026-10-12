@@ -908,7 +908,8 @@ Flags can be combined. Common stacks:
 /setup          Run initial setup / reconfigure
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
-/refresh        Full system refresh (config, MCP servers, skills)
+/refresh        Full system refresh (config, MCP servers, skills, extensions)
+/extensions     List loaded extensions, their contributions, and load problems
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1182,6 +1183,43 @@ chrome before you pick. The choice persists to `config.json`:
 The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
 configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
 per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
+
+Extensions can add more themes (see ## Extensions); they appear in `/theme`, the picker and setup.
+
+## Extensions
+
+Extensions customize Mux without rebuilding it. An extension is a folder holding an
+`extension.json` manifest. Mux looks in `<install>/Extensions/` plus any folders listed in
+`extensions.dirs`. Extensions are **off by default**: with the gate off, nothing is scanned.
+
+```jsonc
+// config.json
+"extensions": {
+  "enabled": true,            // master gate (default false); /set extensions.enabled on
+  "dirs": ["D:/my-extensions"] // optional extra folders; relative paths resolve against the install dir
+}
+```
+
+```jsonc
+// <install>/Extensions/dusk/extension.json
+{
+  "name": "dusk",              // a-z, 0-9, '-' (max 32); defaults to the folder name
+  "version": "1.0.0",
+  "description": "Warm dark theme",
+  "themes": [
+    { "name": "dusk", "base": "nord", "accent": "#FF8800", "banner": "#FF8800", "cardBg": "#2B2A33" }
+  ]
+}
+```
+
+- **themes**: each entry needs a `name` (cannot reuse a built-in name), an optional `base` built-in
+  preset (default `default`), and any color roles to override: `step success warning error info muted
+  accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
+  diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
+- Extensions load in name order. If two define the same theme, the later name wins (with a warning).
+  Invalid manifests or entries are skipped with a warning; they never stop startup.
+- `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
+- The web UI keeps its own theme set; extension themes apply to the TUI.
 
 ## Session Sharing (`/share`, `/join`)
 

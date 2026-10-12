@@ -267,15 +267,29 @@ public sealed record Theme(
             TokyoNight, TokyoNightStorm, RosePine, RosePineDawn, Kanagawa,
             Everforest, OneDark, Monokai, AyuMirage, Synthwave };
 
-    /// <summary>The preset names, for help text / validation.</summary>
-    public static IReadOnlyList<string> Names => Presets.Select(t => t.Name).ToList();
+    // Themes contributed by loaded extensions (ExtensionRegistry). Empty unless extensions are
+    // enabled, so All == Presets and every lookup is unchanged by default.
+    private static IReadOnlyList<Theme> _extensionThemes = [];
 
-    /// <summary>Look up a preset by case-insensitive name. Null when unknown.</summary>
+    /// <summary>
+    /// Every selectable theme: the built-in <see cref="Presets"/> followed by themes contributed
+    /// by loaded extensions. Use this (not Presets) for pickers, galleries and lookups.
+    /// </summary>
+    public static IReadOnlyList<Theme> All =>
+        _extensionThemes.Count == 0 ? Presets : [.. Presets, .. _extensionThemes];
+
+    /// <summary>Replace the extension-contributed themes (called by the extension loader).</summary>
+    internal static void SetExtensionThemes(IReadOnlyList<Theme> themes) => _extensionThemes = themes;
+
+    /// <summary>The selectable theme names, for help text / validation.</summary>
+    public static IReadOnlyList<string> Names => All.Select(t => t.Name).ToList();
+
+    /// <summary>Look up a theme (built-in or extension) by case-insensitive name. Null when unknown.</summary>
     public static Theme? Find(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var n = name.Trim();
-        foreach (var t in Presets)
+        foreach (var t in All)
             if (string.Equals(t.Name, n, StringComparison.OrdinalIgnoreCase)) return t;
         return null;
     }

@@ -83,6 +83,13 @@ public class AppConfig
     [JsonPropertyName("startupArgs")]
     public string StartupArgs { get; set; } = "";
 
+    /// <summary>
+    /// Extensions: folders with an <c>extension.json</c> that customize Mux (see
+    /// <see cref="Extensions.ExtensionsConfig"/>). Off by default; absent = off.
+    /// </summary>
+    [JsonPropertyName("extensions")]
+    public Extensions.ExtensionsConfig Extensions { get; set; } = new();
+
 }
 
 /// <summary>
