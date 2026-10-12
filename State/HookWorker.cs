@@ -58,7 +58,11 @@ public static class HookWorker
     /// Enqueue a hook event for evaluation. Non-blocking, never throws.
     /// Safe to call from MuxConsole before Start().
     /// </summary>
-    public static void Enqueue(HookEvent e) => Channel.Writer.TryWrite(e);
+    public static void Enqueue(HookEvent e)
+    {
+        Channel.Writer.TryWrite(e);
+        Engine.Extensions.ExtensionHost.Publish(e);
+    }
 
     public static void Start(List<HookConfig> hooks)
     {

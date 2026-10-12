@@ -22,4 +22,12 @@ public class ExtensionsConfig
     /// </summary>
     [JsonPropertyName("dirs")]
     public List<string> Dirs { get; set; } = [];
+
+    /// <summary>
+    /// Names of extensions allowed to start their <c>process</c>. Processes run with your user
+    /// permissions, so they are opt-in per extension; data-only contributions (themes) do not
+    /// need to be listed.
+    /// </summary>
+    [JsonPropertyName("trusted")]
+    public List<string> Trusted { get; set; } = [];
 }

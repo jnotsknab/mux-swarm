@@ -17,7 +17,14 @@ internal static partial class ExtensionRegistry
     private const long MaxManifestBytes = 256 * 1024;
 
     /// <summary>One successfully loaded extension, for listing.</summary>
-    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes);
+    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes)
+    {
+        /// <summary>The declared process, when the manifest has a valid one.</summary>
+        internal ExtensionProcessSpec? Process { get; init; }
+
+        /// <summary>Lifecycle events the process subscribes to.</summary>
+        internal IReadOnlyList<string> Events { get; init; } = [];
+    }
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems);
@@ -125,7 +132,17 @@ internal static partial class ExtensionRegistry
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
-            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine));
+            var process = manifest.Process;
+            if (process is not null && string.IsNullOrWhiteSpace(process.Command))
+            {
+                problems.Add($"{name}: process.command is empty; process ignored.");
+                process = null;
+            }
+            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
+            {
+                Process = process,
+                Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
+            });
         }
         return new Result(extensions, themes, problems);
     }

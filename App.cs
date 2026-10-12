@@ -207,6 +207,7 @@ internal class App
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             HookWorker.Stop();
+            Engine.Extensions.ExtensionHost.StopAll();
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
@@ -2317,10 +2318,13 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
     internal static void LoadExtensions(bool announce)
     {
         var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
-        foreach (var problem in result.Problems) MuxConsole.WriteWarning($"Extension: {problem}");
+        var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted));
+        foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         if (announce && Config.Extensions.Enabled)
-            MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s).");
+            MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s), " +
+                                  $"{Engine.Extensions.ExtensionHost.Running.Count} process(es).");
     }
 
     public static async Task<bool> InitMcpServersAsync(AppConfig config)

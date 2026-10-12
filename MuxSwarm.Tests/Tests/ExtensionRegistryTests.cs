@@ -138,6 +138,21 @@ public sealed class ExtensionRegistryTests : IDisposable
     }
 
     [Fact]
+    public void Scan_ReadsProcessAndEvents_AndRejectsEmptyCommand()
+    {
+        AddExtension("svc", """{ "process": { "command": "python", "args": ["main.py", "a b"] }, "events": ["tool_call", " ", "turn_end"] }""");
+        AddExtension("bad", """{ "process": { "command": " " } }""");
+        var result = ExtensionRegistry.Scan([_root]);
+
+        var svc = Assert.Single(result.Extensions, e => e.Name == "svc");
+        Assert.Equal("python", svc.Process!.Command);
+        Assert.Equal(["main.py", "a b"], svc.Process.Args);
+        Assert.Equal(["tool_call", "turn_end"], svc.Events);
+        Assert.Null(Assert.Single(result.Extensions, e => e.Name == "bad").Process);
+        Assert.Contains(result.Problems, p => p.Contains("process.command is empty"));
+    }
+
+    [Fact]
     public void Gate_IsSettableThroughSet_AndOffByDefault()
     {
         var cfg = new AppConfig();

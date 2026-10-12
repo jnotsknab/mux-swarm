@@ -1221,6 +1221,33 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 - `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
 - The web UI keeps its own theme set; extension themes apply to the TUI.
 
+### Extension processes
+
+An extension can run a long-lived process in any language. Processes run with your user
+permissions, so each one must be listed in `extensions.trusted` before Mux starts it.
+
+```jsonc
+// extension.json
+{
+  "name": "notify",
+  "process": { "command": "python", "args": ["-u", "main.py"] }, // no shell; relative paths resolve in the extension folder
+  "events": ["turn_end", "tool_call"]                            // lifecycle events to receive ("*" = all)
+}
+// config.json
+"extensions": { "enabled": true, "trusted": ["notify"] }
+```
+
+Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
+
+- First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir }`.
+- Each subscribed event: notification `event` whose params are the hook payload
+  (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
+- Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
+- stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
+  exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
+  until the next `/refresh`.
+
 ## Session Sharing (`/share`, `/join`)
 
 Share a live session with someone on the same network. Guests see exactly what your TUI draws, in real time.
