@@ -1121,6 +1121,20 @@ unaffected (measured on Claude: same cached share as no line). Each line costs ~
 Numbers match the footer and `/api/status` (tokens / auto-compact threshold). Lead single-agent sessions
 only; swarm/pswarm and team members do not get the line.
 
+**max** also gives the agent two tools (from the next `/agent` session; the tool list is fixed per session):
+- `context_map()` - the largest droppable blocks as `m12 tool_result Filesystem_read_text_file ~7.4k tok "preview"`.
+- `context_drop(ids, reason)` - queue blocks to drop. They are removed at the END of the turn (the session is
+  idle then): a recovery snapshot `<sandboxPath>/prune-recovery/pre-drop-<session>-*.muxprune` (+ `.txt`) is
+  saved first, then each block becomes `[dropped by agent: <reason>; N chars; recover: search <snapshot>.txt]`.
+  No snapshot (no sandbox, or sandbox outside allowedPaths) = nothing is dropped.
+
+Only tool results and assistant text of >= 1,000 characters from earlier turns can be dropped, except the
+newest ~4k tokens of them (counted per block, so one large read cannot shield everything older);
+user and system messages, errors, and already pruned/dropped blocks never are. Messages and tool-call ids
+stay in place (copy-on-write, like `/prune`). A compaction or `/wipe` before the turn ends discards queued
+drops. Dropping changes earlier history, so the provider prompt cache restarts from that point (same as
+`/prune`).
+
 ## Cost breakdown - `/cost all` / `/tokens all`
 
 `/cost` and `/tokens` are unchanged (session usage, footer-mirrored). Adding the `all` arg renders a

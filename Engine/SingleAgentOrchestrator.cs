@@ -1135,6 +1135,8 @@ public static class SingleAgentOrchestrator
         // after the SDK session is created below. Delegation-tool closures read it at call time,
         // so the shared block always reflects the lead's window at the moment of delegation.
         Func<List<ChatMessage>?> leadHistoryProvider = () => null;
+        // /insight max: the session's committed history for context_map/context_drop (bound once the session exists).
+        Func<IReadOnlyList<ChatMessage>?> committedHistory = () => null;
 
         async Task<string> ExecuteDelegation(
             string agentName,
@@ -1552,6 +1554,16 @@ public static class SingleAgentOrchestrator
             systemPrompt += GigaMode.Preamble();
         }
 
+        // /insight max: context_map + context_drop, only where the insight line is wired (the lead /agent client),
+        // fixed for the session. Drops are applied after the turn, when the session is idle (see below).
+        Insight.ContextDrop? contextDrop = null;
+        if (Insight.InsightLevels.Current == Insight.InsightLevel.Max && client?.GetService(typeof(Insight.InsightClient)) is not null)
+        {
+            contextDrop = new Insight.ContextDrop(() => committedHistory());
+            foreach (var tool in contextDrop.Tools()) singleAgentTools.Add(tool);
+            Insight.ContextGauge.Dropped = 0;
+        }
+
         var agentChatOptions = new ChatOptions
         {
             Instructions = systemPrompt,
@@ -1661,6 +1673,7 @@ public static class SingleAgentOrchestrator
         // /split provider: prefer the SDK session's live in-memory history (includes tool
         // calls/results); fall back to the lightweight conversation history. Snapshot copies -
         // the shared block must not race the live list while a delegation renders it.
+        committedHistory = () => session.TryGetInMemoryChatHistory(out var h) && h is not null ? h.ToList() : null;
         leadHistoryProvider = () =>
         {
             if (session.TryGetInMemoryChatHistory(out var live) && live is { Count: > 0 })
@@ -1758,6 +1771,7 @@ public static class SingleAgentOrchestrator
                     var replacement = await agent.CreateSessionAsync(cancellationToken: ExecutionCancellation.Current);
                     ExecutionCancellation.Current.ThrowIfCancellationRequested();
                     session = replacement;
+                    contextDrop?.Clear();   // queued ids refer to the replaced session
                     conversationHistory.Clear();
                     conversationHistory.Add(new ChatMessage(ChatRole.User, summaryText));
                     conversationHistory.Add(new ChatMessage(ChatRole.Assistant,
@@ -1784,6 +1798,35 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
             ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = _sessionTokens });
             return _pendingCompaction;
+        }
+
+        // /insight max: replace the queued blocks with notices after saving a recovery snapshot (same writer as /prune).
+        async Task ApplyContextDropsAsync()
+        {
+            if (contextDrop is null || !session.TryGetInMemoryChatHistory(out var live) || live is null) { contextDrop?.Clear(); return; }
+            var originals = live.ToList();
+            try
+            {
+                var fs = App.Config.Filesystem;
+                var serialized = await agent.SerializeSessionAsync(session, cancellationToken: cancellationToken);
+                string recovery = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [],
+                    $"pre-drop-{ContextPruneSession.SessionTag(sessionTimestamp)}", SessionSnapshotText.FullText(originals));
+                var (messages, dropped, saved) = contextDrop.Apply(originals, recovery);
+                if (dropped == 0) return;
+                session.SetInMemoryChatHistory(messages);
+                conversationHistory.Clear();
+                conversationHistory.AddRange(messages);   // keep the compaction/undo copy aligned, as /prune does
+                long remaining = (long)Math.Ceiling(ContextPruner.EstimateCharacters(messages) / 2.5);
+                _sessionTokens = (uint)Math.Clamp(Math.Max(remaining, (long)_sessionTokens - (long)(saved / 2.5)), 0, uint.MaxValue);
+                _cachedTokens = 0;
+                Insight.ContextGauge.Dropped += dropped;
+                MuxConsole.WriteInfo($"Agent dropped {dropped} context block(s) (~{saved / 2.5:N0} tokens). Recovery snapshot: {recovery}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
+            {
+                contextDrop.Clear();
+                MuxConsole.WriteWarning($"Agent context drop skipped (no recovery snapshot: {ex.Message}); context unchanged.");
+            }
         }
 
         //Offer option to compact
@@ -2521,6 +2564,11 @@ public static class SingleAgentOrchestrator
                 escapeListener.Dispose();
             }
 
+            // /insight max: apply the agent's queued context_drop requests now that the turn has committed and
+            // the session is idle, so the drop is saved with this turn. Snapshot first; no snapshot, no drop.
+            if (contextDrop is { PendingCount: > 0 } && !cancellationToken.IsCancellationRequested)
+                await ApplyContextDropsAsync();
+
             // Persist BEFORE honouring an outer cancellation. The turn-scoped catch above rebuilds
             // the interrupted exchange into the session's history, but an OUTER-token cancel
             // (/qc, /qm, Ctrl+C) used to rethrow here - above the persist block - and discard that
@@ -2724,6 +2772,7 @@ public static class SingleAgentOrchestrator
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {
                     session = await agent.CreateSessionAsync();
+                    contextDrop?.Clear();
                     conversationHistory.Clear();
                     _sessionTokens = 0;
                     _cachedTokens = 0;
