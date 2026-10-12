@@ -883,6 +883,7 @@ public static class SingleAgentOrchestrator
                 stdioFallback: $"[AGENT] {singleAgentDef.Name} is configured with delegation capabilities, run /subagents (/sub) or /parasubagents (/psub) to enable delegation for the /agent interface.");
         }
 
+        HookWorker.SetGoalId(goalId);
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
 
@@ -2178,13 +2179,7 @@ public static class SingleAgentOrchestrator
                                     // "drops on turn end" artifact). The authoritative usage frame moves the meter
                                     // (see ReconcileLiveBaseline); the thinking indicator shows tool work in progress.
 
-                                    HookWorker.Enqueue(new HookEvent
-                                    {
-                                        Event = "tool_call",
-                                        Agent = singleAgentDef.Name,
-                                        Tool = functionCall.Name,
-                                        Timestamp = DateTimeOffset.UtcNow
-                                    });
+                                    HookWorker.Enqueue(HookWorker.ToolCallEvent(singleAgentDef.Name, functionCall));
 
                                     var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                                     toolSpan?.SetTag("agent", singleAgentDef.Name);
@@ -2222,13 +2217,7 @@ public static class SingleAgentOrchestrator
                                         Activity.Current?.SetTag("result", resultText.Length > 4096 ? resultText[..4096] : resultText);
                                     Activity.Current?.Stop();
 
-                                    HookWorker.Enqueue(new HookEvent
-                                    {
-                                        Event = "tool_result",
-                                        Agent = singleAgentDef.Name,
-                                        Summary = functionResult.Result?.ToString(),
-                                        Timestamp = DateTimeOffset.UtcNow
-                                    });
+                                    HookWorker.Enqueue(HookWorker.ToolResultEvent(singleAgentDef.Name, functionResult));
 
                                     if (resultText != null)
                                         MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);

@@ -58,7 +58,58 @@ public static class HookWorker
     /// Enqueue a hook event for evaluation. Non-blocking, never throws.
     /// Safe to call from MuxConsole before Start().
     /// </summary>
-    public static void Enqueue(HookEvent e) => Channel.Writer.TryWrite(e);
+    public static void Enqueue(HookEvent e)
+    {
+        e.GoalId ??= _goalId.Value;
+        Channel.Writer.TryWrite(e);
+    }
+
+    private static readonly AsyncLocal<string?> _goalId = new();
+
+    /// <summary>Ambient goal id (<c>--goal-id</c> or a continuous run's generated id) stamped onto every
+    /// event enqueued from this async flow. Set at orchestrator entry; flows into child tasks. A null id
+    /// is ignored so a nested session without one keeps the parent's goal.</summary>
+    public static void SetGoalId(string? goalId)
+    {
+        if (!string.IsNullOrWhiteSpace(goalId)) _goalId.Value = goalId;
+    }
+
+    // callId -> tool name, so tool_result events can carry the tool that produced them.
+    private static readonly ConcurrentDictionary<string, string> _callTools = new();
+
+    /// <summary>Builds the tool_call hook event, including the call arguments as JSON.</summary>
+    internal static HookEvent ToolCallEvent(string? agent, Microsoft.Extensions.AI.FunctionCallContent call)
+    {
+        if (!string.IsNullOrEmpty(call.CallId))
+        {
+            if (_callTools.Count > 1000) _callTools.Clear();   // calls whose result never arrived
+            _callTools[call.CallId] = call.Name;
+        }
+        string? args = null;
+        try { args = call.Arguments is null ? null : JsonSerializer.Serialize(call.Arguments); } catch { /* unserializable arg */ }
+        return new HookEvent { Event = "tool_call", Agent = agent, Tool = call.Name, Args = args, Timestamp = DateTimeOffset.UtcNow };
+    }
+
+    /// <summary>Builds the tool_result hook event: the tool name (from the matching call) and the result text.</summary>
+    internal static HookEvent ToolResultEvent(string? agent, Microsoft.Extensions.AI.FunctionResultContent result)
+    {
+        string? tool = null;
+        if (!string.IsNullOrEmpty(result.CallId)) _callTools.TryRemove(result.CallId, out tool);
+        return new HookEvent { Event = "tool_result", Agent = agent, Tool = tool, Summary = ResultText(result.Result), Timestamp = DateTimeOffset.UtcNow };
+    }
+
+    /// <summary>Plain text of a tool result: strings as-is, MCP content lists as their joined text parts
+    /// (ToString() on those yields a type name), other JSON as raw JSON.</summary>
+    internal static string? ResultText(object? result) => result switch
+    {
+        null => null,
+        string s => s,
+        JsonElement { ValueKind: JsonValueKind.String } j => j.GetString(),
+        JsonElement j => j.GetRawText(),
+        IEnumerable<Microsoft.Extensions.AI.AIContent> parts =>
+            string.Join("\n", parts.OfType<Microsoft.Extensions.AI.TextContent>().Select(p => p.Text)),
+        _ => result.ToString()
+    };
 
     public static void Start(List<HookConfig> hooks)
     {
