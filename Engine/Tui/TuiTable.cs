@@ -14,8 +14,8 @@ namespace MuxSwarm.Engine.Tui;
 /// </summary>
 internal static class TuiTable
 {
-    private const string Border = "#3A3A3A";  // box-drawing lines (dim)
-    private const string Head = "#64B4DC";    // header cell text (accent)
+    private static string Border => Theme.Active.Border;  // box-drawing lines (dim)
+    private static string Head => Theme.Active.MdHeading; // header cell text (accent)
 
     private enum Align { Left, Center, Right }
 
