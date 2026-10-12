@@ -80,6 +80,10 @@ internal sealed class ExtensionManifest
     /// <summary>Startup splash lines. Replaces the whole built-in pool (quotes, facts, tips, taglines).</summary>
     [JsonPropertyName("splash")]
     public List<string>? Splash { get; set; }
+
+    /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
+    [JsonPropertyName("footer")]
+    public FooterManifest? Footer { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
@@ -140,4 +144,16 @@ internal sealed class ExtensionProcessSpec
     /// <summary>Arguments, passed one-for-one (no quoting or splitting).</summary>
     [JsonPropertyName("args")]
     public List<string> Args { get; set; } = [];
+}
+
+/// <summary>The <c>footer</c> block of an extension manifest.</summary>
+internal sealed class FooterManifest
+{
+    /// <summary>
+    /// Segment ids in braces, in display order, e.g. <c>"{mode} {context} {model}"</c>. Only the
+    /// placeholders matter: text between them is ignored and chips keep the standard separator.
+    /// Segments not named are hidden, except <c>share</c>, which always shows.
+    /// </summary>
+    [JsonPropertyName("template")]
+    public string? Template { get; set; }
 }
