@@ -1182,6 +1182,8 @@ chrome before you pick. The choice persists to `config.json`:
 The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
 configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
 per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
+Exception: rendered markdown tables use the theme - header text = `mdHeading`, grid lines = the
+`border` role (default `#3A3A3A`, so the default theme is unchanged).
 
 ## Session Sharing (`/share`, `/join`)
 
