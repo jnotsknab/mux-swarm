@@ -1480,7 +1480,7 @@ internal class App
                             var sb = new System.Text.StringBuilder();
                             sb.AppendLine($"Hooks: {status}  ({MuxSwarm.State.HookWorker.Count} configured)");
                             foreach (var h in MuxSwarm.State.HookWorker.Loaded)
-                                sb.AppendLine($"  - {h.Id}: on {h.When.Event}" +
+                                sb.AppendLine($"  - {h.Id}: on {string.Join(", ", h.When.Events)}" +
                                     (h.When.Agent is not null ? $" [agent={h.When.Agent}]" : "") +
                                     (h.When.Tool is not null ? $" [tool={h.When.Tool}]" : "") +
                                     $"  ({h.Mode})");

@@ -105,27 +105,12 @@ public static class HookWorker
         {
             try
             {
-                var parts = hook.Command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-                if (parts.Length == 0)
+                var process = StartHookProcess(hook);
+                if (process is null)
                 {
                     MuxConsole.WriteWarning($"[Hook:{hook.Id}] Empty command, skipping persistent start.");
                     continue;
                 }
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = parts[0],
-                    Arguments = parts.Length > 1 ? parts[1] : string.Empty,
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = false,
-                    RedirectStandardError = false,
-                    CreateNoWindow = true
-                };
-
-                var process = new Process { StartInfo = psi };
-                process.Start();
-                ProcessCleanup.Instance.Track(process);
                 _persistentProcesses[hook.Id] = process;
                 MuxConsole.WriteSuccess($"[Hook:{hook.Id}] Persistent process started (PID {process.Id}).");
             }
@@ -134,6 +119,55 @@ public static class HookWorker
                 MuxConsole.WriteWarning($"[Hook:{hook.Id}] Failed to start persistent process: {ex.Message}");
             }
         }
+    }
+
+    /// <summary>Builds the start info for a hook. With <see cref="HookConfig.Args"/> the command is the
+    /// executable and each arg is passed verbatim; without it the legacy split at the first space applies.
+    /// stdin/stdout/stderr are always redirected: stdin carries the event JSON, and the output streams are
+    /// drained by the worker instead of being inherited (under --stdio/--acp stdout is the protocol, and in
+    /// the TUI inherited output draws over the frame). Returns null for an empty command.</summary>
+    internal static ProcessStartInfo? BuildStartInfo(HookConfig hook)
+    {
+        var psi = new ProcessStartInfo
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        if (hook.Args is not null)
+        {
+            if (string.IsNullOrWhiteSpace(hook.Command)) return null;
+            psi.FileName = hook.Command.Trim();
+            foreach (var arg in hook.Args) psi.ArgumentList.Add(arg);
+            return psi;
+        }
+
+        var parts = hook.Command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return null;
+        psi.FileName = parts[0];
+        psi.Arguments = parts.Length > 1 ? parts[1] : string.Empty;
+        return psi;
+    }
+
+    /// <summary>Starts a hook process and drains its stdout/stderr asynchronously into muted log lines
+    /// (a full pipe can never block the hook). Returns null for an empty command.</summary>
+    private static Process? StartHookProcess(HookConfig hook)
+    {
+        var psi = BuildStartInfo(hook);
+        if (psi is null) return null;
+
+        var process = new Process { StartInfo = psi };
+        _startedUtc[hook.Id] = DateTime.UtcNow;
+        process.OutputDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) MuxConsole.WriteMuted($"[Hook:{hook.Id}] {e.Data}"); };
+        process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) MuxConsole.WriteMuted($"[Hook:{hook.Id}:stderr] {e.Data}"); };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        ProcessCleanup.Instance.Track(process);
+        return process;
     }
 
     private static void StopPersistentHooks()
@@ -156,6 +190,7 @@ public static class HookWorker
             catch { /* already exited */ }
         }
         _persistentProcesses.Clear();
+        _restarts.Clear();
     }
 
     private static async Task HookProcessLoopAsync(CancellationToken ct)
@@ -179,27 +214,41 @@ public static class HookWorker
                 // Persistent hooks: write to running process stdin
                 foreach (var hook in matched.Where(h => h.Persistent))
                 {
-                    if (_persistentProcesses.TryGetValue(hook.Id, out var proc))
+                    if (!_persistentProcesses.TryGetValue(hook.Id, out var proc))
                     {
-                        try
+                        // Not running: only a crashed hook whose backoff has elapsed is restarted.
+                        if (_restarts.TryGetValue(hook.Id, out var waiting) && DateTime.UtcNow >= waiting.NextAttemptUtc)
+                            RestartPersistentHook(hook, payload);
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (!proc.HasExited)
                         {
-                            if (!proc.HasExited)
+                            await proc.StandardInput.WriteLineAsync(payload);
+                            await proc.StandardInput.FlushAsync(ct);
+                        }
+                        else
+                        {
+                            _persistentProcesses.TryRemove(hook.Id, out _);
+                            ProcessCleanup.Instance.Untrack(proc.Id);
+                            var delay = RecordCrash(hook.Id, _startedUtc.GetValueOrDefault(hook.Id, DateTime.UtcNow));
+                            if (delay == TimeSpan.Zero)
                             {
-                                await proc.StandardInput.WriteLineAsync(payload);
-                                await proc.StandardInput.FlushAsync(ct);
+                                MuxConsole.WriteWarning($"[Hook:{hook.Id}] Persistent process exited (code {proc.ExitCode}). Restarting...");
+                                RestartPersistentHook(hook, payload);
                             }
                             else
                             {
-                                MuxConsole.WriteWarning($"[Hook:{hook.Id}] Persistent process exited (code {proc.ExitCode}). Restarting...");
-                                _persistentProcesses.TryRemove(hook.Id, out _);
-                                ProcessCleanup.Instance.Untrack(proc.Id);
-                                RestartPersistentHook(hook, payload);
+                                MuxConsole.WriteWarning($"[Hook:{hook.Id}] Persistent process exited again (code {proc.ExitCode}). " +
+                                                        $"Restarting in {delay.TotalSeconds:0}s; its events are skipped until then.");
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            MuxConsole.WriteWarning($"[Hook:{hook.Id}] Write to persistent process failed: {ex.Message}");
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MuxConsole.WriteWarning($"[Hook:{hook.Id}] Write to persistent process failed: {ex.Message}");
                     }
                 }
 
@@ -223,30 +272,48 @@ public static class HookWorker
         }
     }
 
+    /// <summary>Consecutive-crash state of a persistent hook (process loop is the single writer).</summary>
+    private sealed class RestartState
+    {
+        public int Failures;
+        public DateTime NextAttemptUtc;
+    }
+
+    private static readonly ConcurrentDictionary<string, RestartState> _restarts = new();
+    private static readonly ConcurrentDictionary<string, DateTime> _startedUtc = new();
+
+    /// <summary>A persistent hook that stayed up at least this long before crashing resets its backoff.</summary>
+    internal static readonly TimeSpan StableUptime = TimeSpan.FromSeconds(60);
+
+    /// <summary>Delay before restarting a persistent hook after its Nth consecutive crash: the first
+    /// restart is immediate (as before), then 1s, 2s, 4s ... capped at 60s.</summary>
+    internal static TimeSpan RestartDelay(int failures)
+    {
+        if (failures <= 1) return TimeSpan.Zero;
+        return TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, Math.Min(failures - 2, 6))));
+    }
+
+    /// <summary>Records a crash and returns how long to wait before the next restart attempt.</summary>
+    private static TimeSpan RecordCrash(string hookId, DateTime startedUtc)
+    {
+        var state = _restarts.GetOrAdd(hookId, _ => new RestartState());
+        if (DateTime.UtcNow - startedUtc >= StableUptime) state.Failures = 0;
+        state.Failures++;
+        var delay = RestartDelay(state.Failures);
+        state.NextAttemptUtc = DateTime.UtcNow + delay;
+        return delay;
+    }
+
     /// <summary>
     /// Restart a persistent hook that died, and deliver the event that triggered the restart.
+    /// A failed start counts as another crash, so the backoff keeps growing.
     /// </summary>
     private static void RestartPersistentHook(HookConfig hook, string payload)
     {
         try
         {
-            var parts = hook.Command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) return;
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = parts[0],
-                Arguments = parts.Length > 1 ? parts[1] : string.Empty,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
-                CreateNoWindow = true
-            };
-
-            var process = new Process { StartInfo = psi };
-            process.Start();
-            ProcessCleanup.Instance.Track(process);
+            var process = StartHookProcess(hook);
+            if (process is null) return;
             _persistentProcesses[hook.Id] = process;
 
             process.StandardInput.WriteLine(payload);
@@ -256,36 +323,23 @@ public static class HookWorker
         }
         catch (Exception ex)
         {
-            MuxConsole.WriteWarning($"[Hook:{hook.Id}] Restart failed: {ex.Message}");
+            var delay = RecordCrash(hook.Id, DateTime.UtcNow);
+            MuxConsole.WriteWarning($"[Hook:{hook.Id}] Restart failed: {ex.Message}. Next attempt in {Math.Max(1, delay.TotalSeconds):0}s.");
+            if (delay == TimeSpan.Zero) _restarts[hook.Id].NextAttemptUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1);
         }
     }
 
     private static async Task DispatchHook(HookConfig hook, string payload, CancellationToken ct)
     {
+        Process? process = null;
         try
         {
-            var parts = hook.Command.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0)
+            process = StartHookProcess(hook);
+            if (process is null)
             {
                 MuxConsole.WriteWarning($"[Hook:{hook.Id}] Empty command, skipping.");
                 return;
             }
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = parts[0],
-                Arguments = parts.Length > 1 ? parts[1] : string.Empty,
-                UseShellExecute = false,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = false,
-                RedirectStandardError = false,
-                CreateNoWindow = true
-            };
-
-            using var process = new Process { StartInfo = psi };
-            process.Start();
-
-            ProcessCleanup.Instance.Track(process);
 
             await process.StandardInput.WriteLineAsync(payload);
             await process.StandardInput.FlushAsync(ct);
@@ -334,11 +388,27 @@ public static class HookWorker
         {
             MuxConsole.WriteWarning($"[Hook:{hook.Id}] Dispatch failed: {ex.Message}");
         }
+        finally
+        {
+            // An async hook may outlive the 5s exit check: disposing now would close its output pipes
+            // under it, so release the handle when it exits instead.
+            if (process is not null)
+            {
+                try
+                {
+                    if (process.HasExited) process.Dispose();
+                    else { process.EnableRaisingEvents = true; process.Exited += (_, _) => process.Dispose(); }
+                }
+                catch { /* best-effort */ }
+            }
+        }
     }
 
-    private static bool Matches(HookConfig hook, HookEvent e)
+    /// <summary>True when the event name is one of the hook's events and the agent/tool filters pass.
+    /// A hook matches an event occurrence at most once, however many events it lists.</summary>
+    internal static bool Matches(HookConfig hook, HookEvent e)
     {
-        if (!string.Equals(hook.When.Event, e.Event, StringComparison.OrdinalIgnoreCase))
+        if (!hook.When.Events.Any(ev => string.Equals(ev, e.Event, StringComparison.OrdinalIgnoreCase)))
             return false;
 
         if (hook.When.Agent is not null &&
