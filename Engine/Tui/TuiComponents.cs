@@ -762,6 +762,53 @@ internal static class TuiComponents
     /// report nothing.</summary>
     public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub, string? effort, bool modeCycleHint, uint cached, uint sysTokens, uint toolTokens, TimeSpan? sessionElapsed, bool giga, TimeSpan? turnElapsed, TimeSpan? lastTurn, uint toolCalls, string? model, int width, int pulseFrame, string? activeMode, List<(int Col, int Width, string Id)>? badges)
     {
+        var segments = FooterSegments(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached,
+            sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode);
+        var (line, chosen) = ComposeFooter(segments, 0);
+        if (width > 8)
+            for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
+                (line, chosen) = ComposeFooter(segments, lvl);
+        if (badges is not null) { badges.Clear(); badges.AddRange(chosen); }
+        return line;
+    }
+
+    /// <summary>One footer chip. It renders at degradation levels <see cref="MinLevel"/> (inclusive)
+    /// to <see cref="DropLevel"/> (exclusive); level 0 is the widest footer and each step up sheds
+    /// lower-value chips. <see cref="BadgeId"/> marks a clickable chip (see <see cref="BadgeModel"/>).</summary>
+    internal readonly record struct FooterSegment(string Id, string Markup, int MinLevel = 0, int DropLevel = FooterSegment.Never, string? BadgeId = null)
+    {
+        /// <summary>DropLevel for chips that are never degraded away.</summary>
+        public const int Never = int.MaxValue;
+
+        /// <summary>True when the chip renders at degradation <paramref name="level"/>.</summary>
+        public bool VisibleAt(int level) => level >= MinLevel && level < DropLevel;
+    }
+
+    /// <summary>
+    /// The footer chips in render order, each tagged with a stable id: share, orchestration, mode,
+    /// turn, session, context, cached, sys, tools, calls, model, effort, hint. Drop order under width
+    /// pressure (DropLevel): hint 1, sys/tools 2, cached 3, session/calls 4, model 5, idle turn and
+    /// effort 7. The context meter appears as three mutually exclusive forms (16-cell bar, 10-cell
+    /// bar from level 5, bare percent from level 6). Repeated ids are allowed (e.g. plan + psub).
+    /// </summary>
+    internal static List<FooterSegment> FooterSegments(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub, string? effort, bool modeCycleHint, uint cached, uint sysTokens, uint toolTokens, TimeSpan? sessionElapsed, bool giga, TimeSpan? turnElapsed, TimeSpan? lastTurn, uint toolCalls, string? model, int pulseFrame, string? activeMode)
+    {
+        var segs = new List<FooterSegment>();
+
+        // Live session share (/share): always-visible, never degraded away - the user must always
+        // be able to see that their screen is being broadcast and how many people are watching.
+        if (Share.ShareHost.FooterLabel is { } shareChip)
+            segs.Add(new("share", $"[{Err}]\u25cf {Esc(shareChip)}[/]"));
+
+        // Orchestration-mode chip: surfaces the active multi-agent mode set by the App loop
+        // (ServeMode.ActiveMode) - "swarm" (sequential orchestrator) or "pswarm" (parallel
+        // classroom). Static (never pulses) and always present so the user can tell at a glance
+        // which orchestration the session is running.
+        if (string.Equals(activeMode, "swarm", StringComparison.OrdinalIgnoreCase))
+            segs.Add(new("orchestration", $"[{Accent}]swarm[/]"));
+        else if (string.Equals(activeMode, "pswarm", StringComparison.OrdinalIgnoreCase))
+            segs.Add(new("orchestration", $"[{Accent}]pswarm[/]"));
+
         // Mode chip: giga supersedes ultra (superset), ultra collapses plan/psub/sub, else the
         // discrete modes show individually. For a short window after activation the chip
         // "breathes" (dim/normal/bold cycle - weight-only, same trick as PulsingDot, so the
@@ -772,39 +819,24 @@ internal static class TuiComponents
             string deco = PulseDecos[((pulseFrame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
             return string.IsNullOrEmpty(deco) ? colour : $"{colour} {deco}";
         }
-        var modeBadges = new List<string>();
-        if (giga) modeBadges.Add($"[{ModeStyle(Giga)}]giga[/]");
-        else if (ultra) modeBadges.Add($"[{ModeStyle(Ultra)}]ultra[/]");
+        if (giga) segs.Add(new("mode", $"[{ModeStyle(Giga)}]giga[/]"));
+        else if (ultra) segs.Add(new("mode", $"[{ModeStyle(Ultra)}]ultra[/]"));
         else
         {
-            if (plan) modeBadges.Add($"[{Plan}]plan[/]");
-            if (psub) modeBadges.Add($"[{Accent}]psub[/]");
-            if (sub) modeBadges.Add($"[{Ok}]sub[/]");
+            if (plan) segs.Add(new("mode", $"[{Plan}]plan[/]"));
+            if (psub) segs.Add(new("mode", $"[{Accent}]psub[/]"));
+            if (sub) segs.Add(new("mode", $"[{Ok}]sub[/]"));
         }
-
-        // Orchestration-mode chip (leftmost): surfaces the active multi-agent mode set by the
-        // App loop (ServeMode.ActiveMode) - "swarm" (sequential orchestrator) or "pswarm"
-        // (parallel classroom). Static (never pulses) and always present so the user can tell
-        // at a glance which orchestration the session is running.
-        if (string.Equals(activeMode, "swarm", StringComparison.OrdinalIgnoreCase))
-            modeBadges.Insert(0, $"[{Accent}]swarm[/]");
-        else if (string.Equals(activeMode, "pswarm", StringComparison.OrdinalIgnoreCase))
-            modeBadges.Insert(0, $"[{Accent}]pswarm[/]");
-
-        // Live session share (/share): always-visible, never degraded away - the user must always
-        // be able to see that their screen is being broadcast and how many people are watching.
-        if (Share.ShareHost.FooterLabel is { } shareChip)
-            modeBadges.Insert(0, $"[{Err}]\u25cf {Esc(shareChip)}[/]");
 
         // Turn timer: bright + ticking while the model works the current turn; between turns
         // the LAST turn's duration shows dimmed (same glyph, dim = idle) so the cost of the
         // previous exchange stays visible until the next send resets it.
-        string liveTurnChip = turnElapsed is { } te ? $"[{Warn}]\u25cf {ClockMS(te)}[/]" : "";
-        string idleTurnChip = turnElapsed is null && lastTurn is { } lt ? $"[{Dim}]\u25cf {ShortDur(lt)}[/]" : "";
+        if (turnElapsed is { } te) segs.Add(new("turn", $"[{Warn}]\u25cf {ClockMS(te)}[/]"));
+        else if (lastTurn is { } lt) segs.Add(new("turn", $"[{Dim}]\u25cf {ShortDur(lt)}[/]", DropLevel: 7));
 
         // Session timer: total wall-clock since the session opened. Hidden under a minute so a
         // fresh session does not show a noisy "0m".
-        string sessChip = sessionElapsed is { } se && se.TotalSeconds >= 60 ? $"[{Dim}]{ClockHM(se)}[/]" : "";
+        if (sessionElapsed is { } se && se.TotalSeconds >= 60) segs.Add(new("session", $"[{Dim}]{ClockHM(se)}[/]", DropLevel: 4));
 
         // Context meter: bar+percent when a threshold is known (bar shrinks, then collapses to
         // a bare percent+total, under width pressure); a bare token count when tokens have
@@ -812,15 +844,12 @@ internal static class TuiComponents
         // noisy, meaningless "0 tokens". The bar plots TOTAL context (live + cached) against
         // the threshold - compaction fires on the total crossing it - split into a dim cached
         // segment and a bright live segment. `tokens` here is the live (uncached) count.
-        string Meter(int level)
+        if (threshold > 0)
         {
-            if (threshold > 0)
+            uint total = tokens + cached;
+            double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
+            string Bar(int barWidth)
             {
-                uint total = tokens + cached;
-                double fracTotal = Math.Clamp((double)total / threshold, 0, 1);
-                if (level >= 6)
-                    return $"[{Muted}]{fracTotal * 100:F0}% {Fmt(total)}[/]";
-                int barWidth = level >= 5 ? 10 : 16;
                 int filled = (int)Math.Round(fracTotal * barWidth);
                 int cachedCells = Math.Clamp((int)Math.Round((double)cached / threshold * barWidth), 0, filled);
                 int liveCells = filled - cachedCells;
@@ -831,54 +860,46 @@ internal static class TuiComponents
                              $"[{Dim}]" + new string('\u2501', empty) + "[/]";
                 return $"{bar} [{Muted}]{Fmt(total)}/{Fmt(threshold)} ({fracTotal * 100:F0}%)[/]";
             }
-            return tokens > 0 ? $"[{Muted}]{Fmt(tokens)} tokens[/]" : "";
+            segs.Add(new("context", Bar(16), DropLevel: 5));
+            segs.Add(new("context", Bar(10), MinLevel: 5, DropLevel: 6));
+            segs.Add(new("context", $"[{Muted}]{fracTotal * 100:F0}% {Fmt(total)}[/]", MinLevel: 6));
         }
+        else if (tokens > 0) segs.Add(new("context", $"[{Muted}]{Fmt(tokens)} tokens[/]"));
 
-        // Compose the footer at a degradation level (0 = everything). Uniform middot
-        // separators throughout - no mixed double-space/triple-space seams. Chips carry an
-        // optional badge id so the overload can report clickable extents from the same
-        // composition that produced the returned string.
-        (string Line, List<(int Col, int Width, string Id)> Extents) Compose(int level)
+        if (cached > 0 && threshold > 0) segs.Add(new("cached", $"[{Dim}]{Fmt(cached)} cached[/]", DropLevel: 3));
+        if (sysTokens > 0) segs.Add(new("sys", $"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]", DropLevel: 2));
+        if (toolTokens > 0) segs.Add(new("tools", $"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]", DropLevel: 2));
+        if (toolCalls > 0) segs.Add(new("calls", $"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]", DropLevel: 4));
+        // Model chip: the resolved model id (path prefix stripped), high-value so it survives to
+        // mid tiers - after a provider fallback/pin this is the fastest way to see what the
+        // session is actually running on.
+        if (!string.IsNullOrEmpty(model))
         {
-            var chips = new List<(string Markup, string? Id)>(modeBadges.Select(b => (b, (string?)null)));
-            if (liveTurnChip.Length > 0) chips.Add((liveTurnChip, null));
-            if (idleTurnChip.Length > 0 && level < 7) chips.Add((idleTurnChip, null));
-            if (sessChip.Length > 0 && level < 4) chips.Add((sessChip, null));
-            string meter = Meter(level);
-            if (meter.Length > 0) chips.Add((meter, null));
-            if (cached > 0 && threshold > 0 && level < 3) chips.Add(($"[{Dim}]{Fmt(cached)} cached[/]", null));
-            if (sysTokens > 0 && level < 2) chips.Add(($"[{Muted}]sys[/] [{Text}]{Fmt(sysTokens)}[/]", null));
-            if (toolTokens > 0 && level < 2) chips.Add(($"[{Muted}]tools[/] [{Text}]{Fmt(toolTokens)}[/]", null));
-            if (toolCalls > 0 && level < 4) chips.Add(($"[{Muted}]calls[/] [{Text}]{Fmt(toolCalls)}[/]", null));
-            // Model chip: the resolved model id (path prefix stripped), high-value so it
-            // survives to mid tiers - after a provider fallback/pin this is the fastest way
-            // to see what the session is actually running on.
-            if (!string.IsNullOrEmpty(model) && level < 5)
-            {
-                string m = model!;
-                int slash = m.LastIndexOf('/');
-                if (slash >= 0 && slash < m.Length - 1) m = m[(slash + 1)..];
-                chips.Add(($"[{Agent}]{Esc(m)}[/]", BadgeModel));
-            }
-            if (!string.IsNullOrEmpty(effort) && level < 7) chips.Add(($"[{Warn}]\u25d0 {Esc(effort)}[/]", BadgeEffort));
-            if (modeCycleHint && level < 1) chips.Add(($"[{Dim}]\u21e7\u21b9[/]", null));
-            var extents = new List<(int Col, int Width, string Id)>();
-            int col = 2;   // leading "  "
-            for (int i = 0; i < chips.Count; i++)
-            {
-                int w = TuiMarkup.MarkupWidth(chips[i].Markup);
-                if (chips[i].Id is { } id) extents.Add((col, w, id));
-                col += w + 3;   // " · " separator between chips
-            }
-            return ("  " + string.Join($" [{Dim}]\u00b7[/] ", chips.Select(c => c.Markup)), extents);
+            string m = model!;
+            int slash = m.LastIndexOf('/');
+            if (slash >= 0 && slash < m.Length - 1) m = m[(slash + 1)..];
+            segs.Add(new("model", $"[{Agent}]{Esc(m)}[/]", DropLevel: 5, BadgeId: BadgeModel));
         }
+        if (!string.IsNullOrEmpty(effort)) segs.Add(new("effort", $"[{Warn}]\u25d0 {Esc(effort)}[/]", DropLevel: 7, BadgeId: BadgeEffort));
+        if (modeCycleHint) segs.Add(new("hint", $"[{Dim}]\u21e7\u21b9[/]", DropLevel: 1));
+        return segs;
+    }
 
-        var (line, chosen) = Compose(0);
-        if (width > 8)
-            for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
-                (line, chosen) = Compose(lvl);
-        if (badges is not null) { badges.Clear(); badges.AddRange(chosen); }
-        return line;
+    /// <summary>Join the segments visible at <paramref name="level"/> with uniform middot
+    /// separators, reporting (column, width, id) extents for clickable chips measured on the
+    /// same composed string.</summary>
+    private static (string Line, List<(int Col, int Width, string Id)> Extents) ComposeFooter(List<FooterSegment> segments, int level)
+    {
+        var chips = segments.Where(s => s.VisibleAt(level)).ToList();
+        var extents = new List<(int Col, int Width, string Id)>();
+        int col = 2;   // leading "  "
+        foreach (var chip in chips)
+        {
+            int w = TuiMarkup.MarkupWidth(chip.Markup);
+            if (chip.BadgeId is { } id) extents.Add((col, w, id));
+            col += w + 3;   // " · " separator between chips
+        }
+        return ("  " + string.Join($" [{Dim}]\u00b7[/] ", chips.Select(c => c.Markup)), extents);
     }
 
     /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),
