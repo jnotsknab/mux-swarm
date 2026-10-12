@@ -762,8 +762,10 @@ internal static class TuiComponents
     /// report nothing.</summary>
     public static string Footer(uint tokens, uint threshold, bool plan, bool ultra, bool psub, bool sub, string? effort, bool modeCycleHint, uint cached, uint sysTokens, uint toolTokens, TimeSpan? sessionElapsed, bool giga, TimeSpan? turnElapsed, TimeSpan? lastTurn, uint toolCalls, string? model, int width, int pulseFrame, string? activeMode, List<(int Col, int Width, string Id)>? badges)
     {
-        var segments = ApplyFooterTemplate(FooterSegments(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached,
-            sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode), _footerTemplate);
+        var all = FooterSegments(tokens, threshold, plan, ultra, psub, sub, effort, modeCycleHint, cached,
+            sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode);
+        all.AddRange(ExtensionChips());
+        var segments = ApplyFooterTemplate(all, _footerTemplate);
         var (line, chosen) = ComposeFooter(segments, 0);
         if (width > 8)
             for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
@@ -883,6 +885,21 @@ internal static class TuiComponents
         if (!string.IsNullOrEmpty(effort)) segs.Add(new("effort", $"[{Warn}]\u25d0 {Esc(effort)}[/]", DropLevel: 7, BadgeId: BadgeEffort));
         if (modeCycleHint) segs.Add(new("hint", $"[{Dim}]\u21e7\u21b9[/]", DropLevel: 1));
         return segs;
+    }
+
+    /// <summary>
+    /// Chips pushed by extension processes (<c>footer/set</c>), id <c>{extension}.{id}</c>, plain text
+    /// in the muted color. They go after the built-in chips and are among the first dropped (level 2).
+    /// </summary>
+    internal static IEnumerable<FooterSegment> ExtensionChips() =>
+        Extensions.ExtensionFooter.Snapshot().Select(c => new FooterSegment(c.Id, $"[{Muted}]{Esc(c.Text)}[/]", DropLevel: 2));
+
+    /// <summary>True for an extension chip id in a footer template: <c>{extension}.{id}</c>.</summary>
+    internal static bool IsExtensionChipId(string id)
+    {
+        int dot = id.IndexOf('.');
+        return dot > 0 && dot < id.Length - 1 && Extensions.ExtensionFooter.IsValidId(id[(dot + 1)..])
+            && id[..dot].All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
     }
 
     /// <summary>Every footer segment id, in default render order: the ids a footer template may name.</summary>

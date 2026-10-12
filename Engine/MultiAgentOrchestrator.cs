@@ -695,6 +695,7 @@ public static class MultiAgentOrchestrator
                     input, chatClientFactory, agentModels, cancellationToken, toolsCatalog);
                 if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
                 if (disp == MetaCommandDispatch.Result.Handled) continue;
+                if (disp == MetaCommandDispatch.Result.Prompt) input = MetaCommandDispatch.TakePrompt() ?? "";
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
 

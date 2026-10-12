@@ -38,6 +38,9 @@ internal sealed class ExtensionProcess : IDisposable
     /// <summary>True until the process exits or is disposed.</summary>
     internal bool IsRunning { get; private set; } = true;
 
+    /// <summary>Receives <c>command/output</c> text while an extension command runs; null otherwise.</summary>
+    internal volatile Action<string>? CommandOutput;
+
     private ExtensionProcess(string name, Process process, IEnumerable<string> events)
     {
         Name = name;
@@ -64,6 +67,8 @@ internal sealed class ExtensionProcess : IDisposable
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
+            // No BOM: a BOM before the first JSON line breaks the extension's parser on Windows.
+            StandardInputEncoding = new System.Text.UTF8Encoding(false),
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
@@ -99,7 +104,10 @@ internal sealed class ExtensionProcess : IDisposable
         if (!IsRunning) return default;
         var (id, response) = _rpc.Begin(timeout, ct);
         if (!_outbox.Writer.TryWrite(Message(method, @params, id))) _rpc.Complete(id, default);
-        return await response;
+        var reply = await response;
+        // Cancelled by the caller (Esc) rather than timed out or exited: tell the process to stop.
+        if (ct.IsCancellationRequested && IsRunning) Notify("$/cancelRequest", new { id });
+        return reply;
     }
 
     /// <summary>The last lines the extension wrote to stderr (oldest first).</summary>
@@ -138,13 +146,34 @@ internal sealed class ExtensionProcess : IDisposable
                 try
                 {
                     using var doc = JsonDocument.Parse(line);
-                    _rpc.TryComplete(doc.RootElement);
+                    if (!_rpc.TryComplete(doc.RootElement)) OnMessage(doc.RootElement);
                 }
                 catch (JsonException) { AddStderr("[stdout, not JSON] " + line); }
             }
         }
         catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException) { }
         finally { OnExited(); }
+    }
+
+    /// <summary>
+    /// A message from the process that is not a response: notifications <c>footer/set</c>
+    /// <c>{ id, text }</c> (empty text removes the chip) and <c>command/output</c> <c>{ text }</c>.
+    /// Anything else is ignored. Requests from the process (with an id) are not supported yet.
+    /// </summary>
+    private void OnMessage(JsonElement msg)
+    {
+        if (msg.ValueKind != JsonValueKind.Object || !msg.TryGetProperty("method", out var m) || m.ValueKind != JsonValueKind.String) return;
+        msg.TryGetProperty("params", out var p);
+        string? Str(string key) => p.ValueKind == JsonValueKind.Object && p.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        switch (m.GetString())
+        {
+            case "footer/set":
+                if (ExtensionFooter.Set(Name, Str("id") ?? "", Str("text"))) MuxConsole.TuiRepaintSoon();
+                break;
+            case "command/output":
+                if (Str("text") is { Length: > 0 } text) CommandOutput?.Invoke(text);
+                break;
+        }
     }
 
     private async Task ReadStderrAsync()
@@ -171,6 +200,7 @@ internal sealed class ExtensionProcess : IDisposable
         IsRunning = false;
         _outbox.Writer.TryComplete();
         _rpc.CancelAll();
+        if (ExtensionFooter.Clear(Name)) MuxConsole.TuiRepaintSoon();
         int? code = null;
         try { if (_process.WaitForExit(1000)) code = _process.ExitCode; } catch (InvalidOperationException) { }
         AddStderr($"[exited{(code is { } c ? $" with code {c}" : "")}]");
@@ -180,6 +210,7 @@ internal sealed class ExtensionProcess : IDisposable
     public void Dispose()
     {
         IsRunning = false;
+        if (ExtensionFooter.Clear(Name)) MuxConsole.TuiRepaintSoon();
         _outbox.Writer.TryComplete();
         _rpc.CancelAll();
         try

@@ -49,6 +49,29 @@ internal sealed class ExtensionManifest
     /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
     [JsonPropertyName("footer")]
     public FooterManifest? Footer { get; set; }
+
+    /// <summary>
+    /// Slash commands served by the process (needs <c>process</c> and trust). Typing
+    /// <c>/name args</c> sends a <c>command/run</c> request; built-in names can never be taken.
+    /// </summary>
+    [JsonPropertyName("commands")]
+    public List<ExtensionCommandSpec> Commands { get; set; } = [];
+}
+
+/// <summary>One process-backed slash command declared in an extension manifest.</summary>
+internal sealed class ExtensionCommandSpec
+{
+    /// <summary>Command word without the slash: <c>a-z</c>, <c>0-9</c>, <c>-</c>, starting with a letter (max 32).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>One-line description shown in the palette and <c>/extensions</c>.</summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>Seconds to wait for the reply (default 60, max 3600). Esc cancels earlier.</summary>
+    [JsonPropertyName("timeoutSeconds")]
+    public int? TimeoutSeconds { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>

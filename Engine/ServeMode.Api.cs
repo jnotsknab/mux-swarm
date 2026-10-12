@@ -1573,6 +1573,14 @@ public static partial class ServeMode
                 inSessionSafe = e.Scope == Tui.TuiCommands.Scope.SessionOnly,
             })
             .ToList();
+        // Extension commands run in a session or at the menu without leaving the session.
+        items.AddRange(Extensions.ExtensionCommands.Entries.Select(e => new
+        {
+            cmd = e.Cmd,
+            desc = e.Desc,
+            scope = "session",
+            inSessionSafe = true,
+        }));
 
         var keybinds = Tui.TuiCommands.Keys
             .Select(k => new { keys = k.Keys, desc = k.Desc, context = k.Context })

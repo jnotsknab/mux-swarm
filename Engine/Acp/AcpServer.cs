@@ -427,6 +427,7 @@ public sealed class AcpServer
             ("giga", "Toggle dynamic team/workflow orchestration"),
             ("qc", "End the current session")
         };
+        cmds = [.. cmds, .. Extensions.ExtensionCommands.Entries.Select(e => (e.Cmd[1..], e.Desc))];
         WriteMessage(AcpProtocol.SessionUpdate(sid, AcpProtocol.AvailableCommandsUpdate(cmds)));
     }
 

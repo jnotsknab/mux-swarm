@@ -997,6 +997,7 @@ public static class SingleAgentOrchestrator
                     firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
                 if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
+                if (firstDisp == MetaCommandDispatch.Result.Prompt) { initialGoal = MetaCommandDispatch.TakePrompt() ?? ""; break; }
 
                 // Second gate: MetaCommandDispatch only knows the session-agnostic commands, so
                 // without this every other known session command would silently become the
@@ -2889,6 +2890,18 @@ public static class SingleAgentOrchestrator
                         MuxConsole.SetToolBrowserCatalog(toolsCatalog);
                         RenderStatusBar();
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
+                    }
+                }
+                else if (Extensions.ExtensionCommands.Match(metaCmd) is not null)
+                {
+                    // Extension command (served by a trusted extension process). A returned prompt
+                    // becomes the next user turn, like the ! shell escape above.
+                    var outcome = await Extensions.ExtensionCommands.RunAsync(metaCmd, cancellationToken);
+                    if (outcome.Prompt is { } extPrompt)
+                    {
+                        currentGoal = extPrompt;
+                        retryGoalSet = true;
+                        break;
                     }
                 }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))

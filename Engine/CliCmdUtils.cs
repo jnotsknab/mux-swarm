@@ -1932,6 +1932,9 @@ public static class CliCmdUtils
             var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
             var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
             MuxConsole.WriteMuted($"    process: {state}{events}");
+            if (ext.Commands.Count > 0) MuxConsole.WriteMuted($"    commands: {string.Join(", ", ext.Commands.Select(c => c.Cmd))}");
+            var chips = Extensions.ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(ext.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
+            if (chips.Count > 0) MuxConsole.WriteMuted($"    footer chips: {string.Join(", ", chips)}");
             foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
