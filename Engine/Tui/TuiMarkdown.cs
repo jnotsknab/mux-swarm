@@ -43,6 +43,10 @@ internal static class TuiMarkdown
     /// <summary>Sentinels protect already-emitted markup tags from later escaping/regex.</summary>
     private const string LB = "\uE000";  // stands in for '['
     private const string RB = "\uE001";  // stands in for ']'
+    // Span content brackets: protected from the final plain-run escape, restored as "[["/"]]" so
+    // every literal bracket is escaped exactly once (Escape() + the plain pass doubled them).
+    private const string ELB = "\uE002"; // stands in for an escaped '[' ("[[")
+    private const string ERB = "\uE003"; // stands in for an escaped ']' ("]]")
 
     /// <summary>Convert a single line of Markdown to Spectre markup understood by TuiMarkup.</summary>
     public static string ToMarkup(string line)
@@ -143,7 +147,7 @@ internal static class TuiMarkdown
 
         // 1) Inline code first (its content must not be further transformed). Emit with
         //    protected sentinel brackets so subsequent escaping leaves the tags intact.
-        s = InlineCode.Replace(s, m => Tag($"on {(TuiComponents.ContentBackgrounds ? Theme.Active.InlineCodeBg : "default")}", Code, Escape(m.Groups[1].Value)));
+        s = InlineCode.Replace(s, m => Tag($"on {(TuiComponents.ContentBackgrounds ? Theme.Active.InlineCodeBg : "default")}", Code, Protect(m.Groups[1].Value)));
 
         // 1b) Links/images [text](url) -> styled label (the URL is dropped in the terminal; an
         //     image ![alt](url) renders its alt text). Emitted with protected tags so the later
@@ -153,22 +157,22 @@ internal static class TuiMarkdown
             string label = m.Groups[2].Value;
             if (string.IsNullOrEmpty(label)) label = m.Groups[3].Value; // bare-URL / empty alt
             bool isImage = m.Groups[1].Value == "!";
-            string inner = Escape(label);
+            string inner = Protect(label);
             return isImage
                 ? Tag2("italic", inner)                                  // image alt -> italic
                 : $"{LB}{Link} underline{RB}{inner}{LB}/{RB}";           // link -> accent underline
         });
 
         // 1c) Autolinks <https://...> -> styled URL, angle brackets dropped.
-        s = AutoLink.Replace(s, m => $"{LB}{Link} underline{RB}{Escape(m.Groups[1].Value)}{LB}/{RB}");
+        s = AutoLink.Replace(s, m => $"{LB}{Link} underline{RB}{Protect(m.Groups[1].Value)}{LB}/{RB}");
 
         // 2) Bold-italic (***text***) first - without it the bold pass eats two of the three
         //    stars and the italic marker leaks as a literal. Then bold, italic, strike.
-        s = BoldItalicStar.Replace(s, m => Tag2("bold italic", Escape(m.Groups[1].Value)));
-        s = BoldStar.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
-        s = BoldUnder.Replace(s, m => Tag2("bold", Escape(m.Groups[1].Value)));
-        s = ItalicStar.Replace(s, m => Tag2("italic", Escape(m.Groups[1].Value)));
-        s = Strike.Replace(s, m => Tag2("strikethrough", Escape(m.Groups[1].Value)));
+        s = BoldItalicStar.Replace(s, m => Tag2("bold italic", Protect(m.Groups[1].Value)));
+        s = BoldStar.Replace(s, m => Tag2("bold", Protect(m.Groups[1].Value)));
+        s = BoldUnder.Replace(s, m => Tag2("bold", Protect(m.Groups[1].Value)));
+        s = ItalicStar.Replace(s, m => Tag2("italic", Protect(m.Groups[1].Value)));
+        s = Strike.Replace(s, m => Tag2("strikethrough", Protect(m.Groups[1].Value)));
 
         // 2b) Escaped markers: \* \` \_ \~ render the character, not the backslash.
         s = s.Replace("\\*", "*").Replace("\\`", "`").Replace("\\_", "_").Replace("\\~", "~");
@@ -176,7 +180,7 @@ internal static class TuiMarkdown
         // 3) Escape any remaining literal Spectre brackets in the plain runs, then restore
         //    the protected sentinel brackets to real markup brackets.
         s = s.Replace("[", "[[").Replace("]", "]]");
-        s = s.Replace(LB, "[").Replace(RB, "]");
+        s = s.Replace(LB, "[").Replace(RB, "]").Replace(ELB, "[[").Replace(ERB, "]]");
         return s;
     }
 
@@ -202,6 +206,9 @@ internal static class TuiMarkdown
     }
 
     private static string Escape(string s) => (s ?? "").Replace("[", "[[").Replace("]", "]]");
+
+    // Escape span content for Inline(): brackets become sentinels the final pass restores as "[["/"]]".
+    private static string Protect(string s) => (s ?? "").Replace("[", ELB).Replace("]", ERB);
 
     // Build a protected single-tag span: [open]text[/]
     private static string Tag2(string open, string inner) => $"{LB}{open}{RB}{inner}{LB}/{RB}";
