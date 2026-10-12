@@ -1128,7 +1128,10 @@ persistent team members (`memberAutoCompactTokenThreshold`, checked after each t
 the lead-only figures (prev turn, compactions, dropped) are not shown. Orchestrator and compaction calls are
 never stamped.
 
-**max** also gives the agent two tools (from the next `/agent` session; the tool list is fixed per session):
+**max** also gives the lead agent - and every **persistent** team member - two tools (fixed when the session or
+team starts: the next `/agent` session or team launch). A member's drops apply after its task, under its member
+lock, before the unchanged member compaction check; snapshots are named `pre-drop-<team>-<member>-*`. Fresh
+members, `/swarm`, `/pswarm` and delegated sub-agents get no drop tools (their history is not kept or is shared):
 - `context_map()` - the largest droppable blocks as `m12 tool_result Filesystem_read_text_file ~7.4k tok "preview"`.
 - `context_drop(ids, reason)` - queue blocks to drop. They are removed at the END of the turn (the session is
   idle then): a recovery snapshot `<sandboxPath>/prune-recovery/pre-drop-<session>-*.muxprune` (+ `.txt`) is

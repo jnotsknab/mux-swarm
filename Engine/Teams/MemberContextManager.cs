@@ -38,6 +38,25 @@ public sealed class MemberContextManager
     private readonly object _gate = new();
     private readonly Dictionary<string, MemberState> _states = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SemaphoreSlim> _memberLocks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Insight.ContextDrop> _drops = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// /insight max: the member's context_map/context_drop over its warm session, or null for fresh members (their
+    /// session is clean every task, so there is nothing to drop). One instance per member; drops it queues are
+    /// applied after the member's task (see <see cref="RunAsync"/>).
+    /// </summary>
+    internal Insight.ContextDrop? DropFor(string member)
+    {
+        if (!IsPersistent) return null;
+        lock (_gate)
+        {
+            if (!_drops.TryGetValue(member, out var drop))
+                _drops[member] = drop = new Insight.ContextDrop(() =>
+                    MultiAgentOrchestrator.Specialists.TryGetValue(member, out var s)
+                    && s.Session.TryGetInMemoryChatHistory(out var h) && h is not null ? h.ToList() : null);
+            return drop;
+        }
+    }
 
     public string Mode => _mode;
     public int ThresholdTokens => _thresholdTokens;
@@ -137,12 +156,46 @@ public sealed class MemberContextManager
 
         if (IsPersistent)
         {
+            await ApplyDropsAsync(member, ct);   // /insight max; separate step, compaction below is unchanged
             await MaybeCompactAsync(member, st, ct);
             lock (_gate) st.TasksSinceCompaction++;
         }
 
         st.Save(_teamName);
         return result;
+    }
+
+    /// <summary>
+    /// /insight max: apply the member's queued context_drop requests to its warm session now that its task has
+    /// finished (the session is idle), under the per-member lock. A recovery snapshot is saved first (same writer
+    /// as /prune); without one nothing is dropped. No-op when nothing is queued.
+    /// </summary>
+    private async Task ApplyDropsAsync(string member, CancellationToken ct)
+    {
+        Insight.ContextDrop? drop;
+        lock (_gate) _drops.TryGetValue(member, out drop);
+        if (drop is not { PendingCount: > 0 } || !MultiAgentOrchestrator.Specialists.TryGetValue(member, out var specialist)) return;
+        var sem = LockFor(member);
+        await sem.WaitAsync(ct);
+        try
+        {
+            if (!specialist.Session.TryGetInMemoryChatHistory(out var live) || live is null) { drop.Clear(); return; }
+            var originals = live.ToList();
+            var fs = App.Config.Filesystem;
+            var serialized = await specialist.Agent.SerializeSessionAsync(specialist.Session, cancellationToken: ct);
+            string recovery = ContextPruneSession.SaveSnapshot(serialized, fs?.SandboxPath ?? "", fs?.AllowedPaths ?? [],
+                $"pre-drop-{ContextPruneSession.SessionTag(_teamName + "-" + member)}", SessionSnapshotText.FullText(originals));
+            var (messages, dropped, saved) = drop.Apply(originals, recovery);
+            if (dropped == 0) return;
+            specialist.Session.SetInMemoryChatHistory(messages);
+            MuxConsole.WriteMuted($"  [teams] {member} dropped {dropped} context block(s) (~{saved / 2.5:N0} tokens); recovery: {recovery}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
+        {
+            drop.Clear();
+            MuxConsole.WriteMuted($"  [teams] {member} context drop skipped (no recovery snapshot: {ex.Message}).");
+        }
+        finally { sem.Release(); }
     }
 
     /// <summary>
