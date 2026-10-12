@@ -62,7 +62,7 @@ internal static class ContextGauge
             long n = content switch
             {
                 TextContent t => t.Text?.Length ?? 0,
-                FunctionResultContent r => r.Result?.ToString()?.Length ?? 0,
+                FunctionResultContent r => ContextPruner.ResultText(r).Sum(p => (long)p.Text.Length),
                 FunctionCallContent c => c.Arguments?.Sum(a => a.Key.Length + (a.Value?.ToString()?.Length ?? 0)) ?? 0,
                 _ => 0,
             };

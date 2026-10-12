@@ -37,6 +37,64 @@ public class InsightGaugeTests
         Assert.EndsWith("]", result);
     }
 
+    /// <summary>
+    /// MCP tools (e.g. Brave) return content parts, not a string. Live bug 2026-10-12: the stamp did
+    /// Result.ToString() and replaced the search results with "Microsoft.Extensions.AI.AIContent[]".
+    /// </summary>
+    [Fact]
+    public void ContentPartArrayResult_KeepsItsContent_AndGetsTheLineAsAnExtraPart()
+    {
+        AIContent[] parts = [new TextContent("result one"), new TextContent("result two")];
+        var msgs = new List<ChatMessage> { new(ChatRole.User, "go"), new(ChatRole.Tool, [new FunctionResultContent("c0", parts)]) };
+        InsightClient.Stamp(msgs, InsightLevel.Basic);
+        InsightClient.Stamp(msgs, InsightLevel.Basic);
+        var stamped = Assert.IsAssignableFrom<IList<AIContent>>(((FunctionResultContent)msgs[1].Contents[0]).Result);
+        var texts = stamped.OfType<TextContent>().Select(t => t.Text).ToList();
+        Assert.Equal("result one", texts[0]);
+        Assert.Equal("result two", texts[1]);
+        Assert.StartsWith(InsightClient.Marker, texts[2].TrimStart());
+        Assert.Equal(3, texts.Count);                                   // stamped once
+        Assert.DoesNotContain(texts, t => t.Contains("AIContent[]"));
+    }
+
+    [Fact]
+    public void ContentPartListResult_IsStampedInPlace()
+    {
+        var parts = new List<AIContent> { new TextContent("r") };
+        var msgs = new List<ChatMessage> { new(ChatRole.Tool, [new FunctionResultContent("c0", parts)]) };
+        InsightClient.Stamp(msgs, InsightLevel.Basic);
+        Assert.Equal(2, parts.Count);
+        Assert.Contains(InsightClient.Marker, ((TextContent)parts[1]).Text);
+    }
+
+    [Fact]
+    public void JsonStringResult_FromAIFunctionFactory_GetsTheLine()
+    {
+        var json = System.Text.Json.JsonSerializer.SerializeToElement("content of f0");
+        var msgs = new List<ChatMessage> { new(ChatRole.Tool, [new FunctionResultContent("c0", json)]) };
+        InsightClient.Stamp(msgs, InsightLevel.Basic);
+        Assert.StartsWith("content of f0\n\n" + InsightClient.Marker, ((FunctionResultContent)msgs[0].Contents[0]).Result as string);
+    }
+
+    [Fact]
+    public void StructuredJsonResult_IsLeftUntouched()
+    {
+        var json = System.Text.Json.JsonSerializer.SerializeToElement(new { hits = new[] { "a", "b" } });
+        var msgs = new List<ChatMessage> { new(ChatRole.Tool, [new FunctionResultContent("c0", json)]) };
+        InsightClient.Stamp(msgs, InsightLevel.Basic);
+        var result = ((FunctionResultContent)msgs[0].Contents[0]).Result;
+        Assert.IsType<System.Text.Json.JsonElement>(result);
+        Assert.Equal(json.GetRawText(), ((System.Text.Json.JsonElement)result!).GetRawText());
+    }
+
+    [Fact]
+    public void ToolShare_CountsContentPartText_NotTypeNames()
+    {
+        AIContent[] parts = [new TextContent(new string('t', 300))];
+        var msgs = new List<ChatMessage> { new(ChatRole.User, new string('u', 100)), new(ChatRole.Tool, [new FunctionResultContent("c", parts)]) };
+        Assert.Equal(75, ContextGauge.ToolShare(msgs), 1);
+    }
+
     [Fact]
     public void UserPrompt_GetsTheLineAsAnExtraTextPart()
     {

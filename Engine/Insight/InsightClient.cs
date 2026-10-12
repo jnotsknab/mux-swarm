@@ -27,11 +27,7 @@ internal sealed class InsightClient(IChatClient inner, Func<InsightLevel> level)
         try
         {
             if (last.Contents.OfType<FunctionResultContent>().LastOrDefault() is { } result)
-            {
-                string text = result.Result?.ToString() ?? "";
-                if (!text.Contains(Marker, StringComparison.Ordinal) && ContextGauge.Line(level, list) is { } line)
-                    result.Result = text + "\n\n" + line;
-            }
+                StampResult(result, level, list);
             else if (last.Role == ChatRole.User
                      && !last.Contents.OfType<TextContent>().Any(t => t.Text?.Contains(Marker, StringComparison.Ordinal) == true))
             {
@@ -42,6 +38,32 @@ internal sealed class InsightClient(IChatClient inner, Func<InsightLevel> level)
         }
         catch { /* best effort: never fail a model call over the gauge */ }
         return list;
+    }
+
+    /// <summary>
+    /// Append the line to a tool result without changing its shape: a string (or a JSON string, which is what
+    /// AIFunctionFactory returns) gets the text appended; a content-part list/array (MCP tools) gets an extra
+    /// text part; anything else (structured JSON, images only, null) is left untouched for this call.
+    /// Never stamps twice.
+    /// </summary>
+    private static void StampResult(FunctionResultContent result, InsightLevel level, IReadOnlyList<ChatMessage> list)
+    {
+        if (ContextPruner.ResultText(result).Any(p => p.Text.Contains(Marker, StringComparison.Ordinal))) return;
+        switch (result.Result)
+        {
+            case string text when ContextGauge.Line(level, list) is { } line:
+                result.Result = text + "\n\n" + line;
+                break;
+            case System.Text.Json.JsonElement { ValueKind: System.Text.Json.JsonValueKind.String } json   // AIFunctionFactory strings
+                when ContextGauge.Line(level, list) is { } line:
+                result.Result = json.GetString() + "\n\n" + line;
+                break;
+            case IList<AIContent> parts when ContextGauge.Line(level, list) is { } line:
+                var part = new TextContent("\n\n" + line);
+                if (parts.IsReadOnly) result.Result = new List<AIContent>(parts) { part };   // arrays are fixed-size
+                else parts.Add(part);
+                break;
+        }
     }
 
     /// <inheritdoc />
