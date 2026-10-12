@@ -116,13 +116,30 @@ public static class SelfUpdater
             StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Tag marker of nightly builds (e.g. <c>v0.16.0-nightly.20261012</c>).</summary>
+    internal const string NightlyMarker = "-nightly";
+
+    /// <summary>
+    /// Whether a release tag is on this build's update channel: nightly tags are only offered to builds that are
+    /// themselves nightlies, so stable/alpha users never auto-update onto an unreviewed nightly.
+    /// </summary>
+    internal static bool IsCandidate(string tag, string currentVersion)
+        => !tag.Contains(NightlyMarker, StringComparison.OrdinalIgnoreCase)
+           || currentVersion.Contains(NightlyMarker, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The newest tag (input is newest-first, GitHub's order) on this build's channel, or null.</summary>
+    internal static string? PickRelease(IEnumerable<string> tagsNewestFirst, string currentVersion)
+        => tagsNewestFirst.FirstOrDefault(t => IsCandidate(t, currentVersion));
+
     private static async Task<GhRelease?> FetchLatestAsync(HttpClient http, CancellationToken ct)
     {
         // /releases/latest excludes prereleases; the project ships -alpha tags, so take the newest
-        // of the full list instead (first entry is most-recent by GitHub's ordering).
+        // of the full list instead (first entry is most-recent by GitHub's ordering), skipping
+        // nightlies unless this build is one.
         var releases = await http.GetFromJsonAsync<List<GhRelease>>(
             $"https://api.github.com/repos/{Repo}/releases", ct);
-        return releases is { Count: > 0 } ? releases[0] : null;
+        string? tag = releases is null ? null : PickRelease(releases.Select(r => r.TagName), App.Version);
+        return tag is null ? null : releases!.First(r => r.TagName == tag);
     }
 
     /// <summary>Read-only: determine whether an update is available and what asset would be used.</summary>
