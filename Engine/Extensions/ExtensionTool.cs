@@ -30,6 +30,17 @@ internal sealed class ExtensionTool : AIFunction
     /// <inheritdoc/>
     public override JsonElement JsonSchema => _spec.Parameters;
 
+    /// <summary>
+    /// True when the manifest grants this tool to <paramref name="agentName"/> directly
+    /// (<c>agents: ["*"]</c> or the agent's name), bypassing the Swarm.json tool filter.
+    /// </summary>
+    internal bool GrantedTo(string? agentName) =>
+        _spec.Agents is { Count: > 0 } agents
+        && agents.Any(a => a == "*" || (agentName is not null && string.Equals(a, agentName, StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>True when <paramref name="tool"/> is an extension tool granted to <paramref name="agentName"/>.</summary>
+    internal static bool IsGranted(AITool tool, string? agentName) => tool is ExtensionTool t && t.GrantedTo(agentName);
+
     /// <summary>Build the tools of every running extension process (empty when none run).</summary>
     internal static IEnumerable<AITool> ForRunning()
     {
