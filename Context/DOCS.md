@@ -1117,8 +1117,15 @@ The line is appended to the newest input of each model call: the user's prompt, 
 It is saved in the session exactly as sent, so it is replayed history and the provider prompt cache is
 unaffected (measured on Claude: same cached share as no line). Each line costs ~20 tokens (basic) or ~40
 (full) and stays in history; only the newest is current, and the system prompt says so while insight is on.
-Numbers match the footer and `/api/status` (tokens / auto-compact threshold). Lead single-agent sessions
-only; swarm/pswarm and team members do not get the line.
+Numbers match the footer and `/api/status` (tokens / auto-compact threshold). Every lead session (`/agent`,
+`/teams` lead, stateless, resume, ACP, `--agent`) gets the line.
+
+Specialists (`/swarm`, `/pswarm`), delegated sub-agents and team members get it too (basic/full), with THEIR
+OWN numbers: tokens estimated from the request they are sending, against the team's member threshold for
+persistent team members (`memberAutoCompactTokenThreshold`, checked after each task), otherwise
+`auto-compact off` (nothing compacts those histories). At full they see `agent <name> | tool output N%`;
+the lead-only figures (prev turn, compactions, dropped) are not shown. Orchestrator and compaction calls are
+never stamped.
 
 **max** also gives the agent two tools (from the next `/agent` session; the tool list is fixed per session):
 - `context_map()` - the largest droppable blocks as `m12 tool_result Filesystem_read_text_file ~7.4k tok "preview"`.
