@@ -1,7 +1,8 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.Extensions.AI;
 using MuxSwarm.Engine;
 using MuxSwarm.State;
 using Xunit;
@@ -10,7 +11,8 @@ namespace MuxSwarm.Tests.Tests;
 
 /// <summary>
 /// Hook hygiene: when.event accepts a string or a list, explicit args bypass command splitting,
-/// hook output is captured (never inherited), and crashed persistent hooks back off.
+/// hook output is captured (never inherited), crashed persistent hooks back off, and tool events
+/// carry args / tool name / plain result text / goalId.
 /// </summary>
 public class HookHygieneTests
 {
@@ -92,5 +94,38 @@ public class HookHygieneTests
         int[] expected = [0, 0, 1, 2, 4, 8, 16, 32, 60, 60, 60];
         for (int failures = 0; failures < expected.Length; failures++)
             Assert.Equal(TimeSpan.FromSeconds(expected[failures]), HookWorker.RestartDelay(failures));
+    }
+
+    [Fact]
+    public void ToolEvents_CarryArgs_ToolName_AndPlainResultText()
+    {
+        var call = new FunctionCallContent("call-hh-1", "BraveSearch", new Dictionary<string, object?> { ["query"] = "mux" });
+        var callEv = HookWorker.ToolCallEvent("CodeAgent", call);
+        Assert.Equal("tool_call", callEv.Event);
+        Assert.Equal("BraveSearch", callEv.Tool);
+        Assert.Equal("""{"query":"mux"}""", callEv.Args);
+
+        var result = new FunctionResultContent("call-hh-1", new List<AIContent> { new TextContent("hello"), new TextContent("world") });
+        var resEv = HookWorker.ToolResultEvent("CodeAgent", result);
+        Assert.Equal("tool_result", resEv.Event);
+        Assert.Equal("BraveSearch", resEv.Tool);
+        Assert.Equal("hello\nworld", resEv.Summary);
+
+        Assert.Equal("plain", HookWorker.ResultText(JsonSerializer.SerializeToElement("plain")));
+        Assert.Null(HookWorker.ToolResultEvent("CodeAgent", new FunctionResultContent("unknown-call", "x")).Tool);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task GoalId_IsStampedFromAmbientScope()
+    {
+        // Run in a child flow so the AsyncLocal does not leak into other tests.
+        var ev = await System.Threading.Tasks.Task.Run(() =>
+        {
+            HookWorker.SetGoalId("goal-42");
+            var e = new HookEvent { Event = "hh_probe_unmatched" };
+            HookWorker.Enqueue(e);
+            return e;
+        });
+        Assert.Equal("goal-42", ev.GoalId);
     }
 }
