@@ -119,6 +119,9 @@ public static class NativeToolRegistry
             pool.AddRange(FilesystemTools.Build());
         if (ServerEnabled(config, ShellServer))
             pool.AddRange(ReplShellTools.Build());
+        // Tools served by running (trusted) extension processes, named "{extension}_{tool}" so the
+        // per-agent filter gates them by extension name exactly like an MCP server.
+        pool.AddRange(Extensions.ExtensionTool.ForRunning());
         return pool;
     }
 }

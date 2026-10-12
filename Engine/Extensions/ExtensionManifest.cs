@@ -54,6 +54,13 @@ internal sealed class ExtensionManifest
     /// </summary>
     [JsonPropertyName("intercepts")]
     public List<InterceptSpec> Intercepts { get; set; } = [];
+
+    /// <summary>
+    /// Tools the process serves. Each is exposed to the model as <c>{extension}_{name}</c> and is
+    /// only available while the (trusted) process runs.
+    /// </summary>
+    [JsonPropertyName("tools")]
+    public List<ExtensionToolSpec> Tools { get; set; } = [];
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
@@ -74,6 +81,34 @@ internal sealed class InterceptSpec
     /// <summary><c>allow</c> (default) runs the tool when the extension does not answer; <c>deny</c> blocks it.</summary>
     [JsonPropertyName("onTimeout")]
     public string? OnTimeout { get; set; }
+}
+
+/// <summary>One tool an extension process serves via <c>tool/call</c> requests.</summary>
+internal sealed class ExtensionToolSpec
+{
+    /// <summary>Tool name: lowercase letters, digits and '_', starting with a letter (max 48).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>What the tool does, shown to the model (required, max 1024 chars).</summary>
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
+
+    /// <summary>JSON Schema object for the arguments. Defaults to an object with no properties.</summary>
+    [JsonPropertyName("parameters")]
+    public System.Text.Json.JsonElement Parameters { get; set; }
+
+    /// <summary>Seconds to wait for the reply (default 60, max 600).</summary>
+    [JsonPropertyName("timeoutSeconds")]
+    public int? TimeoutSeconds { get; set; }
+
+    /// <summary>
+    /// Agents that get this tool without listing the extension in Swarm.json: <c>["*"]</c> = every
+    /// agent (including the orchestrator), or agent names (case-insensitive). Omitted = only agents
+    /// whose <c>mcpServers</c>/<c>toolPatterns</c> select it, like an MCP server.
+    /// </summary>
+    [JsonPropertyName("agents")]
+    public List<string>? Agents { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>
