@@ -1216,6 +1216,16 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   preset (default `default`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
+- **spinner**: thinking-indicator frames (1-32, each exactly one terminal cell, e.g. `["-", "\\", "|", "/"]`).
+  Replaces the built-in braille spinner on the main agent line (TUI and classic console).
+- **quips**: words the indicator cycles while the agent reasons (1-200, max 80 chars). Replaces the built-ins.
+- **toolLabels**: verb stem -> action label, e.g. `{ "read": "Peeking at", "search": "Hunting" }` (max 40 chars).
+  The verb stem is the first word of a tool name after its server prefix (`Filesystem_read_text_file` -> `read`).
+  Merged over the built-ins; across extensions, keys merge in name order and later names win.
+- **splash**: startup lines (1-200, max 80 chars). Replaces the whole built-in pool (quotes, facts, tips,
+  taglines) in the TUI splash and the web UI tip.
+- For spinner, quips and splash the later extension name wins (with a warning). All text is plain text:
+  Spectre markup such as `[red]` is shown literally, never interpreted.
 - Extensions load in name order. If two define the same theme, the later name wins (with a warning).
   Invalid manifests or entries are skipped with a warning; they never stop startup.
 - `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.

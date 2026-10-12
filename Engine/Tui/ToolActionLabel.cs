@@ -43,6 +43,22 @@ internal static class ToolActionLabel
         ["build"] = "Building", ["compile"] = "Building", ["sleep"] = "Sleeping", ["pause"] = "Sleeping",
     };
 
+    // Built-in verbs merged with extension overrides (ExtensionRegistry); null = built-ins only.
+    // Swapped as a whole dictionary, never mutated, so readers need no lock.
+    private static Dictionary<string, string>? _extensionVerbs;
+
+    private static Dictionary<string, string> Verbs => _extensionVerbs ?? _verbs;
+
+    /// <summary>Merge extension verb labels (verb stem -> label) over the built-ins; null or empty
+    /// restores the built-ins. Called by the extension loader.</summary>
+    internal static void SetExtensionVerbs(IReadOnlyDictionary<string, string>? overrides)
+    {
+        if (overrides is not { Count: > 0 }) { _extensionVerbs = null; return; }
+        var merged = new Dictionary<string, string>(_verbs, StringComparer.OrdinalIgnoreCase);
+        foreach (var (verb, label) in overrides) merged[verb] = label;
+        _extensionVerbs = merged;
+    }
+
     // Tokens dropped from the object/verb stream (noise that adds nothing to the label).
     private static readonly HashSet<string> _noise = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -61,7 +77,7 @@ internal static class ToolActionLabel
         string verbToken = tokens[0];
         var rest = tokens.Skip(1).Where(t => !_noise.Contains(t)).ToList();
 
-        if (_verbs.TryGetValue(verbToken, out var gerund))
+        if (Verbs.TryGetValue(verbToken, out var gerund))
         {
             // Object = up to the first two remaining words, humanized.
             string obj = string.Join(' ', rest.Take(2)).Trim();
@@ -95,7 +111,7 @@ internal static class ToolActionLabel
             bool looksLikePrefix =
                 first.EndsWith("Mcp", StringComparison.OrdinalIgnoreCase) ||
                 first.EndsWith("Server", StringComparison.OrdinalIgnoreCase) ||
-                (!_verbs.ContainsKey(SplitCamel(first).FirstOrDefault() ?? first) &&
+                (!Verbs.ContainsKey(SplitCamel(first).FirstOrDefault() ?? first) &&
                  char.IsUpper(first.Length > 0 ? first[0] : 'a'));
             if (looksLikePrefix)
                 segs = segs.Skip(1).ToArray();
