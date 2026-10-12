@@ -45,6 +45,35 @@ internal sealed class ExtensionManifest
     /// </summary>
     [JsonPropertyName("events")]
     public List<string> Events { get; set; } = [];
+
+    /// <summary>
+    /// Tool-call interceptors served by the process (<c>tool/before</c> / <c>tool/after</c>
+    /// requests). Each entry: <c>tool</c> (name or prefix ending in <c>*</c>), <c>on</c>
+    /// (<c>before</c>, <c>after</c> or <c>both</c>, default <c>before</c>), <c>timeoutMs</c>
+    /// (default 2000, max 30000), and <c>onTimeout</c> (<c>allow</c> default, or <c>deny</c>).
+    /// </summary>
+    [JsonPropertyName("intercepts")]
+    public List<InterceptSpec> Intercepts { get; set; } = [];
+}
+
+/// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
+internal sealed class InterceptSpec
+{
+    /// <summary>Tool name, or a prefix ending in <c>*</c> (<c>*</c> alone = every tool).</summary>
+    [JsonPropertyName("tool")]
+    public string Tool { get; set; } = "";
+
+    /// <summary><c>before</c> (default), <c>after</c> or <c>both</c>.</summary>
+    [JsonPropertyName("on")]
+    public string? On { get; set; }
+
+    /// <summary>How long to wait for the extension's answer, in milliseconds (default 2000).</summary>
+    [JsonPropertyName("timeoutMs")]
+    public int? TimeoutMs { get; set; }
+
+    /// <summary><c>allow</c> (default) runs the tool when the extension does not answer; <c>deny</c> blocks it.</summary>
+    [JsonPropertyName("onTimeout")]
+    public string? OnTimeout { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>

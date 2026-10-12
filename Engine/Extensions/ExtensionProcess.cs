@@ -38,11 +38,15 @@ internal sealed class ExtensionProcess : IDisposable
     /// <summary>True until the process exits or is disposed.</summary>
     internal bool IsRunning { get; private set; } = true;
 
-    private ExtensionProcess(string name, Process process, IEnumerable<string> events)
+    /// <summary>Tool-call interceptors this process serves (from its manifest).</summary>
+    internal IReadOnlyList<InterceptRule> Intercepts { get; }
+
+    private ExtensionProcess(string name, Process process, IEnumerable<string> events, IReadOnlyList<InterceptRule> intercepts)
     {
         Name = name;
         _process = process;
         _subscriptions = new HashSet<string>(events, StringComparer.OrdinalIgnoreCase);
+        Intercepts = intercepts;
     }
 
     /// <summary>
@@ -50,7 +54,8 @@ internal sealed class ExtensionProcess : IDisposable
     /// A command containing a path separator resolves against the extension folder; a bare name
     /// is looked up on PATH. Throws when the process cannot start.
     /// </summary>
-    internal static ExtensionProcess Start(string name, string dir, ExtensionProcessSpec spec, IEnumerable<string> events)
+    internal static ExtensionProcess Start(string name, string dir, ExtensionProcessSpec spec, IEnumerable<string> events,
+        IReadOnlyList<InterceptRule>? intercepts = null)
     {
         var command = spec.Command.Trim();
         if (command.Contains('/') || command.Contains('\\')) command = Path.GetFullPath(command, dir);
@@ -73,7 +78,7 @@ internal sealed class ExtensionProcess : IDisposable
         if (!process.Start()) throw new InvalidOperationException($"could not start '{command}'.");
         ProcessCleanup.Instance.Track(process);
 
-        var ext = new ExtensionProcess(name, process, events);
+        var ext = new ExtensionProcess(name, process, events, intercepts ?? []);
         _ = Task.Run(ext.ReadStdoutAsync);
         _ = Task.Run(ext.ReadStderrAsync);
         _ = Task.Run(ext.DrainOutboxAsync);

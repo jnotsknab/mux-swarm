@@ -2732,7 +2732,14 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .AsIChatClient()
             .AsBuilder()
             .UseFunctionInvocation(configure: c =>
-                c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
+            {
+                c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue;
+                // Extension interceptors (tool/before, tool/after). Only installed while extensions
+                // are enabled, so the default path is the SDK's own invocation; when enabled but no
+                // interceptor matches, InvokeAsync falls straight through to the same call.
+                if (Config.Extensions.Enabled)
+                    c.FunctionInvoker = Engine.Extensions.ToolInterceptor.InvokeAsync;
+            })
             // INSIDE function-invocation (lead single-agent only): splice a user's mid-turn steer
             // ("by the way ...", Ctrl+N) into the live message list on the next model round-trip, so
             // the agent sees it before finishing instead of at the turn boundary. Same in-place

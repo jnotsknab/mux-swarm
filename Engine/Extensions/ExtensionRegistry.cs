@@ -24,6 +24,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Lifecycle events the process subscribes to.</summary>
         internal IReadOnlyList<string> Events { get; init; } = [];
+
+        /// <summary>Validated tool-call interceptors served by the process.</summary>
+        internal IReadOnlyList<InterceptRule> Intercepts { get; init; } = [];
     }
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
@@ -142,9 +145,34 @@ internal static partial class ExtensionRegistry
             {
                 Process = process,
                 Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
+                Intercepts = BuildIntercepts(name, process, manifest.Intercepts, problems),
             });
         }
         return new Result(extensions, themes, problems);
+    }
+
+    /// <summary>Validate <c>intercepts</c> entries; invalid ones become problems and are dropped.</summary>
+    internal static IReadOnlyList<InterceptRule> BuildIntercepts(string name, ExtensionProcessSpec? process,
+        IEnumerable<InterceptSpec>? specs, List<string> problems)
+    {
+        var rules = new List<InterceptRule>();
+        foreach (var spec in specs ?? [])
+        {
+            var tool = spec.Tool?.Trim() ?? "";
+            var on = (spec.On ?? "before").Trim().ToLowerInvariant();
+            var onTimeout = (spec.OnTimeout ?? "allow").Trim().ToLowerInvariant();
+            string? error =
+                process is null ? "intercepts need a process" :
+                tool.Length == 0 || tool.IndexOf('*') is >= 0 and var star && star != tool.Length - 1 ? $"intercept tool '{tool}' is invalid ('*' only at the end)" :
+                on is not ("before" or "after" or "both") ? $"intercept 'on' must be before, after or both (got '{spec.On}')" :
+                onTimeout is not ("allow" or "deny") ? $"intercept 'onTimeout' must be allow or deny (got '{spec.OnTimeout}')" :
+                spec.TimeoutMs is <= 0 ? "intercept timeoutMs must be positive" :
+                null;
+            if (error is not null) { problems.Add($"{name}: {error}; skipped."); continue; }
+            var timeout = TimeSpan.FromMilliseconds(Math.Min(spec.TimeoutMs ?? 2000, (int)ToolInterceptor.MaxTimeout.TotalMilliseconds));
+            rules.Add(new InterceptRule(tool, on is "before" or "both", on is "after" or "both", timeout, onTimeout == "deny"));
+        }
+        return rules;
     }
 
     // Theme color roles settable from a manifest: every string property except Name.

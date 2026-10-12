@@ -1248,6 +1248,26 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
 
+### Tool-call interceptors
+
+A trusted process can gate tool calls for every agent, team and daemon run:
+
+```jsonc
+"intercepts": [
+  { "tool": "Shell_*", "on": "before", "timeoutMs": 2000, "onTimeout": "deny" }, // name, or prefix ending in *
+  { "tool": "*", "on": "after" }                                                  // on: before | after | both
+]
+```
+
+- `tool/before` request, params `{ tool, arguments }`. Reply `result`:
+  `{ "decision": "allow" }`, `{ "decision": "allow", "arguments": { ... } }` (replaces the arguments),
+  or `{ "decision": "deny", "reason": "..." }` (the tool does not run; the model sees
+  `[BLOCKED by extension <name>] <reason>`).
+- `tool/after` request, params `{ tool, arguments, result }`. Reply `result: { "result": "<text>" }`
+  to replace what the model sees (e.g. redact secrets); any other reply keeps the original.
+- No answer within `timeoutMs` (default 2000, max 30000), an `error` reply, or a dead process applies
+  `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
+
 ## Session Sharing (`/share`, `/join`)
 
 Share a live session with someone on the same network. Guests see exactly what your TUI draws, in real time.
