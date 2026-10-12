@@ -93,6 +93,11 @@ internal static class TuiCommands
         new("/daemon cron",   "Add a cron trigger - bare = interactive builder (plain-English schedule OK)", Scope.Both),
         new("/daemon watch",  "Add a file-watch trigger - bare = interactive builder", Scope.Both),
         new("/daemon cancel", "Cancel a runtime trigger (/daemon cancel <id>)", Scope.Both),
+        new("/insight",       "Show or set the agent's context self-awareness (/insight off|basic|full|max)", Scope.Both),
+        new("/insight off",   "Agent gets no context line (default)", Scope.Both),
+        new("/insight basic", "Agent sees context used / threshold on every model call", Scope.Both),
+        new("/insight full",  "Basic + growth per turn, tool-output share, compactions", Scope.Both),
+        new("/insight max",   "Full + context_map / context_drop tools (from the next session)", Scope.Both),
         new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
@@ -194,6 +199,7 @@ internal static class TuiCommands
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da", "/join", "/share kick", "/share control",
         "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom", "/proxy",
+        "/insight",
     };
 
     /// <summary>True when <paramref name="cmd"/> expects an inline argument (Tab keeps a space).</summary>

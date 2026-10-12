@@ -1088,6 +1088,10 @@ public static class SingleAgentOrchestrator
             App.UltraMode);
 
         systemPrompt = preamble + "\r\n\r\n" + systemPrompt;
+        // /insight: tell the agent what the context line means (only when on, so prompts are unchanged when off).
+        // Fixed at session start: changing the level mid-session changes the line, not the system prompt.
+        if (Insight.InsightLevels.Current != Insight.InsightLevel.Off)
+            systemPrompt += Insight.InsightPrompt.Note(Insight.InsightLevels.Current);
 
         var listSkillsTool = AIFunctionFactory.Create(
             method: () =>
@@ -2828,6 +2832,11 @@ public static class SingleAgentOrchestrator
                 {
                     // Live session sharing (process-level, session-agnostic like /daemon).
                     await Share.ShareCommand.RunAsync(metaCmd);
+                }
+                else if (Insight.InsightCommand.Matches(metaCmd))
+                {
+                    // Session-agnostic setting: the insight client reads the level on every model call.
+                    Insight.InsightCommand.Run(metaCmd);
                 }
                 else if (metaCmd.Equals("/daemon", StringComparison.OrdinalIgnoreCase) || metaCmd.Equals("/da", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/daemon ", StringComparison.OrdinalIgnoreCase) || metaCmd.StartsWith("/da ", StringComparison.OrdinalIgnoreCase))

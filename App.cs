@@ -1245,6 +1245,10 @@ internal class App
                     CliCmdUtils.HandleTheme(userInput);
                     break;
 
+                case var ins when Engine.Insight.InsightCommand.Matches(ins):
+                    Engine.Insight.InsightCommand.Run(userInput);
+                    break;
+
                 case "/reloadskills":
                     CliCmdUtils.ReloadSkills();
                     break;
@@ -2714,6 +2718,13 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // the agent sees it before finishing instead of at the turn boundary. Same in-place
             // mechanism as the deep-memory MidTurnReflectionClient, but sourced from the user and
             // re-checked each round-trip. Inert pass-through when no steer is queued (the common case).
+            // INSIDE function-invocation (lead single-agent only): /insight context line, stamped in place
+            // onto the newest message of every model call so the session replays it (prompt cache intact).
+            // Inert while insight is off. Outside the steer client, so the line lands on the tool result
+            // or the user's prompt rather than on a mid-turn steer note.
+            .Use(inner => wrapMidTurnReflection
+                ? new Engine.Insight.InsightClient(inner, () => Engine.Insight.InsightLevels.Current)
+                : inner)
             .Use(inner => wrapMidTurnReflection
                 ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
                 : inner)

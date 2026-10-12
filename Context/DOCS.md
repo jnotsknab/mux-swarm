@@ -831,6 +831,7 @@ Flags can be combined. Common stacks:
 /tokens         Show the current token / context breakdown
 /context [n]    Show usage, or set the context window (/context <n|64k|max>)
 /prune [kind]   Deterministic local context trim, no model call (dupes | tools | stale; bare = all)
+/insight [lvl]  Show/set the agent's context self-awareness: off | basic | full | max (also at the menu)
 /paste          Paste clipboard text or a screenshot into the draft
 /tokens all     Per-model matrixed cost/token breakdown (alias of /cost all)
 /effort         Cycle live effort: low -> med -> high -> xhigh -> max -> low (also Shift+Tab)
@@ -1099,6 +1100,25 @@ themselves and to flag any reflection that conflicts with what they observe.
 
 `/heal` / `/reflect` can additionally propose a new `SKILL` (alongside BRAIN/MEMORY write-backs):
 accepting one scaffolds a `SKILL.md` under the skills dir and hot-reloads the skill manifest.
+
+## Context insight - `/insight` (config `insight.level`)
+
+Tells the lead `/agent` session how full its context window is, so it can plan around auto-compaction.
+Off by default. `/insight <level>` applies immediately and persists to config.json (`"insight": { "level": "basic" }`).
+
+| Level | The agent gets |
+|---|---|
+| `off` | nothing (default) |
+| `basic` | `[mux context: 46.7k/200k (23%), auto-compact at 200k]` on every model call |
+| `full` | basic `\| prev turn +38k \| tool output 61% \| compactions 1` |
+| `max` | full + `dropped N`, plus the `context_map` / `context_drop` tools (next session) |
+
+The line is appended to the newest input of each model call: the user's prompt, or the latest tool result.
+It is saved in the session exactly as sent, so it is replayed history and the provider prompt cache is
+unaffected (measured on Claude: same cached share as no line). Each line costs ~20 tokens (basic) or ~40
+(full) and stays in history; only the newest is current, and the system prompt says so while insight is on.
+Numbers match the footer and `/api/status` (tokens / auto-compact threshold). Lead single-agent sessions
+only; swarm/pswarm and team members do not get the line.
 
 ## Cost breakdown - `/cost all` / `/tokens all`
 
