@@ -1135,6 +1135,8 @@ team starts: the next `/agent` session or team launch). A member's drops apply a
 lock, before the unchanged member compaction check; snapshots are named `pre-drop-<team>-<member>-*`. Fresh
 members, `/swarm`, `/pswarm` and delegated sub-agents get no drop tools (their history is not kept or is shared):
 - `context_map()` - the largest droppable blocks as `m12 tool_result Filesystem_read_text_file ~7.4k tok "preview"`.
+  A message holding several blocks (parallel tool results) lists each as `m12.0`, `m12.1`, ...; passing `m12`
+  drops all of them.
 - `context_drop(ids, reason)` - queue blocks to drop. They are removed at the END of the turn (the session is
   idle then): a recovery snapshot `<sandboxPath>/prune-recovery/pre-drop-<session>-*.muxprune` (+ `.txt`) is
   saved first, then each block becomes `[dropped by agent: <reason>; N chars; recover: search <snapshot>.txt]`.
