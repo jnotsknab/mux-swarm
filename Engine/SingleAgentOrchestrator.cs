@@ -1699,9 +1699,12 @@ public static class SingleAgentOrchestrator
             }
         }
 
-        // midTurnGoal/midTurnTools: set only for mid-turn compaction, whose current turn is not committed to the
-        // session yet; they are recorded in the snapshot .txt and the summary so the turn is not lost from view.
-        async Task<bool> TryCompactAsync(string? instruction = null, string? midTurnGoal = null, IReadOnlyList<string>? midTurnTools = null)
+        // midTurnGoal/midTurnTools/inFlight: set only for mid-turn compaction, whose current turn is not committed to
+        // the session yet. Goal and tools are recorded in the snapshot .txt and the summary; inFlight (the cut pass's
+        // input + streamed messages, tool calls and results included) feeds the snapshot and the tool manifest, so
+        // the agent can see which calls already ran and continue instead of repeating them.
+        async Task<bool> TryCompactAsync(string? instruction = null, string? midTurnGoal = null, IReadOnlyList<string>? midTurnTools = null,
+            IReadOnlyList<ChatMessage>? inFlight = null)
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -1731,8 +1734,12 @@ public static class SingleAgentOrchestrator
                     // Compaction replaces the session; keep a recoverable copy of the full pre-compaction
                     // history first (same writer as /prune) and point the agent at it. The typed session
                     // history (with tool calls) feeds the deterministic manifest; conversationHistory is text-only.
-                    IReadOnlyList<ChatMessage> typedHistory =
-                        session.TryGetInMemoryChatHistory(out var th) && th is not null ? th.ToList() : conversationHistory.ToList();
+                    // A fresh session (no run committed yet) has no typed history; then the in-flight pass already
+                    // carries everything (its input is the reseeded/compacted context plus the goal).
+                    List<ChatMessage> typedHistory =
+                        session.TryGetInMemoryChatHistory(out var th) && th is not null ? th.ToList()
+                        : inFlight is null ? conversationHistory.ToList() : new List<ChatMessage>();
+                    if (inFlight is not null) typedHistory.AddRange(inFlight);
                     string inProgress = SessionSnapshotText.InProgress(midTurnGoal, midTurnTools);
                     string? snapshotPath = await SavePreCompactionSnapshotAsync(typedHistory, inProgress);
                     string summaryText = compactedMsg.Text;
@@ -2077,21 +2084,27 @@ public static class SingleAgentOrchestrator
                         int autoContinues = 0;
                         int maxAutoContinues = ExecutionLimits.Current.MaxAutoContinuesPerTurn;
                         Microsoft.Extensions.AI.ChatFinishReason? lastFinishReason;
-                        // Mid-turn compaction (executionLimits.midTurnCompaction): tripped the moment an
-                        // authoritative UsageContent frame reports the running token total has crossed the
-                        // threshold, then serviced after the stream unwinds (a session swap mid-enumeration
-                        // is unsafe). _disabled latches on for the rest of the turn if a compaction fails to
-                        // get back under the threshold, so a summary that stays large cannot re-trip forever.
+                        // Mid-turn compaction (executionLimits.midTurnCompaction): armed when an authoritative
+                        // UsageContent frame reports the running token total over the threshold; the stream is
+                        // stopped after that model call's tool results (MidTurnCompactionCut) and the compaction
+                        // is serviced once it unwinds (a session swap mid-enumeration is unsafe). A final answer
+                        // is never cut: it finishes and the next turn compacts. _disabled latches on for the rest
+                        // of the turn if a compaction fails to get back under the threshold, so a summary that
+                        // stays large cannot re-trip forever.
                         bool midTurnCompactPending = false;
                         bool midTurnCompactDisabled = false;
                         do
                         {
                         turnCts.Token.ThrowIfCancellationRequested();
                         lastFinishReason = null;
+                        // A cut pass is not committed to the session, so keep its updates for the compaction.
+                        var passUpdates = new List<AgentResponseUpdate>();
+                        var midTurnCut = new MidTurnCompactionCut();
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
                             activityTimeout.Ping();
+                            passUpdates.Add(update);
                             if (update.FinishReason is { } fr) lastFinishReason = fr;
 
                             if (!string.IsNullOrEmpty(update.Text))
@@ -2283,23 +2296,21 @@ public static class SingleAgentOrchestrator
                                         details.InputTokenCount ?? 0, details.OutputTokenCount ?? 0,
                                         details.CachedInputTokenCount ?? 0, details.ReasoningTokenCount ?? 0,
                                         details.TotalTokenCount ?? 0, singleAgentDef.Name);
-
-                                    // Mid-turn compaction: this UsageContent frame is the authoritative token
-                                    // checkpoint, so it is the earliest safe point to notice the session has grown
-                                    // past the threshold WITHIN a turn. Flag it and stop consuming the stream; the
-                                    // actual compaction (which swaps the session) runs once the enumeration unwinds.
-                                    // Fires regardless of finish reason: the authoritative token total only lands
-                                    // on the terminal frame (which often carries Stop), so gating on !Stop would
-                                    // defer every peak-at-end crossing to the next turn and defeat mid-turn compaction.
-                                    if (ExecutionLimits.Current.MidTurnCompaction
-                                        && !midTurnCompactDisabled
-                                        && autoCompactTokenThreshold is int mtcThreshold
-                                        && _sessionTokens > mtcThreshold)
-                                    {
-                                        midTurnCompactPending = true;
-                                        break;
-                                    }
                                 }
+                            }
+
+                            // Mid-turn compaction: a usage frame over the threshold arms the cut; stop consuming
+                            // the stream once that model call's tool results are in (the next, larger call is
+                            // never sent). Only with a compaction model, because a cut pass is not committed to
+                            // the session and must be compacted to survive.
+                            if (ExecutionLimits.Current.MidTurnCompaction
+                                && !midTurnCompactDisabled
+                                && midTurnCut.Observe(update.Contents,
+                                    autoCompactTokenThreshold is int mtcThreshold && _sessionTokens > mtcThreshold)
+                                && ResolveCompactionClient() is not null)
+                            {
+                                midTurnCompactPending = true;
+                                break;
                             }
                         }
 
@@ -2322,7 +2333,11 @@ public static class SingleAgentOrchestrator
                             responseText.Clear();
 
                             MuxConsole.WriteInfo($"Context crossed limit mid-turn (~{_sessionTokens:N0} tokens). Auto-compacting...");
-                            bool mtcOk = await TryCompactAsync(midTurnGoal: currentGoal, midTurnTools: turnToolNames.ToList());
+                            // The cut pass is not in the session: hand its typed messages to the snapshot and the tool
+                            // manifest (as for between-turn compaction, raw tool output never goes to the summarizer).
+                            var inFlight = messages.Concat(passUpdates.ToAgentResponse().Messages).ToList();
+                            bool mtcOk = await TryCompactAsync(midTurnGoal: currentGoal, midTurnTools: turnToolNames.ToList(),
+                                inFlight: inFlight);
 
                             if (mtcOk)
                             {

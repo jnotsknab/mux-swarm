@@ -113,13 +113,11 @@ public class ExecutionLimits
     public int MaxTaskAttempts { get; set; } = 3;
 
     /// <summary>
-    /// When true, a single-agent turn is auto-compacted MID-TURN as soon as an authoritative
-    /// UsageContent checkpoint reports the running session token total has crossed the
-    /// compaction threshold - rather than waiting for the next user input. TryCompactAsync
-    /// summarizes the conversation, spins up a fresh session from the summary, and the current
-    /// turn continues on the compacted context (the live message list is wiped down to the
-    /// reseeded summary; the system prompt lives on the agent and is unaffected). Enabled by
-    /// default; set false to restore the legacy behavior of only compacting between turns.
+    /// When true, a single-agent turn is auto-compacted MID-TURN once a model call's usage reports
+    /// the session over the compaction threshold: the tools that call requested run, then the turn
+    /// stops, is compacted (its tool calls are listed in the summary's tool manifest and saved in the
+    /// pre-compaction snapshot), and continues on the compacted context. A crossing on the final answer is not cut; the next turn compacts first.
+    /// Needs a compaction model. Enabled by default; set false to compact only between turns.
     /// </summary>
     [JsonPropertyName("midTurnCompaction")]
     public bool MidTurnCompaction { get; set; } = true;
