@@ -45,6 +45,33 @@ internal sealed class ExtensionManifest
     /// </summary>
     [JsonPropertyName("events")]
     public List<string> Events { get; set; } = [];
+
+    /// <summary>
+    /// Tools the process serves. Each is exposed to the model as <c>{extension}_{name}</c> and is
+    /// only available while the (trusted) process runs.
+    /// </summary>
+    [JsonPropertyName("tools")]
+    public List<ExtensionToolSpec> Tools { get; set; } = [];
+}
+
+/// <summary>One tool an extension process serves via <c>tool/call</c> requests.</summary>
+internal sealed class ExtensionToolSpec
+{
+    /// <summary>Tool name: lowercase letters, digits and '_', starting with a letter (max 48).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>What the tool does, shown to the model (required, max 1024 chars).</summary>
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
+
+    /// <summary>JSON Schema object for the arguments. Defaults to an object with no properties.</summary>
+    [JsonPropertyName("parameters")]
+    public System.Text.Json.JsonElement Parameters { get; set; }
+
+    /// <summary>Seconds to wait for the reply (default 60, max 600).</summary>
+    [JsonPropertyName("timeoutSeconds")]
+    public int? TimeoutSeconds { get; set; }
 }
 
 /// <summary>How to start an extension process. Never run through a shell.</summary>

@@ -24,7 +24,19 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Lifecycle events the process subscribes to.</summary>
         internal IReadOnlyList<string> Events { get; init; } = [];
+
+        /// <summary>Validated tools the process serves (see <see cref="ExtensionTool"/>).</summary>
+        internal IReadOnlyList<ExtensionToolSpec> Tools { get; init; } = [];
     }
+
+    /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension tool call.</summary>
+    internal const int DefaultToolTimeoutSeconds = 60, MaxToolTimeoutSeconds = 600;
+
+    // Exposed names are "{extension}_{tool}"; providers cap function names at 64 chars.
+    private const int MaxExposedToolName = 64;
+
+    [GeneratedRegex("^[a-z][a-z0-9_]{0,47}$")]
+    private static partial Regex ToolNamePattern();
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems);
@@ -142,10 +154,41 @@ internal static partial class ExtensionRegistry
             {
                 Process = process,
                 Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
+                Tools = ValidateTools(name, manifest.Tools ?? [], process is not null, problems),
             });
         }
         return new Result(extensions, themes, problems);
     }
+
+    // Keep the well-formed tools; report the rest. Tools need a process to answer them.
+    private static List<ExtensionToolSpec> ValidateTools(string ext, List<ExtensionToolSpec> specs, bool hasProcess, List<string> problems)
+    {
+        var ok = new List<ExtensionToolSpec>();
+        if (specs.Count > 0 && !hasProcess) { problems.Add($"{ext}: tools need a process; tools ignored."); return ok; }
+        foreach (var spec in specs)
+        {
+            var toolName = spec?.Name?.Trim() ?? "";
+            string? error =
+                spec is null || !ToolNamePattern().IsMatch(toolName) ? $"tool name '{toolName}' is invalid (a-z, 0-9, '_', starting with a letter, max 48)"
+                : ext.Length + 1 + toolName.Length > MaxExposedToolName ? $"tool '{toolName}': '{ext}_{toolName}' is longer than {MaxExposedToolName} characters"
+                : ok.Any(t => t.Name == toolName) ? $"duplicate tool '{toolName}'"
+                : string.IsNullOrWhiteSpace(spec.Description) || spec.Description.Length > 1024 ? $"tool '{toolName}' needs a description (max 1024 chars)"
+                : spec.Parameters.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined or JsonValueKind.Null) ? $"tool '{toolName}': parameters must be a JSON Schema object"
+                : spec.TimeoutSeconds is < 1 or > MaxToolTimeoutSeconds ? $"tool '{toolName}': timeoutSeconds must be 1-{MaxToolTimeoutSeconds}"
+                : null;
+            if (error is not null) { problems.Add($"{ext}: {error}; skipped."); continue; }
+            ok.Add(new ExtensionToolSpec
+            {
+                Name = toolName,
+                Description = spec!.Description.Trim(),
+                Parameters = spec.Parameters.ValueKind == JsonValueKind.Object ? spec.Parameters.Clone() : EmptySchema,
+                TimeoutSeconds = spec.TimeoutSeconds ?? DefaultToolTimeoutSeconds,
+            });
+        }
+        return ok;
+    }
+
+    private static readonly JsonElement EmptySchema = JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
 
     // Theme color roles settable from a manifest: every string property except Name.
     private static readonly Dictionary<string, PropertyInfo> ThemeRoles = typeof(Theme)

@@ -1244,9 +1244,28 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
   (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
 - stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
+  `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
+  or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout
+  (`timeoutSeconds`, default 60, max 600) or an exited process are returned to the model as
+  `[extension <name>] tool failed: <reason>`; they never stop the turn.
 - Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
+
+```jsonc
+// extension.json (tools)
+"tools": [
+  { "name": "send", "description": "Send a desktop notification.", "timeoutSeconds": 10,
+    "parameters": { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"] } }
+]
+```
+
+- Tool names: `a-z`, `0-9`, `_`, starting with a letter (max 48). The model sees `{extension}_{name}`
+  (e.g. `notify_send`), so an agent gets an extension's tools by listing the extension name in its
+  `mcpServers` (exactly like an MCP server) or by a `toolPatterns` entry such as `notify_*`.
+- Tools exist only while the trusted process runs. A session fixes its tool list when it starts, so new
+  or changed tools appear in sessions started after `/refresh` (same as MCP servers).
 
 ## Session Sharing (`/share`, `/join`)
 

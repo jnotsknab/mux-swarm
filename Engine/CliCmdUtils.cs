@@ -1930,7 +1930,8 @@ public static class CliCmdUtils
             var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
             var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
             var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
-            MuxConsole.WriteMuted($"    process: {state}{events}");
+            var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t => t.Name))}";
+            MuxConsole.WriteMuted($"    process: {state}{events}{tools}");
             foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
