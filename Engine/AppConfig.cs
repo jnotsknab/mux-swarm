@@ -64,6 +64,13 @@ public class AppConfig
     public ContextLimitsConfig ContextLimits { get; set; } = new();
 
     /// <summary>
+    /// Context self-awareness for the lead agent (<c>/insight</c>): <c>insight.level</c> off|basic|full|max.
+    /// Off by default; absent = off.
+    /// </summary>
+    [JsonPropertyName("insight")]
+    public Insight.InsightConfig Insight { get; set; } = new();
+
+    /// <summary>
     /// Client-side display gate for streamed reasoning text in interactive (TUI/console)
     /// agent and swarm loops: "full" / "summary" both SHOW reasoning (rendered grey + italic),
     /// "none" SUPPRESSES streaming reasoning text entirely (gates the stream). This is a

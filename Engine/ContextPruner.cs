@@ -116,7 +116,9 @@ internal static class ContextPruner
                 && item.TryGetProperty("$type", out var type) && type.ValueKind == JsonValueKind.String
                 && (type.GetString() != "text" || item.TryGetProperty("text", out var text) && text.ValueKind == JsonValueKind.String));
 
-    private static IEnumerable<(int Nested, string Text)> ResultText(FunctionResultContent result)
+    /// <summary>Text parts of a tool result: the string, or each TextContent of a content-part list/array
+    /// (also its serialized form after resume). <c>Nested</c> is -1 for a plain string, else the part index.</summary>
+    internal static IEnumerable<(int Nested, string Text)> ResultText(FunctionResultContent result)
     {
         if (result.Result is string s) yield return (-1, s);
         else if (result.Result is JsonElement { ValueKind: JsonValueKind.String } json) yield return (-1, json.GetString() ?? "");
