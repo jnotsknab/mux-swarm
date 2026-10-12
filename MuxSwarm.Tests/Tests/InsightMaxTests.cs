@@ -94,6 +94,80 @@ public class InsightMaxTests
         Assert.Equal(0, dropped);   // nothing queued: Apply alone never drops
     }
 
+    /// <summary>One tool message with four parallel results (live 2026-10-12: four Brave searches in m6).</summary>
+    private static List<ChatMessage> ParallelHistory()
+    {
+        var calls = Enumerable.Range(0, 4).Select(i => (AIContent)new FunctionCallContent($"s{i}", "brave_web_search")).ToList();
+        var results = Enumerable.Range(0, 4).Select(i => (AIContent)new FunctionResultContent($"s{i}", $"HIT{i} " + Big((char)('a' + i), 5000))).ToList();
+        return
+        [
+            new(ChatRole.User, "search four things"),
+            new(ChatRole.Assistant, calls),
+            new(ChatRole.Tool, results),
+            new(ChatRole.Assistant, Big('n', ContextDrop.ProtectedTailChars)),
+            new(ChatRole.User, "drop the searches"),
+        ];
+    }
+
+    [Fact]
+    public void ParallelResults_MessageId_DropsEveryBlockOfTheMessage()
+    {
+        // Bug (dogfood 2026-10-12): "m6" queued ONE block per message, so three of four results stayed in context
+        // while the reply said "Queued 4 block(s)".
+        var h = ParallelHistory();
+        var drop = new ContextDrop(() => h);
+        string reply = drop.Drop(["m2"], "searched already");
+        Assert.Contains("Queued 4 block(s)", reply);
+        var (messages, dropped, saved) = drop.Apply(h, "p.muxprune");
+        Assert.Equal(4, dropped);
+        Assert.True(saved > 4 * 4900);
+        Assert.All(messages[2].Contents.Cast<FunctionResultContent>(),
+            r => Assert.StartsWith(ContextDrop.NoticePrefix, r.Result!.ToString()));
+        Assert.Equal(["s0", "s1", "s2", "s3"], messages[2].Contents.Cast<FunctionResultContent>().Select(r => r.CallId));
+        Assert.StartsWith("HIT0", ((FunctionResultContent)h[2].Contents[0]).Result!.ToString());   // original intact
+        Assert.Empty(ContextDrop.Blocks(messages));
+    }
+
+    [Fact]
+    public void ParallelResults_HaveUniqueIds_AndASubIdDropsOneBlock()
+    {
+        var h = ParallelHistory();
+        var drop = new ContextDrop(() => h);
+        string map = drop.Map();
+        foreach (string id in new[] { "m2.0 ", "m2.1 ", "m2.2 ", "m2.3 " }) Assert.Contains(id, map);
+        Assert.Contains("Queued 1 block(s)", drop.Drop(["m2.1", "m2.1"], "x"));
+        Assert.Contains("Not droppable", drop.Drop(["m2.9", "m2.x"], "x"));
+        var (messages, dropped, _) = drop.Apply(h, "p.muxprune");
+        Assert.Equal(1, dropped);
+        Assert.StartsWith(ContextDrop.NoticePrefix, ((FunctionResultContent)messages[2].Contents[1]).Result!.ToString());
+        Assert.StartsWith("HIT0", ((FunctionResultContent)messages[2].Contents[0]).Result!.ToString());
+        Assert.Equal(["m2.0", "m2.2", "m2.3"], ContextDrop.Blocks(messages).Select(b => b.Id));
+    }
+
+    [Fact]
+    public void JsonObjectResults_AreDroppable_SizedByTheirRawText()
+    {
+        // MCP tools with structuredContent (Brave) return the whole CallToolResult as a JSON object; it has no
+        // plain text parts, so it used to be skipped entirely and could never be dropped.
+        string raw = "{\"content\":[{\"type\":\"text\",\"text\":\"" + Big('q', 3000) + "\"}],\"structuredContent\":{},\"isError\":false}";
+        var json = System.Text.Json.JsonDocument.Parse(raw).RootElement.Clone();
+        var h = new List<ChatMessage>
+        {
+            new(ChatRole.User, "search"),
+            new(ChatRole.Assistant, [new FunctionCallContent("s", "brave_web_search")]),
+            new(ChatRole.Tool, [new FunctionResultContent("s", json)]),
+            new(ChatRole.Assistant, Big('n', ContextDrop.ProtectedTailChars)),
+        };
+        var block = Assert.Single(ContextDrop.Blocks(h));
+        Assert.Equal(raw.Length, block.Chars);
+        var drop = new ContextDrop(() => h);
+        drop.Drop([block.Id], "x");
+        Assert.Equal(1, drop.Apply(h, "p.muxprune").Dropped);
+        h[2] = new ChatMessage(ChatRole.Tool, [new FunctionResultContent("s",
+            System.Text.Json.JsonDocument.Parse(raw.Replace("\"isError\":false", "\"isError\":true")).RootElement.Clone())]);
+        Assert.Empty(ContextDrop.Blocks(h));   // an error result stays, like any other error
+    }
+
     [Fact]
     public void Map_ShowsIdsToolsAndSizes()
     {
