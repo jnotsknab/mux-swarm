@@ -97,4 +97,39 @@ public class FooterSegmentsTests
         foreach (int w in Widths)
             Assert.True(Golden[w] == actual[w], $"footer output changed at width {w}. actual: {report}");
     }
+
+    [Fact]
+    public void FooterSegments_FullInput_HasStableIdsInRenderOrder()
+    {
+        var segs = TuiComponents.FooterSegments(120_000, 200_000, plan: true, ultra: false, psub: true, sub: false,
+            effort: "high", modeCycleHint: true, cached: 30_000, sysTokens: 1_000, toolTokens: 2_000,
+            sessionElapsed: TimeSpan.FromMinutes(5), giga: false, turnElapsed: TimeSpan.FromSeconds(9), lastTurn: null,
+            toolCalls: 3, model: "prov/m1", pulseFrame: -1, activeMode: "swarm");
+        Assert.Equal(
+            new[] { "orchestration", "mode", "mode", "turn", "session", "context", "context", "context",
+                    "cached", "sys", "tools", "calls", "model", "effort", "hint" },
+            segs.Select(s => s.Id));
+        Assert.Equal(TuiComponents.BadgeModel, segs.Single(s => s.Id == "model").BadgeId);
+        Assert.Equal(TuiComponents.BadgeEffort, segs.Single(s => s.Id == "effort").BadgeId);
+    }
+
+    [Fact]
+    public void FooterSegments_DropOrder_MatchesDegradationLevels()
+    {
+        var segs = TuiComponents.FooterSegments(0, 200_000, false, false, false, false, "high", true, 5_000,
+            1_000, 2_000, TimeSpan.FromMinutes(5), false, null, TimeSpan.FromSeconds(9), 3, "m", -1, null);
+        int DropOf(string id) => segs.First(s => s.Id == id).DropLevel;
+        Assert.Equal(1, DropOf("hint"));
+        Assert.Equal(2, DropOf("sys"));
+        Assert.Equal(2, DropOf("tools"));
+        Assert.Equal(3, DropOf("cached"));
+        Assert.Equal(4, DropOf("session"));
+        Assert.Equal(4, DropOf("calls"));
+        Assert.Equal(5, DropOf("model"));
+        Assert.Equal(7, DropOf("turn"));    // idle last-turn chip
+        Assert.Equal(7, DropOf("effort"));
+        // Exactly one context-meter form is visible at every level.
+        for (int lvl = 0; lvl <= 7; lvl++)
+            Assert.Single(segs, s => s.Id == "context" && s.VisibleAt(lvl));
+    }
 }
