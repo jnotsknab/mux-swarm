@@ -416,7 +416,8 @@ public static class MultiAgentOrchestrator
                     MuxConsole.WriteSuccess($"{def.Name} has {filteredTools.Count} tools available. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
                 string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
-                IChatClient client = chatClientFactory(modelId);
+                // /insight: the specialist's own context line (inert while off); orchestrator/compaction clients are untouched.
+                IChatClient client = Insight.InsightClient.ForSubAgent(chatClientFactory(modelId), def.Name);
 
                 VisionConfig? swarmVision = App.SwarmConfig?.VisionAgent;
                 var visionModelId = swarmVision?.Model;
@@ -480,7 +481,7 @@ public static class MultiAgentOrchestrator
 
                 var agentChatOptions = new ChatOptions
                 {
-                    Instructions = prompt,
+                    Instructions = prompt + Insight.InsightPrompt.ForSubAgent(),
                     Tools = agentTools
                 };
 
@@ -920,7 +921,8 @@ public static class MultiAgentOrchestrator
                 MuxConsole.WriteWarning($"{def.Name} matched 0 tools. Check mcpServers in swarm.json or ToolFilter. (Sub-Agent Delegation is {(def.CanDelegate ? "enabled" : "disabled")})");
 
             string modelId = agentModels.GetValueOrDefault(def.Name, agentModels["Orchestrator"]);
-            IChatClient client = chatClientFactory(modelId);
+            // /insight: the specialist's own context line (inert while off); orchestrator/compaction clients are untouched.
+            IChatClient client = Insight.InsightClient.ForSubAgent(chatClientFactory(modelId), def.Name);
 
             VisionConfig? swarmVision = App.SwarmConfig?.VisionAgent;
             var visionModelId = swarmVision?.Model;
@@ -992,7 +994,7 @@ public static class MultiAgentOrchestrator
 
             var agentChatOptions = new ChatOptions
             {
-                Instructions = prompt,
+                Instructions = prompt + Insight.InsightPrompt.ForSubAgent(),
                 Tools = agentTools
             };
 

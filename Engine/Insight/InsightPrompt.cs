@@ -3,6 +3,10 @@ namespace MuxSwarm.Engine.Insight;
 /// <summary>System-prompt note explaining the insight line to the agent (added only when insight is on).</summary>
 internal static class InsightPrompt
 {
+    /// <summary>The note for a sub-agent's system prompt, or "" when insight is off (prompt unchanged).</summary>
+    internal static string ForSubAgent() =>
+        InsightLevels.Current == InsightLevel.Off ? "" : Note(InsightLevels.Current);
+
     /// <summary>The note for <paramref name="level"/>.</summary>
     internal static string Note(InsightLevel level) =>
         "\r\n\r\n## Context awareness (/insight " + InsightLevels.Name(level) + ")\r\n" +

@@ -434,6 +434,10 @@ public static class TeamController
         int memberThreshold = MultiAgentOrchestrator.SwarmConfig?.CompactionAgent?.MemberAutoCompactTokenThreshold ?? 0;
         var contextManager = new MemberContextManager(
             team.Name, team.MemberContext, memberThreshold, memberCompactionClient, memberCompactionOptions);
+        // /insight: members' context line shows the threshold this manager actually compacts at (persistent only;
+        // fresh members start clean every task, so nothing compacts them).
+        if (contextManager.IsPersistent)
+            Insight.ContextGauge.SetMemberThreshold(members, () => contextManager.ThresholdTokens);
 
         // Run one member on a task through the existing parallel-worker path. This is what makes
         // members appear live in the Agent View (RunSubAgentAsync -> BeginSubAgentCapture). The

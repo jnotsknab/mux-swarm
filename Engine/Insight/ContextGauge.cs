@@ -58,6 +58,38 @@ internal static class ContextGauge
         return line + "]";
     }
 
+    /// <summary>Team members' auto-compact thresholds by agent name (set by the running team; empty otherwise).</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Func<int>> MemberThresholds =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Register the live auto-compact threshold for team members (the value the team's member context manager
+    /// actually compacts at). Replaces any previous registration for those names.
+    /// </summary>
+    internal static void SetMemberThreshold(IEnumerable<string> members, Func<int> threshold)
+    {
+        foreach (string m in members) MemberThresholds[m] = threshold;
+    }
+
+    /// <summary>
+    /// The line for a sub-agent: its own tokens (estimated from <paramref name="messages"/>, the request being sent)
+    /// against its team-member threshold, or "auto-compact off" for agents nothing compacts. Full adds the agent name
+    /// and tool share only; lead-only figures (prev turn, compactions, dropped) are not shown.
+    /// </summary>
+    internal static string? SubAgentLine(InsightLevel level, string agent, IReadOnlyList<ChatMessage> messages)
+    {
+        if (level == InsightLevel.Off) return null;
+        uint tokens = (uint)Math.Ceiling(ContextPruner.EstimateCharacters(messages) / 2.5);
+        int threshold = MemberThresholds.TryGetValue(agent, out var t) ? t() : 0;
+        string line = threshold > 0
+            ? $"{Marker} {K(tokens)}/{K((uint)threshold)} ({Percent(tokens, threshold):0}%), auto-compact at {K((uint)threshold)}"
+            : $"{Marker} {K(tokens)}, auto-compact off";
+        if (level >= InsightLevel.Full) line += $" | agent {agent} | tool output {ToolShare(messages):0}%";
+        return line + "]";
+    }
+
+    private const string Marker = InsightClient.Marker;
+
     /// <summary>Percent of the request's text characters that are tool results.</summary>
     internal static double ToolShare(IReadOnlyList<ChatMessage> messages)
     {
