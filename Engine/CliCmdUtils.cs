@@ -1905,8 +1905,9 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | reload]. Bare: every installed extension
-    /// with its contributions, process, conflicts and problems. Changes save to config.json and apply at once.
+    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | reload]. Bare: the interactive panel in the
+    /// docked TUI (toggle, trust, edit, open, reload; conflicts per extension), else a text list.
+    /// Changes save to config.json and apply at once.
     /// </summary>
     public static void HandleExtensions(string userInput = "/extensions")
     {
@@ -1933,9 +1934,42 @@ public static class CliCmdUtils
             MuxConsole.WriteInfo("Extensions are off. Enable with /set extensions.enabled on, then /refresh.");
             return;
         }
-        var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
-            Extensions.ExtensionHost.Running, out var other);
-        PrintExtensions(items, other);
+        Tui.ExtensionsPanelView? view = null;
+        while (true)
+        {
+            var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                Extensions.ExtensionHost.Running, out var other);
+            if (view is null) view = new Tui.ExtensionsPanelView(items, other);
+            else view.Update(items, other, view.Selected?.Name);
+            if (!MuxConsole.TryExtensionsPanel(view, out var action))
+            {
+                PrintExtensions(items, other);
+                return;
+            }
+            var sel = view.Selected;
+            switch (action)
+            {
+                case Tui.ExtensionsPanelView.Action.Close:
+                    return;
+                case Tui.ExtensionsPanelView.Action.Toggle when sel is not null:
+                    view.Message = ApplyExtensionChange(sel.Enabled ? "disable" : "enable", sel.Name, quiet: true);
+                    break;
+                case Tui.ExtensionsPanelView.Action.Trust when sel is not null:
+                    if (!sel.Trusted && !MuxConsole.Confirm($"Trust '{sel.Name}'? Its process runs with your user permissions.", false)) break;
+                    view.Message = ApplyExtensionChange(sel.Trusted ? "untrust" : "trust", sel.Name, quiet: true);
+                    break;
+                case Tui.ExtensionsPanelView.Action.Reload:
+                    App.LoadExtensions(announce: false, quiet: true);
+                    view.Message = $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
+                    break;
+                case Tui.ExtensionsPanelView.Action.Edit when sel is not null:
+                    view.Message = OpenExtensionPath(sel.Manifest, edit: true);
+                    break;
+                case Tui.ExtensionsPanelView.Action.OpenFolder when sel is not null:
+                    view.Message = OpenExtensionPath(sel.Dir, edit: false);
+                    break;
+            }
+        }
     }
 
     // Load problems plus the interceptor warnings, as the panel and the text list show them.
@@ -1995,6 +2029,26 @@ public static class CliCmdUtils
     {
         try { Common.SaveConfig(App.Config); return true; }
         catch (Exception) { return false; }   // SaveConfig already reported the error
+    }
+
+    // Open a manifest in $VISUAL/$EDITOR (waits, then reloads) or a path in the OS default app.
+    private static string OpenExtensionPath(string path, bool edit)
+    {
+        try
+        {
+            bool waited;
+            MuxConsole.TuiSuspend();
+            using (EscapeKeyListener.SuspendInput()) waited = Extensions.ExtensionScaffold.Open(path, edit);
+            MuxConsole.TuiResume();
+            if (!waited) return edit ? $"Opened {Path.GetFileName(path)}; press r to reload after saving." : $"Opened {path}.";
+            App.LoadExtensions(announce: false, quiet: true);
+            return "Saved and reloaded.";
+        }
+        catch (Exception ex)
+        {
+            MuxConsole.TuiResume();
+            return $"Could not open {path}: {ex.Message}";
+        }
     }
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>

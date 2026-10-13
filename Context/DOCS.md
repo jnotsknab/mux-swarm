@@ -909,7 +909,7 @@ Flags can be combined. Common stacks:
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills, extensions)
-/extensions     Installed extensions, conflicts and problems; enable/disable/trust/untrust <name>, reload
+/extensions     Extensions panel: enable/disable, conflicts, trust, edit, reload
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1241,14 +1241,19 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
 - `/refresh` reloads extensions and re-applies `console.theme`.
-- **`/extensions`** (at the menu or inside a session) lists every installed extension with its
-  contributions, process state, conflicts and problems. Change it with `/extensions enable|disable|trust|untrust <name>`
-  (saved to config.json and applied at once; new agent tools arrive with the next session) and
-  `/extensions reload`.
+- **`/extensions`** opens a panel (TUI; works at the menu and inside a session) listing every installed
+  extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
+  one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
+  selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
+  `t` trust/untrust its process (asks first), `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
+  Changes save to config.json and apply at once; new agent tools arrive with the next session.
 - When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
-  style), the later name wins and `/extensions` shows the conflict. Disable the winner to use the
+  style), the later name wins and the panel shows the conflict on both. Disable the winner to use the
   other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
   A command name taken by an earlier extension stays with that one.
+- Outside the TUI, `/extensions` prints the same information as text; change it with
+  `/extensions enable|disable|trust|untrust <name>` and `/extensions reload`.
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
