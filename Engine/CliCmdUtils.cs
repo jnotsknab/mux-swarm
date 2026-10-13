@@ -1936,6 +1936,9 @@ public static class CliCmdUtils
             var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t =>
                 t.Agents is { Count: > 0 } a ? $"{t.Name} (agents: {string.Join(" ", a)})" : t.Name))}";
             MuxConsole.WriteMuted($"    process: {state}{events}{tools}");
+            if (ext.Commands.Count > 0) MuxConsole.WriteMuted($"    commands: {string.Join(", ", ext.Commands.Select(c => c.Cmd))}");
+            var chips = Extensions.ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(ext.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
+            if (chips.Count > 0) MuxConsole.WriteMuted($"    footer chips: {string.Join(", ", chips)}");
             foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);

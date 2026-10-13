@@ -1322,6 +1322,41 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
+- Messages from the process that are not responses are notifications Mux understands:
+  `footer/set` and `command/output` (below). Others are ignored.
+
+### Extension commands
+
+A trusted process can add slash commands. They work in `/agent`, `/swarm`, `/pswarm` and at the
+menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and show in the palette.
+
+```jsonc
+// extension.json
+"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 } ]
+```
+
+- `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
+  can never be taken; if two extensions declare the same command the first by name keeps it.
+- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode }` (`mode` is the
+  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
+  Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
+- Reply `result`: `{ "output": "...", "prompt": "..." }`, both optional. `output` is shown to you;
+  `prompt` is sent to the agent as if you typed it (at the menu, where there is no agent, it is shown).
+  A JSON-RPC `error` is shown as a warning.
+- `/share` guests cannot run extension commands.
+
+### Extension footer chips
+
+A trusted process can show live text in the TUI footer by sending a notification:
+`{ "jsonrpc": "2.0", "method": "footer/set", "params": { "id": "branch", "text": "main *" } }`.
+
+- The chip id is `{extension}.{id}` (`id`: `a-z`, `0-9`, `-`, `_`, max 32). Text is one line of
+  plain text, cut at 40 characters; empty text removes the chip.
+- Mux caches the text and reads it when the footer paints; it never calls the process to draw.
+- Without a footer template, chips show after the built-in ones and are among the first dropped on
+  narrow terminals. A template can place them: `"{mode} {git.branch} {context}"`.
+- A process's chips disappear when it exits or is stopped (`/refresh`).
 
 **Sandboxing.** When a sandbox backend is configured (`sandbox.backend` other than `host`), every
 extension process runs inside it, so it gets the same confinement as the agent's shell:

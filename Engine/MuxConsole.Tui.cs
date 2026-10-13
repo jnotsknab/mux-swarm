@@ -1622,9 +1622,9 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         return true;
     }
 
-    private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.Repl;
+    private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.WithExtensions(Tui.TuiCommands.Repl);
 
-    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.SessionUnified;
+    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.WithExtensions(Tui.TuiCommands.SessionUnified);
 
     /// <summary>Collapsed result: a status glyph + first informative line + "(+N lines)" hint.
     /// Errors get a red cross and a "failed" tag instead of the dim ok marker.</summary>

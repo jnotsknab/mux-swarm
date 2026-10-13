@@ -306,6 +306,16 @@ internal static class TuiCommands
         return list.ToArray();
     }
 
+    /// <summary>
+    /// <paramref name="builtIn"/> followed by the commands of loaded extensions (they work in every
+    /// context, so they carry no scope hint). Returns <paramref name="builtIn"/> itself when none are loaded.
+    /// </summary>
+    public static (string Cmd, string Desc)[] WithExtensions((string Cmd, string Desc)[] builtIn)
+    {
+        var ext = Extensions.ExtensionCommands.Entries;
+        return ext.Length == 0 ? builtIn : [.. builtIn, .. ext];
+    }
+
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
     /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
     /// the transcript/expand overlay).</summary>

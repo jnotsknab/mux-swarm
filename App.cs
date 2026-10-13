@@ -1566,6 +1566,16 @@ internal class App
                     break;
                 }
 
+                case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
+                {
+                    // Extension command at the menu. There is no agent here, so a returned prompt is
+                    // shown instead of sent; run the command inside a session to send it.
+                    var outcome = await Engine.Extensions.ExtensionCommands.RunAsync(userInput, GetOrResetCts().Token);
+                    if (outcome.Prompt is { } extPrompt)
+                        MuxConsole.WriteMuted($"This command sends a prompt to the agent. Start a session (/agent) and run it there. Prompt: {extPrompt}");
+                    break;
+                }
+
                 default:
                     if (userInput.StartsWith("/", StringComparison.Ordinal))
                     {
