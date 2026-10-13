@@ -26,6 +26,7 @@ public sealed class ExtensionsPanelTests
         Assert.Equal(ExtensionsPanelView.Action.Toggle, view.Handle(Key(ConsoleKey.Spacebar, ' '), 5));
         Assert.Equal(ExtensionsPanelView.Action.Toggle, view.Handle(Key(ConsoleKey.Enter), 5));
         Assert.Equal(ExtensionsPanelView.Action.Trust, view.Handle(Key(ConsoleKey.T, 't'), 5));
+        Assert.Equal(ExtensionsPanelView.Action.New, view.Handle(Key(ConsoleKey.N, 'n'), 5));
         Assert.Equal(ExtensionsPanelView.Action.Edit, view.Handle(Key(ConsoleKey.E, 'e'), 5));
         Assert.Equal(ExtensionsPanelView.Action.OpenFolder, view.Handle(Key(ConsoleKey.O, 'o'), 5));
         Assert.Equal(ExtensionsPanelView.Action.Reload, view.Handle(Key(ConsoleKey.R, 'r'), 5));

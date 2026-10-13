@@ -6,13 +6,13 @@ namespace MuxSwarm.Engine.Tui;
 /// Alt-screen <c>/extensions</c> panel: the installed extensions on the left (state badges), the
 /// highlighted one's details on the right (contributions, process, conflicts, problems), and an
 /// action bar. Keys and mouse map to the same <see cref="Action"/>s: Space or a double click
-/// toggles, t trusts, e edits, o opens the folder, r reloads, / searches, Esc closes.
+/// toggles, t trusts, n creates, e edits, o opens the folder, r reloads, / searches, Esc closes.
 /// Pure view: owns no terminal I/O (the TuiDriver runner feeds input and presents rows), so every
 /// behavior is testable headlessly. Same conventions as the theme/model/settings pickers.
 /// </summary>
 internal sealed class ExtensionsPanelView
 {
-    internal enum Action { None, Close, Toggle, Trust, Edit, OpenFolder, Reload }
+    internal enum Action { None, Close, Toggle, Trust, New, Edit, OpenFolder, Reload }
 
     internal const int MinWidth = 60;
     internal const int MinHeight = 14;
@@ -20,7 +20,7 @@ internal sealed class ExtensionsPanelView
     // Action-bar buttons, in order; the hit payload is the index here.
     private static readonly (string Label, Action Action)[] Buttons =
     [
-        ("Space toggle", Action.Toggle), ("t trust", Action.Trust), ("e edit", Action.Edit),
+        ("Space toggle", Action.Toggle), ("t trust", Action.Trust), ("n new", Action.New), ("e edit", Action.Edit),
         ("o folder", Action.OpenFolder), ("r reload", Action.Reload), ("Esc close", Action.Close),
     ];
 
@@ -135,6 +135,7 @@ internal sealed class ExtensionsPanelView
         {
             ' ' => Selected is null ? Action.None : Action.Toggle,
             't' or 'T' => Selected is { HasProcess: true } ? Action.Trust : Action.None,
+            'n' or 'N' => Action.New,
             'e' or 'E' => Selected is null ? Action.None : Action.Edit,
             'o' or 'O' => Selected is null ? Action.None : Action.OpenFolder,
             'r' or 'R' => Action.Reload,
@@ -243,7 +244,7 @@ internal sealed class ExtensionsPanelView
                 left = TuiMarkup.TruncateMarkup($"{marker} {Badges(it)} {name}", listW, "\u2026");
             }
             else if (r == 0 && _matches.Count == 0)
-                left = $"[{TuiComponents.Muted}] {(_items.Count == 0 ? "None installed." : "No matches. Ctrl+U clears.")}[/]";
+                left = $"[{TuiComponents.Muted}] {(_items.Count == 0 ? "None installed. n creates one." : "No matches. Ctrl+U clears.")}[/]";
             else left = "";
             int pad = Math.Max(0, listW - TuiMarkup.MarkupWidth(left));
             int di = _detailScroll + r;

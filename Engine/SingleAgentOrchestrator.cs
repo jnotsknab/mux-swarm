@@ -2895,8 +2895,14 @@ public static class SingleAgentOrchestrator
                 else if (metaCmd.Equals("/extensions", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/extensions ", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Extensions list + enable/disable/trust (process-level, session-agnostic).
-                    CliCmdUtils.HandleExtensions(metaCmd);
+                    // Extensions panel (process-level, session-agnostic). Drafting a new extension
+                    // with the agent returns its brief as the next user turn.
+                    if (CliCmdUtils.HandleExtensions(metaCmd, inSession: true) is { } draft)
+                    {
+                        currentGoal = draft;
+                        retryGoalSet = true;
+                        break;
+                    }
                 }
                 else if (Extensions.ExtensionCommands.Match(metaCmd) is not null)
                 {

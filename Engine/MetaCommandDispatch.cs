@@ -109,9 +109,10 @@ internal static class MetaCommandDispatch
                 return Result.Handled;
 
             case "/extensions":
-                // List + enable/disable/trust; process-level, so it works at any prompt.
-                CliCmdUtils.HandleExtensions(line);
-                return Result.Handled;
+                // Panel + subcommands; works at any prompt. Drafting with the agent returns a prompt.
+                if (CliCmdUtils.HandleExtensions(line, inSession: true) is not { } draft) return Result.Handled;
+                _pendingPrompt = draft;
+                return Result.Prompt;
 
             case "/unhide":
             {

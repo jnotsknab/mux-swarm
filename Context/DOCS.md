@@ -909,7 +909,7 @@ Flags can be combined. Common stacks:
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills, extensions)
-/extensions     Extensions panel: enable/disable, conflicts, trust, edit, reload
+/extensions     Extensions panel: enable/disable, conflicts, trust, create, edit, reload
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1245,15 +1245,18 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
   one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
   selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
-  `t` trust/untrust its process (asks first), `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  `t` trust/untrust its process (asks first), `n` new, `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
   this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
   Changes save to config.json and apply at once; new agent tools arrive with the next session.
 - When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
   style), the later name wins and the panel shows the conflict on both. Disable the winner to use the
   other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
   A command name taken by an earlier extension stays with that one.
+- `/extensions new [name]` scaffolds `<install>/Extensions/<name>` from the parts you pick (theme, spinner
+  + quips, footer chip, slash command, agent tool, interceptor; process parts get a working `main.py`),
+  offers to trust it and reloads. Inside a session it can hand the agent a brief to build it out.
 - Outside the TUI, `/extensions` prints the same information as text; change it with
-  `/extensions enable|disable|trust|untrust <name>` and `/extensions reload`.
+  `/extensions enable|disable|trust|untrust <name>`, `/extensions new [name]` and `/extensions reload`.
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
