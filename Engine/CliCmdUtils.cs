@@ -1931,7 +1931,7 @@ public static class CliCmdUtils
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
             if (ext.Process is null) continue;
             var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
-            var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
+            var state = proc is null ? "not running" : (proc.IsRunning ? "running" : "exited") + $" ({proc.Isolation})";
             var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
             var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t =>
                 t.Agents is { Count: > 0 } a ? $"{t.Name} (agents: {string.Join(" ", a)})" : t.Name))}";

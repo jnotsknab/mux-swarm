@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 
@@ -26,6 +26,7 @@ internal sealed class ExtensionProcess : IDisposable
     };
 
     private readonly Process _process;
+    private readonly NativeTools.ISessionSandbox? _sandbox;   // container/microVM this process runs in, removed on Dispose
     private readonly RpcCorrelator _rpc = new();
     private readonly Channel<string> _outbox = Channel.CreateBounded<string>(
         new BoundedChannelOptions(1024) { FullMode = BoundedChannelFullMode.DropWrite, SingleReader = true });
@@ -41,12 +42,18 @@ internal sealed class ExtensionProcess : IDisposable
     /// <summary>Tool-call interceptors this process serves (from its manifest).</summary>
     internal IReadOnlyList<InterceptRule> Intercepts { get; }
 
-    private ExtensionProcess(string name, Process process, IEnumerable<string> events, IReadOnlyList<InterceptRule> intercepts)
+    /// <summary>Where the process runs: <c>host</c>, or the sandbox backend name (e.g. <c>bwrap</c>, <c>docker</c>).</summary>
+    internal string Isolation { get; }
+
+    private ExtensionProcess(string name, Process process, IEnumerable<string> events, NativeTools.ISessionSandbox? sandbox, string isolation,
+        IReadOnlyList<InterceptRule> intercepts)
     {
         Name = name;
         _process = process;
         _subscriptions = new HashSet<string>(events, StringComparer.OrdinalIgnoreCase);
         Intercepts = intercepts;
+        _sandbox = sandbox;
+        Isolation = isolation;
     }
 
     /// <summary>
@@ -54,16 +61,18 @@ internal sealed class ExtensionProcess : IDisposable
     /// A command containing a path separator resolves against the extension folder; a bare name
     /// is looked up on PATH. Throws when the process cannot start.
     /// </summary>
+    /// <param name="sandbox">The resolved sandbox to run in, or null to run on the host.</param>
     internal static ExtensionProcess Start(string name, string dir, ExtensionProcessSpec spec, IEnumerable<string> events,
-        IReadOnlyList<InterceptRule>? intercepts = null)
+        NativeTools.SandboxSpec? sandbox = null, IReadOnlyList<InterceptRule>? intercepts = null)
     {
         var command = spec.Command.Trim();
         if (command.Contains('/') || command.Contains('\\')) command = Path.GetFullPath(command, dir);
+        var (file, args, workDir, session) = BuildStart(name, dir, command, spec.Args ?? [], sandbox);
 
         var psi = new ProcessStartInfo
         {
-            FileName = command,
-            WorkingDirectory = dir,
+            FileName = file,
+            WorkingDirectory = workDir,
             UseShellExecute = false,
             RedirectStandardInput = true,
             RedirectStandardOutput = true,
@@ -72,18 +81,96 @@ internal sealed class ExtensionProcess : IDisposable
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
         };
-        foreach (var arg in spec.Args ?? []) psi.ArgumentList.Add(arg);
+        if (args is null) foreach (var arg in spec.Args ?? []) psi.ArgumentList.Add(arg);
+        else psi.Arguments = args;
 
         var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        if (!process.Start()) throw new InvalidOperationException($"could not start '{command}'.");
+        try
+        {
+            if (!process.Start()) throw new InvalidOperationException($"could not start '{command}'.");
+        }
+        catch { session?.Dispose(); throw; }
         ProcessCleanup.Instance.Track(process);
 
-        var ext = new ExtensionProcess(name, process, events, intercepts ?? []);
+        var ext = new ExtensionProcess(name, process, events, session, sandbox?.Backend ?? "host", intercepts ?? []);
         _ = Task.Run(ext.ReadStdoutAsync);
         _ = Task.Run(ext.ReadStderrAsync);
         _ = Task.Run(ext.DrainOutboxAsync);
-        ext.Notify("initialize", new { protocolVersion = ProtocolVersion, muxVersion = App.Version, name, dir });
+        // dir = the extension folder as the process sees it; dataDir = where it may write (sandboxed only).
+        string seenDir = sandbox is { Kind: NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx } ? GuestExtensionDir : dir;
+        string? dataDir = sandbox is null ? null
+            : sandbox.Kind is NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx ? NativeTools.OciSandbox.GuestWorkDir : workDir;
+        ext.Notify("initialize", new { protocolVersion = ProtocolVersion, muxVersion = App.Version, name, dir = seenDir, dataDir });
         return ext;
+    }
+
+    /// <summary>Guest path of the extension folder inside a container/microVM (read-only).</summary>
+    internal const string GuestExtensionDir = "/ext";
+
+    /// <summary>
+    /// The private writable folder of a sandboxed extension: <c>&lt;local data&gt;/Mux-Swarm/extensions/&lt;name&gt;</c>
+    /// (<c>%LOCALAPPDATA%</c> on Windows, <c>~/.local/share</c> elsewhere). Its working directory in the sandbox.
+    /// </summary>
+    internal static string DataDirectory(string name)
+    {
+        string root = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        return Path.Combine(root, "Mux-Swarm", "extensions", name);
+    }
+
+    /// <summary>
+    /// How to start the process. Host: the command itself in the extension folder (args via
+    /// ArgumentList, <c>Args</c> null). Sandboxed: the extension folder is read-only and the process
+    /// works in its private <see cref="DataDirectory"/>. Wrapper backends (bwrap, firejail,
+    /// sandbox-exec) wrap the command; container/microVM backends get a dedicated sandbox for this
+    /// extension (data dir at /work, extension folder at <see cref="GuestExtensionDir"/>, plus the usual
+    /// allowed-path mounts) and <c>exec -i</c> into it. A custom backend needs <c>sandbox.replStdio</c>.
+    /// Throws <see cref="NativeTools.SandboxException"/> when the backend cannot host the process.
+    /// </summary>
+    internal static (string File, string? Args, string WorkDir, NativeTools.ISessionSandbox? Session) BuildStart(
+        string name, string dir, string command, IReadOnlyList<string> args, NativeTools.SandboxSpec? sandbox)
+    {
+        if (sandbox is null) return (command, null, dir, null);
+        string data = Directory.CreateDirectory(DataDirectory(name)).FullName;
+        var argv = new List<string> { command };
+        argv.AddRange(args);
+        switch (sandbox.Kind)
+        {
+            case NativeTools.SandboxKind.Wrapper:
+            {
+                var (file, wrapped) = NativeTools.SandboxBackend.WrapProcess(sandbox, argv, data, [dir]);
+                return (file, wrapped, data, null);
+            }
+            case NativeTools.SandboxKind.Custom when sandbox.CustomReplStdio:
+            {
+                var (file, wrapped) = NativeTools.SandboxBackend.WrapShellCommand(sandbox,
+                    string.Join(' ', argv.Select(NativeTools.SandboxBackend.ArgvToken)), data);
+                return (file, wrapped, data, null);
+            }
+            case NativeTools.SandboxKind.Custom:
+                throw new NativeTools.SandboxException("the custom sandbox backend cannot host a long-running stdio process; " +
+                    "set sandbox.replStdio true if your template supports it, or list the extension in extensions.unsandboxed.");
+            case NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx:
+            {
+                // Inside the guest the extension folder is /ext, so paths into it are rewritten.
+                string Guest(string a) => a.StartsWith(dir, StringComparison.OrdinalIgnoreCase)
+                    ? GuestExtensionDir + a[dir.Length..].Replace('\\', '/') : a;
+                var spec = sandbox.WithMounts([.. sandbox.Mounts, new NativeTools.SandboxMount(dir, GuestExtensionDir, ReadOnly: true)]);
+                NativeTools.ISessionSandbox session = spec.Kind == NativeTools.SandboxKind.Sbx
+                    ? new NativeTools.SbxSandbox(spec, data, "ext-" + name)
+                    : new NativeTools.OciSandbox(spec, data, "ext-" + name);
+                try
+                {
+                    session.EnsureStarted();
+                    var (file, exec) = session.ExecInteractive(argv.Select(Guest).ToList());
+                    return (file, exec, data, session);
+                }
+                catch { session.Dispose(); throw; }
+            }
+            default:
+                return (command, null, dir, null);
+        }
     }
 
     /// <summary>True when the extension subscribed to <paramref name="eventName"/> (or to "*").</summary>
@@ -195,5 +282,7 @@ internal sealed class ExtensionProcess : IDisposable
         }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or System.ComponentModel.Win32Exception) { }
         _process.Dispose();
+        // Killing the exec client does not stop what runs in a container/microVM: remove the sandbox itself.
+        _sandbox?.Dispose();
     }
 }
