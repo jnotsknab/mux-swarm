@@ -1597,6 +1597,12 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
+- `when.event` is one event name or a list: `"event": ["turn_end", "task_complete"]` fires once per occurrence of any listed event. A single event still round-trips as a plain string.
+- `args` (optional string array): `command` becomes the executable and each entry is passed verbatim, so paths with spaces need no quoting: `"command": "python", "args": ["C:/My Hooks/notify.py"]`. Without `args`, `command` is split once at the first space (legacy; a quoted path with spaces in the executable position breaks).
+- Hook stdout/stderr are captured, not inherited (stdout is the protocol under `--stdio`/`--acp`, and would draw over the TUI). Each line is surfaced as a muted/debug line `[Hook:<id>] ...` (`[Hook:<id>:stderr] ...`).
+- A crashed persistent hook is restarted on its next event; repeated crashes back off 1s, 2s, 4s ... up to 60s (events for it are skipped meanwhile). Staying up 60s resets the backoff.
+- Payload: `tool_call` carries `args` (call arguments as JSON), `tool_result` carries `tool` and the result text in `summary`, and every event carries `goalId` when the run has one (`--goal-id`, or the id a continuous run generates).
+
 Supported events include `session_start`, `session_end`, `user_input`, `text_chunk`, `thinking_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `runtime_ready`, and the daemon events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. See `docs/hooks.md` for the full table.
 
 Daemon-specific hook events emitted automatically:

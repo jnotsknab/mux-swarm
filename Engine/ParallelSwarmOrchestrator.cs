@@ -240,6 +240,7 @@ public static class ParallelSwarmOrchestrator
         var semaphore = new SemaphoreSlim(App.MaxDegreeParallelism);
         _sessionDirty = false;
 
+        HookWorker.SetGoalId(goalId);
         HookWorker.Enqueue(new HookEvent
         {
             Event = "session_start",
@@ -535,6 +536,7 @@ public static class ParallelSwarmOrchestrator
         if (continuous)
         {
             goalId ??= Guid.NewGuid().ToString("N")[..8];
+            HookWorker.SetGoalId(goalId);
             state = ContinuousStateManager.Load(goalId, PlatformContext.SessionsDirectory)
                     ?? new CurrentStateMetadata(
                         goalId, incomingGoal!, 0, DateTime.MinValue,
@@ -1048,13 +1050,7 @@ public static class ParallelSwarmOrchestrator
                         {
                             lastToolName = fc.Name;
                             Telemetry.TelemetrySink.RecordToolCall(_orchestratorModelId, "Orchestrator", fc.Name);
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_call",
-                                Agent = "Orchestrator",
-                                Tool = fc.Name,
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolCallEvent("Orchestrator", fc));
 
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", "Orchestrator");
@@ -1090,13 +1086,7 @@ public static class ParallelSwarmOrchestrator
                                 new KeyValuePair<string, object?>("agent", "Orchestrator"),
                                 new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_result",
-                                Agent = "Orchestrator",
-                                Summary = fr.Result?.ToString(),
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolResultEvent("Orchestrator", fr));
 
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
@@ -1573,13 +1563,7 @@ public static class ParallelSwarmOrchestrator
 
                             lastToolName = fc.Name;
                             Telemetry.TelemetrySink.RecordToolCall(specialist.Agent.Id, specialist.Def.Name, fc.Name);
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_call",
-                                Agent = label,
-                                Tool = fc.Name,
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolCallEvent(label, fc));
 
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", specialist.Def.Name);
@@ -1636,13 +1620,7 @@ public static class ParallelSwarmOrchestrator
                                 new KeyValuePair<string, object?>("agent", specialist.Def.Name),
                                 new KeyValuePair<string, object?>("tool", lastToolName ?? "unknown"));
 
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_result",
-                                Agent = label,
-                                Summary = fr.Result?.ToString(),
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolResultEvent(label, fr));
 
                             if (!prodMode && !currentlyStreaming && thinking != null)
                             {
