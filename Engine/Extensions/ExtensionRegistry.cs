@@ -25,8 +25,20 @@ internal static partial class ExtensionRegistry
         /// <summary>Lifecycle events the process subscribes to.</summary>
         internal IReadOnlyList<string> Events { get; init; } = [];
 
+        /// <summary>Validated tool-call interceptors served by the process.</summary>
+        internal IReadOnlyList<InterceptRule> Intercepts { get; init; } = [];
+
+        /// <summary>Validated tools the process serves (see <see cref="ExtensionTool"/>).</summary>
+        internal IReadOnlyList<ExtensionToolSpec> Tools { get; init; } = [];
+
+        /// <summary>Cosmetic manifest keys this extension applied (spinner, quips, toolLabels, splash).</summary>
+        internal IReadOnlyList<string> Overrides { get; init; } = [];
+
         /// <summary>True when this extension's footer template is the one applied.</summary>
         internal bool Footer { get; init; }
+
+        /// <summary>True when this extension's markdown style is the one applied.</summary>
+        internal bool Markdown { get; init; }
 
         /// <summary>Validated slash commands the process serves.</summary>
         internal IReadOnlyList<ExtensionCommand> Commands { get; init; } = [];
@@ -55,11 +67,29 @@ internal static partial class ExtensionRegistry
         ReservedCommands.Contains(cmd, StringComparer.OrdinalIgnoreCase)
         || Tui.TuiCommands.All.Any(e => string.Equals(e.Cmd.Split(' ', 2)[0], cmd, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
+    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels);
+
+    /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension tool call.</summary>
+    internal const int DefaultToolTimeoutSeconds = 60, MaxToolTimeoutSeconds = 600;
+
+    // Exposed names are "{extension}_{tool}"; providers cap function names at 64 chars.
+    private const int MaxExposedToolName = 64;
+
+    [GeneratedRegex("^[a-z][a-z0-9_]{0,47}$")]
+    private static partial Regex ToolNamePattern();
+
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
     {
+        /// <summary>Merged cosmetic overrides; all-null members = built-ins.</summary>
+        internal Cosmetics Cosmetics { get; init; } = new(null, null, null, null);
+
         /// <summary>Footer segment ids in display order; null = built-in footer.</summary>
         internal IReadOnlyList<string>? FooterTemplate { get; init; }
+
+        /// <summary>Markdown glyph style; null = built-in.</summary>
+        internal Tui.MarkdownStyle? Markdown { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -82,7 +112,12 @@ internal static partial class ExtensionRegistry
     {
         Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg)) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
+        var c = Loaded.Cosmetics;
+        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips);
+        Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
+        SplashMessages.SetExtensionLines(c.Splash);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
+        Tui.MarkdownStyle.Set(Loaded.Markdown);
         ExtensionCommands.Set(Loaded.Extensions.SelectMany(e => e.Commands));
         return Loaded;
     }
@@ -148,7 +183,10 @@ internal static partial class ExtensionRegistry
 
         var extensions = new List<Extension>();
         var themes = new List<Theme>();
+        string[]? spinner = null, quips = null, splash = null;
+        var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string>? footer = null;
+        Tui.MarkdownStyle? markdown = null;
         var takenCommands = new Dictionary<string, string>(StringComparer.Ordinal);   // command -> owning extension
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
@@ -169,11 +207,27 @@ internal static partial class ExtensionRegistry
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
-            var process = manifest.Process;
-            if (process is not null && string.IsNullOrWhiteSpace(process.Command))
+            var overrides = new List<string>();
+            // List overrides: the last extension (by name) that sets one wins.
+            void TakeList(string key, List<string>? items, int maxItems, int maxChars, bool frames, ref string[]? slot)
             {
-                problems.Add($"{name}: process.command is empty; process ignored.");
-                process = null;
+                if (items is null) return;
+                if (CheckTexts(items, maxItems, maxChars, frames) is { } err) { problems.Add($"{name}: {key} {err}; skipped."); return; }
+                if (slot is not null) problems.Add($"{name}: {key} replaces the one from an earlier extension.");
+                slot = [.. items];
+                overrides.Add(key);
+            }
+            TakeList("spinner", manifest.Spinner, 32, 8, frames: true, ref spinner);
+            TakeList("quips", manifest.Quips, 200, 80, frames: false, ref quips);
+            TakeList("splash", manifest.Splash, 200, 80, frames: false, ref splash);
+            if (manifest.ToolLabels is { } toolLabels)
+            {
+                if (CheckToolLabels(toolLabels) is { } err) problems.Add($"{name}: toolLabels {err}; skipped.");
+                else
+                {
+                    foreach (var (verb, label) in toolLabels) labels[verb.Trim()] = label.Trim();
+                    overrides.Add("toolLabels");
+                }
             }
             bool hasFooter = false;
             if (manifest.Footer?.Template is { } template)
@@ -184,6 +238,19 @@ internal static partial class ExtensionRegistry
                     footer = ids;
                     hasFooter = true;
                 }
+            }
+            var process = manifest.Process;
+            if (process is not null && string.IsNullOrWhiteSpace(process.Command))
+            {
+                problems.Add($"{name}: process.command is empty; process ignored.");
+                process = null;
+            }
+            bool hasMarkdown = false;
+            if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
+            {
+                if (markdown is not null) problems.Add($"{name}: markdown style replaces the one from an earlier extension.");
+                markdown = style;
+                hasMarkdown = true;
             }
             var commands = new List<ExtensionCommand>();
             foreach (var c in manifest.Commands ?? [])
@@ -199,14 +266,101 @@ internal static partial class ExtensionRegistry
             }
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
+                Markdown = hasMarkdown,
+                Commands = commands,
+                Overrides = overrides,
+                Footer = hasFooter,
                 Process = process,
                 Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
-                Footer = hasFooter,
-                Commands = commands,
+                Intercepts = BuildIntercepts(name, process, manifest.Intercepts, problems),
+                Tools = ValidateTools(name, manifest.Tools ?? [], process is not null, problems),
             });
         }
-        return new Result(extensions, themes, problems) { FooterTemplate = footer };
+        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels);
+        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown };
     }
+
+    /// <summary>
+    /// Validate a <c>markdown</c> block over the built-in style. Invalid keys are reported and keep
+    /// their built-in glyph; null when nothing valid was set.
+    /// </summary>
+    internal static Tui.MarkdownStyle? BuildMarkdown(MarkdownManifest md, List<string> problems, string extension)
+    {
+        var style = Tui.MarkdownStyle.Default;
+        bool any = false;
+        if (md.TableBorder is { } border)
+        {
+            var b = border.Trim().ToLowerInvariant();
+            if (Tui.MarkdownStyle.BorderStyles.Contains(b)) { style = style with { Border = b }; any = true; }
+            else problems.Add($"{extension}: markdown.tableBorder '{border}' is not one of {string.Join(", ", Tui.MarkdownStyle.BorderStyles)}; ignored.");
+        }
+        if (md.Bullet is { } bullet)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(bullet)) { style = style with { Bullet = bullet }; any = true; }
+            else problems.Add($"{extension}: markdown.bullet must be one visible terminal cell; ignored.");
+        }
+        if (md.Rule is { } rule)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(rule)) { style = style with { Rule = rule }; any = true; }
+            else problems.Add($"{extension}: markdown.rule must be one visible terminal cell; ignored.");
+        }
+        return any ? style : null;
+    }
+
+    /// <summary>Validate <c>intercepts</c> entries; invalid ones become problems and are dropped.</summary>
+    internal static IReadOnlyList<InterceptRule> BuildIntercepts(string name, ExtensionProcessSpec? process,
+        IEnumerable<InterceptSpec>? specs, List<string> problems)
+    {
+        var rules = new List<InterceptRule>();
+        foreach (var spec in specs ?? [])
+        {
+            var tool = spec.Tool?.Trim() ?? "";
+            var on = (spec.On ?? "before").Trim().ToLowerInvariant();
+            var onTimeout = (spec.OnTimeout ?? "allow").Trim().ToLowerInvariant();
+            string? error =
+                process is null ? "intercepts need a process" :
+                tool.Length == 0 || tool.IndexOf('*') is >= 0 and var star && star != tool.Length - 1 ? $"intercept tool '{tool}' is invalid ('*' only at the end)" :
+                on is not ("before" or "after" or "both") ? $"intercept 'on' must be before, after or both (got '{spec.On}')" :
+                onTimeout is not ("allow" or "deny") ? $"intercept 'onTimeout' must be allow or deny (got '{spec.OnTimeout}')" :
+                spec.TimeoutMs is <= 0 ? "intercept timeoutMs must be positive" :
+                null;
+            if (error is not null) { problems.Add($"{name}: {error}; skipped."); continue; }
+            var timeout = TimeSpan.FromMilliseconds(Math.Min(spec.TimeoutMs ?? 2000, (int)ToolInterceptor.MaxTimeout.TotalMilliseconds));
+            rules.Add(new InterceptRule(tool, on is "before" or "both", on is "after" or "both", timeout, onTimeout == "deny"));
+        }
+        return rules;
+    }
+
+    // Keep the well-formed tools; report the rest. Tools need a process to answer them.
+    private static List<ExtensionToolSpec> ValidateTools(string ext, List<ExtensionToolSpec> specs, bool hasProcess, List<string> problems)
+    {
+        var ok = new List<ExtensionToolSpec>();
+        if (specs.Count > 0 && !hasProcess) { problems.Add($"{ext}: tools need a process; tools ignored."); return ok; }
+        foreach (var spec in specs)
+        {
+            var toolName = spec?.Name?.Trim() ?? "";
+            string? error =
+                spec is null || !ToolNamePattern().IsMatch(toolName) ? $"tool name '{toolName}' is invalid (a-z, 0-9, '_', starting with a letter, max 48)"
+                : ext.Length + 1 + toolName.Length > MaxExposedToolName ? $"tool '{toolName}': '{ext}_{toolName}' is longer than {MaxExposedToolName} characters"
+                : ok.Any(t => t.Name == toolName) ? $"duplicate tool '{toolName}'"
+                : string.IsNullOrWhiteSpace(spec.Description) || spec.Description.Length > 1024 ? $"tool '{toolName}' needs a description (max 1024 chars)"
+                : spec.Parameters.ValueKind is not (JsonValueKind.Object or JsonValueKind.Undefined or JsonValueKind.Null) ? $"tool '{toolName}': parameters must be a JSON Schema object"
+                : spec.TimeoutSeconds is < 1 or > MaxToolTimeoutSeconds ? $"tool '{toolName}': timeoutSeconds must be 1-{MaxToolTimeoutSeconds}"
+                : null;
+            if (error is not null) { problems.Add($"{ext}: {error}; skipped."); continue; }
+            ok.Add(new ExtensionToolSpec
+            {
+                Name = toolName,
+                Description = spec!.Description.Trim(),
+                Parameters = spec.Parameters.ValueKind == JsonValueKind.Object ? spec.Parameters.Clone() : EmptySchema,
+                TimeoutSeconds = spec.TimeoutSeconds ?? DefaultToolTimeoutSeconds,
+                Agents = spec.Agents?.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()).ToList(),
+            });
+        }
+        return ok;
+    }
+
+    private static readonly JsonElement EmptySchema = JsonDocument.Parse("""{"type":"object","properties":{}}""").RootElement.Clone();
 
     // Theme color roles settable from a manifest: every string property except Name.
     private static readonly Dictionary<string, PropertyInfo> ThemeRoles = typeof(Theme)
@@ -242,6 +396,37 @@ internal static partial class ExtensionRegistry
         }
         error = "";
         return theme;
+    }
+
+    // Plain-text list check: 1..maxItems non-blank items, no control chars, at most maxChars each.
+    // Spinner frames must also be exactly one terminal cell wide. Null = valid, else the reason.
+    private static string? CheckTexts(List<string> items, int maxItems, int maxChars, bool frames)
+    {
+        if (items.Count == 0 || items.Count > maxItems) return $"needs 1-{maxItems} entries";
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item)) return "has an empty entry";
+            if (item.Any(char.IsControl)) return "has an entry with control characters";
+            if (item.Length > maxChars) return $"has an entry longer than {maxChars} characters";
+            if (frames && Tui.TuiMarkup.Width(item) != 1) return $"frame '{item}' is not one terminal cell wide";
+        }
+        return null;
+    }
+
+    [GeneratedRegex("^[a-z0-9]{1,32}$", RegexOptions.IgnoreCase)]
+    private static partial Regex VerbPattern();
+
+    // toolLabels check: keys are single verb stems (letters/digits), labels are short plain text.
+    private static string? CheckToolLabels(Dictionary<string, string> labels)
+    {
+        if (labels.Count == 0 || labels.Count > 200) return "needs 1-200 entries";
+        foreach (var (verb, label) in labels)
+        {
+            if (!VerbPattern().IsMatch(verb.Trim())) return $"key '{verb}' must be a single word of letters or digits";
+            if (string.IsNullOrWhiteSpace(label) || label.Any(char.IsControl) || label.Trim().Length > 40)
+                return $"label for '{verb}' must be 1-40 characters without control characters";
+        }
+        return null;
     }
 
     [GeneratedRegex(@"\{([^{}]*)\}")]

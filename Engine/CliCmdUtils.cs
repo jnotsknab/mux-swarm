@@ -1924,20 +1924,29 @@ public static class CliCmdUtils
         {
             var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
             var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
+            var overrides = ext.Overrides.Count == 0 ? "" : $"  overrides: {string.Join(", ", ext.Overrides)}";
             var footer = ext.Footer ? "  footer" : "";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{footer}");
+            var markdown = ext.Markdown ? "  markdown" : "";
+            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{footer}{markdown}");
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
             if (ext.Process is null) continue;
             var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
-            var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
+            var state = proc is null ? "not running" : (proc.IsRunning ? "running" : "exited") + $" ({proc.Isolation})";
             var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
-            MuxConsole.WriteMuted($"    process: {state}{events}");
+            var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t =>
+                t.Agents is { Count: > 0 } a ? $"{t.Name} (agents: {string.Join(" ", a)})" : t.Name))}";
+            MuxConsole.WriteMuted($"    process: {state}{events}{tools}");
             if (ext.Commands.Count > 0) MuxConsole.WriteMuted($"    commands: {string.Join(", ", ext.Commands.Select(c => c.Cmd))}");
             var chips = Extensions.ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(ext.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
             if (chips.Count > 0) MuxConsole.WriteMuted($"    footer chips: {string.Join(", ", chips)}");
             foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
+
+        var toolNames = (App.GetMcpTools() ?? []).Select(t => t.Name)
+            .Concat(NativeToolRegistry.BuildPool(App.Config).Select(t => t.Name)).ToList();
+        foreach (var warning in Extensions.ToolInterceptor.UnmatchedPatterns(loaded.Extensions, toolNames))
+            MuxConsole.WriteWarning(warning);
     }
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
