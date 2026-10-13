@@ -64,7 +64,7 @@ public sealed class ExtensionCosmeticsTests : IDisposable
         var result = ExtensionRegistry.Scan([_root]);
 
         Assert.Equal(["B"], result.Cosmetics.Quips!);
-        Assert.Contains(result.Problems, p => p.Contains("quips replaces"));
+        Assert.Contains(new ExtensionRegistry.Conflict("quips", "bbb", "aaa"), result.Conflicts);
         Assert.Equal("B-read", result.Cosmetics.ToolLabels!["read"]);
         Assert.Equal("A-list", result.Cosmetics.ToolLabels!["LIST"]);
     }
