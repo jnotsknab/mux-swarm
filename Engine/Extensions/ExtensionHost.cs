@@ -17,20 +17,38 @@ internal static class ExtensionHost
     /// Stop every running process, then start the trusted process extensions in
     /// <paramref name="extensions"/>. Returns problems (untrusted, failed to start).
     /// </summary>
-    internal static IReadOnlyList<string> Restart(IReadOnlyList<ExtensionRegistry.Extension> extensions, ICollection<string> trusted)
+    /// <param name="unsandboxed">Trusted extensions exempted from the sandbox by config.</param>
+    /// <param name="sandbox">The configured sandbox; null runs every process on the host.</param>
+    internal static IReadOnlyList<string> Restart(IReadOnlyList<ExtensionRegistry.Extension> extensions, ICollection<string> trusted,
+        ICollection<string>? unsandboxed = null, SandboxConfig? sandbox = null)
     {
         StopAll();
+        NativeTools.SandboxSpec? spec = null;
+        string? sandboxError = null;
+        if (sandbox is not null)
+        {
+            try { spec = NativeTools.SandboxBackend.Resolve(sandbox); }
+            catch (NativeTools.SandboxException ex) { sandboxError = ex.Message; }
+        }
         var problems = new List<string>();
         var started = new List<ExtensionProcess>();
         foreach (var ext in extensions)
         {
-            if (ext.Process is not { } spec) continue;
+            if (ext.Process is not { } procSpec) continue;
             if (!trusted.Contains(ext.Name))
             {
                 problems.Add($"{ext.Name}: process not started; add \"{ext.Name}\" to extensions.trusted to allow it.");
                 continue;
             }
-            try { started.Add(ExtensionProcess.Start(ext.Name, ext.Dir, spec, ext.Events)); }
+            bool exempt = unsandboxed?.Contains(ext.Name) == true;
+            if (!exempt && sandboxError is not null)
+            {
+                // Never fall back to the host when the configured sandbox is unusable.
+                problems.Add($"{ext.Name}: process not started: the sandbox is not usable ({sandboxError}). " +
+                             $"Fix sandbox.backend or add \"{ext.Name}\" to extensions.unsandboxed.");
+                continue;
+            }
+            try { started.Add(ExtensionProcess.Start(ext.Name, ext.Dir, procSpec, ext.Events, exempt ? null : spec)); }
             catch (Exception ex) { problems.Add($"{ext.Name}: process failed to start: {ex.Message}"); }
         }
         _running = [.. started];
