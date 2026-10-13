@@ -909,7 +909,7 @@ Flags can be combined. Common stacks:
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills, extensions)
-/extensions     List loaded extensions, their contributions, and load problems
+/extensions     Installed extensions, conflicts and problems; enable/disable/trust/untrust <name>, reload
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1226,7 +1226,7 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   Merged over the built-ins; across extensions, keys merge in name order and later names win.
 - **splash**: startup lines (1-200, max 80 chars). Replaces the whole built-in pool (quotes, facts, tips,
   taglines) in the TUI splash and the web UI tip.
-- For spinner, quips and splash the later extension name wins (with a warning). All text is plain text:
+- For spinner, quips and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
   Spectre markup such as `[red]` is shown literally, never interpreted.
 - **footer**: `{ "template": "{mode} {context} {model} {effort}" }` picks which TUI footer chips show and
   in what order. Ids: `share orchestration mode turn session context cached sys tools calls model effort hint`.
@@ -1234,13 +1234,21 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   separator. Chips you leave out are hidden, except `share`, which always shows (first) so a live
   broadcast is never hidden. Unknown ids are skipped with a warning. Narrow terminals still drop chips
   in the built-in priority order. If several extensions set a template, the later name wins.
-- Extensions load in name order. If two define the same theme, the later name wins (with a warning).
+- Extensions load in name order. If two define the same theme, the later name wins (shown as a conflict).
   Invalid manifests or entries are skipped with a warning; they never stop startup.
 - **markdown**: `{ "tableBorder": "rounded", "bullet": "▸", "rule": "═" }`. `tableBorder` is `heavy`
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
-- `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
+- `/refresh` reloads extensions and re-applies `console.theme`.
+- **`/extensions`** (at the menu or inside a session) lists every installed extension with its
+  contributions, process state, conflicts and problems. Change it with `/extensions enable|disable|trust|untrust <name>`
+  (saved to config.json and applied at once; new agent tools arrive with the next session) and
+  `/extensions reload`.
+- When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
+  style), the later name wins and `/extensions` shows the conflict. Disable the winner to use the
+  other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
+  A command name taken by an earlier extension stays with that one.
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 

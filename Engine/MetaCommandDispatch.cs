@@ -108,6 +108,11 @@ internal static class MetaCommandDispatch
                 CliCmdUtils.HandleVoice(line);
                 return Result.Handled;
 
+            case "/extensions":
+                // List + enable/disable/trust; process-level, so it works at any prompt.
+                CliCmdUtils.HandleExtensions(line);
+                return Result.Handled;
+
             case "/unhide":
             {
                 var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";

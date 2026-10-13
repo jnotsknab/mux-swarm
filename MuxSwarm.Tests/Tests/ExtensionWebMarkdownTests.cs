@@ -47,7 +47,7 @@ public sealed class ExtensionWebMarkdownTests : IDisposable
         AddExtension("b", """{ "markdown": { "tableBorder": "rounded", "bullet": "\u25b8", "rule": "=" } }""");
         var result = ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] });
 
-        Assert.Contains(result.Problems, p => p.Contains("replaces the one from an earlier extension"));
+        Assert.Equal(new ExtensionRegistry.Conflict("markdown style", "b", "a"), Assert.Single(result.Conflicts));
         Assert.True(result.Extensions.Single(e => e.Name == "b").Markdown);
         var rows = string.Join("\n", TuiTable.Render(Table, 80));
         Assert.Contains("\u256d", rows);                 // rounded corner

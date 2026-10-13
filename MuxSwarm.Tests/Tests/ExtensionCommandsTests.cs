@@ -67,7 +67,7 @@ public sealed class ExtensionCommandsTests : IDisposable
         Assert.Contains(result.Problems, p => p.Contains("'/help' is a built-in"));
         Assert.Contains(result.Problems, p => p.Contains("'/bg' is a built-in"));
         Assert.Contains(result.Problems, p => p.Contains("invalid command name"));
-        Assert.Contains(result.Problems, p => p.Contains("already provided by 'a'"));
+        Assert.Contains(new ExtensionRegistry.Conflict("command /stats", "a", "b"), result.Conflicts);
         Assert.Contains(result.Problems, p => p.Contains("'/orphan' needs a process"));
     }
 

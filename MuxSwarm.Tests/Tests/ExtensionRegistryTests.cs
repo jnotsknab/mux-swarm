@@ -119,7 +119,7 @@ public sealed class ExtensionRegistryTests : IDisposable
         AddExtension("bbb", """{ "themes": [ { "name": "shared", "accent": "#222222" } ] }""");
         var result = ExtensionRegistry.Scan([_root]);
         Assert.Equal("#222222", Assert.Single(result.Themes).Accent);
-        Assert.Contains(result.Problems, p => p.Contains("replaces"));
+        Assert.Equal(new ExtensionRegistry.Conflict("theme 'shared'", "bbb", "aaa"), Assert.Single(result.Conflicts));
     }
 
     [Fact]

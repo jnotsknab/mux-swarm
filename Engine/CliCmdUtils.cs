@@ -1905,48 +1905,96 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /extensions -> show whether extensions are enabled, where Mux looks, and each loaded
-    /// extension with its contributions. Read-only; enable with /set extensions.enabled on + /refresh.
+    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | reload]. Bare: every installed extension
+    /// with its contributions, process, conflicts and problems. Changes save to config.json and apply at once.
     /// </summary>
-    public static void HandleExtensions()
+    public static void HandleExtensions(string userInput = "/extensions")
     {
         var cfg = App.Config.Extensions;
+        var parts = (userInput ?? "").Trim().Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+        string sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : "";
+        string? arg = parts.Length > 2 ? parts[2].Trim() : null;
+        switch (sub)
+        {
+            case "":
+                break;
+            case "enable" or "disable" or "trust" or "untrust" when arg is not null:
+                MuxConsole.WriteInfo(ApplyExtensionChange(sub, arg));
+                return;
+            case "reload":
+                App.LoadExtensions(announce: true);
+                return;
+            default:
+                MuxConsole.WriteWarning("Usage: /extensions [enable|disable|trust|untrust <name> | reload]");
+                return;
+        }
         if (!cfg.Enabled)
         {
             MuxConsole.WriteInfo("Extensions are off. Enable with /set extensions.enabled on, then /refresh.");
             return;
         }
-        var loaded = Extensions.ExtensionRegistry.Loaded;
-        MuxConsole.WriteInfo($"Extensions: {loaded.Extensions.Count} loaded. Search path:");
-        foreach (var dir in Extensions.ExtensionRegistry.SearchDirectories(cfg))
-            MuxConsole.WriteMuted($"  {dir}{(Directory.Exists(dir) ? "" : " (missing)")}");
-        foreach (var ext in loaded.Extensions)
-        {
-            var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
-            var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
-            var overrides = ext.Overrides.Count == 0 ? "" : $"  overrides: {string.Join(", ", ext.Overrides)}";
-            var footer = ext.Footer ? "  footer" : "";
-            var markdown = ext.Markdown ? "  markdown" : "";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{footer}{markdown}");
-            if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
-            if (ext.Process is null) continue;
-            var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
-            var state = proc is null ? "not running" : (proc.IsRunning ? "running" : "exited") + $" ({proc.Isolation})";
-            var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
-            var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t =>
-                t.Agents is { Count: > 0 } a ? $"{t.Name} (agents: {string.Join(" ", a)})" : t.Name))}";
-            MuxConsole.WriteMuted($"    process: {state}{events}{tools}");
-            if (ext.Commands.Count > 0) MuxConsole.WriteMuted($"    commands: {string.Join(", ", ext.Commands.Select(c => c.Cmd))}");
-            var chips = Extensions.ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(ext.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
-            if (chips.Count > 0) MuxConsole.WriteMuted($"    footer chips: {string.Join(", ", chips)}");
-            foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
-        }
-        foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
+        var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+            Extensions.ExtensionHost.Running, out var other);
+        PrintExtensions(items, other);
+    }
 
+    // Load problems plus the interceptor warnings, as the panel and the text list show them.
+    private static IEnumerable<string> PanelProblems()
+    {
         var toolNames = (App.GetMcpTools() ?? []).Select(t => t.Name)
             .Concat(NativeToolRegistry.BuildPool(App.Config).Select(t => t.Name)).ToList();
-        foreach (var warning in Extensions.ToolInterceptor.UnmatchedPatterns(loaded.Extensions, toolNames))
-            MuxConsole.WriteWarning(warning);
+        return App.ExtensionProblems.Concat(Extensions.ToolInterceptor.UnmatchedPatterns(Extensions.ExtensionRegistry.Loaded.Extensions, toolNames));
+    }
+
+    // Text form of the panel for the classic console, stdio and the web UI.
+    private static void PrintExtensions(List<Extensions.ExtensionCatalog.Item> items, List<string> other)
+    {
+        var cfg = App.Config.Extensions;
+        MuxConsole.WriteInfo($"Extensions: {items.Count(i => i.Enabled)} of {items.Count} enabled. Search path:");
+        foreach (var dir in Extensions.ExtensionRegistry.SearchDirectories(cfg))
+            MuxConsole.WriteMuted($"  {dir}{(Directory.Exists(dir) ? "" : " (missing)")}");
+        foreach (var it in items)
+        {
+            var version = string.IsNullOrWhiteSpace(it.Version) ? "" : $" {it.Version}";
+            MuxConsole.WriteBody($"  {(it.Enabled ? "\u25cf" : "\u25cb")} {it.Name}{version}{(it.Enabled ? "" : "  (disabled)")}");
+            if (!string.IsNullOrWhiteSpace(it.Description)) MuxConsole.WriteMuted($"      {it.Description}");
+            foreach (var line in it.Contributes) MuxConsole.WriteMuted($"      {line}");
+            if (it.HasProcess) MuxConsole.WriteMuted($"      process: {it.Process}");
+            foreach (var c in it.Conflicts.Where(c => c.Winner == it.Name))
+                MuxConsole.WriteWarning($"      {c.What}: overrides {c.Loser} (/extensions disable {it.Name} to use {c.Loser}'s)");
+            foreach (var p in it.Problems) MuxConsole.WriteWarning($"      {p}");
+            foreach (var line in it.Stderr) MuxConsole.WriteMuted($"        {line}");
+        }
+        foreach (var p in other) MuxConsole.WriteWarning(p);
+        MuxConsole.WriteMuted("Change with /extensions enable|disable|trust|untrust <name> or /extensions reload.");
+    }
+
+    /// <summary>Enable/disable/trust/untrust <paramref name="name"/>: save config.json, reload, and describe the result.</summary>
+    private static string ApplyExtensionChange(string verb, string name, bool quiet = false)
+    {
+        var cfg = App.Config.Extensions;
+        name = name.Trim().ToLowerInvariant();
+        var loaded = Extensions.ExtensionRegistry.Loaded;
+        bool known = loaded.Extensions.Any(e => e.Name == name) || loaded.Disabled.Any(e => e.Name == name);
+        if (!known) return $"No installed extension named '{name}'.";
+        bool changed = verb switch
+        {
+            "enable" => Extensions.ExtensionCatalog.SetEnabled(cfg, name, true),
+            "disable" => Extensions.ExtensionCatalog.SetEnabled(cfg, name, false),
+            "trust" => Extensions.ExtensionCatalog.SetTrusted(cfg, name, true),
+            _ => Extensions.ExtensionCatalog.SetTrusted(cfg, name, false),
+        };
+        string done = verb switch { "enable" => "enabled", "disable" => "disabled", "trust" => "trusted", _ => "untrusted" };
+        if (!changed) return $"'{name}' is already {done}.";
+        if (!SaveExtensionsConfig()) return $"'{name}' {done} for this session, but config.json could not be saved.";
+        App.LoadExtensions(announce: false, quiet: quiet);
+        return $"'{name}' {done} (saved). New tools reach the agent from the next session.";
+    }
+
+    private static bool SaveExtensionsConfig()
+    {
+        try { Common.SaveConfig(App.Config); return true; }
+        catch (Exception) { return false; }   // SaveConfig already reported the error
     }
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
