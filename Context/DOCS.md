@@ -1262,7 +1262,8 @@ permissions, so each one must be listed in `extensions.trusted` before Mux start
 
 Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
-- First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir }`.
+- First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`
+  (`dir` = the extension folder as the process sees it; `dataDir` = its writable folder when sandboxed, else absent).
 - Each subscribed event: notification `event` whose params are the hook payload
   (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
@@ -1351,6 +1352,22 @@ A trusted process can gate tool calls for every agent, team and daemon run:
   `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
 - Match the real tool names: the native shell tools are `execute_command_async` and `repl_shell_exec`
   (MCP tools are `{server}_{tool}`). `/extensions` warns about patterns that match no loaded tool.
+
+**Sandboxing.** When a sandbox backend is configured (`sandbox.backend` other than `host`), every
+extension process runs inside it, so it gets the same confinement as the agent's shell:
+
+- The extension folder is read-only. The process works in its own writable folder,
+  `<local data>/Mux-Swarm/extensions/<name>` (`%LOCALAPPDATA%` on Windows, `~/.local/share` elsewhere),
+  passed as `dataDir` in `initialize`.
+- Wrapper backends (`bwrap`, `firejail`, `sandbox-exec`) wrap the process. Container and microVM
+  backends (`docker`, `docker-container`, `podman`, `gvisor`, ...) start one sandbox per extension: the
+  data folder at `/work`, the extension folder at `/ext` (read-only), plus the usual allowed-path mounts.
+  The process then runs in Linux, so the image needs its runtime (e.g. python). The sandbox is removed
+  when the process stops. `custom` needs `sandbox.replStdio: true`.
+- If the sandbox cannot be used, the process is not started (never a silent host fallback) and
+  `/extensions` says why. `/extensions` also shows where each process runs.
+- Exempt a trusted extension with `"extensions": { "unsandboxed": ["name"] }`. Only your config can do
+  this; a manifest cannot opt out. With `sandbox.backend: host` nothing changes.
 
 ## Session Sharing (`/share`, `/join`)
 
