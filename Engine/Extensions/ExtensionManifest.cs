@@ -57,6 +57,10 @@ internal sealed class ExtensionManifest
     /// <summary>The whole thinking-indicator animation (frames, speed, quips). Null = built-in.</summary>
     [JsonPropertyName("thinking")]
     public ThinkingManifest? Thinking { get; set; }
+
+    /// <summary>Markdown glyphs (table border style, bullet, rule). Null = built-in style.</summary>
+    [JsonPropertyName("markdown")]
+    public MarkdownManifest? Markdown { get; set; }
 }
 
 /// <summary>
@@ -88,4 +92,20 @@ internal sealed class ThinkingManifest
     /// <summary>Text after the quip (default <c>...</c>, max 8 chars, may be empty).</summary>
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
+}
+
+/// <summary>The <c>markdown</c> block of an extension manifest. Omitted keys keep the built-in glyph.</summary>
+internal sealed class MarkdownManifest
+{
+    /// <summary>Table border style: <c>heavy</c> (default), <c>light</c>, <c>rounded</c> or <c>ascii</c>.</summary>
+    [JsonPropertyName("tableBorder")]
+    public string? TableBorder { get; set; }
+
+    /// <summary>Bullet for unordered lists: one terminal cell (default <c>•</c>).</summary>
+    [JsonPropertyName("bullet")]
+    public string? Bullet { get; set; }
+
+    /// <summary>Glyph repeated for horizontal rules: one terminal cell (default <c>─</c>).</summary>
+    [JsonPropertyName("rule")]
+    public string? Rule { get; set; }
 }
