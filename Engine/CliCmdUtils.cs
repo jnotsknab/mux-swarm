@@ -1926,7 +1926,8 @@ public static class CliCmdUtils
             var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
             var overrides = ext.Overrides.Count == 0 ? "" : $"  overrides: {string.Join(", ", ext.Overrides)}";
             var footer = ext.Footer ? "  footer" : "";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{footer}");
+            var markdown = ext.Markdown ? "  markdown" : "";
+            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{footer}{markdown}");
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
             if (ext.Process is null) continue;
             var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);

@@ -36,6 +36,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>True when this extension's footer template is the one applied.</summary>
         internal bool Footer { get; init; }
+
+        /// <summary>True when this extension's markdown style is the one applied.</summary>
+        internal bool Markdown { get; init; }
     }
 
     /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
@@ -58,6 +61,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Footer segment ids in display order; null = built-in footer.</summary>
         internal IReadOnlyList<string>? FooterTemplate { get; init; }
+
+        /// <summary>Markdown glyph style; null = built-in.</summary>
+        internal Tui.MarkdownStyle? Markdown { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -85,6 +91,7 @@ internal static partial class ExtensionRegistry
         Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
         SplashMessages.SetExtensionLines(c.Splash);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
+        Tui.MarkdownStyle.Set(Loaded.Markdown);
         return Loaded;
     }
 
@@ -152,6 +159,7 @@ internal static partial class ExtensionRegistry
         string[]? spinner = null, quips = null, splash = null;
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string>? footer = null;
+        Tui.MarkdownStyle? markdown = null;
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
             var mine = new List<string>();
@@ -209,8 +217,16 @@ internal static partial class ExtensionRegistry
                 problems.Add($"{name}: process.command is empty; process ignored.");
                 process = null;
             }
+            bool hasMarkdown = false;
+            if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
+            {
+                if (markdown is not null) problems.Add($"{name}: markdown style replaces the one from an earlier extension.");
+                markdown = style;
+                hasMarkdown = true;
+            }
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
+                Markdown = hasMarkdown,
                 Overrides = overrides,
                 Footer = hasFooter,
                 Process = process,
@@ -220,7 +236,34 @@ internal static partial class ExtensionRegistry
             });
         }
         var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels);
-        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, FooterTemplate = footer };
+        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown };
+    }
+
+    /// <summary>
+    /// Validate a <c>markdown</c> block over the built-in style. Invalid keys are reported and keep
+    /// their built-in glyph; null when nothing valid was set.
+    /// </summary>
+    internal static Tui.MarkdownStyle? BuildMarkdown(MarkdownManifest md, List<string> problems, string extension)
+    {
+        var style = Tui.MarkdownStyle.Default;
+        bool any = false;
+        if (md.TableBorder is { } border)
+        {
+            var b = border.Trim().ToLowerInvariant();
+            if (Tui.MarkdownStyle.BorderStyles.Contains(b)) { style = style with { Border = b }; any = true; }
+            else problems.Add($"{extension}: markdown.tableBorder '{border}' is not one of {string.Join(", ", Tui.MarkdownStyle.BorderStyles)}; ignored.");
+        }
+        if (md.Bullet is { } bullet)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(bullet)) { style = style with { Bullet = bullet }; any = true; }
+            else problems.Add($"{extension}: markdown.bullet must be one visible terminal cell; ignored.");
+        }
+        if (md.Rule is { } rule)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(rule)) { style = style with { Rule = rule }; any = true; }
+            else problems.Add($"{extension}: markdown.rule must be one visible terminal cell; ignored.");
+        }
+        return any ? style : null;
     }
 
     /// <summary>Validate <c>intercepts</c> entries; invalid ones become problems and are dropped.</summary>

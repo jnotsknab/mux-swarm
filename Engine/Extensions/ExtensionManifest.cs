@@ -84,6 +84,10 @@ internal sealed class ExtensionManifest
     /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
     [JsonPropertyName("footer")]
     public FooterManifest? Footer { get; set; }
+
+    /// <summary>Markdown glyphs (table border style, bullet, rule). Null = built-in style.</summary>
+    [JsonPropertyName("markdown")]
+    public MarkdownManifest? Markdown { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
@@ -156,4 +160,20 @@ internal sealed class FooterManifest
     /// </summary>
     [JsonPropertyName("template")]
     public string? Template { get; set; }
+}
+
+/// <summary>The <c>markdown</c> block of an extension manifest. Omitted keys keep the built-in glyph.</summary>
+internal sealed class MarkdownManifest
+{
+    /// <summary>Table border style: <c>heavy</c> (default), <c>light</c>, <c>rounded</c> or <c>ascii</c>.</summary>
+    [JsonPropertyName("tableBorder")]
+    public string? TableBorder { get; set; }
+
+    /// <summary>Bullet for unordered lists: one terminal cell (default <c>•</c>).</summary>
+    [JsonPropertyName("bullet")]
+    public string? Bullet { get; set; }
+
+    /// <summary>Glyph repeated for horizontal rules: one terminal cell (default <c>─</c>).</summary>
+    [JsonPropertyName("rule")]
+    public string? Rule { get; set; }
 }

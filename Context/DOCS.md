@@ -1282,8 +1282,13 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   in the built-in priority order. If several extensions set a template, the later name wins.
 - Extensions load in name order. If two define the same theme, the later name wins (with a warning).
   Invalid manifests or entries are skipped with a warning; they never stop startup.
+- **markdown**: `{ "tableBorder": "rounded", "bullet": "▸", "rule": "═" }`. `tableBorder` is `heavy`
+  (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
+  Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
+  Applies to the TUI and to markdown panels in the classic console.
 - `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
-- The web UI keeps its own theme set; extension themes apply to the TUI.
+- The web UI keeps its own built-in theme set and also lists extension themes (served by
+  `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
 ### Extension processes
 
