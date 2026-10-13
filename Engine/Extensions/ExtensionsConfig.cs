@@ -30,4 +30,12 @@ public class ExtensionsConfig
     /// </summary>
     [JsonPropertyName("trusted")]
     public List<string> Trusted { get; set; } = [];
+
+    /// <summary>
+    /// Trusted extensions whose process runs WITHOUT the configured Mux sandbox. When a sandbox backend
+    /// is set (<c>sandbox.backend</c> other than host), every other extension process runs inside it.
+    /// Only this config can exempt one; a manifest cannot opt itself out.
+    /// </summary>
+    [JsonPropertyName("unsandboxed")]
+    public List<string> Unsandboxed { get; set; } = [];
 }

@@ -106,6 +106,13 @@ internal sealed class SbxSandbox : ISessionSandbox
         return (_spec.Binary, $"exec -i -w {OciSandbox.GuestWorkDir} {_name} python {guestWorkerPath}");
     }
 
+    /// <inheritdoc/>
+    public (string File, string Args) ExecInteractive(IReadOnlyList<string> argv)
+    {
+        if (!_started) EnsureStarted();
+        return (_spec.Binary, OciSandbox.InteractiveArgs(_name, argv));
+    }
+
     /// <summary>
     /// Rebuild only when sbx confirmed the VM is gone (<paramref name="exists"/> false). Unknown (a failed
     /// <c>sbx ls</c>) keeps the current VM: dropping it would leak it and split the session between the

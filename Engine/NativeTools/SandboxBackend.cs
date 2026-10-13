@@ -46,6 +46,14 @@ internal sealed class SandboxSpec
 
     public bool UsesAllowlist => AllowedDomains.Count > 0;
 
+    /// <summary>A copy of this spec with <paramref name="mounts"/> instead of <see cref="Mounts"/>.</summary>
+    internal SandboxSpec WithMounts(IReadOnlyList<SandboxMount> mounts) => new()
+    {
+        Kind = Kind, Backend = Backend, Binary = Binary, Image = Image, NetworkOpen = NetworkOpen,
+        AllowedDomains = AllowedDomains, CustomTemplate = CustomTemplate, CustomReplStdio = CustomReplStdio,
+        Runtime = Runtime, Mounts = mounts,
+    };
+
     /// <summary>True for backends with a persistent per-session instance that tools exec into.</summary>
     public bool IsSession => Kind is SandboxKind.Oci or SandboxKind.Sbx;
 }
@@ -372,7 +380,7 @@ internal static class SandboxBackend
     /// <paramref name="innerArgv"/>, byte-for-byte. Only valid for <see cref="SandboxKind.Wrapper"/>.
     /// </summary>
     /// <param name="readOnlyPaths">Extra host paths the process must be able to read (e.g. the Python
-    /// installation behind a venv). bwrap already binds / read-only, so it needs none.</param>
+    /// installation behind a venv). bwrap binds / read-only and re-binds these after its private /tmp.</param>
     public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir,
         IReadOnlyList<string>? readOnlyPaths = null)
     {
@@ -390,6 +398,8 @@ internal static class SandboxBackend
             case "bwrap":
                 argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
                     "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
+                // / is already read-only, but the fresh /tmp hides anything under it: re-bind the extra paths.
+                foreach (var p in readOnlyPaths) argv.AddRange(new[] { "--ro-bind-try", p, p });
                 if (spec.NetworkOpen) argv.Add("--share-net");
                 // No --die-with-parent: it is PR_SET_PDEATHSIG, which fires when the spawning THREAD exits.
                 // .NET starts processes from short-lived pool threads, so it SIGKILLed (137) any job that
