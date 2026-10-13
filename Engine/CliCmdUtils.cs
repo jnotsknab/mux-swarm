@@ -1924,7 +1924,8 @@ public static class CliCmdUtils
         {
             var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
             var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}");
+            var markdown = ext.Markdown ? "  markdown" : "";
+            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{markdown}");
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
