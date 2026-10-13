@@ -96,7 +96,7 @@ public sealed class FooterTemplateTests : IDisposable
     }
 
     [Fact]
-    public void TwoExtensions_LaterNameWins_WithAProblem()
+    public void TwoExtensions_LaterNameWins_WithAConflict()
     {
         AddExtension("aaa", """{ "footer": { "template": "{model}" } }""");
         AddExtension("bbb", """{ "footer": { "template": "{effort}" } }""");
@@ -104,6 +104,6 @@ public sealed class FooterTemplateTests : IDisposable
         var result = ExtensionRegistry.Scan([_root]);
 
         Assert.Equal(["effort"], result.FooterTemplate);
-        Assert.Contains(result.Problems, p => p.Contains("footer template replaces"));
+        Assert.Equal(new ExtensionRegistry.Conflict("footer template", "bbb", "aaa"), Assert.Single(result.Conflicts));
     }
 }

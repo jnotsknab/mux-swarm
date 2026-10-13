@@ -108,6 +108,12 @@ internal static class MetaCommandDispatch
                 CliCmdUtils.HandleVoice(line);
                 return Result.Handled;
 
+            case "/extensions":
+                // Panel + subcommands; works at any prompt. Drafting with the agent returns a prompt.
+                if (CliCmdUtils.HandleExtensions(line, inSession: true) is not { } draft) return Result.Handled;
+                _pendingPrompt = draft;
+                return Result.Prompt;
+
             case "/unhide":
             {
                 var arg = line.Length > cmd.Length ? line.Substring(cmd.Length).Trim() : "";

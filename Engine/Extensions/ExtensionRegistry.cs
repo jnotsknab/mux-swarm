@@ -80,8 +80,20 @@ internal static partial class ExtensionRegistry
     private static partial Regex ToolNamePattern();
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
+    /// <summary>
+    /// Two extensions set the same slot (<paramref name="What"/>, e.g. <c>footer template</c>):
+    /// <paramref name="Winner"/>'s value applies and <paramref name="Loser"/>'s is ignored.
+    /// </summary>
+    internal sealed record Conflict(string What, string Winner, string Loser);
+
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
     {
+        /// <summary>Slots set by more than one extension, and which one won.</summary>
+        internal IReadOnlyList<Conflict> Conflicts { get; init; } = [];
+
+        /// <summary>Installed extensions skipped because <c>extensions.disabled</c> lists them.</summary>
+        internal IReadOnlyList<Extension> Disabled { get; init; } = [];
+
         /// <summary>Merged cosmetic overrides; all-null members = built-ins.</summary>
         internal Cosmetics Cosmetics { get; init; } = new(null, null, null, null);
 
@@ -110,7 +122,7 @@ internal static partial class ExtensionRegistry
     /// </summary>
     internal static Result Load(ExtensionsConfig? cfg)
     {
-        Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg)) : Empty;
+        Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg), cfg.Disabled) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
         var c = Loaded.Cosmetics;
         ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips);
@@ -135,11 +147,15 @@ internal static partial class ExtensionRegistry
         return dirs.Select(Path.TrimEndingDirectorySeparator).Distinct(cmp).ToList();
     }
 
+    /// <summary>True when <paramref name="name"/> is a valid extension name (a-z, 0-9, '-', max 32).</summary>
+    internal static bool IsValidName(string? name) => name is not null && IdPattern().IsMatch(name);
+
     /// <summary>
     /// Scan <paramref name="searchDirs"/> for extension folders and merge them in name order.
+    /// Extensions named in <paramref name="disabled"/> are listed but contribute nothing.
     /// Missing directories are ignored. Pure apart from file reads (no global state), for tests.
     /// </summary>
-    internal static Result Scan(IEnumerable<string> searchDirs)
+    internal static Result Scan(IEnumerable<string> searchDirs, IEnumerable<string>? disabled = null)
     {
         var problems = new List<string>();
         var found = new List<(string Name, string Dir, ExtensionManifest Manifest)>();
@@ -188,8 +204,23 @@ internal static partial class ExtensionRegistry
         IReadOnlyList<string>? footer = null;
         Tui.MarkdownStyle? markdown = null;
         var takenCommands = new Dictionary<string, string>(StringComparer.Ordinal);   // command -> owning extension
+        var conflicts = new List<Conflict>();
+        var owners = new Dictionary<string, string>(StringComparer.Ordinal);          // slot -> extension that set it
+        var off = new HashSet<string>(disabled ?? [], StringComparer.Ordinal);
+        var skipped = new List<Extension>();
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
+            if (off.Contains(name))
+            {
+                skipped.Add(new Extension(name, manifest.Version, manifest.Description, dir, []));
+                continue;
+            }
+            // Later names win a slot; the earlier owner is recorded as the loser.
+            void Claim(string slot)
+            {
+                if (owners.TryGetValue(slot, out var prior)) conflicts.Add(new Conflict(slot, name, prior));
+                owners[slot] = name;
+            }
             var mine = new List<string>();
             foreach (var spec in manifest.Themes ?? [])
             {
@@ -199,11 +230,8 @@ internal static partial class ExtensionRegistry
                     continue;
                 }
                 int prior = themes.FindIndex(t => string.Equals(t.Name, theme.Name, StringComparison.OrdinalIgnoreCase));
-                if (prior >= 0)
-                {
-                    problems.Add($"{name}: theme '{theme.Name}' replaces one from an earlier extension.");
-                    themes.RemoveAt(prior);
-                }
+                if (prior >= 0) themes.RemoveAt(prior);
+                Claim($"theme '{theme.Name.ToLowerInvariant()}'");
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
@@ -213,7 +241,7 @@ internal static partial class ExtensionRegistry
             {
                 if (items is null) return;
                 if (CheckTexts(items, maxItems, maxChars, frames) is { } err) { problems.Add($"{name}: {key} {err}; skipped."); return; }
-                if (slot is not null) problems.Add($"{name}: {key} replaces the one from an earlier extension.");
+                Claim(key);
                 slot = [.. items];
                 overrides.Add(key);
             }
@@ -234,7 +262,7 @@ internal static partial class ExtensionRegistry
             {
                 if (ParseFooterTemplate(template, problems, name) is { } ids)
                 {
-                    if (footer is not null) problems.Add($"{name}: footer template replaces the one from an earlier extension.");
+                    Claim("footer template");
                     footer = ids;
                     hasFooter = true;
                 }
@@ -248,7 +276,7 @@ internal static partial class ExtensionRegistry
             bool hasMarkdown = false;
             if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
             {
-                if (markdown is not null) problems.Add($"{name}: markdown style replaces the one from an earlier extension.");
+                Claim("markdown style");
                 markdown = style;
                 hasMarkdown = true;
             }
@@ -259,7 +287,7 @@ internal static partial class ExtensionRegistry
                 if (process is null) { problems.Add($"{name}: command '/{cname}' needs a process; skipped."); continue; }
                 if (!CommandNamePattern().IsMatch(cname)) { problems.Add($"{name}: invalid command name '{c.Name}' (a-z, 0-9, '-', max 32); skipped."); continue; }
                 if (IsBuiltInCommand("/" + cname)) { problems.Add($"{name}: command '/{cname}' is a built-in; skipped."); continue; }
-                if (takenCommands.TryGetValue(cname, out var owner)) { problems.Add($"{name}: command '/{cname}' is already provided by '{owner}'; skipped."); continue; }
+                if (takenCommands.TryGetValue(cname, out var owner)) { conflicts.Add(new Conflict($"command /{cname}", owner, name)); continue; }
                 takenCommands[cname] = name;
                 int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
                 commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout));
@@ -277,7 +305,10 @@ internal static partial class ExtensionRegistry
             });
         }
         var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels);
-        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown };
+        return new Result(extensions, themes, problems)
+        {
+            Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown, Conflicts = conflicts, Disabled = skipped,
+        };
     }
 
     /// <summary>

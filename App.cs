@@ -1266,7 +1266,7 @@ internal class App
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
-                    CliCmdUtils.HandleExtensions();
+                    CliCmdUtils.HandleExtensions(userInput);
                     break;
 
                 case var cmd when cmd.StartsWith("/report", StringComparison.Ordinal):
@@ -2323,19 +2323,24 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
     }
 
+    /// <summary>Problems from the last <see cref="LoadExtensions"/> (manifest and process start), for <c>/extensions</c>.</summary>
+    internal static IReadOnlyList<string> ExtensionProblems { get; private set; } = [];
+
     /// <summary>
-    /// (Re)load extensions from <c>extensions</c> in config.json and report problems. With
+    /// (Re)load extensions from <c>extensions</c> in config.json and report problems (unless
+    /// <paramref name="quiet"/>, used by the <c>/extensions</c> panel, which shows them itself). With
     /// <paramref name="announce"/> it also prints a one-line summary (used by <c>/refresh</c>).
     /// Re-applies <c>console.theme</c> so edited extension themes take effect and a theme whose
     /// extension is gone falls back to the default.
     /// </summary>
-    internal static void LoadExtensions(bool announce)
+    internal static void LoadExtensions(bool announce, bool quiet = false)
     {
         var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
         var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
-        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox));
-        foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();
+        ExtensionProblems = problems;
+        if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         if (announce && Config.Extensions.Enabled)
             MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s), " +
