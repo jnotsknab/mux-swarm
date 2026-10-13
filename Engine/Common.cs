@@ -181,6 +181,8 @@ public static class Common
 
                 foreach (var tool in tools)
                 {
+                    if (Extensions.ExtensionTool.IsGranted(tool, agent.Name)) { filtered.Add(tool); continue; }
+
                     bool include = false;
 
                     foreach (var server in agent.McpServers)
@@ -247,18 +249,21 @@ public static class Common
         IList<AITool> tools,
         IList<string>? mcpServers,
         IList<string>? toolPatterns,
-        bool includeAllWhenEmpty = false)
+        bool includeAllWhenEmpty = false,
+        string? agentName = null)
     {
         var servers = mcpServers ?? Array.Empty<string>();
         var patterns = toolPatterns ?? Array.Empty<string>();
 
         if (servers.Count == 0 && patterns.Count == 0)
-            return includeAllWhenEmpty ? tools.ToList() : new List<AITool>();
+            return includeAllWhenEmpty ? tools.ToList() : tools.Where(t => Extensions.ExtensionTool.IsGranted(t, agentName)).ToList();
 
         var filtered = new List<AITool>();
 
         foreach (var tool in tools)
         {
+            if (Extensions.ExtensionTool.IsGranted(tool, agentName)) { filtered.Add(tool); continue; }
+
             bool include = false;
 
             foreach (var server in servers)
@@ -320,6 +325,7 @@ public static class Common
             var filtered = new List<AITool>();
             foreach (var tool in tools)
             {
+                if (Extensions.ExtensionTool.IsGranted(tool, agent.Name)) { filtered.Add(tool); continue; }
                 bool include = false;
                 foreach (var server in agent.McpServers)
                 {
