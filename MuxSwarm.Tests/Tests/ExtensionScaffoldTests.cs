@@ -55,31 +55,16 @@ public sealed class ExtensionScaffoldTests : IDisposable
     }
 
     [Fact]
-    public void Scaffold_WritesTheFullReferenceGuide_FromDocs()
-    {
-        var docs = Path.Combine(_root, "DOCS.md");
-        File.WriteAllText(docs, "# Ref\n\n## Before\nx\n\n## Extensions\n\nEvery key: `thinking`, `footer/set`, `command/run`.\n\n## After\ny\n");
-        var dir = ExtensionScaffold.Scaffold(Path.Combine(_root, "ext"), "guide-test", null, ExtensionScaffold.Parts.Command, out _, docs)!;
-        var guide = File.ReadAllText(Path.Combine(dir, ExtensionScaffold.GuideFileName));
-        Assert.StartsWith("# guide-test: Mux extension guide", guide);
-        Assert.Contains("## Extensions", guide);
-        Assert.Contains("`thinking`, `footer/set`, `command/run`", guide);
-        Assert.DoesNotContain("## After", guide);
-        Assert.DoesNotContain("## Before", guide);
-        Assert.Contains("\"method\":\"command/run\"", guide);   // pipe-test example survives interpolation
-
-        var missing = ExtensionScaffold.Guide("x", Path.Combine(_root, "nope.md"));
-        Assert.Contains("See the '## Extensions' section of", missing);
-    }
-
-    [Fact]
-    public void Brief_NamesExactPathsAndTheGuide()
+    public void Brief_NamesExactPathsAndTheDocsSections()
     {
         var dir = Path.Combine(_root, "Extensions", "moon");
         var brief = MuxSwarm.Engine.CliCmdUtils.ExtensionBrief("moon", dir, "show the moon phase", process: true);
         Assert.Contains(Path.Combine(dir, "extension.json"), brief);
         Assert.Contains(Path.Combine(dir, "main.py"), brief);
-        Assert.Contains(Path.Combine(dir, ExtensionScaffold.GuideFileName), brief);
+        Assert.Contains(Path.Combine(MuxSwarm.Engine.PlatformContext.ContextDirectory, "DOCS.md"), brief);
+        Assert.Contains("'## Extensions'", brief);
+        Assert.Contains("'## Event Hooks'", brief);
+        Assert.False(File.Exists(Path.Combine(ExtensionScaffold.Scaffold(_root, "noguide", null, ExtensionScaffold.Parts.Theme, out _)!, "EXTENSION_GUIDE.md")));
         Assert.Contains("show the moon phase", brief);
         Assert.Contains("say so instead of guessing", brief);
         Assert.DoesNotContain("main.py", MuxSwarm.Engine.CliCmdUtils.ExtensionBrief("t", dir, "a theme", process: false));
@@ -110,4 +95,52 @@ public sealed class ExtensionScaffoldTests : IDisposable
         Assert.Contains("\"content\": \"hello J\"", output);
         Assert.Contains("\"id\": 3, \"result\": {}", output);
     }
+
+    [Fact]
+    public void AtTheMenu_TheBriefOpensAnAgentSession()
+    {
+        try
+        {
+            MuxSwarm.Engine.CliCmdUtils.QueueAgentSession("build it");
+            Assert.Equal("/agent", MuxSwarm.Engine.SingleAgentOrchestrator.PendingReplCommand);
+            Assert.Equal("build it", MuxSwarm.Engine.SingleAgentOrchestrator.PendingOpeningGoal);
+        }
+        finally
+        {
+            MuxSwarm.Engine.SingleAgentOrchestrator.PendingReplCommand = null;
+            MuxSwarm.Engine.SingleAgentOrchestrator.PendingOpeningGoal = null;
+        }
+        // The session consumes it before reading the first input (once), so the brief is turn one.
+        var src = File.ReadAllText(Path.Combine(SourceRoot(), "Engine", "SingleAgentOrchestrator.cs"));
+        int take = src.IndexOf("Interlocked.Exchange(ref PendingOpeningGoal, null)", StringComparison.Ordinal);
+        Assert.True(take > 0 && take < src.IndexOf("string firstInput = MuxConsole.ReadInput(cancellationToken)", StringComparison.Ordinal));
+    }
+
+    // Every event name the code emits, and every built-in theme name, must be documented in DOCS.md,
+    // since the brief tells the agent to use only what DOCS.md documents.
+    [Fact]
+    public void Docs_ListEveryEmittedEventAndBuiltInTheme()
+    {
+        var root = SourceRoot();
+        var docs = File.ReadAllText(Path.Combine(root, "Context", "DOCS.md"));
+        int start = docs.IndexOf("\n## Event Hooks", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        int end = docs.IndexOf("\n## ", start + 4, StringComparison.Ordinal);
+        var hooks = docs[start..(end < 0 ? docs.Length : end)];
+        var emitted = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains("MuxSwarm.Tests") && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(f), "new HookEvent\\s*\\{[^}]*?Event\\s*=\\s*\"([a-z_]+)\"")
+                .Select(m => m.Groups[1].Value))
+            .ToHashSet();
+        Assert.True(emitted.Count >= 15, $"found only {emitted.Count} events; is the scan broken?");
+        foreach (var e in emitted) Assert.Contains($"| `{e}` |", hooks);
+
+        int ext = docs.IndexOf("\n## Extensions", StringComparison.Ordinal);
+        var extensions = docs[ext..docs.IndexOf("\n## ", ext + 4, StringComparison.Ordinal)];
+        foreach (var t in MuxSwarm.Engine.Theme.Presets) Assert.Contains(t.Name, extensions);
+        foreach (var id in MuxSwarm.Engine.Tui.TuiComponents.FooterSegmentIds) Assert.Contains(id, extensions);
+    }
+
+    private static string SourceRoot([System.Runtime.CompilerServices.CallerFilePath] string path = "")
+        => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, "..", ".."));
 }
