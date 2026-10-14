@@ -1252,7 +1252,7 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
   one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
   selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
-  `t` trust/untrust its process (asks first), `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  `t` trust/untrust its process (trusting takes a second `t`), `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
   this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
   Changes save to config.json and apply at once; new agent tools arrive with the next session.
 - When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown

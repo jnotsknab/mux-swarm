@@ -100,4 +100,23 @@ public sealed class ExtensionsPanelDriverTests
         Assert.False(MuxConsole.TryExtensionsPanel(View(), out _));
         Assert.True(scope.Pump.TryTake(out _, 0));
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void InPlaceActions_ApplyWithoutLeavingThePanel(bool frame)
+    {
+        using var scope = new AgentPickerDriverTests.Scope(frame);
+        var view = View();
+        var applied = new List<ExtensionsPanelView.Action>();
+        int enters = 0;
+        scope.Pump.PushFront([Key(ConsoleKey.Spacebar, ' '), Key(ConsoleKey.R, 'r'), Key(ConsoleKey.T, 't'), Key(ConsoleKey.T, 't'), Key(ConsoleKey.Escape)]);
+        var before = scope.Term.Output.Length;
+        Assert.True(scope.Driver.RunExtensionsPanel(view, out var action, input: scope.Pump, apply: a => { applied.Add(a); enters++; }));
+        Assert.Equal(ExtensionsPanelView.Action.Close, action);
+        Assert.Equal([ExtensionsPanelView.Action.Toggle, ExtensionsPanelView.Action.Reload, ExtensionsPanelView.Action.Trust], applied);
+        if (!frame)   // inline engine: one alt-screen session, never left and re-entered between actions
+            Assert.Equal(1, System.Text.RegularExpressions.Regex.Count(scope.Term.Output.ToString()[before..], System.Text.RegularExpressions.Regex.Escape(Ansi.LeaveAltScreen)));
+        scope.AssertRestored();
+    }
 }
