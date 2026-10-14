@@ -1247,7 +1247,11 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
-- `/refresh` reloads extensions and re-applies `console.theme`.
+- `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
+  disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
+  recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.
+  Mux reads the manifests of the instance you run: edit `<install>/Extensions/<name>/` of that install
+  (the panel's details pane shows the exact folder).
 - **`/extensions`** opens a panel (TUI; works at the menu and inside a session) listing every installed
   extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
   one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
@@ -1290,7 +1294,11 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Each subscribed event: notification `event` whose params are the hook payload
   (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
-- stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- stdout must carry only JSON-RPC lines, one per line, encoded as UTF-8 (Mux writes UTF-8 without a BOM
+  to stdin). On Windows, Python defaults pipes to the ANSI code page: call
+  `sys.stdout.reconfigure(encoding="utf-8")` (or send ASCII-escaped JSON, Python's `json.dumps` default)
+  or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
+  `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
   `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout

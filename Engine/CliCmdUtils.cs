@@ -2105,11 +2105,25 @@ public static class CliCmdUtils
         if (!inSession || !MuxConsole.Confirm("Have the agent build it out now?", false)) return null;
         var goal = MuxConsole.Prompt("What should it do?", "");
         if (string.IsNullOrWhiteSpace(goal)) return null;
-        return $"Build out the Mux extension scaffolded at {dir} so that it: {goal.Trim()}\n" +
-               $"Read the '## Extensions' section of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} first (manifest keys, " +
-               "the JSON-RPC protocol, limits). Edit only files inside that folder. Keep stdout for JSON-RPC lines only. " +
-               "When done, tell me to run /extensions and press r to reload.";
+        return ExtensionBrief(name, dir, goal.Trim(), process);
     }
+
+    /// <summary>The agent's brief for building out a scaffolded extension: exact paths, the guide, the rules.</summary>
+    internal static string ExtensionBrief(string name, string dir, string goal, bool process) =>
+        $"""
+        Build out the Mux extension "{name}" so that it: {goal}
+
+        - Folder: {dir}
+        - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
+        - Read {Path.Combine(dir, Extensions.ExtensionScaffold.GuideFileName)} in full FIRST. It is the complete reference
+          (every manifest key, limits, the JSON-RPC protocol both ways, trust, sandbox). Use only what it documents;
+          if something you need is not in it, say so instead of guessing.
+        - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).
+        - Process rules: stdout carries only JSON-RPC lines (UTF-8), logs go to stderr; test it by piping JSON
+          lines into it before finishing (see the guide).
+        - Validate extension.json is valid JSON. When done, tell the user to press r in /extensions (or run
+          /extensions reload) and check the details pane for problems.
+        """;
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
     private static void ShowThemeGallery()
