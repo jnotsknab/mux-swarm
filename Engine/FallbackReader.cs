@@ -3,7 +3,7 @@
 /// <summary>
 /// A TextReader that injects a single seeded "first input" before falling back to the real input
 /// (Console.In by default). Used to auto-deliver a one-shot task to an interactive agent session
-/// (e.g. the /newagent and /createhook helper flows).
+/// (e.g. the /newagent helper flow).
 ///
 /// IMPORTANT: the seed is delivered WHOLE on the first ReadLine() - any internal newlines are
 /// flattened to spaces so a multi-line brief is not truncated to its first line (the consumer reads

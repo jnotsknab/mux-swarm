@@ -1689,6 +1689,9 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
+`/createhook` (or `/hooks create`) asks for the id, script, events, filters and mode, saves the entry, and, for a new
+script, starts a normal `/agent` session (your model and settings) whose first message is a brief with those choices.
+
 - `when.event` is one event name or a list: `"event": ["turn_end", "task_complete"]` fires once per occurrence of any listed event. A single event still round-trips as a plain string.
 - `args` (optional string array): `command` becomes the executable and each entry is passed verbatim, so paths with spaces need no quoting: `"command": "python", "args": ["C:/My Hooks/notify.py"]`. Without `args`, `command` is split once at the first space (legacy; a quoted path with spaces in the executable position breaks).
 - Hook stdout/stderr are captured, not inherited (stdout is the protocol under `--stdio`/`--acp`, and would draw over the TUI). Each line is surfaced as a muted/debug line `[Hook:<id>] ...` (`[Hook:<id>:stderr] ...`).
