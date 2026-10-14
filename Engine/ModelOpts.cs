@@ -72,7 +72,7 @@ public class ModelOpts
 
             };
             if (ReasoningEffortControl.TryParse(Reasoning.Effort, out var effort))
-                ReasoningEffortControl.Apply(opts, effort!);
+                ReasoningEffortControl.ApplyQuiet(opts, effort!);   // building from config, not a change
         }
 
         if (AdditionalParams is { Count: > 0 })
