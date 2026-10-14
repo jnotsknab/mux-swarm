@@ -1974,6 +1974,7 @@ public static class CliCmdUtils
                     break;
                 case Tui.ExtensionsPanelView.Action.New:
                     if (NewExtensionWizard(null, inSession) is { } prompt) return prompt;
+                    if (SingleAgentOrchestrator.PendingOpeningGoal is not null) return null;   // an /agent session starts next
                     view.Message = "";
                     break;
             }
@@ -2102,27 +2103,46 @@ public static class CliCmdUtils
         SaveExtensionsConfig();
         App.LoadExtensions(announce: false, quiet: true);
         MuxConsole.WriteSuccess($"Created {dir}. Edit extension.json{(process ? " and main.py" : "")}, then reload (r in /extensions).");
-        if (!inSession || !MuxConsole.Confirm("Have the agent build it out now?", false)) return null;
+        if (!MuxConsole.Confirm(inSession ? "Have the agent build it out now?" : "Start an agent session to build it out?", false)) return null;
         var goal = MuxConsole.Prompt("What should it do?", "");
         if (string.IsNullOrWhiteSpace(goal)) return null;
-        return ExtensionBrief(name, dir, goal.Trim(), process);
+        var brief = ExtensionBrief(name, dir, goal.Trim(), process);
+        if (inSession) return brief;
+        QueueAgentSession(brief);
+        return null;
     }
 
-    /// <summary>The agent's brief for building out a scaffolded extension: exact paths, the guide, the rules.</summary>
+    /// <summary>
+    /// At the menu there is no agent: queue <paramref name="openingGoal"/> as the first message of a new
+    /// <c>/agent</c> session, which the menu loop starts next (the session stays interactive afterwards).
+    /// </summary>
+    internal static void QueueAgentSession(string openingGoal)
+    {
+        SingleAgentOrchestrator.PendingOpeningGoal = openingGoal;
+        SingleAgentOrchestrator.PendingReplCommand = "/agent";
+    }
+
+    /// <summary>The agent's brief for building out a scaffolded extension: exact paths, the docs sections, the rules.</summary>
     internal static string ExtensionBrief(string name, string dir, string goal, bool process) =>
         $"""
         Build out the Mux extension "{name}" so that it: {goal}
 
         - Folder: {dir}
         - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
-        - Read {Path.Combine(dir, Extensions.ExtensionScaffold.GuideFileName)} in full FIRST. It is the complete reference
-          (every manifest key, limits, the JSON-RPC protocol both ways, trust, sandbox). Use only what it documents;
-          if something you need is not in it, say so instead of guessing.
-        - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).
-        - Process rules: stdout carries only JSON-RPC lines (UTF-8), logs go to stderr; test it by piping JSON
-          lines into it before finishing (see the guide).
+        - Read these two sections of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full FIRST (grep for the
+          headings, then read to the next '## '): '## Extensions' (every manifest key, built-in theme names, footer
+          ids, limits, the JSON-RPC protocol both ways, trust, sandbox) and '## Event Hooks' (the table of every
+          event name and the fields it carries). Use only what they document; if you need something they do not
+          cover, say so instead of guessing.
+        - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).{(process ? ProcessRules : "")}
         - Validate extension.json is valid JSON. When done, tell the user to press r in /extensions (or run
           /extensions reload) and check the details pane for problems.
+        """;
+
+    private const string ProcessRules = """
+
+        - Process rules: stdout carries only JSON-RPC lines (UTF-8), logs go to stderr; test it by piping JSON
+          lines into it before finishing (the scaffolded process file answers every message; keep that shape).
         """;
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>

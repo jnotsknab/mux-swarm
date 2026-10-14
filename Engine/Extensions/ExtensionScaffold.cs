@@ -20,13 +20,10 @@ internal static class ExtensionScaffold
 
     /// <summary>
     /// Write a new extension folder <c>root/name</c>: an <c>extension.json</c> with the chosen
-    /// <paramref name="parts"/>, a working <c>main.py</c> when a part needs a process, and
-    /// <c>EXTENSION_GUIDE.md</c>: the full extension reference (the <c>## Extensions</c> section of
-    /// <paramref name="docsPath"/>, the install's DOCS.md by default) so an agent or a person editing
-    /// the folder has every key and protocol message at hand. Returns the folder, or null with
-    /// <paramref name="error"/> (bad name, folder exists).
+    /// <paramref name="parts"/>, plus a working <c>main.py</c> when a part needs a process.
+    /// Returns the folder, or null with <paramref name="error"/> (bad name, folder exists).
     /// </summary>
-    internal static string? Scaffold(string root, string name, string? description, Parts parts, out string error, string? docsPath = null)
+    internal static string? Scaffold(string root, string name, string? description, Parts parts, out string error)
     {
         name = (name ?? "").Trim().ToLowerInvariant();
         error = "";
@@ -61,57 +58,9 @@ internal static class ExtensionScaffold
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName), m.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
         if ((parts & ProcessParts) != 0) File.WriteAllText(Path.Combine(dir, "main.py"), MainPy);
-        File.WriteAllText(Path.Combine(dir, GuideFileName), Guide(name, docsPath ?? Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")));
         return dir;
     }
 
-    /// <summary>File name of the reference written into every scaffolded extension.</summary>
-    internal const string GuideFileName = "EXTENSION_GUIDE.md";
-
-    /// <summary>
-    /// The guide for extension <paramref name="name"/>: where things live, how to apply changes, then
-    /// the <c>## Extensions</c> section of <paramref name="docsPath"/> verbatim (or a pointer when it
-    /// cannot be read).
-    /// </summary>
-    internal static string Guide(string name, string docsPath)
-    {
-        string reference;
-        try
-        {
-            var docs = File.ReadAllText(docsPath).Replace("\r\n", "\n");
-            int start = docs.IndexOf("\n## Extensions", StringComparison.Ordinal);
-            int end = start < 0 ? -1 : docs.IndexOf("\n## ", start + 4, StringComparison.Ordinal);
-            reference = start < 0 ? $"See the '## Extensions' section of {docsPath}."
-                : docs[(start + 1)..(end < 0 ? docs.Length : end)].Trim();
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            reference = $"See the '## Extensions' section of {docsPath}.";
-        }
-        return $$$"""
-            # {{{name}}}: Mux extension guide
-
-            Everything this extension does is declared in `extension.json` in this folder; `main.py` (if
-            present) is its process. The full reference follows below; it is copied from Mux's DOCS.md
-            ({{{docsPath}}}) when the extension was created.
-
-            ## Working on this extension
-
-            - Edit only files in this folder. Mux reads `extension.json` of the install that is running.
-            - Apply changes: `r` in `/extensions`, `/extensions reload`, or `/refresh`. Problems and
-              conflicts show in the `/extensions` details pane; a fixed manifest clears its warning on reload.
-            - A process only starts when its name is in `extensions.trusted` (`t` in `/extensions`).
-            - New or changed agent tools appear in sessions started after the reload.
-            - The process speaks newline-delimited JSON-RPC 2.0 on stdin/stdout: stdout carries only
-              JSON lines, logs go to stderr (the last lines show in `/extensions`). Write UTF-8.
-            - When sandboxed, write files only under `initialize.dataDir`.
-            - Test the process without Mux: pipe JSON lines into it, e.g.
-              `echo {"jsonrpc":"2.0","id":1,"method":"command/run","params":{"name":"x","args":""}} | python -u main.py`.
-
-            {{{reference}}}
-
-            """;
-    }
 
     // The extension name when it is a usable command word, else "ext-<name>".
     private static string CommandName(string name)
@@ -122,7 +71,7 @@ internal static class ExtensionScaffold
     }
 
     private const string MainPy = """
-        # Mux extension process. Full reference: EXTENSION_GUIDE.md in this folder.
+        # Mux extension process. Reference: the '## Extensions' and '## Event Hooks' sections of Mux's Context/DOCS.md.
         # Protocol: newline-delimited JSON-RPC 2.0. Mux -> us on stdin; us -> Mux on stdout.
         # stdout carries ONLY JSON lines; log to stderr (/extensions shows the last lines).
         import json, os, sys

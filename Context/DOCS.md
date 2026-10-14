@@ -1261,7 +1261,9 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 ```
 
 - **themes**: each entry needs a `name` (cannot reuse a built-in name), an optional `base` built-in
-  preset (default `default`), and any color roles to override: `step success warning error info muted
+  preset (default `default`; one of `default dark light mono solarized dracula gruvbox catppuccin-mocha
+  catppuccin-macchiato catppuccin-latte nord tokyo-night tokyo-storm rose-pine rose-dawn kanagawa
+  everforest one-dark monokai ayu-mirage synthwave`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
 - **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
@@ -1310,8 +1312,10 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
   A command name taken by an earlier extension stays with that one.
 - `/extensions new [name]` scaffolds `<install>/Extensions/<name>` from the parts you pick (theme, spinner
-  + quips, footer chip, slash command, agent tool, interceptor; process parts get a working `main.py`),
-  offers to trust it and reloads. Inside a session it can hand the agent a brief to build it out.
+  + quips, footer chip, slash command, agent tool, interceptor; process parts get a working `main.py`
+  that answers every message), offers to trust it and reloads. It then offers to have the agent build it
+  out: inside a session the brief becomes your next message; at the menu it starts an `/agent` session
+  with the brief as the opening goal. The brief points the agent at this section and ## Event Hooks.
 - Outside the TUI, `/extensions` prints the same information as text; change it with
   `/extensions enable|disable|trust|untrust <name>`, `/extensions new [name]` and `/extensions reload`.
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
@@ -1337,8 +1341,9 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
 - First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`
   (`dir` = the extension folder as the process sees it; `dataDir` = its writable folder when sandboxed, else absent).
-- Each subscribed event: notification `event` whose params are the hook payload
-  (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
+- Each subscribed event: notification `event` whose params are the hook payload (`event`, `timestamp`,
+  plus `agent`, `tool`, `args`, `text`, `summary`, `goalId` as set). The event names and the fields each
+  one carries are listed in the table under ## Event Hooks.
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
 - stdout must carry only JSON-RPC lines, one per line, encoded as UTF-8 (Mux writes UTF-8 without a BOM
   to stdin). On Windows, Python defaults pipes to the ANSI code page: call
@@ -1690,7 +1695,33 @@ Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add
 - A crashed persistent hook is restarted on its next event; repeated crashes back off 1s, 2s, 4s ... up to 60s (events for it are skipped meanwhile). Staying up 60s resets the backoff.
 - Payload: `tool_call` carries `args` (call arguments as JSON), `tool_result` carries `tool` and the result text in `summary`, and every event carries `goalId` when the run has one (`--goal-id`, or the id a continuous run generates).
 
-Supported events include `session_start`, `session_end`, `user_input`, `text_chunk`, `thinking_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `runtime_ready`, and the daemon events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. See `docs/hooks.md` for the full table.
+Every event carries `event` and `timestamp`, plus `goalId` when the run has one; the other fields
+depend on the event (absent = not set). These are the exact names emitted, for hooks
+(`when.event`) and extension processes (`events` in the manifest, delivered as `event` notifications
+with this payload as `params`):
+
+| Event | When it fires | Fields |
+|-------|---------------|--------|
+| `runtime_ready` | Runtime finished booting | `text` |
+| `session_start` | A mode was entered | `agent`, `summary` (`agent`/`stateless`/`swarm`/`pswarm`), `text` (opening goal, if any) |
+| `session_end` | A session exited | `agent`, `summary` (`completed`/`interrupted`) |
+| `user_input` | A goal or message was received | `agent`, `text` |
+| `agent_turn_start` | An agent begins a turn | `agent` |
+| `text_chunk` | A streamed piece of the answer | `agent`, `text` |
+| `thinking_chunk` | A streamed piece of reasoning | `agent`, `text` |
+| `tool_call` | A tool is invoked | `agent`, `tool`, `args` (arguments as JSON) |
+| `tool_result` | A tool returned | `agent`, `tool`, `summary` (result text) |
+| `turn_end` | An agent turn completed | `agent`, `summary` (first 500 chars of the answer) |
+| `task_complete` | An agent signalled the task is done | `agent`, `summary` |
+| `delegation` | Work was delegated to a specialist | `agent` (delegating agent), `summary` (task, truncated) |
+| `daemon_start` | The daemon started | `summary` (`<n> triggers`) |
+| `daemon_stop` | The daemon stopped | (none) |
+| `daemon_trigger` | A trigger fired a goal | `agent`, `summary` (`cron:<id>`/`watch:<id>`/`webhook:<id>`), `text` (goal) |
+| `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
+| `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
+
+`*` (extensions) matches every event. `text_chunk` and `thinking_chunk` fire per streamed piece, so
+subscribe to them only when you need streaming.
 
 Daemon-specific hook events emitted automatically:
 - `daemon_start` -- fired when daemon starts with trigger count
