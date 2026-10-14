@@ -20,10 +20,13 @@ internal static class ExtensionScaffold
 
     /// <summary>
     /// Write a new extension folder <c>root/name</c>: an <c>extension.json</c> with the chosen
-    /// <paramref name="parts"/>, plus a working <c>main.py</c> when a part needs a process.
-    /// Returns the folder, or null with <paramref name="error"/> (bad name, folder exists).
+    /// <paramref name="parts"/>, a working <c>main.py</c> when a part needs a process, and
+    /// <c>EXTENSION_GUIDE.md</c>: the full extension reference (the <c>## Extensions</c> section of
+    /// <paramref name="docsPath"/>, the install's DOCS.md by default) so an agent or a person editing
+    /// the folder has every key and protocol message at hand. Returns the folder, or null with
+    /// <paramref name="error"/> (bad name, folder exists).
     /// </summary>
-    internal static string? Scaffold(string root, string name, string? description, Parts parts, out string error)
+    internal static string? Scaffold(string root, string name, string? description, Parts parts, out string error, string? docsPath = null)
     {
         name = (name ?? "").Trim().ToLowerInvariant();
         error = "";
@@ -58,7 +61,56 @@ internal static class ExtensionScaffold
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName), m.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
         if ((parts & ProcessParts) != 0) File.WriteAllText(Path.Combine(dir, "main.py"), MainPy);
+        File.WriteAllText(Path.Combine(dir, GuideFileName), Guide(name, docsPath ?? Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")));
         return dir;
+    }
+
+    /// <summary>File name of the reference written into every scaffolded extension.</summary>
+    internal const string GuideFileName = "EXTENSION_GUIDE.md";
+
+    /// <summary>
+    /// The guide for extension <paramref name="name"/>: where things live, how to apply changes, then
+    /// the <c>## Extensions</c> section of <paramref name="docsPath"/> verbatim (or a pointer when it
+    /// cannot be read).
+    /// </summary>
+    internal static string Guide(string name, string docsPath)
+    {
+        string reference;
+        try
+        {
+            var docs = File.ReadAllText(docsPath).Replace("\r\n", "\n");
+            int start = docs.IndexOf("\n## Extensions", StringComparison.Ordinal);
+            int end = start < 0 ? -1 : docs.IndexOf("\n## ", start + 4, StringComparison.Ordinal);
+            reference = start < 0 ? $"See the '## Extensions' section of {docsPath}."
+                : docs[(start + 1)..(end < 0 ? docs.Length : end)].Trim();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            reference = $"See the '## Extensions' section of {docsPath}.";
+        }
+        return $$$"""
+            # {{{name}}}: Mux extension guide
+
+            Everything this extension does is declared in `extension.json` in this folder; `main.py` (if
+            present) is its process. The full reference follows below; it is copied from Mux's DOCS.md
+            ({{{docsPath}}}) when the extension was created.
+
+            ## Working on this extension
+
+            - Edit only files in this folder. Mux reads `extension.json` of the install that is running.
+            - Apply changes: `r` in `/extensions`, `/extensions reload`, or `/refresh`. Problems and
+              conflicts show in the `/extensions` details pane; a fixed manifest clears its warning on reload.
+            - A process only starts when its name is in `extensions.trusted` (`t` in `/extensions`).
+            - New or changed agent tools appear in sessions started after the reload.
+            - The process speaks newline-delimited JSON-RPC 2.0 on stdin/stdout: stdout carries only
+              JSON lines, logs go to stderr (the last lines show in `/extensions`). Write UTF-8.
+            - When sandboxed, write files only under `initialize.dataDir`.
+            - Test the process without Mux: pipe JSON lines into it, e.g.
+              `echo {"jsonrpc":"2.0","id":1,"method":"command/run","params":{"name":"x","args":""}} | python -u main.py`.
+
+            {{{reference}}}
+
+            """;
     }
 
     // The extension name when it is a usable command word, else "ext-<name>".
@@ -70,41 +122,71 @@ internal static class ExtensionScaffold
     }
 
     private const string MainPy = """
-        # Mux extension process: newline-delimited JSON-RPC 2.0 on stdin/stdout (see DOCS.md, ## Extensions).
-        # Never print anything else to stdout; use stderr for logs (/extensions shows the last lines).
-        import json, sys
+        # Mux extension process. Full reference: EXTENSION_GUIDE.md in this folder.
+        # Protocol: newline-delimited JSON-RPC 2.0. Mux -> us on stdin; us -> Mux on stdout.
+        # stdout carries ONLY JSON lines; log to stderr (/extensions shows the last lines).
+        import json, os, sys
 
-        name, data_dir = "extension", "."   # data_dir: where to write files (initialize.dataDir when sandboxed)
+        sys.stdout.reconfigure(encoding="utf-8")   # Windows pipes default to the ANSI code page
+        name, data_dir = "extension", "."           # from initialize; write files under data_dir
 
 
         def send(obj):
             print(json.dumps(obj), flush=True)
 
 
+        def notify(method, params):
+            send({"jsonrpc": "2.0", "method": method, "params": params})
+
+
         def reply(msg_id, result):
             send({"jsonrpc": "2.0", "id": msg_id, "result": result})
 
 
+        def error(msg_id, message):
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": 1, "message": message}})
+
+
+        def log(text):
+            print(text, file=sys.stderr, flush=True)
+
+
         turns = 0
+        cancelled = set()   # request ids Mux cancelled ($/cancelRequest: the user pressed Esc)
+
         for line in sys.stdin:
             msg = json.loads(line)
             method, params = msg.get("method"), msg.get("params") or {}
-            if "id" not in msg:   # notifications from Mux
-                if method == "initialize":
-                    name, data_dir = params.get("name", name), params.get("dataDir") or "."
-                    send({"jsonrpc": "2.0", "method": "footer/set", "params": {"id": "status", "text": "ready"}})
-                elif method == "event" and params.get("event") == "turn_end":
-                    turns += 1
-                    send({"jsonrpc": "2.0", "method": "footer/set", "params": {"id": "status", "text": f"{turns} turns"}})
+
+            # --- notifications (no id, no reply) ---
+            if "id" not in msg:
+                if method == "initialize":            # { protocolVersion, muxVersion, name, dir, dataDir? }
+                    name = params.get("name", name)
+                    data_dir = params.get("dataDir") or params.get("dir") or "."
+                    notify("footer/set", {"id": "status", "text": "ready"})   # chip id -> "<name>.status"
+                elif method == "event":               # lifecycle event, same payload as hooks
+                    if params.get("event") == "turn_end":
+                        turns += 1
+                        notify("footer/set", {"id": "status", "text": f"{turns} turns"})
+                elif method == "$/cancelRequest":
+                    cancelled.add(params.get("id"))
                 continue
-            if method == "command/run":
-                reply(msg["id"], {"output": f"hello from {name} (args: {params.get('args')!r})"})
-            elif method == "tool/call":
-                reply(msg["id"], {"content": f"hello {params.get('arguments', {}).get('who', 'there')}"})
-            elif method == "tool/before":
-                reply(msg["id"], {"decision": "allow"})
+
+            # --- requests (reply with the same id) ---
+            msg_id = msg["id"]
+            if method == "command/run":               # { name, args, cwd, mode }
+                notify("command/output", {"text": "working..."})        # streamed progress line
+                reply(msg_id, {"output": f"hello from {name} (args: {params.get('args')!r})"})
+                # add "prompt": "..." to the result to send a message to the agent as the next turn
+            elif method == "tool/call":               # { name, arguments } -> { content }
+                who = (params.get("arguments") or {}).get("who", "there")
+                reply(msg_id, {"content": f"hello {who}"})
+            elif method == "tool/before":             # { tool, arguments } -> allow | deny (+ reason) | rewritten arguments
+                reply(msg_id, {"decision": "allow"})
+            elif method == "tool/after":              # { tool, arguments, result } -> {} keeps it, { result } replaces it
+                reply(msg_id, {})
             else:
-                send({"jsonrpc": "2.0", "id": msg["id"], "error": {"code": 1, "message": f"unknown method {method}"}})
+                error(msg_id, f"unknown method {method}")
 
         """;
 
