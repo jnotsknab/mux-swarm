@@ -15,7 +15,8 @@ public sealed class ExtensionCatalogTests : IDisposable
 
     public void Dispose()
     {
-        ExtensionHost.StopAll();
+        // No ExtensionHost.StopAll(): nothing here starts a process, and stopping the global host would
+        // kill a process another (parallel) test class owns.
         ExtensionRegistry.Load(null);
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
     }
