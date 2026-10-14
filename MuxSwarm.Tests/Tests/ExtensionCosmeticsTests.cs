@@ -70,9 +70,9 @@ public sealed class ExtensionCosmeticsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("""{ "spinner": [] }""", "spinner needs 1-32")]
-    [InlineData("""{ "spinner": ["ab"] }""", "not one terminal cell")]
-    [InlineData("""{ "spinner": ["\u4E2D"] }""", "not one terminal cell")]
+    [InlineData("""{ "spinner": [] }""", "spinner needs 1-64")]
+    [InlineData("""{ "spinner": ["123456789"] }""", "1-8 terminal cells")]
+    [InlineData("""{ "spinner": ["\u0301"] }""", "1-8 terminal cells")]   // a lone combining mark: 0 cells
     [InlineData("""{ "quips": ["ok", " "] }""", "empty entry")]
     [InlineData("""{ "quips": ["bad\u001b[31m"] }""", "control characters")]
     [InlineData("""{ "splash": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"] }""", "longer than 80")]
@@ -99,5 +99,47 @@ public sealed class ExtensionCosmeticsTests : IDisposable
 
         string line = TuiComponents.ThinkingLine("Plotting [bold]now", 0);   // no leading frame: fallback uses the extension spinner
         Assert.Equal("[ Plotting [bold]now", TuiMarkup.Plain(line).Trim());
+    }
+
+    [Fact]
+    public void Spinner_AcceptsMultiCellAndEmojiFrames_PaddedToTheWidest()
+    {
+        AddExtension("wide", """{ "spinner": ["\u2588", "\u2588\u2588", "\uD83D\uDE80", "\uD83D\uDC68\u200D\uD83D\uDCBB", "[=  ]"] }""");
+        Assert.Empty(LoadEnabled().Problems);
+        var frames = ThinkingIndicator.ExtensionFrames!;
+        Assert.All(frames, f => Assert.Equal(5, TuiMarkup.Width(f)));   // padded to "[=  ]" (5 cells)
+        Assert.StartsWith("\uD83D\uDE80", frames[2]);
+        Assert.StartsWith("\uD83D\uDC68\u200D\uD83D\uDCBB", frames[3]);   // ZWJ sequence kept whole
+    }
+
+    [Fact]
+    public void Thinking_ControlsFramesTimingQuipsAndSuffix()
+    {
+        AddExtension("calm", """
+            { "spinner": ["x"], "quips": ["Old"],
+              "thinking": { "frames": [".", "..", "..."], "intervalMs": 200, "quips": ["Breathing", "Waiting"],
+                            "quipIntervalMs": 4000, "shuffle": false, "suffix": "" } }
+            """);
+        var result = LoadEnabled();
+        Assert.Empty(result.Problems);
+        Assert.Contains("thinking", Assert.Single(result.Extensions).Overrides);
+        Assert.Equal(new ThinkingIndicator.Timing(200, 4000, false, ""), ThinkingIndicator.ActiveTiming);
+        Assert.Equal([".\u2800\u2800", "..\u2800", "..."], ThinkingIndicator.ExtensionFrames);   // thinking.frames wins
+        Assert.Equal(["Breathing", "Waiting"], ThinkingIndicator.Rotation());                        // in order, no shuffle
+
+        ExtensionRegistry.Load(null);
+        Assert.Equal(ThinkingIndicator.Timing.Default, ThinkingIndicator.ActiveTiming);
+    }
+
+    [Theory]
+    [InlineData("""{ "thinking": { "intervalMs": 10 } }""", "intervalMs must be 40-1000")]
+    [InlineData("""{ "thinking": { "quipIntervalMs": 100 } }""", "quipIntervalMs must be 500-60000")]
+    [InlineData("""{ "thinking": { "suffix": "........." } }""", "suffix must be at most 8")]
+    public void Thinking_RejectsBadTiming_KeepingTheBuiltIn(string manifest, string expected)
+    {
+        AddExtension("bad", manifest);
+        var result = LoadEnabled();
+        Assert.Contains(result.Problems, p => p.Contains(expected));
+        Assert.Equal(ThinkingIndicator.Timing.Default, ThinkingIndicator.ActiveTiming);
     }
 }

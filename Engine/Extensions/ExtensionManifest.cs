@@ -32,7 +32,10 @@ internal sealed class ExtensionManifest
     [JsonPropertyName("themes")]
     public List<Dictionary<string, string>> Themes { get; set; } = [];
 
-    /// <summary>Thinking-indicator spinner frames, replacing the built-in ones. 1-32 frames, each one terminal cell wide.</summary>
+    /// <summary>
+    /// Thinking-indicator spinner frames, replacing the built-in ones: 1-64 frames, each 1-8 terminal
+    /// cells (any text: multi-character, emoji, ZWJ sequences). Shorthand for <c>thinking.frames</c>.
+    /// </summary>
     [JsonPropertyName("spinner")]
     public List<string>? Spinner { get; set; }
 
@@ -50,4 +53,39 @@ internal sealed class ExtensionManifest
     /// <summary>Startup splash lines. Replaces the whole built-in pool (quotes, facts, tips, taglines).</summary>
     [JsonPropertyName("splash")]
     public List<string>? Splash { get; set; }
+
+    /// <summary>The whole thinking-indicator animation (frames, speed, quips). Null = built-in.</summary>
+    [JsonPropertyName("thinking")]
+    public ThinkingManifest? Thinking { get; set; }
+}
+
+/// <summary>
+/// The <c>thinking</c> block: full control of the agent's thinking indicator. Every key is optional;
+/// <c>frames</c> and <c>quips</c> take precedence over the top-level <c>spinner</c> / <c>quips</c>.
+/// </summary>
+internal sealed class ThinkingManifest
+{
+    /// <summary>Spinner frames: 1-64, each 1-8 terminal cells. Narrower frames are padded to the widest.</summary>
+    [JsonPropertyName("frames")]
+    public List<string>? Frames { get; set; }
+
+    /// <summary>Milliseconds per frame, 40-1000 (default 80).</summary>
+    [JsonPropertyName("intervalMs")]
+    public int? IntervalMs { get; set; }
+
+    /// <summary>Words cycled while the agent reasons (1-200, max 80 chars each).</summary>
+    [JsonPropertyName("quips")]
+    public List<string>? Quips { get; set; }
+
+    /// <summary>Milliseconds each quip shows, 500-60000 (default 2000).</summary>
+    [JsonPropertyName("quipIntervalMs")]
+    public int? QuipIntervalMs { get; set; }
+
+    /// <summary>Shuffle the quips per user (default true); false cycles them in order.</summary>
+    [JsonPropertyName("shuffle")]
+    public bool? Shuffle { get; set; }
+
+    /// <summary>Text after the quip (default <c>...</c>, max 8 chars, may be empty).</summary>
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
 }
