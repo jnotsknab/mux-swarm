@@ -355,4 +355,60 @@ public class ModalMouseTests
             ConsoleInputPump.PromptActive = prompt; ConsoleInputPump.ModalActive = modal;
         }
     }
+
+    // VT input (Windows Terminal / ConPTY with VT input on, SSH, Linux) reports Space with no virtual
+    // key; the multi-select toggle keys on ConsoleKey.Spacebar, so Space did nothing while clicks
+    // still toggled. Feed raw bytes through the real assembler, then mix Space and click.
+    [Fact]
+    public void FramePromptModal_MultiSelect_SpaceFromVtInputAndClicksBothToggle()
+    {
+        bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
+        ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
+        var driver = new TuiDriver(new Terminal(), frameEngine: true);
+        driver.SetMouseTrackingPreset("buttons");
+        using var pump = ConsoleInputPump.CreateUnstartedForTest();
+        var current = typeof(ConsoleInputPump).GetField("_current",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var prior = current.GetValue(null);
+        current.SetValue(null, pump);
+        void Raw(string s) { foreach (var c in s) pump.FeedRawKey(new ConsoleKeyInfo(c, ConsoleKey.NoName, false, false, false)); }
+        try
+        {
+            var probe = Task.Run(() =>
+            {
+                for (int i = 0; i < 100; i++)
+                {
+                    var map = driver.FrameHitMap;
+                    if (map is not null)
+                        for (int r = 1; r <= 24; r++)
+                            if (map.TryHit(r, 3, out var hit, out _, out _) && hit is { Kind: MouseTargetKind.PromptModalOption, Payload: 2 })
+                            {
+                                Raw(" ");                         // VT Space on option 0: check it
+                                Raw("\u001b[B");                  // Down to option 1
+                                Raw(" ");                         // check it
+                                Raw(" ");                         // uncheck it again
+                                pump.Enqueue(Press(3, r));        // click option 2: check it
+                                pump.Enqueue(Release(3, r));
+                                Thread.Sleep(600);                // not a double click
+                                Raw(" ");                         // Space on the clicked option: uncheck
+                                Raw(" ");                         // and check again
+                                Raw("\r");                        // submit
+                                return;
+                            }
+                    Thread.Sleep(20);
+                }
+                pump.Enqueue(Key(ConsoleKey.Escape));
+            });
+            var result = driver.RunPromptModal(PromptModalView.Kind.MultiSelect, "pick", new[] { "a", "b", "c" });
+            probe.Wait(TimeSpan.FromSeconds(5));
+            Assert.NotNull(result);
+            Assert.False(result!.Cancelled);
+            Assert.Equal([0, 2], result.Checked);
+        }
+        finally
+        {
+            current.SetValue(null, prior);
+            ConsoleInputPump.PromptActive = prompt; ConsoleInputPump.ModalActive = modal;
+        }
+    }
 }
