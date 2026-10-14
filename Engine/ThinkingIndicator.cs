@@ -29,12 +29,12 @@ public sealed class ThinkingIndicator : IDisposable
     private readonly ManualResetEventSlim _loopExited = new(true);
     private volatile bool _clearedExternally;
 
-    private static readonly string[] Frames =
+    private static readonly string[] BuiltInFrames =
         ["⠀", "⠄", "⠆", "⠦", "⠶", "⠷", "⣷", "⣿", "⣷", "⠷", "⠶", "⠦", "⠆", "⠄", "⠀"];
 
     // Quirky Claude-Code-style "working" gerunds, cycled (~every 2s) while the agent is
     // reasoning and no tool call is in flight. Purely cosmetic flavor for the live spinner.
-    private static readonly string[] QuipPool =
+    private static readonly string[] BuiltInQuips =
     [
         "Thinking", "Cogitating", "Percolating", "Ruminating", "Conjuring",
         "Noodling", "Finagling", "Marinating", "Crystallizing", "Pondering",
@@ -55,6 +55,47 @@ public sealed class ThinkingIndicator : IDisposable
     // shuffle is computed once (lazy) and reused; deterministic per user so it is unit-testable.
     private static string[]? _rotation;
     private static readonly object _rotationLock = new();
+
+    // Extension overrides (ExtensionRegistry). Null = built-ins. Swapped as whole arrays, never mutated.
+    private static string[]? _extensionFrames;
+    private static string[]? _extensionQuips;
+    private static volatile Timing _timing = Timing.Default;
+
+    /// <summary>Animation timing and quip suffix of the thinking indicator.</summary>
+    internal sealed record Timing(int IntervalMs, int QuipIntervalMs, bool Shuffle, string Suffix)
+    {
+        /// <summary>The built-in timing: 80ms frames, a new quip every 2s, shuffled, "..." suffix.</summary>
+        internal static readonly Timing Default = new(80, 2000, true, "...");
+    }
+
+    /// <summary>The active timing (built-in unless an extension set a <c>thinking</c> block).</summary>
+    internal static Timing ActiveTiming => _timing;
+
+    /// <summary>Spinner frames contributed by an extension, or null when the built-ins are in use.</summary>
+    internal static IReadOnlyList<string>? ExtensionFrames => _extensionFrames;
+
+    /// <summary>
+    /// Replace the spinner frames, quip pool and timing (null = built-in). Called by the extension
+    /// loader. Frames narrower than the widest are padded with braille blanks (one cell, not
+    /// whitespace, so line layout never collapses them) so the indicator does not jitter.
+    /// </summary>
+    internal static void SetExtensionCosmetics(string[]? frames, string[]? quips, Timing? timing = null)
+    {
+        _extensionFrames = frames is null ? null : PadFrames(frames);
+        _timing = timing ?? Timing.Default;
+        lock (_rotationLock)
+        {
+            _extensionQuips = quips;
+            _rotation = null;   // rebuilt from the new pool on next use
+        }
+    }
+
+    /// <summary>Pad every frame on the right to the widest frame's cell width with U+2800.</summary>
+    internal static string[] PadFrames(string[] frames)
+    {
+        int widest = frames.Max(f => Tui.TuiMarkup.Width(f));
+        return frames.Select(f => f + new string('\u2800', widest - Tui.TuiMarkup.Width(f))).ToArray();
+    }
 
     internal static int UserSeed()
     {
@@ -87,7 +128,8 @@ public sealed class ThinkingIndicator : IDisposable
         lock (_rotationLock)
         {
             if (_rotation != null) return _rotation;
-            _rotation = Shuffle(QuipPool, UserSeed());
+            var pool = _extensionQuips ?? BuiltInQuips;
+            _rotation = _timing.Shuffle ? Shuffle(pool, UserSeed()) : (string[])pool.Clone();
             return _rotation;
         }
     }
@@ -106,8 +148,6 @@ public sealed class ThinkingIndicator : IDisposable
         return a;
     }
 
-    // How many spinner ticks (80ms each) before advancing to the next quip (~2s).
-    private const int QuipTicks = 25;
 
     internal ThinkingIndicator(
         Action<string> renderRaw,
@@ -200,10 +240,12 @@ public sealed class ThinkingIndicator : IDisposable
             try
             {
                 int frame = 0;
+                var frames = _extensionFrames ?? BuiltInFrames;
+                var timing = _timing;
 
                 while (!_cts.Token.IsCancellationRequested)
                 {
-                    string spinner = Frames[frame++ % Frames.Length];
+                    string spinner = frames[frame++ % frames.Length];
                     string linePrefix = $"  {spinner} {agentName} ";
 
                     int maxWidth = SafeWindowWidth() - 1;
@@ -226,7 +268,7 @@ public sealed class ThinkingIndicator : IDisposable
                             // Default reasoning state: cycle a quirky gerund every ~2s, walking the
                             // PER-USER shuffled rotation (randomized order, stable per user).
                             var rot = Rotation();
-                            statusPart = rot[(frame / QuipTicks) % rot.Length] + "...";
+                            statusPart = rot[(int)((long)frame * timing.IntervalMs / timing.QuipIntervalMs % rot.Length)] + timing.Suffix;
                         }
                     }
 
@@ -249,7 +291,7 @@ public sealed class ThinkingIndicator : IDisposable
                         }
                     }
 
-                    try { await Task.Delay(80, _cts.Token); }
+                    try { await Task.Delay(timing.IntervalMs, _cts.Token); }
                     catch (OperationCanceledException) { break; }
                 }
 

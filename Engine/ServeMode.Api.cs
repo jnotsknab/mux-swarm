@@ -34,6 +34,7 @@ namespace MuxSwarm.Engine;
 ///   GET  /api/workflows/preflight    dynamic-mode readiness (python + SDK)
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
+///   GET /api/themes                  extension themes mapped to the web UI's CSS variables
 /// </summary>
 public static partial class ServeMode
 {
@@ -78,6 +79,7 @@ public static partial class ServeMode
         app.MapGet("/api/workflows/preflight", HandleWorkflowPreflight);
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
+        app.MapGet("/api/themes", HandleThemes);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
         app.MapPost("/api/hook/{id}", HandleWebhook);
@@ -700,6 +702,14 @@ public static partial class ServeMode
             .ToList();
 
         await WriteJson(context, 200, new { count = skills.Count, items = skills });
+    }
+
+    // GET /api/themes
+    // Extension themes mapped to the web UI's CSS variables (the web keeps its own built-in set).
+    private static async Task HandleThemes(HttpContext context)
+    {
+        var items = WebThemes.Build(Theme.All.Except(Theme.Presets));
+        await WriteJson(context, 200, new { count = items.Count, items });
     }
 
     // GET /api/tools
@@ -1573,6 +1583,14 @@ public static partial class ServeMode
                 inSessionSafe = e.Scope == Tui.TuiCommands.Scope.SessionOnly,
             })
             .ToList();
+        // Extension commands run in a session or at the menu without leaving the session.
+        items.AddRange(Extensions.ExtensionCommands.Entries.Select(e => new
+        {
+            cmd = e.Cmd,
+            desc = e.Desc,
+            scope = "session",
+            inSessionSafe = true,
+        }));
 
         var keybinds = Tui.TuiCommands.Keys
             .Select(k => new { keys = k.Keys, desc = k.Desc, context = k.Context })

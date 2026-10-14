@@ -10,6 +10,7 @@
 /// Themes are selected with <c>/theme &lt;name&gt;</c> (or during <c>/setup</c>) and persisted to
 /// <c>config.json</c> under <c>console.theme</c>. The DEFAULT theme reproduces the exact pre-theme
 /// hardcoded palette, so an absent / unset theme is byte-identical to prior behaviour.
+/// <c>Border</c> is the dim structural line color used for rendered-markdown table grids.
 /// </summary>
 public sealed record Theme(
     string Name,
@@ -36,7 +37,10 @@ public sealed record Theme(
     string DiffDelBg = "#2A1A1C",
     string DiffHunkBg = "#16202C",
     string CodeBg = "#1E1E1E",
-    string InlineCodeBg = "#2A2A2A")
+    string InlineCodeBg = "#2A2A2A",
+    // Dim structural line color for rendered-markdown table grids. Optional; the default equals
+    // the original hardcoded grey so the default theme is unchanged.
+    string Border = "#3A3A3A")
 {
     // Backing field for Active. Left null at static init so it does NOT depend on the declaration
     // order of the Default property (a "= Default" initializer here would capture Default's value
@@ -65,7 +69,7 @@ public sealed record Theme(
         Banner: "#7AC0FF", Agent: "#A5D6FF",
         MdHeading: "#7AC0FF", MdCode: "#E3B341", MdLink: "#79C0FF", MdQuote: "#8B949E",
         CardBg: "#161B22", InputBg: "#0D1117", DiffAddBg: "#12261C", DiffDelBg: "#2D1213",
-        DiffHunkBg: "#161F2C", CodeBg: "#161B22", InlineCodeBg: "#21262D");
+        DiffHunkBg: "#161F2C", CodeBg: "#161B22", InlineCodeBg: "#21262D", Border: "#30363D");
 
     /// <summary>Darker, saturated palette for bright/light terminal backgrounds.</summary>
     public static Theme Light { get; } = new(
@@ -75,7 +79,7 @@ public sealed record Theme(
         Banner: "#1A6FB0", Agent: "#2C5F8A",
         MdHeading: "#1A6FB0", MdCode: "#9A6A00", MdLink: "#0A66C2", MdQuote: "#555555",
         CardBg: "#EAEEF2", InputBg: "#F2F4F7", DiffAddBg: "#E1F3E4", DiffDelBg: "#FBE4E4",
-        DiffHunkBg: "#E4ECF5", CodeBg: "#ECECEC", InlineCodeBg: "#E2E2E2");
+        DiffHunkBg: "#E4ECF5", CodeBg: "#ECECEC", InlineCodeBg: "#E2E2E2", Border: "#C8CCD0");
 
     /// <summary>No-color / accessibility theme: everything inherits the terminal foreground
     /// ("default"); structure is conveyed by layout + prefixes, not hue. Only success/warning/error
@@ -87,7 +91,7 @@ public sealed record Theme(
         Banner: "default", Agent: "default",
         MdHeading: "default", MdCode: "default", MdLink: "default", MdQuote: "grey",
         CardBg: "default", InputBg: "default", DiffAddBg: "default", DiffDelBg: "default",
-        DiffHunkBg: "default", CodeBg: "default", InlineCodeBg: "default");
+        DiffHunkBg: "default", CodeBg: "default", InlineCodeBg: "default", Border: "grey");
 
     /// <summary>Solarized (Ethan Schoonover) accent set.</summary>
     public static Theme Solarized { get; } = new(
@@ -97,7 +101,7 @@ public sealed record Theme(
         Banner: "#268BD2", Agent: "#6C71C4",
         MdHeading: "#268BD2", MdCode: "#B58900", MdLink: "#2AA198", MdQuote: "#657B83",
         CardBg: "#073642", InputBg: "#002B36", DiffAddBg: "#0B3A2E", DiffDelBg: "#3A1E22",
-        DiffHunkBg: "#073642", CodeBg: "#002B36", InlineCodeBg: "#073642");
+        DiffHunkBg: "#073642", CodeBg: "#002B36", InlineCodeBg: "#073642", Border: "#586E75");
 
     /// <summary>Dracula palette.</summary>
     public static Theme Dracula { get; } = new(
@@ -107,7 +111,7 @@ public sealed record Theme(
         Banner: "#FF79C6", Agent: "#8BE9FD",
         MdHeading: "#BD93F9", MdCode: "#F1FA8C", MdLink: "#8BE9FD", MdQuote: "#6272A4",
         CardBg: "#282A36", InputBg: "#21222C", DiffAddBg: "#1E3A2A", DiffDelBg: "#3A2130",
-        DiffHunkBg: "#2B2E3B", CodeBg: "#21222C", InlineCodeBg: "#343746");
+        DiffHunkBg: "#2B2E3B", CodeBg: "#21222C", InlineCodeBg: "#343746", Border: "#44475A");
 
     /// <summary>Gruvbox (warm, retro) palette.</summary>
     public static Theme Gruvbox { get; } = new(
@@ -117,7 +121,7 @@ public sealed record Theme(
         Banner: "#FE8019", Agent: "#83A598",
         MdHeading: "#FABD2F", MdCode: "#B8BB26", MdLink: "#83A598", MdQuote: "#928374",
         CardBg: "#3C3836", InputBg: "#282828", DiffAddBg: "#323D1F", DiffDelBg: "#442A25",
-        DiffHunkBg: "#33302B", CodeBg: "#282828", InlineCodeBg: "#3C3836");
+        DiffHunkBg: "#33302B", CodeBg: "#282828", InlineCodeBg: "#3C3836", Border: "#504945");
 
 
     /// <summary>Catppuccin Mocha (flagship dark) - canonical palette v1.8.0.</summary>
@@ -128,7 +132,7 @@ public sealed record Theme(
         Banner: "#CBA6F7", Agent: "#89B4FA",
         MdHeading: "#CBA6F7", MdCode: "#FAB387", MdLink: "#89DCEB", MdQuote: "#A6ADC8",
         CardBg: "#313244", InputBg: "#181825", DiffAddBg: "#28382E", DiffDelBg: "#3B2733",
-        DiffHunkBg: "#2A2B3C", CodeBg: "#181825", InlineCodeBg: "#313244");
+        DiffHunkBg: "#2A2B3C", CodeBg: "#181825", InlineCodeBg: "#313244", Border: "#45475A");
 
     /// <summary>Catppuccin Macchiato (dark).</summary>
     public static Theme CatppuccinMacchiato { get; } = new(
@@ -138,7 +142,7 @@ public sealed record Theme(
         Banner: "#C6A0F6", Agent: "#8AADF4",
         MdHeading: "#C6A0F6", MdCode: "#F5A97F", MdLink: "#91D7E3", MdQuote: "#A5ADCB",
         CardBg: "#363A4F", InputBg: "#1E2030", DiffAddBg: "#2C3B32", DiffDelBg: "#3E2B36",
-        DiffHunkBg: "#2E3145", CodeBg: "#1E2030", InlineCodeBg: "#363A4F");
+        DiffHunkBg: "#2E3145", CodeBg: "#1E2030", InlineCodeBg: "#363A4F", Border: "#494D64");
 
     /// <summary>Catppuccin Latte (light).</summary>
     public static Theme CatppuccinLatte { get; } = new(
@@ -148,7 +152,7 @@ public sealed record Theme(
         Banner: "#8839EF", Agent: "#1E66F5",
         MdHeading: "#8839EF", MdCode: "#FE640B", MdLink: "#04A5E5", MdQuote: "#6C6F85",
         CardBg: "#E6E9EF", InputBg: "#EFF1F5", DiffAddBg: "#DDEBD8", DiffDelBg: "#F5D8DE",
-        DiffHunkBg: "#DEE4F0", CodeBg: "#E6E9EF", InlineCodeBg: "#CCD0DA");
+        DiffHunkBg: "#DEE4F0", CodeBg: "#E6E9EF", InlineCodeBg: "#CCD0DA", Border: "#BCC0CC");
 
     /// <summary>Nord (arctic, bluish) - nord0-15.</summary>
     public static Theme Nord { get; } = new(
@@ -158,7 +162,7 @@ public sealed record Theme(
         Banner: "#88C0D0", Agent: "#81A1C1",
         MdHeading: "#88C0D0", MdCode: "#D08770", MdLink: "#8FBCBB", MdQuote: "#4C566A",
         CardBg: "#3B4252", InputBg: "#2E3440", DiffAddBg: "#37414A", DiffDelBg: "#443C48",
-        DiffHunkBg: "#394356", CodeBg: "#2E3440", InlineCodeBg: "#434C5E");
+        DiffHunkBg: "#394356", CodeBg: "#2E3440", InlineCodeBg: "#434C5E", Border: "#434C5E");
 
     /// <summary>Tokyo Night (night variant).</summary>
     public static Theme TokyoNight { get; } = new(
@@ -168,7 +172,7 @@ public sealed record Theme(
         Banner: "#BB9AF7", Agent: "#7DCFFF",
         MdHeading: "#BB9AF7", MdCode: "#FF9E64", MdLink: "#7DCFFF", MdQuote: "#565F89",
         CardBg: "#292E42", InputBg: "#16161E", DiffAddBg: "#20303B", DiffDelBg: "#37222C",
-        DiffHunkBg: "#283457", CodeBg: "#16161E", InlineCodeBg: "#292E42");
+        DiffHunkBg: "#283457", CodeBg: "#16161E", InlineCodeBg: "#292E42", Border: "#3B4261");
 
     /// <summary>Tokyo Night Storm (lighter bg tier, same accents).</summary>
     public static Theme TokyoNightStorm { get; } = new(
@@ -178,7 +182,7 @@ public sealed record Theme(
         Banner: "#BB9AF7", Agent: "#7DCFFF",
         MdHeading: "#BB9AF7", MdCode: "#FF9E64", MdLink: "#7DCFFF", MdQuote: "#565F89",
         CardBg: "#292E42", InputBg: "#1F2335", DiffAddBg: "#243B33", DiffDelBg: "#3B2735",
-        DiffHunkBg: "#2E3C64", CodeBg: "#1F2335", InlineCodeBg: "#292E42");
+        DiffHunkBg: "#2E3C64", CodeBg: "#1F2335", InlineCodeBg: "#292E42", Border: "#3B4261");
 
     /// <summary>Rose Pine (main).</summary>
     public static Theme RosePine { get; } = new(
@@ -188,7 +192,7 @@ public sealed record Theme(
         Banner: "#EBBCBA", Agent: "#9CCFD8",
         MdHeading: "#C4A7E7", MdCode: "#F6C177", MdLink: "#9CCFD8", MdQuote: "#908CAA",
         CardBg: "#1F1D2E", InputBg: "#191724", DiffAddBg: "#233029", DiffDelBg: "#35222E",
-        DiffHunkBg: "#26233A", CodeBg: "#191724", InlineCodeBg: "#26233A");
+        DiffHunkBg: "#26233A", CodeBg: "#191724", InlineCodeBg: "#26233A", Border: "#403D52");
 
     /// <summary>Kanagawa (wave) - Hokusai-inspired inks.</summary>
     public static Theme Kanagawa { get; } = new(
@@ -198,7 +202,7 @@ public sealed record Theme(
         Banner: "#FFA066", Agent: "#7FB4CA",
         MdHeading: "#957FB8", MdCode: "#C0A36E", MdLink: "#7AA89F", MdQuote: "#727169",
         CardBg: "#2A2A37", InputBg: "#16161D", DiffAddBg: "#2B3328", DiffDelBg: "#43242B",
-        DiffHunkBg: "#223249", CodeBg: "#16161D", InlineCodeBg: "#2A2A37");
+        DiffHunkBg: "#223249", CodeBg: "#16161D", InlineCodeBg: "#2A2A37", Border: "#54546D");
 
     /// <summary>Everforest (dark medium) - comfy greens.</summary>
     public static Theme Everforest { get; } = new(
@@ -208,7 +212,7 @@ public sealed record Theme(
         Banner: "#A7C080", Agent: "#7FBBB3",
         MdHeading: "#A7C080", MdCode: "#E69875", MdLink: "#83C092", MdQuote: "#859289",
         CardBg: "#3D484D", InputBg: "#2D353B", DiffAddBg: "#425047", DiffDelBg: "#514045",
-        DiffHunkBg: "#3A515D", CodeBg: "#2D353B", InlineCodeBg: "#475258");
+        DiffHunkBg: "#3A515D", CodeBg: "#2D353B", InlineCodeBg: "#475258", Border: "#4F585E");
 
     /// <summary>One Dark (Atom).</summary>
     public static Theme OneDark { get; } = new(
@@ -218,7 +222,7 @@ public sealed record Theme(
         Banner: "#61AFEF", Agent: "#56B6C2",
         MdHeading: "#C678DD", MdCode: "#D19A66", MdLink: "#61AFEF", MdQuote: "#5C6370",
         CardBg: "#21252B", InputBg: "#282C34", DiffAddBg: "#2B3328", DiffDelBg: "#3B282C",
-        DiffHunkBg: "#2C313C", CodeBg: "#21252B", InlineCodeBg: "#2C313C");
+        DiffHunkBg: "#2C313C", CodeBg: "#21252B", InlineCodeBg: "#2C313C", Border: "#3E4451");
 
     /// <summary>Monokai (classic).</summary>
     public static Theme Monokai { get; } = new(
@@ -228,7 +232,7 @@ public sealed record Theme(
         Banner: "#F92672", Agent: "#66D9EF",
         MdHeading: "#F92672", MdCode: "#E6DB74", MdLink: "#66D9EF", MdQuote: "#75715E",
         CardBg: "#1E1F1C", InputBg: "#272822", DiffAddBg: "#2E3B22", DiffDelBg: "#3D2228",
-        DiffHunkBg: "#34352F", CodeBg: "#1E1F1C", InlineCodeBg: "#3E3D32");
+        DiffHunkBg: "#34352F", CodeBg: "#1E1F1C", InlineCodeBg: "#3E3D32", Border: "#49483E");
 
     /// <summary>Ayu Mirage (soft dark).</summary>
     public static Theme AyuMirage { get; } = new(
@@ -238,7 +242,7 @@ public sealed record Theme(
         Banner: "#FFCC66", Agent: "#73D0FF",
         MdHeading: "#FFCC66", MdCode: "#FFAD66", MdLink: "#5CCFE6", MdQuote: "#707A8C",
         CardBg: "#282E3B", InputBg: "#242936", DiffAddBg: "#273A2B", DiffDelBg: "#3D2A30",
-        DiffHunkBg: "#1F2430", CodeBg: "#1F2430", InlineCodeBg: "#282E3B");
+        DiffHunkBg: "#1F2430", CodeBg: "#1F2430", InlineCodeBg: "#282E3B", Border: "#33415E");
 
     /// <summary>SynthWave '84 (Robb Owen) - neon retrowave.</summary>
     public static Theme Synthwave { get; } = new(
@@ -248,7 +252,7 @@ public sealed record Theme(
         Banner: "#FF7EDB", Agent: "#36F9F6",
         MdHeading: "#FF7EDB", MdCode: "#FF8B39", MdLink: "#36F9F6", MdQuote: "#848BBD",
         CardBg: "#241B2F", InputBg: "#262335", DiffAddBg: "#1E3A32", DiffDelBg: "#3D2130",
-        DiffHunkBg: "#2A2139", CodeBg: "#241B2F", InlineCodeBg: "#2A2139");
+        DiffHunkBg: "#2A2139", CodeBg: "#241B2F", InlineCodeBg: "#2A2139", Border: "#495495");
 
     /// <summary>Rose Pine Dawn (light).</summary>
     public static Theme RosePineDawn { get; } = new(
@@ -258,7 +262,7 @@ public sealed record Theme(
         Banner: "#D7827E", Agent: "#56949F",
         MdHeading: "#907AA9", MdCode: "#EA9D34", MdLink: "#56949F", MdQuote: "#797593",
         CardBg: "#FFFAF3", InputBg: "#FAF4ED", DiffAddBg: "#E4EDE7", DiffDelBg: "#F6E0E4",
-        DiffHunkBg: "#F2E9E1", CodeBg: "#FFFAF3", InlineCodeBg: "#F2E9E1");
+        DiffHunkBg: "#F2E9E1", CodeBg: "#FFFAF3", InlineCodeBg: "#F2E9E1", Border: "#DFDAD9");
 
     /// <summary>All built-in presets, in display order (default first).</summary>
     public static readonly IReadOnlyList<Theme> Presets =
@@ -267,15 +271,29 @@ public sealed record Theme(
             TokyoNight, TokyoNightStorm, RosePine, RosePineDawn, Kanagawa,
             Everforest, OneDark, Monokai, AyuMirage, Synthwave };
 
-    /// <summary>The preset names, for help text / validation.</summary>
-    public static IReadOnlyList<string> Names => Presets.Select(t => t.Name).ToList();
+    // Themes contributed by loaded extensions (ExtensionRegistry). Empty unless extensions are
+    // enabled, so All == Presets and every lookup is unchanged by default.
+    private static IReadOnlyList<Theme> _extensionThemes = [];
 
-    /// <summary>Look up a preset by case-insensitive name. Null when unknown.</summary>
+    /// <summary>
+    /// Every selectable theme: the built-in <see cref="Presets"/> followed by themes contributed
+    /// by loaded extensions. Use this (not Presets) for pickers, galleries and lookups.
+    /// </summary>
+    public static IReadOnlyList<Theme> All =>
+        _extensionThemes.Count == 0 ? Presets : [.. Presets, .. _extensionThemes];
+
+    /// <summary>Replace the extension-contributed themes (called by the extension loader).</summary>
+    internal static void SetExtensionThemes(IReadOnlyList<Theme> themes) => _extensionThemes = themes;
+
+    /// <summary>The selectable theme names, for help text / validation.</summary>
+    public static IReadOnlyList<string> Names => All.Select(t => t.Name).ToList();
+
+    /// <summary>Look up a theme (built-in or extension) by case-insensitive name. Null when unknown.</summary>
     public static Theme? Find(string? name)
     {
         if (string.IsNullOrWhiteSpace(name)) return null;
         var n = name.Trim();
-        foreach (var t in Presets)
+        foreach (var t in All)
             if (string.Equals(t.Name, n, StringComparison.OrdinalIgnoreCase)) return t;
         return null;
     }

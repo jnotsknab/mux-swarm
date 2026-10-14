@@ -56,8 +56,7 @@ public sealed class AcpServer
     private AcpClientCaps _clientCaps;
 
     // Outbound request correlation (agent->client requests like fs/* and request_permission).
-    private int _outboundId = 1000;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, TaskCompletionSource<JsonElement>> _pendingOutbound = new();
+    private readonly RpcCorrelator _outbound = new(firstId: 1001);
 
     public AcpServer(string version, Func<AcpInputReader, AcpResume?, Task> runSession,
         Func<(string Current, IReadOnlyList<string> Available)>? modelsProvider = null,
@@ -161,12 +160,7 @@ public sealed class AcpServer
             if (method is null)
             {
                 // A response to one of OUR outbound requests (fs/*, request_permission, etc.).
-                // Complete the awaiting task with the result (or a JSON null on error).
-                if (hasId && id is long rid && _pendingOutbound.TryRemove(rid, out var tcs))
-                {
-                    if (root.TryGetProperty("result", out var resEl)) tcs.TrySetResult(resEl.Clone());
-                    else tcs.TrySetResult(default);
-                }
+                _outbound.TryComplete(root);
                 return;
             }
 
@@ -351,9 +345,7 @@ public sealed class AcpServer
     /// </summary>
     private async Task<JsonElement> SendRequestAsync(string method, object @params, int timeoutMs = 30000)
     {
-        long rid = System.Threading.Interlocked.Increment(ref _outboundId);
-        var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingOutbound[rid] = tcs;
+        var (rid, response) = _outbound.Begin(TimeSpan.FromMilliseconds(timeoutMs));
         WriteMessage(new Dictionary<string, object?>
         {
             ["jsonrpc"] = "2.0",
@@ -361,11 +353,8 @@ public sealed class AcpServer
             ["method"] = method,
             ["params"] = @params
         });
-        using var cts = new CancellationTokenSource(timeoutMs);
-        await using (cts.Token.Register(() => { if (_pendingOutbound.TryRemove(rid, out var t)) t.TrySetResult(default); }))
-        {
-            return await tcs.Task;
-        }
+        var message = await response;
+        return message.ValueKind == JsonValueKind.Object && message.TryGetProperty("result", out var result) ? result : default;
     }
 
     private void StartSession(string sid, AcpResume? resume)
@@ -438,6 +427,7 @@ public sealed class AcpServer
             ("giga", "Toggle dynamic team/workflow orchestration"),
             ("qc", "End the current session")
         };
+        cmds = [.. cmds, .. Extensions.ExtensionCommands.Entries.Select(e => (e.Cmd[1..], e.Desc))];
         WriteMessage(AcpProtocol.SessionUpdate(sid, AcpProtocol.AvailableCommandsUpdate(cmds)));
     }
 

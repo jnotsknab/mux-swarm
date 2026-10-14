@@ -41,7 +41,7 @@ internal static class CommandSuggest
 
         int budget = strict ? 1 : (token.Length <= 3 ? 1 : 2);   // bounded, length-scaled edits
         var scored = new List<(int Tier, int Cost, int Len, string Cmd)>();
-        foreach (var cmd in BaseCommands)
+        foreach (var cmd in BaseCommands.Concat(Extensions.ExtensionCommands.Entries.Select(e => e.Cmd)))
         {
             string body = cmd[1..].ToLowerInvariant();
             if (body == token) { scored.Add((0, 0, body.Length, cmd)); continue; }

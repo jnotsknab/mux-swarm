@@ -25,6 +25,12 @@ public static class SingleAgentOrchestrator
     /// </summary>
     public static string? PendingReplCommand = null;
 
+    /// <summary>
+    /// Opening message for the next interactive session (e.g. the brief from <c>/extensions new</c> at the
+    /// menu): sent as the first turn, after which the session stays interactive. Consumed once.
+    /// </summary>
+    public static string? PendingOpeningGoal = null;
+
     private static readonly Dictionary<string, string> Models = Common.LoadAgentModels();
     //uncached tokens
     private static uint _cachedTokens;
@@ -982,6 +988,13 @@ public static class SingleAgentOrchestrator
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
+                if (Interlocked.Exchange(ref PendingOpeningGoal, null) is { Length: > 0 } opening)
+                {
+                    initialGoal = opening;
+                    MuxConsole.WriteMuted("[GOAL] " + (opening.Length > 200 ? opening[..200] + "..." : opening));
+                    break;
+                }
+
                 if (!MuxConsole.TuiActive)
                     MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
                 string firstInput = MuxConsole.ReadInput(cancellationToken) ?? "";
@@ -998,6 +1011,7 @@ public static class SingleAgentOrchestrator
                     firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
                 if (firstDisp == MetaCommandDispatch.Result.Handled) continue;
+                if (firstDisp == MetaCommandDispatch.Result.Prompt) { initialGoal = MetaCommandDispatch.TakePrompt() ?? ""; break; }
 
                 // Second gate: MetaCommandDispatch only knows the session-agnostic commands, so
                 // without this every other known session command would silently become the
@@ -2878,6 +2892,30 @@ public static class SingleAgentOrchestrator
                         MuxConsole.SetToolBrowserCatalog(toolsCatalog);
                         RenderStatusBar();
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
+                    }
+                }
+                else if (metaCmd.Equals("/extensions", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/extensions ", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Extensions panel (process-level, session-agnostic). Drafting a new extension
+                    // with the agent returns its brief as the next user turn.
+                    if (CliCmdUtils.HandleExtensions(metaCmd, inSession: true) is { } draft)
+                    {
+                        currentGoal = draft;
+                        retryGoalSet = true;
+                        break;
+                    }
+                }
+                else if (Extensions.ExtensionCommands.Match(metaCmd) is not null)
+                {
+                    // Extension command (served by a trusted extension process). A returned prompt
+                    // becomes the next user turn, like the ! shell escape above.
+                    var outcome = await Extensions.ExtensionCommands.RunAsync(metaCmd, cancellationToken);
+                    if (outcome.Prompt is { } extPrompt)
+                    {
+                        currentGoal = extPrompt;
+                        retryGoalSet = true;
+                        break;
                     }
                 }
                 else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))

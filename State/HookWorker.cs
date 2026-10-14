@@ -62,6 +62,7 @@ public static class HookWorker
     {
         e.GoalId ??= _goalId.Value;
         Channel.Writer.TryWrite(e);
+        Engine.Extensions.ExtensionHost.Publish(e);
     }
 
     private static readonly AsyncLocal<string?> _goalId = new();

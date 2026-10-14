@@ -101,7 +101,8 @@ public static class ParallelSwarmOrchestrator
                 tools: mcpTools,
                 mcpServers: orch.McpServers,
                 toolPatterns: orch.ToolPatterns,
-                includeAllWhenEmpty: false
+                includeAllWhenEmpty: false,
+                agentName: "Orchestrator"
             );
         }
         catch { return new List<AITool>(); }
@@ -694,6 +695,7 @@ public static class ParallelSwarmOrchestrator
                     input, chatClientFactory, agentModels, cancellationToken, toolsCatalog);
                 if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
                 if (disp == MetaCommandDispatch.Result.Handled) continue;
+                if (disp == MetaCommandDispatch.Result.Prompt) input = MetaCommandDispatch.TakePrompt() ?? "";
 
                 goal = File.Exists(input) ? File.ReadAllText(input) : input;
 

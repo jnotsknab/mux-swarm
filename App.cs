@@ -207,6 +207,7 @@ internal class App
         AppDomain.CurrentDomain.ProcessExit += (_, _) =>
         {
             HookWorker.Stop();
+            Engine.Extensions.ExtensionHost.StopAll();
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
@@ -230,7 +231,7 @@ internal class App
         // splash is printed here synchronously, so if the theme is still Default the splash ignores
         // console.theme. (The frame splash is deferred via FrameSplashFactory and already resolved
         // post-theme.) Re-asserted later alongside the other render config (idempotent).
-        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
+        LoadExtensions(announce: false);
 
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
@@ -1257,6 +1258,11 @@ internal class App
                     Config = LoadConfig(ConfigPath);
                     SwarmConfig = LoadSwarm();
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
+                    LoadExtensions(announce: true);
+                    break;
+
+                case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
+                    CliCmdUtils.HandleExtensions(userInput);
                     break;
 
                 case var cmd when cmd.StartsWith("/report", StringComparison.Ordinal):
@@ -1553,6 +1559,16 @@ internal class App
                     // follow-up prompt (unlike /setmodel), so nothing re-presents the frame before
                     // the next input line. Force one present so the panel is painted, not swallowed.
                     MuxConsole.TuiForceRedraw();
+                    break;
+                }
+
+                case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
+                {
+                    // Extension command at the menu. There is no agent here, so a returned prompt is
+                    // shown instead of sent; run the command inside a session to send it.
+                    var outcome = await Engine.Extensions.ExtensionCommands.RunAsync(userInput, GetOrResetCts().Token);
+                    if (outcome.Prompt is { } extPrompt)
+                        MuxConsole.WriteMuted($"This command sends a prompt to the agent. Start a session (/agent) and run it there. Prompt: {extPrompt}");
                     break;
                 }
 
@@ -2303,6 +2319,30 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
     }
 
+    /// <summary>Problems from the last <see cref="LoadExtensions"/> (manifest and process start), for <c>/extensions</c>.</summary>
+    internal static IReadOnlyList<string> ExtensionProblems { get; private set; } = [];
+
+    /// <summary>
+    /// (Re)load extensions from <c>extensions</c> in config.json and report problems (unless
+    /// <paramref name="quiet"/>, used by the <c>/extensions</c> panel, which shows them itself). With
+    /// <paramref name="announce"/> it also prints a one-line summary (used by <c>/refresh</c>).
+    /// Re-applies <c>console.theme</c> so edited extension themes take effect and a theme whose
+    /// extension is gone falls back to the default.
+    /// </summary>
+    internal static void LoadExtensions(bool announce, bool quiet = false)
+    {
+        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
+        var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
+        var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();
+        ExtensionProblems = problems;
+        if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
+        Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
+        if (announce && Config.Extensions.Enabled)
+            MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s), " +
+                                  $"{Engine.Extensions.ExtensionHost.Running.Count} process(es).");
+    }
+
     public static async Task<bool> InitMcpServersAsync(AppConfig config)
     {
         // Dispose any previously-connected MCP clients before rebuilding. On a reload/refresh this method
@@ -2708,7 +2748,14 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .AsIChatClient()
             .AsBuilder()
             .UseFunctionInvocation(configure: c =>
-                c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue)
+            {
+                c.MaximumIterationsPerRequest = toolIters > 0 ? toolIters : int.MaxValue;
+                // Extension interceptors (tool/before, tool/after). Only installed while extensions
+                // are enabled, so the default path is the SDK's own invocation; when enabled but no
+                // interceptor matches, InvokeAsync falls straight through to the same call.
+                if (Config.Extensions.Enabled)
+                    c.FunctionInvoker = Engine.Extensions.ToolInterceptor.InvokeAsync;
+            })
             // INSIDE function-invocation (lead single-agent only): splice a user's mid-turn steer
             // ("by the way ...", Ctrl+N) into the live message list on the next model round-trip, so
             // the agent sees it before finishing instead of at the turn boundary. Same in-place

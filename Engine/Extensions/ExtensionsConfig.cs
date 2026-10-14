@@ -1,0 +1,48 @@
+﻿using System.Text.Json.Serialization;
+
+namespace MuxSwarm.Engine.Extensions;
+
+/// <summary>
+/// The <c>extensions</c> block in config.json. Extensions are folders holding an
+/// <c>extension.json</c> manifest that customize Mux (themes today; more contribution types
+/// later). Off by default: when <see cref="Enabled"/> is false nothing is scanned and Mux
+/// behaves exactly as it does without the block. Toggle with <c>/set extensions.enabled on</c>
+/// and apply with <c>/refresh</c>.
+/// </summary>
+public class ExtensionsConfig
+{
+    /// <summary>Master gate. False (default) = no extension is loaded.</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = false;
+
+    /// <summary>
+    /// Extra directories to scan, in addition to <c>&lt;install&gt;/Extensions</c>. Each direct
+    /// child folder containing an <c>extension.json</c> is one extension. Relative paths resolve
+    /// against the install directory.
+    /// </summary>
+    [JsonPropertyName("dirs")]
+    public List<string> Dirs { get; set; } = [];
+
+    /// <summary>
+    /// Names of extensions allowed to start their <c>process</c>. Processes run with your user
+    /// permissions, so they are opt-in per extension; data-only contributions (themes) do not
+    /// need to be listed.
+    /// </summary>
+    [JsonPropertyName("trusted")]
+    public List<string> Trusted { get; set; } = [];
+
+    /// <summary>
+    /// Trusted extensions whose process runs WITHOUT the configured Mux sandbox. When a sandbox backend
+    /// is set (<c>sandbox.backend</c> other than host), every other extension process runs inside it.
+    /// Only this config can exempt one; a manifest cannot opt itself out.
+    /// </summary>
+    [JsonPropertyName("unsandboxed")]
+    public List<string> Unsandboxed { get; set; } = [];
+
+    /// <summary>
+    /// Names of installed extensions to skip: they are listed by <c>/extensions</c> but contribute
+    /// nothing and their process does not start. Toggle them in the <c>/extensions</c> panel.
+    /// </summary>
+    [JsonPropertyName("disabled")]
+    public List<string> Disabled { get; set; } = [];
+}
