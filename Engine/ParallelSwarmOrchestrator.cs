@@ -200,7 +200,43 @@ public static class ParallelSwarmOrchestrator
 
     //Core Orchestration
 
+    /// <summary>
+    /// Run the session. <c>session_end</c> fires exactly once on every exit (completed, cancelled with
+    /// Esc/Ctrl+C or an error), carrying how it ended.
+    /// </summary>
     public static async Task RunAsync(
+        Func<string, IChatClient> chatClientFactory,
+        IList<AITool> mcpTools,
+        Dictionary<string, string> agentModels,
+        int maxDegreeOfParallelism = 4,
+        int maxOrchestratorIterations = -1,
+        int maxSubAgentIterations = -1,
+        bool prodMode = false,
+        string? incomingGoal = null,
+        bool continuous = false,
+        bool shouldPlan = false,
+        string? goalId = null,
+        uint minDelaySeconds = 300,
+        uint persistIntervalSeconds = 60,
+        uint sessionRetention = 10,
+        CancellationToken cancellationToken = default,
+        bool persistSession = true)
+    {
+        string outcome = "complete";
+        try
+        {
+            await RunCoreAsync(chatClientFactory: chatClientFactory, mcpTools: mcpTools, agentModels: agentModels, maxDegreeOfParallelism: maxDegreeOfParallelism, maxOrchestratorIterations: maxOrchestratorIterations, maxSubAgentIterations: maxSubAgentIterations, prodMode: prodMode, incomingGoal: incomingGoal, continuous: continuous, shouldPlan: shouldPlan, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, cancellationToken: cancellationToken, persistSession: persistSession);
+            if (cancellationToken.IsCancellationRequested) outcome = "interrupted";
+        }
+        catch (OperationCanceledException) { outcome = "interrupted"; throw; }
+        catch { outcome = "error"; throw; }
+        finally
+        {
+            HookWorker.Enqueue(new HookEvent { Event = "session_end", Agent = "Orchestrator", Summary = outcome, Timestamp = DateTimeOffset.UtcNow });
+        }
+    }
+
+    private static async Task RunCoreAsync(
         Func<string, IChatClient> chatClientFactory,
         IList<AITool> mcpTools,
         Dictionary<string, string> agentModels,
@@ -282,9 +318,12 @@ public static class ParallelSwarmOrchestrator
             {
                 RunResult.Report(status == "success" ? summary : $"[{status}] {summary}");   // daemon/webhook callback result
                 if (status == "success")
-                    MuxConsole.WriteTaskComplete("Task", summary);
+                    MuxConsole.WriteTaskComplete("Task", summary, "success");
                 else
+                {
                     MuxConsole.WriteWarning($"Task {status}: {summary}");
+                    HookWorker.Emit("task_complete", "Task", summary, data: ("status", status));
+                }
 
                 if (!string.IsNullOrEmpty(artifacts))
                     MuxConsole.WriteMuted($"  Artifacts: {artifacts}");
@@ -691,6 +730,7 @@ public static class ParallelSwarmOrchestrator
                 // REPL hand-off, mirroring the single-agent loop. Handled in place -> re-prompt;
                 // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
                 // the top-level menu runs it. Non-meta input falls through as a goal.
+                HookWorker.CommandExecuted(input, "pswarm", "Orchestrator");
                 var disp = await MetaCommandDispatch.TryHandleAsync(
                     input, chatClientFactory, agentModels, cancellationToken, toolsCatalog);
                 if (disp == MetaCommandDispatch.Result.QuitToMenu) break;
@@ -752,6 +792,8 @@ public static class ParallelSwarmOrchestrator
             StdinCancelMonitor.Instance?.SetActiveTurnCts(goalCts);
 
             bool wasInterrupted = false;
+            string? goalError = null;
+            var goalSw = Stopwatch.StartNew();
             MuxConsole.StartTuiTurnClock();
 
             try
@@ -775,8 +817,13 @@ public static class ParallelSwarmOrchestrator
                 MuxConsole.WriteWarning("Goal cancelled; cancellation sent to owned subagent work (Esc / Ctrl+Q).");
                 MuxConsole.WriteInfo("Any work completed by agents before interruption has been preserved to sessions dir.");
             }
+            catch (Exception ex) when (ex is not OperationCanceledException) { goalError = ex.Message; throw; }
             finally
             {
+                // turn_complete once per goal, on every exit (same contract as /agent).
+                HookWorker.Emit("turn_complete", "Orchestrator",
+                    summary: SingleAgentOrchestrator.TurnOutcome(wasInterrupted || cancellationToken.IsCancellationRequested, false, goalError is not null),
+                    data: [("durationMs", goalSw.ElapsedMilliseconds), ("error", goalError)]);
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener?.Dispose();
                 MuxConsole.StopTuiTurnClock();
@@ -855,13 +902,7 @@ public static class ParallelSwarmOrchestrator
                 ContinuousStateManager.Clear(goalId!, PlatformContext.SessionsDirectory);
         }
 
-        HookWorker.Enqueue(new HookEvent
-        {
-            Event = "session_end",
-            Agent = "Orchestrator",
-            Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
-            Timestamp = DateTimeOffset.UtcNow
-        });
+        // session_end: emitted by RunAsync's finally so it fires on every exit path.
 
         sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
         sessionSpan?.SetTag("total_tokens", _swarmTokens);
@@ -1248,12 +1289,15 @@ public static class ParallelSwarmOrchestrator
         // task_complete. First live instance keeps the bare name; concurrent collisions get " 2",
         // " 3", ... Released in finally so labels are recycled across batches.
         var label = AcquireInstanceLabel(agentName);
+        // Hoisted so the finally can emit delegation_end on every exit.
+        string? flowId = null, endStatus = null;
+        Stopwatch? delegationSw = null;
+        int attemptNumber = 1;
         try
         {
 
         string retryKey = $"{agentName}:{Math.Abs(task.GetHashCode())}";
         RetryState? retryState;
-        int attemptNumber;
 
         lock (_stateLock)
         {
@@ -1266,9 +1310,11 @@ public static class ParallelSwarmOrchestrator
         delegationSpan?.SetTag("to", agentName);
         delegationSpan?.SetTag("attempt", attemptNumber);
         delegationSpan?.SetTag("parallel", true);
-        var delegationSw = Stopwatch.StartNew();
+        delegationSw = Stopwatch.StartNew();
 
-        MuxConsole.WriteDelegation(callerName, label, $"[Parallel] {task}");
+        flowId = HookWorker.NextFlowId("d");
+        MuxConsole.WriteDelegation(callerName, label, $"[Parallel] {task}", flowId: flowId);
+        using var flowScope = HookWorker.BeginFlow(callerName, flowId);
 
         if (attemptNumber > 1)
             MuxConsole.WriteWarning($"RETRY {attemptNumber}/{ExecutionLimits.Current.MaxSubTaskRetries} — Prior failure: {retryState?.LastFailureReason ?? "unknown"}");
@@ -1288,6 +1334,7 @@ public static class ParallelSwarmOrchestrator
         // Run the sub-agent
         var (rawResult, status, summary, artifacts) = await RunSubAgentAsync(
             specialist, enrichedTask, maxSubAgentIterations, ct, label, prodMode: prodMode);
+        endStatus = status;
 
         bool succeeded = status == "success";
 
@@ -1351,9 +1398,11 @@ public static class ParallelSwarmOrchestrator
             : compacted;
 
         }
+        catch (OperationCanceledException) { endStatus ??= "cancelled"; throw; }
         finally
         {
             ReleaseInstanceLabel(label);
+            if (flowId is not null) HookWorker.DelegationEnd(callerName, label, flowId, endStatus, delegationSw?.ElapsedMilliseconds ?? 0, attemptNumber);
         }
     }
 
@@ -1695,7 +1744,7 @@ public static class ParallelSwarmOrchestrator
 
             if (iterToolCalls.Any(t => t.Contains("signal_task_complete", StringComparison.OrdinalIgnoreCase)))
             {
-                MuxConsole.WriteTaskComplete(label, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary);
+                MuxConsole.WriteTaskComplete(label, string.IsNullOrWhiteSpace(completionSummary) ? "sub-task" : completionSummary, completionStatus);
                 if (!MuxConsole.IsTui) MuxConsole.WriteRule();
 
                 string raw = fullResponseAccumulator.ToString();

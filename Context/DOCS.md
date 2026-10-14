@@ -1656,22 +1656,46 @@ with this payload as `params`):
 | Event | When it fires | Fields |
 |-------|---------------|--------|
 | `runtime_ready` | Runtime finished booting | `text` |
-| `session_start` | A mode was entered | `agent`, `summary` (`agent`/`stateless`/`swarm`/`pswarm`), `text` (opening goal, if any) |
-| `session_end` | A session exited | `agent`, `summary` (`completed`/`interrupted`) |
+| `session_start` | A mode was entered | `agent`, `summary` (`agent`/`stateless`/`swarm`/`pswarm`), `text` (opening goal, if any); `/agent`: `data.model`, `data.resumed` |
+| `session_end` | A session exited, on every path (`/qc`, Esc/Ctrl+C, error) | `agent`, `summary` (`complete`/`interrupted`/`error`) |
 | `user_input` | A goal or message was received | `agent`, `text` |
 | `agent_turn_start` | An agent begins a turn | `agent` |
 | `text_chunk` | A streamed piece of the answer | `agent`, `text` |
 | `thinking_chunk` | A streamed piece of reasoning | `agent`, `text` |
 | `tool_call` | A tool is invoked | `agent`, `tool`, `args` (arguments as JSON) |
 | `tool_result` | A tool returned | `agent`, `tool`, `summary` (result text) |
-| `turn_end` | An agent turn completed | `agent`, `summary` (first 500 chars of the answer) |
-| `task_complete` | An agent signalled the task is done | `agent`, `summary` |
-| `delegation` | Work was delegated to a specialist | `agent` (delegating agent), `summary` (task, truncated) |
+| `tool_denied` | An extension interceptor blocked a call (after its `tool_call`; the tool never ran) | `summary` = tool; `data.tool`, `data.by` (extension), `data.reason` |
+| `turn_end` | An agent finished one model round-trip (several per user turn) | `agent`, `summary` (first 500 chars of the answer) |
+| `turn_complete` | A whole user turn / goal ended, once, on every path | `agent`, `summary` = `data.outcome`: `ok`/`interrupted`/`timeout`/`failed`; `data.durationMs`, `data.toolCalls` (`/agent`), `data.error` |
+| `task_complete` | An agent signalled the task is done (or failed/partial) | `agent`, `summary`; `data.status` (`success`/`failure`/`partial`) |
+| `delegation` | Work was delegated to a specialist | `agent` (delegating agent), `summary` (task, truncated), `flowId`; `data.to` |
+| `delegation_end` | That delegation finished, on every path | `agent` (delegating agent), `summary` = `data.status`, `flowId` (same as its `delegation`); `data.to`, `data.status` (`success`/`failure`/`partial`/`cancelled`/`error`), `data.durationMs`, `data.attempt` |
+| `job_start` | A background job (`/bg`, background delegation) started | `agent`, `summary` = id; `data.id`, `data.agent` |
+| `job_end` | That job finished | `agent`, `summary` = `data.status` (`done`/`failed`/`cancelled`); `data.id`, `data.agent`, `data.durationMs` |
+| `command_executed` | A slash command was entered (before it runs), at the menu or in a session | `agent` (session lead), `summary` = command; `data.command`, `data.scope` (`menu`/`agent`/`swarm`/`pswarm`), `data.args` (omitted for `/set` `/config` `/login` `/provider` `/join` `/share` `/setkey` `/apikey`) |
+| `compaction` | Context compaction (`/agent`) started, finished or failed | `agent`, `summary` = `data.phase` (`start`/`done`/`failed`); `data.kind` (`auto`/`manual`/`mid_turn`/`resume`), `data.beforeTokens`, `data.afterTokens` + `data.durationMs` (done) |
+| `mcp_server_connected` | An MCP server connected (startup and `/refresh`) | `summary` = server; `data.server`, `data.transport` (`stdio`/`http`), `data.toolCount` |
+| `mcp_server_failed` | An MCP server failed to connect | `summary` = server; `data.server`, `data.error` (max 500 chars) |
+| `model_changed` | A model was changed (`/setmodel`, model picker) | `agent` (slot label), `summary` = new model; `data.from`, `data.to`, `data.slot` (picker) |
+| `provider_changed` | `/provider` switched the provider | `summary` = new provider; `data.from`, `data.to` (names only, never keys) |
+| `effort_changed` | Reasoning effort changed (`/effort`, `/max`, Shift+Tab) | `summary` = new effort; `data.from`, `data.to` |
+| `theme_changed` | `/theme` applied a theme | `summary` = new theme; `data.from`, `data.to` |
+| `extension_process_exited` | A trusted extension process exited on its own (not on `/refresh` or exit) | `summary` = extension; `data.extension`, `data.exitCode` |
 | `daemon_start` | The daemon started | `summary` (`<n> triggers`) |
 | `daemon_stop` | The daemon stopped | (none) |
 | `daemon_trigger` | A trigger fired a goal | `agent`, `summary` (`cron:<id>`/`watch:<id>`/`webhook:<id>`), `text` (goal) |
 | `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
 | `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
+
+**Correlation.** Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
+id, e.g. `d7`, or the job id, e.g. `bg2`) and `parentAgent` (the agent that delegated), so events from
+parallel sub-agents can be told apart; `delegation` and `delegation_end` carry the same `flowId`.
+`data` holds event-specific fields (ids, names, counts, durations), absent when unset.
+
+**What hooks and extensions can see.** `tool_call.args` and `tool_result.summary` carry the full tool
+arguments and results, unredacted (shell commands, file contents, anything the agent passes a tool).
+Only configure hooks and trust extensions you would trust with that. Lifecycle events added since
+(`command_executed`, `model_changed`, ...) carry names, ids and counts only.
 
 `*` (extensions) matches every event. `text_chunk` and `thinking_chunk` fire per streamed piece, so
 subscribe to them only when you need streaming.

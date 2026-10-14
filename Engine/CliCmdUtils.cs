@@ -426,6 +426,8 @@ public static class CliCmdUtils
         selected.Setter(modelId);
 
         File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+        if (selected.CurrentModel != modelId)
+            State.HookWorker.Emit("model_changed", selected.Label, summary: modelId, data: [("from", selected.CurrentModel), ("to", modelId)]);
 
         MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
     }
@@ -471,7 +473,10 @@ public static class CliCmdUtils
             return;
         }
 
+        string? fromProvider = App.ActiveProvider?.Name;
         App.ActiveProvider = matched;
+        if (fromProvider != matched.Name)
+            State.HookWorker.Emit("provider_changed", summary: matched.Name, data: [("from", fromProvider), ("to", matched.Name)]);
         MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({ProviderEndpointLabel(matched)}), be sure to update your model ID's in Swarm.json");
 
         string setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
@@ -1866,7 +1871,9 @@ public static class CliCmdUtils
             if (MuxConsole.TryThemePicker(out var picked))
             {
                 if (picked is null) { MuxConsole.WriteMuted("Theme unchanged."); return; }
+                string fromTheme = Theme.Active.Name;
                 Theme.Set(picked);
+                State.HookWorker.Emit("theme_changed", summary: picked.Name, data: [("from", fromTheme), ("to", picked.Name)]);
                 try
                 {
                     App.Config.Console.Theme = picked.Name;
@@ -1890,7 +1897,9 @@ public static class CliCmdUtils
             return;
         }
 
+        string priorTheme = Theme.Active.Name;
         Theme.Set(theme);
+        State.HookWorker.Emit("theme_changed", summary: theme.Name, data: [("from", priorTheme), ("to", theme.Name)]);
         try
         {
             App.Config.Console.Theme = theme.Name;

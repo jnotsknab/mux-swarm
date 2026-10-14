@@ -296,6 +296,8 @@ internal sealed class ExtensionProcess : IDisposable
         int? code = null;
         try { if (_process.WaitForExit(1000)) code = _process.ExitCode; } catch (InvalidOperationException) { }
         AddStderr($"[exited{(code is { } c ? $" with code {c}" : "")}]");
+        // Unexpected exit only (Dispose clears IsRunning first): its tools, commands and chips are gone.
+        State.HookWorker.Emit("extension_process_exited", summary: Name, data: [("extension", Name), ("exitCode", code)]);
     }
 
     /// <summary>Close stdin, give the process a moment to exit on its own, then kill it.</summary>

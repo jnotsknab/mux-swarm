@@ -129,11 +129,19 @@ public sealed class ExtensionScaffoldTests : IDisposable
         var hooks = docs[start..(end < 0 ? docs.Length : end)];
         var emitted = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains("MuxSwarm.Tests") && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
-            .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(File.ReadAllText(f), "new HookEvent\\s*\\{[^}]*?Event\\s*=\\s*\"([a-z_]+)\"")
-                .Select(m => m.Groups[1].Value))
+            .SelectMany(f =>
+            {
+                var src = File.ReadAllText(f);
+                return System.Text.RegularExpressions.Regex.Matches(src, "new HookEvent\\s*\\{[^}]*?Event\\s*=\\s*\"([a-z_]+)\"")
+                    .Concat(System.Text.RegularExpressions.Regex.Matches(src, "(?:HookWorker\\.|\\b)Emit\\(\"([a-z_]+)\""))
+                    .Select(m => m.Groups[1].Value);
+            })
             .ToHashSet();
         Assert.True(emitted.Count >= 15, $"found only {emitted.Count} events; is the scan broken?");
         foreach (var e in emitted) Assert.Contains($"| `{e}` |", hooks);
+        Assert.Contains("delegation_end", emitted);   // via HookWorker.DelegationEnd's literal
+        // /createhook offers exactly the emitted events, so a new event is always pickable.
+        Assert.Equal(emitted.OrderBy(e => e), MuxSwarm.Engine.Tui.TuiConfigCommands.HookEvents.OrderBy(e => e));
 
         int ext = docs.IndexOf("\n## Extensions", StringComparison.Ordinal);
         var extensions = docs[ext..docs.IndexOf("\n## ", ext + 4, StringComparison.Ordinal)];

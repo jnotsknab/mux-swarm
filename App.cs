@@ -656,6 +656,8 @@ internal class App
             // // background. Idempotent after the first call.
             // await EnsureMcpReadyAsync();
 
+            HookWorker.CommandExecuted(userInput, "menu");
+
             if (ContextPruner.TryParse(userInput, out _, out var menuPruneError))
             {
                 MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle lead session after its first turn. Launch /agent or a team lead; delegated sessions are unchanged.");
@@ -2422,6 +2424,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             successCount++;
             OtelLogger.Info($"Loaded {result.Tools.Count} tools from {result.Name}{(result.IsHttp ? " (HTTP)" : "")}");
+            HookWorker.Emit("mcp_server_connected", summary: result.Name,
+                data: [("server", result.Name), ("transport", result.IsHttp ? "http" : "stdio"), ("toolCount", result.Tools.Count)]);
         }
 
         ToolCatalog.PublishExternal(McpTools ?? new List<McpClientTool>(), loading: false);
@@ -2567,6 +2571,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             }
 
             OtelLogger.Warn($"MCP connect failed: {name}: {ex.Message}");
+            // The error only (no stderr tail: it can echo env values); capped.
+            string mcpErr = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+            HookWorker.Emit("mcp_server_failed", summary: name, data: [("server", name), ("error", mcpErr)]);
             if (McpStderrTails.TryGetValue(name, out var tail) && !tail.IsEmpty)
                 OtelLogger.Warn($"MCP stderr tail [{name}]: {string.Join(" | ", tail)}");
             return null;
