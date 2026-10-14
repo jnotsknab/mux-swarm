@@ -1944,7 +1944,22 @@ public static class CliCmdUtils
                 Extensions.ExtensionHost.Running, out var other);
             if (view is null) view = new Tui.ExtensionsPanelView(items, other);
             else view.Update(items, other, view.Selected?.Name);
-            if (!MuxConsole.TryExtensionsPanel(view, out var action))
+            // Toggle, trust, reload and open-folder apply while the panel stays up (no flip to the transcript).
+            void Apply(Tui.ExtensionsPanelView.Action a)
+            {
+                if (view.Selected is not { } s && a != Tui.ExtensionsPanelView.Action.Reload) return;
+                view.Message = a switch
+                {
+                    Tui.ExtensionsPanelView.Action.Toggle => ApplyExtensionChange(view.Selected!.Enabled ? "disable" : "enable", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.Trust => ApplyExtensionChange(view.Selected!.Trusted ? "untrust" : "trust", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.OpenFolder => OpenExtensionPath(view.Selected!.Dir, edit: false),
+                    _ => ReloadExtensionsQuiet(),
+                };
+                var fresh = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                    Extensions.ExtensionHost.Running, out var rest);
+                view.Update(fresh, rest, view.Selected?.Name);
+            }
+            if (!MuxConsole.TryExtensionsPanel(view, out var action, Apply))
             {
                 PrintExtensions(items, other);
                 return null;
@@ -1954,22 +1969,8 @@ public static class CliCmdUtils
             {
                 case Tui.ExtensionsPanelView.Action.Close:
                     return null;
-                case Tui.ExtensionsPanelView.Action.Toggle when sel is not null:
-                    view.Message = ApplyExtensionChange(sel.Enabled ? "disable" : "enable", sel.Name, quiet: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.Trust when sel is not null:
-                    if (!sel.Trusted && !MuxConsole.Confirm($"Trust '{sel.Name}'? Its process runs with your user permissions.", false)) break;
-                    view.Message = ApplyExtensionChange(sel.Trusted ? "untrust" : "trust", sel.Name, quiet: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.Reload:
-                    App.LoadExtensions(announce: false, quiet: true);
-                    view.Message = $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
-                    break;
                 case Tui.ExtensionsPanelView.Action.Edit when sel is not null:
                     view.Message = OpenExtensionPath(sel.Manifest, edit: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.OpenFolder when sel is not null:
-                    view.Message = OpenExtensionPath(sel.Dir, edit: false);
                     break;
                 case Tui.ExtensionsPanelView.Action.New:
                     if (NewExtensionWizard(null, inSession) is { } prompt) return prompt;
@@ -2032,6 +2033,12 @@ public static class CliCmdUtils
         return $"'{name}' {done} (saved). New tools reach the agent from the next session.";
     }
 
+    private static string ReloadExtensionsQuiet()
+    {
+        App.LoadExtensions(announce: false, quiet: true);
+        return $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
+    }
+
     private static bool SaveExtensionsConfig()
     {
         try { Common.SaveConfig(App.Config); return true; }
@@ -2041,19 +2048,21 @@ public static class CliCmdUtils
     // Open a manifest in $VISUAL/$EDITOR (waits, then reloads) or a path in the OS default app.
     private static string OpenExtensionPath(string path, bool edit)
     {
+        // Only a terminal editor ($VISUAL/$EDITOR) needs the console; the OS default app opens in the background.
+        bool terminal = edit && Extensions.ExtensionScaffold.TerminalEditor() is not null;
         try
         {
             bool waited;
-            MuxConsole.TuiSuspend();
-            using (EscapeKeyListener.SuspendInput()) waited = Extensions.ExtensionScaffold.Open(path, edit);
-            MuxConsole.TuiResume();
+            if (terminal) MuxConsole.TuiSuspend();
+            using (terminal ? EscapeKeyListener.SuspendInput() : null) waited = Extensions.ExtensionScaffold.Open(path, edit);
+            if (terminal) MuxConsole.TuiResume();
             if (!waited) return edit ? $"Opened {Path.GetFileName(path)}; press r to reload after saving." : $"Opened {path}.";
             App.LoadExtensions(announce: false, quiet: true);
             return "Saved and reloaded.";
         }
         catch (Exception ex)
         {
-            MuxConsole.TuiResume();
+            if (terminal) MuxConsole.TuiResume();
             return $"Could not open {path}: {ex.Message}";
         }
     }

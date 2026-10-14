@@ -108,6 +108,13 @@ internal static class ExtensionScaffold
 
         """;
 
+    /// <summary>The user's terminal editor from <c>$VISUAL</c> or <c>$EDITOR</c>, or null when neither is set.</summary>
+    internal static string? TerminalEditor()
+    {
+        var e = Environment.GetEnvironmentVariable("VISUAL") ?? Environment.GetEnvironmentVariable("EDITOR");
+        return string.IsNullOrWhiteSpace(e) ? null : e;
+    }
+
     /// <summary>
     /// Open <paramref name="path"/> for the user. With <paramref name="edit"/> and <c>$VISUAL</c> /
     /// <c>$EDITOR</c> set, runs that editor in this console and waits (returns true = edited);
@@ -116,8 +123,8 @@ internal static class ExtensionScaffold
     /// </summary>
     internal static bool Open(string path, bool edit)
     {
-        var editor = edit ? Environment.GetEnvironmentVariable("VISUAL") ?? Environment.GetEnvironmentVariable("EDITOR") : null;
-        if (!string.IsNullOrWhiteSpace(editor))
+        var editor = edit ? TerminalEditor() : null;
+        if (editor is not null)
         {
             // The editor string is the user's own (it may carry flags, e.g. "code -w"), so a shell runs it.
             // cmd /s /c strips the outer quotes and runs: editor "path" (Windows paths cannot contain quotes).

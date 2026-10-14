@@ -25,7 +25,9 @@ public sealed class ExtensionsPanelTests
         Assert.Equal("demo", view.Selected!.Name);
         Assert.Equal(ExtensionsPanelView.Action.Toggle, view.Handle(Key(ConsoleKey.Spacebar, ' '), 5));
         Assert.Equal(ExtensionsPanelView.Action.Toggle, view.Handle(Key(ConsoleKey.Enter), 5));
-        Assert.Equal(ExtensionsPanelView.Action.Trust, view.Handle(Key(ConsoleKey.T, 't'), 5));
+        Assert.Equal(ExtensionsPanelView.Action.None, view.Handle(Key(ConsoleKey.T, 't'), 5));    // first t arms
+        Assert.Contains("Press t again", view.Message);
+        Assert.Equal(ExtensionsPanelView.Action.Trust, view.Handle(Key(ConsoleKey.T, 't'), 5));   // second t trusts
         Assert.Equal(ExtensionsPanelView.Action.New, view.Handle(Key(ConsoleKey.N, 'n'), 5));
         Assert.Equal(ExtensionsPanelView.Action.Edit, view.Handle(Key(ConsoleKey.E, 'e'), 5));
         Assert.Equal(ExtensionsPanelView.Action.OpenFolder, view.Handle(Key(ConsoleKey.O, 'o'), 5));
@@ -77,12 +79,13 @@ public sealed class ExtensionsPanelTests
         Assert.Contains(rows, r => r.Contains("! bad key"));
 
         // Action bar: the first button is Space toggle, the last Esc close.
-        int bar = rows.FindIndex(r => r.Contains("[Space toggle]")) + 1;
+        int bar = rows.FindIndex(r => r.Contains("Space toggle \u00b7 t trust")) + 1;
+        Assert.DoesNotContain(rows, r => r.Contains("[Space"));   // no brackets, like the other panels
         Assert.True(bar > 0);
         Assert.True(hits.TryHit(bar, 3, out var first, out _, out _));
         Assert.Equal(MouseTargetKind.PromptModalOption, first.Kind);
         Assert.Equal(ExtensionsPanelView.Action.Toggle, ExtensionsPanelView.ClickButton(first.Payload));
-        int closeCol = rows[bar - 1].IndexOf("[Esc close]", StringComparison.Ordinal) + 2;
+        int closeCol = rows[bar - 1].IndexOf("Esc close", StringComparison.Ordinal) + 2;
         Assert.True(hits.TryHit(bar, closeCol, out var close, out _, out _));
         Assert.Equal(ExtensionsPanelView.Action.Close, ExtensionsPanelView.ClickButton(close.Payload));
 
@@ -107,5 +110,17 @@ public sealed class ExtensionsPanelTests
         var rows = new ExtensionsPanelView([Item("a")]).Render(40, 8);
         Assert.Equal(8, rows.Count);
         Assert.Contains("Resize", rows[1]);
+    }
+
+    [Fact]
+    public void View_TrustArmsThenTrusts_UntrustIsImmediate_OtherKeysDisarm()
+    {
+        var view = new ExtensionsPanelView([Item("a", process: true), Item("b", process: true, trusted: true)]);
+        Assert.Equal(ExtensionsPanelView.Action.None, view.Handle(Key(ConsoleKey.T, 't'), 5));
+        Assert.Contains(view.Render(100, 24).Select(TuiMarkup.Plain), r => r.Contains("t again to trust"));
+        Assert.Equal(ExtensionsPanelView.Action.None, view.Handle(Key(ConsoleKey.DownArrow), 5));   // disarms
+        Assert.Equal(ExtensionsPanelView.Action.Trust, view.Handle(Key(ConsoleKey.T, 't'), 5));    // b is trusted: untrust at once
+        Assert.True(ExtensionsPanelView.InPlace(ExtensionsPanelView.Action.Toggle));
+        Assert.False(ExtensionsPanelView.InPlace(ExtensionsPanelView.Action.Edit));
     }
 }

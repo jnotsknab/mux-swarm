@@ -31,6 +31,7 @@ internal sealed class ExtensionsPanelView
     private string _query = "";
     private bool _searching;
     private int _detailScroll;
+    private bool _trustPending;   // first 't' on an untrusted extension arms; the second trusts it
 
     internal ExtensionsPanelView(IReadOnlyList<ExtensionCatalog.Item> items, IReadOnlyList<string>? other = null, string? select = null)
     {
@@ -84,6 +85,9 @@ internal sealed class ExtensionsPanelView
     /// <summary>The action of a clicked action-bar button (region payload = button index).</summary>
     internal static Action ClickButton(int index) => index >= 0 && index < Buttons.Length ? Buttons[index].Action : Action.None;
 
+    /// <summary>Run a clicked action-bar button: like its key, so Trust still takes two presses.</summary>
+    internal Action Click(int index) => ClickButton(index) is Action.Trust ? Trust() : ClickButton(index);
+
     /// <summary>Scroll the details pane (mouse wheel over it).</summary>
     internal void ScrollDetail(int delta) => _detailScroll = Math.Max(0, _detailScroll + delta);
 
@@ -95,8 +99,29 @@ internal sealed class ExtensionsPanelView
         Filter();
     }
 
+    /// <summary>True for actions applied while the panel stays open (no console needed).</summary>
+    internal static bool InPlace(Action a) => a is Action.Toggle or Action.Trust or Action.Reload or Action.OpenFolder;
+
+    /// <summary>
+    /// Trusting starts a process with the user's permissions, so it takes two presses: the first
+    /// arms (the button reads "t again to trust"), the second returns <see cref="Action.Trust"/>.
+    /// Untrusting is immediate. Any other key disarms.
+    /// </summary>
+    internal Action Trust()
+    {
+        if (Selected is not { HasProcess: true } sel) return Action.None;
+        if (sel.Trusted || _trustPending) { _trustPending = false; return Action.Trust; }
+        _trustPending = true;
+        Message = $"Trusting '{sel.Name}' lets its process run with your user permissions. Press t again to trust it.";
+        return Action.None;
+    }
+
     internal Action Handle(ConsoleKeyInfo key, int pageSize)
     {
+        bool armed = _trustPending;
+        _trustPending = false;
+        if (armed && key.KeyChar is 't' or 'T' && !_searching) { _trustPending = true; return Trust(); }
+        if (armed) Message = "";
         bool ctrl = key.Modifiers.HasFlag(ConsoleModifiers.Control);
         if (ctrl && key.Key is ConsoleKey.Q or ConsoleKey.C) return Action.Close;
         if (key.Key == ConsoleKey.Escape)
@@ -134,7 +159,7 @@ internal sealed class ExtensionsPanelView
         return key.KeyChar switch
         {
             ' ' => Selected is null ? Action.None : Action.Toggle,
-            't' or 'T' => Selected is { HasProcess: true } ? Action.Trust : Action.None,
+            't' or 'T' => Trust(),
             'n' or 'N' => Action.New,
             'e' or 'E' => Selected is null ? Action.None : Action.Edit,
             'o' or 'O' => Selected is null ? Action.None : Action.OpenFolder,
@@ -269,11 +294,14 @@ internal sealed class ExtensionsPanelView
                 Action.Trust => Selected is { HasProcess: true },
                 _ => true,
             };
-            string text = action == Action.Trust && Selected is { Trusted: true } ? "t untrust" : action == Action.Toggle && Selected is { Enabled: false } ? "Space enable" : label;
-            int w = TuiMarkup.Width(text) + 2;
+            string text = action == Action.Trust && Selected is { Trusted: true } ? "t untrust"
+                : action == Action.Trust && _trustPending ? "t again to trust"
+                : action == Action.Toggle && Selected is { Enabled: false } ? "Space enable" : label;
+            if (b > 0) { bar.Append($"[{TuiComponents.Muted}] \u00b7 [/]"); col += 3; }
+            int w = TuiMarkup.Width(text);
             if (on) hits?.Add(new HitRegion(rows.Count + 1, col, 1, w, MouseTargetKind.PromptModalOption, b));
-            bar.Append(on ? $"[{TuiComponents.Accent}][[{Esc(text)}]][/]" : $"[{TuiComponents.Muted}][[{Esc(text)}]][/]").Append(' ');
-            col += w + 1;
+            bar.Append(on ? $"[{TuiComponents.Accent}]{Esc(text)}[/]" : $"[{TuiComponents.Muted}]{Esc(text)}[/]");
+            col += w;
         }
         rows.Add(bar.ToString());
         rows.Add($"[{TuiComponents.Muted}] \u2191\u2193 select \u00b7 Enter/double-click toggle \u00b7 wheel scrolls \u00b7 \u25cf on \u25cb off \u25b6 process \u21c4 conflict ! problems[/]");
