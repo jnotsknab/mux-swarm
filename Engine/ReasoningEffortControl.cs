@@ -43,8 +43,20 @@ internal static class ReasoningEffortControl
         return selection is not null;
     }
 
-    /// <summary>Updates only the selected effort, retaining reasoning output and unrelated model options.</summary>
+    /// <summary>
+    /// Updates only the selected effort, retaining reasoning output and unrelated model options.
+    /// Emits <c>effort_changed</c> when the label changes (every path: /effort, /max, Shift+Tab).
+    /// </summary>
     internal static void Apply(ChatOptions options, Selection selection)
+    {
+        var from = GetLabel(options);
+        ApplyQuiet(options, selection);
+        if (from != selection.Label)
+            State.HookWorker.Emit("effort_changed", summary: selection.Label, data: [("from", from), ("to", selection.Label)]);
+    }
+
+    /// <summary>Set the effort without emitting <c>effort_changed</c> (options built from config).</summary>
+    internal static void ApplyQuiet(ChatOptions options, Selection selection)
     {
         options.Reasoning = new ReasoningOptions
         {

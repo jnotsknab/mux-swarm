@@ -426,6 +426,8 @@ public static class CliCmdUtils
         selected.Setter(modelId);
 
         File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(config, CfgSerialOpts));
+        if (selected.CurrentModel != modelId)
+            State.HookWorker.Emit("model_changed", selected.Label, summary: modelId, data: [("from", selected.CurrentModel), ("to", modelId)]);
 
         MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
     }
@@ -471,7 +473,10 @@ public static class CliCmdUtils
             return;
         }
 
+        string? fromProvider = App.ActiveProvider?.Name;
         App.ActiveProvider = matched;
+        if (fromProvider != matched.Name)
+            State.HookWorker.Emit("provider_changed", summary: matched.Name, data: [("from", fromProvider), ("to", matched.Name)]);
         MuxConsole.WriteSuccess($"Provider switched to: {matched.Name} ({ProviderEndpointLabel(matched)}), be sure to update your model ID's in Swarm.json");
 
         string setDefault = MuxConsole.Prompt("Set as default provider? (y/n): ");
@@ -1866,7 +1871,9 @@ public static class CliCmdUtils
             if (MuxConsole.TryThemePicker(out var picked))
             {
                 if (picked is null) { MuxConsole.WriteMuted("Theme unchanged."); return; }
+                string fromTheme = Theme.Active.Name;
                 Theme.Set(picked);
+                State.HookWorker.Emit("theme_changed", summary: picked.Name, data: [("from", fromTheme), ("to", picked.Name)]);
                 try
                 {
                     App.Config.Console.Theme = picked.Name;
@@ -1890,7 +1897,9 @@ public static class CliCmdUtils
             return;
         }
 
+        string priorTheme = Theme.Active.Name;
         Theme.Set(theme);
+        State.HookWorker.Emit("theme_changed", summary: theme.Name, data: [("from", priorTheme), ("to", theme.Name)]);
         try
         {
             App.Config.Console.Theme = theme.Name;
@@ -1905,45 +1914,245 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /extensions -> show whether extensions are enabled, where Mux looks, and each loaded
-    /// extension with its contributions. Read-only; enable with /set extensions.enabled on + /refresh.
+    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | new [name] | reload]. Bare: the
+    /// interactive panel in the docked TUI (toggle, trust, create, edit, reload; conflicts shown per
+    /// extension), else a text list. Returns a prompt for the agent when the user asks the agent to
+    /// draft a new extension (only offered inside a session), else null.
     /// </summary>
-    public static void HandleExtensions()
+    public static string? HandleExtensions(string userInput = "/extensions", bool inSession = false)
     {
         var cfg = App.Config.Extensions;
+        var parts = (userInput ?? "").Trim().Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+        string sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : "";
+        string? arg = parts.Length > 2 ? parts[2].Trim() : null;
+        switch (sub)
+        {
+            case "":
+                break;
+            case "enable" or "disable" or "trust" or "untrust" when arg is not null:
+                MuxConsole.WriteInfo(ApplyExtensionChange(sub, arg));
+                return null;
+            case "new" or "create":
+                return NewExtensionWizard(arg, inSession);
+            case "reload":
+                App.LoadExtensions(announce: true);
+                return null;
+            default:
+                MuxConsole.WriteWarning("Usage: /extensions [enable|disable|trust|untrust <name> | new [name] | reload]");
+                return null;
+        }
         if (!cfg.Enabled)
         {
             MuxConsole.WriteInfo("Extensions are off. Enable with /set extensions.enabled on, then /refresh.");
-            return;
+            return null;
         }
-        var loaded = Extensions.ExtensionRegistry.Loaded;
-        MuxConsole.WriteInfo($"Extensions: {loaded.Extensions.Count} loaded. Search path:");
-        foreach (var dir in Extensions.ExtensionRegistry.SearchDirectories(cfg))
-            MuxConsole.WriteMuted($"  {dir}{(Directory.Exists(dir) ? "" : " (missing)")}");
-        foreach (var ext in loaded.Extensions)
+        Tui.ExtensionsPanelView? view = null;
+        while (true)
         {
-            var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
-            var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
-            var overrides = ext.Overrides.Count == 0 ? "" : $"  overrides: {string.Join(", ", ext.Overrides)}";
-            var footer = ext.Footer ? "  footer" : "";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{footer}");
-            if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
-            if (ext.Process is null) continue;
-            var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
-            var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
-            var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
-            var tools = ext.Tools.Count == 0 ? "" : $", tools: {string.Join(", ", ext.Tools.Select(t =>
-                t.Agents is { Count: > 0 } a ? $"{t.Name} (agents: {string.Join(" ", a)})" : t.Name))}";
-            MuxConsole.WriteMuted($"    process: {state}{events}{tools}");
-            foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
+            var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                Extensions.ExtensionHost.Running, out var other);
+            if (view is null) view = new Tui.ExtensionsPanelView(items, other);
+            else view.Update(items, other, view.Selected?.Name);
+            // Toggle, trust, reload and open-folder apply while the panel stays up (no flip to the transcript).
+            void Apply(Tui.ExtensionsPanelView.Action a)
+            {
+                if (view.Selected is not { } s && a != Tui.ExtensionsPanelView.Action.Reload) return;
+                view.Message = a switch
+                {
+                    Tui.ExtensionsPanelView.Action.Toggle => ApplyExtensionChange(view.Selected!.Enabled ? "disable" : "enable", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.Trust => ApplyExtensionChange(view.Selected!.Trusted ? "untrust" : "trust", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.OpenFolder => OpenExtensionPath(view.Selected!.Dir, edit: false),
+                    _ => ReloadExtensionsQuiet(),
+                };
+                var fresh = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                    Extensions.ExtensionHost.Running, out var rest);
+                view.Update(fresh, rest, view.Selected?.Name);
+            }
+            if (!MuxConsole.TryExtensionsPanel(view, out var action, Apply))
+            {
+                PrintExtensions(items, other);
+                return null;
+            }
+            var sel = view.Selected;
+            switch (action)
+            {
+                case Tui.ExtensionsPanelView.Action.Close:
+                    return null;
+                case Tui.ExtensionsPanelView.Action.Edit when sel is not null:
+                    view.Message = OpenExtensionPath(sel.Manifest, edit: true);
+                    break;
+                case Tui.ExtensionsPanelView.Action.New:
+                    if (NewExtensionWizard(null, inSession) is { } prompt) return prompt;
+                    if (SingleAgentOrchestrator.PendingOpeningGoal is not null) return null;   // an /agent session starts next
+                    view.Message = "";
+                    break;
+            }
         }
-        foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
+    }
 
+    // Load problems plus the interceptor warnings, as the panel and the text list show them.
+    private static IEnumerable<string> PanelProblems()
+    {
         var toolNames = (App.GetMcpTools() ?? []).Select(t => t.Name)
             .Concat(NativeToolRegistry.BuildPool(App.Config).Select(t => t.Name)).ToList();
-        foreach (var warning in Extensions.ToolInterceptor.UnmatchedPatterns(loaded.Extensions, toolNames))
-            MuxConsole.WriteWarning(warning);
+        return App.ExtensionProblems.Concat(Extensions.ToolInterceptor.UnmatchedPatterns(Extensions.ExtensionRegistry.Loaded.Extensions, toolNames));
     }
+
+    // Text form of the panel for the classic console, stdio and the web UI.
+    private static void PrintExtensions(List<Extensions.ExtensionCatalog.Item> items, List<string> other)
+    {
+        var cfg = App.Config.Extensions;
+        MuxConsole.WriteInfo($"Extensions: {items.Count(i => i.Enabled)} of {items.Count} enabled. Search path:");
+        foreach (var dir in Extensions.ExtensionRegistry.SearchDirectories(cfg))
+            MuxConsole.WriteMuted($"  {dir}{(Directory.Exists(dir) ? "" : " (missing)")}");
+        foreach (var it in items)
+        {
+            var version = string.IsNullOrWhiteSpace(it.Version) ? "" : $" {it.Version}";
+            MuxConsole.WriteBody($"  {(it.Enabled ? "\u25cf" : "\u25cb")} {it.Name}{version}{(it.Enabled ? "" : "  (disabled)")}");
+            if (!string.IsNullOrWhiteSpace(it.Description)) MuxConsole.WriteMuted($"      {it.Description}");
+            foreach (var line in it.Contributes) MuxConsole.WriteMuted($"      {line}");
+            if (it.HasProcess) MuxConsole.WriteMuted($"      process: {it.Process}");
+            foreach (var c in it.Conflicts.Where(c => c.Winner == it.Name))
+                MuxConsole.WriteWarning($"      {c.What}: overrides {c.Loser} (/extensions disable {it.Name} to use {c.Loser}'s)");
+            foreach (var p in it.Problems) MuxConsole.WriteWarning($"      {p}");
+            foreach (var line in it.Stderr) MuxConsole.WriteMuted($"        {line}");
+        }
+        foreach (var p in other) MuxConsole.WriteWarning(p);
+        MuxConsole.WriteMuted("Change with /extensions enable|disable|trust|untrust <name>, /extensions new, /extensions reload.");
+    }
+
+    /// <summary>Enable/disable/trust/untrust <paramref name="name"/>: save config.json, reload, and describe the result.</summary>
+    private static string ApplyExtensionChange(string verb, string name, bool quiet = false)
+    {
+        var cfg = App.Config.Extensions;
+        name = name.Trim().ToLowerInvariant();
+        var loaded = Extensions.ExtensionRegistry.Loaded;
+        bool known = loaded.Extensions.Any(e => e.Name == name) || loaded.Disabled.Any(e => e.Name == name);
+        if (!known) return $"No installed extension named '{name}'.";
+        bool changed = verb switch
+        {
+            "enable" => Extensions.ExtensionCatalog.SetEnabled(cfg, name, true),
+            "disable" => Extensions.ExtensionCatalog.SetEnabled(cfg, name, false),
+            "trust" => Extensions.ExtensionCatalog.SetTrusted(cfg, name, true),
+            _ => Extensions.ExtensionCatalog.SetTrusted(cfg, name, false),
+        };
+        string done = verb switch { "enable" => "enabled", "disable" => "disabled", "trust" => "trusted", _ => "untrusted" };
+        if (!changed) return $"'{name}' is already {done}.";
+        if (!SaveExtensionsConfig()) return $"'{name}' {done} for this session, but config.json could not be saved.";
+        App.LoadExtensions(announce: false, quiet: quiet);
+        return $"'{name}' {done} (saved). New tools reach the agent from the next session.";
+    }
+
+    private static string ReloadExtensionsQuiet()
+    {
+        App.LoadExtensions(announce: false, quiet: true);
+        return $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
+    }
+
+    private static bool SaveExtensionsConfig()
+    {
+        try { Common.SaveConfig(App.Config); return true; }
+        catch (Exception) { return false; }   // SaveConfig already reported the error
+    }
+
+    // Open a manifest in $VISUAL/$EDITOR (waits, then reloads) or a path in the OS default app.
+    private static string OpenExtensionPath(string path, bool edit)
+    {
+        // Only a terminal editor ($VISUAL/$EDITOR) needs the console; the OS default app opens in the background.
+        bool terminal = edit && Extensions.ExtensionScaffold.TerminalEditor() is not null;
+        try
+        {
+            bool waited;
+            if (terminal) MuxConsole.TuiSuspend();
+            using (terminal ? EscapeKeyListener.SuspendInput() : null) waited = Extensions.ExtensionScaffold.Open(path, edit);
+            if (terminal) MuxConsole.TuiResume();
+            if (!waited) return edit ? $"Opened {Path.GetFileName(path)}; press r to reload after saving." : $"Opened {path}.";
+            App.LoadExtensions(announce: false, quiet: true);
+            return "Saved and reloaded.";
+        }
+        catch (Exception ex)
+        {
+            if (terminal) MuxConsole.TuiResume();
+            return $"Could not open {path}: {ex.Message}";
+        }
+    }
+
+    // /extensions new: name, description, parts -> scaffold into <install>/Extensions, then reload.
+    // Inside a session it can hand a drafting brief to the agent instead (returned as the prompt).
+    private static string? NewExtensionWizard(string? name, bool inSession)
+    {
+        var cfg = App.Config.Extensions;
+        name = string.IsNullOrWhiteSpace(name) ? MuxConsole.Prompt("New extension name (a-z, 0-9, '-')") : name;
+        name = (name ?? "").Trim().ToLowerInvariant();
+        if (name.Length == 0) { MuxConsole.WriteMuted("No extension created."); return null; }
+        if (!Extensions.ExtensionRegistry.IsValidName(name)) { MuxConsole.WriteWarning($"'{name}' is not a valid name (a-z, 0-9 and '-', max 32 chars)."); return null; }
+        var description = MuxConsole.Prompt("One-line description (optional)", "");
+        var choices = new (string Label, Extensions.ExtensionScaffold.Parts Part)[]
+        {
+            ("Theme", Extensions.ExtensionScaffold.Parts.Theme),
+            ("Spinner + quips", Extensions.ExtensionScaffold.Parts.Cosmetics),
+            ("Footer chip (process)", Extensions.ExtensionScaffold.Parts.FooterChip),
+            ("Slash command (process)", Extensions.ExtensionScaffold.Parts.Command),
+            ("Agent tool (process)", Extensions.ExtensionScaffold.Parts.Tool),
+            ("Tool interceptor (process)", Extensions.ExtensionScaffold.Parts.Intercept),
+        };
+        var picked = MuxConsole.MultiSelect("What should it include?", choices.Select(c => c.Label));
+        var parts = choices.Where(c => picked.Contains(c.Label)).Aggregate(Extensions.ExtensionScaffold.Parts.None, (a, c) => a | c.Part);
+        if (parts == Extensions.ExtensionScaffold.Parts.None) parts = Extensions.ExtensionScaffold.Parts.Theme;
+
+        var root = Extensions.ExtensionRegistry.DefaultDirectory;
+        if (Extensions.ExtensionScaffold.Scaffold(root, name, description, parts, out var error) is not { } dir)
+        {
+            MuxConsole.WriteWarning(error);
+            return null;
+        }
+        bool process = (parts & Extensions.ExtensionScaffold.ProcessParts) != 0;
+        if (process && MuxConsole.Confirm($"Trust '{name}' so its process starts? It runs with your user permissions.", true))
+            Extensions.ExtensionCatalog.SetTrusted(cfg, name, true);
+        SaveExtensionsConfig();
+        App.LoadExtensions(announce: false, quiet: true);
+        MuxConsole.WriteSuccess($"Created {dir}. Edit extension.json{(process ? " and main.py" : "")}, then reload (r in /extensions).");
+        if (!MuxConsole.Confirm(inSession ? "Have the agent build it out now?" : "Start an agent session to build it out?", false)) return null;
+        var goal = MuxConsole.Prompt("What should it do?", "");
+        if (string.IsNullOrWhiteSpace(goal)) return null;
+        var brief = ExtensionBrief(name, dir, goal.Trim(), process);
+        if (inSession) return brief;
+        QueueAgentSession(brief);
+        return null;
+    }
+
+    /// <summary>
+    /// At the menu there is no agent: queue <paramref name="openingGoal"/> as the first message of a new
+    /// <c>/agent</c> session, which the menu loop starts next (the session stays interactive afterwards).
+    /// </summary>
+    internal static void QueueAgentSession(string openingGoal)
+    {
+        SingleAgentOrchestrator.PendingOpeningGoal = openingGoal;
+        SingleAgentOrchestrator.PendingReplCommand = "/agent";
+    }
+
+    /// <summary>The agent's brief for building out a scaffolded extension: exact paths, the docs sections, the rules.</summary>
+    internal static string ExtensionBrief(string name, string dir, string goal, bool process) =>
+        $"""
+        Build out the Mux extension "{name}" so that it: {goal}
+
+        - Folder: {dir}
+        - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
+        - Read these two sections of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full FIRST (grep for the
+          headings, then read to the next '## '): '## Extensions' (every manifest key, built-in theme names, footer
+          ids, limits, the JSON-RPC protocol both ways, trust, sandbox) and '## Event Hooks' (the table of every
+          event name and the fields it carries). Use only what they document; if you need something they do not
+          cover, say so instead of guessing.
+        - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).{(process ? ProcessRules : "")}
+        - Validate extension.json is valid JSON. When done, tell the user to press r in /extensions (or run
+          /extensions reload) and check the details pane for problems.
+        """;
+
+    private const string ProcessRules = """
+
+        - Process rules: stdout carries only JSON-RPC lines (UTF-8), logs go to stderr; test it by piping JSON
+          lines into it before finishing (the scaffolded process file answers every message; keep that shape).
+        """;
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
     private static void ShowThemeGallery()

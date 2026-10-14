@@ -99,6 +99,9 @@ internal static class TuiCommands
         new("/insight full",  "Basic + growth per turn, tool-output share, compactions", Scope.Both),
         new("/insight max",   "Full + context_map / context_drop tools (from the next session)", Scope.Both),
         new("/update",        "Update Mux-Swarm from the latest GitHub release (verifies hash; restarts if the binary changed)", Scope.Both),
+        new("/extensions",    "Extensions panel: enable/disable, resolve conflicts, trust, create, edit, reload", Scope.Both),
+        new("/extensions new", "Scaffold a new extension (theme, footer chip, slash command, tool, ...)", Scope.Both),
+        new("/extensions reload", "Reload extensions from disk (same as /refresh for extensions)", Scope.Both),
         new("/detach",       "Detach this session to the background (re-attach with /attach)", Scope.SessionOnly),
         new("/voice",        "Voice dictation into the compose field (/voice [auto|off|vol <1-10>]) - TUI only", Scope.SessionOnly),
         new("/unhide",       "Restore a hidden sub-agent to the viewport (/unhide <agent>; hide via \\ Agent View 'h')", Scope.SessionOnly),
@@ -175,7 +178,6 @@ internal static class TuiCommands
         new("/deep",         "Toggle deep memory on/off (/deep [off])", Scope.ReplOnly),
         new("/taskgraph",    "Auto-decompose goals into a blockedBy task graph (/taskgraph on|off|status)", Scope.ReplOnly),
         new("/theme",        "View or switch the TUI color theme (/theme [name])", Scope.ReplOnly),
-        new("/extensions",   "List loaded extensions and their contributions", Scope.ReplOnly),
         new("/sessions",     "List all saved sessions", Scope.ReplOnly),
         new("/setup",        "Run initial setup / reconfigure", Scope.ReplOnly),
         new("/reloadskills", "Refresh the skills directory", Scope.ReplOnly),
@@ -304,6 +306,16 @@ internal static class TuiCommands
             if (e.Scope == Scope.SessionOnly && seen.Add(e.Cmd))
                 list.Add((e.Cmd, e.Desc + "  (needs a session)"));
         return list.ToArray();
+    }
+
+    /// <summary>
+    /// <paramref name="builtIn"/> followed by the commands of loaded extensions (they work in every
+    /// context, so they carry no scope hint). Returns <paramref name="builtIn"/> itself when none are loaded.
+    /// </summary>
+    public static (string Cmd, string Desc)[] WithExtensions((string Cmd, string Desc)[] builtIn)
+    {
+        var ext = Extensions.ExtensionCommands.Entries;
+        return ext.Length == 0 ? builtIn : [.. builtIn, .. ext];
     }
 
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it

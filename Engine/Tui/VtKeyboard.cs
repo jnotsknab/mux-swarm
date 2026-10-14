@@ -3,7 +3,7 @@ namespace MuxSwarm.Engine.Tui;
 /// <summary>Translate standard CSI/SS3 keyboard sequences to the same keys as native console adapters.</summary>
 internal static class VtKeyboard
 {
-    /// <summary>VT passthrough often has no virtual key; normalize control bytes without changing printable payload.</summary>
+    /// <summary>VT passthrough often has no virtual key; normalize control bytes and Space without changing printable payload.</summary>
     internal static ConsoleKeyInfo Normalize(ConsoleKeyInfo key)
     {
         if (key.Key is not (ConsoleKey.NoName or (ConsoleKey)0)) return key;
@@ -13,6 +13,9 @@ internal static class VtKeyboard
             '\r' or '\n' => ConsoleKey.Enter, '\t' => ConsoleKey.Tab,
             '\b' or '\x7f' => ConsoleKey.Backspace, '\x1b' => ConsoleKey.Escape,
             >= '\x01' and <= '\x1a' => (ConsoleKey)((int)ConsoleKey.A + c - 1),
+            // Space has no glyph to match by character the way h/j/k/q are matched, so give it
+            // its virtual key: toggles (multi-select boxes) check ConsoleKey.Spacebar.
+            ' ' => ConsoleKey.Spacebar,
             _ => key.Key
         };
         bool control = c is >= '\x01' and <= '\x1a' && c is not ('\r' or '\n' or '\t' or '\b');

@@ -967,6 +967,19 @@ public static partial class MuxConsole
         return _driver!.RunThemePicker(new Tui.ThemePickerView(activeName: Theme.Active.Name), out applied);
     }
 
+    /// <summary>
+    /// Open the alt-screen <c>/extensions</c> panel in the docked TUI and return the user's action.
+    /// False when unavailable (classic renderer / stdio / another modal); the caller then prints the
+    /// text list instead.
+    /// </summary>
+    internal static bool TryExtensionsPanel(Tui.ExtensionsPanelView view, out Tui.ExtensionsPanelView.Action action,
+        Action<Tui.ExtensionsPanelView.Action>? apply = null)
+    {
+        action = Tui.ExtensionsPanelView.Action.Close;
+        if (!ViaDriver || InputOverride != Console.In) return false;
+        return _driver!.RunExtensionsPanel(view, out action, apply: apply);
+    }
+
 internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
     /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
@@ -1622,9 +1635,9 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         return true;
     }
 
-    private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.Repl;
+    private static (string Cmd, string Desc)[] ReplPaletteEntries => Tui.TuiCommands.WithExtensions(Tui.TuiCommands.Repl);
 
-    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.SessionUnified;
+    private static (string Cmd, string Desc)[] SlashPaletteEntries => Tui.TuiCommands.WithExtensions(Tui.TuiCommands.SessionUnified);
 
     /// <summary>Collapsed result: a status glyph + first informative line + "(+N lines)" hint.
     /// Errors get a red cross and a "failed" tag instead of the dim ok marker.</summary>

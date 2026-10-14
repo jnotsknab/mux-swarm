@@ -35,7 +35,11 @@ internal static class ToolInterceptor
                 new { tool, arguments = context.Arguments }, rule.Timeout, ct);
             var decision = Decide(reply, rule, out var reason, out var rewritten);
             if (decision == Decision.Deny)
+            {
+                // tool_call already fired (when the model streamed it); this says it never ran.
+                State.HookWorker.Emit("tool_denied", summary: tool, data: [("tool", tool), ("by", process.Name), ("reason", reason)]);
                 return $"[BLOCKED by extension {process.Name}] {reason}";
+            }
             if (rewritten is not null)
                 context.Arguments = new AIFunctionArguments(rewritten) { Services = context.Arguments.Services, Context = context.Arguments.Context };
         }

@@ -36,10 +36,43 @@ internal static partial class ExtensionRegistry
 
         /// <summary>True when this extension's footer template is the one applied.</summary>
         internal bool Footer { get; init; }
+
+        /// <summary>True when this extension's markdown style is the one applied.</summary>
+        internal bool Markdown { get; init; }
+
+        /// <summary>Validated slash commands the process serves.</summary>
+        internal IReadOnlyList<ExtensionCommand> Commands { get; init; } = [];
     }
 
+    /// <summary>A validated extension slash command: <c>/{Name}</c>, owned by <paramref name="Extension"/>.</summary>
+    internal sealed record ExtensionCommand(string Extension, string Name, string Description, int TimeoutSeconds)
+    {
+        /// <summary>The command as typed, e.g. <c>/standup</c>.</summary>
+        internal string Cmd => "/" + Name;
+    }
+
+    /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension command.</summary>
+    internal const int DefaultCommandTimeoutSeconds = 60, MaxCommandTimeoutSeconds = 3600;
+
+    [GeneratedRegex("^[a-z][a-z0-9-]{0,31}$")]
+    private static partial Regex CommandNamePattern();
+
+    // Built-in command words that are not in TuiCommands.All (aliases and hidden commands).
+    private static readonly string[] ReservedCommands =
+        ["/bg", "/da", "/cont", "/dbg", "/nodbg", "/dv", "/sub", "/psub", "/sav", "/keys", "/quit",
+         "/removeagent", "/disabletools", "/startargs", "/ultraplan"];
+
+    /// <summary>True when <paramref name="cmd"/> (e.g. <c>/help</c>) is a built-in command word.</summary>
+    internal static bool IsBuiltInCommand(string cmd) =>
+        ReservedCommands.Contains(cmd, StringComparer.OrdinalIgnoreCase)
+        || Tui.TuiCommands.All.Any(e => string.Equals(e.Cmd.Split(' ', 2)[0], cmd, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
-    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels);
+    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels)
+    {
+        /// <summary>Thinking-indicator timing from a <c>thinking</c> block; null = built-in.</summary>
+        internal ThinkingIndicator.Timing? Timing { get; init; }
+    }
 
     /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension tool call.</summary>
     internal const int DefaultToolTimeoutSeconds = 60, MaxToolTimeoutSeconds = 600;
@@ -51,13 +84,28 @@ internal static partial class ExtensionRegistry
     private static partial Regex ToolNamePattern();
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
+    /// <summary>
+    /// Two extensions set the same slot (<paramref name="What"/>, e.g. <c>footer template</c>):
+    /// <paramref name="Winner"/>'s value applies and <paramref name="Loser"/>'s is ignored.
+    /// </summary>
+    internal sealed record Conflict(string What, string Winner, string Loser);
+
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
     {
+        /// <summary>Slots set by more than one extension, and which one won.</summary>
+        internal IReadOnlyList<Conflict> Conflicts { get; init; } = [];
+
+        /// <summary>Installed extensions skipped because <c>extensions.disabled</c> lists them.</summary>
+        internal IReadOnlyList<Extension> Disabled { get; init; } = [];
+
         /// <summary>Merged cosmetic overrides; all-null members = built-ins.</summary>
         internal Cosmetics Cosmetics { get; init; } = new(null, null, null, null);
 
         /// <summary>Footer segment ids in display order; null = built-in footer.</summary>
         internal IReadOnlyList<string>? FooterTemplate { get; init; }
+
+        /// <summary>Markdown glyph style; null = built-in.</summary>
+        internal Tui.MarkdownStyle? Markdown { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -78,13 +126,15 @@ internal static partial class ExtensionRegistry
     /// </summary>
     internal static Result Load(ExtensionsConfig? cfg)
     {
-        Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg)) : Empty;
+        Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg), cfg.Disabled) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
         var c = Loaded.Cosmetics;
-        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips);
+        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips, c.Timing);
         Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
         SplashMessages.SetExtensionLines(c.Splash);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
+        Tui.MarkdownStyle.Set(Loaded.Markdown);
+        ExtensionCommands.Set(Loaded.Extensions.SelectMany(e => e.Commands));
         return Loaded;
     }
 
@@ -101,11 +151,15 @@ internal static partial class ExtensionRegistry
         return dirs.Select(Path.TrimEndingDirectorySeparator).Distinct(cmp).ToList();
     }
 
+    /// <summary>True when <paramref name="name"/> is a valid extension name (a-z, 0-9, '-', max 32).</summary>
+    internal static bool IsValidName(string? name) => name is not null && IdPattern().IsMatch(name);
+
     /// <summary>
     /// Scan <paramref name="searchDirs"/> for extension folders and merge them in name order.
+    /// Extensions named in <paramref name="disabled"/> are listed but contribute nothing.
     /// Missing directories are ignored. Pure apart from file reads (no global state), for tests.
     /// </summary>
-    internal static Result Scan(IEnumerable<string> searchDirs)
+    internal static Result Scan(IEnumerable<string> searchDirs, IEnumerable<string>? disabled = null)
     {
         var problems = new List<string>();
         var found = new List<(string Name, string Dir, ExtensionManifest Manifest)>();
@@ -150,10 +204,28 @@ internal static partial class ExtensionRegistry
         var extensions = new List<Extension>();
         var themes = new List<Theme>();
         string[]? spinner = null, quips = null, splash = null;
+        ThinkingIndicator.Timing? timing = null;
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string>? footer = null;
+        Tui.MarkdownStyle? markdown = null;
+        var takenCommands = new Dictionary<string, string>(StringComparer.Ordinal);   // command -> owning extension
+        var conflicts = new List<Conflict>();
+        var owners = new Dictionary<string, string>(StringComparer.Ordinal);          // slot -> extension that set it
+        var off = new HashSet<string>(disabled ?? [], StringComparer.Ordinal);
+        var skipped = new List<Extension>();
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
+            if (off.Contains(name))
+            {
+                skipped.Add(new Extension(name, manifest.Version, manifest.Description, dir, []));
+                continue;
+            }
+            // Later names win a slot; the earlier owner is recorded as the loser.
+            void Claim(string slot)
+            {
+                if (owners.TryGetValue(slot, out var prior)) conflicts.Add(new Conflict(slot, name, prior));
+                owners[slot] = name;
+            }
             var mine = new List<string>();
             foreach (var spec in manifest.Themes ?? [])
             {
@@ -163,11 +235,8 @@ internal static partial class ExtensionRegistry
                     continue;
                 }
                 int prior = themes.FindIndex(t => string.Equals(t.Name, theme.Name, StringComparison.OrdinalIgnoreCase));
-                if (prior >= 0)
-                {
-                    problems.Add($"{name}: theme '{theme.Name}' replaces one from an earlier extension.");
-                    themes.RemoveAt(prior);
-                }
+                if (prior >= 0) themes.RemoveAt(prior);
+                Claim($"theme '{theme.Name.ToLowerInvariant()}'");
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
@@ -177,12 +246,24 @@ internal static partial class ExtensionRegistry
             {
                 if (items is null) return;
                 if (CheckTexts(items, maxItems, maxChars, frames) is { } err) { problems.Add($"{name}: {key} {err}; skipped."); return; }
-                if (slot is not null) problems.Add($"{name}: {key} replaces the one from an earlier extension.");
+                Claim(key);
                 slot = [.. items];
                 overrides.Add(key);
             }
-            TakeList("spinner", manifest.Spinner, 32, 8, frames: true, ref spinner);
-            TakeList("quips", manifest.Quips, 200, 80, frames: false, ref quips);
+            // thinking.frames / thinking.quips win over the top-level spinner / quips of the same extension.
+            TakeList("spinner", manifest.Thinking?.Frames ?? manifest.Spinner, 64, 32, frames: true, ref spinner);
+            TakeList("quips", manifest.Thinking?.Quips ?? manifest.Quips, 200, 80, frames: false, ref quips);
+            if (manifest.Thinking is { } thinking)
+            {
+                var (t, err) = BuildTiming(thinking);
+                if (err is not null) problems.Add($"{name}: thinking {err}; timing skipped.");
+                else
+                {
+                    Claim("thinking");
+                    timing = t;
+                    overrides.Add("thinking");
+                }
+            }
             TakeList("splash", manifest.Splash, 200, 80, frames: false, ref splash);
             if (manifest.ToolLabels is { } toolLabels)
             {
@@ -198,7 +279,7 @@ internal static partial class ExtensionRegistry
             {
                 if (ParseFooterTemplate(template, problems, name) is { } ids)
                 {
-                    if (footer is not null) problems.Add($"{name}: footer template replaces the one from an earlier extension.");
+                    Claim("footer template");
                     footer = ids;
                     hasFooter = true;
                 }
@@ -209,8 +290,29 @@ internal static partial class ExtensionRegistry
                 problems.Add($"{name}: process.command is empty; process ignored.");
                 process = null;
             }
+            bool hasMarkdown = false;
+            if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
+            {
+                Claim("markdown style");
+                markdown = style;
+                hasMarkdown = true;
+            }
+            var commands = new List<ExtensionCommand>();
+            foreach (var c in manifest.Commands ?? [])
+            {
+                var cname = (c.Name ?? "").Trim().TrimStart('/').ToLowerInvariant();
+                if (process is null) { problems.Add($"{name}: command '/{cname}' needs a process; skipped."); continue; }
+                if (!CommandNamePattern().IsMatch(cname)) { problems.Add($"{name}: invalid command name '{c.Name}' (a-z, 0-9, '-', max 32); skipped."); continue; }
+                if (IsBuiltInCommand("/" + cname)) { problems.Add($"{name}: command '/{cname}' is a built-in; skipped."); continue; }
+                if (takenCommands.TryGetValue(cname, out var owner)) { conflicts.Add(new Conflict($"command /{cname}", owner, name)); continue; }
+                takenCommands[cname] = name;
+                int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
+                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout));
+            }
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
+                Markdown = hasMarkdown,
+                Commands = commands,
                 Overrides = overrides,
                 Footer = hasFooter,
                 Process = process,
@@ -219,8 +321,38 @@ internal static partial class ExtensionRegistry
                 Tools = ValidateTools(name, manifest.Tools ?? [], process is not null, problems),
             });
         }
-        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels);
-        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, FooterTemplate = footer };
+        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels) { Timing = timing };
+        return new Result(extensions, themes, problems)
+        {
+            Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown, Conflicts = conflicts, Disabled = skipped,
+        };
+    }
+
+    /// <summary>
+    /// Validate a <c>markdown</c> block over the built-in style. Invalid keys are reported and keep
+    /// their built-in glyph; null when nothing valid was set.
+    /// </summary>
+    internal static Tui.MarkdownStyle? BuildMarkdown(MarkdownManifest md, List<string> problems, string extension)
+    {
+        var style = Tui.MarkdownStyle.Default;
+        bool any = false;
+        if (md.TableBorder is { } border)
+        {
+            var b = border.Trim().ToLowerInvariant();
+            if (Tui.MarkdownStyle.BorderStyles.Contains(b)) { style = style with { Border = b }; any = true; }
+            else problems.Add($"{extension}: markdown.tableBorder '{border}' is not one of {string.Join(", ", Tui.MarkdownStyle.BorderStyles)}; ignored.");
+        }
+        if (md.Bullet is { } bullet)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(bullet)) { style = style with { Bullet = bullet }; any = true; }
+            else problems.Add($"{extension}: markdown.bullet must be one visible terminal cell; ignored.");
+        }
+        if (md.Rule is { } rule)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(rule)) { style = style with { Rule = rule }; any = true; }
+            else problems.Add($"{extension}: markdown.rule must be one visible terminal cell; ignored.");
+        }
+        return any ? style : null;
     }
 
     /// <summary>Validate <c>intercepts</c> entries; invalid ones become problems and are dropped.</summary>
@@ -314,8 +446,18 @@ internal static partial class ExtensionRegistry
         return theme;
     }
 
+    /// <summary>Validate the timing keys of a <c>thinking</c> block over the built-in timing. Error = the first bad key.</summary>
+    internal static (ThinkingIndicator.Timing Timing, string? Error) BuildTiming(ThinkingManifest m)
+    {
+        var d = ThinkingIndicator.Timing.Default;
+        if (m.IntervalMs is < 40 or > 1000) return (d, "intervalMs must be 40-1000");
+        if (m.QuipIntervalMs is < 500 or > 60000) return (d, "quipIntervalMs must be 500-60000");
+        if (m.Suffix is { } s && (s.Length > 8 || s.Any(char.IsControl))) return (d, "suffix must be at most 8 characters without control characters");
+        return (new(m.IntervalMs ?? d.IntervalMs, m.QuipIntervalMs ?? d.QuipIntervalMs, m.Shuffle ?? d.Shuffle, m.Suffix ?? d.Suffix), null);
+    }
+
     // Plain-text list check: 1..maxItems non-blank items, no control chars, at most maxChars each.
-    // Spinner frames must also be exactly one terminal cell wide. Null = valid, else the reason.
+    // Spinner frames must also be 1-8 terminal cells wide. Null = valid, else the reason.
     private static string? CheckTexts(List<string> items, int maxItems, int maxChars, bool frames)
     {
         if (items.Count == 0 || items.Count > maxItems) return $"needs 1-{maxItems} entries";
@@ -324,7 +466,7 @@ internal static partial class ExtensionRegistry
             if (string.IsNullOrWhiteSpace(item)) return "has an empty entry";
             if (item.Any(char.IsControl)) return "has an entry with control characters";
             if (item.Length > maxChars) return $"has an entry longer than {maxChars} characters";
-            if (frames && Tui.TuiMarkup.Width(item) != 1) return $"frame '{item}' is not one terminal cell wide";
+            if (frames && Tui.TuiMarkup.Width(item) is < 1 or > 8) return $"frame '{item}' must be 1-8 terminal cells wide";
         }
         return null;
     }
@@ -359,13 +501,19 @@ internal static partial class ExtensionRegistry
         foreach (Match m in Placeholder().Matches(template))
         {
             var id = m.Groups[1].Value.Trim().ToLowerInvariant();
-            if (!Tui.TuiComponents.FooterSegmentIds.Contains(id))
+            if (!Tui.TuiComponents.FooterSegmentIds.Contains(id) && !Tui.TuiComponents.IsExtensionChipId(id))
                 problems.Add($"{extension}: footer template has unknown segment '{{{m.Groups[1].Value}}}'; ignored.");
             else if (!ids.Contains(id)) ids.Add(id);
         }
         if (ids.Count > 0) return ids;
         problems.Add($"{extension}: footer template names no known segment; skipped.");
         return null;
+    }
+
+    private static string OneLine(string text, int max)
+    {
+        var s = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return s.Length <= max ? s : s[..max];
     }
 
     // A single Spectre color token (hex, named color or "default"); rejects styles and markup.

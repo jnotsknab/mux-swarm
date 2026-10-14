@@ -30,7 +30,7 @@ public class HookScaffoldTests
             Command = "bash /hooks/notify.sh",
             Mode = HookMode.Blocking,
             TimeoutSeconds = 45,
-            When = new HookClause { Event = "task_complete", Agent = "CodeAgent", Tool = null },
+            When = new HookClause { Events = ["task_complete"], Agent = "CodeAgent", Tool = null },
         });
 
         var json = JsonSerializer.Serialize(swarm, Opts);
@@ -41,7 +41,7 @@ public class HookScaffoldTests
         Assert.Equal("bash /hooks/notify.sh", h.Command);
         Assert.Equal(HookMode.Blocking, h.Mode);
         Assert.Equal(45, h.TimeoutSeconds);
-        Assert.Equal("task_complete", h.When.Event);
+        Assert.Equal(["task_complete"], h.When.Events);
         Assert.Equal("CodeAgent", h.When.Agent);
         Assert.Null(h.When.Tool);
     }

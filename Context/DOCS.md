@@ -912,7 +912,7 @@ Flags can be combined. Common stacks:
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills, extensions)
-/extensions     List loaded extensions, their contributions, and load problems
+/extensions     Extensions panel: enable/disable, conflicts, trust, create, edit, reload
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1263,18 +1263,27 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 ```
 
 - **themes**: each entry needs a `name` (cannot reuse a built-in name), an optional `base` built-in
-  preset (default `default`), and any color roles to override: `step success warning error info muted
+  preset (default `default`; one of `default dark light mono solarized dracula gruvbox catppuccin-mocha
+  catppuccin-macchiato catppuccin-latte nord tokyo-night tokyo-storm rose-pine rose-dawn kanagawa
+  everforest one-dark monokai ayu-mirage synthwave`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
-- **spinner**: thinking-indicator frames (1-32, each exactly one terminal cell, e.g. `["-", "\\", "|", "/"]`).
-  Replaces the built-in braille spinner on the main agent line (TUI and classic console).
+- **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
+  emoji or ZWJ sequences, e.g. `["-", "\\", "|", "/"]` or `["[=  ]", "[ = ]", "[  =]"]`). Narrower frames
+  are padded to the widest so the line does not jitter. Replaces the built-in braille spinner on the main
+  agent line (TUI and classic console).
 - **quips**: words the indicator cycles while the agent reasons (1-200, max 80 chars). Replaces the built-ins.
+- **thinking**: the whole indicator animation, every key optional:
+  `{ "frames": [...], "intervalMs": 80, "quips": [...], "quipIntervalMs": 2000, "shuffle": true, "suffix": "..." }`.
+  `frames`/`quips` follow the rules above and win over the top-level `spinner`/`quips`; `intervalMs` (40-1000)
+  is the frame time, `quipIntervalMs` (500-60000) how long each quip shows, `shuffle: false` cycles quips in
+  order, `suffix` (max 8 chars, may be empty) follows the quip. Invalid timing keys keep the built-in timing.
 - **toolLabels**: verb stem -> action label, e.g. `{ "read": "Peeking at", "search": "Hunting" }` (max 40 chars).
   The verb stem is the first word of a tool name after its server prefix (`Filesystem_read_text_file` -> `read`).
   Merged over the built-ins; across extensions, keys merge in name order and later names win.
 - **splash**: startup lines (1-200, max 80 chars). Replaces the whole built-in pool (quotes, facts, tips,
   taglines) in the TUI splash and the web UI tip.
-- For spinner, quips and splash the later extension name wins (with a warning). All text is plain text:
+- For spinner, quips, thinking and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
   Spectre markup such as `[red]` is shown literally, never interpreted.
 - **footer**: `{ "template": "{mode} {context} {model} {effort}" }` picks which TUI footer chips show and
   in what order. Ids: `share orchestration mode turn session context cached sys tools calls model effort hint`.
@@ -1282,10 +1291,37 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   separator. Chips you leave out are hidden, except `share`, which always shows (first) so a live
   broadcast is never hidden. Unknown ids are skipped with a warning. Narrow terminals still drop chips
   in the built-in priority order. If several extensions set a template, the later name wins.
-- Extensions load in name order. If two define the same theme, the later name wins (with a warning).
+- Extensions load in name order. If two define the same theme, the later name wins (shown as a conflict).
   Invalid manifests or entries are skipped with a warning; they never stop startup.
-- `/refresh` reloads extensions and re-applies `console.theme`; `/extensions` lists what loaded.
-- The web UI keeps its own theme set; extension themes apply to the TUI.
+- **markdown**: `{ "tableBorder": "rounded", "bullet": "▸", "rule": "═" }`. `tableBorder` is `heavy`
+  (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
+  Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
+  Applies to the TUI and to markdown panels in the classic console.
+- `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
+  disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
+  recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.
+  Mux reads the manifests of the instance you run: edit `<install>/Extensions/<name>/` of that install
+  (the panel's details pane shows the exact folder).
+- **`/extensions`** opens a panel (TUI; works at the menu and inside a session) listing every installed
+  extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
+  one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
+  selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
+  `t` trust/untrust its process (trusting takes a second `t`), `n` new, `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
+  Changes save to config.json and apply at once; new agent tools arrive with the next session.
+- When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
+  style), the later name wins and the panel shows the conflict on both. Disable the winner to use the
+  other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
+  A command name taken by an earlier extension stays with that one.
+- `/extensions new [name]` scaffolds `<install>/Extensions/<name>` from the parts you pick (theme, spinner
+  + quips, footer chip, slash command, agent tool, interceptor; process parts get a working `main.py`
+  that answers every message), offers to trust it and reloads. It then offers to have the agent build it
+  out: inside a session the brief becomes your next message; at the menu it starts an `/agent` session
+  with the brief as the opening goal. The brief points the agent at this section and ## Event Hooks.
+- Outside the TUI, `/extensions` prints the same information as text; change it with
+  `/extensions enable|disable|trust|untrust <name>`, `/extensions new [name]` and `/extensions reload`.
+- The web UI keeps its own built-in theme set and also lists extension themes (served by
+  `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
 ### Extension processes
 
@@ -1305,11 +1341,17 @@ permissions, so each one must be listed in `extensions.trusted` before Mux start
 
 Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
-- First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir }`.
-- Each subscribed event: notification `event` whose params are the hook payload
-  (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
+- First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`
+  (`dir` = the extension folder as the process sees it; `dataDir` = its writable folder when sandboxed, else absent).
+- Each subscribed event: notification `event` whose params are the hook payload (`event`, `timestamp`,
+  plus `agent`, `tool`, `args`, `text`, `summary`, `goalId` as set). The event names and the fields each
+  one carries are listed in the table under ## Event Hooks.
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
-- stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- stdout must carry only JSON-RPC lines, one per line, encoded as UTF-8 (Mux writes UTF-8 without a BOM
+  to stdin). On Windows, Python defaults pipes to the ANSI code page: call
+  `sys.stdout.reconfigure(encoding="utf-8")` (or send ASCII-escaped JSON, Python's `json.dumps` default)
+  or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
+  `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
   `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout
@@ -1318,7 +1360,57 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
+- Messages from the process that are not responses are notifications Mux understands:
+  `footer/set` and `command/output` (below). Others are ignored.
 
+### Extension commands
+
+A trusted process can add slash commands. They work in `/agent`, `/swarm`, `/pswarm` and at the
+menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and show in the palette.
+
+```jsonc
+// extension.json
+"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 } ]
+```
+
+- `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
+  can never be taken; if two extensions declare the same command the first by name keeps it.
+- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode }` (`mode` is the
+  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
+  Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
+- Reply `result`: `{ "output": "...", "prompt": "..." }`, both optional. `output` is shown to you;
+  `prompt` is sent to the agent as if you typed it (at the menu, where there is no agent, it is shown).
+  A JSON-RPC `error` is shown as a warning.
+- `/share` guests cannot run extension commands.
+
+### Extension footer chips
+
+A trusted process can show live text in the TUI footer by sending a notification:
+`{ "jsonrpc": "2.0", "method": "footer/set", "params": { "id": "branch", "text": "main *" } }`.
+
+- The chip id is `{extension}.{id}` (`id`: `a-z`, `0-9`, `-`, `_`, max 32). Text is one line of
+  plain text, cut at 40 characters; empty text removes the chip.
+- Mux caches the text and reads it when the footer paints; it never calls the process to draw.
+- Without a footer template, chips show after the built-in ones and are among the first dropped on
+  narrow terminals. A template can place them: `"{mode} {git.branch} {context}"`.
+- A process's chips disappear when it exits or is stopped (`/refresh`).
+
+**Sandboxing.** When a sandbox backend is configured (`sandbox.backend` other than `host`), every
+extension process runs inside it, so it gets the same confinement as the agent's shell:
+
+- The extension folder is read-only. The process works in its own writable folder,
+  `<local data>/Mux-Swarm/extensions/<name>` (`%LOCALAPPDATA%` on Windows, `~/.local/share` elsewhere),
+  passed as `dataDir` in `initialize`.
+- Wrapper backends (`bwrap`, `firejail`, `sandbox-exec`) wrap the process. Container and microVM
+  backends (`docker`, `docker-container`, `podman`, `gvisor`, ...) start one sandbox per extension: the
+  data folder at `/work`, the extension folder at `/ext` (read-only), plus the usual allowed-path mounts.
+  The process then runs in Linux, so the image needs its runtime (e.g. python). The sandbox is removed
+  when the process stops. `custom` needs `sandbox.replStdio: true`.
+- If the sandbox cannot be used, the process is not started (never a silent host fallback) and
+  `/extensions` says why. `/extensions` also shows where each process runs.
+- Exempt a trusted extension with `"extensions": { "unsandboxed": ["name"] }`. Only your config can do
+  this; a manifest cannot opt out. With `sandbox.backend: host` nothing changes.
 ### Extension tools
 
 ```jsonc
@@ -1599,7 +1691,66 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
-Supported events include `session_start`, `session_end`, `user_input`, `text_chunk`, `thinking_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `runtime_ready`, and the daemon events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. See `docs/hooks.md` for the full table.
+`/createhook` (or `/hooks create`) asks for the id, script, events, filters and mode, saves the entry, and, for a new
+script, starts a normal `/agent` session (your model and settings) whose first message is a brief with those choices.
+
+- `when.event` is one event name or a list: `"event": ["turn_end", "task_complete"]` fires once per occurrence of any listed event. A single event still round-trips as a plain string.
+- `args` (optional string array): `command` becomes the executable and each entry is passed verbatim, so paths with spaces need no quoting: `"command": "python", "args": ["C:/My Hooks/notify.py"]`. Without `args`, `command` is split once at the first space (legacy; a quoted path with spaces in the executable position breaks).
+- Hook stdout/stderr are captured, not inherited (stdout is the protocol under `--stdio`/`--acp`, and would draw over the TUI). Each line is surfaced as a muted/debug line `[Hook:<id>] ...` (`[Hook:<id>:stderr] ...`).
+- A crashed persistent hook is restarted on its next event; repeated crashes back off 1s, 2s, 4s ... up to 60s (events for it are skipped meanwhile). Staying up 60s resets the backoff.
+- Payload: `tool_call` carries `args` (call arguments as JSON), `tool_result` carries `tool` and the result text in `summary`, and every event carries `goalId` when the run has one (`--goal-id`, or the id a continuous run generates).
+
+Every event carries `event` and `timestamp`, plus `goalId` when the run has one; the other fields
+depend on the event (absent = not set). These are the exact names emitted, for hooks
+(`when.event`) and extension processes (`events` in the manifest, delivered as `event` notifications
+with this payload as `params`):
+
+| Event | When it fires | Fields |
+|-------|---------------|--------|
+| `runtime_ready` | Runtime finished booting | `text` |
+| `session_start` | A mode was entered | `agent`, `summary` (`agent`/`stateless`/`swarm`/`pswarm`), `text` (opening goal, if any); `/agent`: `data.model`, `data.resumed` |
+| `session_end` | A session exited, on every path (`/qc`, Esc/Ctrl+C, error) | `agent`, `summary` (`complete`/`interrupted`/`error`) |
+| `user_input` | A goal or message was received | `agent`, `text` |
+| `agent_turn_start` | An agent begins a turn | `agent` |
+| `text_chunk` | A streamed piece of the answer | `agent`, `text` |
+| `thinking_chunk` | A streamed piece of reasoning | `agent`, `text` |
+| `tool_call` | A tool is invoked | `agent`, `tool`, `args` (arguments as JSON) |
+| `tool_result` | A tool returned | `agent`, `tool`, `summary` (result text) |
+| `tool_denied` | An extension interceptor blocked a call (after its `tool_call`; the tool never ran) | `summary` = tool; `data.tool`, `data.by` (extension), `data.reason` |
+| `turn_end` | An agent finished one model round-trip (several per user turn) | `agent`, `summary` (first 500 chars of the answer) |
+| `turn_complete` | A whole user turn / goal ended, once, on every path | `agent`, `summary` = `data.outcome`: `ok`/`interrupted`/`timeout`/`failed`; `data.durationMs`, `data.toolCalls` (`/agent`), `data.error` |
+| `task_complete` | An agent signalled the task is done (or failed/partial) | `agent`, `summary`; `data.status` (`success`/`failure`/`partial`) |
+| `delegation` | Work was delegated to a specialist | `agent` (delegating agent), `summary` (task, truncated), `flowId`; `data.to` |
+| `delegation_end` | That delegation finished, on every path | `agent` (delegating agent), `summary` = `data.status`, `flowId` (same as its `delegation`); `data.to`, `data.status` (`success`/`failure`/`partial`/`cancelled`/`error`), `data.durationMs`, `data.attempt` |
+| `job_start` | A background job (`/bg`, background delegation) started | `agent`, `summary` = id; `data.id`, `data.agent` |
+| `job_end` | That job finished | `agent`, `summary` = `data.status` (`done`/`failed`/`cancelled`); `data.id`, `data.agent`, `data.durationMs` |
+| `command_executed` | A slash command was entered (before it runs), at the menu or in a session | `agent` (session lead), `summary` = command; `data.command`, `data.scope` (`menu`/`agent`/`swarm`/`pswarm`), `data.args` (omitted for `/set` `/config` `/login` `/provider` `/join` `/share` `/setkey` `/apikey`) |
+| `compaction` | Context compaction (`/agent`) started, finished or failed | `agent`, `summary` = `data.phase` (`start`/`done`/`failed`); `data.kind` (`auto`/`manual`/`mid_turn`/`resume`), `data.beforeTokens`, `data.afterTokens` + `data.durationMs` (done) |
+| `mcp_server_connected` | An MCP server connected (startup and `/refresh`) | `summary` = server; `data.server`, `data.transport` (`stdio`/`http`), `data.toolCount` |
+| `mcp_server_failed` | An MCP server failed to connect | `summary` = server; `data.server`, `data.error` (max 500 chars) |
+| `model_changed` | A model was changed (`/setmodel`, model picker) | `agent` (slot label), `summary` = new model; `data.from`, `data.to`, `data.slot` (picker) |
+| `provider_changed` | `/provider` switched the provider | `summary` = new provider; `data.from`, `data.to` (names only, never keys) |
+| `effort_changed` | Reasoning effort changed (`/effort`, `/max`, Shift+Tab) | `summary` = new effort; `data.from`, `data.to` |
+| `theme_changed` | `/theme` applied a theme | `summary` = new theme; `data.from`, `data.to` |
+| `extension_process_exited` | A trusted extension process exited on its own (not on `/refresh` or exit) | `summary` = extension; `data.extension`, `data.exitCode` |
+| `daemon_start` | The daemon started | `summary` (`<n> triggers`) |
+| `daemon_stop` | The daemon stopped | (none) |
+| `daemon_trigger` | A trigger fired a goal | `agent`, `summary` (`cron:<id>`/`watch:<id>`/`webhook:<id>`), `text` (goal) |
+| `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
+| `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
+
+**Correlation.** Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
+id, e.g. `d7`, or the job id, e.g. `bg2`) and `parentAgent` (the agent that delegated), so events from
+parallel sub-agents can be told apart; `delegation` and `delegation_end` carry the same `flowId`.
+`data` holds event-specific fields (ids, names, counts, durations), absent when unset.
+
+**What hooks and extensions can see.** `tool_call.args` and `tool_result.summary` carry the full tool
+arguments and results, unredacted (shell commands, file contents, anything the agent passes a tool).
+Only configure hooks and trust extensions you would trust with that. Lifecycle events added since
+(`command_executed`, `model_changed`, ...) carry names, ids and counts only.
+
+`*` (extensions) matches every event. `text_chunk` and `thinking_chunk` fire per streamed piece, so
+subscribe to them only when you need streaming.
 
 Daemon-specific hook events emitted automatically:
 - `daemon_start` -- fired when daemon starts with trigger count

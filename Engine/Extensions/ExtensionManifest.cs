@@ -62,7 +62,10 @@ internal sealed class ExtensionManifest
     [JsonPropertyName("tools")]
     public List<ExtensionToolSpec> Tools { get; set; } = [];
 
-    /// <summary>Thinking-indicator spinner frames, replacing the built-in ones. 1-32 frames, each one terminal cell wide.</summary>
+    /// <summary>
+    /// Thinking-indicator spinner frames, replacing the built-in ones: 1-64 frames, each 1-8 terminal
+    /// cells (any text: multi-character, emoji, ZWJ sequences). Shorthand for <c>thinking.frames</c>.
+    /// </summary>
     [JsonPropertyName("spinner")]
     public List<string>? Spinner { get; set; }
 
@@ -84,6 +87,68 @@ internal sealed class ExtensionManifest
     /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
     [JsonPropertyName("footer")]
     public FooterManifest? Footer { get; set; }
+
+    /// <summary>Markdown glyphs (table border style, bullet, rule). Null = built-in style.</summary>
+    [JsonPropertyName("markdown")]
+    public MarkdownManifest? Markdown { get; set; }
+
+    /// <summary>
+    /// Slash commands served by the process (needs <c>process</c> and trust). Typing
+    /// <c>/name args</c> sends a <c>command/run</c> request; built-in names can never be taken.
+    /// </summary>
+    [JsonPropertyName("commands")]
+    public List<ExtensionCommandSpec> Commands { get; set; } = [];
+
+    /// <summary>The whole thinking-indicator animation (frames, speed, quips). Null = built-in.</summary>
+    [JsonPropertyName("thinking")]
+    public ThinkingManifest? Thinking { get; set; }
+}
+
+/// <summary>
+/// The <c>thinking</c> block: full control of the agent's thinking indicator. Every key is optional;
+/// <c>frames</c> and <c>quips</c> take precedence over the top-level <c>spinner</c> / <c>quips</c>.
+/// </summary>
+internal sealed class ThinkingManifest
+{
+    /// <summary>Spinner frames: 1-64, each 1-8 terminal cells. Narrower frames are padded to the widest.</summary>
+    [JsonPropertyName("frames")]
+    public List<string>? Frames { get; set; }
+
+    /// <summary>Milliseconds per frame, 40-1000 (default 80).</summary>
+    [JsonPropertyName("intervalMs")]
+    public int? IntervalMs { get; set; }
+
+    /// <summary>Words cycled while the agent reasons (1-200, max 80 chars each).</summary>
+    [JsonPropertyName("quips")]
+    public List<string>? Quips { get; set; }
+
+    /// <summary>Milliseconds each quip shows, 500-60000 (default 2000).</summary>
+    [JsonPropertyName("quipIntervalMs")]
+    public int? QuipIntervalMs { get; set; }
+
+    /// <summary>Shuffle the quips per user (default true); false cycles them in order.</summary>
+    [JsonPropertyName("shuffle")]
+    public bool? Shuffle { get; set; }
+
+    /// <summary>Text after the quip (default <c>...</c>, max 8 chars, may be empty).</summary>
+    [JsonPropertyName("suffix")]
+    public string? Suffix { get; set; }
+}
+
+/// <summary>One process-backed slash command declared in an extension manifest.</summary>
+internal sealed class ExtensionCommandSpec
+{
+    /// <summary>Command word without the slash: <c>a-z</c>, <c>0-9</c>, <c>-</c>, starting with a letter (max 32).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>One-line description shown in the palette and <c>/extensions</c>.</summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>Seconds to wait for the reply (default 60, max 3600). Esc cancels earlier.</summary>
+    [JsonPropertyName("timeoutSeconds")]
+    public int? TimeoutSeconds { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
@@ -156,4 +221,20 @@ internal sealed class FooterManifest
     /// </summary>
     [JsonPropertyName("template")]
     public string? Template { get; set; }
+}
+
+/// <summary>The <c>markdown</c> block of an extension manifest. Omitted keys keep the built-in glyph.</summary>
+internal sealed class MarkdownManifest
+{
+    /// <summary>Table border style: <c>heavy</c> (default), <c>light</c>, <c>rounded</c> or <c>ascii</c>.</summary>
+    [JsonPropertyName("tableBorder")]
+    public string? TableBorder { get; set; }
+
+    /// <summary>Bullet for unordered lists: one terminal cell (default <c>•</c>).</summary>
+    [JsonPropertyName("bullet")]
+    public string? Bullet { get; set; }
+
+    /// <summary>Glyph repeated for horizontal rules: one terminal cell (default <c>─</c>).</summary>
+    [JsonPropertyName("rule")]
+    public string? Rule { get; set; }
 }

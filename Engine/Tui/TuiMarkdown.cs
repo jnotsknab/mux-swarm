@@ -82,7 +82,7 @@ internal static class TuiMarkdown
         if (ul.Success)
         {
             string body = Inline(ul.Groups[1].Value);
-            return $"{pad}[{Bullet}]\u2022[/] {body}";
+            return $"{pad}[{Bullet}]{Escape(MarkdownStyle.Active.Bullet)}[/] {body}";
         }
 
         // Ordered list: keep the number, style the marker subtly.
@@ -100,7 +100,7 @@ internal static class TuiMarkdown
 
         // Thematic break: ---, ***, ___ (3+). Render a dim horizontal rule.
         if (Regex.IsMatch(trimmed, @"^([-*_])\1{2,}$"))
-            return $"{pad}[{Bullet}]{new string('\u2500', 24)}[/]";
+            return $"{pad}[{Bullet}]{Escape(string.Concat(Enumerable.Repeat(MarkdownStyle.Active.Rule, 24)))}[/]";
 
         // Table rows: lines that start and end with a pipe (GitHub-flavored). The header
         // separator (|---|:--:|) becomes a rule; data/header rows render styled cells joined
@@ -110,7 +110,7 @@ internal static class TuiMarkdown
         {
             // Separator row -> rule.
             if (Regex.IsMatch(trimmed, @"^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?$"))
-                return $"{pad}[{Bullet}]{new string('\u2500', 24)}[/]";
+                return $"{pad}[{Bullet}]{Escape(string.Concat(Enumerable.Repeat(MarkdownStyle.Active.Rule, 24)))}[/]";
             var cells = SplitTableCells(trimmed);
             var sep = $" [{Bullet}]\u2502[/] ";
             return pad + string.Join(sep, cells.Select(c => Inline(c.Trim())));

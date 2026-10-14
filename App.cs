@@ -656,6 +656,8 @@ internal class App
             // // background. Idempotent after the first call.
             // await EnsureMcpReadyAsync();
 
+            HookWorker.CommandExecuted(userInput, "menu");
+
             if (ContextPruner.TryParse(userInput, out _, out var menuPruneError))
             {
                 MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle lead session after its first turn. Launch /agent or a team lead; delegated sessions are unchanged.");
@@ -1266,7 +1268,7 @@ internal class App
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
-                    CliCmdUtils.HandleExtensions();
+                    CliCmdUtils.HandleExtensions(userInput);
                     break;
 
                 case var cmd when cmd.StartsWith("/report", StringComparison.Ordinal):
@@ -1423,27 +1425,9 @@ internal class App
 
                 case var hkCmd when hkCmd == "/createhook" || hkCmd.StartsWith("/createhook ", StringComparison.Ordinal):
                 {
-                    await EnsureMcpReadyAsync();
-                    var helperModel = LoadSingleAgentModel();
-                    // Helper that drafts a hook SCRIPT to the given file path (vs /newagent's prompt file).
-                    void SpawnHookScriptHelper(string scriptPath, string purpose)
-                    {
-                        var task = BuildHookHelperBrief(scriptPath, purpose);
-                        // Pass the brief as incomingGoal so the helper runs ONE-SHOT (initialGoal set
-                        // directly, then the `incomingGoal != null && !continuous` break fires) and
-                        // control returns to the wizard in a single flow. Injecting via FallbackReader
-                        // instead left the helper reading stdin, blocking the wizard's next step and
-                        // swallowing the user's following input until a second invocation.
-                        SingleAgentOrchestrator.ChatAgentAsync(
-                            client: CreateChatClient(helperModel),
-                            GetOrResetCts().Token,
-                            maxIterations: 4,
-                            mcpTools: McpTools,
-                            incomingGoal: task,
-                            continuous: false).GetAwaiter().GetResult();
-                    }
-
-                    var res = TuiConfigCommands.RunInteractive(userInput, SpawnHookScriptHelper);
+                    // A new script is drafted by a normal /agent session (the user's model, context
+                    // window and settings) that starts next, with the brief as its first message.
+                    var res = TuiConfigCommands.RunInteractive(userInput, (_, brief) => CliCmdUtils.QueueAgentSession(brief));
                     if (res.Ok) { MuxConsole.WriteSuccess(res.Message); SwarmConfig = LoadSwarm(); }
                     else MuxConsole.WriteWarning(res.Message);
                     break;
@@ -1466,20 +1450,8 @@ internal class App
                         case "create":
                         case "new":
                         {
-                            await EnsureMcpReadyAsync();
-                            var helperModel2 = LoadSingleAgentModel();
-                            void SpawnHookScriptHelper2(string scriptPath, string purpose)
-                            {
-                                var task = BuildHookHelperBrief(scriptPath, purpose);
-                                // One-shot via incomingGoal (see /createhook above); previously the
-                                // FallbackReader injection left the helper reading stdin and blocked the wizard.
-                                SingleAgentOrchestrator.ChatAgentAsync(
-                                    client: CreateChatClient(helperModel2), GetOrResetCts().Token,
-                                    maxIterations: 4, mcpTools: McpTools,
-                                    incomingGoal: task, continuous: false).GetAwaiter().GetResult();
-                            }
                             var cres = TuiConfigCommands.RunCreateHookWizard(
-                                new[] { "/createhook" }, SpawnHookScriptHelper2);
+                                new[] { "/createhook" }, (_, brief) => CliCmdUtils.QueueAgentSession(brief));
                             if (cres.Ok) { MuxConsole.WriteSuccess(cres.Message); SwarmConfig = LoadSwarm(); }
                             else MuxConsole.WriteWarning(cres.Message);
                             break;
@@ -1490,7 +1462,7 @@ internal class App
                             var sb = new System.Text.StringBuilder();
                             sb.AppendLine($"Hooks: {status}  ({MuxSwarm.State.HookWorker.Count} configured)");
                             foreach (var h in MuxSwarm.State.HookWorker.Loaded)
-                                sb.AppendLine($"  - {h.Id}: on {h.When.Event}" +
+                                sb.AppendLine($"  - {h.Id}: on {string.Join(", ", h.When.Events)}" +
                                     (h.When.Agent is not null ? $" [agent={h.When.Agent}]" : "") +
                                     (h.When.Tool is not null ? $" [tool={h.When.Tool}]" : "") +
                                     $"  ({h.Mode})");
@@ -1566,6 +1538,16 @@ internal class App
                     break;
                 }
 
+                case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
+                {
+                    // Extension command at the menu. There is no agent here, so a returned prompt is
+                    // shown instead of sent; run the command inside a session to send it.
+                    var outcome = await Engine.Extensions.ExtensionCommands.RunAsync(userInput, GetOrResetCts().Token);
+                    if (outcome.Prompt is { } extPrompt)
+                        MuxConsole.WriteMuted($"This command sends a prompt to the agent. Start a session (/agent) and run it there. Prompt: {extPrompt}");
+                    break;
+                }
+
                 default:
                     if (userInput.StartsWith("/", StringComparison.Ordinal))
                     {
@@ -1605,66 +1587,6 @@ internal class App
         return Environment.ExitCode;
     }
     
-    /// <summary>
-    /// Build the grounding brief handed to the helper agent that authors a hook script. Gives the
-    /// agent the full hook contract - how hooks run, the exact event payload schema, the canonical
-    /// event list, the stdin/exit-code/timeout semantics, and safety rules - so it is not flying
-    /// blind. Used by /createhook and /hooks create.
-    /// </summary>
-    private static string BuildHookHelperBrief(string scriptPath, string purpose)
-    {
-        var ext = System.IO.Path.GetExtension(scriptPath).ToLowerInvariant();
-        var lang = ext switch
-        {
-            ".ps1" => "PowerShell",
-            ".sh" => "bash",
-            ".py" => "Python",
-            ".js" => "Node.js",
-            _ => "a shell script"
-        };
-        return
-$@"You are writing a Mux-Swarm EVENT HOOK script. Write the finished, runnable {lang} script to this
-EXACT path and nothing else there: {scriptPath}
-
-PURPOSE (what the user wants this hook to do):
-{purpose}
-
-HOW MUX-SWARM HOOKS WORK (authoritative - do not invent behavior):
-- A hook is an external command Mux-Swarm runs when a lifecycle EVENT fires. It is configured in
-  swarm.json under hooks[] (the /createhook wizard writes that entry; you only write the SCRIPT).
-- DELIVERY: every time the event fires, Mux writes ONE line of JSON to your script's STDIN (newline-
-  delimited). Read exactly one line from stdin and JSON-parse it. For a 'persistent' hook the process
-  stays alive and receives a STREAM of such lines (loop over stdin); for async/blocking it is invoked
-  once per event with a single line then stdin closes.
-- The command is split on the FIRST space into executable + args, so your script must be invoked as a
-  single program (the wizard wraps it, e.g. 'bash <path>' or 'powershell -File <path>').
-- OUTPUT: stdout/stderr are NOT captured or shown - do your own logging/IO (write a file, hit a
-  webhook, send a notification). Exit code 0 = success. A 'blocking' hook is awaited up to its
-  timeoutSeconds (default 30) and then killed; 'async' fire-and-forget; do not block forever unless
-  the hook is configured persistent.
-
-EVENT PAYLOAD (camelCase JSON fields; some are null depending on the event):
-  event      string  - the event name (see list below)
-  agent      string? - agent involved (e.g. the agent that called a tool)
-  tool       string? - tool name (on tool_call / tool_result)
-  text       string? - streamed text/reasoning chunk (on text_chunk / thinking_chunk)
-  args       string? - tool-call arguments
-  summary    string? - short summary (turn_end, delegation, task_complete, daemon_*)
-  goalId     string? - active goal/session id when present
-  timestamp  string  - ISO-8601 UTC time the event fired
-
-CANONICAL EVENTS you can trigger on (use the one that matches the purpose):
-  user_input, agent_turn_start, tool_call, tool_result, text_chunk, thinking_chunk,
-  turn_end, delegation, task_complete, session_start, session_end, runtime_ready,
-  daemon_start, daemon_stop, daemon_trigger, daemon_status, daemon_bridge
-
-SAFETY: the hook runs with the user's permissions. Keep it minimal, validate the parsed JSON, never
-hardcode secrets (read them from environment variables), and fail safe (a missing field must not crash).
-
-Ask the user at most one or two focused clarifying questions ONLY if the purpose is ambiguous, then
-write the complete script to {scriptPath} (overwrite the seed). Confirm the path when done.";
-    }
-
     private string LoadSingleAgentModel()
     {
         if (!string.IsNullOrEmpty(_cliModelOverride))
@@ -2313,18 +2235,24 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         chromaCfg.Args = MuxSwarm.Setup.McpServerDefaults.ChromaArgs(config.Filesystem.ChromaDbPath);
     }
 
+    /// <summary>Problems from the last <see cref="LoadExtensions"/> (manifest and process start), for <c>/extensions</c>.</summary>
+    internal static IReadOnlyList<string> ExtensionProblems { get; private set; } = [];
+
     /// <summary>
-    /// (Re)load extensions from <c>extensions</c> in config.json and report problems. With
+    /// (Re)load extensions from <c>extensions</c> in config.json and report problems (unless
+    /// <paramref name="quiet"/>, used by the <c>/extensions</c> panel, which shows them itself). With
     /// <paramref name="announce"/> it also prints a one-line summary (used by <c>/refresh</c>).
     /// Re-applies <c>console.theme</c> so edited extension themes take effect and a theme whose
     /// extension is gone falls back to the default.
     /// </summary>
-    internal static void LoadExtensions(bool announce)
+    internal static void LoadExtensions(bool announce, bool quiet = false)
     {
         var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
-        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted));
-        foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
+        var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();
+        ExtensionProblems = problems;
+        if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
         if (announce && Config.Extensions.Enabled)
             MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s), " +
@@ -2410,6 +2338,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
             successCount++;
             OtelLogger.Info($"Loaded {result.Tools.Count} tools from {result.Name}{(result.IsHttp ? " (HTTP)" : "")}");
+            HookWorker.Emit("mcp_server_connected", summary: result.Name,
+                data: [("server", result.Name), ("transport", result.IsHttp ? "http" : "stdio"), ("toolCount", result.Tools.Count)]);
         }
 
         ToolCatalog.PublishExternal(McpTools ?? new List<McpClientTool>(), loading: false);
@@ -2555,6 +2485,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             }
 
             OtelLogger.Warn($"MCP connect failed: {name}: {ex.Message}");
+            // The error only (no stderr tail: it can echo env values); capped.
+            string mcpErr = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+            HookWorker.Emit("mcp_server_failed", summary: name, data: [("server", name), ("error", mcpErr)]);
             if (McpStderrTails.TryGetValue(name, out var tail) && !tail.IsEmpty)
                 OtelLogger.Warn($"MCP stderr tail [{name}]: {string.Join(" | ", tail)}");
             return null;
