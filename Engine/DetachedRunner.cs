@@ -121,6 +121,8 @@ public static class DetachedRunner
             };
             _jobs.Add(job);
         }
+        State.HookWorker.Emit("job_start", job.Agent, summary: job.Id, data: [("id", job.Id), ("agent", job.Agent)]);
+        var jobSw = System.Diagnostics.Stopwatch.StartNew();
 
         int maxIters = ExecutionLimits.Current.MaxSubAgentIterations;
         if (maxIters <= 0) maxIters = 8;
@@ -130,6 +132,7 @@ public static class DetachedRunner
             try
             {
                 using var jobOwnership = ExecutionCancellation.Enter(job.Cts.Token);
+                using var jobFlow = State.HookWorker.BeginFlow(null, job.Id);   // its events carry flowId = job id
                 job.Cts.Token.ThrowIfCancellationRequested();
                 // Tag every NDJSON frame this background job emits with a serve origin+lane so the web
                 // app routes them into the job's own sub-agent card instead of interleaving them into
@@ -173,7 +176,13 @@ public static class DetachedRunner
             {
                 lock (_gate) { job.Status = DetachedStatus.Failed; job.Result = ex.Message; job.Finished = DateTimeOffset.UtcNow; }
             }
-            finally { job.Cts.Dispose(); }
+            finally
+            {
+                job.Cts.Dispose();
+                // After the status is final and outside _gate.
+                State.HookWorker.Emit("job_end", job.Agent, summary: job.Status.ToString().ToLowerInvariant(),
+                    data: [("id", job.Id), ("agent", job.Agent), ("status", job.Status.ToString().ToLowerInvariant()), ("durationMs", jobSw.ElapsedMilliseconds)]);
+            }
         });
 
         return job;

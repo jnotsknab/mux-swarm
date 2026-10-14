@@ -976,11 +976,15 @@ internal static partial class TuiConfigCommands
 
     // ---- /createhook + /hooks: interactive hook scaffolder ------------------------------
 
-    private static readonly string[] HookEvents =
+    /// <summary>Every event a hook can match, in the order the <c>/createhook</c> picker lists them.</summary>
+    internal static readonly string[] HookEvents =
     {
-        "user_input", "agent_turn_start", "tool_call", "tool_result", "text_chunk",
-        "thinking_chunk", "turn_end", "delegation", "task_complete", "session_start",
-        "session_end", "runtime_ready",
+        "user_input", "agent_turn_start", "tool_call", "tool_result", "tool_denied", "text_chunk",
+        "thinking_chunk", "turn_end", "turn_complete", "delegation", "delegation_end", "task_complete",
+        "session_start", "session_end", "runtime_ready", "command_executed", "compaction",
+        "job_start", "job_end", "mcp_server_connected", "mcp_server_failed", "model_changed",
+        "provider_changed", "effort_changed", "theme_changed", "extension_process_exited",
+        "daemon_start", "daemon_stop", "daemon_trigger", "daemon_status", "daemon_bridge",
     };
 
     /// <summary>Per-language seed skeleton for a new hook script: documents the stdin-JSON contract

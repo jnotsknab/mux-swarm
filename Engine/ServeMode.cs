@@ -252,14 +252,9 @@ public static partial class ServeMode
                     if (string.IsNullOrEmpty(msg))
                         continue;
 
+                    // No hook event here: the orchestrator that consumes this line emits user_input
+                    // (with the real agent) for goals, and command_executed for slash commands.
                     await _inputChannel.Writer.WriteAsync(msg);
-                    HookWorker.Enqueue(new HookEvent
-                    {
-                        Event = "user_input",
-                        Agent = "Unknown",
-                        Text = msg,
-                        Timestamp = DateTimeOffset.UtcNow
-                    });
 
                     BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = msg }));
 

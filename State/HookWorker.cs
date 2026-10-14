@@ -61,9 +61,87 @@ public static class HookWorker
     public static void Enqueue(HookEvent e)
     {
         e.GoalId ??= _goalId.Value;
+        if (_flow.Value is { } flow) { e.ParentAgent ??= flow.Parent; e.FlowId ??= flow.Id; }
+        Observed?.Invoke(e);
         Channel.Writer.TryWrite(e);
         Engine.Extensions.ExtensionHost.Publish(e);
     }
+
+    /// <summary>
+    /// Enqueue a lifecycle event with structured <paramref name="data"/> (null values are dropped).
+    /// The one-line form every new event uses; never throws.
+    /// </summary>
+    public static void Emit(string name, string? agent = null, string? summary = null, string? text = null,
+        params (string Key, object? Value)[] data)
+    {
+        var bag = data.Where(d => d.Value is not null).ToDictionary(d => d.Key, d => d.Value);
+        Enqueue(new HookEvent
+        {
+            Event = name, Agent = agent, Summary = summary, Text = text,
+            Data = bag.Count == 0 ? null : bag, Timestamp = DateTimeOffset.UtcNow,
+        });
+    }
+
+    /// <summary>
+    /// Emit <c>delegation_end</c> for flow <paramref name="flowId"/>: <paramref name="status"/> is the
+    /// sub-agent's reported status, or <c>cancelled</c>/<c>error</c> when it never reported one.
+    /// </summary>
+    public static void DelegationEnd(string from, string to, string flowId, string? status, long ms, int attempt = 1) =>
+        Enqueue(new HookEvent
+        {
+            Event = "delegation_end", Agent = from, Summary = status ?? "error", FlowId = flowId,
+            Data = new() { ["to"] = to, ["status"] = status ?? "error", ["durationMs"] = ms, ["attempt"] = attempt },
+            Timestamp = DateTimeOffset.UtcNow,
+        });
+
+    // Commands whose arguments can carry credentials or invite codes: their args are never emitted.
+    private static readonly HashSet<string> SecretArgCommands = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/set", "/config", "/login", "/provider", "/join", "/share", "/setkey", "/apikey",
+    };
+
+    /// <summary>
+    /// Emit <c>command_executed</c> for a slash command line typed by the user, before it runs.
+    /// <c>data.args</c> is omitted for commands that can take secrets (<c>/set</c>, <c>/login</c>,
+    /// <c>/provider</c>, <c>/join</c>, ...). Non-slash lines are ignored.
+    /// </summary>
+    public static void CommandExecuted(string line, string scope, string? agent = null)
+    {
+        var trimmed = (line ?? "").Trim();
+        if (trimmed.Length < 2 || trimmed[0] != '/') return;
+        var parts = trimmed.Split(' ', 2, StringSplitOptions.TrimEntries);
+        string cmd = parts[0].ToLowerInvariant();
+        string? args = parts.Length > 1 && !SecretArgCommands.Contains(cmd) ? parts[1] : null;
+        Emit("command_executed", agent, summary: cmd, data: [("command", cmd), ("args", args), ("scope", scope)]);
+    }
+
+    /// <summary>Test seam: sees every enqueued event (after stamping). Null in production.</summary>
+    internal static Action<HookEvent>? Observed;
+
+    private sealed record Flow(string? Parent, string Id);
+    private static readonly AsyncLocal<Flow?> _flow = new();
+
+    /// <summary>
+    /// Mark the current async flow (and its child tasks) as delegation or job <paramref name="id"/>
+    /// started by <paramref name="parent"/>: every event enqueued inside carries <c>parentAgent</c> and
+    /// <c>flowId</c>, so events from parallel sub-agents can be told apart. Dispose to restore.
+    /// </summary>
+    public static IDisposable BeginFlow(string? parent, string id)
+    {
+        var prior = _flow.Value;
+        _flow.Value = new Flow(parent, id);
+        return new FlowScope(prior);
+    }
+
+    private sealed class FlowScope(Flow? prior) : IDisposable
+    {
+        public void Dispose() => _flow.Value = prior;
+    }
+
+    private static int _flowSeq;
+
+    /// <summary>A short process-unique id for a delegation or job flow (<c>d12</c>, <c>j3</c>).</summary>
+    public static string NextFlowId(string prefix) => prefix + Interlocked.Increment(ref _flowSeq);
 
     private static readonly AsyncLocal<string?> _goalId = new();
 
