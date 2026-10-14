@@ -1218,15 +1218,22 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   preset (default `default`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
-- **spinner**: thinking-indicator frames (1-32, each exactly one terminal cell, e.g. `["-", "\\", "|", "/"]`).
-  Replaces the built-in braille spinner on the main agent line (TUI and classic console).
+- **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
+  emoji or ZWJ sequences, e.g. `["-", "\\", "|", "/"]` or `["[=  ]", "[ = ]", "[  =]"]`). Narrower frames
+  are padded to the widest so the line does not jitter. Replaces the built-in braille spinner on the main
+  agent line (TUI and classic console).
 - **quips**: words the indicator cycles while the agent reasons (1-200, max 80 chars). Replaces the built-ins.
+- **thinking**: the whole indicator animation, every key optional:
+  `{ "frames": [...], "intervalMs": 80, "quips": [...], "quipIntervalMs": 2000, "shuffle": true, "suffix": "..." }`.
+  `frames`/`quips` follow the rules above and win over the top-level `spinner`/`quips`; `intervalMs` (40-1000)
+  is the frame time, `quipIntervalMs` (500-60000) how long each quip shows, `shuffle: false` cycles quips in
+  order, `suffix` (max 8 chars, may be empty) follows the quip. Invalid timing keys keep the built-in timing.
 - **toolLabels**: verb stem -> action label, e.g. `{ "read": "Peeking at", "search": "Hunting" }` (max 40 chars).
   The verb stem is the first word of a tool name after its server prefix (`Filesystem_read_text_file` -> `read`).
   Merged over the built-ins; across extensions, keys merge in name order and later names win.
 - **splash**: startup lines (1-200, max 80 chars). Replaces the whole built-in pool (quotes, facts, tips,
   taglines) in the TUI splash and the web UI tip.
-- For spinner, quips and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
+- For spinner, quips, thinking and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
   Spectre markup such as `[red]` is shown literally, never interpreted.
 - **footer**: `{ "template": "{mode} {context} {model} {effort}" }` picks which TUI footer chips show and
   in what order. Ids: `share orchestration mode turn session context cached sys tools calls model effort hint`.
