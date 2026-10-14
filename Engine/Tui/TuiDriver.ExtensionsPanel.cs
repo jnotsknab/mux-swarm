@@ -3,14 +3,16 @@
 internal sealed partial class TuiDriver
 {
     /// <summary>
-    /// Run the alt-screen <c>/extensions</c> panel on the shared pump until the user picks an
-    /// action, then return it (the caller applies it and re-opens the panel with the same view).
+    /// Run the alt-screen <c>/extensions</c> panel on the shared pump. Actions that need no console
+    /// (toggle, trust, reload, open folder) go to <paramref name="apply"/> while the panel stays up,
+    /// so it never flips back to the transcript; the panel returns for the rest (edit, new, close).
     /// Mouse: click selects, double click toggles, wheel scrolls the list or the details pane, and
     /// action-bar buttons click like their keys. Returns false when the TUI cannot host the panel
     /// right now (another modal owns the screen) so the caller falls back to the text list.
     /// </summary>
     internal bool RunExtensionsPanel(ExtensionsPanelView view, out ExtensionsPanelView.Action action,
-        CancellationToken cancellationToken = default, ConsoleInputPump? input = null)
+        CancellationToken cancellationToken = default, ConsoleInputPump? input = null,
+        Action<ExtensionsPanelView.Action>? apply = null)
     {
         action = ExtensionsPanelView.Action.Close;
         var pump = input ?? ConsoleInputPump.Current;
@@ -32,6 +34,14 @@ internal sealed partial class TuiDriver
         }
         var hits = new MouseHitMap();
         var clicks = new MouseClickTracker();
+        var result = ExtensionsPanelView.Action.Close;
+        // True = leave the panel with this action; false = applied in place, keep running.
+        bool Finish(ExtensionsPanelView.Action a)
+        {
+            if (apply is not null && ExtensionsPanelView.InPlace(a)) { apply(a); return false; }
+            result = a;
+            return true;
+        }
         int lastMouseRow = 0, lastMouseCol = 0;
         try
         {
@@ -69,26 +79,25 @@ internal sealed partial class TuiDriver
                     if (hit.Kind == MouseTargetKind.PickerItem)
                     {
                         view.ClickItem(hit.Payload);
-                        if (clickCount == 2 && view.Selected is not null) { action = ExtensionsPanelView.Action.Toggle; return true; }
+                        if (clickCount == 2 && view.Selected is not null && Finish(ExtensionsPanelView.Action.Toggle)) return true;
                     }
                     else if (hit.Kind == MouseTargetKind.PromptModalOption
-                             && ExtensionsPanelView.ClickButton(hit.Payload) is var button and not ExtensionsPanelView.Action.None)
-                    {
-                        action = button;
+                             && view.Click(hit.Payload) is var button and not ExtensionsPanelView.Action.None
+                             && Finish(button))
                         return true;
-                    }
                     else if (hit.Kind == MouseTargetKind.PickerSearchBox)
                         view.Handle(new ConsoleKeyInfo('/', ConsoleKey.Oem2, false, false, false), 1);
                     continue;
                 }
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
                 var picked = view.Handle(ev.Key, Math.Max(1, height - 10));
-                if (picked != ExtensionsPanelView.Action.None) { action = picked; return true; }
+                if (picked != ExtensionsPanelView.Action.None && Finish(picked)) return true;
             }
             return true;
         }
         finally
         {
+            action = result;
             lock (MuxConsole.ConsoleLock)
             {
                 _modalPresenting = false;
