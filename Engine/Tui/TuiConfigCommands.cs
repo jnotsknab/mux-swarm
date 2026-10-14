@@ -1035,6 +1035,40 @@ internal static partial class TuiConfigCommands
     }
 
     /// <summary>
+    /// The agent's brief for writing a new hook script: the exact path, the choices the user already
+    /// made (events, filters, mode, the command that runs it) and the DOCS.md section that defines the
+    /// payload, so the brief cannot drift from the emitted events.
+    /// </summary>
+    internal static string HookBrief(string scriptPath, string purpose, HookConfig hook)
+    {
+        var lang = System.IO.Path.GetExtension(scriptPath).ToLowerInvariant() switch
+        {
+            ".ps1" => "PowerShell", ".py" => "Python", ".js" => "Node.js", _ => "bash",
+        };
+        var filters = (hook.When.Agent is { } a ? $"; only for agent '{a}'" : "") + (hook.When.Tool is { } t ? $"; only for tool '{t}'" : "");
+        var mode = hook.Persistent ? "persistent (one long-lived process; loop over stdin, one JSON line per event)"
+            : hook.Mode == HookMode.Blocking ? $"blocking (Mux waits up to {hook.TimeoutSeconds}s, then kills it; one JSON line on stdin, then EOF)"
+            : "async (fire and forget; one JSON line on stdin, then EOF)";
+        return $"""
+            Write the Mux hook script "{hook.Id}" so that it: {purpose}
+
+            - Script ({lang}): {scriptPath} (a runnable seed is there; overwrite it)
+            - Already saved in {PlatformContext.SwarmPath} under hooks[]; do not edit that file:
+              - fires on: {string.Join(", ", hook.When.Events)}{filters}
+              - mode: {mode}
+              - command: {hook.Command}
+            - Read the '## Event Hooks' section of {System.IO.Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full
+              FIRST (grep the heading, read to the next '## '): the payload fields, the table of every event and
+              the fields it carries, and how output is handled. Handle only the events above, use only fields
+              that table lists, and say so instead of guessing if something is not covered.
+            - The hook runs with the user's permissions: read secrets from environment variables, never hardcode
+              them; a missing field must not crash it; exit 0.
+            - Test it by piping a sample JSON line for each event into the command before finishing. Ask the user
+              only if the purpose is ambiguous. When done, tell them to run /refresh to activate it.
+            """;
+    }
+
+    /// <summary>
     /// Guided /createhook entry point. Branches on the KIND of background integration being created:
     /// a lifecycle <b>hook</b> (shell out on an event), an <b>outbound webhook</b> (Mux POSTs a
     /// signed JSON envelope to an external URL on matching events -> swarm.json webhooks[]), or an
@@ -1077,10 +1111,12 @@ internal static partial class TuiConfigCommands
         if (swarm.Hooks.Exists(h => string.Equals(h.Id, id, System.StringComparison.OrdinalIgnoreCase)))
             return Bad($"A hook with id '{id}' already exists in Swarm.json.");
 
-        // Script source: write a new script (helper) | existing script/command.
+        // Script source: write a new script (helper) | existing script/command. A new script is
+        // drafted by an agent AFTER every choice below is made, so its brief carries them.
         string command;
+        (string Path, string Purpose)? draft = null;
         var sourceChoices = new List<string>();
-        if (spawnScriptHelper is not null) sourceChoices.Add("Write a NEW hook script (a helper drafts it)");
+        if (spawnScriptHelper is not null) sourceChoices.Add("Write a NEW hook script (an agent drafts it)");
         sourceChoices.Add("Point at an EXISTING script or shell command");
         var source = sourceChoices.Count == 1 ? sourceChoices[0]
             : MuxConsole.Select("How should this hook run?", sourceChoices);
@@ -1117,9 +1153,7 @@ internal static partial class TuiConfigCommands
                 _      => $"bash \"{scriptPath}\"",
             };
 
-            MuxConsole.WriteInfo($"Spawning a helper to author the hook script '{id}'...");
-            try { spawnScriptHelper(scriptPath, purpose); }
-            catch (System.Exception ex) { MuxConsole.WriteWarning($"Helper failed ({ex.Message}); seed script kept at {scriptPath}."); }
+            draft = (scriptPath, purpose);
         }
         else
         {
@@ -1163,20 +1197,27 @@ internal static partial class TuiConfigCommands
 
         try
         {
-            swarm.Hooks.Add(new HookConfig
+            var hook = new HookConfig
             {
                 Id = id,
                 Command = command,
                 Mode = blocking ? HookMode.Blocking : HookMode.Async,
                 TimeoutSeconds = timeout,
                 When = new HookClause { Events = events, Agent = agentFilter, Tool = toolFilter },
-            });
+            };
+            swarm.Hooks.Add(hook);
             SaveSwarm(swarm);
+            if (draft is { } d && spawnScriptHelper is not null)
+            {
+                try { spawnScriptHelper(d.Path, HookBrief(d.Path, d.Purpose, hook)); }
+                catch (System.Exception ex) { MuxConsole.WriteWarning($"Agent hand-off failed ({ex.Message}); seed script kept at {d.Path}."); }
+            }
             return Ok(
                 $"Created hook '{id}'.\n" +
                 $"  event: {ev}{(agentFilter is not null ? $"  agent: {agentFilter}" : "")}{(toolFilter is not null ? $"  tool: {toolFilter}" : "")}\n" +
                 $"  mode: {(blocking ? $"blocking ({timeout}s)" : "async")}\n" +
                 $"  command: {command}\n" +
+                (draft is not null && spawnScriptHelper is not null ? $"An agent session starts next to write {draft.Value.Path}.\n" : "") +
                 "Run /refresh (or restart) to activate it. Toggle hooks with /hooks on|off.");
         }
         catch (System.Exception ex)
