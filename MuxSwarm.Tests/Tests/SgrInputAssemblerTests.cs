@@ -405,6 +405,17 @@ public class SgrInputAssemblerTests
         Assert.Equal((ConsoleModifiers)modifiers, key.Key.Modifiers);
     }
 
+    /// <summary>VT input reports Space with no virtual key; it must still arrive as Spacebar (multi-select toggles).</summary>
+    [Fact]
+    public void VtSpace_ArrivesAsSpacebar_WithItsCharacter()
+    {
+        var asm = new SgrInputAssembler(true, true);
+        var ev = Assert.Single(asm.Feed(new ConsoleKeyInfo(' ', ConsoleKey.NoName, false, false, false)));
+        Assert.Equal(ConsoleKey.Spacebar, ev.Key.Key);
+        Assert.Equal(' ', ev.Key.KeyChar);
+        Assert.Equal(ConsoleKey.Spacebar, VtKeyboard.Normalize(new ConsoleKeyInfo(' ', (ConsoleKey)0, true, false, false)).Key);
+    }
+
     /// <summary>Captured ConPTY-style Unicode records retain framed payload and decode subsequent navigation.</summary>
     [Fact]
     public void ConPtyVtRecords_PreservePasteBeforeKeyboardAndMouse()
