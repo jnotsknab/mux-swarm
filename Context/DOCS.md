@@ -1264,15 +1264,22 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   preset (default `default`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
-- **spinner**: thinking-indicator frames (1-32, each exactly one terminal cell, e.g. `["-", "\\", "|", "/"]`).
-  Replaces the built-in braille spinner on the main agent line (TUI and classic console).
+- **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
+  emoji or ZWJ sequences, e.g. `["-", "\\", "|", "/"]` or `["[=  ]", "[ = ]", "[  =]"]`). Narrower frames
+  are padded to the widest so the line does not jitter. Replaces the built-in braille spinner on the main
+  agent line (TUI and classic console).
 - **quips**: words the indicator cycles while the agent reasons (1-200, max 80 chars). Replaces the built-ins.
+- **thinking**: the whole indicator animation, every key optional:
+  `{ "frames": [...], "intervalMs": 80, "quips": [...], "quipIntervalMs": 2000, "shuffle": true, "suffix": "..." }`.
+  `frames`/`quips` follow the rules above and win over the top-level `spinner`/`quips`; `intervalMs` (40-1000)
+  is the frame time, `quipIntervalMs` (500-60000) how long each quip shows, `shuffle: false` cycles quips in
+  order, `suffix` (max 8 chars, may be empty) follows the quip. Invalid timing keys keep the built-in timing.
 - **toolLabels**: verb stem -> action label, e.g. `{ "read": "Peeking at", "search": "Hunting" }` (max 40 chars).
   The verb stem is the first word of a tool name after its server prefix (`Filesystem_read_text_file` -> `read`).
   Merged over the built-ins; across extensions, keys merge in name order and later names win.
 - **splash**: startup lines (1-200, max 80 chars). Replaces the whole built-in pool (quotes, facts, tips,
   taglines) in the TUI splash and the web UI tip.
-- For spinner, quips and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
+- For spinner, quips, thinking and splash the later extension name wins (shown as a conflict in `/extensions`). All text is plain text:
   Spectre markup such as `[red]` is shown literally, never interpreted.
 - **footer**: `{ "template": "{mode} {context} {model} {effort}" }` picks which TUI footer chips show and
   in what order. Ids: `share orchestration mode turn session context cached sys tools calls model effort hint`.
@@ -1286,12 +1293,16 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
-- `/refresh` reloads extensions and re-applies `console.theme`.
+- `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
+  disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
+  recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.
+  Mux reads the manifests of the instance you run: edit `<install>/Extensions/<name>/` of that install
+  (the panel's details pane shows the exact folder).
 - **`/extensions`** opens a panel (TUI; works at the menu and inside a session) listing every installed
   extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
   one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
   selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
-  `t` trust/untrust its process (asks first), `n` new, `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  `t` trust/untrust its process (trusting takes a second `t`), `n` new, `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
   this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
   Changes save to config.json and apply at once; new agent tools arrive with the next session.
 - When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
@@ -1329,7 +1340,11 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Each subscribed event: notification `event` whose params are the hook payload
   (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
-- stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- stdout must carry only JSON-RPC lines, one per line, encoded as UTF-8 (Mux writes UTF-8 without a BOM
+  to stdin). On Windows, Python defaults pipes to the ANSI code page: call
+  `sys.stdout.reconfigure(encoding="utf-8")` (or send ASCII-escaped JSON, Python's `json.dumps` default)
+  or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
+  `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
   `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout

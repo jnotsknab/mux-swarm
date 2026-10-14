@@ -1944,7 +1944,22 @@ public static class CliCmdUtils
                 Extensions.ExtensionHost.Running, out var other);
             if (view is null) view = new Tui.ExtensionsPanelView(items, other);
             else view.Update(items, other, view.Selected?.Name);
-            if (!MuxConsole.TryExtensionsPanel(view, out var action))
+            // Toggle, trust, reload and open-folder apply while the panel stays up (no flip to the transcript).
+            void Apply(Tui.ExtensionsPanelView.Action a)
+            {
+                if (view.Selected is not { } s && a != Tui.ExtensionsPanelView.Action.Reload) return;
+                view.Message = a switch
+                {
+                    Tui.ExtensionsPanelView.Action.Toggle => ApplyExtensionChange(view.Selected!.Enabled ? "disable" : "enable", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.Trust => ApplyExtensionChange(view.Selected!.Trusted ? "untrust" : "trust", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.OpenFolder => OpenExtensionPath(view.Selected!.Dir, edit: false),
+                    _ => ReloadExtensionsQuiet(),
+                };
+                var fresh = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                    Extensions.ExtensionHost.Running, out var rest);
+                view.Update(fresh, rest, view.Selected?.Name);
+            }
+            if (!MuxConsole.TryExtensionsPanel(view, out var action, Apply))
             {
                 PrintExtensions(items, other);
                 return null;
@@ -1954,22 +1969,8 @@ public static class CliCmdUtils
             {
                 case Tui.ExtensionsPanelView.Action.Close:
                     return null;
-                case Tui.ExtensionsPanelView.Action.Toggle when sel is not null:
-                    view.Message = ApplyExtensionChange(sel.Enabled ? "disable" : "enable", sel.Name, quiet: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.Trust when sel is not null:
-                    if (!sel.Trusted && !MuxConsole.Confirm($"Trust '{sel.Name}'? Its process runs with your user permissions.", false)) break;
-                    view.Message = ApplyExtensionChange(sel.Trusted ? "untrust" : "trust", sel.Name, quiet: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.Reload:
-                    App.LoadExtensions(announce: false, quiet: true);
-                    view.Message = $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
-                    break;
                 case Tui.ExtensionsPanelView.Action.Edit when sel is not null:
                     view.Message = OpenExtensionPath(sel.Manifest, edit: true);
-                    break;
-                case Tui.ExtensionsPanelView.Action.OpenFolder when sel is not null:
-                    view.Message = OpenExtensionPath(sel.Dir, edit: false);
                     break;
                 case Tui.ExtensionsPanelView.Action.New:
                     if (NewExtensionWizard(null, inSession) is { } prompt) return prompt;
@@ -2032,6 +2033,12 @@ public static class CliCmdUtils
         return $"'{name}' {done} (saved). New tools reach the agent from the next session.";
     }
 
+    private static string ReloadExtensionsQuiet()
+    {
+        App.LoadExtensions(announce: false, quiet: true);
+        return $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
+    }
+
     private static bool SaveExtensionsConfig()
     {
         try { Common.SaveConfig(App.Config); return true; }
@@ -2041,19 +2048,21 @@ public static class CliCmdUtils
     // Open a manifest in $VISUAL/$EDITOR (waits, then reloads) or a path in the OS default app.
     private static string OpenExtensionPath(string path, bool edit)
     {
+        // Only a terminal editor ($VISUAL/$EDITOR) needs the console; the OS default app opens in the background.
+        bool terminal = edit && Extensions.ExtensionScaffold.TerminalEditor() is not null;
         try
         {
             bool waited;
-            MuxConsole.TuiSuspend();
-            using (EscapeKeyListener.SuspendInput()) waited = Extensions.ExtensionScaffold.Open(path, edit);
-            MuxConsole.TuiResume();
+            if (terminal) MuxConsole.TuiSuspend();
+            using (terminal ? EscapeKeyListener.SuspendInput() : null) waited = Extensions.ExtensionScaffold.Open(path, edit);
+            if (terminal) MuxConsole.TuiResume();
             if (!waited) return edit ? $"Opened {Path.GetFileName(path)}; press r to reload after saving." : $"Opened {path}.";
             App.LoadExtensions(announce: false, quiet: true);
             return "Saved and reloaded.";
         }
         catch (Exception ex)
         {
-            MuxConsole.TuiResume();
+            if (terminal) MuxConsole.TuiResume();
             return $"Could not open {path}: {ex.Message}";
         }
     }
@@ -2096,11 +2105,25 @@ public static class CliCmdUtils
         if (!inSession || !MuxConsole.Confirm("Have the agent build it out now?", false)) return null;
         var goal = MuxConsole.Prompt("What should it do?", "");
         if (string.IsNullOrWhiteSpace(goal)) return null;
-        return $"Build out the Mux extension scaffolded at {dir} so that it: {goal.Trim()}\n" +
-               $"Read the '## Extensions' section of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} first (manifest keys, " +
-               "the JSON-RPC protocol, limits). Edit only files inside that folder. Keep stdout for JSON-RPC lines only. " +
-               "When done, tell me to run /extensions and press r to reload.";
+        return ExtensionBrief(name, dir, goal.Trim(), process);
     }
+
+    /// <summary>The agent's brief for building out a scaffolded extension: exact paths, the guide, the rules.</summary>
+    internal static string ExtensionBrief(string name, string dir, string goal, bool process) =>
+        $"""
+        Build out the Mux extension "{name}" so that it: {goal}
+
+        - Folder: {dir}
+        - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
+        - Read {Path.Combine(dir, Extensions.ExtensionScaffold.GuideFileName)} in full FIRST. It is the complete reference
+          (every manifest key, limits, the JSON-RPC protocol both ways, trust, sandbox). Use only what it documents;
+          if something you need is not in it, say so instead of guessing.
+        - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).
+        - Process rules: stdout carries only JSON-RPC lines (UTF-8), logs go to stderr; test it by piping JSON
+          lines into it before finishing (see the guide).
+        - Validate extension.json is valid JSON. When done, tell the user to press r in /extensions (or run
+          /extensions reload) and check the details pane for problems.
+        """;
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>
     private static void ShowThemeGallery()

@@ -68,7 +68,11 @@ internal static partial class ExtensionRegistry
         || Tui.TuiCommands.All.Any(e => string.Equals(e.Cmd.Split(' ', 2)[0], cmd, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
-    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels);
+    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels)
+    {
+        /// <summary>Thinking-indicator timing from a <c>thinking</c> block; null = built-in.</summary>
+        internal ThinkingIndicator.Timing? Timing { get; init; }
+    }
 
     /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension tool call.</summary>
     internal const int DefaultToolTimeoutSeconds = 60, MaxToolTimeoutSeconds = 600;
@@ -125,7 +129,7 @@ internal static partial class ExtensionRegistry
         Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg), cfg.Disabled) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
         var c = Loaded.Cosmetics;
-        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips);
+        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips, c.Timing);
         Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
         SplashMessages.SetExtensionLines(c.Splash);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
@@ -200,6 +204,7 @@ internal static partial class ExtensionRegistry
         var extensions = new List<Extension>();
         var themes = new List<Theme>();
         string[]? spinner = null, quips = null, splash = null;
+        ThinkingIndicator.Timing? timing = null;
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string>? footer = null;
         Tui.MarkdownStyle? markdown = null;
@@ -245,8 +250,20 @@ internal static partial class ExtensionRegistry
                 slot = [.. items];
                 overrides.Add(key);
             }
-            TakeList("spinner", manifest.Spinner, 32, 8, frames: true, ref spinner);
-            TakeList("quips", manifest.Quips, 200, 80, frames: false, ref quips);
+            // thinking.frames / thinking.quips win over the top-level spinner / quips of the same extension.
+            TakeList("spinner", manifest.Thinking?.Frames ?? manifest.Spinner, 64, 32, frames: true, ref spinner);
+            TakeList("quips", manifest.Thinking?.Quips ?? manifest.Quips, 200, 80, frames: false, ref quips);
+            if (manifest.Thinking is { } thinking)
+            {
+                var (t, err) = BuildTiming(thinking);
+                if (err is not null) problems.Add($"{name}: thinking {err}; timing skipped.");
+                else
+                {
+                    Claim("thinking");
+                    timing = t;
+                    overrides.Add("thinking");
+                }
+            }
             TakeList("splash", manifest.Splash, 200, 80, frames: false, ref splash);
             if (manifest.ToolLabels is { } toolLabels)
             {
@@ -304,7 +321,7 @@ internal static partial class ExtensionRegistry
                 Tools = ValidateTools(name, manifest.Tools ?? [], process is not null, problems),
             });
         }
-        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels);
+        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels) { Timing = timing };
         return new Result(extensions, themes, problems)
         {
             Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown, Conflicts = conflicts, Disabled = skipped,
@@ -429,8 +446,18 @@ internal static partial class ExtensionRegistry
         return theme;
     }
 
+    /// <summary>Validate the timing keys of a <c>thinking</c> block over the built-in timing. Error = the first bad key.</summary>
+    internal static (ThinkingIndicator.Timing Timing, string? Error) BuildTiming(ThinkingManifest m)
+    {
+        var d = ThinkingIndicator.Timing.Default;
+        if (m.IntervalMs is < 40 or > 1000) return (d, "intervalMs must be 40-1000");
+        if (m.QuipIntervalMs is < 500 or > 60000) return (d, "quipIntervalMs must be 500-60000");
+        if (m.Suffix is { } s && (s.Length > 8 || s.Any(char.IsControl))) return (d, "suffix must be at most 8 characters without control characters");
+        return (new(m.IntervalMs ?? d.IntervalMs, m.QuipIntervalMs ?? d.QuipIntervalMs, m.Shuffle ?? d.Shuffle, m.Suffix ?? d.Suffix), null);
+    }
+
     // Plain-text list check: 1..maxItems non-blank items, no control chars, at most maxChars each.
-    // Spinner frames must also be exactly one terminal cell wide. Null = valid, else the reason.
+    // Spinner frames must also be 1-8 terminal cells wide. Null = valid, else the reason.
     private static string? CheckTexts(List<string> items, int maxItems, int maxChars, bool frames)
     {
         if (items.Count == 0 || items.Count > maxItems) return $"needs 1-{maxItems} entries";
@@ -439,7 +466,7 @@ internal static partial class ExtensionRegistry
             if (string.IsNullOrWhiteSpace(item)) return "has an empty entry";
             if (item.Any(char.IsControl)) return "has an entry with control characters";
             if (item.Length > maxChars) return $"has an entry longer than {maxChars} characters";
-            if (frames && Tui.TuiMarkup.Width(item) != 1) return $"frame '{item}' is not one terminal cell wide";
+            if (frames && Tui.TuiMarkup.Width(item) is < 1 or > 8) return $"frame '{item}' must be 1-8 terminal cells wide";
         }
         return null;
     }

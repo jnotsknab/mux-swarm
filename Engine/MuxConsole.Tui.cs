@@ -972,11 +972,12 @@ public static partial class MuxConsole
     /// False when unavailable (classic renderer / stdio / another modal); the caller then prints the
     /// text list instead.
     /// </summary>
-    internal static bool TryExtensionsPanel(Tui.ExtensionsPanelView view, out Tui.ExtensionsPanelView.Action action)
+    internal static bool TryExtensionsPanel(Tui.ExtensionsPanelView view, out Tui.ExtensionsPanelView.Action action,
+        Action<Tui.ExtensionsPanelView.Action>? apply = null)
     {
         action = Tui.ExtensionsPanelView.Action.Close;
         if (!ViaDriver || InputOverride != Console.In) return false;
-        return _driver!.RunExtensionsPanel(view, out action);
+        return _driver!.RunExtensionsPanel(view, out action, apply: apply);
     }
 
 internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
