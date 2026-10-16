@@ -40,7 +40,8 @@ internal static class TuiMarkdown
     private static readonly Regex Slot = new("\uE004(\\d+)\uE005", RegexOptions.Compiled);
     private static readonly Regex Strike = new(@"~~(.+?)~~", RegexOptions.Compiled);
     // [text](url) and ![alt](url). Optional "title" after the url is tolerated and dropped.
-    private static readonly Regex MdLink = new(@"(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
+    // The URL may hold one level of balanced parentheses (wiki-style "Foo_(bar)").
+    private static readonly Regex MdLink = new(@"(!?)\[([^\]]*)\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
     private static readonly Regex AutoLink = new(@"<(https?://[^>\s]+)>", RegexOptions.Compiled);
     // Fenced code delimiter: ``` or ~~~ (3+), optional info string (language).
     private static readonly Regex FenceRe = new(@"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+\-.#]*)[^`]*$", RegexOptions.Compiled);
