@@ -73,6 +73,7 @@ internal sealed partial class TuiDriver
     private readonly List<string> _codeBuf = new();
     private bool _inFence;
     private string _fenceLang = "";
+    private string _fenceOpen = "";   // the opening fence line: only a matching fence closes the block
 
     // True after a tool call/result block commits, so the NEXT agent text block gets a single
     // blank-line separator above it (visual breathing room between a tool block and prose).
@@ -1883,7 +1884,7 @@ internal sealed partial class TuiDriver
         // captured verbatim (a closing fence flushes the block); an opening fence starts capture.
         if (_inFence)
         {
-            if (TuiMarkdown.IsFence(raw)) { FlushCodeBuffer(); return; }
+            if (TuiMarkdown.ClosesFence(raw, _fenceOpen)) { FlushCodeBuffer(); return; }
             _codeBuf.Add(raw);
             return;
         }
@@ -1893,6 +1894,7 @@ internal sealed partial class TuiDriver
             ConsumeGap();
             _inFence = true;
             _fenceLang = TuiMarkdown.FenceInfo(raw);
+            _fenceOpen = raw;
             _codeBuf.Clear();
             return;
         }
@@ -1963,7 +1965,9 @@ internal sealed partial class TuiDriver
             foreach (var ln in code) outl.Add(TuiMarkdown.DiffLine(ln));  // git-style diff: per-line +/- coloring
         else
             foreach (var ln in code) outl.Add(TuiMarkdown.CodeLine(ln));
-        CommitMirrored(Lane(outl));
+        // CodeLine/DiffLine carry a 2-col indent; add the rest so code shares the answer's text margin.
+        string extra = new string(' ', StreamIndent.Length - 2);
+        CommitMirrored(Lane(outl.Select(l => extra + l).ToList()));
         _pendingGap = true;
     }
 
@@ -1983,11 +1987,11 @@ internal sealed partial class TuiDriver
             // the mangled-borders corruption dogfooding caught. Lane tint is captured NOW - the
             // layout re-runs long after the turn ends.
             var tint = _laneTint;
-            CommitLayout(w => TuiTable.Render(rows, w)
+            CommitLayout(w => TuiTable.Render(rows, w, StreamIndent.Length)
                 .Select(l => TuiComponents.Gutter(l, tint)).ToList());
         }
         else
-            CommitMirrored(Lane(rows.Select(TuiMarkdown.ToMarkup).ToList()));
+            CommitMirrored(Lane(rows.Select(r => StreamIndent + TuiMarkdown.ToMarkup(r)).ToList()));
     }
 
     // --- live-region composition (pure, testable) ----------------------------

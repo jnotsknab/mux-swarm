@@ -24,7 +24,7 @@ internal static class TuiTable
     {
         if (string.IsNullOrEmpty(s) || !s.Contains('|')) return false;
         string t = s.Trim();
-        int pipes = t.Count(ch => ch == '|');
+        int pipes = TuiMarkdown.SplitRow(t).Count - 1;
         return t.StartsWith("|") || t.EndsWith("|") || pipes >= 2;
     }
 
@@ -39,7 +39,7 @@ internal static class TuiTable
     /// missing the first row is still treated as the header. Returns one markup string per
     /// visual row (top border, header, header rule, body rows, bottom border).
     /// </summary>
-    public static List<string> Render(IReadOnlyList<string> rawRows, int width)
+    public static List<string> Render(IReadOnlyList<string> rawRows, int width, int indentCols = 2)
     {
         var rows = rawRows.Where(r => !string.IsNullOrWhiteSpace(r)).ToList();
         if (rows.Count == 0) return new();
@@ -61,8 +61,8 @@ internal static class TuiTable
         for (int c = 0; c < cols; c++)
             colW[c] = Math.Max(1, dataRows.Max(r => TuiMarkup.Width(r[c])));
 
-        // Budget: indent(2) + borders. Each column costs colW + 3 ("| " + " "), plus final "|".
-        int pad = 2;
+        // Budget: indent + borders. Each column costs colW + 3 ("| " + " "), plus final "|".
+        int pad = Math.Max(0, indentCols);
         int chrome = 2 + cols * 3;                 // leading "│ " + per-column " │ "; +1 keeps the
                                                    // closing border out of the last terminal column (no soft-wrap).
         int avail = Math.Max(8, width) - pad - chrome;
@@ -82,6 +82,9 @@ internal static class TuiTable
 
         string indent = new string(' ', pad);
         var outp = new List<string>();
+        // Even at the floor the grid does not fit: a wrapped grid would break its borders across
+        // rows, so show each row as a stacked "header: value" record instead.
+        if (Total() > avail) return Stacked(dataRows, width, indent);
 
         // Border glyphs from the markdown style: HEAVY by default (the boxy, thick-edged grid; light/
         // rounded read as "extremely thin" in dogfooding), or an extension's light/rounded/ascii set.
@@ -95,7 +98,7 @@ internal static class TuiTable
         outp.Add(topB);
         // Header row (first data row) styled in accent.
         outp.AddRange(RenderRow(dataRows[0], colW, aligns, indent, headerStyle: true));
-        outp.Add(midB);
+        if (dataRows.Count > 1) outp.Add(midB);   // header-only table: no dangling separator
         for (int i = 1; i < dataRows.Count; i++)
             outp.AddRange(RenderRow(dataRows[i], colW, aligns, indent, headerStyle: false));
         outp.Add(botB);
@@ -156,6 +159,38 @@ internal static class TuiTable
         return outLines;
     }
 
+    /// <summary>
+    /// Narrow-terminal fallback: one record per body row, each cell on its own line as
+    /// <c>header: value</c> (values wrap under themselves), records separated by a dim rule.
+    /// </summary>
+    private static List<string> Stacked(List<List<string>> dataRows, int width, string indent)
+    {
+        var head = dataRows[0];
+        int usable = Math.Max(12, width - 1 - indent.Length);
+        int keyW = Math.Min(head.Max(h => TuiMarkup.Width(h)), Math.Max(4, usable / 3));
+        int valW = Math.Max(6, usable - keyW - 2);
+        var g = MarkdownStyle.Active.BorderGlyphs;
+        string rule = indent + $"[{Border}]{Esc(string.Concat(Enumerable.Repeat(g[0], Math.Min(usable, 40))))}[/]";
+        var outp = new List<string> { "" };
+        var body = dataRows.Count > 1 ? dataRows.Skip(1).ToList() : new List<List<string>> { head };
+        for (int r = 0; r < body.Count; r++)
+        {
+            outp.Add(rule);
+            for (int c = 0; c < head.Count; c++)
+            {
+                string key = TuiMarkup.Width(head[c]) > keyW ? TuiMarkup.TruncatePlain(head[c], keyW) : head[c];
+                string keyCell = $"[bold {Head}]{Esc(key)}[/]" + new string(' ', keyW - TuiMarkup.Width(key));
+                var lines = TuiMarkup.WrapPlain(dataRows.Count > 1 && c < body[r].Count ? body[r][c] : "", valW);
+                if (lines.Count == 0) lines.Add("");
+                outp.Add(indent + keyCell + "  " + Esc(lines[0]));
+                foreach (var more in lines.Skip(1)) outp.Add(indent + new string(' ', keyW + 2) + Esc(more));
+            }
+        }
+        outp.Add(rule);
+        outp.Add("");
+        return outp;
+    }
+
     private static List<Align> ParseAligns(string sepRow)
     {
         return SplitCells(sepRow).Select(c =>
@@ -169,12 +204,10 @@ internal static class TuiTable
 
     private static List<string> SplitCells(string row)
     {
-        string t = row.Trim();
-        if (t.StartsWith("|")) t = t[1..];
-        if (t.EndsWith("|")) t = t[..^1];
-        // Strip inline Markdown (**bold**, *italic*, `code`, ~~strike~~) to clean plain text so the
-        // fixed-width column math is correct and no stray markers (e.g. "**") leak into cells.
-        return t.Split('|').Select(c => TuiMarkdown.StripInline(c.Trim())).ToList();
+        // Split on unescaped pipes outside code spans, then strip inline Markdown (**bold**, *italic*,
+        // `code`, ~~strike~~, escapes, entities) to plain text so the column math is exact and no
+        // stray markers leak into cells. Tabs become spaces (a raw tab moves the terminal cursor).
+        return TuiMarkdown.SplitRow(row).Select(c => TuiMarkdown.StripInline(TuiMarkup.ExpandTabs(c).Trim())).ToList();
     }
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");

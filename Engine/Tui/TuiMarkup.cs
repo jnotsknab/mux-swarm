@@ -15,19 +15,21 @@ internal readonly record struct TuiStyle(
     bool Dim,
     bool Italic,
     bool Underline,
-    (byte R, byte G, byte B)? Bg = null)
+    (byte R, byte G, byte B)? Bg = null,
+    bool Strike = false)
 {
     public static readonly TuiStyle None = new(null, false, false, false, false, null);
 
     /// <summary>SGR prefix emitting this style (empty when no attributes are set).</summary>
     public string ToAnsi()
     {
-        if (Fg is null && Bg is null && !Bold && !Dim && !Italic && !Underline) return "";
+        if (Fg is null && Bg is null && !Bold && !Dim && !Italic && !Underline && !Strike) return "";
         var sb = new StringBuilder();
         if (Bold) sb.Append(Ansi.Bold);
         if (Dim) sb.Append(Ansi.Dim);
         if (Italic) sb.Append(Ansi.Italic);
         if (Underline) sb.Append(Ansi.Underline);
+        if (Strike) sb.Append(Ansi.Strike);
         if (Fg is { } c) sb.Append(Ansi.Fg(c.R, c.G, c.B));
         if (Bg is { } bc) sb.Append(Ansi.Bg(bc.R, bc.G, bc.B));
         return sb.ToString();
@@ -145,6 +147,7 @@ internal static class TuiMarkup
                 case "dim": style = style with { Dim = true }; break;
                 case "italic": case "i": style = style with { Italic = true }; break;
                 case "underline": case "u": style = style with { Underline = true }; break;
+                case "strikethrough": case "strike": case "s": style = style with { Strike = true }; break;
                 default:
                     var col = ResolveColor(tok);
                     if (col is { } c) style = style with { Fg = c };
@@ -186,39 +189,77 @@ internal static class TuiMarkup
     // --- display width + wrapping -------------------------------------------
 
     /// <summary>
-    /// Visible width of a single rune. Combining marks count 0, common wide ranges
-    /// (CJK, fullwidth, most emoji) count 2, everything else 1. Good enough for terminal
-    /// layout without pulling in a full Unicode width table.
+    /// Visible width of a single rune: 0 for controls, combining/enclosing marks and zero-width
+    /// format characters, 2 for East Asian Wide/Fullwidth (Unicode 15 table below: CJK, Hangul,
+    /// fullwidth forms and emoji with emoji presentation), otherwise 1. Text-presentation symbols
+    /// such as the warning sign, ballot box or black star are 1, as terminals draw them; a VS16
+    /// variant is widened by <see cref="TextElementWidth"/>.
     /// </summary>
     public static int RuneWidth(int cp)
     {
         if (cp == 0) return 0;
-        // C0/C1 control: 0 (callers strip control chars; defensive here).
+        // C0/C1 control: 0 (tabs are expanded before layout, see ExpandTabs).
         if (cp < 32 || (cp >= 0x7f && cp < 0xa0)) return 0;
-        // Combining marks.
-        if ((cp >= 0x0300 && cp <= 0x036F) || (cp >= 0x1AB0 && cp <= 0x1AFF) ||
-            (cp >= 0x1DC0 && cp <= 0x1DFF) || (cp >= 0x20D0 && cp <= 0x20FF) ||
-            (cp >= 0xFE20 && cp <= 0xFE2F)) return 0;
-        // Wide ranges.
-        if ((cp >= 0x1100 && cp <= 0x115F) ||  // Hangul Jamo
-            (cp >= 0x2E80 && cp <= 0x303E) ||  // CJK radicals, Kangxi
-            (cp >= 0x3041 && cp <= 0x33FF) ||  // Hiragana..CJK symbols
-            (cp >= 0x3400 && cp <= 0x4DBF) ||  // CJK Ext A
-            (cp >= 0x4E00 && cp <= 0x9FFF) ||  // CJK Unified
-            (cp >= 0xA000 && cp <= 0xA4CF) ||  // Yi
-            (cp >= 0xAC00 && cp <= 0xD7A3) ||  // Hangul syllables
-            (cp >= 0xF900 && cp <= 0xFAFF) ||  // CJK compat
-            (cp >= 0xFE30 && cp <= 0xFE4F) ||  // CJK compat forms
-            (cp >= 0xFF00 && cp <= 0xFF60) ||  // Fullwidth forms
-            (cp >= 0xFFE0 && cp <= 0xFFE6) ||
-            (cp >= 0x1F300 && cp <= 0x1FAFF) || // emoji / pictographs (incl. 0x1F534 red, 0x1F7E1/E2 circles)
-            (cp >= 0x1F000 && cp <= 0x1F2FF) || // mahjong/dominoes/playing cards/enclosed
-            (cp >= 0x2600 && cp <= 0x27BF && !(cp >= 0x2713 && cp <= 0x2718)) ||   // Misc Symbols + Dingbats (incl. 0x2705 check mark, 0x26A0 warn); 0x2713-0x2718 (check/cross text dingbats) are East Asian Ambiguous -> width 1 (a VS16 variant still measures 2 via TextElementWidth)
-            (cp == 0x2B50 || cp == 0x2B55) ||   // star, heavy circle (emoji)
-            (cp >= 0x2300 && cp <= 0x23FF) ||   // Misc Technical (hourglass/watch/etc render wide as emoji)
-            (cp >= 0x20000 && cp <= 0x3FFFD))   // CJK Ext B+
-            return 2;
+        if (cp is 0x200B or 0x200C or 0x200D or 0x2060 or 0xFEFF) return 0;
+        if (cp < 0x300) return 1;
+        var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(cp);
+        if (cat is System.Globalization.UnicodeCategory.NonSpacingMark or System.Globalization.UnicodeCategory.EnclosingMark) return 0;
+        if (cp < WideRanges[0]) return 1;
+        int lo = 0, hi = WideRanges.Length / 2 - 1;
+        while (lo <= hi)
+        {
+            int mid = (lo + hi) / 2;
+            if (cp < WideRanges[mid * 2]) hi = mid - 1;
+            else if (cp > WideRanges[mid * 2 + 1]) lo = mid + 1;
+            else return 2;
+        }
         return 1;
+    }
+
+    // East_Asian_Width W/F ranges (inclusive start, end pairs), generated from Unicode 15.0.
+    private static readonly int[] WideRanges =
+    {
+        0x1100, 0x115F, 0x231A, 0x231B, 0x2329, 0x232A, 0x23E9, 0x23EC, 0x23F0, 0x23F0, 0x23F3,
+        0x23F3, 0x25FD, 0x25FE, 0x2614, 0x2615, 0x2648, 0x2653, 0x267F, 0x267F, 0x2693, 0x2693,
+        0x26A1, 0x26A1, 0x26AA, 0x26AB, 0x26BD, 0x26BE, 0x26C4, 0x26C5, 0x26CE, 0x26CE, 0x26D4,
+        0x26D4, 0x26EA, 0x26EA, 0x26F2, 0x26F3, 0x26F5, 0x26F5, 0x26FA, 0x26FA, 0x26FD, 0x26FD,
+        0x2705, 0x2705, 0x270A, 0x270B, 0x2728, 0x2728, 0x274C, 0x274C, 0x274E, 0x274E, 0x2753,
+        0x2755, 0x2757, 0x2757, 0x2795, 0x2797, 0x27B0, 0x27B0, 0x27BF, 0x27BF, 0x2B1B, 0x2B1C,
+        0x2B50, 0x2B50, 0x2B55, 0x2B55, 0x2E80, 0x2E99, 0x2E9B, 0x2EF3, 0x2F00, 0x2FD5, 0x2FF0,
+        0x2FFB, 0x3000, 0x303E, 0x3041, 0x3096, 0x3099, 0x30FF, 0x3105, 0x312F, 0x3131, 0x318E,
+        0x3190, 0x31E3, 0x31F0, 0x321E, 0x3220, 0x3247, 0x3250, 0x4DBF, 0x4E00, 0xA48C, 0xA490,
+        0xA4C6, 0xA960, 0xA97C, 0xAC00, 0xD7A3, 0xF900, 0xFAFF, 0xFE10, 0xFE19, 0xFE30, 0xFE52,
+        0xFE54, 0xFE66, 0xFE68, 0xFE6B, 0xFF01, 0xFF60, 0xFFE0, 0xFFE6, 0x16FE0, 0x16FE4, 0x16FF0,
+        0x16FF1, 0x17000, 0x187F7, 0x18800, 0x18CD5, 0x18D00, 0x18D08, 0x1AFF0, 0x1AFF3, 0x1AFF5,
+        0x1AFFB, 0x1AFFD, 0x1AFFE, 0x1B000, 0x1B122, 0x1B132, 0x1B132, 0x1B150, 0x1B152, 0x1B155,
+        0x1B155, 0x1B164, 0x1B167, 0x1B170, 0x1B2FB, 0x1F004, 0x1F004, 0x1F0CF, 0x1F0CF, 0x1F18E,
+        0x1F18E, 0x1F191, 0x1F19A, 0x1F200, 0x1F202, 0x1F210, 0x1F23B, 0x1F240, 0x1F248, 0x1F250,
+        0x1F251, 0x1F260, 0x1F265, 0x1F300, 0x1F320, 0x1F32D, 0x1F335, 0x1F337, 0x1F37C, 0x1F37E,
+        0x1F393, 0x1F3A0, 0x1F3CA, 0x1F3CF, 0x1F3D3, 0x1F3E0, 0x1F3F0, 0x1F3F4, 0x1F3F4, 0x1F3F8,
+        0x1F43E, 0x1F440, 0x1F440, 0x1F442, 0x1F4FC, 0x1F4FF, 0x1F53D, 0x1F54B, 0x1F54E, 0x1F550,
+        0x1F567, 0x1F57A, 0x1F57A, 0x1F595, 0x1F596, 0x1F5A4, 0x1F5A4, 0x1F5FB, 0x1F64F, 0x1F680,
+        0x1F6C5, 0x1F6CC, 0x1F6CC, 0x1F6D0, 0x1F6D2, 0x1F6D5, 0x1F6D7, 0x1F6DC, 0x1F6DF, 0x1F6EB,
+        0x1F6EC, 0x1F6F4, 0x1F6FC, 0x1F7E0, 0x1F7EB, 0x1F7F0, 0x1F7F0, 0x1F90C, 0x1F93A, 0x1F93C,
+        0x1F945, 0x1F947, 0x1F9FF, 0x1FA70, 0x1FA7C, 0x1FA80, 0x1FA88, 0x1FA90, 0x1FABD, 0x1FABF,
+        0x1FAC5, 0x1FACE, 0x1FADB, 0x1FAE0, 0x1FAE8, 0x1FAF0, 0x1FAF8, 0x20000, 0x2FFFD, 0x30000,
+        0x3FFFD
+    };
+
+    /// <summary>Expand tab characters to spaces (stops every <paramref name="tabSize"/> columns) so
+    /// layout never writes a raw tab, which terminals move the cursor for but width math counts as 0.</summary>
+    public static string ExpandTabs(string s, int tabSize = 4)
+    {
+        if (string.IsNullOrEmpty(s) || s.IndexOf('\t') < 0) return s ?? "";
+        var sb = new StringBuilder(s.Length + 8);
+        int col = 0;
+        var e = System.Globalization.StringInfo.GetTextElementEnumerator(s);
+        while (e.MoveNext())
+        {
+            string el = (string)e.Current;
+            if (el == "\t") { int n = tabSize - col % tabSize; sb.Append(' ', n); col += n; }
+            else { sb.Append(el); col += TextElementWidth(el); }
+        }
+        return sb.ToString();
     }
 
     /// <summary>
@@ -235,6 +276,9 @@ internal static class TuiMarkup
         if (element.Contains('\uFE0F')) return 2;
         // A ZWJ emoji sequence is a single cluster (e.g. family/profession emoji); render as width 2.
         if (element.Contains('\u200D')) return 2;
+        // Regional-indicator pair (a flag) is one cluster drawn 2 wide.
+        int cp0 = char.ConvertToUtf32(element, 0);
+        if (cp0 is >= 0x1F1E6 and <= 0x1F1FF) return 2;
         return baseW;
     }
 
@@ -472,6 +516,7 @@ internal static class TuiMarkup
         if (s.Dim) parts.Add("dim");
         if (s.Italic) parts.Add("italic");
         if (s.Underline) parts.Add("underline");
+        if (s.Strike) parts.Add("strikethrough");
         if (s.Fg is { } c) parts.Add($"#{c.R:X2}{c.G:X2}{c.B:X2}");
         if (s.Bg is { } b) { parts.Add("on"); parts.Add($"#{b.R:X2}{b.G:X2}{b.B:X2}"); }
         return parts.Count == 0 ? "" : "[" + string.Join(" ", parts) + "]";
