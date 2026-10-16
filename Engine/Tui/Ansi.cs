@@ -119,6 +119,8 @@ internal static class Ansi
     public const string Dim = CSI + "2m";
     public const string Italic = CSI + "3m";
     public const string Underline = CSI + "4m";
+    /// <summary>SGR strikethrough.</summary>
+    public const string Strike = CSI + "9m";
 
     /// <summary>
     /// Begin Synchronized Update (DEC private mode 2026, CSI ?2026h). The terminal buffers
