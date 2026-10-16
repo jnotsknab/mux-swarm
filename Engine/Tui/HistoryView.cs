@@ -165,7 +165,7 @@ internal sealed class HistoryView
             void FlushTableRun()
             {
                 if (tableRun.Count == 0) return;
-                foreach (var trow in TuiTable.Render(tableRun, w))
+                foreach (var trow in TuiTable.Render(tableRun, w, 0))
                 {
                     _lines.Add(TuiMarkup.Plain(trow));
                     _markup.Add("  " + trow);
@@ -180,7 +180,7 @@ internal sealed class HistoryView
                     continue;
                 }
                 FlushTableRun();
-                foreach (var wrapped in TuiMarkup.WrapPlain(raw, w))
+                foreach (var wrapped in TuiMarkup.WrapPlain(TuiMarkup.ExpandTabs(raw), w))
                 {
                     _lines.Add(wrapped);
                     bool toolMarker = wrapped.StartsWith("[tool ", StringComparison.Ordinal);

@@ -32,13 +32,18 @@ internal static class TuiMarkdown
     private static readonly Regex BoldStar = new(@"\*\*(.+?)\*\*", RegexOptions.Compiled);
     private static readonly Regex BoldUnder = new(@"__(.+?)__", RegexOptions.Compiled);
     private static readonly Regex ItalicStar = new(@"(?<![\*])\*(?!\s)(.+?)(?<!\s)\*(?![\*])", RegexOptions.Compiled);
-    private static readonly Regex InlineCode = new(@"`([^`]+?)`", RegexOptions.Compiled);
+    // Code span: a run of N backticks closed by exactly N (CommonMark), so ``a`b`` keeps its inner tick.
+    private static readonly Regex InlineCode = new(@"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)", RegexOptions.Compiled);
+    // Backslash escape of any ASCII punctuation (CommonMark): the backslash is dropped, the char kept literal.
+    private static readonly Regex Escaped = new(@"\\([!-/:-@\[-`{-~])", RegexOptions.Compiled);
+    // Placeholder for a code span or escaped char while emphasis runs: \uE004 index \uE005.
+    private static readonly Regex Slot = new("\uE004(\\d+)\uE005", RegexOptions.Compiled);
     private static readonly Regex Strike = new(@"~~(.+?)~~", RegexOptions.Compiled);
     // [text](url) and ![alt](url). Optional "title" after the url is tolerated and dropped.
     private static readonly Regex MdLink = new(@"(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.Compiled);
     private static readonly Regex AutoLink = new(@"<(https?://[^>\s]+)>", RegexOptions.Compiled);
     // Fenced code delimiter: ``` or ~~~ (3+), optional info string (language).
-    private static readonly Regex FenceRe = new(@"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+\-.#]*)\s*$", RegexOptions.Compiled);
+    private static readonly Regex FenceRe = new(@"^\s*(`{3,}|~{3,})\s*([A-Za-z0-9_+\-.#]*)[^`]*$", RegexOptions.Compiled);
 
     /// <summary>Sentinels protect already-emitted markup tags from later escaping/regex.</summary>
     private const string LB = "\uE000";  // stands in for '['
@@ -94,9 +99,12 @@ internal static class TuiMarkdown
         }
 
         // Blockquote.
-        var bq = Regex.Match(trimmed, @"^>\s?(.*)$");
+        var bq = Regex.Match(trimmed, @"^((?:>\s?)+)(.*)$");
         if (bq.Success)
-            return $"{pad}[{Bullet}]\u2502[/] {Inline(bq.Groups[1].Value)}";
+        {
+            int depth = bq.Groups[1].Value.Count(c => c == '>');
+            return pad + string.Concat(Enumerable.Repeat($"[{Bullet}]\u2502[/] ", depth)) + Inline(bq.Groups[2].Value);
+        }
 
         // Thematic break: ---, ***, ___ (3+). Render a dim horizontal rule.
         if (Regex.IsMatch(trimmed, @"^([-*_])\1{2,}$"))
@@ -127,17 +135,49 @@ internal static class TuiMarkdown
         if (!s.Contains('|')) return false;
         string t = s.Trim();
         // Require either leading/trailing pipe or >=2 pipes, to avoid eating prose with one "|".
-        int pipes = t.Count(ch => ch == '|');
+        int pipes = SplitRow(t).Count - 1;
         return t.StartsWith("|") || t.EndsWith("|") || pipes >= 2;
     }
 
     /// <summary>Split a table row into cells on unescaped pipes, dropping leading/trailing empties.</summary>
-    private static List<string> SplitTableCells(string row)
+    private static List<string> SplitTableCells(string row) => SplitRow(row);
+
+    /// <summary>
+    /// Split a GFM table row into raw cells. A pipe escaped as <c>\|</c> or inside a closed code span is
+    /// cell text, not a separator (the escape is removed); the outer pipes are optional.
+    /// </summary>
+    internal static List<string> SplitRow(string row)
     {
-        string t = row.Trim();
-        if (t.StartsWith("|")) t = t[1..];
-        if (t.EndsWith("|")) t = t[..^1];
-        return t.Split('|').ToList();
+        string t = (row ?? "").Trim();
+        var cells = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        for (int i = 0; i < t.Length; i++)
+        {
+            char ch = t[i];
+            if (ch == '\\' && i + 1 < t.Length && t[i + 1] == '|') { cur.Append('|'); i++; continue; }
+            if (ch == '`')
+            {
+                int run = 1;
+                while (i + run < t.Length && t[i + run] == '`') run++;
+                int close = t.IndexOf(new string('`', run), i + run, StringComparison.Ordinal);
+                if (close > 0)
+                {
+                    // GFM: "\|" inside a code span in a table cell is still a literal pipe.
+                    cur.Append(t.Substring(i, close + run - i).Replace("\\|", "|"));
+                    i = close + run - 1;
+                    continue;
+                }
+                cur.Append(t, i, run);
+                i += run - 1;
+                continue;
+            }
+            if (ch == '|') { cells.Add(cur.ToString()); cur.Clear(); continue; }
+            cur.Append(ch);
+        }
+        cells.Add(cur.ToString());
+        if (t.StartsWith('|')) cells.RemoveAt(0);
+        if (t.EndsWith('|') && !t.EndsWith("\\|") && cells.Count > 0) cells.RemoveAt(cells.Count - 1);
+        return cells;
     }
 
     /// <summary>Apply inline transforms (bold/italic/code) and escape stray brackets.</summary>
@@ -145,9 +185,16 @@ internal static class TuiMarkdown
     {
         if (string.IsNullOrEmpty(s)) return "";
 
-        // 1) Inline code first (its content must not be further transformed). Emit with
-        //    protected sentinel brackets so subsequent escaping leaves the tags intact.
-        s = InlineCode.Replace(s, m => Tag($"on {(TuiComponents.ContentBackgrounds ? Theme.Active.InlineCodeBg : "default")}", Code, Protect(m.Groups[1].Value)));
+        // 0) Strip sentinel characters from model text so they can never forge markup brackets.
+        s = StripSentinels(s);
+
+        // 1) Code spans and backslash escapes become slots first: their content is literal, so no
+        //    emphasis, link or entity rule may touch it. Slots are filled in after the emphasis passes.
+        var slots = new List<string>();
+        string Hold(string markup) { slots.Add(markup); return $"\uE004{slots.Count - 1}\uE005"; }
+        s = InlineCode.Replace(s, m => Hold(Tag($"on {(TuiComponents.ContentBackgrounds ? Theme.Active.InlineCodeBg : "default")}", Code, Protect(CodeText(m.Groups[2].Value)))));
+        s = Escaped.Replace(s, m => Hold(Protect(m.Groups[1].Value)));
+        s = System.Net.WebUtility.HtmlDecode(s);
 
         // 1b) Links/images [text](url) -> styled label (the URL is dropped in the terminal; an
         //     image ![alt](url) renders its alt text). Emitted with protected tags so the later
@@ -174,13 +221,22 @@ internal static class TuiMarkdown
         s = ItalicStar.Replace(s, m => Tag2("italic", Protect(m.Groups[1].Value)));
         s = Strike.Replace(s, m => Tag2("strikethrough", Protect(m.Groups[1].Value)));
 
-        // 2b) Escaped markers: \* \` \_ \~ render the character, not the backslash.
-        s = s.Replace("\\*", "*").Replace("\\`", "`").Replace("\\_", "_").Replace("\\~", "~");
-
         // 3) Escape any remaining literal Spectre brackets in the plain runs, then restore
         //    the protected sentinel brackets to real markup brackets.
         s = s.Replace("[", "[[").Replace("]", "]]");
+        s = Slot.Replace(s, m => slots[int.Parse(m.Groups[1].Value)]);
         s = s.Replace(LB, "[").Replace(RB, "]").Replace(ELB, "[[").Replace(ERB, "]]");
+        return s;
+    }
+
+    // CommonMark code span content: one leading and trailing space are stripped when both are present.
+    private static string CodeText(string s) => s.Length >= 2 && s[0] == ' ' && s[^1] == ' ' && s.Trim().Length > 0 ? s[1..^1] : s;
+
+    private static string StripSentinels(string s)
+    {
+        foreach (char c in s)
+            if (c is >= '\uE000' and <= '\uE005')
+                return new string(s.Where(ch => ch is < '\uE000' or > '\uE005').ToArray());
         return s;
     }
 
@@ -193,7 +249,12 @@ internal static class TuiMarkdown
     public static string StripInline(string s)
     {
         if (string.IsNullOrEmpty(s)) return "";
-        s = InlineCode.Replace(s, m => m.Groups[1].Value);
+        s = StripSentinels(s);
+        var slots = new List<string>();
+        string Hold(string text) { slots.Add(text); return $"\uE004{slots.Count - 1}\uE005"; }
+        s = InlineCode.Replace(s, m => Hold(CodeText(m.Groups[2].Value)));
+        s = Escaped.Replace(s, m => Hold(m.Groups[1].Value));
+        s = System.Net.WebUtility.HtmlDecode(s);
         s = MdLink.Replace(s, m => string.IsNullOrEmpty(m.Groups[2].Value) ? m.Groups[3].Value : m.Groups[2].Value);
         s = AutoLink.Replace(s, m => m.Groups[1].Value);
         s = BoldItalicStar.Replace(s, m => m.Groups[1].Value);
@@ -201,8 +262,7 @@ internal static class TuiMarkdown
         s = BoldUnder.Replace(s, m => m.Groups[1].Value);
         s = ItalicStar.Replace(s, m => m.Groups[1].Value);
         s = Strike.Replace(s, m => m.Groups[1].Value);
-        s = s.Replace("\\*", "*").Replace("\\`", "`").Replace("\\_", "_").Replace("\\~", "~");
-        return s;
+        return Slot.Replace(s, m => slots[int.Parse(m.Groups[1].Value)]);
     }
 
     private static string Escape(string s) => (s ?? "").Replace("[", "[[").Replace("]", "]]");
@@ -223,6 +283,19 @@ internal static class TuiMarkdown
     /// </summary>
     public static bool IsFence(string line) => line is not null && FenceRe.IsMatch(line);
 
+    /// <summary>
+    /// True when <paramref name="line"/> closes a block opened by <paramref name="opener"/>: the same
+    /// fence character, at least as many of them, and no info string (CommonMark).
+    /// </summary>
+    public static bool ClosesFence(string line, string opener)
+    {
+        var m = FenceRe.Match(line ?? "");
+        var o = FenceRe.Match(opener ?? "");
+        if (!m.Success || !o.Success) return false;
+        string run = m.Groups[1].Value, open = o.Groups[1].Value;
+        return run[0] == open[0] && run.Length >= open.Length && line!.Trim() == run;
+    }
+
     /// <summary>Info string (language) of a fence line, or "" if none / not a fence.</summary>
     public static string FenceInfo(string line)
     {
@@ -237,7 +310,7 @@ internal static class TuiMarkdown
     /// </summary>
     public static string CodeLine(string raw)
     {
-        string body = Escape(raw ?? "");
+        string body = Escape(TuiMarkup.ExpandTabs(raw ?? ""));
         return $"  [{Code} on {CodeBg}] {body} [/]";
     }
 
@@ -284,7 +357,7 @@ internal static class TuiMarkdown
     public static string DiffLine(string raw)
     {
         string s = raw ?? "";
-        string body = Escape(s);
+        string body = Escape(TuiMarkup.ExpandTabs(s));
         string fg;
         if (s.StartsWith("@@"))
             fg = DiffHunk;
