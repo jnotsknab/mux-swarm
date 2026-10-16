@@ -50,7 +50,8 @@ public class RenderStressReplayTests
 
     public static IEnumerable<object[]> Cases()
     {
-        foreach (var name in new[] { "t01_escapes", "t02_wide", "t03_status", "t04_unicode", "t05_padding", "t06_widetable", "t07_longcells", "t08_ragged", "t09_blocks", "t10_code", "t11_mixed" })
+        foreach (var name in new[] { "t01_escapes", "t02_wide", "t03_status", "t04_unicode", "t05_padding", "t06_widetable", "t07_longcells", "t08_ragged", "t09_blocks", "t10_code", "t11_mixed",
+            "u01_cells_md", "u02_align", "u03_narrow_long", "u04_lists_code", "u07_diff_json", "u08_unicode_prose", "u09_table_edge" })
             foreach (int w in new[] { 130, 90, 60, 40 })
                 foreach (bool frame in new[] { false, true })
                     yield return new object[] { name, w, frame };
@@ -163,6 +164,14 @@ public class RenderStressReplayTests
     [InlineData("\U0001F44D\U0001F3FF", 2)] [InlineData("\U0001F468\u200D\U0001F469\u200D\U0001F467", 2)] [InlineData("\U0001F6C8", 1)]
     [InlineData("\u0E44", 1)] [InlineData("\uAC00", 2)] [InlineData("\u3042", 2)]
     public void GlyphWidths_MatchTheTerminal(string s, int cells) => Assert.Equal(cells, TuiMarkup.Width(s));
+
+    [Theory, InlineData(false), InlineData(true)]
+    public void LinkWithParensInUrl_KeepsItsLabel(bool frame)
+    {
+        var rows = Render(Corpus("u01_cells_md"), 130, frame);
+        Assert.Contains(rows, r => r.Contains("docs") && r.Contains("paren url") && !r.Contains("docs)"));
+        Assert.Contains(rows, r => r.Contains("x[0] | y"));
+    }
 
     [Fact]
     public void Strikethrough_RendersSgr9()
