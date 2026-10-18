@@ -10332,7 +10332,7 @@ const icons = {
         'Background opacity of the floating message bar. Lower = more translucent/glassy.',
         (v) => Math.round(v * 100) + '%'),
       toggleRow('showTimestamps',   'Show message timestamps'),
-      toggleRow('fileChips',        'File chips and image previews', 'Turn file paths in replies into clickable chips (preview, download, show in folder) and show images inline.'),
+      toggleRow('fileChips',        'File chips and image previews', 'Turn file paths in replies into clickable chips (preview, download, copy path) and show images inline.'),
       toggleRow('showAgentBadge',   'Show agent name badges'),
       toggleRow('showCharCounter',  'Show character counter'),
       toggleRow('collapseCardsByDefault', 'Auto-collapse long cards',
@@ -14817,7 +14817,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /MuxEditor ===== -->
-<!-- ===== File chips: agent-mentioned paths become clickable (preview / download / reveal) ===== -->
+<!-- ===== File chips: agent-mentioned paths become clickable (preview / download / copy path) ===== -->
 <style>
 @layer mux.base {
   .mux-fchip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: baseline;
@@ -14859,14 +14859,23 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     el.className = 'mux-fchip'; el.tabIndex = 0; el.title = m.path + ' \u00b7 ' + fmtSize(m.size);
     el.dataset.path = m.path; el.dataset.kind = m.kind;
     el.innerHTML = '<span class="mux-fchip-ico">' + ICON + '</span><span class="mux-fchip-name"></span>' +
-      (hasOpen() ? '<button class="mux-fchip-act" data-act="native" title="Open with default app" aria-label="Open with default app">\u29c9</button>' : '') +
+      (hasOpen() ? '<button class="mux-fchip-act" data-act="native" title="Open with default app" aria-label="Open with default app">\u2197</button>' : '') +
       '<button class="mux-fchip-act" data-act="download" title="Download" aria-label="Download">\u2913</button>' +
-      '<button class="mux-fchip-act" data-act="reveal" title="Show in folder" aria-label="Show in folder">\u2197</button>';
+      '<button class="mux-fchip-act" data-act="copy" title="Copy path" aria-label="Copy path">\u29c9</button>';
     el.querySelector('.mux-fchip-name').textContent = label;
     return el;
   }
   // Desktop shell (mux-desktop) can open files with their default app; browsers cannot.
   function hasOpen(){ var h = window.muxHost; return !!(h && typeof h.openPath === 'function' && (h.capabilities || []).indexOf('openPath') >= 0); }
+  // The async clipboard API needs a secure context (https or localhost); a tailnet/LAN http origin falls back.
+  function copyText(text){
+    var done = function(){ if (window.muxToast) window.muxToast('Path copied', 'success'); };
+    if (navigator.clipboard && window.isSecureContext) { navigator.clipboard.writeText(text).then(done, function(){}); return; }
+    var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { if (document.execCommand('copy')) done(); } catch(_) {}
+    ta.remove();
+  }
   function fmtSize(n){ return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
 
   // Preview kinds the existing panel understands (its classify() reads the URL extension, which
@@ -14888,11 +14897,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       Promise.resolve(window.muxHost.openPath(path)).catch(function(err){ if (window.muxToast) window.muxToast(String((err && err.message) || err || 'Could not open the file')); });
       return;
     }
-    if (what === 'reveal') {
-      fetch('/api/file/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: path }) })
-        .then(function(r){ if (!r.ok && window.muxToast) window.muxToast('Could not open a file manager on the Mux host'); }).catch(function(){});
-      return;
-    }
+    if (what === 'copy') { copyText(path); return; }
     open(path, el.dataset.kind);
   }
   document.addEventListener('click', function(e){
@@ -14933,7 +14938,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         var m = ms[i]; if (!m) return;
         var raw = h.path.replace(/[.,;:]+$/, '');
         frag.appendChild(document.createTextNode(text.slice(pos, h.s)));
-        frag.appendChild(chip(m, inCode ? raw : m.name));
+        frag.appendChild(chip(m, m.name)); // full path: tooltip + Copy path
         pos = h.s + raw.length; any = true;
         thumbAfter(tn.parentElement, m);
       });
