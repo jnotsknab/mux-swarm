@@ -2849,12 +2849,12 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     }
   }
 
-  micBtn.addEventListener('click', () => {
+      micBtn.addEventListener('click', () => {
     if (!recognition) {
       console.log('Voice input not supported in this browser');
       return;
     }
-    
+
     if (isRecording) {
       stopRecording();
     } else {
@@ -2865,6 +2865,8 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
       }
     }
   });
+
+
   const statusDot = $('statusDot');
   const statusText = $('statusText');
   const statusBtn = $('statusBtn');
@@ -2951,7 +2953,8 @@ const icons = {
     // Theme vars live in <style id="mux-theme-vars"> inside @layer mux.theme (not inline on
     // :root) so extension CSS in @layer mux.ext can override them without !important.
     // Custom color overrides go to @layer mux.user, which beats both.
-    const _vars = Object.assign({}, baseTheme.vars);
+    const _variant = _resolveVariant(baseTheme);
+    const _vars = Object.assign({}, baseTheme.vars, _variant ? (baseTheme.variants[_variant].vars || {}) : {});
     const _user = {};
     for (const [key, val] of Object.entries(customOverrides)) {
       _user[key] = val;
@@ -2962,9 +2965,16 @@ const icons = {
     let _tv = document.getElementById('mux-theme-vars');
     if (!_tv) { _tv = document.createElement('style'); _tv.id = 'mux-theme-vars'; document.head.appendChild(_tv); }
     _tv.textContent = `@layer mux.theme { :root { ${_decl(_vars)} } }\n@layer mux.user { :root { ${_decl(_user)} } }`;
-    const _scheme = baseTheme.isLight != null ? (baseTheme.isLight ? 'light' : 'dark') : (_isLightBg(_vars['--bg']) ? 'light' : 'dark');
-    document.documentElement.dataset.muxTheme = baseTheme.id;
-    document.documentElement.dataset.muxScheme = _scheme;
+    const _scheme = _variant || (baseTheme.isLight != null ? (baseTheme.isLight ? 'light' : 'dark') : (_isLightBg(_vars['--bg']) ? 'light' : 'dark'));
+    const _root = document.documentElement;
+    const _changed = _root.dataset.muxTheme !== baseTheme.id || _root.dataset.muxScheme !== _scheme;
+    _root.dataset.muxTheme = baseTheme.id;
+    _root.dataset.muxScheme = _scheme;
+    if (typeof applyExtensionAssets === 'function') { applyExtensionAssets(baseTheme, _extAssetStamp); renderVariantControl(baseTheme); }
+    if (_changed) {
+      // Hosts (desktop shells) and extensions listen for this instead of polling localStorage.
+      try { window.dispatchEvent(new CustomEvent('mux:theme-changed', { detail: { id: baseTheme.id, scheme: _scheme, bg: _user['--bg'] || _vars['--bg'] || '' } })); } catch (_) {}
+    }
 
     // Update active preset button
     document.querySelectorAll('.theme-preset-btn').forEach(btn => {
@@ -3026,19 +3036,92 @@ const icons = {
   });
 
   // Extension themes from the runtime (GET /api/themes). Appended to the bundled list; an older
-  // binary 404s and the bundled list stays as is. A saved extension theme is re-applied once loaded.
-  (async () => {
+  // binary 404s and the bundled list stays as is. Re-run on 'ui_themes_changed' (live reload).
+  // Web themes may add light/dark variants, scoped CSS and fonts; their CSS is imported into
+  // @layer mux.ext so it overrides theme vars and base styles without !important.
+  let _extGlobalCss = [];
+  const _extStamp = () => Date.now().toString(36);
+  function _variantPref(id) { try { return localStorage.getItem('mux-theme-variant.' + id) || ''; } catch (_) { return ''; } }
+  function _resolveVariant(t) {
+    if (!t || !t.variants) return null;
+    const pref = _variantPref(t.id) || t.defaultVariant || 'system';
+    const want = pref === 'system'
+      ? (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+      : pref;
+    return t.variants[want] ? want : (t.variants.dark ? 'dark' : 'light');
+  }
+  // Only same-origin /ext/ URLs are ever loaded (the server never serves extension JS).
+  const _extUrl = (u) => (typeof u === 'string' && /^\/ext\/[a-z0-9-]+\//.test(u)) ? u : null;
+  function _cssStr(s) { return "'" + String(s).replace(/[\\'\n\r]/g, '') + "'"; }
+  function applyExtensionAssets(t, stamp) {
+    let el = document.getElementById('mux-ext-css');
+    if (!el) { el = document.createElement('style'); el.id = 'mux-ext-css'; document.head.appendChild(el); }
+    const q = stamp ? ('?v=' + stamp) : '';
+    const urls = _extGlobalCss.concat((t && t.css) || []).map(_extUrl).filter(Boolean);
+    const fonts = ((t && t.fonts) || []).filter(f => f && _extUrl(f.url)).map(f =>
+      `@font-face { font-family: ${_cssStr(f.family)}; src: url(${_cssStr(f.url + q)}); font-weight: ${f.weight || '400'}; font-style: ${f.style || 'normal'}; font-display: swap; }`);
+    // @import must precede every other rule in a sheet.
+    el.textContent = urls.map(u => `@import url(${_cssStr(u + q)}) layer(mux.ext);`).concat(fonts).join('\n');
+    el.dataset.muxExtCss = (t && t.css && t.css.length) ? t.id : '';
+  }
+  function renderVariantControl(t) {
+    let box = document.getElementById('themeVariant');
+    if (!box) {
+      const presets = document.getElementById('themePresets');
+      if (!presets || !presets.parentElement) return;
+      box = document.createElement('div');
+      box.id = 'themeVariant';
+      box.className = 'mux-seg';
+      box.setAttribute('role', 'radiogroup');
+      box.style.marginTop = '10px';
+      presets.parentElement.appendChild(box);
+    }
+    if (!t || !t.variants) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = '';
+    const cur = _variantPref(t.id) || t.defaultVariant || 'system';
+    box.innerHTML = '';
+    for (const v of ['light', 'dark', 'system']) {
+      if (v !== 'system' && !t.variants[v]) continue;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = v[0].toUpperCase() + v.slice(1);
+      b.className = cur === v ? 'active' : '';
+      b.setAttribute('aria-checked', String(cur === v));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { localStorage.setItem('mux-theme-variant.' + t.id, v); } catch (_) {}
+        applyThemeState();
+      });
+      box.appendChild(b);
+    }
+  }
+  if (window.matchMedia) {
+    try {
+      matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        const t = themes.find(x => x.id === currentThemeId);
+        if (t && t.variants) applyThemeState();
+      });
+    } catch (_) {}
+  }
+  async function loadExtensionThemes(live) {
     try {
       const r = await fetch(_apiUrl('/api/themes'), { headers: { 'Accept': 'application/json' } });
       if (!r.ok) return;
       const data = await r.json();
       const container = document.getElementById("themePresets");
+      // Live reload: drop extension entries and re-add them from the fresh list.
+      for (let k = themes.length - 1; k >= 0; k--) if (themes[k].ext) themes.splice(k, 1);
+      if (container) container.querySelectorAll('.theme-preset-btn[data-ext="1"]').forEach(b => b.remove());
+      _extGlobalCss = Array.isArray(data.globalCss) ? data.globalCss : [];
       for (const t of (data.items || [])) {
         if (!t || !t.id || !t.vars || themes.some(x => x.id === t.id)) continue;
-        themes.push({ id: t.id, name: t.name, dot: t.dot, vars: t.vars });
+        themes.push({ id: t.id, name: t.name, dot: t.dot, vars: t.vars, isLight: t.isLight, ext: true,
+                      variants: t.variants || null, defaultVariant: t.defaultVariant || null,
+                      css: Array.isArray(t.css) ? t.css : [], fonts: Array.isArray(t.fonts) ? t.fonts : [] });
         const btn = document.createElement('button');
         btn.className = 'theme-preset-btn';
         btn.dataset.id = t.id;
+        btn.dataset.ext = '1';
         const dot = document.createElement('div');
         dot.className = 'preset-color-dot';
         dot.style.background = t.dot;
@@ -3047,9 +3130,13 @@ const icons = {
         btn.addEventListener('click', () => { currentThemeId = t.id; customOverrides = {}; applyThemeState(); });
         if (container) container.appendChild(btn);
       }
-      if (themes.some(x => x.id === currentThemeId)) applyThemeState();
+      _extAssetStamp = live ? _extStamp() : _extAssetStamp;
+      applyThemeState();
     } catch (_) {}
-  })();
+  }
+  let _extAssetStamp = '';
+  window.__muxLoadExtensionThemes = loadExtensionThemes;
+  loadExtensionThemes(false);
 
   // Load saved state on boot
   try {
@@ -3747,6 +3834,10 @@ const icons = {
       case 'splash':
       case 'banner':
         break; // suppressed
+
+      case 'ui_themes_changed':
+        try { window.__muxLoadExtensionThemes && window.__muxLoadExtensionThemes(true); } catch (_) {}
+        break;
 
       case 'step':
         routePill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
