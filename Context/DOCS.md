@@ -1350,7 +1350,10 @@ choices persist per browser. The floating panel stays the default.
 
 **Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day with counts, Older
 collapsed; titled by their first message, up to two lines, with the time and message count; pins shared with the Sessions
-tab; the resumed session is highlighted); click resumes (`/resume <id>`), hover pins or copies the ID, **+ New** sends
+tab is gone; the rail is the one sessions list; the resumed session is highlighted). Click opens a read-only
+**viewer** over the transcript (the saved conversation, with Resume / Copy ID / Download; Esc closes); Resume or a
+double-click sends `/resume <id>`, and the page then redraws that session's last 200 messages above a "Resumed" divider
+(client-side from the session file; the engine already restores the context). Hover pins or copies the ID, **+ New** sends
 `/agent`. Drag its right edge to resize (220-520px). It starts open on wide screens and remembers your choice (toggle next
 to the wordmark). In an agent session the composer shows an **Effort** chip (sends `/effort <level>`) once the session has
 run a turn, a **context gauge** (tokens until auto-compact, from `/api/status`) with a **Compact now** action, and an

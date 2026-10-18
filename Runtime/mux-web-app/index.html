@@ -2820,7 +2820,6 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     <div class="sidebar-resizer" id="sidebarResizer"></div>
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
-      <button class="sidebar-tab" data-tab="sessions">Sessions</button>
       <button class="sidebar-tab" data-tab="skills">Skills</button>
       <button class="sidebar-tab" data-tab="tools">Tools</button>
       <button class="sidebar-tab" data-tab="diffs">Tool Output</button>
@@ -6916,8 +6915,6 @@ const icons = {
     if (currentTab === 'diffs') {
       sidebarContent.innerHTML = '';
       sidebarContent.appendChild(diffsArea);
-    } else if (currentTab === 'sessions') {
-      loadSessionsView();
     } else if (currentTab === 'skills') {
       loadCatalogView('skills');
     } else if (currentTab === 'tools') {
@@ -7238,32 +7235,7 @@ const icons = {
     document.head.appendChild(styleEl);
   })();
 
-  // ─── Sessions tab: Claude-Desktop-style two-pane viewer ───
-  const _sessionCache = new Map(); // folderName -> parsed agent_session.json
-
-  // ─── Session pinning ───
-  // Pins are a client-side preference: the engine has no pin concept, and the
-  // sessions directory is deliberately not writable through the API. Keyed by
-  // session folder name, which is stable for the life of the session.
-  const PIN_KEY = 'muxPinnedSessions.v1';
-  function loadPins() {
-    try {
-      const v = JSON.parse(localStorage.getItem(PIN_KEY) || '[]');
-      return new Set(Array.isArray(v) ? v : []);
-    } catch (_) { return new Set(); }
-  }
-  function savePins(set) {
-    try { localStorage.setItem(PIN_KEY, JSON.stringify([...set])); } catch (_) {}
-  }
-  function isPinned(name) { return loadPins().has(name); }
-  function togglePin(name) {
-    const pins = loadPins();
-    if (pins.has(name)) pins.delete(name); else pins.add(name);
-    savePins(pins);
-    return pins.has(name);
-  }
-  let _selectedSession = null;
-
+  // ─── Session transcript helpers (shared with the sessions rail viewer and resume replay) ───
   function _fmtSessionDate(folderName) {
     const m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})$/.exec(folderName || '');
     if (!m) return folderName || '';
@@ -7292,325 +7264,8 @@ const icons = {
     return [];
   }
 
-  function _firstUserText(messages) {
-    for (const m of messages) {
-      const role = (m.role || m.Role || '').toLowerCase();
-      if (role !== 'user') continue;
-      const cs = m.contents || m.Contents || [];
-      for (const c of cs) {
-        const t = c && (c['$type'] || c.type || '');
-        if (t === 'text' && typeof c.text === 'string' && c.text.trim()) return c.text.trim();
-      }
-    }
-    return '';
-  }
-
-  function _ellipsis(s, n) { s = String(s||''); return s.length > n ? s.slice(0, n-1) + '…' : s; }
-
-  // Searchable conversation text: user + assistant text blocks only.
-  // Tool calls/results and reasoning are skipped (noise + size).
-  const SESS_IDX_CAP = 200000; // chars per session
-  function _sessionSearchText(messages) {
-    let out = '';
-    for (const m of messages) {
-      const role = (m.role || m.Role || '').toLowerCase();
-      if (role !== 'user' && role !== 'assistant') continue;
-      for (const c of (m.contents || m.Contents || [])) {
-        const t = c && (c['$type'] || c.type || '');
-        if (t === 'text' && typeof c.text === 'string') {
-          out += c.text + '\n';
-          if (out.length >= SESS_IDX_CAP) return out.slice(0, SESS_IDX_CAP);
-        }
-      }
-    }
-    return out;
-  }
-
-  // Re-sort the rendered session rows so pinned ones sit at the top. Operates on
-  // the live DOM (no refetch) and preserves the existing relative order inside
-  // each band, which is already recency-sorted.
-  function reflowPinned(listEl) {
-    if (!listEl) return;
-    const rows = [...listEl.querySelectorAll('.mux-sess-row')];
-    const pinned = rows.filter(r => r.classList.contains('pinned'));
-    const rest = rows.filter(r => !r.classList.contains('pinned'));
-    for (const r of [...pinned, ...rest]) listEl.appendChild(r);
-  }
-
-  async function loadSessionsView() {
-    sidebarContent.innerHTML = '<div class="loading">Loading sessions…</div>';
-    let listData;
-    try {
-      const r = await fetch('/api/list/sessions');
-      listData = await r.json();
-      if (listData.error) throw new Error(listData.error);
-    } catch (e) {
-      sidebarContent.innerHTML = `<div class="error-msg">Error: ${esc(e.message || String(e))}</div>`;
-      return;
-    }
-    const folders = (listData.items || []).filter(it => it.isDir).map(it => it.name);
-    folders.sort((a,b) => a < b ? 1 : (a > b ? -1 : 0));
-    // Pinned sessions float to the top; recency order is preserved within each band.
-    {
-      const pins = loadPins();
-      folders.sort((a, b) => (pins.has(b) ? 1 : 0) - (pins.has(a) ? 1 : 0));
-    }
-
-    sidebarContent.innerHTML = `
-      <div class="mux-sess-root">
-        <div class="mux-sess-toolbar">
-          <input class="mux-sess-search" type="search" placeholder="Search sessions…" />
-          <span class="mux-sess-count">${folders.length} session${folders.length===1?'':'s'}</span>
-        </div>
-        <div class="mux-sess-split">
-          <div class="mux-sess-list" id="muxSessList"></div>
-          <div class="mux-sess-preview" id="muxSessPreview">
-            <div class="mux-sess-empty">
-              <div class="mux-sess-empty-icon">${icons.file || ''}</div>
-              <div>Select a session to preview</div>
-            </div>
-          </div>
-        </div>
-      </div>`;
-
-    const listEl = sidebarContent.querySelector('#muxSessList');
-    const previewEl = sidebarContent.querySelector('#muxSessPreview');
-    const searchEl = sidebarContent.querySelector('.mux-sess-search');
-
-    const rowEls = new Map();
-    for (const name of folders) {
-      const row = document.createElement('div');
-      row.className = 'mux-sess-row' + (isPinned(name) ? ' pinned' : '');
-      row.dataset.folder = name;
-      row.innerHTML = `
-        <button class="mux-sess-pin" type="button" aria-label="Pin session" title="Pin session">${icons.pin}</button>
-        <div class="mux-sess-row-title">${esc(_fmtSessionDate(name))}</div>
-        <div class="mux-sess-row-snippet"><span class="mux-sess-skel">loading…</span></div>
-        <div class="mux-sess-row-meta">
-          <span class="mux-sess-folder">${esc(name)}</span>
-        </div>`;
-      row.addEventListener('click', () => selectSession(name));
-      // Pin toggle must not also select the session.
-      row.querySelector('.mux-sess-pin').addEventListener('click', (e) => {
-        e.stopPropagation();
-        const nowPinned = togglePin(name);
-        row.classList.toggle('pinned', nowPinned);
-        // Re-float the row without refetching: pinned rows go to the top of the
-        // list, unpinned ones return to their recency position.
-        reflowPinned(listEl);
-      });
-      listEl.appendChild(row);
-      rowEls.set(name, row);
-    }
-
-    const searchIdx = new Map(); // name -> { raw, lower } conversation text
-    const queue = folders.slice();
-    const CONC = 6;
-    async function worker() {
-      while (queue.length) {
-        const name = queue.shift();
-        try {
-          const r = await fetch(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`);
-          if (!r.ok) throw new Error('HTTP '+r.status);
-          const json = await r.json();
-          _sessionCache.set(name, json);
-          const msgs = _sessionMessages(json);
-          try {
-            const txt = _sessionSearchText(msgs);
-            searchIdx.set(name, { raw: txt, lower: txt.toLowerCase() });
-          } catch(_) {}
-          const row = rowEls.get(name);
-          if (!row) continue;
-          const snippet = _firstUserText(msgs) || '(empty)';
-          row.querySelector('.mux-sess-row-snippet').textContent = _ellipsis(snippet, 140);
-          const meta = row.querySelector('.mux-sess-row-meta');
-          meta.innerHTML = `
-            <span class="mux-sess-chip">${msgs.length} msg${msgs.length===1?'':'s'}</span>
-            <span class="mux-sess-folder">${esc(name)}</span>`;
-        } catch (e) {
-          const row = rowEls.get(name);
-          if (row) row.querySelector('.mux-sess-row-snippet').innerHTML = `<span class="mux-sess-err">${esc(e.message)}</span>`;
-        }
-      }
-    }
-    for (let i=0;i<CONC;i++) worker();
-
-    // Full-content search across user+assistant messages (index built by the
-    // snippet workers above — no extra fetching). Multi-term AND: every
-    // whitespace-separated term must appear somewhere in the conversation.
-    let _searchT = null;
-    searchEl.addEventListener('input', () => {
-      clearTimeout(_searchT);
-      _searchT = setTimeout(() => {
-        const q = searchEl.value.trim().toLowerCase();
-        const terms = q.split(/\s+/).filter(Boolean);
-        for (const [name, row] of rowEls) {
-          const snipEl = row.querySelector('.mux-sess-row-snippet');
-          if (row.dataset.origSnippet === undefined) row.dataset.origSnippet = snipEl.textContent;
-          if (!terms.length) {
-            row.style.display = '';
-            snipEl.textContent = row.dataset.origSnippet;
-            continue;
-          }
-          const idx = searchIdx.get(name);
-          const nameL = name.toLowerCase();
-          const hay = idx ? idx.lower : snipEl.textContent.toLowerCase();
-          const hit = terms.every(t => nameL.includes(t) || hay.includes(t));
-          row.style.display = hit ? '' : 'none';
-          if (hit && idx) {
-            // Show match context: excerpt around the first term's first hit.
-            const pos = idx.lower.indexOf(terms[0]);
-            if (pos >= 0) {
-              const start = Math.max(0, pos - 50);
-              const ex = (start > 0 ? '\u2026' : '') + idx.raw.slice(start, pos + terms[0].length + 90).replace(/\s+/g, ' ');
-              snipEl.textContent = _ellipsis(ex, 140);
-            } else {
-              snipEl.textContent = row.dataset.origSnippet;
-            }
-          }
-        }
-      }, 100);
-    });
-
-    function selectSession(name) {
-      _selectedSession = name;
-      for (const [n,r] of rowEls) r.classList.toggle('active', n === name);
-      const json = _sessionCache.get(name);
-      if (!json) {
-        previewEl.innerHTML = '<div class="loading">Loading session…</div>';
-        fetch(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`)
-          .then(r => r.json())
-          .then(j => { _sessionCache.set(name, j); renderSessionPreview(previewEl, name, j); })
-          .catch(e => previewEl.innerHTML = `<div class="error-msg">Error: ${esc(e.message)}</div>`);
-      } else {
-        renderSessionPreview(previewEl, name, json);
-      }
-    }
-  }
-
-  function renderSessionPreview(host, name, json) {
-    const msgs = _sessionMessages(json);
-    const roleCounts = { user:0, assistant:0, tool:0, system:0, other:0 };
-    let toolCalls = 0, reasoningBlocks = 0;
-    for (const m of msgs) {
-      const r = (m.role||m.Role||'other').toLowerCase();
-      roleCounts[r in roleCounts ? r : 'other']++;
-      for (const c of (m.contents||m.Contents||[])) {
-        const t = c && (c['$type']||c.type||'');
-        if (t === 'functionCall') toolCalls++;
-        else if (t === 'reasoning') reasoningBlocks++;
-      }
-    }
-
-    const header = `
-      <div class="mux-sess-head">
-        <button class="mux-sess-back" type="button" title="Back to list" aria-label="Back to list">‹ Back</button>
-        <div class="mux-sess-head-title">${esc(_fmtSessionDate(name))}</div>
-        <div class="mux-sess-head-folder">${esc(name)}</div>
-        <div class="mux-sess-head-stats">
-          <span class="mux-sess-chip">${msgs.length} messages</span>
-          <span class="mux-sess-chip">${roleCounts.user} user</span>
-          <span class="mux-sess-chip">${roleCounts.assistant} assistant</span>
-          ${toolCalls ? `<span class="mux-sess-chip">${toolCalls} tool call${toolCalls===1?'':'s'}</span>` : ''}
-          ${reasoningBlocks ? `<span class="mux-sess-chip">${reasoningBlocks} reasoning</span>` : ''}
-        </div>
-        <div class="mux-sess-head-actions">
-          <button class="mux-sess-btn primary" data-act="resume">Resume</button>
-          <button class="mux-sess-btn" data-act="copy-id">Copy Session ID</button>
-          <button class="mux-sess-btn" data-act="download">Download JSON</button>
-        </div>
-      </div>`;
-
-    let body = '<div class="mux-sess-body">';
-    if (!msgs.length) {
-      body += '<div class="mux-sess-empty"><div>This session has no messages.</div></div>';
-    } else {
-      for (const m of msgs) body += _renderMessage(m);
-    }
-    body += '</div>';
-
-    host.innerHTML = header + body;
-
-    const _root = sidebarContent.querySelector('.mux-sess-root');
-    if (_root) _root.classList.add('has-selection');
-    const _back = host.querySelector('.mux-sess-back');
-    if (_back) _back.addEventListener('click', () => {
-      if (_root) _root.classList.remove('has-selection');
-      sidebarContent.querySelectorAll('.mux-sess-row.active').forEach(r => r.classList.remove('active'));
-      host.innerHTML = `
-        <div class="mux-sess-empty">
-          <div class="mux-sess-empty-icon">${icons.file || ''}</div>
-          <div>Select a session to preview</div>
-        </div>`;
-    });
-    host.querySelector('[data-act="copy-id"]').addEventListener('click', async (e) => {
-      // name === timestamped session folder (e.g. 2026-06-10_22-19-20)
-      let copied = false;
-      try {
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(name);
-          copied = true;
-        }
-      } catch(_) {}
-      if (!copied) {
-        // Fallback for insecure origins (http over LAN/Tailscale) where
-        // navigator.clipboard is unavailable.
-        try {
-          const ta = document.createElement('textarea');
-          ta.value = name;
-          ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
-          document.body.appendChild(ta);
-          ta.select();
-          copied = document.execCommand('copy');
-          ta.remove();
-        } catch(_) {}
-      }
-      const btn = e.currentTarget;
-      const orig = btn.textContent;
-      btn.textContent = copied ? 'Copied!' : 'Copy failed';
-      setTimeout(() => { btn.textContent = orig; }, 1400);
-    });
-    // Resume: validate the session is resumable, then send '/resume <id>' over the
-    // WS (the resumed agent loop streams back over the same channel as /agent), and
-    // return the user to the chat view. The id is the timestamped session folder name.
-    const _resumeBtn = host.querySelector('[data-act="resume"]');
-    if (_resumeBtn) _resumeBtn.addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      const orig = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = 'Resuming…';
-      try {
-        // Pre-check via /api/sessions/{id}; tolerate older binaries (404 on route)
-        // by proceeding anyway — the runtime validates again on /resume <id>.
-        let resumable = true;
-        try {
-          const r = await fetch(_apiUrl(`/api/sessions/${encodeURIComponent(name)}`), { headers: { 'Accept': 'application/json' } });
-          if (r.ok) { const d = await r.json(); resumable = !!d.resumable; }
-        } catch (_) {}
-        if (!resumable) {
-          btn.textContent = 'Not resumable';
-          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
-          return;
-        }
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          btn.textContent = 'Not connected';
-          setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1600);
-          return;
-        }
-        // Hand off to the chat view and resume.
-        try { if (sidebar.classList.contains('open')) toggleSidebar(); } catch (_) {}
-        await send('/resume ' + name);
-        try { input.focus(); } catch (_) {}
-      } finally {
-        // Button lives in the sidebar which we just closed; restore state in case
-        // the user reopens before navigating away.
-        setTimeout(() => { try { btn.textContent = orig; btn.disabled = false; } catch (_) {} }, 1200);
-      }
-    });
-    host.querySelector('[data-act="download"]').addEventListener('click', () => {
-      window.open((window.MuxAuth&&window.MuxAuth.url?window.MuxAuth.url(`/api/download/sessions/${encodePath(name + '/agent_session.json')}`):`/api/download/sessions/${encodePath(name + '/agent_session.json')}`), '_blank');
-    });
-  }
+  // The sessions rail (viewer + resume replay) renders saved transcripts with these.
+  try { window.MuxSessionView = { messages: function(j){ return _sessionMessages(j); }, render: function(m){ return _renderMessage(m); }, date: function(n){ return _fmtSessionDate(n); } }; } catch (_) {}
 
   function _mdSafe(text) {
     try { return window.renderMarkdown ? window.renderMarkdown(String(text||'')) : `<pre>${esc(String(text||''))}</pre>`; }
@@ -7701,103 +7356,7 @@ const icons = {
   (function injectSessionsCss(){
     if (document.getElementById('muxSessionsCss')) return;
     const css = `
-      /* ── Sessions tab ─────────────────────────────────────── */
-      .mux-sess-root { display:flex; flex-direction:column; height:100%; min-height:0; }
-
-      .mux-sess-toolbar {
-        display:flex; align-items:center; gap:8px;
-        padding:8px 10px;
-        border-bottom:1px solid var(--border, #27272a);
-        flex:0 0 auto;
-      }
-      .mux-sess-search {
-        flex:1 1 auto; min-width:0;
-        background:var(--mux-inset-bg);
-        color:var(--text);
-        border:1px solid var(--border, #27272a);
-        border-radius:6px;
-        padding:5px 9px;
-        font-size:calc(12px * var(--ui-font-scale, 1));
-        outline:none;
-      }
-      .mux-sess-search:focus {
-        border-color: var(--accent, #64b4dc);
-        box-shadow: 0 0 0 2px rgba(var(--accent-rgb),0.15);
-      }
-      .mux-sess-count {
-        font-size:calc(10px * var(--ui-font-scale, 1));
-        color:var(--muted, #71717a);
-        white-space:nowrap;
-      }
-
-      /* Split: single-column at narrow widths, two-pane when there's room */
-      .mux-sess-split {
-        display:flex; flex:1 1 auto; min-height:0;
-        flex-direction: column;
-      }
-
-      .mux-sess-list {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow-y:auto;
-        scrollbar-width: thin;
-        scrollbar-color: var(--border, #27272a) transparent;
-      }
-      .mux-sess-list::-webkit-scrollbar { width: 6px; }
-      .mux-sess-list::-webkit-scrollbar-track { background: transparent; }
-      .mux-sess-list::-webkit-scrollbar-thumb {
-        background: var(--border, #27272a); border-radius: 3px;
-      }
-      .mux-sess-list:hover::-webkit-scrollbar-thumb {
-        background: var(--muted, #71717a);
-      }
-
-      .mux-sess-preview {
-        flex: 1 1 auto;
-        min-width: 0; min-height: 0;
-        overflow-y: auto; overflow-x: hidden;
-        display: flex; flex-direction: column;
-        scrollbar-width: thin;
-        scrollbar-color: var(--border, #27272a) transparent;
-      }
-      .mux-sess-preview::-webkit-scrollbar { width: 6px; }
-      .mux-sess-preview::-webkit-scrollbar-track { background: transparent; }
-      .mux-sess-preview::-webkit-scrollbar-thumb {
-        background: var(--border, #27272a); border-radius: 3px;
-      }
-      .mux-sess-preview:hover::-webkit-scrollbar-thumb {
-        background: var(--muted, #71717a);
-      }
-
-      /* Narrow mode: only show list OR preview, never both */
-      .mux-sess-root:not(.has-selection) .mux-sess-preview { display: none; }
-      .mux-sess-root.has-selection .mux-sess-list { display: none; }
-      .mux-sess-back {
-        display: inline-flex; align-items: center;
-        background: transparent; border: none;
-        color: var(--muted, #a1a1aa);
-        font-size: calc(11px * var(--ui-font-scale, 1));
-        padding: 2px 6px 2px 0; margin-bottom: 6px;
-        cursor: pointer;
-      }
-      .mux-sess-back:hover { color: var(--text); }
-
-      /* Wide mode (≥ 560px): two-pane, list always visible, no back button */
-      @container muxSidebar (min-width: 560px) {
-        .mux-sess-split { flex-direction: row; }
-        .mux-sess-list {
-          flex: 0 0 38%;
-          min-width: 220px; max-width: 360px;
-          border-right: 1px solid var(--border, #27272a);
-        }
-        .mux-sess-root.has-selection .mux-sess-list { display: block; }
-        .mux-sess-root:not(.has-selection) .mux-sess-preview {
-          display: flex; /* show empty-state hint */
-        }
-        .mux-sess-back { display: none; }
-      }
-      /* Container queries supported via the sidebar host */
-      #sidebarContent { container-type: inline-size; container-name: muxSidebar; }
+      /* ── Session transcript (sessions rail viewer) ── */
 
       /* Status dots shared by the node-graph Flows lane: the only place colour is
          used in that surface, so state reads instantly without tinting chrome. */
@@ -7892,97 +7451,6 @@ const icons = {
         padding: 16px; color: var(--muted, #71717a); font-style: italic;
         font-size: calc(12.5px * var(--ui-font-scale, 1));
       }
-      /* Fallback if container queries unsupported: use media query on viewport */
-      @supports not (container-type: inline-size) {
-        @media (min-width: 900px) {
-          .mux-sess-split { flex-direction: row; }
-          .mux-sess-list {
-            flex: 0 0 38%;
-            min-width: 220px; max-width: 360px;
-            border-right: 1px solid var(--border, #27272a);
-          }
-          .mux-sess-root.has-selection .mux-sess-list { display: block; }
-          .mux-sess-root:not(.has-selection) .mux-sess-preview { display: flex; }
-          .mux-sess-back { display: none; }
-        }
-      }
-
-      /* ── List rows ──────────────────────────────────────── */
-      .mux-sess-row {
-        padding: 8px 12px;
-        border-bottom: 1px solid rgba(var(--mux-tint-rgb), 0.04);
-        cursor: pointer;
-        transition: background 0.12s;
-      }
-      .mux-sess-row:hover { background: rgba(var(--accent-rgb),0.06); }
-
-      /* ── Session pinning ── */
-      .mux-sess-row { position: relative; }
-      /* Keep the title clear of the pin button. */
-      .mux-sess-row .mux-sess-row-title { padding-right: 22px; }
-      .mux-sess-pin {
-        position: absolute;
-        top: 6px; right: 6px;
-        display: inline-flex; align-items: center; justify-content: center;
-        width: 20px; height: 20px;
-        padding: 0;
-        background: transparent;
-        border: none;
-        border-radius: 4px;
-        color: var(--muted, #71717a);
-        cursor: pointer;
-        opacity: 0;
-        transition: opacity .12s ease, color .12s ease, background .12s ease;
-      }
-      .mux-sess-row:hover .mux-sess-pin,
-      .mux-sess-pin:focus-visible { opacity: 0.65; }
-      .mux-sess-pin:hover { opacity: 1; color: var(--accent, #64b4dc); background: rgba(var(--accent-rgb),0.12); }
-      /* A pinned row keeps its marker visible at all times. */
-      .mux-sess-row.pinned .mux-sess-pin {
-        opacity: 1;
-        color: var(--accent, #64b4dc);
-      }
-      .mux-sess-row.pinned {
-        background: rgba(var(--mux-tint-rgb), 0.022);
-      }
-      .mux-sess-row.active {
-        background: rgba(var(--accent-rgb),0.1);
-        box-shadow: inset 2px 0 0 var(--accent, #64b4dc);
-      }
-      .mux-sess-row-title {
-        font-weight: 600;
-        font-size: calc(12px * var(--ui-font-scale, 1));
-        color: var(--text);
-        line-height: 1.3;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-      }
-      .mux-sess-row-snippet {
-        color: var(--muted, #a1a1aa);
-        font-size: calc(11px * var(--ui-font-scale, 1));
-        margin-top: 3px;
-        line-height: 1.4;
-        display: -webkit-box;
-        -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-        overflow: hidden;
-        word-break: break-word;
-      }
-      .mux-sess-row-meta {
-        margin-top: 6px;
-        display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
-        font-size: calc(10px * var(--ui-font-scale, 1));
-        color: var(--muted, #71717a);
-        min-width: 0;
-      }
-      .mux-sess-row-meta .mux-sess-folder {
-        font-family: var(--font-mono, monospace);
-        font-size: calc(9px * var(--ui-font-scale, 1));
-        opacity: 0.75;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        flex: 1 1 auto; min-width: 0;
-      }
-      .mux-sess-skel { color: var(--muted, #71717a); font-style: italic; opacity: 0.7; }
-      .mux-sess-err { color: var(--red); }
-
       /* ── Chips ──────────────────────────────────────────── */
       .mux-sess-chip {
         display: inline-flex; align-items: center;
@@ -8059,7 +7527,7 @@ const icons = {
       .mux-sess-btn.primary {
         background: var(--accent, #64b4dc);
         border-color: var(--accent, #64b4dc);
-        color: var(--bg, #0b0d10);
+        color: var(--accent-fg, var(--bg, #0b0d10));
         font-weight: 600;
       }
       .mux-sess-btn.primary:hover { filter: brightness(1.08); }
@@ -8067,9 +7535,8 @@ const icons = {
 
       /* ── Message stream ─────────────────────────────────── */
       .mux-sess-body {
-        padding: 14px 16px 28px;
+        padding: 4px 0 12px;
         display: flex; flex-direction: column; gap: 16px;
-        max-width: 920px;
       }
       .mux-sess-msg {
         padding: 2px 0;
@@ -15166,7 +14633,34 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-rail-row:hover .mux-rail-acts, .mux-rail-row:focus-within .mux-rail-acts { display: flex; }
   .mux-rail-acts button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); border-radius: 4px; }
   .mux-rail-acts button:hover, .mux-rail-acts button.on { color: var(--accent); }
+  .mux-rail-row.viewing { background: rgba(var(--mux-tint-rgb), .07); }
   .mux-rail-toggle { margin-right: 6px; }
+
+  /* Read-only session viewer: covers the transcript column; Resume is explicit. */
+  .mux-sv { position: fixed; top: var(--mux-sv-top, 64px); bottom: 0; left: var(--composer-left-inset, 0px); right: var(--composer-right-inset, 0px);
+    z-index: 65; display: flex; flex-direction: column; background: var(--bg); border-top: 1px solid var(--border); }
+  body.mux-rail-open .mux-sv { left: var(--mux-rail-width, 300px); }
+  .mux-sv[hidden] { display: none; }
+  .mux-sv-head { display: flex; align-items: flex-start; gap: 16px; padding: 14px max(24px, calc((100% - var(--mux-content-max, 760px)) / 2)) 12px;
+    border-bottom: 1px solid var(--border); }
+  .mux-sv-ttl { flex: 1; min-width: 0; }
+  .mux-sv-ttl .t { font-size: calc(18px * var(--ui-font-scale, 1)); line-height: 1.3; color: var(--text); overflow-wrap: anywhere; }
+  .mux-sv-ttl .m { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 10px; font-size: calc(11.5px * var(--ui-font-scale, 1)); color: var(--muted); }
+  .mux-sv-acts { display: flex; gap: 6px; flex: 0 0 auto; }
+  .mux-sv-body { flex: 1; overflow-y: auto; padding: 12px max(24px, calc((100% - var(--mux-content-max, 760px)) / 2)) 48px;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-sv-body::-webkit-scrollbar { width: 8px; } .mux-sv-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .mux-sv-more { display: block; margin: 0 auto 12px; }
+  /* Resume replay: earlier turns drawn from the session file, then a divider. */
+  .mux-replay { opacity: .92; }
+  .mux-replay .user-msg { margin-bottom: 12px; }
+  .mux-replay-tools { margin: 4px 0 8px; display: flex; flex-direction: column; gap: 4px; }
+  .mux-replay-tools .mux-sess-msg { margin: 0; padding: 0; border: 0; background: none; }
+  .mux-replay-tools .mux-sess-msg-head { display: none; }
+  .mux-replay-div { display: flex; align-items: center; gap: 10px; margin: 18px 0 10px; color: var(--muted);
+    font-size: calc(11px * var(--ui-font-scale, 1)); letter-spacing: .06em; text-transform: uppercase; }
+  .mux-replay-div::before, .mux-replay-div::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+  @media (max-width: 900px) { body.mux-rail-open .mux-sv { left: 0; } }
   @media (max-width: 900px) {
     body.mux-rail-open .app { margin-left: 0; }
     body.mux-rail-open .input-area { --composer-left-inset: 0px; }
@@ -15257,8 +14751,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   rail.querySelector('#muxRailNew').addEventListener('click', function(){ send('/agent'); });
   search.addEventListener('input', render);
 
-  var items = [], loaded = 0, titles = new Map(), meta = new Map(), current = '';
-  var TITLE_KEY = 'muxSessionTitles.v1', META_KEY = 'muxSessionMeta.v1';
+  var items = [], loaded = 0, titles = new Map(), meta = new Map(), current = '', viewing = '';
+  var TITLE_KEY = 'muxSessionTitles.v2', META_KEY = 'muxSessionMeta.v1';
   try { (JSON.parse(localStorage.getItem(TITLE_KEY) || '[]') || []).forEach(function(p){ titles.set(p[0], p[1]); }); } catch(_) {}
   try { (JSON.parse(localStorage.getItem(META_KEY) || '[]') || []).forEach(function(p){ meta.set(p[0], p[1]); }); } catch(_) {}
   function saveTitles(){ try { localStorage.setItem(TITLE_KEY, JSON.stringify(Array.from(titles.entries()).slice(-400)));
@@ -15291,6 +14785,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     if (d.getTime() >= t0 - 7 * day) return 'Previous 7 days';
     return 'Older';
   }
+  // Titles are plain text: drop markdown emphasis/code/link syntax and [file: ...] tags.
+  function plain(t){ return String(t).replace(/\[file:[^\]]*\]/g, '').replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`~#>]+/g, '').replace(/\s+/g, ' ').trim(); }
   function firstUser(json){
     try {
       var sb = json.stateBag || json, msgs = [];
@@ -15298,7 +14794,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       for (var i = 0; i < msgs.length; i++) {
         if ((msgs[i].role || '').toLowerCase() !== 'user') continue;
         var cs = msgs[i].contents || [];
-        for (var j = 0; j < cs.length; j++) if (cs[j] && typeof cs[j].text === 'string' && cs[j].text.trim()) return cs[j].text.trim().split('\n')[0].slice(0, 120);
+        for (var j = 0; j < cs.length; j++) if (cs[j] && typeof cs[j].text === 'string' && cs[j].text.trim()) return plain(cs[j].text.trim().split('\n')[0]).slice(0, 120);
       }
     } catch(_) {}
     return '';
@@ -15347,7 +14843,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         if (m && m.turns) bits.push(m.turns + (m.turns === 1 ? ' message' : ' messages'));
         bits.forEach(function(x){ var e = document.createElement('span'); e.textContent = x; d.appendChild(e); });
         b.appendChild(t); b.appendChild(d);
-        b.addEventListener('click', function(){ current = s.n; send('/resume ' + s.n); render(); if (window.innerWidth < 900) { st.open = false; save(); apply(); } });
+        row.dataset.session = s.n; if (s.n === viewing) row.classList.add('viewing');
+        // Click views the saved transcript (read-only); Resume is a button there, or double-click.
+        b.addEventListener('click', function(){ view(s.n, s.title); if (window.innerWidth < 900) { st.open = false; save(); apply(); } });
+        b.addEventListener('dblclick', function(){ resume(s.n); });
         var acts = document.createElement('div'); acts.className = 'mux-rail-acts';
         acts.innerHTML = '<button type="button" data-a="pin"></button><button type="button" data-a="copy" title="Copy session ID" aria-label="Copy session ID">\u29c9</button>';
         var pb = acts.firstChild, pinned = p.has(s.n);
@@ -15367,9 +14866,117 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   window.addEventListener('mux:ws-event', function(e){
     var ev = e.detail || {}; if (ev.type !== 'user_input' || typeof ev.text !== 'string') return;
     var w = ev.text.trim().split(/\s+/), c = (w[0] || '').toLowerCase();
-    if (c === '/resume' && w[1]) { current = w[1]; render(); }
+    if (c === '/resume' && w[1]) { current = w[1]; render(); replay(w[1]); }
     else if (['/agent', '/stateless', '/swarm', '/pswarm', '/qc', '/exit'].indexOf(c) >= 0) { current = ''; loaded = 0; if (st.open) setTimeout(load, 1500); else render(); }
   });
+
+  // ── Session viewer (read-only) + resume ──
+  var SV = window.MuxSessionView, cache = new Map(), PAGE = 200;
+  function sessionJson(n){
+    if (cache.has(n)) return Promise.resolve(cache.get(n));
+    return fetch(apiUrl('/api/download/sessions/' + encodeURIComponent(n) + '/agent_session.json'))
+      .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function(j){ cache.set(n, j); return j; });
+  }
+  // Draw the last `shown` messages into `host`, with a "Show earlier" button for the rest.
+  function drawMessages(host, msgs, shown){
+    host.innerHTML = '';
+    var from = Math.max(0, msgs.length - shown);
+    if (from > 0) {
+      var more = document.createElement('button'); more.type = 'button'; more.className = 'mux-sess-btn mux-sv-more';
+      more.textContent = 'Show ' + Math.min(PAGE, from) + ' earlier messages (' + from + ' hidden)';
+      more.addEventListener('click', function(){ drawMessages(host, msgs, shown + PAGE); });
+      host.appendChild(more);
+    }
+    var wrap = document.createElement('div'); wrap.className = 'mux-sess-body';
+    wrap.innerHTML = msgs.slice(from).map(function(m){ return SV.render(m); }).join('') ||
+      '<div class="mux-sess-empty"><div>This session has no messages.</div></div>';
+    host.appendChild(wrap);
+  }
+  var sv = document.createElement('section'); sv.className = 'mux-sv'; sv.id = 'muxSessionViewer'; sv.hidden = true;
+  sv.setAttribute('aria-label', 'Session viewer');
+  sv.innerHTML = '<div class="mux-sv-head"><div class="mux-sv-ttl"><div class="t"></div><div class="m"></div></div>' +
+    '<div class="mux-sv-acts"><button type="button" class="mux-sess-btn primary" data-act="resume">Resume</button>' +
+    '<button type="button" class="mux-sess-btn" data-act="copy">Copy ID</button>' +
+    '<button type="button" class="mux-sess-btn" data-act="download">Download</button>' +
+    '<button type="button" class="mux-sess-btn" data-act="close" title="Close (Esc)" aria-label="Close viewer">\u2715</button></div></div>' +
+    '<div class="mux-sv-body"></div>';
+  document.body.appendChild(sv);
+  var svBody = sv.querySelector('.mux-sv-body');
+  // Mark the viewed row in place (no list rebuild, so a double-click still lands on the same row).
+  function markViewing(){ list.querySelectorAll('.mux-rail-row').forEach(function(r){ r.classList.toggle('viewing', r.dataset.session === viewing); }); }
+  function closeView(){ sv.hidden = true; viewing = ''; markViewing(); }
+  function view(n, title){
+    if (!SV) { resume(n); return; }
+    viewing = n; markViewing();
+    var hdr = document.querySelector('[data-mux="header"]');
+    if (hdr) sv.style.setProperty('--mux-sv-top', Math.round(hdr.getBoundingClientRect().bottom) + 'px');
+    sv.querySelector('.t').textContent = title || n;
+    sv.querySelector('.m').textContent = SV.date(n);
+    svBody.innerHTML = '<div class="loading">Loading session\u2026</div>';
+    sv.hidden = false;
+    sessionJson(n).then(function(j){
+      if (viewing !== n) return;
+      var msgs = SV.messages(j), u = 0, tools = 0;
+      msgs.forEach(function(m){
+        if ((m.role || '').toLowerCase() === 'user') u++;
+        (m.contents || []).forEach(function(c){ if (c && (c['$type'] || c.type) === 'functionCall') tools++; });
+      });
+      var meta = sv.querySelector('.m'); meta.innerHTML = '';
+      [SV.date(n), msgs.length + ' messages', u + ' from you', tools + ' tool calls', n].forEach(function(x){ var e = document.createElement('span'); e.textContent = x; meta.appendChild(e); });
+      drawMessages(svBody, msgs, PAGE); svBody.scrollTop = svBody.scrollHeight;
+    }).catch(function(e){ svBody.innerHTML = ''; var d = document.createElement('div'); d.className = 'error-msg'; d.textContent = 'Could not load the session: ' + e.message; svBody.appendChild(d); });
+  }
+  function resume(n){ closeView(); current = n; render(); send('/resume ' + n); }
+  sv.addEventListener('click', function(e){
+    var b = e.target.closest && e.target.closest('[data-act]'); if (!b || !viewing) return;
+    var n = viewing, a = b.dataset.act;
+    if (a === 'close') closeView();
+    else if (a === 'resume') resume(n);
+    else if (a === 'download') window.open(apiUrl('/api/download/sessions/' + encodeURIComponent(n) + '/agent_session.json'), '_blank', 'noopener');
+    else if (a === 'copy') { try { navigator.clipboard.writeText(n).then(function(){ if (window.muxToast) window.muxToast('Session ID copied', 'success'); }); } catch(_) {} }
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && !sv.hidden) { e.preventDefault(); closeView(); } });
+
+  // After /resume <id> echoes back, draw that session's saved conversation above the live one.
+  // Client-side only: the engine restores the context, the page redraws what was said.
+  // Transcript-style rows: your messages as bubbles, replies as prose, tool calls as collapsed rows.
+  function replayHtml(msgs){
+    var md = window.renderMarkdown || function(t){ return String(t).replace(/[&<>]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c]; }); };
+    var html = '';
+    msgs.forEach(function(m){
+      var role = (m.role || '').toLowerCase(), cs = m.contents || [], text = '', calls = '';
+      cs.forEach(function(c){
+        var t = c && (c['$type'] || c.type);
+        if (t === 'text' && typeof c.text === 'string') text += (text ? '\n\n' : '') + c.text;
+        else if (t === 'functionCall' || t === 'functionResult') calls += SV.render({ role: role, contents: [c] });
+      });
+      if (role === 'user' && text.trim()) html += '<div class="user-msg" data-mux="msg-user"><span class="bubble"><div>' + md(text.replace(/\[file:\s*(.+?)\]\n?/g, '').trim()) + '</div></span></div>';
+      else if (role === 'assistant' && text.trim()) html += '<div class="stream-block" data-mux="msg-agent">' + md(text) + '</div>';
+      if (calls) html += '<div class="mux-replay-tools">' + calls + '</div>';
+    });
+    return html;
+  }
+  function replay(n){
+    if (!SV) return;
+    var out = document.getElementById('output'); if (!out) return;
+    // Placeholder now, so the history lands above the echoed "/resume" and anything the engine prints next.
+    var box = document.createElement('div'); box.className = 'mux-replay'; box.dataset.session = n;
+    var last = out.lastElementChild;
+    if (last && last.classList && last.classList.contains('user-msg')) out.insertBefore(box, last); else out.appendChild(box);
+    sessionJson(n).then(function(j){
+      var msgs = SV.messages(j);
+      if (!msgs.length) { box.remove(); return; }
+      var from = Math.max(0, msgs.length - PAGE);
+      if (from > 0) {
+        var note = document.createElement('div'); note.className = 'mux-replay-div';
+        note.textContent = from + ' earlier messages not shown \u00b7 open the session in the sidebar to read them'; box.appendChild(note);
+      }
+      var list = document.createElement('div'); list.innerHTML = replayHtml(msgs.slice(from)); box.appendChild(list);
+      var div = document.createElement('div'); div.className = 'mux-replay-div'; div.textContent = 'Resumed \u00b7 earlier conversation above'; box.appendChild(div);
+      out.scrollTop = out.scrollHeight;
+    }).catch(function(){ box.remove(); });
+  }
 
   // ── Composer: effort chip + context gauge ──
   var actions = document.querySelector('[data-mux="composer-actions"]');
@@ -15488,6 +15095,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   apply(); poll();
   window.MuxRail = { open: function(){ st.open = true; save(); apply(); }, close: function(){ st.open = false; save(); apply(); },
     reload: function(){ loaded = 0; load(); }, status: function(){ return Object.assign({}, last); } };
+  window.MuxSessions = { view: function(n){ view(n, titles.get(n) || n); }, close: closeView, resume: function(n){ resume(n); } };
   window.MuxComposer = { collapse: function(){ setCollapsed(true); }, expand: function(){ setCollapsed(false, true); },
     get collapsed(){ return !!cst.collapsed; } };
 })();
@@ -15570,8 +15178,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function syncTheme(h, detail) {
     if (!h.theme || typeof h.theme.set !== 'function') return;
     const scheme = (detail && detail.scheme) || root.dataset.muxScheme || 'dark';
-    const bg = (detail && detail.bg) || getComputedStyle(root).getPropertyValue('--bg').trim();
-    try { h.theme.set(scheme, bg); } catch (_) {}
+    const cs = getComputedStyle(root), v = (n) => cs.getPropertyValue(n).trim();
+    const bg = (detail && detail.bg) || v('--bg');
+    // Extra colors let the desktop loading screen match on the next launch (hex only; others are ignored).
+    try { h.theme.set(scheme, bg, { text: v('--text'), muted: v('--muted'), accent: v('--accent') }); } catch (_) {}
   }
   function init() {
     const h = window.muxHost;
