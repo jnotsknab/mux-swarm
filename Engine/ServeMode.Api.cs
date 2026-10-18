@@ -38,7 +38,6 @@ namespace MuxSwarm.Engine;
 ///   GET /ext/{name}/{**path}         static CSS/font/image assets from an enabled extension's web folder
 ///   POST /api/voice/transcribe       raw audio body -> { text, ms, model } via local whisper.cpp
 ///   GET /api/file, /api/file/meta    file bytes / metadata under sandbox, sessions or allowedPaths (ServeMode.Files.cs)
-///   POST /api/file/reveal            show a file in the serve host's file manager
 ///   GET  /api/ext/panels             open extension panels (element trees, see DOCS Extension panels)
 ///   POST /api/ext/panels/event       { extension, id, key?, type, value? } -> a user action on a panel (ui/event)
 /// </summary>
@@ -88,7 +87,6 @@ public static partial class ServeMode
         app.MapGet("/api/themes", HandleThemes);
         app.MapGet("/api/file", HandleFile);
         app.MapGet("/api/file/meta", HandleFileMeta);
-        app.MapPost("/api/file/reveal", HandleFileReveal);
         app.MapGet("/ext/{name}/{**path}", Extensions.ExtensionWeb.HandleAsset);
         app.MapGet("/api/ext/panels", HandleExtPanels);
         app.MapPost("/api/ext/panels/event", HandleExtPanelEvent);

@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using Microsoft.AspNetCore.Http;
+﻿using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.StaticFiles;
 using MuxSwarm.Engine.NativeTools;
 
@@ -14,18 +13,10 @@ namespace MuxSwarm.Engine;
 ///
 ///   GET  /api/file?path=&amp;as=view|download   file bytes (Range supported); as=download adds attachment
 ///   GET  /api/file/meta?path=                  { path, name, size, mtime, mime, kind }
-///   POST /api/file/reveal { path }             show the file in the OS file manager (serve host)
 /// </summary>
 public static partial class ServeMode
 {
     private static readonly FileExtensionContentTypeProvider _mime = new();
-
-    /// <summary>Launches the OS file manager; replaced in tests so nothing opens.</summary>
-    internal static Func<ProcessStartInfo, bool> RevealLauncher = psi =>
-    {
-        try { using var p = Process.Start(psi); return p != null; }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { return false; }
-    };
 
     /// <summary>Roots a web UI file request may resolve under (sandbox, sessions, allowedPaths).</summary>
     internal static IReadOnlyList<string> FileRoots()
@@ -122,37 +113,5 @@ public static partial class ServeMode
             mime = MimeOf(full),
             kind = FileKind(full),
         });
-    }
-
-    private static async Task HandleFileReveal(HttpContext context)
-    {
-        string? path = null;
-        try
-        {
-            using var doc = await System.Text.Json.JsonDocument.ParseAsync(context.Request.Body);
-            if (doc.RootElement.TryGetProperty("path", out var p)) path = p.GetString();
-        }
-        catch (System.Text.Json.JsonException) { }
-        var full = ResolveServableFile(path, FileRoots(), FileExcludes());
-        if (full == null) { await WriteJson(context, 404, new { error = "File not found" }); return; }
-        var psi = RevealCommand(full);
-        if (psi == null || !RevealLauncher(psi)) { await WriteJson(context, 501, new { error = "No file manager available on the serve host" }); return; }
-        await WriteJson(context, 200, new { ok = true, path = full });
-    }
-
-    /// <summary>The OS command that shows <paramref name="full"/> in a file manager (argv, never a shell string).</summary>
-    internal static ProcessStartInfo? RevealCommand(string full)
-    {
-        ProcessStartInfo psi;
-        if (PlatformContext.IsWindows) { psi = new ProcessStartInfo("explorer.exe"); psi.ArgumentList.Add("/select," + full); }
-        else if (PlatformContext.IsMac) { psi = new ProcessStartInfo("open"); psi.ArgumentList.Add("-R"); psi.ArgumentList.Add(full); }
-        else if (PlatformContext.IsLinux) { psi = new ProcessStartInfo("xdg-open"); psi.ArgumentList.Add(Path.GetDirectoryName(full) ?? full); }
-        else return null;
-        psi.UseShellExecute = false;
-        psi.RedirectStandardInput = true;
-        psi.RedirectStandardOutput = true;
-        psi.RedirectStandardError = true;
-        psi.CreateNoWindow = true;
-        return psi;
     }
 }
