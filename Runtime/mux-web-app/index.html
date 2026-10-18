@@ -10061,22 +10061,24 @@ const icons = {
     const serifStack = `'${(state.fontSerif || 'Newsreader').replace(/'/g, "\\'")}', 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif`;
     sv['--font-mono'] = monoStack;
     // A font picked here (built-in or uploaded) beats extension themes: the --mux-font-* tokens a
-    // theme sets in @layer mux.ext are re-pointed in mux.user. Defaults leave the theme's fonts alone
-    // (the Broadsheet layout points --font-sans at the reading serif).
+    // theme sets in @layer mux.ext are re-pointed in mux.user. Defaults leave the theme's fonts alone.
+    // The Broadsheet layout (built-ins but Classic) reads all text from --font-serif, so there a Monospace
+    // pick only changes code; in the original layout (Classic, extension themes) it also sets the prose,
+    // and a Reading font pick sets the prose over it (as before).
+    const classicOnly = {};
     if ((state.fontSans || DEFAULTS.fontSans) !== DEFAULTS.fontSans) { sv['--font-sans'] = sansStack; sv['--mux-font-ui'] = sansStack; }
     if ((state.fontMono || DEFAULTS.fontMono) !== DEFAULTS.fontMono) {
-      sv['--mux-font-prose'] = monoStack;
       sv['--mux-font-code'] = monoStack;
+      classicOnly['--mux-font-prose'] = monoStack;
     }
-    // Reading font: themes that set prose to var(--font-serif) (Broadsheet) pick this up; an explicit
-    // non-default choice also wins over an extension theme's prose font.
     if ((state.fontSerif || DEFAULTS.fontSerif) !== DEFAULTS.fontSerif) {
       sv['--font-serif'] = serifStack;
-      sv['--mux-font-prose'] = serifStack;
+      classicOnly['--mux-font-prose'] = serifStack;
     }
     let _sv = document.getElementById('mux-settings-vars');
     if (!_sv) { _sv = document.createElement('style'); _sv.id = 'mux-settings-vars'; document.head.appendChild(_sv); }
-    _sv.textContent = '@layer mux.user { :root { ' + Object.entries(sv).map(([k, v]) => k + ': ' + v + ';').join(' ') + ' } }';
+    const _d = (o) => Object.entries(o).map(([k, v]) => k + ': ' + v + ';').join(' ');
+    _sv.textContent = '@layer mux.user { :root { ' + _d(sv) + ' } :root[data-mux-style="classic"] { ' + _d(classicOnly) + ' } }';
     loadGoogleFont(state.fontMono);
     loadGoogleFont(state.fontSans);
     loadGoogleFont(state.fontSerif);
