@@ -6694,6 +6694,7 @@ const icons = {
     }
   });
 
+  try { window.muxToast = (m, ty) => showToast(m, ty || 'error'); } catch (_) {}
   function showToast(msg, type = 'success') {
     const t = document.createElement('div');
     t.className = `toast ${type}`;
@@ -9937,7 +9938,8 @@ const icons = {
     customFonts: [],
     warnSessionSwitch: true,
     editorTheme: 'auto',
-    flowsAutoActivity: true
+    flowsAutoActivity: true,
+    fileChips: true
   };
   function loadState(){
     try { return Object.assign({}, DEFAULTS, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); }
@@ -10265,6 +10267,7 @@ const icons = {
         'Background opacity of the floating message bar. Lower = more translucent/glassy.',
         (v) => Math.round(v * 100) + '%'),
       toggleRow('showTimestamps',   'Show message timestamps'),
+      toggleRow('fileChips',        'File chips and image previews', 'Turn file paths in replies into clickable chips (preview, download, show in folder) and show images inline.'),
       toggleRow('showAgentBadge',   'Show agent name badges'),
       toggleRow('showCharCounter',  'Show character counter'),
       toggleRow('collapseCardsByDefault', 'Auto-collapse long cards',
@@ -14705,6 +14708,164 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /MuxEditor ===== -->
+<!-- ===== File chips: agent-mentioned paths become clickable (preview / download / reveal) ===== -->
+<style>
+@layer mux.base {
+  .mux-fchip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; vertical-align: baseline;
+    padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--mux-inset-bg);
+    font-family: var(--mux-font-code); font-size: 0.88em; color: var(--text); cursor: pointer; white-space: nowrap; }
+  .mux-fchip:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .mux-fchip .mux-fchip-ico { color: var(--accent); flex: 0 0 auto; display: inline-flex; }
+  .mux-fchip .mux-fchip-name { overflow: hidden; text-overflow: ellipsis; }
+  .mux-fchip .mux-fchip-act { opacity: 0; color: var(--muted); padding: 0 1px; border: 0; background: none; cursor: pointer; font: inherit; }
+  .mux-fchip:hover .mux-fchip-act, .mux-fchip:focus-within .mux-fchip-act { opacity: 1; }
+  .mux-fchip .mux-fchip-act:hover { color: var(--text); }
+  .mux-fthumb { display: block; margin: 8px 0; max-width: min(100%, 480px); max-height: 320px; border: 1px solid var(--border);
+    border-radius: 4px; background: var(--mux-inset-bg); cursor: zoom-in; object-fit: contain; }
+  body.hide-file-chips .mux-fchip-act, body.hide-file-chips .mux-fthumb { display: none; }
+}
+</style>
+<script>
+(function(){
+  // Paths: Windows drive / UNC, POSIX absolute (with a file extension), and file:// URLs. Relative paths are
+  // too ambiguous in prose, so only those inside inline code (`out/chart.png`) are tried.
+  var ABS = /(?:file:\/\/\/?[^\s<>"'`]+|[A-Za-z]:[\\\/][^\s<>"'`|?*]*?\.[A-Za-z0-9]{1,8}|\\\\[^\s<>"'`|?*\\]+\\[^\s<>"'`|?*]*?\.[A-Za-z0-9]{1,8}|(?:^|(?<=[\s(\[]))\/(?:[\w.@+-]+\/)+[\w.@+-]+\.[A-Za-z0-9]{1,8})(?=[\s)\],.;:!?'"]*(?:\s|$))/g;
+  var REL = /^(?:\.\/)?[\w.@+-]+(?:\/[\w.@+-]+)+\.[A-Za-z0-9]{1,8}$/;
+  var IMG = /\.(png|jpe?g|gif|webp|bmp|avif|svg)$/i;
+  var SKIP = 'A,BUTTON,TEXTAREA,INPUT,SCRIPT,STYLE,PRE,.mux-fchip,.code-block,.prompt-block,.mux-sess-viewer';
+  var meta = new Map(); // path -> Promise<meta|null>
+
+  function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+  function fileUrl(path, as){ return apiUrl('/api/file?path=' + encodeURIComponent(path) + (as ? '&as=' + as : '')); }
+  function lookup(path){
+    if (!meta.has(path)) meta.set(path, fetch('/api/file/meta?path=' + encodeURIComponent(path))
+      .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }));
+    return meta.get(path);
+  }
+  function enabled(){ try { var s = window.MuxSettings && window.MuxSettings.get(); return !s || s.fileChips !== false; } catch(_) { return true; } }
+
+  var ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg>';
+  function chip(m, label){
+    var el = document.createElement('span');
+    el.className = 'mux-fchip'; el.tabIndex = 0; el.title = m.path + ' \u00b7 ' + fmtSize(m.size);
+    el.dataset.path = m.path; el.dataset.kind = m.kind;
+    el.innerHTML = '<span class="mux-fchip-ico">' + ICON + '</span><span class="mux-fchip-name"></span>' +
+      '<button class="mux-fchip-act" data-act="download" title="Download" aria-label="Download">\u2913</button>' +
+      '<button class="mux-fchip-act" data-act="reveal" title="Show in folder" aria-label="Show in folder">\u2197</button>';
+    el.querySelector('.mux-fchip-name').textContent = label;
+    return el;
+  }
+  function fmtSize(n){ return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+
+  // Preview kinds the existing panel understands (its classify() reads the URL extension, which
+  // /api/file?path= does not have, so pass the kind from /api/file/meta).
+  var PREVIEW_KIND = { image: 'image', video: 'video', audio: 'audio', pdf: 'iframe', markdown: 'markdown',
+    html: 'html', json: 'json', table: 'table', text: 'text' };
+  function open(path, kind){
+    if (window.MuxWorkspace && window.MuxWorkspace.open) { window.MuxWorkspace.open(path, kind); return; }
+    if (!window.MuxPreview) return;
+    if (kind === 'binary') { window.open(fileUrl(path, 'download'), '_blank', 'noopener'); return; }
+    var k = PREVIEW_KIND[kind];
+    if (kind === 'image' && /\.svg$/i.test(path)) k = 'svg';
+    window.MuxPreview.show('/api/file?path=' + encodeURIComponent(path), k ? { kind: k } : undefined);
+  }
+  function act(el, what){
+    var path = el.dataset.path;
+    if (what === 'download') { window.open(fileUrl(path, 'download'), '_blank', 'noopener'); return; }
+    if (what === 'reveal') {
+      fetch('/api/file/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: path }) })
+        .then(function(r){ if (!r.ok && window.muxToast) window.muxToast('Could not open a file manager on the Mux host'); }).catch(function(){});
+      return;
+    }
+    open(path, el.dataset.kind);
+  }
+  document.addEventListener('click', function(e){
+    var el = e.target.closest && e.target.closest('.mux-fchip, .mux-fthumb');
+    if (!el) return;
+    e.preventDefault(); e.stopPropagation();
+    var b = e.target.closest('.mux-fchip-act');
+    act(el, b ? b.dataset.act : 'open');
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' && e.target.classList && e.target.classList.contains('mux-fchip')) { e.preventDefault(); act(e.target, 'open'); }
+  });
+
+  function thumbAfter(node, m){
+    if (m.kind !== 'image') return;
+    var host = node.closest && node.closest('.stream-block, .task-complete, .bubble');
+    if (!host || host.querySelectorAll('.mux-fthumb').length >= 6) return;
+    if (host.querySelector('.mux-fthumb[data-path="' + CSS.escape(m.path) + '"]')) return;
+    var img = document.createElement('img');
+    img.className = 'mux-fthumb'; img.loading = 'lazy'; img.alt = m.name; img.dataset.path = m.path; img.dataset.kind = 'image';
+    img.src = fileUrl(m.path);
+    host.appendChild(img);
+  }
+
+  // Replace one text node's matches with chips, once each path is confirmed to exist.
+  function scanText(tn){
+    var text = tn.nodeValue; if (!text || text.length < 4) return;
+    var inCode = tn.parentElement && tn.parentElement.tagName === 'CODE';
+    var hits = [];
+    if (inCode && REL.test(text.trim())) hits.push({ s: text.indexOf(text.trim()), path: text.trim() });
+    else { ABS.lastIndex = 0; var m; while ((m = ABS.exec(text))) hits.push({ s: m.index, path: m[0] }); }
+    if (!hits.length) return;
+    Promise.all(hits.map(function(h){ return lookup(h.path.replace(/[.,;:]+$/, '')); })).then(function(ms){
+      // The block may have re-rendered meanwhile (streaming): only touch a node still in the page.
+      if (!tn.parentNode || !tn.isConnected || tn.nodeValue !== text) return;
+      var frag = document.createDocumentFragment(), pos = 0, any = false;
+      hits.forEach(function(h, i){
+        var m = ms[i]; if (!m) return;
+        var raw = h.path.replace(/[.,;:]+$/, '');
+        frag.appendChild(document.createTextNode(text.slice(pos, h.s)));
+        frag.appendChild(chip(m, inCode ? raw : m.name));
+        pos = h.s + raw.length; any = true;
+        thumbAfter(tn.parentElement, m);
+      });
+      if (!any) return;
+      frag.appendChild(document.createTextNode(text.slice(pos)));
+      var target = (inCode && tn.parentElement.childNodes.length === 1) ? tn.parentElement : tn;
+      if (target.parentNode) target.parentNode.replaceChild(frag, target);
+    });
+  }
+  function scan(root){
+    if (!enabled() || !root || root.nodeType !== 1) return;
+    if (root.closest && root.closest(SKIP)) return;
+    // Markdown images: ![alt](path) arrives as literal text from the renderer.
+    var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: function(n){
+      var p = n.parentElement; return (!p || p.closest(SKIP) && !(p.tagName === 'CODE' && !p.closest('pre'))) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+    var list = []; while (w.nextNode()) list.push(w.currentNode);
+    list.forEach(scanText);
+  }
+
+  // Streaming replaces innerHTML many times; scan settled blocks only (debounced per block).
+  var pending = new Map();
+  function later(el){
+    clearTimeout(pending.get(el));
+    pending.set(el, setTimeout(function(){ pending.delete(el); scan(el); }, 700));
+  }
+  var BLOCKS = '.stream-block, .task-complete, .tool-result, .tool-detail, .bubble, .event';
+  function start(){
+    var out = document.getElementById('output'); if (!out) return;
+    new MutationObserver(function(muts){
+      muts.forEach(function(mu){
+        var t = mu.target.nodeType === 1 ? mu.target : mu.target.parentElement;
+        if (!t || (t.closest && t.closest('.mux-fchip'))) return;
+        // Scan the enclosing block, or each block inside an added subtree (a new turn wrapper).
+        var blk = t.closest && t.closest(BLOCKS);
+        if (blk) { later(blk); return; }
+        mu.addedNodes.forEach(function(n){
+          if (n.nodeType !== 1 || n.classList.contains('mux-fthumb')) return;
+          if (n.matches(BLOCKS)) later(n); else n.querySelectorAll && n.querySelectorAll(BLOCKS).forEach(later);
+        });
+      });
+    }).observe(out, { childList: true, subtree: true, characterData: true });
+    out.querySelectorAll(BLOCKS).forEach(later);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
+  window.MuxFileChips = { scan: scan, lookup: lookup, fileUrl: fileUrl };
+})();
+</script>
+<!-- ===== /File chips ===== -->
 <!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
 <style>
 @layer mux.base {

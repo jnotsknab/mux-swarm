@@ -1336,6 +1336,12 @@ Extension CSS loads into `mux.ext`, so it beats the base styles and the theme co
 
 Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light theme only has to set the core colors.
 
+**File chips.** File paths in agent replies, tool output and inline code (absolute Windows/UNC/POSIX paths,
+`file://` URLs, and sandbox-relative paths inside backticks) become chips once `GET /api/file/meta` confirms the file
+exists under the sandbox, sessions folder or `filesystem.allowedPaths`. Click opens it in the preview panel; the hover
+actions download it or show it in the Mux host's file manager (`POST /api/file/reveal`). Image paths also render an
+inline thumbnail. Turn both off with Settings > File chips and image previews.
+
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
 the bundled Newsreader serif for agent replies (`--font-serif`; change it under Settings > Typography > Reading font),
 square 3px corners and hairline rules, with Paper (light) and Ink (dark) variants that follow the system scheme. Its layout
