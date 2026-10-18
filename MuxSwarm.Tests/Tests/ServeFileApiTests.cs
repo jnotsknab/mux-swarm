@@ -49,6 +49,18 @@ public class ServeFileApiTests : IDisposable
         Assert.Null(ServeMode.ResolveServableFile(Path.Combine(_outside, "secret.txt"), Roots));
 
     [Fact]
+    public void ExcludedFolder_IsNull_EvenInsideAnAllowedRoot() // config folder when serve.configExposed is off
+    {
+        var cfgDir = Path.Combine(_allowed, "Configs");
+        Directory.CreateDirectory(cfgDir);
+        var cfg = Path.Combine(cfgDir, "Config.json");
+        File.WriteAllText(cfg, "{}");
+        Assert.Equal(cfg, ServeMode.ResolveServableFile(cfg, Roots));
+        Assert.Null(ServeMode.ResolveServableFile(cfg, Roots, [cfgDir]));
+        Assert.NotNull(ServeMode.ResolveServableFile(Path.Combine(_allowed, "README.md"), Roots, [cfgDir]));
+    }
+
+    [Fact]
     public void Directory_IsNull() => Assert.Null(ServeMode.ResolveServableFile(_allowed, Roots));
 
     [Theory]
