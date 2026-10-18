@@ -1682,6 +1682,11 @@ tooltip). Click opens it in the preview panel; the hover actions download it or 
 action opens the file with its default app (`muxHost.openPath`; executables and shortcuts are refused). Image paths also render an
 inline thumbnail. Turn both off with Settings > File chips and image previews.
 
+**Workspace.** Files opened from chips collect as tabs in the preview panel. The dock button pins the panel to the
+right edge (drag its left edge to resize; the chat column makes room); the eye button turns on **Follow agent**,
+which opens each file a write/edit/move/download tool reports, so you can watch what the agent is producing. Both
+choices persist per browser. The floating panel stays the default.
+
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
 the bundled Newsreader serif for all text (`--font-serif`; change it under Settings > Typography > Reading font; code,
 diffs and tool output stay monospace), square 3px corners and hairline rules, and a stacked composer (full-width input,
