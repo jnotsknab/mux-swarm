@@ -1602,6 +1602,8 @@ Features: streaming responses, markdown rendering, plan mode prompts, live diffs
 
 Combine with `--daemon` for background triggers alongside the web UI. Combine with `--register` for persistence across reboots.
 
+- `POST /api/voice/transcribe`: raw audio body (`audio/wav`; `webm`/`ogg`/`mpeg` need ffmpeg on PATH, max 25 MB / 5 min) -> `{ text, ms, model }` via the local whisper.cpp assets from `/voice`. Non-speech annotations are filtered and silence returns `""`; `429` when a transcription is already running, `503` when the assets are not installed. Same `serve.auth` gate as `/api`.
+
 ### In-app editor & auth
 
 The web UI includes a bundled **Monaco** code editor (offline, syntax highlighting

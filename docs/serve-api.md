@@ -74,7 +74,25 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 | `/api/update` | `POST`: read-only self-update plan (what would change) | `serve.auth` |
 | `/api/restart` | Restart the server process | `serve.auth` |
 | `/api/shutdown` | Shut down the server process | `serve.auth` |
+| `/api/voice/transcribe` | `POST`: transcribe an audio clip with local whisper.cpp (see below) | `serve.auth` |
 | `/api/hook/{id}` | `POST`: inbound webhook, fires the matching daemon trigger | Per-trigger HMAC/bearer (see below) |
+
+### `POST /api/voice/transcribe`
+
+Server-side speech-to-text for the web UI and desktop shells, using the same local whisper.cpp
+binary and model as the TUI `/voice` command (`Runtime/whisper/`).
+
+- **Body:** raw audio with `Content-Type` `audio/wav`, `audio/webm`, `audio/ogg`, or `audio/mpeg`.
+  Non-WAV input needs `ffmpeg` on `PATH` (converted to 16 kHz mono WAV); without it only WAV is accepted.
+- **Limits:** 25 MB and 5 minutes (`413`). One transcription at a time; a concurrent call gets `429 {"error":"busy"}`.
+- **Response:** `200 { "text": "Hello from Mux Swarm.", "ms": 548, "model": "ggml-base.en-q5_1" }`.
+  Whole-line non-speech annotations (`[BLANK_AUDIO]`, `(air whooshing)`, `[MUSIC]`) are removed and silence returns `""`.
+- **Errors** (`{ "error": "..." }`): `415` unsupported type or undecodable audio, `503` whisper binary or model not
+  installed (run `/voice` once in the TUI to download them; the endpoint never downloads), `504` whisper timed out.
+
+```bash
+curl -X POST -H "Content-Type: audio/wav" --data-binary @clip.wav http://127.0.0.1:6723/api/voice/transcribe
+```
 
 ### Auth (`serve.auth`)
 

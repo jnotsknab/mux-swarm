@@ -36,6 +36,7 @@ namespace MuxSwarm.Engine;
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 ///   GET /api/themes                  extension themes mapped to the web UI's CSS variables (+ web block CSS/fonts/variants)
 ///   GET /ext/{name}/{**path}         static CSS/font/image assets from an enabled extension's web folder
+///   POST /api/voice/transcribe       raw audio body -> { text, ms, model } via local whisper.cpp
 /// </summary>
 public static partial class ServeMode
 {
@@ -91,6 +92,7 @@ public static partial class ServeMode
         app.MapPut("/api/config-files/{which}", HandleConfigFilePut);
         app.MapGet("/api/update", HandleUpdateCheck);
         app.MapPost("/api/update", HandleUpdateApply);
+        app.MapPost("/api/voice/transcribe", Voice.VoiceTranscribeEndpoint.Handle);
     }
 
     // Inbound webhook: POST /api/hook/{id} -> fires the matching daemon "webhook" trigger's goal
