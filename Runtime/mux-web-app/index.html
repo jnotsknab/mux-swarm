@@ -2636,11 +2636,15 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
 }
 </style>
 <style>
-/* ── Broadsheet: the default look (built-in theme, scoped to its id). Centered reading column, serif
-   prose, square-cornered chrome with hairline rules, mono datelines. Tokens first, then a few rules for
-   things tokens cannot express. Other presets are untouched. ── */
+/* ── Broadsheet layout: the default theme's look, shared by every built-in preset except Classic
+   (applyThemeState sets data-mux-style; Classic and extension themes keep the original layout). Centered
+   reading column, the reading serif for all text (code stays mono), square-cornered chrome with hairline
+   rules, a stacked composer. Each preset only brings its palette. Tokens first, then rules tokens cannot
+   express. ── */
 @layer mux.theme {
-  html[data-mux-theme="broadsheet"] {
+  html[data-mux-style="broadsheet"] {
+    --font-sans: var(--font-serif);
+    --mux-font-ui: var(--font-serif);
     --mux-font-prose: var(--font-serif);
     --mux-prose-size: calc(16.5px * var(--ui-font-scale, 1));
     --mux-prose-leading: 1.7;
@@ -2649,59 +2653,72 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     --mux-radius: 0px;
     --mux-bubble-bg: var(--bg-card);
     --mux-bubble-radius: 3px;
-    --mux-composer-bg: var(--bg-input);
+    /* Presets made for the glass look have translucent --bg-input: paint it over --bg so the floating
+       composer stays opaque. */
+    --mux-composer-bg: linear-gradient(var(--bg-input), var(--bg-input)), var(--bg);
     --mux-composer-radius: 4px;
     --mux-composer-shadow: 0 1px 0 var(--border), 0 10px 28px rgba(0, 0, 0, 0.18);
     --mux-surface-raised: var(--bg-card);
     --mux-header-border: var(--border);
     --composer-opacity: 1;
   }
-  html[data-mux-theme="broadsheet"][data-mux-scheme="light"] {
+  html[data-mux-style="broadsheet"][data-mux-scheme="light"] {
     --mux-composer-shadow: 0 1px 0 var(--border), 0 8px 24px rgba(20, 24, 32, 0.07);
+  }
+  /* Matrix keeps its terminal type. */
+  html[data-mux-style="broadsheet"][data-mux-theme="matrix"] {
+    --font-sans: var(--font-mono); --mux-font-ui: var(--font-mono); --mux-font-prose: var(--font-mono);
   }
 }
 @layer mux.base {
-  html[data-mux-theme="broadsheet"] [data-mux="composer"] {
+  html[data-mux-style="broadsheet"] [data-mux="composer"] {
     left: 50%; right: auto; transform: translateX(-50%);
     width: min(calc(var(--mux-content-max) + 160px), calc(100% - 48px - var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)));
     margin-left: calc((var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)) / 2);
     backdrop-filter: none; -webkit-backdrop-filter: none;
+    /* Stacked: the textarea gets the full width, the pickers and actions sit on a row below (Send right). */
+    flex-direction: column; align-items: stretch; gap: 6px;
   }
-  html[data-mux-theme="broadsheet"] .stream-block { padding: 6px 4px; }
-  html[data-mux-theme="broadsheet"] .stream-block :is(h1, h2, h3, h4) {
+  html[data-mux-style="broadsheet"] .input-area .btn-group { align-self: stretch; }
+  html[data-mux-style="broadsheet"] .input-area .send-btn { margin-left: auto; }
+  html[data-mux-style="broadsheet"] .output { padding-bottom: 140px; }
+  /* Chrome that hard-codes the mono stack reads in the UI font too; code, diffs and tool output stay mono. */
+  html[data-mux-style="broadsheet"] :is(.input-area textarea, .send-btn, .session-btn, .model-btn, .cmd-palette, .agent-badge, .msg-time) {
+    font-family: var(--mux-font-ui);
+  }
+  html[data-mux-style="broadsheet"] .stream-block { padding: 6px 4px; }
+  html[data-mux-style="broadsheet"] .stream-block :is(h1, h2, h3, h4) {
     font-family: var(--font-serif); font-weight: 600; color: var(--text); letter-spacing: -0.005em;
   }
-  html[data-mux-theme="broadsheet"] .stream-block :is(h1, h2) { border-bottom: 1px solid var(--border); }
-  html[data-mux-theme="broadsheet"] .stream-block code {
+  html[data-mux-style="broadsheet"] .stream-block :is(h1, h2) { border-bottom: 1px solid var(--border); }
+  html[data-mux-style="broadsheet"] .stream-block code {
     font-weight: 400; color: var(--text); background: var(--bg-card); border: 1px solid var(--border); border-radius: 2px;
   }
-  html[data-mux-theme="broadsheet"] .stream-block pre { border: 1px solid var(--border); border-radius: 2px; }
-  html[data-mux-theme="broadsheet"] .stream-block blockquote { border-left-width: 2px; background: transparent; }
-  html[data-mux-theme="broadsheet"] .stream-block a { color: var(--accent); border-bottom: 1px solid rgba(var(--accent-rgb), 0.35); }
-  /* Dateline: agent name and time in small mono caps, ruled off from the previous turn. */
-  html[data-mux-theme="broadsheet"] .agent-turn {
+  html[data-mux-style="broadsheet"] .stream-block pre { border: 1px solid var(--border); border-radius: 2px; }
+  html[data-mux-style="broadsheet"] .stream-block blockquote { border-left-width: 2px; background: transparent; }
+  html[data-mux-style="broadsheet"] .stream-block a { color: var(--accent); border-bottom: 1px solid rgba(var(--accent-rgb), 0.35); }
+  /* Dateline: agent name and time in tracked caps, ruled off from the previous turn. */
+  html[data-mux-style="broadsheet"] .agent-turn {
     margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--border);
   }
-  html[data-mux-theme="broadsheet"] .agent-badge {
-    font-family: var(--font-mono); letter-spacing: 0.12em; color: var(--muted); font-weight: 600;
-  }
-  html[data-mux-theme="broadsheet"] .agent-turn .msg-time { font-family: var(--font-mono); opacity: 0.7; }
+  html[data-mux-style="broadsheet"] .agent-badge { letter-spacing: 0.12em; color: var(--muted); font-weight: 600; }
+  html[data-mux-style="broadsheet"] .agent-turn .msg-time { opacity: 0.7; font-variant-numeric: tabular-nums; }
   /* Tool calls and events read as margin notes: mono, small, quiet. */
-  html[data-mux-theme="broadsheet"] :is(.tool-call, .tool-result) { font-family: var(--font-mono); }
-  html[data-mux-theme="broadsheet"] .user-msg .bubble { border-color: var(--border); }
+  html[data-mux-style="broadsheet"] :is(.tool-call, .tool-result) { font-family: var(--font-mono); }
+  html[data-mux-style="broadsheet"] .user-msg .bubble { border-color: var(--border); }
   /* Square controls: buttons, pills and chips share the 3px corner of the frame. */
-  html[data-mux-theme="broadsheet"] :is(.send-btn, .stop-btn, .mic-btn, .upload-btn, .session-btn, .model-btn, .pill-tag, .mux-token-badge, .icon-btn, .mux-preview-fab) { border-radius: 3px; }
-  html[data-mux-theme="broadsheet"] .send-btn { color: var(--mux-on-accent); }
-  html[data-mux-theme="broadsheet"] :is(.model-menu, .session-menu, .cmd-palette, .theme-panel, .mux-settings) { border-radius: 4px; }
-  html[data-mux-theme="broadsheet"] [data-mux="header"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  html[data-mux-theme="broadsheet"] .header-logo { font-family: var(--font-serif); font-weight: 600; letter-spacing: 0.04em; }
-  html[data-mux-theme="broadsheet"] [data-mux="splash-title"] {
+  html[data-mux-style="broadsheet"] :is(.send-btn, .stop-btn, .mic-btn, .upload-btn, .session-btn, .model-btn, .pill-tag, .mux-token-badge, .icon-btn, .mux-preview-fab) { border-radius: 3px; }
+  html[data-mux-style="broadsheet"] .send-btn { color: var(--mux-on-accent); }
+  html[data-mux-style="broadsheet"] :is(.model-menu, .session-menu, .cmd-palette, .theme-panel, .mux-settings) { border-radius: 4px; }
+  html[data-mux-style="broadsheet"] [data-mux="header"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  html[data-mux-style="broadsheet"] .header-logo { font-family: var(--font-serif); font-weight: 600; letter-spacing: 0.04em; }
+  html[data-mux-style="broadsheet"] [data-mux="splash-title"] {
     font-family: var(--font-serif); font-weight: 500; letter-spacing: 0.06em;
     background: none; -webkit-text-fill-color: currentColor; color: var(--text);
   }
-  html[data-mux-theme="broadsheet"] [data-mux="splash-tip"] { font-family: var(--font-serif); font-size: calc(15px * var(--ui-font-scale, 1)); }
+  html[data-mux-style="broadsheet"] [data-mux="splash-tip"] { font-family: var(--font-serif); font-size: calc(15px * var(--ui-font-scale, 1)); }
   @media (max-width: 640px) {
-    html[data-mux-theme="broadsheet"] [data-mux="composer"] { width: calc(100% - 16px); }
+    html[data-mux-style="broadsheet"] [data-mux="composer"] { width: calc(100% - 16px); }
   }
 }
 </style>
@@ -3063,7 +3080,7 @@ const icons = {
   
   const themes = [
     // Default look: Mux's own newsprint/ink palette (Paper light, Ink dark; follows the system).
-    // Layout and typography for it live in the `html[data-mux-theme="broadsheet"]` block.
+    // Its layout (shared by every built-in except Classic) lives in the `html[data-mux-style="broadsheet"]` block.
     { id: 'broadsheet', name: 'Broadsheet', dot: '#1f3a5f', defaultVariant: 'system',
       vars: { '--bg': '#141820', '--bg-card': '#1b2029', '--bg-input': '#20262f', '--border': 'rgba(196, 204, 216, 0.14)', '--text': '#e8e6e1', '--muted': '#9aa1ab', '--blue': '#86a8d8', '--green': '#7fb592', '--amber': '#d6aa5b', '--red': '#e07b72', '--agent': '#a99ad6', '--accent': '#8fb0e0', '--accent-rgb': '143, 176, 224', '--green-rgb': '127, 181, 146', '--blue-rgb': '134, 168, 216', '--amber-rgb': '214, 170, 91', '--red-rgb': '224, 123, 114', '--agent-rgb': '169, 154, 214' },
       variants: {
@@ -3136,6 +3153,8 @@ const icons = {
     const _changed = _root.dataset.muxTheme !== baseTheme.id || _root.dataset.muxScheme !== _scheme;
     _root.dataset.muxTheme = baseTheme.id;
     _root.dataset.muxScheme = _scheme;
+    // Layout family: built-ins share the Broadsheet layout; Classic and extension themes keep the original one.
+    _root.dataset.muxStyle = (baseTheme.ext || baseTheme.id === 'zinc') ? 'classic' : 'broadsheet';
     if (typeof applyExtensionAssets === 'function') { applyExtensionAssets(baseTheme, _extAssetStamp); renderVariantControl(baseTheme); }
     // Fires on every apply (custom color edits included); `changed` says whether id/scheme moved.
     {
@@ -10084,10 +10103,10 @@ const icons = {
     const sansStack = `'${(state.fontSans || 'IBM Plex Sans').replace(/'/g, "\\'")}', 'IBM Plex Sans', -apple-system, system-ui, sans-serif`;
     const serifStack = `'${(state.fontSerif || 'Newsreader').replace(/'/g, "\\'")}', 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif`;
     sv['--font-mono'] = monoStack;
-    sv['--font-sans'] = sansStack;
     // A font picked here (built-in or uploaded) beats extension themes: the --mux-font-* tokens a
-    // theme sets in @layer mux.ext are re-pointed in mux.user. Defaults leave the theme's fonts alone.
-    if ((state.fontSans || DEFAULTS.fontSans) !== DEFAULTS.fontSans) sv['--mux-font-ui'] = sansStack;
+    // theme sets in @layer mux.ext are re-pointed in mux.user. Defaults leave the theme's fonts alone
+    // (the Broadsheet layout points --font-sans at the reading serif).
+    if ((state.fontSans || DEFAULTS.fontSans) !== DEFAULTS.fontSans) { sv['--font-sans'] = sansStack; sv['--mux-font-ui'] = sansStack; }
     if ((state.fontMono || DEFAULTS.fontMono) !== DEFAULTS.fontMono) {
       sv['--mux-font-prose'] = monoStack;
       sv['--mux-font-code'] = monoStack;
@@ -10301,8 +10320,8 @@ const icons = {
       sliderRow('uiSpacingScale', 'Card spacing', 0.5, 2.0, 0.1, 'Vertical gap between chat cards and pills.', (v) => v.toFixed(1) + 'x'),
       sliderRow('streamPreviewLines', 'Collapsed preview lines', 1, 6, 1, 'How many lines of a long response stay visible when its card is collapsed.', (v) => v + (v === 1 ? ' line' : ' lines')),
       fontSelectRow('fontMono', 'Monospace font', 'mono', 'Used for chat output, code, paths.'),
-      fontSelectRow('fontSans', 'Sans-serif font', 'sans', 'Used for headings, labels, buttons.'),
-      fontSelectRow('fontSerif', 'Reading font', 'serif', 'Agent replies in the Broadsheet theme (and any theme that uses the reading font).'),
+      fontSelectRow('fontSans', 'Sans-serif font', 'sans', 'Headings, labels and buttons in Classic and extension themes (a non-default pick applies everywhere).'),
+      fontSelectRow('fontSerif', 'Reading font', 'serif', 'All text in the built-in themes except Classic; code stays monospace.'),
       fontUploadRow(),
     ]);
     section('Display', [
