@@ -1342,6 +1342,11 @@ exists under the sandbox, sessions folder or `filesystem.allowedPaths`. Click op
 actions download it or show it in the Mux host's file manager (`POST /api/file/reveal`). Image paths also render an
 inline thumbnail. Turn both off with Settings > File chips and image previews.
 
+**Workspace.** Files opened from chips collect as tabs in the preview panel. The dock button pins the panel to the
+right edge (drag its left edge to resize; the chat column makes room); the eye button turns on **Follow agent**,
+which opens each file a write/edit/move/download tool reports, so you can watch what the agent is producing. Both
+choices persist per browser. The floating panel stays the default.
+
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
 the bundled Newsreader serif for agent replies (`--font-serif`; change it under Settings > Typography > Reading font),
 square 3px corners and hairline rules, with Paper (light) and Ink (dark) variants that follow the system scheme. Its layout

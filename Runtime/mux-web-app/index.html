@@ -3461,7 +3461,8 @@ const icons = {
     ws.onmessage = (e) => {
       for (const line of e.data.split('\n')) {
         if (!line.trim()) continue;
-        try { handleEvent(JSON.parse(line)); }
+        let _ev = null;
+        try { _ev = JSON.parse(line); handleEvent(_ev); }
         catch {
           // Filter splash noise
           if (/^[│╭╰╮╯┌┐└┘─═╗╔╝╚║███▄▀◠◡█\s|]+$/.test(line.trim())) continue;
@@ -3470,6 +3471,8 @@ const icons = {
           if (line.trim() === '') continue;
           appendText(line, 'event-info');
         }
+        // Read-only event tap for add-ons (workspace follow mode); fired after the transcript handled it.
+        if (_ev) { try { window.dispatchEvent(new CustomEvent('mux:ws-event', { detail: _ev })); } catch (_) {} }
       }
     };
   }
@@ -14866,6 +14869,137 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /File chips ===== -->
+<!-- ===== Workspace: dock the preview panel to the right, keep a file history, optionally follow the agent ===== -->
+<style>
+@layer mux.base {
+  .mux-preview-panel.docked {
+    top: 0 !important; right: 0 !important; left: auto !important; bottom: 0 !important;
+    width: var(--mux-workspace-width, 44vw) !important; height: 100vh !important; max-width: 80vw;
+    border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; box-shadow: none;
+  }
+  .mux-preview-panel.docked .mux-preview-resize { display: none; }
+  .mux-preview-panel.docked .mux-preview-header { cursor: default; }
+  body.mux-ws-docked .app { margin-right: var(--mux-workspace-width, 44vw); }
+  body.mux-ws-docked .input-area { --composer-right-inset: var(--mux-workspace-width, 44vw); }
+  .mux-ws-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; display: none; z-index: 2; }
+  .mux-preview-panel.docked .mux-ws-edge { display: block; }
+  .mux-ws-tabs { display: none; gap: 2px; padding: 4px 6px 0; border-bottom: 1px solid var(--border); background: var(--bg-card);
+    overflow-x: auto; flex: 0 0 auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-preview-panel.has-tabs .mux-ws-tabs { display: flex; }
+  .mux-ws-tab { display: inline-flex; align-items: center; gap: 4px; max-width: 200px; padding: 4px 8px; border: 1px solid transparent;
+    border-bottom: 0; border-radius: 4px 4px 0 0; background: none; color: var(--muted); font: inherit; font-size: calc(12px * var(--ui-font-scale, 1));
+    cursor: pointer; white-space: nowrap; }
+  .mux-ws-tab .nm { overflow: hidden; text-overflow: ellipsis; }
+  .mux-ws-tab.active { color: var(--text); background: var(--bg); border-color: var(--border); }
+  .mux-ws-tab .x { opacity: .5; padding: 0 2px; }
+  .mux-ws-tab .x:hover { opacity: 1; color: var(--red); }
+  .mux-preview-btn.on { color: var(--accent); background: rgba(var(--accent-rgb), 0.12); }
+  @media (max-width: 900px) {
+    body.mux-ws-docked .app { margin-right: 0; }
+    body.mux-ws-docked .input-area { --composer-right-inset: 0px; }
+    .mux-preview-panel.docked { width: 100vw !important; max-width: none; }
+  }
+}
+</style>
+<script>
+(function(){
+  var panel = document.getElementById('muxPreviewPanel'); if (!panel || !window.MuxPreview) return;
+  var header = document.getElementById('muxPreviewHeader'), body = document.getElementById('muxPreviewBody');
+  var closeBtn = document.getElementById('muxPreviewClose');
+  var LS = 'muxWorkspace.v1';
+  var st = (function(){ try { return Object.assign({ docked: false, follow: false, width: 0 }, JSON.parse(localStorage.getItem(LS) || '{}')); } catch(_) { return { docked: false, follow: false, width: 0 }; } })();
+  function save(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch(_) {} }
+  var tabs = []; var active = null; var MAX_TABS = 12;
+
+  function btn(id, title, svg){
+    var b = document.createElement('button'); b.className = 'mux-preview-btn'; b.id = id; b.title = title; b.type = 'button';
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + svg + '</svg>';
+    header.insertBefore(b, closeBtn); return b;
+  }
+  var followBtn = btn('muxWsFollow', 'Follow agent: open files as the agent writes them', '<circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/>');
+  var dockBtn = btn('muxWsDock', 'Dock to the side / float', '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="14" y1="3" x2="14" y2="21"/>');
+  var strip = document.createElement('div'); strip.className = 'mux-ws-tabs'; strip.id = 'muxWsTabs';
+  panel.insertBefore(strip, body);
+  var edge = document.createElement('div'); edge.className = 'mux-ws-edge'; panel.appendChild(edge);
+
+  function applyDock(){
+    panel.classList.toggle('docked', !!st.docked);
+    document.body.classList.toggle('mux-ws-docked', !!st.docked && panel.classList.contains('open'));
+    dockBtn.classList.toggle('on', !!st.docked);
+    followBtn.classList.toggle('on', !!st.follow);
+    if (st.width) document.documentElement.style.setProperty('--mux-workspace-width', st.width + 'px');
+  }
+  // The panel opens/closes from many places (FAB, file browser, chips); keep the page margin in sync.
+  new MutationObserver(applyDock).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  dockBtn.addEventListener('click', function(){ st.docked = !st.docked; panel.classList.remove('maximized'); save(); applyDock(); });
+  followBtn.addEventListener('click', function(){ st.follow = !st.follow; save(); applyDock(); });
+
+  edge.addEventListener('pointerdown', function(e){
+    e.preventDefault(); edge.setPointerCapture(e.pointerId);
+    function mv(ev){ st.width = Math.max(320, Math.min(window.innerWidth * 0.8, window.innerWidth - ev.clientX)); applyDock(); }
+    function up(ev){ edge.removeEventListener('pointermove', mv); edge.removeEventListener('pointerup', up); try { edge.releasePointerCapture(ev.pointerId); } catch(_) {} save(); }
+    edge.addEventListener('pointermove', mv); edge.addEventListener('pointerup', up);
+  });
+
+  function renderTabs(){
+    strip.innerHTML = '';
+    panel.classList.toggle('has-tabs', tabs.length > 0);
+    tabs.forEach(function(t){
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-ws-tab' + (t.path === active ? ' active' : ''); b.title = t.path;
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.path.split(/[\\/]/).pop();
+      var x = document.createElement('span'); x.className = 'x'; x.textContent = '\u00d7'; x.title = 'Close';
+      b.appendChild(nm); b.appendChild(x);
+      b.addEventListener('click', function(e){
+        if (e.target === x) { tabs = tabs.filter(function(o){ return o !== t; }); if (active === t.path) { active = null; var n = tabs[tabs.length - 1]; if (n) show(n); } renderTabs(); return; }
+        show(t);
+      });
+      strip.appendChild(b);
+    });
+  }
+  var PREVIEW_KIND = { image: 'image', video: 'video', audio: 'audio', pdf: 'iframe', markdown: 'markdown', html: 'html', json: 'json', table: 'table', text: 'text' };
+  var urlIn = document.getElementById('muxPreviewUrl');
+  function show(t){
+    active = t.path; renderTabs();
+    var k = PREVIEW_KIND[t.kind]; if (t.kind === 'image' && /\.svg$/i.test(t.path)) k = 'svg';
+    window.MuxPreview.show('/api/file?path=' + encodeURIComponent(t.path), k ? { kind: k } : undefined);
+    if (urlIn) urlIn.title = t.path; // full path on hover; the bar keeps the loadable /api/file URL
+  }
+  function open(path, kind){
+    var t = tabs.find(function(o){ return o.path === path; });
+    if (!t) { t = { path: path, kind: kind || 'text' }; tabs.push(t); if (tabs.length > MAX_TABS) tabs.shift(); }
+    if (kind) t.kind = kind;
+    if (t.kind === 'binary') { window.open((window.MuxFileChips ? window.MuxFileChips.fileUrl(path, 'download') : '/api/file?as=download&path=' + encodeURIComponent(path)), '_blank', 'noopener'); return; }
+    show(t);
+  }
+
+  // Follow agent: when a write/edit/move/download tool reports a file path, open it (debounced).
+  var WRITE_TOOL = /(write|edit|create|save|move|rename|download|export|render|screenshot)/i;
+  var PATH_IN = /(?:[A-Za-z]:[\\\/]|\\\\|\/)[^\s"'`<>|*?]+\.[A-Za-z0-9]{1,8}/g;
+  var followTimer = 0;
+  function onEvent(ev){
+    if (!st.follow || !ev || (ev.type !== 'tool_result' && ev.type !== 'function_result')) return;
+    if (!WRITE_TOOL.test(ev.tool || '')) return;
+    var text = String(ev.result || ev.summary || ev.output || '');
+    var m = text.match(PATH_IN); if (!m) return;
+    var path = m[m.length - 1].replace(/[.,;:)]+$/, '');
+    clearTimeout(followTimer);
+    followTimer = setTimeout(function(){
+      var look = window.MuxFileChips ? window.MuxFileChips.lookup(path) : Promise.resolve(null);
+      look.then(function(meta){
+        if (!meta) return;
+        var t = tabs.find(function(o){ return o.path === meta.path; });
+        if (t && active === t.path) { show(t); return; } // refresh the open file
+        open(meta.path, meta.kind);
+      });
+    }, 400);
+  }
+  window.addEventListener('mux:ws-event', function(e){ onEvent(e.detail); });
+
+  applyDock();
+  window.MuxWorkspace = { open: open, tabs: function(){ return tabs.slice(); }, state: function(){ return Object.assign({}, st); } };
+})();
+</script>
+<!-- ===== /Workspace ===== -->
 <!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
 <style>
 @layer mux.base {
