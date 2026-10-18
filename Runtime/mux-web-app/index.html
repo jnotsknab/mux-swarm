@@ -9939,6 +9939,13 @@ const icons = {
     const sansStack = `'${(state.fontSans || 'IBM Plex Sans').replace(/'/g, "\\'")}', 'IBM Plex Sans', -apple-system, system-ui, sans-serif`;
     sv['--font-mono'] = monoStack;
     sv['--font-sans'] = sansStack;
+    // A font picked here (built-in or uploaded) beats extension themes: the --mux-font-* tokens a
+    // theme sets in @layer mux.ext are re-pointed in mux.user. Defaults leave the theme's fonts alone.
+    if ((state.fontSans || DEFAULTS.fontSans) !== DEFAULTS.fontSans) sv['--mux-font-ui'] = sansStack;
+    if ((state.fontMono || DEFAULTS.fontMono) !== DEFAULTS.fontMono) {
+      sv['--mux-font-prose'] = monoStack;
+      sv['--mux-font-code'] = monoStack;
+    }
     let _sv = document.getElementById('mux-settings-vars');
     if (!_sv) { _sv = document.createElement('style'); _sv.id = 'mux-settings-vars'; document.head.appendChild(_sv); }
     _sv.textContent = '@layer mux.user { :root { ' + Object.entries(sv).map(([k, v]) => k + ': ' + v + ';').join(' ') + ' } }';
