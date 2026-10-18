@@ -49,7 +49,8 @@ interface MuxHost {
     controls: "web" | "native-left" | "native-right";
   };
   voice?: { start(): Promise<void>; stop(): Promise<string> };   // stop() returns the transcript
-  theme?: { set(scheme: "light" | "dark", bg: string): void };  // native window background + dark chrome
+  // native window background + dark chrome; colors (#rrggbb) let the shell theme its own loading screen
+  theme?: { set(scheme: "light" | "dark", bg: string, colors?: { text?: string; muted?: string; accent?: string }): void };
   notify?(title: string, body: string): void;
   openExternal?(url: string): void;
   openPath?(path: string): Promise<void>;   // open a local file with its default app; rejects for executables/folders
