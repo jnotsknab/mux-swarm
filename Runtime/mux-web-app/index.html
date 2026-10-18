@@ -14592,7 +14592,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 @layer mux.base {
   [data-mux="titlebar-slot"] { display: none; }
   html[data-mux-host] [data-mux="titlebar-slot"] { display: flex; align-items: stretch; align-self: stretch; flex-shrink: 0; margin: -16px -24px -16px 6px; }
+  /* The header clips (overflow: hidden) for its collapse animation; the slot bleeds into .app's
+     right padding so the controls sit flush with the window edge, which needs visible overflow. */
   html[data-mux-host] .header { -webkit-user-select: none; user-select: none; app-region: drag; -webkit-app-region: drag; }
+  html[data-mux-host] body:not(.header-collapsed) .header { overflow: visible; }
+  html[data-mux-host] body.header-collapsed [data-mux="titlebar-slot"] { display: none; }
   html[data-mux-host] .header :is(button, a, input, select, textarea, .header-status, [data-mux="titlebar-slot"]) { app-region: no-drag; -webkit-app-region: no-drag; }
   html[data-mux-controls="native-left"] .header { padding-left: 72px; }
   html[data-mux-controls="native-right"] [data-mux="titlebar-slot"] { width: 120px; }
