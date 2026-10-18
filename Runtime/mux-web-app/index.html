@@ -96,9 +96,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=overlays-content">
 <title>Mux-Swarm</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2309090b'/><path d='M30 70 L30 30 L50 50 L70 30 L70 70' fill='none' stroke='%23ffffff' stroke-width='8' stroke-linecap='round' stroke-linejoin='round'/><circle cx='30' cy='30' r='6' fill='%2364B4DC'/><circle cx='50' cy='50' r='6' fill='%2364B4DC'/><circle cx='70' cy='30' r='6' fill='%2364B4DC'/><circle cx='30' cy='70' r='6' fill='%2364B4DC'/><circle cx='70' cy='70' r='6' fill='%2364B4DC'/></svg>" type="image/svg+xml">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="fonts/fonts.css" rel="stylesheet">
 <style>
+@layer mux.base, mux.strong, mux.theme, mux.ext, mux.user;
+@layer mux.base {
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -131,17 +132,39 @@
   --ui-line-height: 1.6;
   --ui-spacing-scale: 1;
 }
+:root {
+  /* Semantic skin tokens (stable contract, see DOCS.md "Customizing the web UI").
+     Defaults reproduce the stock look; extension CSS overrides them in @layer mux.ext. */
+  --mux-font-ui: var(--font-sans);
+  --mux-font-prose: var(--font-mono);
+  --mux-font-code: var(--font-mono);
+  --mux-prose-size: calc(15.5px * var(--ui-font-scale, 1));
+  --mux-prose-leading: var(--ui-line-height);
+  --mux-content-max: 100%;
+  --mux-radius: 8px;
+  --mux-bubble-bg: rgba(var(--accent-rgb), 0.10);
+  --mux-bubble-fg: var(--text);
+  --mux-bubble-radius: 16px 16px 4px 16px;
+  --mux-composer-bg: color-mix(in srgb, var(--bg) calc(var(--composer-opacity, 0.62) * 100%), transparent);
+  --mux-composer-shadow: 0 8px 30px rgba(0,0,0,0.38), 0 1px 0 rgba(255,255,255,0.04) inset;
+  --mux-composer-radius: 16px;
+  --mux-surface: var(--bg-card);
+  --mux-surface-raised: var(--bg-input);
+  --mux-code-bg: var(--bg-input);
+  --mux-header-bg: transparent;
+  --mux-header-border: var(--border);
+}
 /* Apply user font/density preferences globally */
 /* ── User typography (font size / line-height / density) ── */
-html, body { font-family: var(--font-sans) !important; }
+html, body {  }
 html, body,
 #output, .message, .bubble,
 .panel-block, .panel-body,
 .mux-md-view,
 .input-area textarea,
 .user-msg .bubble {
-  font-size: var(--ui-font-size) !important;
-  line-height: var(--ui-line-height) !important;
+  
+  
 }
 /* Apply only the line-height to elements that own their font-size
    via calc(Npx * var(--ui-font-scale, 1)) rules. This keeps the user's
@@ -203,32 +226,32 @@ html, body,
     body.hide-reasoning .reasoning-block { display: none; }
 .stream-block, .stream-block p, .stream-block li,
 .stream-block .stream-body {
-  line-height: var(--ui-line-height) !important;
+  
 }
 /* Code blocks inside agent cards keep a readable fixed leading - the user's
    prose line-height shouldn't stretch monospace code listings. */
 .stream-block pre, .stream-block pre code {
-  line-height: 1.55 !important;
+  
 }
 /* Status chips stay tight regardless of user line-height preference -
    they're inline indicators, not prose. */
 .mux-token-badge, .mux-save-banner, .mux-compact-row {
-  line-height: 1.2 !important;
+  
 }
 .header-logo, .sidebar-tab, .mux-settings-btn, .mng-input, .mng-select {
-  font-family: var(--font-sans) !important;
+  
 }
 /* Chat output uses the monospace "output" font. Sessions preview and other
    .mux-md-view consumers stay on the UI sans font (default body). */
 #output, #output .message, #output .bubble, #output .mux-md-view, #output .stream-block,
 #output .user-msg .bubble {
-  font-family: var(--font-mono) !important;
+  
 }
 /* Spacing scale multiplies vertical gaps between cards/pills */
 .event, .task-complete, .delegation, .panel-block,
 .mux-token-badge, .mux-save-banner, .mux-compact-row {
-  margin-top: calc(8px * var(--ui-spacing-scale)) !important;
-  margin-bottom: calc(8px * var(--ui-spacing-scale)) !important;
+  
+  
 }
 
 
@@ -350,7 +373,8 @@ body:has(.app.sidebar-open) .input-area { --composer-right-inset: var(--sidebar-
 /* ── Header ── */
 .header {
   padding: 16px 0;
-  border-bottom: 1px solid var(--border);
+  background: var(--mux-header-bg);
+  border-bottom: 1px solid var(--mux-header-border);
   display: flex;
   align-items: center;
   gap: 16px;
@@ -491,8 +515,8 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 
 /* ── Sidebar ── */
 .sidebar {
-  position: fixed; top: 0; right: 0; width: var(--sidebar-width); height: 100vh; height: 100dvh;
-  background: var(--bg-card); border-left: 1px solid var(--border);
+    position: fixed; top: 0; right: 0; width: var(--sidebar-width); height: 100vh; height: 100dvh;
+  background: var(--mux-surface); border-left: 1px solid var(--border);
   display: flex; flex-direction: column; transform: translateX(100%);
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 100;
   backdrop-filter: blur(20px);
@@ -574,7 +598,11 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .sidebar-content.drag-over { background: rgba(var(--accent-rgb),0.05); outline: 2px dashed var(--accent); outline-offset: -4px; }
 
 /* ── Output ── */
-.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth; }
+.output { flex: 1; overflow-y: auto; padding: 16px 0; scroll-behavior: smooth;
+  /* Reading column: pad the scroller (never margin:auto rows, which would also center
+     fit-content rows such as events and the thinking bar away from the text edge). */
+  padding-left: max(0px, calc((100% - var(--mux-content-max)) / 2));
+  padding-right: max(0px, calc((100% - var(--mux-content-max)) / 2)); }
 /* Give #output a definite height so the splash's percentage min-height
    resolves and the empty state optically centers. */
 .output { min-height: 0; }
@@ -695,22 +723,22 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
      fade/unfade carries the state change. */
   background: transparent;
   border-left: none;
-  padding: 12px 16px; 
-  margin: 8px 0 16px 0; 
-  border-radius: 8px;
-  word-break: break-word; 
+    padding: 12px 16px;
+  margin: 8px 0 16px 0;
+  border-radius: var(--mux-radius);
+  word-break: break-word;
   overflow-wrap: anywhere;
-  font-size: calc(15.5px * var(--ui-font-scale, 1)); 
+  font-size: var(--mux-prose-size); 
   line-height: 1.6; 
   max-width: 100%; 
   overflow-x: hidden;
 }
-.stream-block code { background: var(--bg-input); padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
-.stream-block pre { background: var(--bg-input); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
+.stream-block code { background: var(--mux-code-bg); padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
+.stream-block pre { background: var(--mux-code-bg); padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; }
 .stream-block pre code { background: none; padding: 0; }
 
 /* ── Markdown typography hierarchy inside chat stream blocks ── */
-.stream-block { font-weight: 400; color: var(--text); font-family: var(--font-mono) !important; }
+.stream-block { font-weight: 400; color: var(--text);  }
 .stream-block p { margin: 0.55em 0; font-weight: 400; }
 .stream-block p:first-child { margin-top: 0; }
 .stream-block p:last-child { margin-bottom: 0; }
@@ -748,7 +776,7 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .stream-block a:hover { border-bottom-style: solid; }
 .stream-block hr { border: 0; border-top: 1px solid var(--border); margin: 1em 0; }
 .stream-block code {
-  font-family: var(--font-mono) !important;
+  
   font-weight: 500;
   color: var(--accent, #64b4dc);
   background: rgba(var(--accent-rgb), 0.10);
@@ -1382,7 +1410,7 @@ body.hide-all-pills .event-group { display: none !important; }
 .table-block tr:last-child td { border-bottom: none; }
 
 /* ── Prompts ── */
-.prompt-block { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; }
+.prompt-block { background: var(--mux-surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 8px 0; }
 .prompt-block .prompt-text { color: var(--text); margin-bottom: 12px; font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.6; word-break: break-word; }
 .prompt-block .prompt-text pre { background: var(--bg-input); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(11px * var(--ui-font-scale, 1)); }
 .prompt-block .prompt-text code { background: var(--bg-input); padding: 1px 4px; border-radius: 3px; font-size: calc(11px * var(--ui-font-scale, 1)); }
@@ -1593,11 +1621,11 @@ body.hide-all-pills .event-group { display: none !important; }
   display: flex; gap: 8px; align-items: flex-end;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--bg) calc(var(--composer-opacity, 0.62) * 100%), transparent);
+    border-radius: var(--mux-composer-radius);
+  background: var(--mux-composer-bg);
   backdrop-filter: blur(18px) saturate(1.1);
   -webkit-backdrop-filter: blur(18px) saturate(1.1);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.38), 0 1px 0 rgba(255,255,255,0.04) inset;
+    box-shadow: var(--mux-composer-shadow);
   transition: bottom 0.18s ease, box-shadow 0.2s ease;
 }
 .input-area:focus-within {
@@ -2022,23 +2050,23 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .user-msg { text-align: right; padding: 8px 0; margin-bottom: 4px; }
 .user-msg .bubble { max-width: 100%; overflow-x: auto;
   display: inline-block;
-  font-family: var(--font-sans) !important; 
-  background: rgba(var(--accent-rgb), 0.10);
+   
+    background: var(--mux-bubble-bg);
   padding: 10px 14px;
-  border-radius: 16px 16px 4px 16px; 
+  border-radius: var(--mux-bubble-radius); 
   border: 1px solid var(--border);
   max-width: 80%; 
   text-align: left; 
   word-break: break-word;
-  white-space: pre-wrap;
-  color: var(--text);
+    white-space: pre-wrap;
+  color: var(--mux-bubble-fg);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
-.user-msg .bubble pre { background: var(--bg); font-family: var(--font-mono) !important;
+.user-msg .bubble pre { background: var(--bg); 
   padding: 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0; font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.6; white-space: pre; }
 .user-msg .bubble pre code { background: none; padding: 0; }
-.user-msg .bubble code { background: var(--bg); font-family: var(--font-mono) !important;
+.user-msg .bubble code { background: var(--bg); 
   padding: 1px 5px; border-radius: 3px; font-size: calc(12px * var(--ui-font-scale, 1)); }
 
 /* ── Mobile ── */
@@ -2439,8 +2467,8 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   width: 320px;
   max-width: calc(100vw - 24px);
   box-sizing: border-box;
-  overflow: hidden;
-  background: var(--bg-card);
+    overflow: hidden;
+  background: var(--mux-surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 16px;
@@ -2570,6 +2598,23 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 .input-wrapper { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 
 
+}
+/* Former !important overrides: precedence now comes from the mux.strong layer. */
+@layer mux.strong {
+html, body { font-family: var(--mux-font-ui); }
+html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view, .input-area textarea, .user-msg .bubble { font-size: var(--ui-font-size); line-height: var(--ui-line-height); }
+.stream-block, .stream-block p, .stream-block li, .stream-block .stream-body { line-height: var(--mux-prose-leading); }
+.stream-block pre, .stream-block pre code { line-height: 1.55; }
+.mux-token-badge, .mux-save-banner, .mux-compact-row { line-height: 1.2; }
+.header-logo, .sidebar-tab, .mux-settings-btn, .mng-input, .mng-select { font-family: var(--mux-font-ui); }
+#output, #output .message, #output .bubble, #output .mux-md-view, #output .stream-block, #output .user-msg .bubble { font-family: var(--mux-font-prose); }
+.event, .task-complete, .delegation, .panel-block, .mux-token-badge, .mux-save-banner, .mux-compact-row { margin-top: calc(8px * var(--ui-spacing-scale)); margin-bottom: calc(8px * var(--ui-spacing-scale)); }
+.stream-block { font-family: var(--mux-font-prose); }
+.stream-block code { font-family: var(--mux-font-code); }
+.user-msg .bubble { font-family: var(--mux-font-ui); }
+.user-msg .bubble pre { font-family: var(--mux-font-code); }
+.user-msg .bubble code { font-family: var(--mux-font-code); }
+}
 </style>
 </head>
 <body>
@@ -2608,13 +2653,13 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
 <div class="toast-container" id="toastContainer"></div>
 <div class="app-container">
   <div class="app" id="app">
-    <div class="header">
+    <div class="header" data-mux="header">
       <a href="https://github.com/jnotsknab/mux-swarm" target="_blank" class="header-logo" title="View on GitHub">MUX-SWARM</a>
       <span class="header-status" id="statusBtn" title="Click to restart server">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">connecting...</span>
       </span>
-      <div class="header-actions">
+      <div class="header-actions" data-mux="header-actions">
         <button class="icon-btn" id="reconnectBtn" title="Force reconnect"><svg data-icon="reconnect" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 1 1-3.5-7.1"/><polyline points="21 4 21 9 16 9"/></svg></button>
         <button class="icon-btn" id="clearScreenBtn" title="Clear screen (Ctrl+L)" aria-label="Clear screen"><svg data-icon="eraser" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 20H9l-6-6a1.5 1.5 0 0 1 0-2.1l8.4-8.4a1.5 1.5 0 0 1 2.1 0l7 7a1.5 1.5 0 0 1 0 2.1L13.5 20"/><line x1="9" y1="20" x2="5.5" y2="16.5"/></svg></button>
         <button class="icon-btn" id="themeBtn" title="Theme Settings"><svg data-icon="palette" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c1 0 1.7-.8 1.7-1.7 0-.4-.2-.8-.4-1.1-.3-.3-.4-.7-.4-1.1a1.7 1.7 0 0 1 1.7-1.7H17c2.8 0 5-2.2 5-5C22 6 17.5 2 12 2z"/><circle cx="6.5" cy="12.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/></svg></button>
@@ -2625,7 +2670,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
     </button>
 
-    <div class="output" id="output">
+    <div class="output" id="output" data-mux="transcript">
       <div id="loadingSkeleton">
         <div class="skel-bubble"></div>
         <div class="skel-line" style="width:40%"></div>
@@ -2633,14 +2678,14 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
       </div>
     </div>
 
-    <div class="input-area">
+    <div class="input-area" data-mux="composer">
       <div class="input-wrapper">
         <div class="attachments-strip" id="attachments"></div>
         <div class="cmd-palette" id="cmdPalette" role="listbox" aria-label="Slash commands"></div>
-        <textarea id="input" name="main-chat-input" rows="1" placeholder="Type a message or /command..." autofocus></textarea>
+        <textarea id="input" data-mux="composer-input" name="main-chat-input" rows="1" placeholder="Type a message or /command..." autofocus></textarea>
         <div class="char-counter" id="charCounter">0 / 4000</div>
       </div>
-      <div class="btn-group">
+      <div class="btn-group" data-mux="composer-actions">
         <button class="session-btn" id="sessionBtn" type="button" title="Session &amp; mode" aria-haspopup="menu" aria-expanded="false">
           <span class="session-btn-dot" id="sessionBtnDot" aria-hidden="true"></span>
           <span class="session-btn-name" id="sessionBtnName">Interactive</span>
@@ -2658,7 +2703,7 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
     </div>
   </div>
 
-  <div class="sidebar" id="sidebar">
+  <div class="sidebar" id="sidebar" data-mux="sidebar">
     <div class="sidebar-resizer" id="sidebarResizer"></div>
     <div class="sidebar-header">
       <button class="sidebar-tab active" data-tab="sandbox">Sandbox</button>
@@ -2788,9 +2833,64 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
         try { recognition.start(); } catch(e) { }
       }
     };
-  } else {
-    micBtn.style.display = 'none'; // Hide if not supported
   }
+
+  // Voice backend, first that applies: window.muxHost.voice (desktop shell) -> Web Speech
+  // (Chromium) -> MediaRecorder + POST /api/voice/transcribe (needs a secure context:
+  // localhost or https) -> hidden mic with a tooltip saying why.
+  const _hostVoice = () => (window.muxHost && window.muxHost.voice && Array.isArray(window.muxHost.capabilities)
+    && window.muxHost.capabilities.indexOf('voice') >= 0) ? window.muxHost.voice : null;
+  const _canRecord = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  function voiceMode() { return _hostVoice() ? 'host' : recognition ? 'speech' : _canRecord() ? 'server' : ''; }
+  // Whisper prints non-speech annotations ([BLANK_AUDIO], (air whooshing), [MUSIC]) as whole lines.
+  function cleanTranscript(text) {
+    return String(text || '').split(/\r?\n/).map(l => l.trim())
+      .filter(l => l && !/^\[[^\]]*\]$/.test(l) && !/^\([^)]*\)$/.test(l)).join(' ').trim();
+  }
+  function appendTranscript(text) {
+    const t = cleanTranscript(text);
+    if (!t) return false;
+    let target = input;
+    if (window.activeVoiceHandler) {
+      const prompts = document.querySelectorAll('.prompt-block textarea:not([disabled]):not(.voice-hidden-input)');
+      if (prompts.length > 0) target = prompts[prompts.length - 1];
+    }
+    const cur = target.value;
+    target.value = cur + (cur && !/\s$/.test(cur) ? ' ' : '') + t;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+  let _rec = null, _recChunks = [], _voiceBusy = false;
+  async function startCapture() {
+    if (voiceMode() === 'host') { await _hostVoice().start(); return; }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _recChunks = [];
+    _rec = new MediaRecorder(stream);
+    _rec.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data); };
+    _rec.start();
+  }
+  async function stopCapture() {
+    if (voiceMode() === 'host') return await _hostVoice().stop();
+    if (!_rec) return '';
+    const rec = _rec; _rec = null;
+    await new Promise(res => { rec.onstop = res; rec.stop(); });
+    rec.stream.getTracks().forEach(t => t.stop());
+    const blob = new Blob(_recChunks, { type: rec.mimeType || 'audio/webm' });
+    const r = await fetch(_apiUrl('/api/voice/transcribe'), { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/webm').split(';')[0] }, body: blob });
+    if (!r.ok) throw new Error(r.status === 429 ? 'busy, try again' : ('transcribe failed (' + r.status + ')'));
+    return (await r.json()).text || '';
+  }
+  function syncMicAvailability() {
+    const mode = voiceMode();
+    micBtn.dataset.voice = mode || 'none';
+    if (mode) { micBtn.style.display = ''; micBtn.title = 'Voice Input'; }
+    else {
+      micBtn.style.display = 'none';
+      micBtn.title = 'Voice input needs Chrome/Edge, a desktop app, or https/localhost for server transcription';
+    }
+  }
+  syncMicAvailability();
+  window.addEventListener('mux:host-ready', syncMicAvailability);
 
   function stopRecording() {
     isRecording = false;
@@ -2804,22 +2904,38 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
     }
   }
 
-  micBtn.addEventListener('click', () => {
-    if (!recognition) {
-      console.log('Voice input not supported in this browser');
+    micBtn.addEventListener('click', async () => {
+    const mode = voiceMode();
+    if (mode === 'speech') {
+      if (isRecording) stopRecording();
+      else { try { recognition.start(); } catch (e) { console.error(e); } }
       return;
     }
-    
-    if (isRecording) {
-      stopRecording();
-    } else {
-      try {
-        recognition.start();
-      } catch(e) {
-        console.error(e);
+    if (!mode || _voiceBusy) return;
+    // Host / server capture: click to record, click again to transcribe. Text is appended to
+    // the composer (never auto-sent).
+    try {
+      if (!isRecording) {
+        await startCapture();
+        isRecording = true;
+        micBtn.classList.add('recording');
+      } else {
+        isRecording = false; _voiceBusy = true;
+        micBtn.classList.remove('recording');
+        micBtn.classList.add('transcribing');
+        const text = await stopCapture();
+        if (!appendTranscript(text)) console.log('No speech detected');
+        input.focus();
       }
+    } catch (e) {
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      console.error('Voice: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (!isRecording) { _voiceBusy = false; micBtn.classList.remove('transcribing'); }
     }
   });
+
   const statusDot = $('statusDot');
   const statusText = $('statusText');
   const statusBtn = $('statusBtn');
@@ -2890,24 +3006,43 @@ const icons = {
       return hex;
   }
 
+  // Relative luminance of a #rgb/#rrggbb color; used to derive data-mux-scheme for presets.
+  function _isLightBg(hex) {
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m) return false;
+    let h = m[1]; if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.5;
+  }
+
   function applyThemeState() {
     const baseTheme = themes.find(t => t.id === currentThemeId) || themes[0];
     document.body.dataset.themePreset = baseTheme.id;
     
-    // Apply base vars
-    for (const [key, val] of Object.entries(baseTheme.vars)) {
-      document.documentElement.style.setProperty(key, val);
-    }
-    
-    // Apply custom overrides (if any)
+    // Theme vars live in <style id="mux-theme-vars"> inside @layer mux.theme (not inline on
+    // :root) so extension CSS in @layer mux.ext can override them without !important.
+    // Custom color overrides go to @layer mux.user, which beats both.
+    const _variant = _resolveVariant(baseTheme);
+    const _vars = Object.assign({}, baseTheme.vars, _variant ? (baseTheme.variants[_variant].vars || {}) : {});
+    const _user = {};
     for (const [key, val] of Object.entries(customOverrides)) {
-      document.documentElement.style.setProperty(key, val);
-      
+      _user[key] = val;
       // Auto-generate derived colors for custom BG so cards/inputs don't break
-      if (key === '--bg') {
-         document.documentElement.style.setProperty('--bg-card', hexToRgbA(val, 0.6));
-         document.documentElement.style.setProperty('--bg-input', hexToRgbA(val, 0.5));
-      }
+      if (key === '--bg') { _user['--bg-card'] = hexToRgbA(val, 0.6); _user['--bg-input'] = hexToRgbA(val, 0.5); }
+    }
+    const _decl = (o) => Object.entries(o).map(([k, v]) => `${k}: ${v};`).join(' ');
+    let _tv = document.getElementById('mux-theme-vars');
+    if (!_tv) { _tv = document.createElement('style'); _tv.id = 'mux-theme-vars'; document.head.appendChild(_tv); }
+    _tv.textContent = `@layer mux.theme { :root { ${_decl(_vars)} } }\n@layer mux.user { :root { ${_decl(_user)} } }`;
+    const _scheme = _variant || (baseTheme.isLight != null ? (baseTheme.isLight ? 'light' : 'dark') : (_isLightBg(_vars['--bg']) ? 'light' : 'dark'));
+    const _root = document.documentElement;
+    const _changed = _root.dataset.muxTheme !== baseTheme.id || _root.dataset.muxScheme !== _scheme;
+    _root.dataset.muxTheme = baseTheme.id;
+    _root.dataset.muxScheme = _scheme;
+    if (typeof applyExtensionAssets === 'function') { applyExtensionAssets(baseTheme, _extAssetStamp); renderVariantControl(baseTheme); }
+    if (_changed) {
+      // Hosts (desktop shells) and extensions listen for this instead of polling localStorage.
+      try { window.dispatchEvent(new CustomEvent('mux:theme-changed', { detail: { id: baseTheme.id, scheme: _scheme, bg: _user['--bg'] || _vars['--bg'] || '' } })); } catch (_) {}
     }
 
     // Update active preset button
@@ -2970,19 +3105,92 @@ const icons = {
   });
 
   // Extension themes from the runtime (GET /api/themes). Appended to the bundled list; an older
-  // binary 404s and the bundled list stays as is. A saved extension theme is re-applied once loaded.
-  (async () => {
+  // binary 404s and the bundled list stays as is. Re-run on 'ui_themes_changed' (live reload).
+  // Web themes may add light/dark variants, scoped CSS and fonts; their CSS is imported into
+  // @layer mux.ext so it overrides theme vars and base styles without !important.
+  let _extGlobalCss = [];
+  const _extStamp = () => Date.now().toString(36);
+  function _variantPref(id) { try { return localStorage.getItem('mux-theme-variant.' + id) || ''; } catch (_) { return ''; } }
+  function _resolveVariant(t) {
+    if (!t || !t.variants) return null;
+    const pref = _variantPref(t.id) || t.defaultVariant || 'system';
+    const want = pref === 'system'
+      ? (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
+      : pref;
+    return t.variants[want] ? want : (t.variants.dark ? 'dark' : 'light');
+  }
+  // Only same-origin /ext/ URLs are ever loaded (the server never serves extension JS).
+  const _extUrl = (u) => (typeof u === 'string' && /^\/ext\/[a-z0-9-]+\//.test(u)) ? u : null;
+  function _cssStr(s) { return "'" + String(s).replace(/[\\'\n\r]/g, '') + "'"; }
+  function applyExtensionAssets(t, stamp) {
+    let el = document.getElementById('mux-ext-css');
+    if (!el) { el = document.createElement('style'); el.id = 'mux-ext-css'; document.head.appendChild(el); }
+    const q = stamp ? ('?v=' + stamp) : '';
+    const urls = _extGlobalCss.concat((t && t.css) || []).map(_extUrl).filter(Boolean);
+    const fonts = ((t && t.fonts) || []).filter(f => f && _extUrl(f.url)).map(f =>
+      `@font-face { font-family: ${_cssStr(f.family)}; src: url(${_cssStr(f.url + q)}); font-weight: ${f.weight || '400'}; font-style: ${f.style || 'normal'}; font-display: swap; }`);
+    // @import must precede every other rule in a sheet.
+    el.textContent = urls.map(u => `@import url(${_cssStr(u + q)}) layer(mux.ext);`).concat(fonts).join('\n');
+    el.dataset.muxExtCss = (t && t.css && t.css.length) ? t.id : '';
+  }
+  function renderVariantControl(t) {
+    let box = document.getElementById('themeVariant');
+    if (!box) {
+      const presets = document.getElementById('themePresets');
+      if (!presets || !presets.parentElement) return;
+      box = document.createElement('div');
+      box.id = 'themeVariant';
+      box.className = 'mux-seg';
+      box.setAttribute('role', 'radiogroup');
+      box.style.marginTop = '10px';
+      presets.parentElement.appendChild(box);
+    }
+    if (!t || !t.variants) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    box.style.display = '';
+    const cur = _variantPref(t.id) || t.defaultVariant || 'system';
+    box.innerHTML = '';
+    for (const v of ['light', 'dark', 'system']) {
+      if (v !== 'system' && !t.variants[v]) continue;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = v[0].toUpperCase() + v.slice(1);
+      b.className = cur === v ? 'active' : '';
+      b.setAttribute('aria-checked', String(cur === v));
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { localStorage.setItem('mux-theme-variant.' + t.id, v); } catch (_) {}
+        applyThemeState();
+      });
+      box.appendChild(b);
+    }
+  }
+  if (window.matchMedia) {
+    try {
+      matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        const t = themes.find(x => x.id === currentThemeId);
+        if (t && t.variants) applyThemeState();
+      });
+    } catch (_) {}
+  }
+  async function loadExtensionThemes(live) {
     try {
       const r = await fetch(_apiUrl('/api/themes'), { headers: { 'Accept': 'application/json' } });
       if (!r.ok) return;
       const data = await r.json();
       const container = document.getElementById("themePresets");
+      // Live reload: drop extension entries and re-add them from the fresh list.
+      for (let k = themes.length - 1; k >= 0; k--) if (themes[k].ext) themes.splice(k, 1);
+      if (container) container.querySelectorAll('.theme-preset-btn[data-ext="1"]').forEach(b => b.remove());
+      _extGlobalCss = Array.isArray(data.globalCss) ? data.globalCss : [];
       for (const t of (data.items || [])) {
         if (!t || !t.id || !t.vars || themes.some(x => x.id === t.id)) continue;
-        themes.push({ id: t.id, name: t.name, dot: t.dot, vars: t.vars });
+        themes.push({ id: t.id, name: t.name, dot: t.dot, vars: t.vars, isLight: t.isLight, ext: true,
+                      variants: t.variants || null, defaultVariant: t.defaultVariant || null,
+                      css: Array.isArray(t.css) ? t.css : [], fonts: Array.isArray(t.fonts) ? t.fonts : [] });
         const btn = document.createElement('button');
         btn.className = 'theme-preset-btn';
         btn.dataset.id = t.id;
+        btn.dataset.ext = '1';
         const dot = document.createElement('div');
         dot.className = 'preset-color-dot';
         dot.style.background = t.dot;
@@ -2991,9 +3199,13 @@ const icons = {
         btn.addEventListener('click', () => { currentThemeId = t.id; customOverrides = {}; applyThemeState(); });
         if (container) container.appendChild(btn);
       }
-      if (themes.some(x => x.id === currentThemeId)) applyThemeState();
+      _extAssetStamp = live ? _extStamp() : _extAssetStamp;
+      applyThemeState();
     } catch (_) {}
-  })();
+  }
+  let _extAssetStamp = '';
+  window.__muxLoadExtensionThemes = loadExtensionThemes;
+  loadExtensionThemes(false);
 
   // Load saved state on boot
   try {
@@ -3178,6 +3390,7 @@ const icons = {
 
     const el = document.createElement('div');
     el.className = 'mux-splash';
+    el.dataset.mux = 'splash';
     el.id = 'muxSplash';
     // Static fallback tagline: shown until (or unless) the dynamic tip loads, so the
     // splash is never empty on a slow/failed fetch.
@@ -3185,8 +3398,8 @@ const icons = {
       'I can read code, run tools, and orchestrate a swarm of agents.';
     el.innerHTML =
       '<div class="mux-splash-inner">' +
-        '<div class="mux-splash-mark">MUX&#8202;SWARM</div>' +
-        '<div class="mux-splash-tip" id="muxSplashTip">' + esc(fallbackTagline) + '</div>' +
+        '<div class="mux-splash-mark" data-mux="splash-title">MUX&#8202;SWARM</div>' +
+        '<div class="mux-splash-tip" id="muxSplashTip" data-mux="splash-tip">' + esc(fallbackTagline) + '</div>' +
         '<div class="mux-splash-meta" id="muxSplashMeta"></div>' +
       '</div>';
     output.appendChild(el);
@@ -3294,6 +3507,7 @@ const icons = {
     if (_toolGroup && _toolGroup.el.isConnected) return _toolGroup;
     const el = document.createElement('div');
     el.className = 'tool-group open';
+    el.dataset.mux = 'tool';
     el.innerHTML =
       '<div class="tool-group-header">' +
         '<span class="tg-chev"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>' +
@@ -3323,6 +3537,7 @@ const icons = {
     try { breakPillGroup(); } catch(_){}
     const row = document.createElement('div');
     row.className = 'tool-call';
+    row.dataset.mux = 'tool';
     row.innerHTML = html;
     row._resultSeen = false;
     if (!toolGroupingEnabled()) {
@@ -3492,6 +3707,7 @@ const icons = {
     removeThinkingBar();
     const bar = document.createElement('div');
     bar.className = 'thinking-bar';
+    bar.dataset.mux = 'thinking';
     bar.id = '_thinking';
     bar.innerHTML = `<div class="bar"></div><span>${esc(agentName)}${status ? ' — ' + esc(status) : ''}</span>`;
     // Append inside current stream block if exists, else to output
@@ -3688,6 +3904,10 @@ const icons = {
       case 'banner':
         break; // suppressed
 
+      case 'ui_themes_changed':
+        try { window.__muxLoadExtensionThemes && window.__muxLoadExtensionThemes(true); } catch (_) {}
+        break;
+
       case 'step':
         routePill(pillFromHTML(`<div class="event event-step">Step ${ev.number} — ${esc(ev.title || '')}</div>`));
         break;
@@ -3765,6 +3985,7 @@ const icons = {
           
           const el = document.createElement('div');
           el.className = 'user-msg';
+          el.dataset.mux = 'msg-user';
           el.innerHTML = `<span class="bubble">${attachmentsHtml}<div>${renderMarkdown(displayTxt)}</div></span>`;
           const time = (ev.timestamp ? new Date(ev.timestamp) : new Date()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
           el.innerHTML += `<span class="msg-time">${time}</span>`;
@@ -3792,7 +4013,7 @@ const icons = {
           renderHelpPanel(ev.message);
         } else if (ev.message && ev.message.length > 200) {
           // Long text — render as formatted panel
-          appendHTML(`<div class="stream-block">${renderMarkdown(ev.message)}</div>`);
+          appendHTML(`<div class="stream-block" data-mux="prose">${renderMarkdown(ev.message)}</div>`);
           // Attach copy button to the just-appended stream-block.
           { const last = output.lastElementChild; if (last && last.classList && last.classList.contains('stream-block')) attachMsgCopy(last, ev.message); }
         } else {
@@ -3854,6 +4075,7 @@ const icons = {
           dismissSplash();
           st = { el: document.createElement('div'), text: '', body: null };
           st.el.className = 'stream-block';
+          st.el.dataset.mux = 'msg-agent';
           output.appendChild(st.el);
           _agentStreams.set(skey, st);
         }
@@ -4227,7 +4449,7 @@ const icons = {
         break;
       }
 
-      case 'task_start': routePill(pillFromHTML(`<div class="event event-info no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
+      case 'task_start': routePill(pillFromHTML(`<div class="event event-info no-default-icon"><span style="margin-top:2px">${icons.hourglass}</span> <span>${esc(ev.message || "")}</span></div>`)); break;
       case 'task_done': {
         // Suppress redundant task_done row when a recently-rendered .task-complete card
         // already covers the same agent. Scan back through the last few siblings since
@@ -4250,7 +4472,7 @@ const icons = {
           }
         }
         if (suppressed) break;
-        routePill(pillFromHTML(`<div class="event event-success no-default-icon" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
+        routePill(pillFromHTML(`<div class="event event-success no-default-icon"><span style="margin-top:2px">${icons.check}</span> <span>${esc(msg)}</span></div>`));
         break;
       }
 
@@ -4294,6 +4516,7 @@ const icons = {
     if (_reasoningBlock && _reasoningBlock.el.isConnected) return _reasoningBlock;
     const el = document.createElement('div');
     el.className = 'reasoning-block open';
+    el.dataset.mux = 'thinking';
     el.innerHTML =
       '<div class="reasoning-header">' +
         '<span class="rb-chev">' + icons.chevronDown + '</span>' +
@@ -4351,6 +4574,7 @@ const icons = {
     if (_pillGroup && _pillGroup.el.isConnected) return _pillGroup;
     const el = document.createElement('div');
     el.className = 'event-group open';
+    el.dataset.mux = 'event';
     el.innerHTML =
       '<div class="event-group-header">' +
         '<span class="eg-chev">' + icons.chevronDown + '</span>' +
@@ -4439,6 +4663,7 @@ const icons = {
   function pillFromText(text, cls) {
     const el = document.createElement('div');
     el.className = 'event ' + (cls || '');
+    el.dataset.mux = 'event';
     el.textContent = text || '';
     return el;
   }
@@ -4453,6 +4678,7 @@ const icons = {
     dismissSplash();
     const el = document.createElement('div');
     el.className = `event ${cls || ''}`;
+    el.dataset.mux = 'event';
     el.textContent = text || '';
     output.appendChild(el);
     decorateCollapsibles(el);
@@ -6235,7 +6461,7 @@ const icons = {
       : (e.key === 'Enter' && !e.shiftKey);
     if (wantsSend) {
       e.preventDefault();
-      if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
+      if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
       const text = input.value.trim();
       if (text || pendingFiles.length > 0) { send(text); input.value = ''; }
     }
@@ -6243,7 +6469,7 @@ const icons = {
 
   statusBtn.addEventListener('click', () => {
     if (confirm('Are you sure you want to restart the server?')) {
-      appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
+      appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
       // Native restart route: spawns a successor that waits for this process to exit, then rebinds
       // the serve port. Replaces the old flaky "__CANCEL__ -> /qc -> /exit over WS" timing dance.
       fetch('/api/restart', { method: 'POST' })
@@ -6253,7 +6479,7 @@ const icons = {
   });
 
   actionBtn.addEventListener('click', () => {
-    if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
+    if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
     const text = input.value.trim();
     if (text || pendingFiles.length > 0) { send(text); input.value = ''; }
   });
@@ -6263,7 +6489,7 @@ const icons = {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
       sendRaw('__CANCEL__');
-      appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`);
+      appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`);
     }
   });
 
@@ -6850,7 +7076,7 @@ const icons = {
     ].join('\n');
     const styleEl = document.createElement('style');
     styleEl.id = 'muxSbxFindCss';
-    styleEl.textContent = css;
+    styleEl.textContent = '@layer mux.base {' + css + '}';
     document.head.appendChild(styleEl);
   })();
 
@@ -7814,13 +8040,13 @@ const icons = {
     `;
     const styleEl = document.createElement('style');
     styleEl.id = 'muxSessionsCss';
-    styleEl.textContent = css;
+    styleEl.textContent = '@layer mux.base {' + css + '}';
     document.head.appendChild(styleEl);
   })();
 
   // ─── Mobile Visibility & Reconnect Logic ───
   function forceReconnect() {
-    appendHTML(`<div class="event event-info" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.refresh}</span> <span>Reconnecting...</span></div>`);
+    appendHTML(`<div class="event event-info"><span style="margin-top:2px">${icons.refresh}</span> <span>Reconnecting...</span></div>`);
     statusDot.className = 'status-dot';
     statusText.textContent = 'reconnecting...';
     
@@ -7985,6 +8211,7 @@ const icons = {
 
 <!-- ─── Live Preview Panel (composable, additive) ─── -->
 <style>
+@layer mux.base {
   .mux-preview-fab {
     position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
     z-index: 9998;
@@ -8204,6 +8431,7 @@ const icons = {
     .mux-preview-header .grip { display: none; }
     .mux-preview-resize { display: none; }
   }
+}
 </style>
 
 <button class="mux-preview-fab" id="muxPreviewFab" title="Drag to move • Resize from corner • Click to open" aria-label="Preview panel">
@@ -8889,7 +9117,7 @@ const icons = {
   (function injectCtxMenuStyle(){
     if (document.getElementById('mux-ctx-style')) return;
     const st = document.createElement('style'); st.id = 'mux-ctx-style';
-    st.textContent = [
+    st.textContent = ['@layer mux.base {',
       '.mux-ctx-menu{position:fixed;z-index:100000;min-width:170px;padding:5px;',
       'background:var(--bg-card,#1a1a1f);border:1px solid var(--border,#333);border-radius:8px;',
       'box-shadow:0 8px 28px rgba(0,0,0,0.45);display:flex;flex-direction:column;gap:1px;',
@@ -8898,7 +9126,7 @@ const icons = {
       'background:transparent;color:var(--text,#e4e4e7);font-size:13px;text-align:left;',
       'border-radius:5px;cursor:pointer;width:100%}',
       '.mux-ctx-item:hover{background:rgba(var(--accent-rgb,100,180,220),0.14);color:var(--accent,#64b4dc)}',
-      '.mux-ctx-ico{width:16px;display:inline-flex;justify-content:center;opacity:.85;font-size:13px}'
+      '.mux-ctx-ico{width:16px;display:inline-flex;justify-content:center;opacity:.85;font-size:13px}', '}'
     ].join('');
     document.head.appendChild(st);
   })();
@@ -8912,6 +9140,7 @@ const icons = {
 </script>
 
 <style>
+@layer mux.base {
   /* ── Generic toast (used by clear-screen undo) ── */
   .mux-toast {
     position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px);
@@ -8941,9 +9170,11 @@ const icons = {
     transition: background 0.15s, border-color 0.15s;
   }
   .mux-toast .mux-toast-btn:hover { background: rgba(var(--accent-rgb),0.1); border-color: var(--accent, #64b4dc); }
+}
 </style>
 <!-- ─── Settings Panel (composable, additive) ─── -->
 <style>
+@layer mux.base {
   .mux-settings-backdrop {
     position: fixed; inset: 0; z-index: 10000;
     background: rgba(0,0,0,0.55);
@@ -9219,7 +9450,7 @@ const icons = {
   .mux-compact-row::before,
   .mux-compact-row::after,
   .mux-save-banner::before,
-  .mux-save-banner::after { content: none !important; display: none !important; }
+  .mux-save-banner::after {   }
 
   .mux-token-badge { padding-left: 10px; }
   .mux-token-badge .mux-kv { display: inline-flex; align-items: baseline; gap: 4px; }
@@ -9297,27 +9528,27 @@ const icons = {
   .event-error,
   .event-info,
   .event-debug {
-    border-radius: 999px !important;
-    padding: 3px 10px 3px 8px !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 6px !important;
-    font-size: calc(11px * var(--ui-font-scale, 1)) !important;
-    line-height: 1.2 !important;
-    width: fit-content !important;
-    max-width: 90% !important;
+    
+    
+    
+    
+    
+    
+    
+    
+    
   }
   /* Drop the absolute icon badge — we use inline tag-chips instead */
   .event-success::after,
   .event-warning::after,
   .event-error::after,
   .event-info::after,
-  .event-debug::after { content: none !important; display: none !important; }
+  .event-debug::after {   }
   .event-success,
   .event-warning,
   .event-error,
   .event-info,
-  .event-debug { padding-left: 8px !important; }
+  .event-debug {  }
 
   /* Inline uppercase tag-chip (e.g. SESSION, INFO, DONE) */
   .pill-tag {
@@ -9344,23 +9575,23 @@ const icons = {
 
   /* Agent badge — chrome-less plain label (no chip; matches flat stream) */
   .agent-badge {
-    background: transparent !important;
-    border: none !important;
-    color: var(--accent, #a78bfa) !important;
-    font-size: calc(10px * var(--ui-font-scale, 1)) !important;
-    font-weight: 700 !important;
-    padding: 0 !important;
-    letter-spacing: 0.08em !important;
-    box-shadow: none !important;
-    text-transform: uppercase !important;
-    line-height: 1.2 !important;
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
   }
 
   /* Token badge + compact row: compact padding so they don't dominate the chat */
   .mux-token-badge,
   .mux-compact-row {
-    padding: 3px 10px 3px 8px !important;
-    gap: 6px !important;
+    
+    
   }
   /* Add subtle inset tag for token badge when wrapped (handled via JS class .has-tag) */
   .mux-token-badge .pill-tag { background: rgba(161,161,170,0.16); color: var(--muted, #a1a1aa); }
@@ -9527,6 +9758,16 @@ const icons = {
       margin-right: 0; flex-basis: 100%;
     }
   }
+}
+/* Former !important overrides: precedence now comes from the mux.strong layer. */
+@layer mux.strong {
+.mux-token-badge::before, .mux-token-badge::after, .mux-compact-row::before, .mux-compact-row::after, .mux-save-banner::before, .mux-save-banner::after { content: none; display: none; }
+.event-success, .event-warning, .event-error, .event-info, .event-debug { border-radius: 999px; padding: 3px 10px 3px 8px; display: inline-flex; align-items: center; gap: 6px; font-size: calc(11px * var(--ui-font-scale, 1)); line-height: 1.2; width: fit-content; max-width: 90%; }
+.event-success::after, .event-warning::after, .event-error::after, .event-info::after, .event-debug::after { content: none; display: none; }
+.event-success, .event-warning, .event-error, .event-info, .event-debug { padding-left: 8px; }
+.agent-badge { background: transparent; border: none; color: var(--accent, #a78bfa); font-size: calc(10px * var(--ui-font-scale, 1)); font-weight: 700; padding: 0; letter-spacing: 0.08em; box-shadow: none; text-transform: uppercase; line-height: 1.2; }
+.mux-token-badge, .mux-compact-row { padding: 3px 10px 3px 8px; gap: 6px; }
+}
 </style>
 
 <button class="icon-btn" id="muxSettingsBtn" title="Settings" aria-label="Settings" style="display:none">
@@ -9627,9 +9868,12 @@ const icons = {
   // Dynamically load a Google Fonts stylesheet for the chosen font family (no-op if already loaded or builtin/custom)
   const LOADED_GFONTS = new Set();
   const BUILTIN_LOCAL = new Set(['SF Mono','Menlo','Consolas','Segoe UI','SF Pro Text','Helvetica Neue','system-ui','ui-monospace','-apple-system']);
+  // Shipped under /fonts/ (Runtime/mux-web-app/fonts), so the UI renders offline.
+  const BUNDLED_FONTS = new Set(['JetBrains Mono','IBM Plex Sans']);
   function loadGoogleFont(name){
     if (!name || LOADED_GFONTS.has(name)) return;
     if (BUILTIN_LOCAL.has(name)) return; // OS-provided, don't fetch
+    if (BUNDLED_FONTS.has(name)) return; // served locally from /fonts/
     // Skip if matches a user-uploaded custom font
     if ((state.customFonts || []).some(f => f.name === name)) return;
     const id = 'gfont-' + name.replace(/[^a-z0-9]/gi,'-').toLowerCase();
@@ -9658,9 +9902,6 @@ const icons = {
     b.classList.toggle('path-redacted',       state.pathMode === 'redacted');
     b.dataset.sendOnEnter = state.sendOnEnter;
     b.classList.toggle('hide-cmd-palette',   !state.cmdPaletteEnabled);
-    document.documentElement.style.setProperty('--cmd-palette-opacity', String(state.cmdPaletteOpacity));
-    document.documentElement.style.setProperty('--menu-opacity', String(state.menuOpacity != null ? state.menuOpacity : 1));
-    document.documentElement.style.setProperty('--composer-opacity', String(state.composerOpacity != null ? state.composerOpacity : 0.62));
     b.classList.toggle('collapse-cards-default', !!state.collapseCardsByDefault);
     b.dataset.collapseThreshold = String(state.collapseThreshold || 200);
     b.classList.toggle('hide-compacting-pills', !!state.hideCompactingPills);
@@ -9681,17 +9922,26 @@ const icons = {
     b.classList.toggle('hide-reasoning', state.showReasoning === 'hide');
     b.dataset.reasoningCollapseAt = String(state.reasoningCollapseAt || 600);
     // Typography
-    const root = document.documentElement;
-    root.style.setProperty('--ui-font-size', (state.uiFontSize || 14) + 'px');
-    root.style.setProperty('--ui-font-scale', String(((state.uiFontSize || 14) / 14)));
-    root.style.setProperty('--ui-line-height', String(state.uiLineHeight || 1.6));
-    root.style.setProperty('--ui-spacing-scale', String(state.uiSpacingScale || 1));
-    root.style.setProperty('--stream-preview-lines', String(state.streamPreviewLines || 2));
+    // Settings-driven vars go to @layer mux.user (see applyThemeState); runtime layout vars
+    // (--sidebar-width, --kb-inset) stay inline because they are not skinnable.
+    const sv = {
+      '--ui-font-size': (state.uiFontSize || 14) + 'px',
+      '--ui-font-scale': String(((state.uiFontSize || 14) / 14)),
+      '--ui-line-height': String(state.uiLineHeight || 1.6),
+      '--ui-spacing-scale': String(state.uiSpacingScale || 1),
+      '--stream-preview-lines': String(state.streamPreviewLines || 2),
+      '--cmd-palette-opacity': String(state.cmdPaletteOpacity),
+      '--menu-opacity': String(state.menuOpacity != null ? state.menuOpacity : 1),
+      '--composer-opacity': String(state.composerOpacity != null ? state.composerOpacity : 0.62),
+    };
     // Font family stacks: chosen family first, then a sane fallback stack
     const monoStack = `'${(state.fontMono || 'JetBrains Mono').replace(/'/g, "\\'")}', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace`;
     const sansStack = `'${(state.fontSans || 'IBM Plex Sans').replace(/'/g, "\\'")}', 'IBM Plex Sans', -apple-system, system-ui, sans-serif`;
-    root.style.setProperty('--font-mono', monoStack);
-    root.style.setProperty('--font-sans', sansStack);
+    sv['--font-mono'] = monoStack;
+    sv['--font-sans'] = sansStack;
+    let _sv = document.getElementById('mux-settings-vars');
+    if (!_sv) { _sv = document.createElement('style'); _sv.id = 'mux-settings-vars'; document.head.appendChild(_sv); }
+    _sv.textContent = '@layer mux.user { :root { ' + Object.entries(sv).map(([k, v]) => k + ': ' + v + ';').join(' ') + ' } }';
     loadGoogleFont(state.fontMono);
     loadGoogleFont(state.fontSans);
     // Let the code editor re-evaluate its theme when settings change.
@@ -10408,6 +10658,7 @@ const icons = {
 <!-- Mux Node Graph injected -->
 
 <style>
+@layer mux.base {
 /* ── Mux Node Graph (mng-*) — theme-aware ── */
 
 /* Satellite trigger — sibling of the preview FAB (JS-positioned).
@@ -11249,6 +11500,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mng-bridge-msg { min-height: 44px; }
   /* Larger tap targets for Send/Clear */
   .mng-bridge-actions .mng-btn { min-height: 40px; }
+}
 }
 </style>
 
@@ -14112,6 +14364,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
 <!-- ===== MuxEditor (Batch 3 / C4): bundled Monaco IDE pane ===== -->
 <style>
+@layer mux.base {
   #muxEditorOverlay{position:fixed;inset:0;z-index:99999;display:none;flex-direction:column;
     background:var(--bg,#1e1e1e);color:var(--text,#ddd);font-family:var(--font-sans,inherit)}
   #muxEditorOverlay.open{display:flex}
@@ -14129,6 +14382,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   #muxEditorHost{flex:1;min-height:0}
   #muxEditorStatus{flex:0 0 auto;padding:4px 12px;font-size:11px;color:var(--muted,#888);
     border-top:1px solid var(--border,#333);min-height:20px}
+}
 </style>
 <div id="muxEditorOverlay" role="dialog" aria-label="Code editor">
   <div id="muxEditorBar">
@@ -14333,6 +14587,111 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /MuxEditor ===== -->
+<!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
+<style>
+@layer mux.base {
+  [data-mux="titlebar-slot"] { display: none; }
+  html[data-mux-host] [data-mux="titlebar-slot"] { display: flex; align-items: stretch; align-self: stretch; flex-shrink: 0; margin: -16px -24px -16px 6px; }
+  html[data-mux-host] .header { -webkit-user-select: none; user-select: none; app-region: drag; -webkit-app-region: drag; }
+  html[data-mux-host] .header :is(button, a, input, select, textarea, .header-status, [data-mux="titlebar-slot"]) { app-region: no-drag; -webkit-app-region: no-drag; }
+  html[data-mux-controls="native-left"] .header { padding-left: 72px; }
+  html[data-mux-controls="native-right"] [data-mux="titlebar-slot"] { width: 120px; }
+  /* With window controls in the header the collapse chevron joins the header flow, before them. */
+  html[data-mux-controls] .header > .header-toggle { position: static; align-self: center; margin-left: 4px; flex-shrink: 0; }
+  html[data-mux-controls] body.header-collapsed .header-toggle { position: absolute; }
+  [data-mux="titlebar-slot"] button { width: 46px; border: none; border-radius: 0; background: transparent; color: var(--muted);
+    display: inline-flex; align-items: center; justify-content: center; cursor: default; padding: 0; }
+  [data-mux="titlebar-slot"] button:hover { background: rgba(127, 127, 127, 0.18); color: var(--text); }
+  [data-mux="titlebar-slot"] button.close:hover { background: #c42b1c; color: #fff; }
+  [data-mux="titlebar-slot"] svg { width: 10px; height: 10px; }
+}
+</style>
+<script>
+(() => {
+  // A desktop shell defines window.muxHost before page scripts run (Tauri initialization script,
+  // WKUserScript at document start, WebKitGTK UserScript). ?host= is only an early styling hint.
+  // Without muxHost nothing here changes the page.
+  const root = document.documentElement;
+  const hint = new URLSearchParams(location.search).get('host');
+  const platformOf = (h) => /win/i.test(h) ? 'windows' : /mac/i.test(h) ? 'macos' : /linux|gtk/i.test(h) ? 'linux' : '';
+  if (hint && platformOf(hint) && !window.muxHost) root.dataset.muxHost = platformOf(hint);
+  const ICONS = {
+    min: '<svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg>',
+    max: '<svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>',
+    restore: '<svg viewBox="0 0 10 10"><path d="M2.5 0.5h7v7M0.5 2.5h7v7h-7z" fill="none" stroke="currentColor" stroke-width="1"/></svg>',
+    close: '<svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1"/></svg>',
+  };
+  const has = (h, cap) => Array.isArray(h.capabilities) && h.capabilities.indexOf(cap) >= 0;
+  function mountWindow(h) {
+    const w = h.window, header = document.querySelector('[data-mux="header"]');
+    if (!w || !header || header.querySelector('[data-mux="titlebar-slot"]')) return;
+    root.dataset.muxControls = w.controls || 'web';
+    const slot = document.createElement('div');
+    slot.dataset.mux = 'titlebar-slot';
+    header.appendChild(slot);
+    const toggle = document.getElementById('headerToggle');
+    if (toggle) header.insertBefore(toggle, slot);
+    let maxBtn = null;
+    const sync = async () => { if (!maxBtn || !w.isMaximized) return; try { const m = await w.isMaximized(); maxBtn.innerHTML = m ? ICONS.restore : ICONS.max; maxBtn.title = m ? 'Restore' : 'Maximize'; } catch (_) {} };
+    if ((w.controls || 'web') === 'web') {
+      const mk = (cls, title, svg, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = cls; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg;
+        b.addEventListener('click', (e) => { e.stopPropagation(); Promise.resolve(fn()).then(sync).catch(() => {}); });
+        b.addEventListener('dblclick', (e) => e.stopPropagation());
+        slot.appendChild(b); return b;
+      };
+      mk('min', 'Minimize', ICONS.min, () => w.minimize());
+      maxBtn = mk('max', 'Maximize', ICONS.max, () => w.toggleMaximize());
+      mk('close', 'Close', ICONS.close, () => w.close());
+      sync();
+      if (typeof w.onMaximizedChange === 'function') { try { w.onMaximizedChange(() => sync()); } catch (_) {} }
+      window.addEventListener('resize', sync);
+    }
+    // CSS app-region covers WebView2; WKWebView/WebKitGTK ignore it, so drag from JS too.
+    header.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, a, input, select, textarea, [contenteditable], .header-status, [data-mux="titlebar-slot"]')) return;
+      if (e.detail === 2) { Promise.resolve(w.toggleMaximize && w.toggleMaximize()).then(sync).catch(() => {}); return; }
+      if (typeof w.startDrag === 'function') { try { w.startDrag(); } catch (_) {} }
+    });
+  }
+  function syncTheme(h, detail) {
+    if (!h.theme || typeof h.theme.set !== 'function') return;
+    const scheme = (detail && detail.scheme) || root.dataset.muxScheme || 'dark';
+    const bg = (detail && detail.bg) || getComputedStyle(root).getPropertyValue('--bg').trim();
+    try { h.theme.set(scheme, bg); } catch (_) {}
+  }
+  function init() {
+    const h = window.muxHost;
+    if (!h || typeof h !== 'object') return;
+    root.dataset.muxHost = h.platform || platformOf(hint || '') || 'unknown';
+    if (has(h, 'window')) mountWindow(h);
+    if (has(h, 'theme')) {
+      window.addEventListener('mux:theme-changed', (e) => syncTheme(h, e.detail));
+      syncTheme(h, null);
+    }
+    if (has(h, 'openExternal') && typeof h.openExternal === 'function') {
+      document.addEventListener('click', (e) => {
+        const a = e.target.closest && e.target.closest('a[href]');
+        if (!a || e.defaultPrevented) return;
+        let u; try { u = new URL(a.href, location.href); } catch (_) { return; }
+        if (u.origin === location.origin || !/^https?:$/.test(u.protocol)) return;
+        e.preventDefault(); h.openExternal(u.href);
+      }, true);
+    }
+    window.dispatchEvent(new CustomEvent('mux:host-ready', { detail: { platform: root.dataset.muxHost } }));
+  }
+  /** Public UI API for hosts and tests. Stable: see docs/desktop.md. */
+  window.mux = Object.assign(window.mux || {}, {
+    get theme() { return { id: root.dataset.muxTheme || '', scheme: root.dataset.muxScheme || '' }; },
+    get host() { return root.dataset.muxHost || ''; },
+    /** Re-run host detection (a host that defines muxHost late calls this). */
+    attachHost: init,
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
 </body>
 </html>
 <!-- test comment for live diffs -->

@@ -102,6 +102,10 @@ internal sealed class ExtensionManifest
     /// <summary>The whole thinking-indicator animation (frames, speed, quips). Null = built-in.</summary>
     [JsonPropertyName("thinking")]
     public ThinkingManifest? Thinking { get; set; }
+
+    /// <summary>Web UI contributions: themes with CSS, fonts and light/dark variants (see <see cref="WebManifest"/>).</summary>
+    [JsonPropertyName("web")]
+    public WebManifest? Web { get; set; }
 }
 
 /// <summary>

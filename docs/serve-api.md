@@ -60,6 +60,8 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 | `/api/sessions` | List session metadata | `serve.auth` |
 | `/api/sessions/{id}` | Single session metadata | `serve.auth` |
 | `/api/commands` | Available slash commands | `serve.auth` |
+| `/api/themes` | Extension themes for the web picker: `id, name, dot, isLight, vars` plus, for extension `web` themes, `variants`, `defaultVariant`, `css`, `fonts`, `source`; top-level `globalCss` | `serve.auth` |
+| `/ext/{name}/{path}` | Static CSS/font/image assets of an enabled extension's `web` folder (never JS). `nosniff`, `no-cache` + ETag | Open (like the web UI shell) |
 | `/api/config` | Runtime config view | `serve.auth` + `serve.configExposed` |
 | `/api/config-files/{which}` | Read/edit `Config.json` / `Swarm.json` (Monaco editor backend) | `serve.auth` + `serve.configExposed` |
 | `/api/skills` | List installed skills | `serve.auth` |
@@ -116,6 +118,8 @@ Practical notes:
 - Bridges (Telegram, Discord, Signal) are just WebSocket clients: any script that reads
   `MUX_WS_URL` and connects to `/ws` can serve as a bridge.
 - When `serve.auth` is enabled the WebSocket upgrade requires the same bearer token as `/api`.
+- `{"type":"ui_themes_changed"}` is sent after `/refresh` or `/extensions reload`; web clients
+  re-fetch `/api/themes` and swap extension CSS live.
 
 ---
 
