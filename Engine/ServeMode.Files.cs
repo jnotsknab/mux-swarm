@@ -8,7 +8,8 @@ namespace MuxSwarm.Engine;
 /// <summary>
 /// File endpoints for the web UI's file chips, inline images and workspace panel. A path (absolute, or
 /// relative to the sandbox) is served when it lies under the sandbox, the sessions folder, or any
-/// <c>filesystem.allowedPaths</c> root: the same roots the agent's own file tools use. Covered by the
+/// <c>filesystem.allowedPaths</c> root (the same roots the agent's own file tools use), except the config
+/// folder unless <c>serve.configExposed</c> is on. Covered by the
 /// existing serve.auth middleware like every other /api route.
 ///
 ///   GET  /api/file?path=&amp;as=view|download   file bytes (Range supported); as=download adds attachment
@@ -37,10 +38,21 @@ public static partial class ServeMode
     }
 
     /// <summary>
-    /// Resolve <paramref name="path"/> to an existing file under one of <paramref name="roots"/>. Relative
-    /// paths are taken against the first root (the sandbox). Null when missing or outside every root.
+    /// Folders /api/file must not serve: the config folder (setup adds it to allowedPaths) unless
+    /// <c>serve.configExposed</c> is on, the same gate as /api/config-files.
     /// </summary>
-    internal static string? ResolveServableFile(string? path, IReadOnlyList<string> roots)
+    internal static IReadOnlyList<string> FileExcludes()
+    {
+        var dir = App.Config?.Filesystem?.ConfigDir;
+        return string.IsNullOrWhiteSpace(dir) || App.Config?.Serve?.ConfigExposed == true ? [] : [dir];
+    }
+
+    /// <summary>
+    /// Resolve <paramref name="path"/> to an existing file under one of <paramref name="roots"/> and not under
+    /// <paramref name="excludes"/>. Relative paths are taken against the first root (the sandbox). Null when
+    /// missing or not servable.
+    /// </summary>
+    internal static string? ResolveServableFile(string? path, IReadOnlyList<string> roots, IReadOnlyList<string>? excludes = null)
     {
         if (string.IsNullOrWhiteSpace(path) || roots.Count == 0) return null;
         try
@@ -48,7 +60,8 @@ public static partial class ServeMode
             var p = path.Trim();
             if (p.StartsWith("file://", StringComparison.OrdinalIgnoreCase)) p = new Uri(p).LocalPath;
             var full = Path.IsPathRooted(p) ? Path.GetFullPath(p) : Path.GetFullPath(Path.Combine(roots[0], p));
-            return File.Exists(full) && NativeToolSecurity.IsUnderAllowed(full, roots) ? full : null;
+            if (!File.Exists(full) || !NativeToolSecurity.IsUnderAllowed(full, roots)) return null;
+            return excludes != null && excludes.Count > 0 && NativeToolSecurity.IsUnderAllowed(full, excludes) ? null : full;
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or UriFormatException or IOException)
         {
@@ -88,7 +101,7 @@ public static partial class ServeMode
 
     private static async Task HandleFile(HttpContext context)
     {
-        var full = ResolveServableFile(context.Request.Query["path"].FirstOrDefault(), FileRoots());
+        var full = ResolveServableFile(context.Request.Query["path"].FirstOrDefault(), FileRoots(), FileExcludes());
         if (full == null) { await WriteJson(context, 404, new { error = "File not found" }); return; }
         var download = string.Equals(context.Request.Query["as"].FirstOrDefault(), "download", StringComparison.OrdinalIgnoreCase);
         await Results.File(full, MimeOf(full), download ? Path.GetFileName(full) : null, enableRangeProcessing: true)
@@ -97,7 +110,7 @@ public static partial class ServeMode
 
     private static async Task HandleFileMeta(HttpContext context)
     {
-        var full = ResolveServableFile(context.Request.Query["path"].FirstOrDefault(), FileRoots());
+        var full = ResolveServableFile(context.Request.Query["path"].FirstOrDefault(), FileRoots(), FileExcludes());
         if (full == null) { await WriteJson(context, 404, new { error = "File not found" }); return; }
         var fi = new FileInfo(full);
         await WriteJson(context, 200, new
@@ -120,7 +133,7 @@ public static partial class ServeMode
             if (doc.RootElement.TryGetProperty("path", out var p)) path = p.GetString();
         }
         catch (System.Text.Json.JsonException) { }
-        var full = ResolveServableFile(path, FileRoots());
+        var full = ResolveServableFile(path, FileRoots(), FileExcludes());
         if (full == null) { await WriteJson(context, 404, new { error = "File not found" }); return; }
         var psi = RevealCommand(full);
         if (psi == null || !RevealLauncher(psi)) { await WriteJson(context, 501, new { error = "No file manager available on the serve host" }); return; }
