@@ -37,6 +37,10 @@ public class WebUiBroadsheetTests
     }
 
     [Fact]
+    public void MonospacePick_OnlySetsProseInTheClassicLayout() =>
+        Assert.Contains(":root[data-mux-style=\"classic\"] { ' + _d(classicOnly)", Html); // Broadsheet prose stays the reading font
+
+    [Fact]
     public void BroadsheetComposer_StacksTheTextareaAboveTheControls() =>
         Assert.Contains("flex-direction: column; align-items: stretch; gap: 6px;", Html);
 
