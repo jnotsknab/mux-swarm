@@ -2833,9 +2833,64 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
         try { recognition.start(); } catch(e) { }
       }
     };
-  } else {
-    micBtn.style.display = 'none'; // Hide if not supported
   }
+
+  // Voice backend, first that applies: window.muxHost.voice (desktop shell) -> Web Speech
+  // (Chromium) -> MediaRecorder + POST /api/voice/transcribe (needs a secure context:
+  // localhost or https) -> hidden mic with a tooltip saying why.
+  const _hostVoice = () => (window.muxHost && window.muxHost.voice && Array.isArray(window.muxHost.capabilities)
+    && window.muxHost.capabilities.indexOf('voice') >= 0) ? window.muxHost.voice : null;
+  const _canRecord = () => !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  function voiceMode() { return _hostVoice() ? 'host' : recognition ? 'speech' : _canRecord() ? 'server' : ''; }
+  // Whisper prints non-speech annotations ([BLANK_AUDIO], (air whooshing), [MUSIC]) as whole lines.
+  function cleanTranscript(text) {
+    return String(text || '').split(/\r?\n/).map(l => l.trim())
+      .filter(l => l && !/^\[[^\]]*\]$/.test(l) && !/^\([^)]*\)$/.test(l)).join(' ').trim();
+  }
+  function appendTranscript(text) {
+    const t = cleanTranscript(text);
+    if (!t) return false;
+    let target = input;
+    if (window.activeVoiceHandler) {
+      const prompts = document.querySelectorAll('.prompt-block textarea:not([disabled]):not(.voice-hidden-input)');
+      if (prompts.length > 0) target = prompts[prompts.length - 1];
+    }
+    const cur = target.value;
+    target.value = cur + (cur && !/\s$/.test(cur) ? ' ' : '') + t;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+  let _rec = null, _recChunks = [], _voiceBusy = false;
+  async function startCapture() {
+    if (voiceMode() === 'host') { await _hostVoice().start(); return; }
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _recChunks = [];
+    _rec = new MediaRecorder(stream);
+    _rec.ondataavailable = (e) => { if (e.data && e.data.size) _recChunks.push(e.data); };
+    _rec.start();
+  }
+  async function stopCapture() {
+    if (voiceMode() === 'host') return await _hostVoice().stop();
+    if (!_rec) return '';
+    const rec = _rec; _rec = null;
+    await new Promise(res => { rec.onstop = res; rec.stop(); });
+    rec.stream.getTracks().forEach(t => t.stop());
+    const blob = new Blob(_recChunks, { type: rec.mimeType || 'audio/webm' });
+    const r = await fetch(_apiUrl('/api/voice/transcribe'), { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/webm').split(';')[0] }, body: blob });
+    if (!r.ok) throw new Error(r.status === 429 ? 'busy, try again' : ('transcribe failed (' + r.status + ')'));
+    return (await r.json()).text || '';
+  }
+  function syncMicAvailability() {
+    const mode = voiceMode();
+    micBtn.dataset.voice = mode || 'none';
+    if (mode) { micBtn.style.display = ''; micBtn.title = 'Voice Input'; }
+    else {
+      micBtn.style.display = 'none';
+      micBtn.title = 'Voice input needs Chrome/Edge, a desktop app, or https/localhost for server transcription';
+    }
+  }
+  syncMicAvailability();
+  window.addEventListener('mux:host-ready', syncMicAvailability);
 
   function stopRecording() {
     isRecording = false;
@@ -2849,23 +2904,37 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     }
   }
 
-      micBtn.addEventListener('click', () => {
-    if (!recognition) {
-      console.log('Voice input not supported in this browser');
+    micBtn.addEventListener('click', async () => {
+    const mode = voiceMode();
+    if (mode === 'speech') {
+      if (isRecording) stopRecording();
+      else { try { recognition.start(); } catch (e) { console.error(e); } }
       return;
     }
-
-    if (isRecording) {
-      stopRecording();
-    } else {
-      try {
-        recognition.start();
-      } catch(e) {
-        console.error(e);
+    if (!mode || _voiceBusy) return;
+    // Host / server capture: click to record, click again to transcribe. Text is appended to
+    // the composer (never auto-sent).
+    try {
+      if (!isRecording) {
+        await startCapture();
+        isRecording = true;
+        micBtn.classList.add('recording');
+      } else {
+        isRecording = false; _voiceBusy = true;
+        micBtn.classList.remove('recording');
+        micBtn.classList.add('transcribing');
+        const text = await stopCapture();
+        if (!appendTranscript(text)) console.log('No speech detected');
+        input.focus();
       }
+    } catch (e) {
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      console.error('Voice: ' + (e && e.message ? e.message : e));
+    } finally {
+      if (!isRecording) { _voiceBusy = false; micBtn.classList.remove('transcribing'); }
     }
   });
-
 
   const statusDot = $('statusDot');
   const statusText = $('statusText');
@@ -14518,6 +14587,111 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /MuxEditor ===== -->
+<!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
+<style>
+@layer mux.base {
+  [data-mux="titlebar-slot"] { display: none; }
+  html[data-mux-host] [data-mux="titlebar-slot"] { display: flex; align-items: stretch; align-self: stretch; flex-shrink: 0; margin: -16px -24px -16px 6px; }
+  html[data-mux-host] .header { -webkit-user-select: none; user-select: none; app-region: drag; -webkit-app-region: drag; }
+  html[data-mux-host] .header :is(button, a, input, select, textarea, .header-status, [data-mux="titlebar-slot"]) { app-region: no-drag; -webkit-app-region: no-drag; }
+  html[data-mux-controls="native-left"] .header { padding-left: 72px; }
+  html[data-mux-controls="native-right"] [data-mux="titlebar-slot"] { width: 120px; }
+  /* With window controls in the header the collapse chevron joins the header flow, before them. */
+  html[data-mux-controls] .header > .header-toggle { position: static; align-self: center; margin-left: 4px; flex-shrink: 0; }
+  html[data-mux-controls] body.header-collapsed .header-toggle { position: absolute; }
+  [data-mux="titlebar-slot"] button { width: 46px; border: none; border-radius: 0; background: transparent; color: var(--muted);
+    display: inline-flex; align-items: center; justify-content: center; cursor: default; padding: 0; }
+  [data-mux="titlebar-slot"] button:hover { background: rgba(127, 127, 127, 0.18); color: var(--text); }
+  [data-mux="titlebar-slot"] button.close:hover { background: #c42b1c; color: #fff; }
+  [data-mux="titlebar-slot"] svg { width: 10px; height: 10px; }
+}
+</style>
+<script>
+(() => {
+  // A desktop shell defines window.muxHost before page scripts run (Tauri initialization script,
+  // WKUserScript at document start, WebKitGTK UserScript). ?host= is only an early styling hint.
+  // Without muxHost nothing here changes the page.
+  const root = document.documentElement;
+  const hint = new URLSearchParams(location.search).get('host');
+  const platformOf = (h) => /win/i.test(h) ? 'windows' : /mac/i.test(h) ? 'macos' : /linux|gtk/i.test(h) ? 'linux' : '';
+  if (hint && platformOf(hint) && !window.muxHost) root.dataset.muxHost = platformOf(hint);
+  const ICONS = {
+    min: '<svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg>',
+    max: '<svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>',
+    restore: '<svg viewBox="0 0 10 10"><path d="M2.5 0.5h7v7M0.5 2.5h7v7h-7z" fill="none" stroke="currentColor" stroke-width="1"/></svg>',
+    close: '<svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1"/></svg>',
+  };
+  const has = (h, cap) => Array.isArray(h.capabilities) && h.capabilities.indexOf(cap) >= 0;
+  function mountWindow(h) {
+    const w = h.window, header = document.querySelector('[data-mux="header"]');
+    if (!w || !header || header.querySelector('[data-mux="titlebar-slot"]')) return;
+    root.dataset.muxControls = w.controls || 'web';
+    const slot = document.createElement('div');
+    slot.dataset.mux = 'titlebar-slot';
+    header.appendChild(slot);
+    const toggle = document.getElementById('headerToggle');
+    if (toggle) header.insertBefore(toggle, slot);
+    let maxBtn = null;
+    const sync = async () => { if (!maxBtn || !w.isMaximized) return; try { const m = await w.isMaximized(); maxBtn.innerHTML = m ? ICONS.restore : ICONS.max; maxBtn.title = m ? 'Restore' : 'Maximize'; } catch (_) {} };
+    if ((w.controls || 'web') === 'web') {
+      const mk = (cls, title, svg, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = cls; b.title = title; b.setAttribute('aria-label', title); b.innerHTML = svg;
+        b.addEventListener('click', (e) => { e.stopPropagation(); Promise.resolve(fn()).then(sync).catch(() => {}); });
+        b.addEventListener('dblclick', (e) => e.stopPropagation());
+        slot.appendChild(b); return b;
+      };
+      mk('min', 'Minimize', ICONS.min, () => w.minimize());
+      maxBtn = mk('max', 'Maximize', ICONS.max, () => w.toggleMaximize());
+      mk('close', 'Close', ICONS.close, () => w.close());
+      sync();
+      if (typeof w.onMaximizedChange === 'function') { try { w.onMaximizedChange(() => sync()); } catch (_) {} }
+      window.addEventListener('resize', sync);
+    }
+    // CSS app-region covers WebView2; WKWebView/WebKitGTK ignore it, so drag from JS too.
+    header.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || e.target.closest('button, a, input, select, textarea, [contenteditable], .header-status, [data-mux="titlebar-slot"]')) return;
+      if (e.detail === 2) { Promise.resolve(w.toggleMaximize && w.toggleMaximize()).then(sync).catch(() => {}); return; }
+      if (typeof w.startDrag === 'function') { try { w.startDrag(); } catch (_) {} }
+    });
+  }
+  function syncTheme(h, detail) {
+    if (!h.theme || typeof h.theme.set !== 'function') return;
+    const scheme = (detail && detail.scheme) || root.dataset.muxScheme || 'dark';
+    const bg = (detail && detail.bg) || getComputedStyle(root).getPropertyValue('--bg').trim();
+    try { h.theme.set(scheme, bg); } catch (_) {}
+  }
+  function init() {
+    const h = window.muxHost;
+    if (!h || typeof h !== 'object') return;
+    root.dataset.muxHost = h.platform || platformOf(hint || '') || 'unknown';
+    if (has(h, 'window')) mountWindow(h);
+    if (has(h, 'theme')) {
+      window.addEventListener('mux:theme-changed', (e) => syncTheme(h, e.detail));
+      syncTheme(h, null);
+    }
+    if (has(h, 'openExternal') && typeof h.openExternal === 'function') {
+      document.addEventListener('click', (e) => {
+        const a = e.target.closest && e.target.closest('a[href]');
+        if (!a || e.defaultPrevented) return;
+        let u; try { u = new URL(a.href, location.href); } catch (_) { return; }
+        if (u.origin === location.origin || !/^https?:$/.test(u.protocol)) return;
+        e.preventDefault(); h.openExternal(u.href);
+      }, true);
+    }
+    window.dispatchEvent(new CustomEvent('mux:host-ready', { detail: { platform: root.dataset.muxHost } }));
+  }
+  /** Public UI API for hosts and tests. Stable: see docs/desktop.md. */
+  window.mux = Object.assign(window.mux || {}, {
+    get theme() { return { id: root.dataset.muxTheme || '', scheme: root.dataset.muxScheme || '' }; },
+    get host() { return root.dataset.muxHost || ''; },
+    /** Re-run host detection (a host that defines muxHost late calls this). */
+    attachHost: init,
+  });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+
 </body>
 </html>
 <!-- test comment for live diffs -->
