@@ -1348,11 +1348,14 @@ right edge (drag its left edge to resize; the chat column makes room); the eye b
 which opens each file a write/edit/move/download tool reports, so you can watch what the agent is producing. Both
 choices persist per browser. The floating panel stays the default.
 
-**Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day, titled by their
-first message, pins shared with the Sessions tab); click resumes (`/resume <id>`), **+ New session** sends `/agent`. It
-starts open on wide screens and remembers your choice (toggle next to the wordmark). In an agent session the composer
-shows an **Effort** chip (sends `/effort <level>`) once the session has run a turn, and a **context gauge** (tokens until
-auto-compact, from `/api/status`) with a **Compact now** action.
+**Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day with counts, Older
+collapsed; titled by their first message, up to two lines, with the time and message count; pins shared with the Sessions
+tab; the resumed session is highlighted); click resumes (`/resume <id>`), hover pins or copies the ID, **+ New** sends
+`/agent`. Drag its right edge to resize (220-520px). It starts open on wide screens and remembers your choice (toggle next
+to the wordmark). In an agent session the composer shows an **Effort** chip (sends `/effort <level>`) once the session has
+run a turn, a **context gauge** (tokens until auto-compact, from `/api/status`) with a **Compact now** action, and an
+**Actions** menu (Compact, Undo, Retry, Copy last reply, Wipe with a confirm). The chevron at the left of the controls
+collapses the composer to a slim bar (`/` or Ctrl+Shift+Space reopens it; it also reopens when the agent asks a question).
 
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
 the bundled Newsreader serif for all text (`--font-serif`; change it under Settings > Typography > Reading font; code,
