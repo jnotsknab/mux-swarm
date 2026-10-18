@@ -35,4 +35,27 @@ public class WebUiSessionsComposerTests
         Assert.Contains("send('/compact')", Html);
         Assert.Contains("send('/resume ' + s.n)", Html);
     }
+
+    [Fact]
+    public void Composer_Collapses_AndComesBackForQuestions()
+    {
+        Assert.Contains("document.body.classList.toggle('mux-composer-collapsed', cst.collapsed);", Html);
+        Assert.Contains("e.detail.type === 'prompt' && cst.collapsed) setCollapsed(false, true);", Html);
+        Assert.Contains("@media (prefers-reduced-motion: reduce)", Html);
+    }
+
+    [Fact]
+    public void SessionActions_SendExistingCommands_AndConfirmWipe()
+    {
+        Assert.Contains("['Compact', '/compact', true], ['Undo last exchange', '/undo', true], ['Retry last message', '/retry', true]", Html);
+        Assert.Contains("if (a[1] === '/wipe' && !window.confirm(", Html);
+    }
+
+    [Fact]
+    public void Rail_IsResizable_WithPinsAndCurrentSession()
+    {
+        Assert.Contains("Math.max(220, Math.min(520,", Html);
+        Assert.Contains("function togglePin(n)", Html);
+        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); }", Html);
+    }
 }
