@@ -2567,6 +2567,9 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   animation: pulse-op 1.5s ease-in-out infinite;
 }
 @keyframes pulse-op { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+#loadingSkeleton.mux-offline { animation: none; align-items: center; justify-content: center; text-align: center; gap: 8px; min-height: 40vh; }
+.mux-offline-t { font-size: calc(16px * var(--ui-font-scale, 1)); color: var(--text); font-weight: 600; }
+.mux-offline-d { font-size: calc(13px * var(--ui-font-scale, 1)); color: var(--muted); }
 .skel-line { height: 12px; background: var(--bg-input); border-radius: 6px; }
 .skel-bubble { height: 60px; width: 70%; background: var(--bg-input); border-radius: 16px 16px 16px 4px; }
 
@@ -2741,7 +2744,7 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
   <div class="app" id="app">
     <div class="header" data-mux="header">
       <a href="https://github.com/jnotsknab/mux-swarm" target="_blank" class="header-logo" title="View on GitHub">MUX-SWARM</a>
-      <span class="header-status" id="statusBtn" title="Click to restart server">
+      <span class="header-status" id="statusBtn" title="Connection: click for reconnect / restart" role="button" tabindex="0">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">connecting...</span>
       </span>
@@ -3398,6 +3401,17 @@ const icons = {
   })();
 
   // ─── WebSocket ───
+  // Offline state: if the first connection has not opened after a few seconds, replace the endless
+  // skeleton with a plain message + Retry (the reconnect loop keeps running underneath).
+  setTimeout(() => {
+    const skel = document.getElementById('loadingSkeleton');
+    if (!skel || (ws && ws.readyState === WebSocket.OPEN)) return;
+    skel.removeAttribute('style'); skel.className = 'mux-offline'; skel.style.animation = 'none';
+    skel.innerHTML = '<div class="mux-offline-t">Can\u2019t reach the Mux runtime</div>' +
+      '<div class="mux-offline-d"></div><button class="mux-rail-btn" type="button">Retry now</button>';
+    skel.querySelector('.mux-offline-d').textContent = 'Waiting for ' + location.host + '. Mux keeps retrying in the background.';
+    skel.querySelector('button').addEventListener('click', () => { try { reconnectBtn.click(); } catch (_) {} });
+  }, 4000);
   function connect() {
     // Cancel any reconnect scheduled by a prior onclose so we never end up with two
     // overlapping sockets both appending to the same DOM (the classic node-graph flakiness).
@@ -6568,7 +6582,25 @@ const icons = {
     }
   });
 
-  statusBtn.addEventListener('click', () => {
+  // Status pill opens a small menu (Reconnect / Restart) instead of restarting on a stray click.
+  const statusMenu = document.createElement('div');
+  statusMenu.className = 'mux-cpop mux-status-menu'; statusMenu.setAttribute('role', 'menu');
+  statusMenu.innerHTML = '<button class="opt" type="button" data-act="reconnect">Reconnect</button>' +
+    '<button class="opt" type="button" data-act="restart">Restart server\u2026</button>';
+  statusBtn.style.position = 'relative'; statusBtn.appendChild(statusMenu);
+  statusMenu.addEventListener('click', (e) => {
+    const b = e.target.closest('.opt'); if (!b) return;
+    e.stopPropagation(); statusMenu.classList.remove('open');
+    if (b.dataset.act === 'reconnect') { reconnectBtn.click(); return; }
+    restartServer();
+  });
+  statusBtn.addEventListener('click', (e) => {
+    if (e.target.closest('.mux-status-menu')) return;
+    e.stopPropagation(); statusMenu.classList.toggle('open');
+  });
+  statusBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); statusMenu.classList.toggle('open'); } });
+  document.addEventListener('click', () => statusMenu.classList.remove('open'));
+  function restartServer() {
     if (confirm('Are you sure you want to restart the server?')) {
       appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.refresh}</span> <span>Restarting server...</span></div>`);
       // Native restart route: spawns a successor that waits for this process to exit, then rebinds
@@ -6577,7 +6609,7 @@ const icons = {
         .then(r => { if (!r.ok && r.status !== 202) throw new Error('HTTP ' + r.status); })
         .catch(err => { alert('Restart request failed: ' + err.message); });
     }
-  });
+  }
 
   actionBtn.addEventListener('click', () => {
     if (isAgentBusy) { sendRaw('__CANCEL__'); appendHTML(`<div class="event event-warning"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`); return; }
@@ -9310,6 +9342,15 @@ const icons = {
   }
   .mux-settings-body:hover::-webkit-scrollbar-thumb { background: var(--muted, #71717a); background-clip: content-box; }
 
+  .mux-settings-nav { position: sticky; top: -12px; z-index: 2; margin: -12px -22px 4px; padding: 12px 22px 10px;
+    background: var(--bg); border-bottom: 1px solid var(--border); }
+  .mux-settings-search { width: 100%; box-sizing: border-box; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius, 8px);
+    background: var(--mux-inset-bg); color: var(--text); font: inherit; font-size: calc(13px * var(--ui-font-scale, 1)); }
+  .mux-settings-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .mux-settings-chip { border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 999px; padding: 2px 9px;
+    font: inherit; font-size: calc(11.5px * var(--ui-font-scale, 1)); cursor: pointer; }
+  .mux-settings-chip:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  html[data-mux-theme="broadsheet"] .mux-settings-chip { border-radius: 3px; }
   .mux-settings details {
     border: 1px solid var(--border, #2a2a30);
     background: var(--bg-card, #14141a);
@@ -10359,6 +10400,38 @@ const icons = {
         if (fab) { fab.classList.remove('placed'); fab.style.cssText = ''; }
       }),
     ]);
+    buildSettingsNav(body);
+  }
+
+  // Search + section jump bar over the rendered sections (keys and rows unchanged).
+  function buildSettingsNav(body){
+    const sections = [...body.querySelectorAll(':scope > details')];
+    const bar = document.createElement('div'); bar.className = 'mux-settings-nav';
+    const q = document.createElement('input'); q.type = 'search'; q.className = 'mux-settings-search';
+    q.placeholder = 'Search settings'; q.setAttribute('aria-label', 'Search settings');
+    const chips = document.createElement('div'); chips.className = 'mux-settings-chips';
+    sections.forEach(det => {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'mux-settings-chip';
+      b.textContent = det.querySelector('summary').textContent;
+      b.addEventListener('click', () => { det.open = true; det.scrollIntoView({ block: 'start', behavior: 'smooth' }); });
+      chips.appendChild(b);
+    });
+    q.addEventListener('input', () => {
+      const s = q.value.trim().toLowerCase();
+      sections.forEach(det => {
+        let any = false;
+        det.querySelectorAll(':scope > .mux-row').forEach(r => {
+          const hit = !s || r.textContent.toLowerCase().includes(s);
+          r.style.display = hit ? '' : 'none'; any = any || hit;
+        });
+        const titleHit = !s || det.querySelector('summary').textContent.toLowerCase().includes(s);
+        if (titleHit && s) det.querySelectorAll(':scope > .mux-row').forEach(r => { r.style.display = ''; });
+        det.style.display = (any || titleHit) ? '' : 'none';
+        if (s && (any || titleHit)) det.open = true;
+      });
+    });
+    bar.appendChild(q); bar.appendChild(chips);
+    body.insertBefore(bar, body.firstChild);
   }
 
   const backdrop = document.getElementById('muxSettingsBackdrop');
@@ -11323,6 +11396,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-side .mng-side-section .mng-list { max-height: 110px; }
 .mng-side h4 { font-size: calc(10px * var(--ui-font-scale, 1)); text-transform: uppercase; color: var(--muted); letter-spacing: 0.08em; margin: 0 0 6px 0; font-weight: 600; }
 .mng-form { display: flex; flex-direction: column; gap: 6px; }
+.mng-form.mng-form-empty > :not(.mng-help) { display: none; }
 .mng-input, .mng-select {
   width: 100%; box-sizing: border-box;
   background: var(--bg-input); color: var(--text);
@@ -11334,6 +11408,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 .mng-input:disabled { opacity: 0.5; }
 .mng-row { display: flex; gap: 6px; }
 .mng-row .mng-btn { flex: 1; justify-content: center; }
+.mng-row.mng-row-quiet { margin-top: 2px; padding-top: 6px; border-top: 1px dashed var(--border); }
+.mng-row.mng-row-quiet .mng-btn { flex: 0 0 auto; }
+.mng-row .mng-row-gap { flex: 1; }
+.mng-form :is(.mng-btn:disabled) { opacity: .45; cursor: default; }
+.mng-side details.mng-tips > summary { cursor: pointer; list-style: none; font-size: calc(10px * var(--ui-font-scale, 1)); text-transform: uppercase;
+  color: var(--muted); letter-spacing: 0.08em; font-weight: 600; }
+.mng-side details.mng-tips > summary::-webkit-details-marker { display: none; }
+.mng-side details.mng-tips[open] > summary { margin-bottom: 6px; }
 .mng-side .mng-list { flex: 1; overflow-y: auto; padding: 6px; }
 .mng-side .mng-list-item {
   display: flex; align-items: center; gap: 6px;
@@ -11638,7 +11720,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     <button class="mng-btn" id="mngBtnAdd" title="Add a node">+ Add</button>
     <button class="mng-btn" id="mngBtnLayout" title="Auto-layout">Layout</button>
     <button class="mng-btn" id="mngBtnCenter" title="Center view">Center</button>
-    <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Daemon activity">⚙ Daemon <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
+    <button class="mng-btn mng-daemon-btn" id="mngBtnDaemon" title="Workflows, schedules and daemon activity">Workflows <span class="mng-daemon-badge" id="mngDaemonBadge" hidden>0</span></button>
     <button class="mng-btn" id="mngBtnMax" title="Maximize">⛶</button>
     <button class="mng-btn" id="mngBtnClose" title="Close">×</button>
   </div>
@@ -11745,13 +11827,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           <input class="mng-input" id="mngNodeLabel" placeholder="Label" />
           <input class="mng-input" id="mngNodeUrl"   placeholder="host:port (e.g. localhost:6724)" />
           <div class="mng-row">
-            <button class="mng-btn primary" id="mngBtnView" title="Open this runtime's full UI as an embedded view">View</button>
-            <button class="mng-btn" id="mngBtnNavigate" title="Open this runtime's UI in a new tab">Navigate</button>
-            <button class="mng-btn" id="mngBtnMain" title="Make this the main node">Main</button>
-          </div>
-          <div class="mng-row">
+            <button class="mng-btn primary" id="mngBtnView" title="Open this runtime's full UI as an embedded view">Open</button>
+            <button class="mng-btn" id="mngBtnNavigate" title="Open this runtime's UI in a new tab">New tab</button>
             <button class="mng-btn" id="mngBtnPing" title="Test connection">Ping</button>
-            <button class="mng-btn danger" id="mngBtnDelete" title="Delete node">Delete</button>
+          </div>
+          <div class="mng-row mng-row-quiet">
+            <button class="mng-btn" id="mngBtnMain" title="Make this the main node">Set as main</button>
+            <span class="mng-row-gap"></span>
+            <button class="mng-btn danger" id="mngBtnDelete" title="Delete node (asks first)">Delete</button>
           </div>
           <div class="mng-help" id="mngFormHelp">Select a node from the canvas, or click <strong>+ Add</strong>.</div>
         </div>
@@ -11787,14 +11870,14 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         <h4>Nodes</h4>
         <div class="mng-list" id="mngList"></div>
       </div>
-      <div class="mng-side-section">
-        <h4>Tips</h4>
+      <details class="mng-side-section mng-tips">
+        <summary>Tips</summary>
         <div class="mng-help">
           Drag nodes to move • drag from the right edge port to connect •
           double-click empty canvas to add • scroll to zoom •
           right-click an edge to remove it.
         </div>
-      </div>
+      </details>
     </div>
   </div>
   <div class="mng-resize" id="mngResize" title="Resize"></div>
@@ -12310,6 +12393,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     function bindFormFor(id){
       currentId = id;
       const n = id ? Store.getNode(id) : null;
+      const form = document.getElementById('mngForm');
+      if (form) form.classList.toggle('mng-form-empty', !n);
       if (!n) {
         labelEl.value = '';
         urlEl.value = '';
@@ -15046,6 +15131,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-cpop { position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 180px; z-index: 80; padding: 6px; display: none;
     background: var(--mux-surface-solid); border: 1px solid var(--border); border-radius: var(--radius, 8px); box-shadow: var(--mux-shadow-md, 0 12px 34px rgba(0,0,0,.4)); }
   .mux-cpop.open { display: block; }
+  .mux-cpop.mux-status-menu { bottom: auto; top: calc(100% + 6px); left: 0; right: auto; min-width: 160px; }
   .mux-cpop .opt { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; background: none; color: var(--text); font: inherit;
     font-size: calc(12.5px * var(--ui-font-scale, 1)); padding: 6px 8px; border-radius: 4px; cursor: pointer; text-align: left; }
   .mux-cpop .opt:hover { background: rgba(var(--mux-tint-rgb), .06); }
