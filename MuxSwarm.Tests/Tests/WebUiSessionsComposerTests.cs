@@ -33,7 +33,23 @@ public class WebUiSessionsComposerTests
     {
         Assert.Contains("send('/effort ' + l[0])", Html);
         Assert.Contains("send('/compact')", Html);
-        Assert.Contains("send('/resume ' + s.n)", Html);
+        Assert.Contains("send('/resume ' + n)", Html);
+    }
+
+    [Fact]
+    public void RailClick_Views_ResumeIsExplicit_AndTheLegacyTabIsGone()
+    {
+        Assert.Contains("b.addEventListener('click', function(){ view(s.n, s.title);", Html);
+        Assert.Contains("b.addEventListener('dblclick', function(){ resume(s.n); });", Html);
+        Assert.DoesNotContain("data-tab=\"sessions\"", Html);
+        Assert.DoesNotContain("function loadSessionsView", Html);
+    }
+
+    [Fact]
+    public void Resume_RedrawsTheSavedConversation()
+    {
+        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); replay(w[1]); }", Html);
+        Assert.Contains("'Resumed \\u00b7 earlier conversation above'", Html);
     }
 
     [Fact]
@@ -56,6 +72,6 @@ public class WebUiSessionsComposerTests
     {
         Assert.Contains("Math.max(220, Math.min(520,", Html);
         Assert.Contains("function togglePin(n)", Html);
-        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); }", Html);
+        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render();", Html);
     }
 }
