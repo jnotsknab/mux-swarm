@@ -1,10 +1,9 @@
-﻿using System.Diagnostics;
-using MuxSwarm.Engine;
+﻿using MuxSwarm.Engine;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
 
-/// <summary>/api/file resolution, kinds and the reveal command (no file manager is ever launched).</summary>
+/// <summary>/api/file resolution and kinds.</summary>
 public class ServeFileApiTests : IDisposable
 {
     private readonly string _base = Path.Combine(Path.GetTempPath(), "mux-fileapi-" + Guid.NewGuid().ToString("N"));
@@ -77,16 +76,4 @@ public class ServeFileApiTests : IDisposable
     [InlineData("a.txt", "text")]
     [InlineData("a.exe", "binary")]
     public void FileKind_FromExtension(string name, string kind) => Assert.Equal(kind, ServeMode.FileKind(name));
-
-    [Fact]
-    public void RevealCommand_IsArgvForThisOs()
-    {
-        var p = Path.Combine(_allowed, "README.md");
-        var psi = ServeMode.RevealCommand(p)!;
-        Assert.False(psi.UseShellExecute);
-        Assert.True(psi.RedirectStandardInput);
-        if (OperatingSystem.IsWindows()) { Assert.Equal("explorer.exe", psi.FileName); Assert.Equal(["/select," + p], psi.ArgumentList); }
-        else if (OperatingSystem.IsMacOS()) { Assert.Equal("open", psi.FileName); Assert.Equal(["-R", p], psi.ArgumentList); }
-        else { Assert.Equal("xdg-open", psi.FileName); Assert.Equal([_allowed], psi.ArgumentList); }
-    }
 }

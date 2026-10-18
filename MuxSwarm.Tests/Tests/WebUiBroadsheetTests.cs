@@ -28,6 +28,19 @@ public class WebUiBroadsheetTests
     }
 
     [Fact]
+    public void BuiltIns_ShareTheBroadsheetLayout_ExceptClassicAndExtensions()
+    {
+        Assert.Contains("_root.dataset.muxStyle = (baseTheme.ext || baseTheme.id === 'zinc') ? 'classic' : 'broadsheet';", Html);
+        Assert.DoesNotContain("html[data-mux-theme=\"broadsheet\"]", Html); // layout keys on the style, not one theme id
+        var block = Html[Html.IndexOf("html[data-mux-style=\"broadsheet\"] {", StringComparison.Ordinal)..][..200];
+        Assert.Contains("--font-sans: var(--font-serif);", block);                  // whole UI in the reading serif
+    }
+
+    [Fact]
+    public void BroadsheetComposer_StacksTheTextareaAboveTheControls() =>
+        Assert.Contains("flex-direction: column; align-items: stretch; gap: 6px;", Html);
+
+    [Fact]
     public void Newsreader_IsBundled_WithItsLicense()
     {
         var fonts = Path.Combine(Root, "Runtime", "mux-web-app", "fonts");
