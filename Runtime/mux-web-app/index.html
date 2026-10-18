@@ -14600,9 +14600,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   html[data-mux-host] .header :is(button, a, input, select, textarea, .header-status, [data-mux="titlebar-slot"]) { app-region: no-drag; -webkit-app-region: no-drag; }
   html[data-mux-controls="native-left"] .header { padding-left: 72px; }
   html[data-mux-controls="native-right"] [data-mux="titlebar-slot"] { width: 120px; }
-  /* With window controls in the header the collapse chevron joins the header flow, before them. */
-  html[data-mux-controls] .header > .header-toggle { position: static; align-self: center; margin-left: 4px; flex-shrink: 0; }
-  html[data-mux-controls] body.header-collapsed .header-toggle { position: absolute; }
+  /* The collapse chevron stays a sibling of the header (it must remain clickable when the header is
+     collapsed). With web-drawn controls it sits just left of them; when collapsed it returns to the
+     corner, because the controls hide with the header. */
+  html[data-mux-controls="web"] body:not(.header-collapsed) .header-toggle { right: 162px; top: 21px; }
+  html[data-mux-controls="native-right"] body:not(.header-collapsed) .header-toggle { right: 150px; }
   [data-mux="titlebar-slot"] button { width: 46px; border: none; border-radius: 0; background: transparent; color: var(--muted);
     display: inline-flex; align-items: center; justify-content: center; cursor: default; padding: 0; }
   [data-mux="titlebar-slot"] button:hover { background: rgba(127, 127, 127, 0.18); color: var(--text); }
@@ -14633,8 +14635,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     const slot = document.createElement('div');
     slot.dataset.mux = 'titlebar-slot';
     header.appendChild(slot);
-    const toggle = document.getElementById('headerToggle');
-    if (toggle) header.insertBefore(toggle, slot);
+    // Keep room for the collapse chevron (a sibling of the header) left of the controls.
+    if ((w.controls || 'web') === 'web') slot.style.marginLeft = '40px';
     let maxBtn = null;
     const sync = async () => { if (!maxBtn || !w.isMaximized) return; try { const m = await w.isMaximized(); maxBtn.innerHTML = m ? ICONS.restore : ICONS.max; maxBtn.title = m ? 'Restore' : 'Maximize'; } catch (_) {} };
     if ((w.controls || 'web') === 'web') {
