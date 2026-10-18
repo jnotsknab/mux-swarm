@@ -15132,29 +15132,42 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 <!-- ===== Sessions rail (left) + composer effort chip and context gauge ===== -->
 <style>
 @layer mux.base {
-  .mux-rail { position: fixed; left: 0; top: 0; bottom: 0; width: var(--mux-rail-width, 260px); z-index: 70;
+  .mux-rail { position: fixed; left: 0; top: 0; bottom: 0; width: var(--mux-rail-width, 300px); z-index: 70;
     display: none; flex-direction: column; background: var(--mux-surface, var(--bg-card)); border-right: 1px solid var(--border); }
   body.mux-rail-open .mux-rail { display: flex; }
-  body.mux-rail-open .app { margin-left: var(--mux-rail-width, 260px); }
-  body.mux-rail-open .input-area { --composer-left-inset: var(--mux-rail-width, 260px); }
-  .mux-rail-head { display: flex; align-items: center; gap: 6px; padding: 14px 12px 10px; }
+  body.mux-rail-open .app { margin-left: var(--mux-rail-width, 300px); }
+  body.mux-rail-open .input-area { --composer-left-inset: var(--mux-rail-width, 300px); }
+  /* Drag the right edge to resize (220-520px, saved per browser). */
+  .mux-rail-edge { position: absolute; top: 0; right: -3px; bottom: 0; width: 6px; cursor: col-resize; z-index: 1; }
+  .mux-rail-edge:hover, .mux-rail.resizing .mux-rail-edge { background: rgba(var(--accent-rgb), .35); }
+  .mux-rail-head { display: flex; align-items: center; gap: 4px; padding: 14px 10px 10px 14px; }
   .mux-rail-head .ttl { flex: 1; font-size: calc(11px * var(--ui-font-scale, 1)); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
   .mux-rail-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border); background: var(--bg-input);
     color: var(--text); border-radius: var(--radius, 6px); padding: 6px 10px; font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); cursor: pointer; }
   .mux-rail-btn:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
   .mux-rail-btn.ghost { border-color: transparent; background: none; color: var(--muted); padding: 4px 6px; }
   .mux-rail-btn.ghost:hover { color: var(--text); background: rgba(var(--mux-tint-rgb), .06); }
-  .mux-rail-new { margin: 0 12px 8px; }
-  .mux-rail-search { margin: 0 12px 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius, 6px); background: var(--mux-inset-bg);
+  .mux-rail-search { margin: 0 12px 10px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius, 6px); background: var(--mux-inset-bg);
     color: var(--text); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
   .mux-rail-list { flex: 1; overflow-y: auto; padding: 0 6px 12px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
   .mux-rail-list::-webkit-scrollbar { width: 8px; } .mux-rail-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-  .mux-rail-sec { padding: 10px 8px 4px; font-size: calc(10.5px * var(--ui-font-scale, 1)); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .mux-rail-sec { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; font: inherit; cursor: pointer; text-align: left;
+    padding: 12px 8px 4px; font-size: calc(10.5px * var(--ui-font-scale, 1)); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .mux-rail-sec .n { margin-left: auto; letter-spacing: 0; opacity: .7; }
+  .mux-rail-sec .c { display: inline-flex; transition: transform .15s; } .mux-rail-sec.shut .c { transform: rotate(-90deg); }
+  .mux-rail-sec:hover { color: var(--text); }
+  .mux-rail-row { position: relative; border-radius: var(--radius, 6px); }
+  .mux-rail-row:hover, .mux-rail-row:focus-within { background: rgba(var(--mux-tint-rgb), .05); }
+  .mux-rail-row.current { background: rgba(var(--accent-rgb), .16); box-shadow: inset 3px 0 0 var(--accent); }
   .mux-rail-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer;
-    padding: 7px 8px; border-radius: var(--radius, 6px); }
-  .mux-rail-item:hover { background: rgba(var(--mux-tint-rgb), .05); }
-  .mux-rail-item .t { display: block; font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mux-rail-item .d { display: block; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); font-family: var(--font-mono); }
+    padding: 6px 8px 6px 10px; border-radius: inherit; }
+  .mux-rail-item .t { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+    font-size: calc(13px * var(--ui-font-scale, 1)); line-height: 1.35; }
+  .mux-rail-item .d { display: flex; gap: 8px; margin-top: 2px; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .mux-rail-acts { position: absolute; top: 4px; right: 4px; display: none; gap: 2px; background: var(--mux-surface-solid); border-radius: var(--radius, 6px); }
+  .mux-rail-row:hover .mux-rail-acts, .mux-rail-row:focus-within .mux-rail-acts { display: flex; }
+  .mux-rail-acts button { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); border-radius: 4px; }
+  .mux-rail-acts button:hover, .mux-rail-acts button.on { color: var(--accent); }
   .mux-rail-toggle { margin-right: 6px; }
   @media (max-width: 900px) {
     body.mux-rail-open .app { margin-left: 0; }
@@ -15180,6 +15193,28 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-cpop .opt.on { color: var(--accent); }
   .mux-cpop .info { padding: 6px 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; }
   .mux-cpop .info b { color: var(--text); font-weight: 600; }
+  .mux-cpop .opt:disabled { opacity: .45; cursor: default; background: none; }
+  .mux-cpop .opt .k { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+  @media (max-width: 1100px) { .mux-cchip#muxActions { font-size: 0; gap: 0; } .mux-cchip#muxActions::before { content: '\22ef'; font-size: calc(14px * var(--ui-font-scale, 1)); } }
+
+  /* Collapsible composer: the input and controls fold away to a slim bar (state saved per browser). */
+  .input-area { transition: bottom .18s ease, box-shadow .2s ease, padding .18s ease; }
+  .input-area > :is(.input-wrapper, .btn-group) { max-height: 640px; transition: max-height .18s ease, opacity .14s ease; }
+  .mux-ccollapse { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
+    border: 1px solid transparent; background: none; color: var(--muted); border-radius: var(--radius, 6px); cursor: pointer; }
+  .mux-ccollapse:hover { color: var(--text); border-color: var(--border); }
+  .mux-cbar { display: none; align-items: center; gap: 8px; width: 100%; border: 0; background: none; color: var(--muted); font: inherit;
+    font-size: calc(13px * var(--ui-font-scale, 1)); padding: 2px 4px; cursor: text; text-align: left; }
+  .mux-cbar .k { margin-left: auto; font-size: calc(11px * var(--ui-font-scale, 1)); opacity: .7; }
+  body.mux-composer-collapsed .input-area { flex-direction: column; align-items: stretch; gap: 0; padding: 6px 12px; }
+  body.mux-composer-collapsed .input-area > :is(.input-wrapper, .btn-group) { max-height: 0; opacity: 0; overflow: hidden; pointer-events: none; }
+  body.mux-composer-collapsed .mux-cbar { display: flex; animation: mux-cbar-in .18s ease; }
+  html body.mux-composer-collapsed .output { padding-bottom: 64px; }
+  @keyframes mux-cbar-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .input-area, .input-area > :is(.input-wrapper, .btn-group) { transition: none; }
+    body.mux-composer-collapsed .mux-cbar { animation: none; }
+  }
 }
 </style>
 <script>
@@ -15195,13 +15230,21 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   // ── Rail ──
   var rail = document.createElement('aside'); rail.className = 'mux-rail'; rail.id = 'muxRail'; rail.setAttribute('aria-label', 'Sessions');
   rail.innerHTML = '<div class="mux-rail-head"><span class="ttl">Sessions</span>' +
+    '<button class="mux-rail-btn" id="muxRailNew" title="Start a new agent session (/agent)">+ New</button>' +
     '<button class="mux-rail-btn ghost" id="muxRailRefresh" title="Refresh" aria-label="Refresh sessions">\u21bb</button>' +
     '<button class="mux-rail-btn ghost" id="muxRailHide" title="Hide sidebar" aria-label="Hide sidebar">\u00ab</button></div>' +
-    '<button class="mux-rail-btn mux-rail-new" id="muxRailNew" title="Start a new agent session (/agent)">+ New session</button>' +
     '<input class="mux-rail-search" id="muxRailSearch" type="search" placeholder="Search sessions" aria-label="Search sessions">' +
-    '<div class="mux-rail-list" id="muxRailList"></div>';
+    '<div class="mux-rail-list" id="muxRailList"></div><div class="mux-rail-edge" title="Drag to resize"></div>';
   document.body.appendChild(rail);
   var list = rail.querySelector('#muxRailList'), search = rail.querySelector('#muxRailSearch');
+  function setWidth(w){ w = Math.max(220, Math.min(520, Math.round(w || 300))); document.documentElement.style.setProperty('--mux-rail-width', w + 'px'); return w; }
+  if (st && st.width) setWidth(st.width);
+  rail.querySelector('.mux-rail-edge').addEventListener('pointerdown', function(e){
+    e.preventDefault(); rail.classList.add('resizing');
+    function mv(ev){ st.width = setWidth(ev.clientX); }
+    function up(){ rail.classList.remove('resizing'); save(); window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); }
+    window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up);
+  });
 
   var toggle = document.createElement('button');
   toggle.className = 'icon-btn mux-rail-toggle'; toggle.id = 'muxRailToggle'; toggle.title = 'Sessions sidebar'; toggle.setAttribute('aria-label', 'Sessions sidebar');
@@ -15216,15 +15259,31 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   rail.querySelector('#muxRailNew').addEventListener('click', function(){ send('/agent'); });
   search.addEventListener('input', render);
 
-  var items = [], loaded = 0, titles = new Map();
-  var TITLE_KEY = 'muxSessionTitles.v1';
+  var items = [], loaded = 0, titles = new Map(), meta = new Map(), current = '';
+  var TITLE_KEY = 'muxSessionTitles.v1', META_KEY = 'muxSessionMeta.v1';
   try { (JSON.parse(localStorage.getItem(TITLE_KEY) || '[]') || []).forEach(function(p){ titles.set(p[0], p[1]); }); } catch(_) {}
-  function saveTitles(){ try { localStorage.setItem(TITLE_KEY, JSON.stringify(Array.from(titles.entries()).slice(-400))); } catch(_) {} }
-  function pins(){ try { return new Set(JSON.parse(localStorage.getItem('muxPinnedSessions.v1') || '[]')); } catch(_) { return new Set(); } }
+  try { (JSON.parse(localStorage.getItem(META_KEY) || '[]') || []).forEach(function(p){ meta.set(p[0], p[1]); }); } catch(_) {}
+  function saveTitles(){ try { localStorage.setItem(TITLE_KEY, JSON.stringify(Array.from(titles.entries()).slice(-400)));
+    localStorage.setItem(META_KEY, JSON.stringify(Array.from(meta.entries()).slice(-400))); } catch(_) {} }
+  var PIN_KEY = 'muxPinnedSessions.v1';
+  function pins(){ try { return new Set(JSON.parse(localStorage.getItem(PIN_KEY) || '[]')); } catch(_) { return new Set(); } }
+  function togglePin(n){ var p = pins(); if (p.has(n)) p.delete(n); else p.add(n); try { localStorage.setItem(PIN_KEY, JSON.stringify(Array.from(p))); } catch(_) {} render(); }
+  st.shut = st.shut || { 'Older': true };
   function when(name){
-    var m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/.exec(name || ''); if (!m) return { d: null, label: name };
+    var m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/.exec(name || ''); if (!m) return { d: null, label: name, short: name };
     var d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-    return { d: d, label: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) };
+    return { d: d, label: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }),
+      time: d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+      day: d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) };
+  }
+  // Message counts come from the same agent_session.json read that yields the title.
+  function counts(json){
+    try {
+      var sb = json.stateBag || json, msgs = [];
+      Object.keys(sb).forEach(function(k){ if (sb[k] && Array.isArray(sb[k].messages)) msgs = sb[k].messages; });
+      var u = 0; msgs.forEach(function(m){ if ((m.role || '').toLowerCase() === 'user') u++; });
+      return { turns: u };
+    } catch(_) { return null; }
   }
   function bucket(d){
     if (!d) return 'Older';
@@ -15257,7 +15316,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       (function next(){
         var n = todo.shift(); if (!n) { saveTitles(); return; }
         fetch('/api/download/sessions/' + encodeURIComponent(n) + '/agent_session.json').then(function(r){ return r.ok ? r.json() : null; })
-          .then(function(j){ titles.set(n, (j && firstUser(j)) || ''); render(); }).catch(function(){ titles.set(n, ''); }).then(next);
+          .then(function(j){ titles.set(n, (j && firstUser(j)) || ''); if (j) meta.set(n, counts(j)); render(); }).catch(function(){ titles.set(n, ''); }).then(next);
       })();
     }).catch(function(){ list.textContent = 'Could not load sessions.'; });
   }
@@ -15269,22 +15328,50 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       var w = when(n), title = titles.get(n) || w.label;
       if (q && (title + ' ' + n).toLowerCase().indexOf(q) < 0) return;
       var g = p.has(n) ? 'Pinned' : bucket(w.d);
-      (groups[g] = groups[g] || []).push({ n: n, title: title, when: w.label });
+      (groups[g] = groups[g] || []).push({ n: n, title: title, w: w, g: g });
     });
     order.forEach(function(g){
       if (!groups[g]) return;
-      var h = document.createElement('div'); h.className = 'mux-rail-sec'; h.textContent = g; list.appendChild(h);
+      var shut = !q && !!st.shut[g];
+      var h = document.createElement('button'); h.type = 'button'; h.className = 'mux-rail-sec' + (shut ? ' shut' : '');
+      h.innerHTML = '<span class="c"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span><span></span><span class="n"></span>';
+      h.children[1].textContent = g; h.children[2].textContent = groups[g].length;
+      h.addEventListener('click', function(){ st.shut[g] = !st.shut[g]; save(); render(); });
+      list.appendChild(h);
+      if (shut) return;
       groups[g].forEach(function(s){
+        var row = document.createElement('div'); row.className = 'mux-rail-row' + (s.n === current ? ' current' : '');
         var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-rail-item'; b.title = 'Resume ' + s.n; b.dataset.session = s.n;
         var t = document.createElement('span'); t.className = 't'; t.textContent = s.title;
-        var d = document.createElement('span'); d.className = 'd'; d.textContent = s.when;
+        var d = document.createElement('span'); d.className = 'd';
+        // Inside Today/Yesterday the group already says the day: show the time only.
+        var m = meta.get(s.n), bits = [(s.g === 'Today' || s.g === 'Yesterday') ? s.w.time : (s.w.day ? s.w.day + ', ' + s.w.time : s.w.label)];
+        if (m && m.turns) bits.push(m.turns + (m.turns === 1 ? ' message' : ' messages'));
+        bits.forEach(function(x){ var e = document.createElement('span'); e.textContent = x; d.appendChild(e); });
         b.appendChild(t); b.appendChild(d);
-        b.addEventListener('click', function(){ send('/resume ' + s.n); if (window.innerWidth < 900) { st.open = false; save(); apply(); } });
-        list.appendChild(b);
+        b.addEventListener('click', function(){ current = s.n; send('/resume ' + s.n); render(); if (window.innerWidth < 900) { st.open = false; save(); apply(); } });
+        var acts = document.createElement('div'); acts.className = 'mux-rail-acts';
+        acts.innerHTML = '<button type="button" data-a="pin"></button><button type="button" data-a="copy" title="Copy session ID" aria-label="Copy session ID">\u29c9</button>';
+        var pb = acts.firstChild, pinned = p.has(s.n);
+        pb.textContent = '\u2605'; pb.className = pinned ? 'on' : ''; pb.title = pinned ? 'Unpin' : 'Pin'; pb.setAttribute('aria-label', pb.title);
+        pb.addEventListener('click', function(e){ e.stopPropagation(); togglePin(s.n); });
+        acts.lastChild.addEventListener('click', function(e){
+          e.stopPropagation();
+          try { navigator.clipboard.writeText(s.n).then(function(){ if (window.muxToast) window.muxToast('Session ID copied', 'success'); }); } catch(_) {}
+        });
+        row.appendChild(b); row.appendChild(acts); list.appendChild(row);
       });
     });
     if (!list.childNodes.length) list.innerHTML = '<div class="mux-rail-sec">' + (items.length ? 'No matches' : 'No sessions yet') + '</div>';
   }
+  // Current session from the server-echoed input: /resume <id> marks it, a new session or /qc clears it
+  // (a new session's folder shows up on the next refresh).
+  window.addEventListener('mux:ws-event', function(e){
+    var ev = e.detail || {}; if (ev.type !== 'user_input' || typeof ev.text !== 'string') return;
+    var w = ev.text.trim().split(/\s+/), c = (w[0] || '').toLowerCase();
+    if (c === '/resume' && w[1]) { current = w[1]; render(); }
+    else if (['/agent', '/stateless', '/swarm', '/pswarm', '/qc', '/exit'].indexOf(c) >= 0) { current = ''; loaded = 0; if (st.open) setTimeout(load, 1500); else render(); }
+  });
 
   // ── Composer: effort chip + context gauge ──
   var actions = document.querySelector('[data-mux="composer-actions"]');
@@ -15302,6 +15389,60 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   document.addEventListener('click', function(e){ if (!e.target.closest || !e.target.closest('.mux-cpop')) closeAll(); });
   var gauge = chip('muxGauge', 'Context used until auto-compact');
   var effort = chip('muxEffort', 'Reasoning effort');
+
+  // ── Composer: session actions (existing commands; session-only ones disabled outside a session) ──
+  var act = chip('muxActions', 'Session actions');
+  var mic = document.getElementById('micBtn');
+  if (actions && mic) actions.insertBefore(act.wrap, mic);
+  act.btn.hidden = false; act.btn.textContent = 'Actions \u25be';
+  var ACTS = [['Compact', '/compact', true], ['Undo last exchange', '/undo', true], ['Retry last message', '/retry', true],
+    ['Copy last reply', '/copy', false], ['Wipe context\u2026', '/wipe', true]];
+  function paintActions(inAgent){
+    act.pop.innerHTML = '';
+    ACTS.forEach(function(a){
+      var o = document.createElement('button'); o.type = 'button'; o.className = 'opt'; o.disabled = a[2] && !inAgent;
+      o.innerHTML = '<span></span><span class="k"></span>'; o.firstChild.textContent = a[0]; o.lastChild.textContent = a[1];
+      if (o.disabled) o.title = 'Needs a running session';
+      o.addEventListener('click', function(){
+        closeAll();
+        if (a[1] === '/wipe' && !window.confirm('Wipe the current session context? The conversation so far is dropped.')) return;
+        send(a[1]); setTimeout(poll, 1200);
+      });
+      act.pop.appendChild(o);
+    });
+  }
+  paintActions(false);
+
+  // ── Composer: collapse to a slim bar ──
+  var CKEY = 'muxComposer.v1', area = document.querySelector('[data-mux="composer"]'), ta = document.getElementById('input');
+  var cst = (function(){ try { return JSON.parse(localStorage.getItem(CKEY) || '{}') || {}; } catch(_) { return {}; } })();
+  var cbtn = document.createElement('button'); cbtn.type = 'button'; cbtn.className = 'mux-ccollapse'; cbtn.id = 'muxComposerCollapse';
+  cbtn.title = 'Collapse the composer (Ctrl+Shift+Space)'; cbtn.setAttribute('aria-label', 'Collapse the composer');
+  cbtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+  if (actions) actions.insertBefore(cbtn, actions.firstChild);
+  var cbar = document.createElement('button'); cbar.type = 'button'; cbar.className = 'mux-cbar'; cbar.id = 'muxComposerBar';
+  cbar.setAttribute('aria-label', 'Expand the composer');
+  cbar.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg><span>Message Mux\u2026</span><span class="k">/ or Ctrl+Shift+Space</span>';
+  if (area) area.insertBefore(cbar, area.firstChild);
+  function setCollapsed(v, focus){
+    cst.collapsed = !!v; try { localStorage.setItem(CKEY, JSON.stringify(cst)); } catch(_) {}
+    document.body.classList.toggle('mux-composer-collapsed', cst.collapsed);
+    if (!cst.collapsed && focus && ta) ta.focus();
+  }
+  setCollapsed(cst.collapsed);
+  cbtn.addEventListener('click', function(){ setCollapsed(true); });
+  cbar.addEventListener('click', function(){ setCollapsed(false, true); });
+  // Anything that focuses the input (attachments, shortcuts, other panels) opens it again.
+  if (ta) ta.addEventListener('focus', function(){ if (cst.collapsed) setCollapsed(false); });
+  document.addEventListener('keydown', function(e){
+    if (e.ctrlKey && e.shiftKey && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); setCollapsed(!cst.collapsed, true); return; }
+    if (!cst.collapsed || e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+    var t = e.target; if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+    e.preventDefault(); setCollapsed(false, true);
+    if (ta && !ta.value) { ta.value = '/'; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+  });
+  // The agent asking a question always brings the composer back.
+  window.addEventListener('mux:ws-event', function(e){ if (e.detail && e.detail.type === 'prompt' && cst.collapsed) setCollapsed(false, true); });
   var LEVELS = [['low', 'Low'], ['med', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']];
   var last = {};
   function fmt(n){ return n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'k' : String(n || 0); }
@@ -15321,6 +15462,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         effort.pop.appendChild(o);
       });
     }
+    paintActions(inAgent);
     gauge.btn.hidden = !inAgent || !s.tokenThreshold;
     if (!gauge.btn.hidden) {
       var pct = Math.max(0, Math.min(100, s.tokenPct || 0));
@@ -15348,6 +15490,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   apply(); poll();
   window.MuxRail = { open: function(){ st.open = true; save(); apply(); }, close: function(){ st.open = false; save(); apply(); },
     reload: function(){ loaded = 0; load(); }, status: function(){ return Object.assign({}, last); } };
+  window.MuxComposer = { collapse: function(){ setCollapsed(true); }, expand: function(){ setCollapsed(false, true); },
+    get collapsed(){ return !!cst.collapsed; } };
 })();
 </script>
 <!-- ===== /Sessions rail ===== -->
