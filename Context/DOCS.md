@@ -1347,6 +1347,12 @@ right edge (drag its left edge to resize; the chat column makes room); the eye b
 which opens each file a write/edit/move/download tool reports, so you can watch what the agent is producing. Both
 choices persist per browser. The floating panel stays the default.
 
+**Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day, titled by their
+first message, pins shared with the Sessions tab); click resumes (`/resume <id>`), **+ New session** sends `/agent`. It
+starts open on wide screens and remembers your choice (toggle next to the wordmark). In an agent session the composer
+shows an **Effort** chip (sends `/effort <level>`) once the session has run a turn, and a **context gauge** (tokens until
+auto-compact, from `/api/status`) with a **Compact now** action.
+
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
 the bundled Newsreader serif for agent replies (`--font-serif`; change it under Settings > Typography > Reading font),
 square 3px corners and hairline rules, with Paper (light) and Ink (dark) variants that follow the system scheme. Its layout

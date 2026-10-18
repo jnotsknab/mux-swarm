@@ -1282,7 +1282,14 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
     }
 
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
-    public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
+    public static void SetTuiEffort(string? effort)
+    {
+        CurrentEffort = effort;
+        if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); }
+    }
+
+    /// <summary>Live session reasoning-effort label (null outside a single-agent session); read by /api/status.</summary>
+    internal static string? CurrentEffort { get; private set; }
 
     /// <summary>
     /// Register the Shift+Tab mode-cycle callback on the driver (e.g. cycle reasoning effort
