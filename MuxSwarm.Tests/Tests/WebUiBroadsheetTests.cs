@@ -45,6 +45,21 @@ public class WebUiBroadsheetTests
         Assert.Contains("flex-direction: column; align-items: stretch; gap: 6px;", Html);
 
     [Fact]
+    public void ComposerFocus_IsAnOutlineOnly() =>
+        Assert.Contains(".input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }", Html);
+
+    [Fact]
+    public void RenderedCode_HasFixedLeading_AndThemedScrollbars()
+    {
+        Assert.Contains(".mux-md-view pre, .mux-md-view pre code { line-height: 1.55; }", Html);      // preview panel, not double spaced
+        Assert.Contains(":is(.stream-block, .bubble, .code-block, .mux-md-view) pre { scrollbar-width: thin;", Html);
+    }
+
+    [Fact]
+    public void CommandPaletteHeader_FollowsThePaletteCorner() =>
+        Assert.Contains("border-radius: inherit; border-bottom-left-radius: 0; border-bottom-right-radius: 0;", Html);
+
+    [Fact]
     public void Newsreader_IsBundled_WithItsLicense()
     {
         var fonts = Path.Combine(Root, "Runtime", "mux-web-app", "fonts");
