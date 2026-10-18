@@ -69,6 +69,9 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 | `/api/read/{type}/{path}` | Read a file | `serve.auth` |
 | `/api/save/{type}/{path}` | Save a file | `serve.auth` + `serve.editable` |
 | `/api/download/{type}/{path}` | Download a file | `serve.auth` |
+| `/api/file?path=&as=view\|download` | File bytes for chips, inline images and the preview panel. `path` is absolute or sandbox-relative and must lie under the sandbox, sessions folder or a `filesystem.allowedPaths` root (same roots as the file tools); `Range` supported; 404 otherwise | `serve.auth` |
+| `/api/file/meta?path=` | `{ path, name, size, mtime, mime, kind }` (`kind`: image, video, audio, pdf, markdown, html, json, table, text, binary) | `serve.auth` |
+| `/api/file/reveal` | `POST { path }`: show the file in the serve host's file manager (Explorer `/select`, `open -R`, `xdg-open` on the folder); 501 when none is available | `serve.auth` |
 | `/api/upload` | Upload a file | `serve.auth` |
 | `/api/fs` | Filesystem CRUD operations | `serve.auth` + `serve.editable` for writes |
 | `/api/update` | `POST`: read-only self-update plan (what would change) | `serve.auth` |
