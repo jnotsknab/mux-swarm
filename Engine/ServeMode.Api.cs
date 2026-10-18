@@ -37,7 +37,6 @@ namespace MuxSwarm.Engine;
 ///   GET /api/themes                  extension themes mapped to the web UI's CSS variables (+ web block CSS/fonts/variants)
 ///   GET /ext/{name}/{**path}         static CSS/font/image assets from an enabled extension's web folder
 ///   GET /api/file, /api/file/meta    file bytes / metadata under sandbox, sessions or allowedPaths (ServeMode.Files.cs)
-///   POST /api/file/reveal            show a file in the serve host's file manager
 /// </summary>
 public static partial class ServeMode
 {
@@ -85,7 +84,6 @@ public static partial class ServeMode
         app.MapGet("/api/themes", HandleThemes);
         app.MapGet("/api/file", HandleFile);
         app.MapGet("/api/file/meta", HandleFileMeta);
-        app.MapPost("/api/file/reveal", HandleFileReveal);
         app.MapGet("/ext/{name}/{**path}", Extensions.ExtensionWeb.HandleAsset);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
