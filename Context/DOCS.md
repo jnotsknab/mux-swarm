@@ -1338,8 +1338,8 @@ Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light th
 
 **File chips.** File paths in agent replies, tool output and inline code (absolute Windows/UNC/POSIX paths,
 `file://` URLs, and sandbox-relative paths inside backticks) become chips once `GET /api/file/meta` confirms the file
-exists under the sandbox, sessions folder or `filesystem.allowedPaths`. Click opens it in the preview panel; the hover
-actions download it or show it in the Mux host's file manager (`POST /api/file/reveal`). In the desktop app an extra
+exists under the sandbox, sessions folder or `filesystem.allowedPaths`. A chip shows the file name (full path in its
+tooltip). Click opens it in the preview panel; the hover actions download it or copy its full path. In the desktop app an extra
 action opens the file with its default app (`muxHost.openPath`; executables and shortcuts are refused). Image paths also render an
 inline thumbnail. Turn both off with Settings > File chips and image previews.
 
