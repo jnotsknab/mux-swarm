@@ -128,6 +128,7 @@
   --mux-tint-rgb: 255, 255, 255;
   --font-mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
   --font-sans: 'IBM Plex Sans', -apple-system, sans-serif;
+  --font-serif: 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
   --sidebar-width: 420px;
   --radius: 0.5rem;
   /* Typography & density (user-controllable from Settings → Typography) */
@@ -2631,6 +2632,76 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
 .user-msg .bubble code { font-family: var(--mux-font-code); }
 }
 </style>
+<style>
+/* ── Broadsheet: the default look (built-in theme, scoped to its id). Centered reading column, serif
+   prose, square-cornered chrome with hairline rules, mono datelines. Tokens first, then a few rules for
+   things tokens cannot express. Other presets are untouched. ── */
+@layer mux.theme {
+  html[data-mux-theme="broadsheet"] {
+    --mux-font-prose: var(--font-serif);
+    --mux-prose-size: calc(16.5px * var(--ui-font-scale, 1));
+    --mux-prose-leading: 1.7;
+    --mux-content-max: 760px;
+    --radius: 3px;
+    --mux-radius: 0px;
+    --mux-bubble-bg: var(--bg-card);
+    --mux-bubble-radius: 3px;
+    --mux-composer-bg: var(--bg-input);
+    --mux-composer-radius: 4px;
+    --mux-composer-shadow: 0 1px 0 var(--border), 0 10px 28px rgba(0, 0, 0, 0.18);
+    --mux-surface-raised: var(--bg-card);
+    --mux-header-border: var(--border);
+    --composer-opacity: 1;
+  }
+  html[data-mux-theme="broadsheet"][data-mux-scheme="light"] {
+    --mux-composer-shadow: 0 1px 0 var(--border), 0 8px 24px rgba(20, 24, 32, 0.07);
+  }
+}
+@layer mux.base {
+  html[data-mux-theme="broadsheet"] [data-mux="composer"] {
+    left: 50%; right: auto; transform: translateX(-50%);
+    width: min(calc(var(--mux-content-max) + 48px), calc(100% - 48px - var(--composer-right-inset, 0px)));
+    margin-left: calc(var(--composer-right-inset, 0px) / -2);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  html[data-mux-theme="broadsheet"] .stream-block { padding: 6px 4px; }
+  html[data-mux-theme="broadsheet"] .stream-block :is(h1, h2, h3, h4) {
+    font-family: var(--font-serif); font-weight: 600; color: var(--text); letter-spacing: -0.005em;
+  }
+  html[data-mux-theme="broadsheet"] .stream-block :is(h1, h2) { border-bottom: 1px solid var(--border); }
+  html[data-mux-theme="broadsheet"] .stream-block code {
+    font-weight: 400; color: var(--text); background: var(--bg-card); border: 1px solid var(--border); border-radius: 2px;
+  }
+  html[data-mux-theme="broadsheet"] .stream-block pre { border: 1px solid var(--border); border-radius: 2px; }
+  html[data-mux-theme="broadsheet"] .stream-block blockquote { border-left-width: 2px; background: transparent; }
+  html[data-mux-theme="broadsheet"] .stream-block a { color: var(--accent); border-bottom: 1px solid rgba(var(--accent-rgb), 0.35); }
+  /* Dateline: agent name and time in small mono caps, ruled off from the previous turn. */
+  html[data-mux-theme="broadsheet"] .agent-turn {
+    margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+  html[data-mux-theme="broadsheet"] .agent-badge {
+    font-family: var(--font-mono); letter-spacing: 0.12em; color: var(--muted); font-weight: 600;
+  }
+  html[data-mux-theme="broadsheet"] .agent-turn .msg-time { font-family: var(--font-mono); opacity: 0.7; }
+  /* Tool calls and events read as margin notes: mono, small, quiet. */
+  html[data-mux-theme="broadsheet"] :is(.tool-call, .tool-result) { font-family: var(--font-mono); }
+  html[data-mux-theme="broadsheet"] .user-msg .bubble { border-color: var(--border); }
+  /* Square controls: buttons, pills and chips share the 3px corner of the frame. */
+  html[data-mux-theme="broadsheet"] :is(.send-btn, .stop-btn, .mic-btn, .upload-btn, .session-btn, .model-btn, .pill-tag, .mux-token-badge, .icon-btn, .mux-preview-fab) { border-radius: 3px; }
+  html[data-mux-theme="broadsheet"] .send-btn { color: var(--mux-on-accent); }
+  html[data-mux-theme="broadsheet"] :is(.model-menu, .session-menu, .cmd-palette, .theme-panel, .mux-settings) { border-radius: 4px; }
+  html[data-mux-theme="broadsheet"] [data-mux="header"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  html[data-mux-theme="broadsheet"] .header-logo { font-family: var(--font-serif); font-weight: 600; letter-spacing: 0.04em; }
+  html[data-mux-theme="broadsheet"] [data-mux="splash-title"] {
+    font-family: var(--font-serif); font-weight: 500; letter-spacing: 0.06em;
+    background: none; -webkit-text-fill-color: currentColor; color: var(--text);
+  }
+  html[data-mux-theme="broadsheet"] [data-mux="splash-tip"] { font-family: var(--font-serif); font-size: calc(15px * var(--ui-font-scale, 1)); }
+  @media (max-width: 640px) {
+    html[data-mux-theme="broadsheet"] [data-mux="composer"] { width: calc(100% - 16px); }
+  }
+}
+</style>
 </head>
 <body>
 
@@ -2988,7 +3059,15 @@ const icons = {
   
   
   const themes = [
-    { id: 'zinc', name: 'Zinc', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC', '--accent-rgb': '100, 180, 220', '--green-rgb': '16, 185, 129', '--blue-rgb': '59, 130, 246', '--amber-rgb': '245, 158, 11', '--red-rgb': '239, 68, 68', '--agent-rgb': '139, 92, 246' } },
+    // Default look: Mux's own newsprint/ink palette (Paper light, Ink dark; follows the system).
+    // Layout and typography for it live in the `html[data-mux-theme="broadsheet"]` block.
+    { id: 'broadsheet', name: 'Broadsheet', dot: '#1f3a5f', defaultVariant: 'system',
+      vars: { '--bg': '#141820', '--bg-card': '#1b2029', '--bg-input': '#20262f', '--border': 'rgba(196, 204, 216, 0.14)', '--text': '#e8e6e1', '--muted': '#9aa1ab', '--blue': '#86a8d8', '--green': '#7fb592', '--amber': '#d6aa5b', '--red': '#e07b72', '--agent': '#a99ad6', '--accent': '#8fb0e0', '--accent-rgb': '143, 176, 224', '--green-rgb': '127, 181, 146', '--blue-rgb': '134, 168, 216', '--amber-rgb': '214, 170, 91', '--red-rgb': '224, 123, 114', '--agent-rgb': '169, 154, 214' },
+      variants: {
+        light: { vars: { '--bg': '#f4f2ed', '--bg-card': '#fbfaf7', '--bg-input': '#ffffff', '--border': 'rgba(28, 32, 40, 0.14)', '--text': '#1b1e24', '--muted': '#5f6570', '--blue': '#2a4f86', '--green': '#2f7a4b', '--amber': '#9a6510', '--red': '#b23a32', '--agent': '#5b4a9c', '--accent': '#1f3a5f', '--accent-rgb': '31, 58, 95', '--accent-fg': '#ffffff', '--green-rgb': '47, 122, 75', '--blue-rgb': '42, 79, 134', '--amber-rgb': '154, 101, 16', '--red-rgb': '178, 58, 50', '--agent-rgb': '91, 74, 156', '--muted-rgb': '95, 101, 112' } },
+        dark:  { vars: { '--accent-fg': '#0f1318', '--muted-rgb': '154, 161, 171' } }
+      } },
+    { id: 'zinc', name: 'Classic', dot: '#09090b', vars: { '--bg': '#09090b', '--bg-card': 'rgba(24, 24, 27, 0.6)', '--bg-input': 'rgba(39, 39, 42, 0.5)', '--border': 'rgba(63, 63, 70, 0.4)', '--text': '#fafafa', '--muted': '#a1a1aa', '--blue': '#3b82f6', '--green': '#10b981', '--amber': '#f59e0b', '--red': '#ef4444', '--agent': '#8b5cf6', '--accent': '#64B4DC', '--accent-rgb': '100, 180, 220', '--green-rgb': '16, 185, 129', '--blue-rgb': '59, 130, 246', '--amber-rgb': '245, 158, 11', '--red-rgb': '239, 68, 68', '--agent-rgb': '139, 92, 246' } },
     { id: 'light', name: 'Light', dot: '#f4f4f5', vars: { '--bg': '#f4f4f5', '--bg-card': 'rgba(255, 255, 255, 0.8)', '--bg-input': 'rgba(255, 255, 255, 0.9)', '--border': 'rgba(228, 228, 231, 0.8)', '--text': '#18181b', '--muted': '#71717a', '--blue': '#2563eb', '--green': '#059669', '--amber': '#d97706', '--red': '#dc2626', '--agent': '#7c3aed', '--accent': '#0284c7', '--accent-rgb': '2, 132, 199', '--green-rgb': '5, 150, 105', '--blue-rgb': '37, 99, 235', '--amber-rgb': '217, 119, 6', '--red-rgb': '220, 38, 38', '--agent-rgb': '124, 58, 237' } },
     { id: 'ocean', name: 'Ocean', dot: '#0f172a', vars: { '--bg': '#0f172a', '--bg-card': 'rgba(30, 41, 59, 0.6)', '--bg-input': 'rgba(51, 65, 85, 0.5)', '--border': 'rgba(71, 85, 105, 0.4)', '--text': '#f8fafc', '--muted': '#94a3b8', '--blue': '#38bdf8', '--green': '#34d399', '--amber': '#fbbf24', '--red': '#f87171', '--agent': '#a78bfa', '--accent': '#2dd4bf', '--accent-rgb': '45, 212, 191', '--green-rgb': '52, 211, 153', '--blue-rgb': '56, 189, 248', '--amber-rgb': '251, 191, 36', '--red-rgb': '248, 113, 113', '--agent-rgb': '167, 139, 250' } },
     { id: 'matrix', name: 'Matrix', dot: '#000000', vars: { '--bg': '#000000', '--bg-card': 'rgba(0, 20, 0, 0.6)', '--bg-input': 'rgba(0, 40, 0, 0.5)', '--border': 'rgba(0, 80, 0, 0.4)', '--text': '#4ade80', '--muted': '#22c55e', '--blue': '#4ade80', '--green': '#86efac', '--amber': '#facc15', '--red': '#ef4444', '--agent': '#4ade80', '--accent': '#22c55e', '--accent-rgb': '34, 197, 94', '--green-rgb': '134, 239, 172', '--blue-rgb': '74, 222, 128', '--amber-rgb': '250, 204, 21', '--red-rgb': '239, 68, 68', '--agent-rgb': '74, 222, 128' } },
@@ -3007,7 +3086,7 @@ const icons = {
     { id: 'synthwave', name: 'SynthWave', dot: '#262335', vars: { '--bg': '#262335', '--bg-card': 'rgba(36, 27, 47, 0.7)', '--bg-input': 'rgba(42, 33, 57, 0.6)', '--border': 'rgba(73, 84, 149, 0.45)', '--text': '#ffffff', '--muted': '#848bbd', '--blue': '#36f9f6', '--green': '#72f1b8', '--amber': '#fede5d', '--red': '#fe4450', '--agent': '#f97e72', '--accent': '#ff7edb', '--accent-rgb': '255, 126, 219', '--green-rgb': '114, 241, 184', '--blue-rgb': '54, 249, 246', '--amber-rgb': '254, 222, 93', '--red-rgb': '254, 68, 80', '--agent-rgb': '249, 126, 114' } }
   ];
 
-  let currentThemeId = 'zinc';
+  let currentThemeId = 'broadsheet';
   let customOverrides = {}; // { '--bg': '#...', ... }
 
   function hexToRgbA(hex, alpha) {
@@ -3234,6 +3313,7 @@ const icons = {
       applyThemeState();
     }
   } catch(e) { applyThemeState(); }
+
 
 
   
@@ -9853,6 +9933,7 @@ const icons = {
     streamPreviewLines: 2,
     fontMono: 'JetBrains Mono',
     fontSans: 'IBM Plex Sans',
+    fontSerif: 'Newsreader',
     customFonts: [],
     warnSessionSwitch: true,
     editorTheme: 'auto',
@@ -9885,7 +9966,7 @@ const icons = {
   const LOADED_GFONTS = new Set();
   const BUILTIN_LOCAL = new Set(['SF Mono','Menlo','Consolas','Segoe UI','SF Pro Text','Helvetica Neue','system-ui','ui-monospace','-apple-system']);
   // Shipped under /fonts/ (Runtime/mux-web-app/fonts), so the UI renders offline.
-  const BUNDLED_FONTS = new Set(['JetBrains Mono','IBM Plex Sans']);
+  const BUNDLED_FONTS = new Set(['JetBrains Mono','IBM Plex Sans','Newsreader']);
   function loadGoogleFont(name){
     if (!name || LOADED_GFONTS.has(name)) return;
     if (BUILTIN_LOCAL.has(name)) return; // OS-provided, don't fetch
@@ -9953,6 +10034,7 @@ const icons = {
     // Font family stacks: chosen family first, then a sane fallback stack
     const monoStack = `'${(state.fontMono || 'JetBrains Mono').replace(/'/g, "\\'")}', 'JetBrains Mono', 'Cascadia Code', 'Fira Code', ui-monospace, monospace`;
     const sansStack = `'${(state.fontSans || 'IBM Plex Sans').replace(/'/g, "\\'")}', 'IBM Plex Sans', -apple-system, system-ui, sans-serif`;
+    const serifStack = `'${(state.fontSerif || 'Newsreader').replace(/'/g, "\\'")}', 'Newsreader', 'Iowan Old Style', Georgia, 'Times New Roman', serif`;
     sv['--font-mono'] = monoStack;
     sv['--font-sans'] = sansStack;
     // A font picked here (built-in or uploaded) beats extension themes: the --mux-font-* tokens a
@@ -9962,11 +10044,18 @@ const icons = {
       sv['--mux-font-prose'] = monoStack;
       sv['--mux-font-code'] = monoStack;
     }
+    // Reading font: themes that set prose to var(--font-serif) (Broadsheet) pick this up; an explicit
+    // non-default choice also wins over an extension theme's prose font.
+    if ((state.fontSerif || DEFAULTS.fontSerif) !== DEFAULTS.fontSerif) {
+      sv['--font-serif'] = serifStack;
+      sv['--mux-font-prose'] = serifStack;
+    }
     let _sv = document.getElementById('mux-settings-vars');
     if (!_sv) { _sv = document.createElement('style'); _sv.id = 'mux-settings-vars'; document.head.appendChild(_sv); }
     _sv.textContent = '@layer mux.user { :root { ' + Object.entries(sv).map(([k, v]) => k + ': ' + v + ';').join(' ') + ' } }';
     loadGoogleFont(state.fontMono);
     loadGoogleFont(state.fontSans);
+    loadGoogleFont(state.fontSerif);
     // Let the code editor re-evaluate its theme when settings change.
     try { window.MuxEditor && window.MuxEditor.refreshTheme && window.MuxEditor.refreshTheme(); } catch(_) {}
   }
@@ -10067,8 +10156,10 @@ const icons = {
     // ── Typography helpers ──
     const BUILTIN_MONO = ['JetBrains Mono','Cascadia Code','Fira Code','SF Mono','Menlo','Consolas','Source Code Pro','IBM Plex Mono','ui-monospace'];
     const BUILTIN_SANS = ['IBM Plex Sans','Inter','SF Pro Text','Segoe UI','Roboto','Helvetica Neue','system-ui'];
+    const BUILTIN_SERIF = ['Newsreader','Source Serif 4','Literata','Georgia','Iowan Old Style','Times New Roman'];
     function allMono(){ return BUILTIN_MONO.concat((state.customFonts || []).map(f => f.name)); }
     function allSans(){ return BUILTIN_SANS.concat((state.customFonts || []).map(f => f.name)); }
+    function allSerif(){ return BUILTIN_SERIF.concat((state.customFonts || []).map(f => f.name)); }
     function fontSelectRow(key, label, kind, desc){
       const row = document.createElement('div'); row.className = 'mux-row';
       const wrap = document.createElement('div');
@@ -10077,7 +10168,7 @@ const icons = {
       if (desc) { const d = document.createElement('div'); d.className = 'desc'; d.textContent = desc; wrap.appendChild(d); }
       row.appendChild(wrap);
       const sel = document.createElement('select');
-      const opts = kind === 'mono' ? allMono() : allSans();
+      const opts = kind === 'mono' ? allMono() : (kind === 'serif' ? allSerif() : allSans());
       opts.forEach(name => {
         const o = document.createElement('option'); o.value = name; o.textContent = name;
         if (state[key] === name) o.selected = true;
@@ -10106,6 +10197,7 @@ const icons = {
             state.customFonts.splice(i, 1);
             if (state.fontMono === f.name) state.fontMono = 'JetBrains Mono';
             if (state.fontSans === f.name) state.fontSans = 'IBM Plex Sans';
+            if (state.fontSerif === f.name) state.fontSerif = 'Newsreader';
             saveState(state); reloadCustomFonts(); apply(); renderList();
             // Refresh the font selects
             const body = document.getElementById('muxSettingsBody');
@@ -10162,6 +10254,7 @@ const icons = {
       sliderRow('streamPreviewLines', 'Collapsed preview lines', 1, 6, 1, 'How many lines of a long response stay visible when its card is collapsed.', (v) => v + (v === 1 ? ' line' : ' lines')),
       fontSelectRow('fontMono', 'Monospace font', 'mono', 'Used for chat output, code, paths.'),
       fontSelectRow('fontSans', 'Sans-serif font', 'sans', 'Used for headings, labels, buttons.'),
+      fontSelectRow('fontSerif', 'Reading font', 'serif', 'Agent replies in the Broadsheet theme (and any theme that uses the reading font).'),
       fontUploadRow(),
     ]);
     section('Display', [
