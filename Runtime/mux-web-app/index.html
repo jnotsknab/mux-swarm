@@ -812,6 +812,13 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 }
 .code-block { position: relative; }
 .code-block pre { margin: 8px 0; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+/* Rendered code everywhere (replies, bubbles, preview panel): thin themed scrollbars, never the browser default. */
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre::-webkit-scrollbar { width: 8px; height: 8px; }
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre::-webkit-scrollbar-track { background: transparent; }
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre:hover::-webkit-scrollbar-thumb { background: var(--muted); background-clip: content-box; }
+:is(.stream-block, .bubble, .code-block, .mux-md-view) pre::-webkit-scrollbar-button { display: none; }
 .code-block pre code { background: none; border: 0; padding: 0; font-size: calc(12.5px * var(--ui-font-scale, 1)); line-height: 1.55; color: var(--text); }
 .code-copy-btn { position: absolute; top: 6px; right: 6px; background: var(--mux-inset-bg); color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 3px 5px; cursor: pointer; display: inline-flex; align-items: center; opacity: 0; transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease; z-index: 2; }
 .code-block:hover .code-copy-btn, .code-copy-btn:focus { opacity: 1; }
@@ -1645,10 +1652,8 @@ body.hide-all-pills .event-group { display: none !important; }
     box-shadow: var(--mux-composer-shadow);
   transition: bottom 0.18s ease, box-shadow 0.2s ease;
 }
-.input-area:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  box-shadow: 0 10px 36px rgba(0,0,0,0.45), 0 0 0 1px rgba(var(--accent-rgb), 0.25);
-}
+/* Focus: outline only (the border takes the accent); the resting shadow does not change. */
+.input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
 .input-area .btn-group { align-self: flex-end; }
 
 /* ── Session / mode selector ── (mirrors the model selector; abstracts the
@@ -1961,7 +1966,7 @@ body.hide-capability-hints .mux-hint-bar { display: none !important; }
      panel stays fully readable at max: 1.0 = solid zinc, lower = glassy.
      Built on an opaque dark base so chat text never bleeds through. */
   background: color-mix(in srgb, var(--mux-surface-solid) calc(var(--cmd-palette-opacity, 1) * 100%), transparent);
-  border: 1px solid var(--border); border-radius: 16px;
+  border: 1px solid var(--border); border-radius: var(--mux-cmd-radius, 16px);
   box-shadow: 0 12px 34px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
   backdrop-filter: blur(18px) saturate(1.1); -webkit-backdrop-filter: blur(18px) saturate(1.1);
   max-height: 280px; overflow-y: auto; z-index: 50; overflow-x: hidden;
@@ -1980,14 +1985,15 @@ body.hide-cmd-palette .cmd-palette { display: none !important; }
   letter-spacing: 0.05em; border-bottom: 1px solid var(--border);
   /* Opaque header strip so it reads clearly even when the panel is set glassy. */
   background: var(--mux-surface-solid);
-  border-radius: 16px 16px 0 0;
+  /* Match the palette's own corner (themes change it) so nothing shows past the strip. */
+  border-radius: inherit; border-bottom-left-radius: 0; border-bottom-right-radius: 0;
   position: sticky; top: 0; z-index: 1;
 }
 .cmd-item {
   display: flex; align-items: baseline; gap: 12px; padding: 7px 14px;
   cursor: pointer; border-left: 2px solid transparent;
 }
-.cmd-item:last-child { border-radius: 0 0 16px 16px; }
+.cmd-item:last-child { border-radius: 0 0 calc(var(--mux-cmd-radius, 16px) - 1px) calc(var(--mux-cmd-radius, 16px) - 1px); }
 .cmd-item:hover { background: rgba(var(--accent-rgb), 0.08); }
 .cmd-item.active { background: rgba(var(--accent-rgb), 0.14); border-left-color: var(--accent); }
 .cmd-item .cmd-name { color: var(--accent); font-weight: 600; white-space: nowrap; min-width: 110px; }
@@ -2706,7 +2712,8 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
   /* Square controls: buttons, pills and chips share the 3px corner of the frame. */
   html[data-mux-style="broadsheet"] :is(.send-btn, .stop-btn, .mic-btn, .upload-btn, .session-btn, .model-btn, .pill-tag, .mux-token-badge, .icon-btn, .mux-preview-fab) { border-radius: 3px; }
   html[data-mux-style="broadsheet"] .send-btn { color: var(--mux-on-accent); }
-  html[data-mux-style="broadsheet"] :is(.model-menu, .session-menu, .cmd-palette, .theme-panel, .mux-settings) { border-radius: 4px; }
+  html[data-mux-style="broadsheet"] :is(.model-menu, .session-menu, .theme-panel, .mux-settings) { border-radius: 4px; }
+  html[data-mux-style="broadsheet"] { --mux-cmd-radius: 4px; }
   html[data-mux-style="broadsheet"] [data-mux="header"] { backdrop-filter: none; -webkit-backdrop-filter: none; }
   html[data-mux-style="broadsheet"] .header-logo { font-family: var(--font-serif); font-weight: 600; letter-spacing: 0.04em; }
   html[data-mux-style="broadsheet"] [data-mux="splash-title"] {
@@ -8478,6 +8485,8 @@ const icons = {
     background: rgba(var(--mux-tint-rgb), 0.06); padding: 1px 5px; border-radius: 3px; }
   .mux-md-view pre { background: var(--mux-code-bg); border: 1px solid var(--border, #27272a);
     padding: 12px; border-radius: 6px; overflow-x: auto; }
+  /* Code keeps its own leading: the Settings line height is for prose and would double-space listings. */
+  .mux-md-view pre, .mux-md-view pre code { line-height: 1.55; }
   .mux-md-view pre code { background: transparent; padding: 0; }
   .mux-md-view blockquote { border-left: 3px solid var(--accent, #64b4dc);
     padding: 0.2em 0.9em; margin: 0.7em 0; color: var(--muted, #a1a1aa); }
