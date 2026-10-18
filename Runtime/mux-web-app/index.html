@@ -1628,7 +1628,7 @@ body.hide-all-pills .event-group { display: none !important; }
   position: fixed;
   /* Span the main content column: align to the .app side padding (24px desktop)
      and shrink when the sidebar is open so it never sits under the file browser. */
-  left: 24px;
+  left: calc(24px + var(--composer-left-inset, 0px));
   right: calc(24px + var(--composer-right-inset, 0px));
   /* Pinned to the visual-viewport bottom. When the keyboard is up, --kb-inset
      (set from visualViewport) lifts the bar flush above it; otherwise it rests
@@ -2660,8 +2660,8 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
 @layer mux.base {
   html[data-mux-theme="broadsheet"] [data-mux="composer"] {
     left: 50%; right: auto; transform: translateX(-50%);
-    width: min(calc(var(--mux-content-max) + 48px), calc(100% - 48px - var(--composer-right-inset, 0px)));
-    margin-left: calc(var(--composer-right-inset, 0px) / -2);
+    width: min(calc(var(--mux-content-max) + 160px), calc(100% - 48px - var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)));
+    margin-left: calc((var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)) / 2);
     backdrop-filter: none; -webkit-backdrop-filter: none;
   }
   html[data-mux-theme="broadsheet"] .stream-block { padding: 6px 4px; }
@@ -15002,6 +15002,227 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /Workspace ===== -->
+<!-- ===== Sessions rail (left) + composer effort chip and context gauge ===== -->
+<style>
+@layer mux.base {
+  .mux-rail { position: fixed; left: 0; top: 0; bottom: 0; width: var(--mux-rail-width, 260px); z-index: 70;
+    display: none; flex-direction: column; background: var(--mux-surface, var(--bg-card)); border-right: 1px solid var(--border); }
+  body.mux-rail-open .mux-rail { display: flex; }
+  body.mux-rail-open .app { margin-left: var(--mux-rail-width, 260px); }
+  body.mux-rail-open .input-area { --composer-left-inset: var(--mux-rail-width, 260px); }
+  .mux-rail-head { display: flex; align-items: center; gap: 6px; padding: 14px 12px 10px; }
+  .mux-rail-head .ttl { flex: 1; font-size: calc(11px * var(--ui-font-scale, 1)); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-family: var(--font-mono); }
+  .mux-rail-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border); background: var(--bg-input);
+    color: var(--text); border-radius: var(--radius, 6px); padding: 6px 10px; font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); cursor: pointer; }
+  .mux-rail-btn:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .mux-rail-btn.ghost { border-color: transparent; background: none; color: var(--muted); padding: 4px 6px; }
+  .mux-rail-btn.ghost:hover { color: var(--text); background: rgba(var(--mux-tint-rgb), .06); }
+  .mux-rail-new { margin: 0 12px 8px; }
+  .mux-rail-search { margin: 0 12px 8px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius, 6px); background: var(--mux-inset-bg);
+    color: var(--text); font: inherit; font-size: calc(12.5px * var(--ui-font-scale, 1)); }
+  .mux-rail-list { flex: 1; overflow-y: auto; padding: 0 6px 12px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-rail-list::-webkit-scrollbar { width: 8px; } .mux-rail-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .mux-rail-sec { padding: 10px 8px 4px; font-size: calc(10.5px * var(--ui-font-scale, 1)); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+  .mux-rail-item { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--text); font: inherit; cursor: pointer;
+    padding: 7px 8px; border-radius: var(--radius, 6px); }
+  .mux-rail-item:hover { background: rgba(var(--mux-tint-rgb), .05); }
+  .mux-rail-item .t { display: block; font-size: calc(13px * var(--ui-font-scale, 1)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mux-rail-item .d { display: block; font-size: calc(11px * var(--ui-font-scale, 1)); color: var(--muted); font-family: var(--font-mono); }
+  .mux-rail-toggle { margin-right: 6px; }
+  @media (max-width: 900px) {
+    body.mux-rail-open .app { margin-left: 0; }
+    body.mux-rail-open .input-area { --composer-left-inset: 0px; }
+    .mux-rail { box-shadow: var(--mux-shadow-md, 0 12px 34px rgba(0,0,0,.4)); }
+  }
+
+  /* Composer: effort chip + context gauge */
+  @media (max-width: 1100px) { .mux-cchip#muxEffort { font-size: 0; gap: 0; } .mux-cchip#muxEffort::before { content: attr(data-short); font-size: calc(12px * var(--ui-font-scale, 1)); } }
+  .mux-cchip { position: relative; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: transparent;
+    color: var(--muted); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: calc(12px * var(--ui-font-scale, 1)); cursor: pointer; white-space: nowrap; }
+  .mux-cchip:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+  .mux-cchip[hidden] { display: none; }
+  .mux-gauge-ring { width: 14px; height: 14px; border-radius: 50%;
+    background: conic-gradient(var(--mux-gauge-color, var(--accent)) calc(var(--mux-gauge, 0) * 1%), rgba(var(--mux-tint-rgb), .12) 0); }
+  .mux-cpop { position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 180px; z-index: 80; padding: 6px; display: none;
+    background: var(--mux-surface-solid); border: 1px solid var(--border); border-radius: var(--radius, 8px); box-shadow: var(--mux-shadow-md, 0 12px 34px rgba(0,0,0,.4)); }
+  .mux-cpop.open { display: block; }
+  .mux-cpop .opt { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; background: none; color: var(--text); font: inherit;
+    font-size: calc(12.5px * var(--ui-font-scale, 1)); padding: 6px 8px; border-radius: 4px; cursor: pointer; text-align: left; }
+  .mux-cpop .opt:hover { background: rgba(var(--mux-tint-rgb), .06); }
+  .mux-cpop .opt.on { color: var(--accent); }
+  .mux-cpop .info { padding: 6px 8px; color: var(--muted); font-size: calc(12px * var(--ui-font-scale, 1)); line-height: 1.5; }
+  .mux-cpop .info b { color: var(--text); font-weight: 600; }
+}
+</style>
+<script>
+(function(){
+  var LS = 'muxRail.v1';
+  var st = (function(){ try { return JSON.parse(localStorage.getItem(LS) || 'null'); } catch(_) { return null; } })();
+  // First run: open on wide screens (Claude/Codex-style sidebar), closed on narrow ones. Then the user's choice wins.
+  if (!st) st = { open: window.innerWidth >= 1200 };
+  function save(){ try { localStorage.setItem(LS, JSON.stringify(st)); } catch(_) {} }
+  function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+  function send(t){ if (typeof window.MuxSend === 'function') window.MuxSend(t); }
+
+  // ── Rail ──
+  var rail = document.createElement('aside'); rail.className = 'mux-rail'; rail.id = 'muxRail'; rail.setAttribute('aria-label', 'Sessions');
+  rail.innerHTML = '<div class="mux-rail-head"><span class="ttl">Sessions</span>' +
+    '<button class="mux-rail-btn ghost" id="muxRailRefresh" title="Refresh" aria-label="Refresh sessions">\u21bb</button>' +
+    '<button class="mux-rail-btn ghost" id="muxRailHide" title="Hide sidebar" aria-label="Hide sidebar">\u00ab</button></div>' +
+    '<button class="mux-rail-btn mux-rail-new" id="muxRailNew" title="Start a new agent session (/agent)">+ New session</button>' +
+    '<input class="mux-rail-search" id="muxRailSearch" type="search" placeholder="Search sessions" aria-label="Search sessions">' +
+    '<div class="mux-rail-list" id="muxRailList"></div>';
+  document.body.appendChild(rail);
+  var list = rail.querySelector('#muxRailList'), search = rail.querySelector('#muxRailSearch');
+
+  var toggle = document.createElement('button');
+  toggle.className = 'icon-btn mux-rail-toggle'; toggle.id = 'muxRailToggle'; toggle.title = 'Sessions sidebar'; toggle.setAttribute('aria-label', 'Sessions sidebar');
+  toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="9" y1="4" x2="9" y2="20"/></svg>';
+  var logo = document.querySelector('[data-mux="header"] .header-logo');
+  if (logo) logo.parentNode.insertBefore(toggle, logo);
+
+  function apply(){ document.body.classList.toggle('mux-rail-open', !!st.open); toggle.setAttribute('aria-pressed', String(!!st.open)); if (st.open) load(); }
+  toggle.addEventListener('click', function(){ st.open = !st.open; save(); apply(); });
+  rail.querySelector('#muxRailHide').addEventListener('click', function(){ st.open = false; save(); apply(); });
+  rail.querySelector('#muxRailRefresh').addEventListener('click', function(){ loaded = 0; load(); });
+  rail.querySelector('#muxRailNew').addEventListener('click', function(){ send('/agent'); });
+  search.addEventListener('input', render);
+
+  var items = [], loaded = 0, titles = new Map();
+  var TITLE_KEY = 'muxSessionTitles.v1';
+  try { (JSON.parse(localStorage.getItem(TITLE_KEY) || '[]') || []).forEach(function(p){ titles.set(p[0], p[1]); }); } catch(_) {}
+  function saveTitles(){ try { localStorage.setItem(TITLE_KEY, JSON.stringify(Array.from(titles.entries()).slice(-400))); } catch(_) {} }
+  function pins(){ try { return new Set(JSON.parse(localStorage.getItem('muxPinnedSessions.v1') || '[]')); } catch(_) { return new Set(); } }
+  function when(name){
+    var m = /^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})/.exec(name || ''); if (!m) return { d: null, label: name };
+    var d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+    return { d: d, label: d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) };
+  }
+  function bucket(d){
+    if (!d) return 'Older';
+    var now = new Date(), day = 864e5, t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (d.getTime() >= t0) return 'Today';
+    if (d.getTime() >= t0 - day) return 'Yesterday';
+    if (d.getTime() >= t0 - 7 * day) return 'Previous 7 days';
+    return 'Older';
+  }
+  function firstUser(json){
+    try {
+      var sb = json.stateBag || json, msgs = [];
+      Object.keys(sb).forEach(function(k){ if (sb[k] && Array.isArray(sb[k].messages)) msgs = sb[k].messages; });
+      for (var i = 0; i < msgs.length; i++) {
+        if ((msgs[i].role || '').toLowerCase() !== 'user') continue;
+        var cs = msgs[i].contents || [];
+        for (var j = 0; j < cs.length; j++) if (cs[j] && typeof cs[j].text === 'string' && cs[j].text.trim()) return cs[j].text.trim().split('\n')[0].slice(0, 120);
+      }
+    } catch(_) {}
+    return '';
+  }
+  function load(){
+    if (Date.now() - loaded < 15000) { render(); return; }
+    loaded = Date.now();
+    fetch('/api/list/sessions').then(function(r){ return r.json(); }).then(function(d){
+      items = (d.items || []).filter(function(i){ return i.isDir; }).map(function(i){ return i.name; }).sort().reverse();
+      render();
+      // Titles: first user line, fetched once per session (cached), newest first, a few at a time.
+      var todo = items.filter(function(n){ return !titles.has(n); }).slice(0, 40);
+      (function next(){
+        var n = todo.shift(); if (!n) { saveTitles(); return; }
+        fetch('/api/download/sessions/' + encodeURIComponent(n) + '/agent_session.json').then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(j){ titles.set(n, (j && firstUser(j)) || ''); render(); }).catch(function(){ titles.set(n, ''); }).then(next);
+      })();
+    }).catch(function(){ list.textContent = 'Could not load sessions.'; });
+  }
+  function render(){
+    var q = (search.value || '').toLowerCase(), p = pins();
+    list.innerHTML = '';
+    var groups = {}, order = ['Pinned', 'Today', 'Yesterday', 'Previous 7 days', 'Older'];
+    items.forEach(function(n){
+      var w = when(n), title = titles.get(n) || w.label;
+      if (q && (title + ' ' + n).toLowerCase().indexOf(q) < 0) return;
+      var g = p.has(n) ? 'Pinned' : bucket(w.d);
+      (groups[g] = groups[g] || []).push({ n: n, title: title, when: w.label });
+    });
+    order.forEach(function(g){
+      if (!groups[g]) return;
+      var h = document.createElement('div'); h.className = 'mux-rail-sec'; h.textContent = g; list.appendChild(h);
+      groups[g].forEach(function(s){
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-rail-item'; b.title = 'Resume ' + s.n; b.dataset.session = s.n;
+        var t = document.createElement('span'); t.className = 't'; t.textContent = s.title;
+        var d = document.createElement('span'); d.className = 'd'; d.textContent = s.when;
+        b.appendChild(t); b.appendChild(d);
+        b.addEventListener('click', function(){ send('/resume ' + s.n); if (window.innerWidth < 900) { st.open = false; save(); apply(); } });
+        list.appendChild(b);
+      });
+    });
+    if (!list.childNodes.length) list.innerHTML = '<div class="mux-rail-sec">' + (items.length ? 'No matches' : 'No sessions yet') + '</div>';
+  }
+
+  // ── Composer: effort chip + context gauge ──
+  var actions = document.querySelector('[data-mux="composer-actions"]');
+  var modelBtn = document.getElementById('modelBtn');
+  function chip(id, title){
+    var w = document.createElement('span'); w.style.position = 'relative'; w.style.display = 'inline-flex';
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-cchip'; b.id = id; b.title = title; b.hidden = true;
+    var pop = document.createElement('div'); pop.className = 'mux-cpop'; pop.setAttribute('role', 'menu');
+    w.appendChild(b); w.appendChild(pop);
+    if (actions && modelBtn) actions.insertBefore(w, modelBtn.nextSibling);
+    b.addEventListener('click', function(e){ e.stopPropagation(); var o = !pop.classList.contains('open'); closeAll(); pop.classList.toggle('open', o); });
+    return { btn: b, pop: pop, wrap: w };
+  }
+  function closeAll(){ document.querySelectorAll('.mux-cpop.open').forEach(function(p){ p.classList.remove('open'); }); }
+  document.addEventListener('click', function(e){ if (!e.target.closest || !e.target.closest('.mux-cpop')) closeAll(); });
+  var gauge = chip('muxGauge', 'Context used until auto-compact');
+  var effort = chip('muxEffort', 'Reasoning effort');
+  var LEVELS = [['low', 'Low'], ['med', 'Medium'], ['high', 'High'], ['xhigh', 'Extra high'], ['max', 'Max']];
+  var last = {};
+  function fmt(n){ return n >= 1000 ? (n / 1000).toFixed(n >= 100000 ? 0 : 1) + 'k' : String(n || 0); }
+  function paint(s){
+    last = s || {};
+    var inAgent = !!(s && s.inSession);
+    // Shown once the engine reports a live effort (after the session's first turn, like /effort itself).
+    effort.btn.hidden = !(s && s.effort);
+    if (s && s.effort) {
+      effort.btn.textContent = 'Effort: ' + s.effort;
+      effort.btn.dataset.short = s.effort;
+      effort.pop.innerHTML = '';
+      LEVELS.forEach(function(l){
+        var o = document.createElement('button'); o.type = 'button'; o.className = 'opt' + (s.effort === l[0] ? ' on' : '');
+        o.innerHTML = '<span></span><span></span>'; o.firstChild.textContent = l[1]; o.lastChild.textContent = l[0];
+        o.addEventListener('click', function(){ closeAll(); send('/effort ' + l[0]); effort.btn.textContent = 'Effort: ' + l[0]; setTimeout(poll, 800); });
+        effort.pop.appendChild(o);
+      });
+    }
+    gauge.btn.hidden = !inAgent || !s.tokenThreshold;
+    if (!gauge.btn.hidden) {
+      var pct = Math.max(0, Math.min(100, s.tokenPct || 0));
+      gauge.btn.innerHTML = '<span class="mux-gauge-ring"></span><span></span>';
+      gauge.btn.style.setProperty('--mux-gauge', pct);
+      gauge.btn.style.setProperty('--mux-gauge-color', pct >= 85 ? 'var(--red)' : pct >= 65 ? 'var(--amber)' : 'var(--accent)');
+      gauge.btn.lastChild.textContent = Math.round(pct) + '%';
+      gauge.pop.innerHTML = '<div class="info"><b></b> of <b></b> tokens before auto-compact</div>';
+      var bs = gauge.pop.querySelectorAll('b'); bs[0].textContent = fmt(s.tokens); bs[1].textContent = fmt(s.tokenThreshold);
+      var c = document.createElement('button'); c.type = 'button'; c.className = 'opt'; c.textContent = 'Compact now';
+      c.addEventListener('click', function(){ closeAll(); send('/compact'); setTimeout(poll, 1500); });
+      gauge.pop.appendChild(c);
+    }
+  }
+  function poll(){
+    if (document.hidden) return;
+    fetch(apiUrl('/api/status')).then(function(r){ return r.ok ? r.json() : null; }).then(paint).catch(function(){});
+  }
+  setInterval(poll, 5000);
+  window.addEventListener('mux:ws-event', function(e){
+    var t = e.detail && e.detail.type;
+    if (t === 'agent_turn_end' || t === 'session_start' || t === 'session_end' || t === 'success') setTimeout(poll, 300);
+  });
+
+  apply(); poll();
+  window.MuxRail = { open: function(){ st.open = true; save(); apply(); }, close: function(){ st.open = false; save(); apply(); },
+    reload: function(){ loaded = 0; load(); }, status: function(){ return Object.assign({}, last); } };
+})();
+</script>
+<!-- ===== /Sessions rail ===== -->
 <!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
 <style>
 @layer mux.base {
