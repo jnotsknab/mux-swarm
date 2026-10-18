@@ -54,7 +54,7 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 |-------|---------|--------|
 | `/ws` | NDJSON WebSocket: full event stream + user input | `serve.auth` bearer (when enabled) |
 | `/api/health` | Health probe: `version`, `uptimeSec`, `serveAddress`, `port`, `mode`, `agentCount`, `tip`, `daemon` (`off` = no daemon, `starting` = daemon requested but triggers not registered yet, so `POST /api/hook/{id}` may still 404; `ready` = all boot triggers registered) | `serve.auth` |
-| `/api/status` | Runtime status: `mode, inSession, provider, tokens, tokenThreshold, tokenPct, plan, ultra, giga, sub, psub, effort` (`effort` = live reasoning-effort label in a single-agent session, else null) | `serve.auth` |
+| `/api/status` | Runtime status: `mode, inSession, provider, tokens, tokenThreshold, tokenPct, plan, ultra, giga, sub, psub, effort` (`effort` = live reasoning-effort label in a single-agent session; omitted otherwise) | `serve.auth` |
 | `/api/agents` | List configured agents | `serve.auth` |
 | `/api/models` | Active-provider model catalog; shared discovery with TUI `/setmodel` | `serve.auth` |
 | `/api/sessions` | List session metadata | `serve.auth` |
