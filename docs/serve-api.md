@@ -54,12 +54,14 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 |-------|---------|--------|
 | `/ws` | NDJSON WebSocket: full event stream + user input | `serve.auth` bearer (when enabled) |
 | `/api/health` | Health probe: `version`, `uptimeSec`, `serveAddress`, `port`, `mode`, `agentCount`, `tip`, `daemon` (`off` = no daemon, `starting` = daemon requested but triggers not registered yet, so `POST /api/hook/{id}` may still 404; `ready` = all boot triggers registered) | `serve.auth` |
-| `/api/status` | Runtime status | `serve.auth` |
+| `/api/status` | Runtime status: `mode, inSession, provider, tokens, tokenThreshold, tokenPct, plan, ultra, giga, sub, psub, effort` (`effort` = live reasoning-effort label in a single-agent session; omitted otherwise) | `serve.auth` |
 | `/api/agents` | List configured agents | `serve.auth` |
 | `/api/models` | Active-provider model catalog; shared discovery with TUI `/setmodel` | `serve.auth` |
 | `/api/sessions` | List session metadata | `serve.auth` |
 | `/api/sessions/{id}` | Single session metadata | `serve.auth` |
 | `/api/commands` | Available slash commands | `serve.auth` |
+| `/api/themes` | Extension themes for the web picker: `id, name, dot, isLight, vars` plus, for extension `web` themes, `variants`, `defaultVariant`, `css`, `fonts`, `source`; top-level `globalCss` | `serve.auth` |
+| `/ext/{name}/{path}` | Static CSS/font/image assets of an enabled extension's `web` folder (never JS). `nosniff`, `no-cache` + ETag | Open (like the web UI shell) |
 | `/api/config` | Runtime config view | `serve.auth` + `serve.configExposed` |
 | `/api/config-files/{which}` | Read/edit `Config.json` / `Swarm.json` (Monaco editor backend) | `serve.auth` + `serve.configExposed` |
 | `/api/skills` | List installed skills | `serve.auth` |
@@ -67,12 +69,32 @@ All routes are served from the same Kestrel host as the web UI (`ServeMode.cs`).
 | `/api/read/{type}/{path}` | Read a file | `serve.auth` |
 | `/api/save/{type}/{path}` | Save a file | `serve.auth` + `serve.editable` |
 | `/api/download/{type}/{path}` | Download a file | `serve.auth` |
+| `/api/file?path=&as=view\|download` | File bytes for chips, inline images and the preview panel. `path` is absolute or sandbox-relative and must lie under the sandbox, sessions folder or a `filesystem.allowedPaths` root (same roots as the file tools); the config folder is excluded unless `serve.configExposed` is on; `Range` supported; 404 otherwise | `serve.auth` |
+| `/api/file/meta?path=` | `{ path, name, size, mtime, mime, kind }` (`kind`: image, video, audio, pdf, markdown, html, json, table, text, binary) | `serve.auth` |
 | `/api/upload` | Upload a file | `serve.auth` |
 | `/api/fs` | Filesystem CRUD operations | `serve.auth` + `serve.editable` for writes |
 | `/api/update` | `POST`: read-only self-update plan (what would change) | `serve.auth` |
 | `/api/restart` | Restart the server process | `serve.auth` |
 | `/api/shutdown` | Shut down the server process | `serve.auth` |
+| `/api/voice/transcribe` | `POST`: transcribe an audio clip with local whisper.cpp (see below) | `serve.auth` |
 | `/api/hook/{id}` | `POST`: inbound webhook, fires the matching daemon trigger | Per-trigger HMAC/bearer (see below) |
+
+### `POST /api/voice/transcribe`
+
+Server-side speech-to-text for the web UI and desktop shells, using the same local whisper.cpp
+binary and model as the TUI `/voice` command (`Runtime/whisper/`).
+
+- **Body:** raw audio with `Content-Type` `audio/wav`, `audio/webm`, `audio/ogg`, or `audio/mpeg`.
+  Non-WAV input needs `ffmpeg` on `PATH` (converted to 16 kHz mono WAV); without it only WAV is accepted.
+- **Limits:** 25 MB and 5 minutes (`413`). One transcription at a time; a concurrent call gets `429 {"error":"busy"}`.
+- **Response:** `200 { "text": "Hello from Mux Swarm.", "ms": 548, "model": "ggml-base.en-q5_1" }`.
+  Whole-line non-speech annotations (`[BLANK_AUDIO]`, `(air whooshing)`, `[MUSIC]`) are removed and silence returns `""`.
+- **Errors** (`{ "error": "..." }`): `415` unsupported type or undecodable audio, `503` whisper binary or model not
+  installed (run `/voice` once in the TUI to download them; the endpoint never downloads), `504` whisper timed out.
+
+```bash
+curl -X POST -H "Content-Type: audio/wav" --data-binary @clip.wav http://127.0.0.1:6723/api/voice/transcribe
+```
 
 ### Auth (`serve.auth`)
 
@@ -116,6 +138,8 @@ Practical notes:
 - Bridges (Telegram, Discord, Signal) are just WebSocket clients: any script that reads
   `MUX_WS_URL` and connects to `/ws` can serve as a bridge.
 - When `serve.auth` is enabled the WebSocket upgrade requires the same bearer token as `/api`.
+- `{"type":"ui_themes_changed"}` is sent after `/refresh` or `/extensions reload`; web clients
+  re-fetch `/api/themes` and swap extension CSS live.
 
 ---
 

@@ -42,6 +42,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Validated slash commands the process serves.</summary>
         internal IReadOnlyList<ExtensionCommand> Commands { get; init; } = [];
+
+        /// <summary>Validated web UI contributions (themes, CSS, fonts), or null.</summary>
+        internal ExtensionWeb.Contribution? Web { get; init; }
     }
 
     /// <summary>A validated extension slash command: <c>/{Name}</c>, owned by <paramref name="Extension"/>.</summary>
@@ -309,8 +312,11 @@ internal static partial class ExtensionRegistry
                 int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
                 commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout));
             }
+            var web = manifest.Web is { } wm ? ExtensionWeb.Build(name, dir, wm, problems) : null;
+            foreach (var wt in web?.Themes ?? []) Claim($"web theme '{wt.Id}'");
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
+                Web = web,
                 Markdown = hasMarkdown,
                 Commands = commands,
                 Overrides = overrides,

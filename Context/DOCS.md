@@ -1323,6 +1323,120 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
+### Customizing the web UI (`web` block)
+
+When a user asks to restyle the web UI (fonts, colors, chat bubbles, composer, reading width,
+light/dark), build an extension with a `web` block. It is static content only: CSS, fonts and
+images, served from the extension folder. Extension JavaScript is never served.
+
+```jsonc
+// <install>/Extensions/paper/extension.json
+{
+  "name": "paper",
+  "web": {
+    "themes": [ {
+      "id": "paper",                       // a-z, 0-9, '-' (max 32); web id "ext-paper"
+      "name": "Paper",
+      "variants": {                        // optional; omit for one mode and use "vars" instead
+        "light": { "vars": { "--bg": "#faf8f2", "--text": "#1f1d1a", "--accent": "#b4532a" }, "tui": "paper-light" },
+        "dark":  { "vars": { "--bg": "#22201d", "--text": "#f1ede4", "--accent": "#d9784f" } }
+      },
+      "defaultVariant": "system",          // light | dark | system (follows the OS)
+      "css": ["paper.css"],                // applied only while this theme is active
+      "fonts": [ { "family": "Literata", "src": "fonts/literata.woff2", "weight": "200 900" } ]
+    } ],
+    "css": [],                             // optional: applied whenever the extension is enabled
+    "assets": "web/"                       // folder served at /ext/paper/ (default web/)
+  }
+}
+```
+
+```css
+/* web/paper.css: override tokens, target data-mux hooks. No !important needed. */
+:root {
+  --mux-font-prose: "Literata", Georgia, serif;
+  --mux-prose-size: 16px;
+  --mux-prose-leading: 1.65;
+  --mux-content-max: 720px;
+  --mux-bubble-radius: 18px;
+  --mux-composer-radius: 20px;
+  --mux-composer-bg: var(--bg);
+  --mux-header-border: transparent;
+}
+[data-mux="msg-user"] .bubble { box-shadow: none; }
+```
+
+- Paths are relative to `assets` and must stay inside it (no `..`, absolute paths or symlinks out).
+  Types: css, woff2, woff, ttf, otf, svg, png, webp, json. Limits: CSS 256 KB per file, fonts 2 MB,
+  8 MB per extension. Bad entries are skipped with a warning in `/extensions`; startup never fails.
+- Picking a web theme never changes `console.theme`; `tui` is metadata only.
+- Same id in two extensions: the later name wins (shown as a conflict). A web theme also replaces a
+  TUI-mapped theme with the same `ext-` id.
+- `/extensions reload` (or `/refresh`) re-reads manifests and sends `ui_themes_changed` on `/ws`;
+  open web UIs re-fetch `/api/themes` and swap the CSS without a page reload.
+- `/share` guests only receive these theme assets; nothing else is exposed.
+
+**Layers.** The web app orders its CSS as `@layer mux.base, mux.strong, mux.theme, mux.ext, mux.user`.
+Extension CSS loads into `mux.ext`, so it beats the base styles and the theme colors without
+`!important`; the user's own Settings (font size, custom colors) in `mux.user` still win.
+
+**Tokens** (defaults reproduce the stock look; the short vars `--bg --text --muted --accent --border
+--bg-card --bg-input --font-sans --font-mono` still work):
+
+| Token | Controls |
+|---|---|
+| `--mux-font-ui` / `--mux-font-prose` / `--mux-font-code` | UI chrome / agent and user message text / code |
+| `--mux-prose-size` / `--mux-prose-leading` | Agent message font size / line height |
+| `--mux-content-max` | Reading column width (default `100%`; e.g. `720px` centers a column) |
+| `--mux-radius` | Agent message block corner radius |
+| `--mux-bubble-bg` / `--mux-bubble-fg` / `--mux-bubble-radius` | User message bubble |
+| `--mux-composer-bg` / `--mux-composer-shadow` / `--mux-composer-radius` | Input composer |
+| `--mux-surface` / `--mux-surface-raised` / `--mux-code-bg` | Panels and sidebar / raised controls / code blocks |
+| `--mux-header-bg` / `--mux-header-border` | Top bar |
+| `--mux-tint-rgb` | Overlay color (as `r, g, b`) for hovers, tracks and separators; white on dark schemes, black on light |
+| `--muted-rgb` | `--muted` as `r, g, b` for translucent neutral chips and scrollbars |
+| `--mux-inset-bg` / `--mux-surface-solid` / `--mux-scrim` | Inset inputs and code chips / opaque menus (command palette) / modal backdrops |
+| `--mux-reasoning-fg` / `--mux-on-accent` | Reasoning text / text on accent-filled buttons |
+
+Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light theme only has to set the core colors.
+
+**File chips.** File paths in agent replies, tool output and inline code (absolute Windows/UNC/POSIX paths,
+`file://` URLs, and sandbox-relative paths inside backticks) become chips once `GET /api/file/meta` confirms the file
+exists under the sandbox, sessions folder or `filesystem.allowedPaths`. A chip shows the file name (full path in its
+tooltip). Click opens it in the preview panel; the hover actions download it or copy its full path. In the desktop app an extra
+action opens the file with its default app (`muxHost.openPath`; executables and shortcuts are refused). Image paths also render an
+inline thumbnail. Turn both off with Settings > File chips and image previews.
+
+**Workspace.** Files opened from chips collect as tabs in the preview panel. The dock button pins the panel to the
+right edge (drag its left edge to resize; the chat column makes room); the eye button turns on **Follow agent**,
+which opens each file a write/edit/move/download tool reports, so you can watch what the agent is producing. Both
+choices persist per browser. The floating panel stays the default.
+
+**Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day with counts, Older
+collapsed; titled by their first message, up to two lines, with the time and message count; pins shared with the Sessions
+tab is gone; the rail is the one sessions list; the resumed session is highlighted). Click opens a read-only
+**viewer** over the transcript (the saved conversation, with Resume / Copy ID / Download; Esc closes); Resume or a
+double-click sends `/resume <id>`, and the page then redraws that session's last 200 messages above a "Resumed" divider
+(client-side from the session file; the engine already restores the context). Hover pins or copies the ID, **+ New** sends
+`/agent`. Drag its right edge to resize (220-520px). It starts open on wide screens and remembers your choice (toggle next
+to the wordmark). In an agent session the composer shows an **Effort** chip (sends `/effort <level>`) once the session has
+run a turn, a **context gauge** (tokens until auto-compact, from `/api/status`) with a **Compact now** action, and an
+**Actions** menu (Compact, Undo, Retry, Copy last reply, Wipe with a confirm). The chevron at the left of the controls
+collapses the composer to a slim bar (`/` or Ctrl+Shift+Space reopens it; it also reopens when the agent asks a question).
+
+**Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
+the bundled Newsreader serif for all text (`--font-serif`; change it under Settings > Typography > Reading font; code,
+diffs and tool output stay monospace), square 3px corners and hairline rules, and a stacked composer (full-width input,
+controls below), with Paper (light) and Ink (dark) variants that follow the system scheme. Every other built-in preset
+uses the same layout with its own palette (Matrix keeps monospace type): the rules key on `html[data-mux-style="broadsheet"]`,
+which the web UI sets for built-ins. **Classic** (id `zinc`, so a saved choice keeps working) and extension themes keep the
+original layout (`data-mux-style="classic"`). A theme already picked in the browser is kept.
+
+**Hooks** (stable contract; class names are not): `data-mux="header | header-actions | transcript |
+msg-user | msg-agent | prose | tool | event | thinking | composer | composer-input | composer-actions |
+splash | splash-title | splash-tip | sidebar | titlebar-slot"`. The root element carries
+`data-mux-theme="<id>"`, `data-mux-scheme="light|dark"` and, inside a desktop shell, `data-mux-host`.
+
 ### Extension processes
 
 An extension can run a long-lived process in any language. Processes run with your user
@@ -1524,9 +1638,11 @@ Launch with `mux-swarm --serve` (default port 6723) or `mux-swarm --serve 8080` 
 
 Binds to loopback (`127.0.0.1`) by default, so it is reachable only from the host machine. Set `serveAddress` to `0.0.0.0` to expose it on LAN/Tailscale (`http://<host-ip>:<port>`); pair that with `serve.auth` and your own perimeter.
 
-Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (Zinc, Light, Ocean, Matrix), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
+Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (17 presets plus extension web themes, see Customizing the web UI), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
 
 Combine with `--daemon` for background triggers alongside the web UI. Combine with `--register` for persistence across reboots.
+
+- `POST /api/voice/transcribe`: raw audio body (`audio/wav`; `webm`/`ogg`/`mpeg` need ffmpeg on PATH, max 25 MB / 5 min) -> `{ text, ms, model }` via the local whisper.cpp assets from `/voice`. Non-speech annotations are filtered and silence returns `""`; `429` when a transcription is already running, `503` when the assets are not installed. Same `serve.auth` gate as `/api`.
 
 ### In-app editor & auth
 
@@ -1538,6 +1654,25 @@ is read-only.
 Optional app-level auth is configured via `serve.auth` (see [serve](#serve)). The
 web app prompts for the token, stores it in `sessionStorage`, and attaches it to all
 API/WS calls. App auth complements (does not replace) an nginx perimeter.
+
+### Desktop app (Mux-Swarm Desktop)
+
+A native window for the same web UI: one Tauri v2 shell for Windows (WebView2), macOS (WKWebView) and Linux
+(WebKitGTK). It uses your existing engine install (`muxExe` in its config, then `MUX_EXE`, the per-OS install
+dir, then `PATH`); if none is found the loading screen offers **Install Mux-Swarm**. It attaches to a serve
+already answering on its port (default 6723), otherwise it spawns `MuxSwarm --serve <port>` and stops that engine
+when the window closes. Remote mode (`url`) opens a hosted Mux instead.
+
+- Installers ship with the releases: `Mux-Swarm-Desktop_<ver>_x64-setup.exe` / `.msi` (Windows, per-user,
+  installs WebView2 if missing), `.dmg` (macOS universal), `.AppImage` / `.deb` (Linux, needs webkit2gtk 4.1).
+- The builds are not code-signed yet. Trust them once on first open: Windows SmartScreen **More info > Run
+  anyway**; macOS **System Settings > Privacy & Security > Open Anyway** (macOS 15+); Linux needs nothing.
+- Native extras through `window.muxHost`: window controls in the header, microphone capture (sent to
+  `/api/voice/transcribe`), dark/light window chrome, notifications, links in your browser, **Open with
+  default app** on file chips. The loading screen uses the colors of the last theme the web UI reported
+  (`theme.json` in the app config dir; delete it to reset).
+- Shell config: `<app config dir>/config.json` (`muxExe`, `port`, `url`, `trustRemoteOrigin`, `extraArgs`,
+  `keepServerOnClose`, `startupTimeoutSecs`). Bridge contract for other shells: `docs/desktop.md`.
 
 ## Subscription Auth (CLIProxy sidecar)
 
