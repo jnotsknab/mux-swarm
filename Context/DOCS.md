@@ -1653,6 +1653,25 @@ Optional app-level auth is configured via `serve.auth` (see [serve](#serve)). Th
 web app prompts for the token, stores it in `sessionStorage`, and attaches it to all
 API/WS calls. App auth complements (does not replace) an nginx perimeter.
 
+### Desktop app (Mux-Swarm Desktop)
+
+A native window for the same web UI: one Tauri v2 shell for Windows (WebView2), macOS (WKWebView) and Linux
+(WebKitGTK). It uses your existing engine install (`muxExe` in its config, then `MUX_EXE`, the per-OS install
+dir, then `PATH`); if none is found the loading screen offers **Install Mux-Swarm**. It attaches to a serve
+already answering on its port (default 6723), otherwise it spawns `MuxSwarm --serve <port>` and stops that engine
+when the window closes. Remote mode (`url`) opens a hosted Mux instead.
+
+- Installers ship with the releases: `Mux-Swarm-Desktop_<ver>_x64-setup.exe` / `.msi` (Windows, per-user,
+  installs WebView2 if missing), `.dmg` (macOS universal), `.AppImage` / `.deb` (Linux, needs webkit2gtk 4.1).
+- The builds are not code-signed yet. Trust them once on first open: Windows SmartScreen **More info > Run
+  anyway**; macOS **System Settings > Privacy & Security > Open Anyway** (macOS 15+); Linux needs nothing.
+- Native extras through `window.muxHost`: window controls in the header, microphone capture (sent to
+  `/api/voice/transcribe`), dark/light window chrome, notifications, links in your browser, **Open with
+  default app** on file chips. The loading screen uses the colors of the last theme the web UI reported
+  (`theme.json` in the app config dir; delete it to reset).
+- Shell config: `<app config dir>/config.json` (`muxExe`, `port`, `url`, `trustRemoteOrigin`, `extraArgs`,
+  `keepServerOnClose`, `startupTimeoutSecs`). Bridge contract for other shells: `docs/desktop.md`.
+
 ## Subscription Auth (CLIProxy sidecar)
 
 Besides plain API-key providers, Mux can authenticate with subscription accounts
