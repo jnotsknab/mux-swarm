@@ -1337,10 +1337,12 @@ Extension CSS loads into `mux.ext`, so it beats the base styles and the theme co
 Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light theme only has to set the core colors.
 
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
-the bundled Newsreader serif for agent replies (`--font-serif`; change it under Settings > Typography > Reading font),
-square 3px corners and hairline rules, with Paper (light) and Ink (dark) variants that follow the system scheme. Its layout
-lives in the `html[data-mux-theme="broadsheet"]` rules, so other presets are unchanged. The previous default is still
-available as **Classic** (id `zinc`, so a saved choice keeps working). A theme already picked in the browser is kept.
+the bundled Newsreader serif for all text (`--font-serif`; change it under Settings > Typography > Reading font; code,
+diffs and tool output stay monospace), square 3px corners and hairline rules, and a stacked composer (full-width input,
+controls below), with Paper (light) and Ink (dark) variants that follow the system scheme. Every other built-in preset
+uses the same layout with its own palette (Matrix keeps monospace type): the rules key on `html[data-mux-style="broadsheet"]`,
+which the web UI sets for built-ins. **Classic** (id `zinc`, so a saved choice keeps working) and extension themes keep the
+original layout (`data-mux-style="classic"`). A theme already picked in the browser is kept.
 
 **Hooks** (stable contract; class names are not): `data-mux="header | header-actions | transcript |
 msg-user | msg-agent | prose | tool | event | thinking | composer | composer-input | composer-actions |
