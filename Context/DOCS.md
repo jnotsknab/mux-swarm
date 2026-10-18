@@ -1391,6 +1391,12 @@ Extension CSS loads into `mux.ext`, so it beats the base styles and the theme co
 | `--mux-composer-bg` / `--mux-composer-shadow` / `--mux-composer-radius` | Input composer |
 | `--mux-surface` / `--mux-surface-raised` / `--mux-code-bg` | Panels and sidebar / raised controls / code blocks |
 | `--mux-header-bg` / `--mux-header-border` | Top bar |
+| `--mux-tint-rgb` | Overlay color (as `r, g, b`) for hovers, tracks and separators; white on dark schemes, black on light |
+| `--muted-rgb` | `--muted` as `r, g, b` for translucent neutral chips and scrollbars |
+| `--mux-inset-bg` / `--mux-surface-solid` / `--mux-scrim` | Inset inputs and code chips / opaque menus (command palette) / modal backdrops |
+| `--mux-reasoning-fg` / `--mux-on-accent` | Reasoning text / text on accent-filled buttons |
+
+Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light theme only has to set the core colors.
 
 **Hooks** (stable contract; class names are not): `data-mux="header | header-actions | transcript |
 msg-user | msg-agent | prose | tool | event | thinking | composer | composer-input | composer-actions |
