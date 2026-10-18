@@ -34,7 +34,8 @@ namespace MuxSwarm.Engine;
 ///   GET  /api/workflows/preflight    dynamic-mode readiness (python + SDK)
 ///   GET /api/status                  authoritative session mode / in-session flag
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
-///   GET /api/themes                  extension themes mapped to the web UI's CSS variables
+///   GET /api/themes                  extension themes mapped to the web UI's CSS variables (+ web block CSS/fonts/variants)
+///   GET /ext/{name}/{**path}         static CSS/font/image assets from an enabled extension's web folder
 /// </summary>
 public static partial class ServeMode
 {
@@ -80,6 +81,7 @@ public static partial class ServeMode
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapGet("/api/themes", HandleThemes);
+        app.MapGet("/ext/{name}/{**path}", Extensions.ExtensionWeb.HandleAsset);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
         app.MapPost("/api/hook/{id}", HandleWebhook);
@@ -708,8 +710,30 @@ public static partial class ServeMode
     // Extension themes mapped to the web UI's CSS variables (the web keeps its own built-in set).
     private static async Task HandleThemes(HttpContext context)
     {
-        var items = WebThemes.Build(Theme.All.Except(Theme.Presets));
-        await WriteJson(context, 200, new { count = items.Count, items });
+        var (items, globalCss) = ThemesPayload();
+        await WriteJson(context, 200, new { count = items.Count, items, globalCss });
+    }
+
+    /// <summary>
+    /// The <c>/api/themes</c> items: TUI-mapped themes first (unchanged shape), then extension web
+    /// themes, which add <c>variants</c>, <c>defaultVariant</c>, <c>css</c>, <c>fonts</c> and <c>source</c>.
+    /// A web theme replaces a TUI-mapped theme with the same id.
+    /// </summary>
+    internal static (List<object> Items, List<string> GlobalCss) ThemesPayload()
+    {
+        var (web, globalCss) = Extensions.ExtensionWeb.Collect();
+        var items = WebThemes.Build(Theme.All.Except(Theme.Presets))
+            .Where(t => web.All(w => w.Id != t.Id)).Cast<object>().ToList();
+        items.AddRange(web.Select(w => (object)new
+        {
+            id = w.Id, name = w.Name, dot = w.Dot, isLight = w.IsLight, vars = w.Vars,
+            variants = w.Variants?.ToDictionary(v => v.Key, v => new { vars = v.Value }),
+            defaultVariant = w.DefaultVariant,
+            css = w.Css,
+            fonts = w.Fonts.Select(f => new { family = f.Family, url = f.Url, weight = f.Weight, style = f.Style }),
+            source = w.Source,
+        }));
+        return (items, globalCss);
     }
 
     // GET /api/tools

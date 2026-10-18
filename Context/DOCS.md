@@ -1259,6 +1259,82 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
+### Customizing the web UI (`web` block)
+
+When a user asks to restyle the web UI (fonts, colors, chat bubbles, composer, reading width,
+light/dark), build an extension with a `web` block. It is static content only: CSS, fonts and
+images, served from the extension folder. Extension JavaScript is never served.
+
+```jsonc
+// <install>/Extensions/paper/extension.json
+{
+  "name": "paper",
+  "web": {
+    "themes": [ {
+      "id": "paper",                       // a-z, 0-9, '-' (max 32); web id "ext-paper"
+      "name": "Paper",
+      "variants": {                        // optional; omit for one mode and use "vars" instead
+        "light": { "vars": { "--bg": "#faf8f2", "--text": "#1f1d1a", "--accent": "#b4532a" }, "tui": "paper-light" },
+        "dark":  { "vars": { "--bg": "#22201d", "--text": "#f1ede4", "--accent": "#d9784f" } }
+      },
+      "defaultVariant": "system",          // light | dark | system (follows the OS)
+      "css": ["paper.css"],                // applied only while this theme is active
+      "fonts": [ { "family": "Literata", "src": "fonts/literata.woff2", "weight": "200 900" } ]
+    } ],
+    "css": [],                             // optional: applied whenever the extension is enabled
+    "assets": "web/"                       // folder served at /ext/paper/ (default web/)
+  }
+}
+```
+
+```css
+/* web/paper.css: override tokens, target data-mux hooks. No !important needed. */
+:root {
+  --mux-font-prose: "Literata", Georgia, serif;
+  --mux-prose-size: 16px;
+  --mux-prose-leading: 1.65;
+  --mux-content-max: 720px;
+  --mux-bubble-radius: 18px;
+  --mux-composer-radius: 20px;
+  --mux-composer-bg: var(--bg);
+  --mux-header-border: transparent;
+}
+[data-mux="msg-user"] .bubble { box-shadow: none; }
+```
+
+- Paths are relative to `assets` and must stay inside it (no `..`, absolute paths or symlinks out).
+  Types: css, woff2, woff, ttf, otf, svg, png, webp, json. Limits: CSS 256 KB per file, fonts 2 MB,
+  8 MB per extension. Bad entries are skipped with a warning in `/extensions`; startup never fails.
+- Picking a web theme never changes `console.theme`; `tui` is metadata only.
+- Same id in two extensions: the later name wins (shown as a conflict). A web theme also replaces a
+  TUI-mapped theme with the same `ext-` id.
+- `/extensions reload` (or `/refresh`) re-reads manifests and sends `ui_themes_changed` on `/ws`;
+  open web UIs re-fetch `/api/themes` and swap the CSS without a page reload.
+- `/share` guests only receive these theme assets; nothing else is exposed.
+
+**Layers.** The web app orders its CSS as `@layer mux.base, mux.strong, mux.theme, mux.ext, mux.user`.
+Extension CSS loads into `mux.ext`, so it beats the base styles and the theme colors without
+`!important`; the user's own Settings (font size, custom colors) in `mux.user` still win.
+
+**Tokens** (defaults reproduce the stock look; the short vars `--bg --text --muted --accent --border
+--bg-card --bg-input --font-sans --font-mono` still work):
+
+| Token | Controls |
+|---|---|
+| `--mux-font-ui` / `--mux-font-prose` / `--mux-font-code` | UI chrome / agent and user message text / code |
+| `--mux-prose-size` / `--mux-prose-leading` | Agent message font size / line height |
+| `--mux-content-max` | Reading column width (default `100%`; e.g. `720px` centers a column) |
+| `--mux-radius` | Agent message block corner radius |
+| `--mux-bubble-bg` / `--mux-bubble-fg` / `--mux-bubble-radius` | User message bubble |
+| `--mux-composer-bg` / `--mux-composer-shadow` / `--mux-composer-radius` | Input composer |
+| `--mux-surface` / `--mux-surface-raised` / `--mux-code-bg` | Panels and sidebar / raised controls / code blocks |
+| `--mux-header-bg` / `--mux-header-border` | Top bar |
+
+**Hooks** (stable contract; class names are not): `data-mux="header | header-actions | transcript |
+msg-user | msg-agent | prose | tool | event | thinking | composer | composer-input | composer-actions |
+splash | splash-title | splash-tip | sidebar | titlebar-slot"`. The root element carries
+`data-mux-theme="<id>"`, `data-mux-scheme="light|dark"` and, inside a desktop shell, `data-mux-host`.
+
 ### Extension processes
 
 An extension can run a long-lived process in any language. Processes run with your user
@@ -1454,7 +1530,7 @@ Launch with `mux-swarm --serve` (default port 6723) or `mux-swarm --serve 8080` 
 
 Binds to loopback (`127.0.0.1`) by default, so it is reachable only from the host machine. Set `serveAddress` to `0.0.0.0` to expose it on LAN/Tailscale (`http://<host-ip>:<port>`); pair that with `serve.auth` and your own perimeter.
 
-Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (Zinc, Light, Ocean, Matrix), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
+Features: streaming responses, markdown rendering, plan mode prompts, live diffs panel, theme engine (17 presets plus extension web themes, see Customizing the web UI), file browser, drag-drop upload, voice input, auto-reconnect. Single static HTML file, zero dependencies.
 
 Combine with `--daemon` for background triggers alongside the web UI. Combine with `--register` for persistence across reboots.
 

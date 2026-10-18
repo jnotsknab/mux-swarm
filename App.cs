@@ -2338,6 +2338,8 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         ExtensionProblems = problems;
         if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
+        // Open web UIs re-fetch /api/themes and swap extension CSS live.
+        Engine.ServeMode.EmitEvent(new { type = "ui_themes_changed" });
         if (announce && Config.Extensions.Enabled)
             MuxConsole.WriteMuted($"Extensions: {result.Extensions.Count} loaded, {result.Themes.Count} theme(s), " +
                                   $"{Engine.Extensions.ExtensionHost.Running.Count} process(es).");
