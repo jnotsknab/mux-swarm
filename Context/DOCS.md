@@ -1338,8 +1338,8 @@ Scheme-aware defaults live under `:root[data-mux-scheme="light"]`, so a light th
 
 **File chips.** File paths in agent replies, tool output and inline code (absolute Windows/UNC/POSIX paths,
 `file://` URLs, and sandbox-relative paths inside backticks) become chips once `GET /api/file/meta` confirms the file
-exists under the sandbox, sessions folder or `filesystem.allowedPaths`. Click opens it in the preview panel; the hover
-actions download it or show it in the Mux host's file manager (`POST /api/file/reveal`). In the desktop app an extra
+exists under the sandbox, sessions folder or `filesystem.allowedPaths`. A chip shows the file name (full path in its
+tooltip). Click opens it in the preview panel; the hover actions download it or copy its full path. In the desktop app an extra
 action opens the file with its default app (`muxHost.openPath`; executables and shortcuts are refused). Image paths also render an
 inline thumbnail. Turn both off with Settings > File chips and image previews.
 
@@ -1349,10 +1349,12 @@ which opens each file a write/edit/move/download tool reports, so you can watch 
 choices persist per browser. The floating panel stays the default.
 
 **Default theme: Broadsheet.** New installs (and Settings > Reset) open in Broadsheet: a 760px centered reading column,
-the bundled Newsreader serif for agent replies (`--font-serif`; change it under Settings > Typography > Reading font),
-square 3px corners and hairline rules, with Paper (light) and Ink (dark) variants that follow the system scheme. Its layout
-lives in the `html[data-mux-theme="broadsheet"]` rules, so other presets are unchanged. The previous default is still
-available as **Classic** (id `zinc`, so a saved choice keeps working). A theme already picked in the browser is kept.
+the bundled Newsreader serif for all text (`--font-serif`; change it under Settings > Typography > Reading font; code,
+diffs and tool output stay monospace), square 3px corners and hairline rules, and a stacked composer (full-width input,
+controls below), with Paper (light) and Ink (dark) variants that follow the system scheme. Every other built-in preset
+uses the same layout with its own palette (Matrix keeps monospace type): the rules key on `html[data-mux-style="broadsheet"]`,
+which the web UI sets for built-ins. **Classic** (id `zinc`, so a saved choice keeps working) and extension themes keep the
+original layout (`data-mux-style="classic"`). A theme already picked in the browser is kept.
 
 **Hooks** (stable contract; class names are not): `data-mux="header | header-actions | transcript |
 msg-user | msg-agent | prose | tool | event | thinking | composer | composer-input | composer-actions |
