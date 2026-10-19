@@ -157,6 +157,7 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 "serve": {
   "editable": false,
   "configExposed": false,
+  "fileEvents": true,
   "auth": { "enabled": false, "token": "", "scheme": "bearer" },
   "editor": { "autoFetch": true, "version": "" }
 }
@@ -166,6 +167,7 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 |-----|---------|---------|
 | `configExposed` | `false` | When true, the native config-editor endpoints (`GET`/`PUT /api/config-files/{config\|swarm}`) are enabled, letting the web app read and edit `Config.json` / `Swarm.json` in the browser (Monaco). Server-side validates JSON before writing (a parse error returns 422, file untouched). Independent of `editable`. |
 | `editable` | `false` | When true, IDE write endpoints (`POST /api/save`, `POST /api/fs`) are enabled for the **sandbox** root only. Sessions stay read-only. When false they return `403`. |
+| `fileEvents` | `true` | When true, files created, modified, renamed or deleted while a tool call runs (any tool: file tools, REPL, shell, MCP servers) are reported as `file_changed` events `{path, change, tool}` on the serve/stdio stream. They never reach the model. Watched: workspace, sandbox, `filesystem.allowedPaths` (skips `.git`, `bin`, `obj`, `node_modules`, `.venv`, temp files; max 50 per tool call). The web UI's Follow agent mode uses them. False disables the watchers and the event. |
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |
 | `auth.scheme` | `"bearer"` | Auth scheme. |

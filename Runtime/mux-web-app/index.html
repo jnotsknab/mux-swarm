@@ -14371,7 +14371,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
   function fileUrl(path, as){ return apiUrl('/api/file?path=' + encodeURIComponent(path) + (as ? '&as=' + as : '')); }
-  function lookup(path){
+  // fresh = re-check the server (a path mentioned before the file existed caches a miss).
+  function lookup(path, fresh){
+    if (fresh) meta.delete(path);
     if (!meta.has(path)) meta.set(path, fetch('/api/file/meta?path=' + encodeURIComponent(path))
       .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }));
     return meta.get(path);
@@ -14615,19 +14617,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     show(t);
   }
 
-  // Follow agent: when a write/edit/move/download tool reports a file path, open it (debounced).
-  var WRITE_TOOL = /(write|edit|create|save|move|rename|download|export|render|screenshot)/i;
-  var PATH_IN = /(?:[A-Za-z]:[\\\/]|\\\\|\/)[^\s"'`<>|*?]+\.[A-Za-z0-9]{1,8}/g;
+  // Follow agent: open the file the agent last created/changed, whatever tool wrote it. The engine
+  // reports real file-system changes made during tool calls as file_changed (serve.fileEvents).
   var followTimer = 0;
   function onEvent(ev){
-    if (!st.follow || !ev || (ev.type !== 'tool_result' && ev.type !== 'function_result')) return;
-    if (!WRITE_TOOL.test(ev.tool || '')) return;
-    var text = String(ev.result || ev.summary || ev.output || '');
-    var m = text.match(PATH_IN); if (!m) return;
-    var path = m[m.length - 1].replace(/[.,;:)]+$/, '');
+    if (!st.follow || !ev || ev.type !== 'file_changed' || !ev.path || ev.change === 'deleted') return;
+    var path = ev.path;
     clearTimeout(followTimer);
     followTimer = setTimeout(function(){
-      var look = window.MuxFileChips ? window.MuxFileChips.lookup(path) : Promise.resolve(null);
+      var look = window.MuxFileChips ? window.MuxFileChips.lookup(path, true) : Promise.resolve(null);
       look.then(function(meta){
         if (!meta) return;
         var t = tabs.find(function(o){ return o.path === meta.path; });

@@ -486,6 +486,15 @@ public class ServeConfig
     [JsonPropertyName("configExposed")]
     public bool ConfigExposed { get; set; } = false;
 
+    /// <summary>
+    /// When true (default), files created, changed, renamed or deleted while a tool call runs are
+    /// reported as <c>file_changed</c> events on the serve/stdio stream (never to the model), so the
+    /// web UI can follow the agent's edits whatever tool made them. False disables the file
+    /// watchers and the event entirely.
+    /// </summary>
+    [JsonPropertyName("fileEvents")]
+    public bool FileEvents { get; set; } = true;
+
     /// <summary>Optional app-level auth for the serve layer. Default disabled.</summary>
     [JsonPropertyName("auth")]
     public ServeAuthConfig Auth { get; set; } = new();
