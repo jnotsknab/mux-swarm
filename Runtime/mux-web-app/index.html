@@ -8005,11 +8005,6 @@ const icons = {
   }
   .mux-preview-empty a { color: var(--accent, #64b4dc); text-decoration: none; }
   .mux-preview-empty a:hover { text-decoration: underline; }
-  .mux-reader-banner { padding: 6px 14px; font-size: 11px; color: var(--muted);
-  border-bottom: 1px solid var(--border); background: rgba(var(--accent-rgb),0.04);
-  position: sticky; top: 0; z-index: 1; }
-.mux-reader-banner a { color: var(--accent, #64b4dc); text-decoration: none; }
-.mux-reader-banner a:hover { text-decoration: underline; }
   .mux-iframe-fallback { position: absolute; left: 12px; right: 12px; bottom: 12px;
     background: var(--mux-surface-solid); border: 1px solid var(--border, #27272a); border-radius: 6px;
     padding: 12px 14px; backdrop-filter: blur(4px); }
@@ -8131,14 +8126,8 @@ const icons = {
     <button class="mux-preview-btn" id="muxPreviewReload" title="Reload">
       <svg data-icon="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
     </button>
-    <button class="mux-preview-btn" id="muxPreviewReader" title="Reader mode — fetch readable content for sites that block embedding">
-      <svg data-icon="book-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-    </button>
     <button class="mux-preview-btn" id="muxPreviewExternal" title="Open in new tab">
       <svg data-icon="external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-    </button>
-    <button class="mux-preview-btn" id="muxPreviewPopout" title="Pop out to window">
-      <svg data-icon="popout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M21 8v13H8"/></svg>
     </button>
     <button class="mux-preview-btn" id="muxPreviewMax" title="Maximize / restore">
       <svg data-icon="square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
@@ -8164,8 +8153,6 @@ const icons = {
   const goBtn   = document.getElementById('muxPreviewGo');
   const rldBtn  = document.getElementById('muxPreviewReload');
   const extBtn  = document.getElementById('muxPreviewExternal');
-  const readerBtn = document.getElementById('muxPreviewReader');
-  const popBtn  = document.getElementById('muxPreviewPopout');
   const maxBtn  = document.getElementById('muxPreviewMax');
   const closeBt = document.getElementById('muxPreviewClose');
   const body    = document.getElementById('muxPreviewBody');
@@ -8215,14 +8202,14 @@ const icons = {
       f.addEventListener('load', () => { loaded = true; });
       setTimeout(() => {
         if (loaded) return;
-        // Still no load event after 3.5s — likely blocked by headers. Offer reader mode.
+        // Still no load event after 3.5s — likely blocked by headers. Offer the real browser tab.
         const note = document.createElement('div');
         note.className = 'mux-preview-empty mux-iframe-fallback';
         note.innerHTML = 'This site blocks embedding (X-Frame-Options / CSP).<br/>';
         const rdr = document.createElement('a');
-        rdr.href = '#'; rdr.textContent = 'Open in Reader Mode \u2197';
+        rdr.href = '#'; rdr.textContent = 'Open in the browser tab \u2197';
         rdr.style.marginRight = '14px';
-        rdr.addEventListener('click', (e) => { e.preventDefault(); renderReader(src); });
+        rdr.addEventListener('click', (e) => { e.preventDefault(); if (window.MuxBrowser) window.MuxBrowser.open(src); });
         const tab = document.createElement('a');
         tab.href = src; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
         tab.textContent = 'Open in new tab \u2197';
@@ -8343,56 +8330,6 @@ const icons = {
       }
     } catch (e) {
       body.innerHTML = '<div class="mux-preview-empty">Failed to load: ' + (e && e.message ? e.message : 'unknown error') + '</div>';
-    }
-  }
-
-  // ── Reader mode: fetch readable content for sites that block iframing. ──
-  // Frontend-only: routes through the public r.jina.ai reader (no API key),
-  // which returns clean Markdown for almost any URL. Rendered via renderMarkdown.
-  async function renderReader(src) {
-    const target = normalize(src);
-    if (!target) return;
-    currentUrl = target;
-    urlIn.value = target;
-    body.innerHTML = '<div class="mux-preview-empty">Reader mode \u2014 fetching readable content\u2026</div>';
-    // r.jina.ai accepts the full URL appended after a slash.
-    const readerUrl = 'https://r.jina.ai/' + target;
-    try {
-      const resp = await fetch(readerUrl, {
-        headers: { 'Accept': 'text/markdown, text/plain, */*' }
-      });
-      if (!resp.ok) throw new Error('reader returned ' + resp.status);
-      const txt = await resp.text();
-      if (!txt || !txt.trim()) throw new Error('empty content');
-      body.innerHTML = '';
-      const md = (typeof window !== 'undefined' && typeof window.renderMarkdown === 'function')
-        ? window.renderMarkdown
-        : (typeof renderMarkdown === 'function' ? renderMarkdown : null);
-      let html;
-      if (md) {
-        try { html = md(txt); }
-        catch (_) { html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>'; }
-      } else {
-        html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>';
-      }
-      const view = buildMarkdownView(html);
-      // Small reader-mode header strip so it's clear this is extracted content.
-      const banner = document.createElement('div');
-      banner.className = 'mux-reader-banner';
-      banner.innerHTML = 'Reader mode \u00b7 extracted content \u00b7 ' +
-        '<a href="' + target.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">view original \u2197</a>';
-      body.appendChild(banner);
-      body.appendChild(view);
-    } catch (e) {
-      body.innerHTML = '';
-      const note = document.createElement('div');
-      note.className = 'mux-preview-empty mux-iframe-fallback';
-      note.innerHTML = 'Reader mode failed: ' + (e && e.message ? e.message : 'unknown') + '<br/>';
-      const tab = document.createElement('a');
-      tab.href = target; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
-      tab.textContent = 'Open in new tab \u2197';
-      note.appendChild(tab);
-      body.appendChild(note);
     }
   }
 
@@ -8606,11 +8543,6 @@ const icons = {
   maxBtn.addEventListener('click', () => panel.classList.toggle('maximized'));
   rldBtn.addEventListener('click', () => { if (currentUrl) load(currentUrl); });
   extBtn.addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
-  readerBtn.addEventListener('click', () => { const u = currentUrl || normalize(urlIn.value); if (u) renderReader(u); });
-  popBtn.addEventListener('click', () => {
-    if (!currentUrl) return;
-    window.open(currentUrl, 'mux_preview_popout', 'width=900,height=700,noopener');
-  });
   goBtn.addEventListener('click', () => load(urlIn.value));
   urlIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); load(urlIn.value); } });
 
@@ -8810,7 +8742,6 @@ const icons = {
 
   window.MuxPreview = {
     show(src, opts) { openPanel(); load(src, opts); },
-    reader(src) { openPanel(); renderReader(src); },
     open: openPanel, close: closePanel, load: load
   };
 })();
@@ -14702,10 +14633,166 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   window.addEventListener('mux:ws-event', function(e){ onEvent(e.detail); });
 
   applyDock();
-  window.MuxWorkspace = { open: open, tabs: function(){ return tabs.slice(); }, state: function(){ return Object.assign({}, st); } };
+  window.MuxWorkspace = { open: open, repaint: renderTabs, tabs: function(){ return tabs.slice(); }, state: function(){ return Object.assign({}, st); } };
 })();
 </script>
 <!-- ===== /Workspace ===== -->
+<!-- ===== Browser: live view of the engine's built-in browser (serve.browser) ===== -->
+<style>
+@layer mux.base {
+  .mux-preview-panel.mux-browsing .mux-preview-body { display: none; }
+  .mux-bv { display: none; flex: 1; min-height: 0; position: relative; background: #fff; overflow: hidden; outline: none; }
+  .mux-preview-panel.mux-browsing .mux-bv { display: block; }
+  .mux-bv canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: default; }
+  .mux-bv .mux-bv-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    color: var(--muted); background: var(--bg); font-size: calc(13px * var(--ui-font-scale, 1)); text-align: center; padding: 20px; }
+  .mux-bv .mux-bv-msg[hidden] { display: none; }
+  .mux-bv progress { width: 240px; accent-color: var(--accent); }
+  .mux-ws-tab.mux-bt .ic { opacity: .7; }
+  .mux-ws-tab.mux-bt-new { min-width: 0; padding: 4px 8px; }
+  .mux-preview-btn[hidden] { display: none; }
+}
+</style>
+<script>
+(function(){
+  var panel = document.getElementById('muxPreviewPanel'); if (!panel || !window.MuxPreview) return;
+  var header = document.getElementById('muxPreviewHeader'), body = document.getElementById('muxPreviewBody');
+  var urlIn = document.getElementById('muxPreviewUrl'), goBtn = document.getElementById('muxPreviewGo');
+  var rldBtn = document.getElementById('muxPreviewReload'), extBtn = document.getElementById('muxPreviewExternal');
+  var strip = document.getElementById('muxWsTabs');
+  function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+  var ICON = { globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>',
+    back: '<polyline points="15 18 9 12 15 6"/>', fwd: '<polyline points="9 18 15 12 9 6"/>' };
+  function btn(id, title, svg, before){
+    var b = document.createElement('button'); b.className = 'mux-preview-btn'; b.id = id; b.title = title; b.type = 'button';
+    b.setAttribute('aria-label', title);
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + svg + '</svg>';
+    header.insertBefore(b, before); return b;
+  }
+  var modeBtn = btn('muxBrowserMode', 'Browser: the built-in browser the agent uses', ICON.globe, urlIn);
+  var backBtn = btn('muxBrowserBack', 'Back', ICON.back, urlIn), fwdBtn = btn('muxBrowserFwd', 'Forward', ICON.fwd, urlIn);
+  backBtn.hidden = fwdBtn.hidden = true;
+  var view = document.createElement('div'); view.className = 'mux-bv'; view.tabIndex = 0;
+  var cv = document.createElement('canvas'); view.appendChild(cv);
+  var msg = document.createElement('div'); msg.className = 'mux-bv-msg'; view.appendChild(msg);
+  panel.insertBefore(view, body.nextSibling);
+  var ctx = cv.getContext('2d');
+  var ws = null, on = false, tabs = [], activeId = null, vw = 1280, vh = 800, filePlaceholder = '';
+  function say(html){ msg.innerHTML = html; msg.hidden = !html; }
+
+  function send(o){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function paintTabs(){
+    if (!on) return;
+    strip.innerHTML = ''; panel.classList.add('has-tabs');
+    tabs.forEach(function(t){
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-ws-tab mux-bt' + (t.id === activeId ? ' active' : '');
+      b.title = t.url || '';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.title || t.url || 'New tab';
+      var x = document.createElement('span'); x.className = 'x'; x.textContent = '\u00d7'; x.title = 'Close tab';
+      b.appendChild(nm); b.appendChild(x);
+      b.addEventListener('click', function(e){ if (e.target === x) send({ op: 'close', id: t.id }); else send({ op: 'activate', id: t.id }); });
+      strip.appendChild(b);
+    });
+    var n = document.createElement('button'); n.type = 'button'; n.className = 'mux-ws-tab mux-bt-new'; n.textContent = '+'; n.title = 'New tab';
+    n.addEventListener('click', function(){ send({ op: 'open', url: 'about:blank' }); setTimeout(function(){ urlIn.focus(); urlIn.select(); }, 50); });
+    strip.appendChild(n);
+    var a = tabs.find(function(t){ return t.id === activeId; });
+    if (a && document.activeElement !== urlIn) urlIn.value = a.url === 'about:blank' ? '' : (a.url || '');
+  }
+  function size(){
+    var r = view.getBoundingClientRect(); if (!r.width || !r.height) return;
+    var w = Math.round(r.width), h = Math.round(r.height);
+    if (Math.abs(w - vw) < 8 && Math.abs(h - vh) < 8) return;
+    vw = w; vh = h; send({ op: 'resize', w: w, h: h });
+  }
+  var ro = new ResizeObserver(function(){ clearTimeout(ro.t); ro.t = setTimeout(size, 200); }); ro.observe(view);
+
+  function connect(){
+    if (ws && ws.readyState <= 1) return;
+    say('Starting the browser\u2026');
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/api/browser/ws';
+    if (window.MuxAuth && window.MuxAuth.wsUrl) url = window.MuxAuth.wsUrl(url);
+    ws = new WebSocket(url);
+    ws.onopen = function(){ setTimeout(size, 50); };
+    ws.onmessage = function(e){
+      var m; try { m = JSON.parse(e.data); } catch(_) { return; }
+      if (m.type === 'frame' && m.data) {
+        var img = new Image();
+        img.onload = function(){ if (cv.width !== img.width || cv.height !== img.height) { cv.width = img.width; cv.height = img.height; } ctx.drawImage(img, 0, 0); say(''); };
+        img.src = 'data:image/jpeg;base64,' + m.data;
+      } else if (m.type === 'tabs') { tabs = m.tabs || []; activeId = m.active; paintTabs(); }
+      else if (m.type === 'status' && m.status === 'ready') { say(''); }
+      else if (m.type === 'error') { say('Browser error: ' + (m.message || 'unknown').replace(/</g, '&lt;')); }
+    };
+    ws.onclose = function(){ ws = null; if (on) say('Browser disconnected. <button type="button" class="mux-settings-btn" id="muxBvRetry">Reconnect</button>'); var r = document.getElementById('muxBvRetry'); if (r) r.onclick = connect; };
+    pollDownload();
+  }
+  function pollDownload(){
+    fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
+      if (!s || !on) return;
+      if (s.status === 'unsupported') { say('The built-in browser is not available on this platform.'); return; }
+      if (s.status === 'downloading') {
+        var pct = s.total ? Math.round(s.downloaded * 100 / s.total) : 0;
+        say('Downloading the browser (Chrome for Testing ' + s.version + ', one time)\u2026<progress max="100" value="' + pct + '"></progress>' + pct + '%');
+        setTimeout(pollDownload, 700);
+      } else if (s.status === 'starting') setTimeout(pollDownload, 500);
+      else if (s.status === 'error') say('The browser could not start: ' + String(s.error || '').replace(/</g, '&lt;'));
+    }).catch(function(){});
+  }
+  function setMode(v){
+    on = !!v;
+    panel.classList.toggle('mux-browsing', on); modeBtn.classList.toggle('on', on);
+    backBtn.hidden = fwdBtn.hidden = !on;
+    urlIn.placeholder = on ? 'Search or enter an address' : filePlaceholder;
+    if (on) { window.MuxPreview.open(); connect(); paintTabs(); setTimeout(function(){ view.focus(); }, 0); }
+    else { try { ws && ws.close(); } catch(_) {} ws = null; if (window.MuxWorkspace && window.MuxWorkspace.repaint) window.MuxWorkspace.repaint(); else panel.classList.remove('has-tabs'); }
+  }
+  filePlaceholder = urlIn.placeholder;
+  modeBtn.addEventListener('click', function(){ setMode(!on); });
+  backBtn.addEventListener('click', function(){ send({ op: 'back' }); });
+  fwdBtn.addEventListener('click', function(){ send({ op: 'forward' }); });
+  // Header controls act on the browser while it is shown (capture phase: run before the file preview's handlers).
+  function nav(e){ if (!on) return; e.stopImmediatePropagation(); e.preventDefault(); send({ op: 'navigate', url: urlIn.value }); view.focus(); }
+  urlIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') nav(e); }, true);
+  goBtn.addEventListener('click', nav, true);
+  rldBtn.addEventListener('click', function(e){ if (!on) return; e.stopImmediatePropagation(); send({ op: 'reload' }); }, true);
+  extBtn.addEventListener('click', function(e){
+    if (!on) return; e.stopImmediatePropagation();
+    var a = tabs.find(function(t){ return t.id === activeId; }); if (a && /^https?:/.test(a.url)) window.open(a.url, '_blank', 'noopener');
+  }, true);
+  // Leaving browser mode when a file is opened in the panel (file tabs, follow, chips).
+  var _show = window.MuxPreview.show; window.MuxPreview.show = function(){ if (on) setMode(false); return _show.apply(this, arguments); };
+
+  // Input: map canvas coordinates to the page viewport.
+  function pt(e){ var r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (cv.width / r.width), y: (e.clientY - r.top) * (cv.height / r.height) }; }
+  function mods(e){ return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0); }
+  var BTN = ['left', 'middle', 'right'];
+  cv.addEventListener('mousedown', function(e){ view.focus(); var p = pt(e); send({ op: 'mouse', type: 'mousePressed', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); e.preventDefault(); });
+  cv.addEventListener('mouseup', function(e){ var p = pt(e); send({ op: 'mouse', type: 'mouseReleased', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); });
+  var lastMove = 0;
+  cv.addEventListener('mousemove', function(e){ var t = Date.now(); if (t - lastMove < 40) return; lastMove = t; var p = pt(e); send({ op: 'mouse', type: 'mouseMoved', x: p.x, y: p.y, mods: mods(e) }); });
+  cv.addEventListener('wheel', function(e){ var p = pt(e); send({ op: 'wheel', x: p.x, y: p.y, dx: e.deltaX, dy: e.deltaY }); e.preventDefault(); }, { passive: false });
+  cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  view.addEventListener('keydown', function(e){
+    if (!on) return;
+    var printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+    send({ op: 'key', type: printable ? 'keyDown' : 'rawKeyDown', key: e.key, code: e.code, keyCode: e.keyCode, mods: mods(e), text: printable ? e.key : (e.key === 'Enter' ? '\r' : '') });
+    e.preventDefault();
+  });
+  view.addEventListener('keyup', function(e){ if (!on) return; send({ op: 'key', type: 'keyUp', key: e.key, code: e.code, keyCode: e.keyCode, mods: mods(e) }); e.preventDefault(); });
+  view.addEventListener('paste', function(e){ var t = e.clipboardData && e.clipboardData.getData('text'); if (t) { send({ op: 'text', text: t }); e.preventDefault(); } });
+
+  // Hide the Browser button entirely when the engine has it off (or is older).
+  fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
+    if (!s || !s.enabled || s.status === 'unsupported') { modeBtn.hidden = true; }
+  }).catch(function(){ modeBtn.hidden = true; });
+
+  window.MuxBrowser = { open: function(url){ setMode(true); if (url) setTimeout(function(){ send({ op: 'open', url: url }); }, ws && ws.readyState === 1 ? 0 : 1500); },
+    close: function(){ setMode(false); }, get on(){ return on; }, tabs: function(){ return tabs.slice(); } };
+})();
+</script>
+<!-- ===== /Browser ===== -->
 <!-- ===== Sessions rail (left) + composer effort chip and context gauge ===== -->
 <style>
 @layer mux.base {

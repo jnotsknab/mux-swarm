@@ -128,6 +128,7 @@ public static partial class ServeMode
         app.MapPost("/api/upload", HandleUpload);
 
         MapApiRoutes(app);
+        Browser.BrowserRelay.Map(app);
 
         if (wwwroot != null && Directory.Exists(wwwroot))
         {

@@ -495,6 +495,37 @@ public class ServeConfig
     /// <summary>Code editor (Monaco) asset provisioning for the serve layer.</summary>
     [JsonPropertyName("editor")]
     public ServeEditorConfig Editor { get; set; } = new();
+
+    /// <summary>Built-in browser shown in the preview panel and shared with the Playwright tools.</summary>
+    [JsonPropertyName("browser")]
+    public ServeBrowserConfig Browser { get; set; } = new();
+}
+
+/// <summary>
+/// Built-in browser: a pinned Chrome for Testing build downloaded on first use into
+/// <c>Runtime/browser</c>, run headless with a persistent profile and streamed into the web UI's
+/// preview panel. The built-in Playwright MCP server attaches to the same browser, so the user
+/// watches (and can take over) the agent's tabs.
+/// </summary>
+public class ServeBrowserConfig
+{
+    /// <summary>When true (default), the Browser tab is available and Playwright attaches to it.</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>When true (default), the built-in <c>Playwright</c> MCP server drives this browser
+    /// (<c>--cdp-endpoint</c>) instead of launching its own. Only applies while <see cref="Enabled"/>.</summary>
+    [JsonPropertyName("playwright")]
+    public bool Playwright { get; set; } = true;
+
+    /// <summary>When true (default), the browser runs headless and is only seen in the panel. False opens
+    /// a real browser window too (desktop sessions only), still mirrored in the panel.</summary>
+    [JsonPropertyName("headless")]
+    public bool Headless { get; set; } = true;
+
+    /// <summary>Profile directory (cookies, logins). Empty = <c>Sessions/BrowserProfile</c>.</summary>
+    [JsonPropertyName("profileDir")]
+    public string ProfileDir { get; set; } = "";
 }
 
 /// <summary>
