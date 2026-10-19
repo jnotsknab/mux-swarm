@@ -63,8 +63,9 @@ public class WebUiSessionsComposerTests
     [Fact]
     public void SessionActions_SendExistingCommands_AndConfirmWipe()
     {
-        Assert.Contains("['Compact', '/compact', true], ['Undo last exchange', '/undo', true], ['Retry last message', '/retry', true]", Html);
-        Assert.Contains("if (a[1] === '/wipe' && !window.confirm(", Html);
+        // The list is user-configurable (WebUiComposerActionsTests); /wipe still confirms when chosen.
+        Assert.Contains("var CONFIRM = { '/wipe': 'Wipe the current session context? The conversation so far is dropped.' };", Html);
+        Assert.Contains("if (CONFIRM[cmd] && !window.confirm(CONFIRM[cmd])) return;", Html);
     }
 
     [Fact]
