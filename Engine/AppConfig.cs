@@ -486,6 +486,15 @@ public class ServeConfig
     [JsonPropertyName("configExposed")]
     public bool ConfigExposed { get; set; } = false;
 
+    /// <summary>
+    /// When true (default), files created, changed, renamed or deleted while a tool call runs are
+    /// reported as <c>file_changed</c> events on the serve/stdio stream (never to the model), so the
+    /// web UI can follow the agent's edits whatever tool made them. False disables the file
+    /// watchers and the event entirely.
+    /// </summary>
+    [JsonPropertyName("fileEvents")]
+    public bool FileEvents { get; set; } = true;
+
     /// <summary>Optional app-level auth for the serve layer. Default disabled.</summary>
     [JsonPropertyName("auth")]
     public ServeAuthConfig Auth { get; set; } = new();
@@ -493,6 +502,42 @@ public class ServeConfig
     /// <summary>Code editor (Monaco) asset provisioning for the serve layer.</summary>
     [JsonPropertyName("editor")]
     public ServeEditorConfig Editor { get; set; } = new();
+
+    /// <summary>Built-in browser shown in the preview panel and shared with the Playwright tools.</summary>
+    [JsonPropertyName("browser")]
+    public ServeBrowserConfig Browser { get; set; } = new();
+}
+
+/// <summary>
+/// Built-in browser: a pinned Chrome for Testing build downloaded on first use into
+/// <c>Runtime/browser</c>, run headless with a persistent profile and streamed into the web UI's
+/// preview panel. The built-in Playwright MCP server attaches to the same browser, so the user
+/// watches (and can take over) the agent's tabs.
+/// </summary>
+public class ServeBrowserConfig
+{
+    /// <summary>When true (default), the Browser tab is available and Playwright attaches to it.</summary>
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>When true (default), the built-in <c>Playwright</c> MCP server drives this browser
+    /// (<c>--cdp-endpoint</c>) instead of launching its own. Only applies while <see cref="Enabled"/>.</summary>
+    [JsonPropertyName("playwright")]
+    public bool Playwright { get; set; } = true;
+
+    /// <summary>When true (default), the browser runs headless and is only seen in the panel. False opens
+    /// a real browser window too (desktop sessions only), still mirrored in the panel.</summary>
+    [JsonPropertyName("headless")]
+    public bool Headless { get; set; } = true;
+
+    /// <summary>Address new tabs open on: a URL or a bare host (<c>example.com</c> becomes https).
+    /// Empty = a blank page.</summary>
+    [JsonPropertyName("homePage")]
+    public string HomePage { get; set; } = "https://duckduckgo.com";
+
+    /// <summary>Profile directory (cookies, logins). Empty = <c>Sessions/BrowserProfile</c>.</summary>
+    [JsonPropertyName("profileDir")]
+    public string ProfileDir { get; set; } = "";
 }
 
 /// <summary>

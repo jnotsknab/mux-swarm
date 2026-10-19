@@ -2654,7 +2654,9 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     --mux-font-prose: var(--font-serif);
     --mux-prose-size: calc(16.5px * var(--ui-font-scale, 1));
     --mux-prose-leading: 1.7;
-    --mux-content-max: 760px;
+    /* Fluid reading column: 760px on small windows, ~62% of the viewport on wide ones, capped so
+       prose lines stay readable (the cap follows the UI font scale). */
+    --mux-content-max: clamp(760px, 62vw, calc(1180px * var(--ui-font-scale, 1)));
     --radius: 3px;
     --mux-radius: 0px;
     --mux-bubble-bg: var(--bg-card);
@@ -5347,6 +5349,8 @@ const icons = {
   // Node-graph panel lives in a separate <script> block; give it the same send()
   // path the composer uses so a static workflow dispatches as a normal goal.
   try { window.MuxSend = (t) => send(t); } catch(_) {}
+  // Command catalog (engine /api/commands + client-only commands) for add-ons such as the Actions menu.
+  try { window.MuxCommands = { all: () => SLASH_COMMANDS.map(c => Object.assign({}, c)) }; } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -5478,10 +5482,14 @@ const icons = {
     const block = document.createElement('div');
     block.className = 'prompt-block';
     block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Confirm?")}</div>`;
-    const respond = (val) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${val}</div></div>`; };
+    const respond = (val, shown) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${shown || val}</div></div>`; };
     const y = document.createElement('button'); y.textContent = 'Yes'; y.addEventListener('click', () => respond('y'));
     const n = document.createElement('button'); n.textContent = 'No'; n.addEventListener('click', () => respond('n'));
     block.appendChild(y); block.appendChild(n);
+    if (ev.bailout) {
+      const c = document.createElement('button'); c.textContent = 'Cancel'; c.addEventListener('click', () => respond('cancel', 'cancelled'));
+      block.appendChild(c);
+    }
     output.appendChild(block); scrollToBottom(true);
   }
 
@@ -5489,8 +5497,16 @@ const icons = {
     const block = document.createElement('div');
     block.className = 'prompt-block';
     block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Select:")}</div>`;
-    const choices = ev.choices || [];
+    let choices = ev.choices || [];
     const selected = new Set();
+    const done = (shown) => { block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(shown)}</div></div>`; };
+    // Bailout prompts (ask_user) end with "enter custom" + "cancel" rows. They are not options: the
+    // engine reads "=text" as a custom answer and "cancel" as a cancel, never their index.
+    let bail = null;
+    if (ev.bailout && choices.length >= 2) {
+      bail = choices.slice(-2);
+      choices = choices.slice(0, -2);
+    }
     choices.forEach((choice, i) => {
       const btn = document.createElement('button');
       btn.textContent = `${i + 1}. ${choice}`;
@@ -5500,18 +5516,38 @@ const icons = {
           else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(var(--accent-rgb),0.1)'; }
         });
       } else {
-        btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(choice)}</div></div>`; });
+        btn.addEventListener('click', () => { sendRaw(String(i + 1)); done(choice); });
       }
       block.appendChild(btn);
     });
     if (multi) {
       const s = document.createElement('button'); s.textContent = 'Submit'; s.style.marginTop = '6px';
       s.addEventListener('click', () => {
-        const val = Array.from(selected).sort().join(',');
-        sendRaw(val || '1');
-        block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${Array.from(selected).sort().map(i => choices[i-1]).join(", ")}</div></div>`;
+        const picked = Array.from(selected).sort((a, b) => a - b);
+        if (!picked.length) { sendRaw(bail ? 'cancel' : '1'); done(bail ? 'cancelled' : choices[0]); return; }
+        sendRaw(picked.join(','));
+        done(picked.map(i => choices[i-1]).join(", "));
       });
       block.appendChild(document.createElement('br')); block.appendChild(s);
+    }
+    if (bail) {
+      const row = document.createElement('div'); row.className = 'prompt-bail'; row.style.marginTop = '6px';
+      const custom = document.createElement('button'); custom.textContent = bail[0];
+      custom.addEventListener('click', () => {
+        row.innerHTML = '';
+        const inp = document.createElement('textarea');
+        inp.rows = 1; inp.placeholder = 'Type your answer';
+        inp.style.cssText = 'width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--font-mono);font-size:12px;outline:none;resize:none;';
+        const go = document.createElement('button'); go.textContent = 'Submit'; go.style.marginTop = '6px';
+        const submit = () => { const v = inp.value.trim(); if (!v) return; sendRaw('=' + v); done(v); };
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+        go.addEventListener('click', submit);
+        row.appendChild(inp); row.appendChild(go); inp.focus();
+      });
+      const cancel = document.createElement('button'); cancel.textContent = bail[1];
+      cancel.addEventListener('click', () => { sendRaw('cancel'); done('cancelled'); });
+      row.appendChild(custom); row.appendChild(cancel);
+      block.appendChild(row);
     }
     output.appendChild(block); scrollToBottom(true);
   }
@@ -5578,6 +5614,8 @@ const icons = {
       _modelSlots.find(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase());
     if (active && active.model) {
       best = active.model;
+    } else if (_activeAgentName && _activeAgentModel) {
+      best = _activeAgentModel;   // singleAgent is not in /api/agents; /api/status names its model
     } else {
       const counts = new Map();
       for (const s of _modelSlots) {
@@ -5590,9 +5628,16 @@ const icons = {
     nameEl.title = (_activeAgentName ? _activeAgentName + ' \u2014 ' : '') + (best || 'No model configured');
   }
 
-  // Which agent single-agent mode is currently bound to. Set by a successful
-  // /api/agent swap; used only to headline the button.
+  // Which agent single-agent mode is bound to, and its model. Seeded and kept current by
+  // /api/status (the engine's view), and set at once by a successful /api/agent swap.
   let _activeAgentName = null;
+  let _activeAgentModel = null;
+  function setActiveAgent(name, model) {
+    if (!name || (name === _activeAgentName && (model || null) === _activeAgentModel)) return;
+    _activeAgentName = name;
+    _activeAgentModel = model || null;
+    refreshModelButton();
+  }
 
   // Trim vendor prefixes/date suffixes so the composer button stays compact.
   function shortModelName(m) {
@@ -5629,8 +5674,11 @@ const icons = {
     document.body.appendChild(menu);
     positionModelMenu(menu, btn);
 
-    const slots = await loadModelSlots(true);
+    let slots = await loadModelSlots(true);
     if (!modelMenuEl()) return;   // closed while loading
+    // The default single agent lives outside agents[]; list it so the active row shows.
+    if (_activeAgentName && !slots.some(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase()))
+      slots = [{ name: _activeAgentName, model: _activeAgentModel }].concat(slots);
     if (!slots.length) {
       menu.innerHTML = '<div class="model-menu-loading">No agents configured.</div>';
       return;
@@ -5698,8 +5746,7 @@ const icons = {
       });
       const data = await r.json().catch(() => null);
       if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
-      _activeAgentName = (data && data.agent) || name;
-      refreshModelButton();
+      setActiveAgent((data && data.agent) || name, slot.model);
       closeModelMenu();
       routePill(pillFromText('Active agent: ' + _activeAgentName, 'event-success'));
     } catch (e) {
@@ -5745,6 +5792,7 @@ const icons = {
         slot.model = v;
         const cached = _modelSlots.find(s => s && s.name === name);
         if (cached) cached.model = v;
+        if (_activeAgentName && name.toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = v;
         refreshModelButton();
         closeModelMenu();
         routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
@@ -5859,6 +5907,7 @@ const icons = {
           plan: !!st.plan, ultra: !!st.ultra, giga: !!st.giga,
           sub: !!st.sub, psub: !!st.psub,
         };
+        setActiveAgent(st.agent, st.model);
       }
     } catch (_) {}
     return _sessStatus;
@@ -6383,11 +6432,12 @@ const icons = {
       // DISPLAY: rebuild the palette pool from the server catalog + client-only extras.
       const serverRows = items
         .filter(c => c && c.cmd)
-        .map(c => ({ cmd: c.cmd, desc: c.desc || '' }));
+        .map(c => ({ cmd: c.cmd, desc: c.desc || '', scope: c.scope || '' }));
       if (serverRows.length) {
         const seen = new Set(serverRows.map(r => r.cmd.toLowerCase()));
         const extras = CLIENT_ONLY_DISPLAY.filter(r => !seen.has(r.cmd.toLowerCase()));
         SLASH_COMMANDS = [...serverRows, ...extras];
+        try { window.dispatchEvent(new CustomEvent('mux:commands')); } catch (_) {}
         // If the palette is open (and not on a /skill sub-query), refresh it live.
         if (paletteOpen && typeof input !== 'undefined' && input && !/^\/skill\b/i.test(input.value)) {
           paletteItems = buildPalette(input.value);
@@ -7957,11 +8007,6 @@ const icons = {
   }
   .mux-preview-empty a { color: var(--accent, #64b4dc); text-decoration: none; }
   .mux-preview-empty a:hover { text-decoration: underline; }
-  .mux-reader-banner { padding: 6px 14px; font-size: 11px; color: var(--muted);
-  border-bottom: 1px solid var(--border); background: rgba(var(--accent-rgb),0.04);
-  position: sticky; top: 0; z-index: 1; }
-.mux-reader-banner a { color: var(--accent, #64b4dc); text-decoration: none; }
-.mux-reader-banner a:hover { text-decoration: underline; }
   .mux-iframe-fallback { position: absolute; left: 12px; right: 12px; bottom: 12px;
     background: var(--mux-surface-solid); border: 1px solid var(--border, #27272a); border-radius: 6px;
     padding: 12px 14px; backdrop-filter: blur(4px); }
@@ -8083,14 +8128,8 @@ const icons = {
     <button class="mux-preview-btn" id="muxPreviewReload" title="Reload">
       <svg data-icon="refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
     </button>
-    <button class="mux-preview-btn" id="muxPreviewReader" title="Reader mode — fetch readable content for sites that block embedding">
-      <svg data-icon="book-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-    </button>
     <button class="mux-preview-btn" id="muxPreviewExternal" title="Open in new tab">
       <svg data-icon="external-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-    </button>
-    <button class="mux-preview-btn" id="muxPreviewPopout" title="Pop out to window">
-      <svg data-icon="popout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M21 8v13H8"/></svg>
     </button>
     <button class="mux-preview-btn" id="muxPreviewMax" title="Maximize / restore">
       <svg data-icon="square" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
@@ -8116,8 +8155,6 @@ const icons = {
   const goBtn   = document.getElementById('muxPreviewGo');
   const rldBtn  = document.getElementById('muxPreviewReload');
   const extBtn  = document.getElementById('muxPreviewExternal');
-  const readerBtn = document.getElementById('muxPreviewReader');
-  const popBtn  = document.getElementById('muxPreviewPopout');
   const maxBtn  = document.getElementById('muxPreviewMax');
   const closeBt = document.getElementById('muxPreviewClose');
   const body    = document.getElementById('muxPreviewBody');
@@ -8167,14 +8204,14 @@ const icons = {
       f.addEventListener('load', () => { loaded = true; });
       setTimeout(() => {
         if (loaded) return;
-        // Still no load event after 3.5s — likely blocked by headers. Offer reader mode.
+        // Still no load event after 3.5s — likely blocked by headers. Offer the real browser tab.
         const note = document.createElement('div');
         note.className = 'mux-preview-empty mux-iframe-fallback';
         note.innerHTML = 'This site blocks embedding (X-Frame-Options / CSP).<br/>';
         const rdr = document.createElement('a');
-        rdr.href = '#'; rdr.textContent = 'Open in Reader Mode \u2197';
+        rdr.href = '#'; rdr.textContent = 'Open in the browser tab \u2197';
         rdr.style.marginRight = '14px';
-        rdr.addEventListener('click', (e) => { e.preventDefault(); renderReader(src); });
+        rdr.addEventListener('click', (e) => { e.preventDefault(); if (window.MuxBrowser) window.MuxBrowser.open(src); });
         const tab = document.createElement('a');
         tab.href = src; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
         tab.textContent = 'Open in new tab \u2197';
@@ -8295,56 +8332,6 @@ const icons = {
       }
     } catch (e) {
       body.innerHTML = '<div class="mux-preview-empty">Failed to load: ' + (e && e.message ? e.message : 'unknown error') + '</div>';
-    }
-  }
-
-  // ── Reader mode: fetch readable content for sites that block iframing. ──
-  // Frontend-only: routes through the public r.jina.ai reader (no API key),
-  // which returns clean Markdown for almost any URL. Rendered via renderMarkdown.
-  async function renderReader(src) {
-    const target = normalize(src);
-    if (!target) return;
-    currentUrl = target;
-    urlIn.value = target;
-    body.innerHTML = '<div class="mux-preview-empty">Reader mode \u2014 fetching readable content\u2026</div>';
-    // r.jina.ai accepts the full URL appended after a slash.
-    const readerUrl = 'https://r.jina.ai/' + target;
-    try {
-      const resp = await fetch(readerUrl, {
-        headers: { 'Accept': 'text/markdown, text/plain, */*' }
-      });
-      if (!resp.ok) throw new Error('reader returned ' + resp.status);
-      const txt = await resp.text();
-      if (!txt || !txt.trim()) throw new Error('empty content');
-      body.innerHTML = '';
-      const md = (typeof window !== 'undefined' && typeof window.renderMarkdown === 'function')
-        ? window.renderMarkdown
-        : (typeof renderMarkdown === 'function' ? renderMarkdown : null);
-      let html;
-      if (md) {
-        try { html = md(txt); }
-        catch (_) { html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>'; }
-      } else {
-        html = '<pre>' + txt.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>';
-      }
-      const view = buildMarkdownView(html);
-      // Small reader-mode header strip so it's clear this is extracted content.
-      const banner = document.createElement('div');
-      banner.className = 'mux-reader-banner';
-      banner.innerHTML = 'Reader mode \u00b7 extracted content \u00b7 ' +
-        '<a href="' + target.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener noreferrer">view original \u2197</a>';
-      body.appendChild(banner);
-      body.appendChild(view);
-    } catch (e) {
-      body.innerHTML = '';
-      const note = document.createElement('div');
-      note.className = 'mux-preview-empty mux-iframe-fallback';
-      note.innerHTML = 'Reader mode failed: ' + (e && e.message ? e.message : 'unknown') + '<br/>';
-      const tab = document.createElement('a');
-      tab.href = target; tab.target = '_blank'; tab.rel = 'noopener noreferrer';
-      tab.textContent = 'Open in new tab \u2197';
-      note.appendChild(tab);
-      body.appendChild(note);
     }
   }
 
@@ -8558,11 +8545,6 @@ const icons = {
   maxBtn.addEventListener('click', () => panel.classList.toggle('maximized'));
   rldBtn.addEventListener('click', () => { if (currentUrl) load(currentUrl); });
   extBtn.addEventListener('click', () => { if (currentUrl) window.open(currentUrl, '_blank', 'noopener'); });
-  readerBtn.addEventListener('click', () => { const u = currentUrl || normalize(urlIn.value); if (u) renderReader(u); });
-  popBtn.addEventListener('click', () => {
-    if (!currentUrl) return;
-    window.open(currentUrl, 'mux_preview_popout', 'width=900,height=700,noopener');
-  });
   goBtn.addEventListener('click', () => load(urlIn.value));
   urlIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); load(urlIn.value); } });
 
@@ -8762,7 +8744,6 @@ const icons = {
 
   window.MuxPreview = {
     show(src, opts) { openPanel(); load(src, opts); },
-    reader(src) { openPanel(); renderReader(src); },
     open: openPanel, close: closePanel, load: load
   };
 })();
@@ -8888,6 +8869,20 @@ const icons = {
   }
   .mux-settings details > .mux-row:first-of-type,
   .mux-settings details[open] > summary + .mux-row { border-top: 0; }
+  .mux-actpick { padding: 4px 0 10px; }
+  .mux-actpick-chosen { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; }
+  .mux-actpick-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius, 4px); }
+  .mux-actpick-item code, .mux-actpick-add code { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); }
+  .mux-actpick-btn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 3px; }
+  .mux-actpick-btn:hover:not(:disabled) { color: var(--text); background: rgba(var(--mux-tint-rgb, 128,128,128), .08); }
+  .mux-actpick-btn:disabled { opacity: .3; cursor: default; }
+  .mux-actpick-search { width: 100%; box-sizing: border-box; padding: 6px 8px; background: var(--bg-input); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius, 4px); font: inherit; outline: none; }
+  .mux-actpick-list { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; margin-top: 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-actpick-list::-webkit-scrollbar { width: 8px; } .mux-actpick-list::-webkit-scrollbar-track { background: transparent; }
+  .mux-actpick-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; } .mux-actpick-list::-webkit-scrollbar-button { display: none; }
+  .mux-actpick-add { display: flex; gap: 10px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--text); padding: 5px 8px; cursor: pointer; border-radius: 3px; font: inherit; }
+  .mux-actpick-add:hover { background: rgba(var(--mux-tint-rgb, 128,128,128), .06); }
+  .mux-actpick-add .desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mux-row > div:first-child { flex: 1; min-width: 0; }
   .mux-row .lbl { color: var(--text, #e4e4e7); font-weight: 500; }
   .mux-row .desc {
@@ -9444,6 +9439,7 @@ const icons = {
     showCharCounter: true,
     showMic: true,
     showUpload: true,
+    composerActions: ['/compact', '/prune', '/undo', '/retry', '/copy'],
     showPreviewFab: true,
     lockPreviewFab: false,
     sendOnEnter: 'enter',
@@ -9603,6 +9599,7 @@ const icons = {
     loadGoogleFont(state.fontSerif);
     // Let the code editor re-evaluate its theme when settings change.
     try { window.MuxEditor && window.MuxEditor.refreshTheme && window.MuxEditor.refreshTheme(); } catch(_) {}
+    try { window.dispatchEvent(new CustomEvent('mux:settings')); } catch(_) {}
   }
 
   function renderUI(){
@@ -9870,6 +9867,54 @@ const icons = {
         [{label:'Enter', value:'enter'}, {label:'Ctrl+Enter', value:'ctrl'}],
         'Enter: send (Shift+Enter newline). Ctrl/Cmd+Enter: send only with modifier.'),
     ]);
+    // Composer Actions menu: pick from the engine's command catalog (same list as the / palette).
+    function actionsPicker(){
+      const box = document.createElement('div'); box.className = 'mux-actpick';
+      const head = document.createElement('div'); head.className = 'mux-row';
+      head.innerHTML = '<div style="flex:1"><div class="lbl">Actions menu</div><div class="desc">Commands in the composer\'s Actions menu, in this order. Session-only commands are disabled outside a session.</div></div>';
+      const reset = document.createElement('button'); reset.className = 'mux-settings-btn'; reset.textContent = 'Reset';
+      reset.addEventListener('click', () => { state.composerActions = DEFAULTS.composerActions.slice(); saveState(state); apply(); paint(); });
+      head.appendChild(reset); box.appendChild(head);
+      const chosen = document.createElement('div'); chosen.className = 'mux-actpick-chosen'; box.appendChild(chosen);
+      const search = document.createElement('input'); search.type = 'search'; search.className = 'mux-actpick-search';
+      search.placeholder = 'Add a command\u2026 (type to filter)'; box.appendChild(search);
+      const list = document.createElement('div'); list.className = 'mux-actpick-list'; box.appendChild(list);
+      const cur = () => Array.isArray(state.composerActions) ? state.composerActions : DEFAULTS.composerActions.slice();
+      const set = (a) => { state.composerActions = a; saveState(state); apply(); paint(); };
+      function paint(){
+        const a = cur();
+        chosen.innerHTML = '';
+        if (!a.length) { const e = document.createElement('div'); e.className = 'desc'; e.textContent = 'No actions; the menu shows a hint.'; chosen.appendChild(e); }
+        a.forEach((cmd, i) => {
+          const r = document.createElement('div'); r.className = 'mux-actpick-item';
+          const n = document.createElement('code'); n.textContent = cmd; r.appendChild(n);
+          const sp = document.createElement('span'); sp.style.flex = '1'; r.appendChild(sp);
+          [['\u2191', i > 0, () => { const b = a.slice(); [b[i-1], b[i]] = [b[i], b[i-1]]; set(b); }, 'Move up'],
+           ['\u2193', i < a.length - 1, () => { const b = a.slice(); [b[i+1], b[i]] = [b[i], b[i+1]]; set(b); }, 'Move down'],
+           ['\u2715', true, () => set(a.filter((_, k) => k !== i)), 'Remove']].forEach(([t, ok, fn, title]) => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'mux-actpick-btn'; b.textContent = t;
+            b.title = title; b.setAttribute('aria-label', title + ' ' + cmd); b.disabled = !ok; b.addEventListener('click', fn); r.appendChild(b);
+          });
+          chosen.appendChild(r);
+        });
+        const q = search.value.trim().toLowerCase();
+        const all = window.MuxCommands ? window.MuxCommands.all() : [];
+        list.innerHTML = '';
+        all.filter(c => c.cmd && !a.includes(c.cmd) && (!q || c.cmd.toLowerCase().includes(q) || (c.desc || '').toLowerCase().includes(q)))
+          .slice(0, q ? 40 : 12).forEach(c => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'mux-actpick-add';
+            b.innerHTML = '<code></code><span class="desc"></span>';
+            b.firstChild.textContent = '+ ' + c.cmd; b.lastChild.textContent = c.desc || '';
+            b.addEventListener('click', () => { set(a.concat([c.cmd])); search.value = ''; paint(); });
+            list.appendChild(b);
+          });
+      }
+      search.addEventListener('input', paint);
+      window.addEventListener('mux:commands', paint);
+      paint();
+      return box;
+    }
+    section('Composer actions', [actionsPicker()]);
     section('Command Palette', [
       toggleRow('cmdPaletteEnabled', 'Enable slash command hints',
         'Show the floating command palette when typing / at the start of the input.'),
@@ -14324,7 +14369,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 
   function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
   function fileUrl(path, as){ return apiUrl('/api/file?path=' + encodeURIComponent(path) + (as ? '&as=' + as : '')); }
-  function lookup(path){
+  // fresh = re-check the server (a path mentioned before the file existed caches a miss).
+  function lookup(path, fresh){
+    if (fresh) meta.delete(path);
     if (!meta.has(path)) meta.set(path, fetch('/api/file/meta?path=' + encodeURIComponent(path))
       .then(function(r){ return r.ok ? r.json() : null; }).catch(function(){ return null; }));
     return meta.get(path);
@@ -14568,19 +14615,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     show(t);
   }
 
-  // Follow agent: when a write/edit/move/download tool reports a file path, open it (debounced).
-  var WRITE_TOOL = /(write|edit|create|save|move|rename|download|export|render|screenshot)/i;
-  var PATH_IN = /(?:[A-Za-z]:[\\\/]|\\\\|\/)[^\s"'`<>|*?]+\.[A-Za-z0-9]{1,8}/g;
+  // Follow agent: open the file the agent last created/changed, whatever tool wrote it. The engine
+  // reports real file-system changes made during tool calls as file_changed (serve.fileEvents).
   var followTimer = 0;
   function onEvent(ev){
-    if (!st.follow || !ev || (ev.type !== 'tool_result' && ev.type !== 'function_result')) return;
-    if (!WRITE_TOOL.test(ev.tool || '')) return;
-    var text = String(ev.result || ev.summary || ev.output || '');
-    var m = text.match(PATH_IN); if (!m) return;
-    var path = m[m.length - 1].replace(/[.,;:)]+$/, '');
+    if (!st.follow || !ev || ev.type !== 'file_changed' || !ev.path || ev.change === 'deleted') return;
+    var path = ev.path;
     clearTimeout(followTimer);
     followTimer = setTimeout(function(){
-      var look = window.MuxFileChips ? window.MuxFileChips.lookup(path) : Promise.resolve(null);
+      var look = window.MuxFileChips ? window.MuxFileChips.lookup(path, true) : Promise.resolve(null);
       look.then(function(meta){
         if (!meta) return;
         var t = tabs.find(function(o){ return o.path === meta.path; });
@@ -14592,10 +14635,185 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   window.addEventListener('mux:ws-event', function(e){ onEvent(e.detail); });
 
   applyDock();
-  window.MuxWorkspace = { open: open, tabs: function(){ return tabs.slice(); }, state: function(){ return Object.assign({}, st); } };
+  window.MuxWorkspace = { open: open, repaint: renderTabs, tabs: function(){ return tabs.slice(); }, state: function(){ return Object.assign({}, st); } };
 })();
 </script>
 <!-- ===== /Workspace ===== -->
+<!-- ===== Browser: live view of the engine's built-in browser (serve.browser) ===== -->
+<style>
+@layer mux.base {
+  .mux-preview-panel.mux-browsing .mux-preview-body { display: none; }
+  .mux-bv { display: none; flex: 1; min-height: 0; position: relative; background: #fff; overflow: hidden; outline: none; }
+  .mux-preview-panel.mux-browsing .mux-bv { display: block; }
+  .mux-bv canvas { display: block; width: 100%; height: 100%; object-fit: contain; cursor: default; }
+  .mux-bv .mux-bv-msg { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+    color: var(--muted); background: var(--bg); font-size: calc(13px * var(--ui-font-scale, 1)); text-align: center; padding: 20px; }
+  .mux-bv .mux-bv-msg[hidden] { display: none; }
+  .mux-bv progress { width: 240px; accent-color: var(--accent); }
+  .mux-bv .mux-bv-note { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 80%; padding: 6px 12px;
+    border-radius: var(--radius, 4px); background: var(--mux-surface-solid, var(--bg-card)); color: var(--muted); border: 1px solid var(--border);
+    font-size: calc(12px * var(--ui-font-scale, 1)); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mux-bv .mux-bv-note[hidden] { display: none; }
+  .mux-ws-tab.mux-bt .ic { opacity: .7; }
+  .mux-ws-tab.mux-bt-new { min-width: 0; padding: 4px 8px; }
+  .mux-preview-btn[hidden] { display: none; }
+}
+</style>
+<script>
+(function(){
+  var panel = document.getElementById('muxPreviewPanel'); if (!panel || !window.MuxPreview) return;
+  var header = document.getElementById('muxPreviewHeader'), body = document.getElementById('muxPreviewBody');
+  var urlIn = document.getElementById('muxPreviewUrl'), goBtn = document.getElementById('muxPreviewGo');
+  var rldBtn = document.getElementById('muxPreviewReload'), extBtn = document.getElementById('muxPreviewExternal');
+  var strip = document.getElementById('muxWsTabs');
+  function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+  var ICON = { globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>',
+    back: '<polyline points="15 18 9 12 15 6"/>', fwd: '<polyline points="9 18 15 12 9 6"/>',
+    reload: '<path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/>',
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>' };
+  function btn(id, title, svg, before){
+    var b = document.createElement('button'); b.className = 'mux-preview-btn'; b.id = id; b.title = title; b.type = 'button';
+    b.setAttribute('aria-label', title);
+    b.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' + svg + '</svg>';
+    header.insertBefore(b, before); return b;
+  }
+  var modeBtn = btn('muxBrowserMode', 'Browser: the built-in browser the agent uses', ICON.globe, urlIn);
+  var backBtn = btn('muxBrowserBack', 'Back', ICON.back, urlIn), fwdBtn = btn('muxBrowserFwd', 'Forward', ICON.fwd, urlIn);
+  var refBtn = btn('muxBrowserReload', 'Refresh', ICON.reload, urlIn), homeBtn = btn('muxBrowserHome', 'Home page', ICON.home, urlIn);
+  var NAV = [backBtn, fwdBtn, refBtn, homeBtn];
+  NAV.forEach(function(b){ b.hidden = true; });
+  var view = document.createElement('div'); view.className = 'mux-bv'; view.tabIndex = 0;
+  var cv = document.createElement('canvas'); view.appendChild(cv);
+  var msg = document.createElement('div'); msg.className = 'mux-bv-msg'; view.appendChild(msg);
+  panel.insertBefore(view, body.nextSibling);
+  var ctx = cv.getContext('2d');
+  var ws = null, on = false, tabs = [], activeId = null, vw = 1280, vh = 800, filePlaceholder = '';
+  function say(html){ msg.innerHTML = html; msg.hidden = !html; }
+  // A failed op (navigation refused, history end, ...) shows briefly over the page instead of covering it.
+  var noteEl = document.createElement('div'); noteEl.className = 'mux-bv-note'; noteEl.hidden = true; view.appendChild(noteEl);
+  function note(t){ noteEl.textContent = t || ''; noteEl.hidden = !t; clearTimeout(note.t); note.t = setTimeout(function(){ noteEl.hidden = true; }, 2500); }
+
+  function send(o){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
+  function paintTabs(){
+    if (!on) return;
+    strip.innerHTML = ''; panel.classList.add('has-tabs');
+    tabs.forEach(function(t){
+      var b = document.createElement('button'); b.type = 'button'; b.className = 'mux-ws-tab mux-bt' + (t.id === activeId ? ' active' : '');
+      b.title = t.url || '';
+      var nm = document.createElement('span'); nm.className = 'nm'; nm.textContent = t.title || t.url || 'New tab';
+      var x = document.createElement('span'); x.className = 'x'; x.textContent = '\u00d7'; x.title = 'Close tab';
+      b.appendChild(nm); b.appendChild(x);
+      b.addEventListener('click', function(e){ if (e.target === x) send({ op: 'close', id: t.id }); else send({ op: 'activate', id: t.id }); });
+      strip.appendChild(b);
+    });
+    var n = document.createElement('button'); n.type = 'button'; n.className = 'mux-ws-tab mux-bt-new'; n.textContent = '+'; n.title = 'New tab';
+    n.addEventListener('click', function(){ send({ op: 'open', url: '' }); setTimeout(function(){ urlIn.focus(); urlIn.select(); }, 50); });
+    strip.appendChild(n);
+    var a = tabs.find(function(t){ return t.id === activeId; });
+    if (a && !(document.activeElement === urlIn && urlIn.dataset.editing)) urlIn.value = a.url === 'about:blank' ? '' : (a.url || '');
+  }
+  function size(){
+    var r = view.getBoundingClientRect(); if (!r.width || !r.height) return;
+    var w = Math.round(r.width), h = Math.round(r.height);
+    if (Math.abs(w - vw) < 8 && Math.abs(h - vh) < 8) return;
+    vw = w; vh = h; send({ op: 'resize', w: w, h: h });
+  }
+  var ro = new ResizeObserver(function(){ clearTimeout(ro.t); ro.t = setTimeout(size, 200); }); ro.observe(view);
+
+  function connect(){
+    if (ws && ws.readyState <= 1) return;
+    say('Starting the browser\u2026');
+    var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = proto + '//' + location.host + '/api/browser/ws';
+    if (window.MuxAuth && window.MuxAuth.wsUrl) url = window.MuxAuth.wsUrl(url);
+    ws = new WebSocket(url);
+    ws.onopen = function(){ setTimeout(size, 50); };
+    ws.onmessage = function(e){
+      var m; try { m = JSON.parse(e.data); } catch(_) { return; }
+      if (m.type === 'frame' && m.data) {
+        var img = new Image();
+        img.onload = function(){ if (cv.width !== img.width || cv.height !== img.height) { cv.width = img.width; cv.height = img.height; } ctx.drawImage(img, 0, 0); say(''); };
+        img.src = 'data:image/jpeg;base64,' + m.data;
+      } else if (m.type === 'tabs') { tabs = m.tabs || []; activeId = m.active; paintTabs(); }
+      else if (m.type === 'status' && m.status === 'ready') { ready = true; say(''); }
+      else if (m.type === 'notice') { note(m.message); }
+      else if (m.type === 'error') { say('Browser error: ' + (m.message || 'unknown').replace(/</g, '&lt;')); }
+    };
+    ws.onclose = function(){ ws = null; ready = false; if (on) say('Browser disconnected. <button type="button" class="mux-settings-btn" id="muxBvRetry">Reconnect</button>'); var r = document.getElementById('muxBvRetry'); if (r) r.onclick = connect; };
+    pollDownload();
+  }
+  var ready = false;
+  function pollDownload(){
+    fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
+      if (!s || !on || ready) return;
+      if (s.status === 'unsupported') { say('The built-in browser is not available on this platform.'); return; }
+      if (s.status === 'downloading') {
+        var pct = s.total ? Math.round(s.downloaded * 100 / s.total) : 0;
+        say('Downloading the browser (Chrome for Testing ' + s.version + ', one time)\u2026<progress max="100" value="' + pct + '"></progress>' + pct + '%');
+        setTimeout(pollDownload, 700);
+      } else if (s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);   // idle: the socket has not kicked it off yet
+      else if (s.status === 'error') say('The browser could not start: ' + String(s.error || '').replace(/</g, '&lt;'));
+    }).catch(function(){});
+  }
+  function setMode(v){
+    on = !!v;
+    panel.classList.toggle('mux-browsing', on); modeBtn.classList.toggle('on', on);
+    NAV.forEach(function(b){ b.hidden = !on; });
+    if (rldBtn) rldBtn.hidden = on;   // the browser has its own refresh next to back/forward
+    urlIn.placeholder = on ? 'Search or enter an address' : filePlaceholder;
+    if (on) { window.MuxPreview.open(); connect(); paintTabs(); setTimeout(function(){ view.focus(); }, 0); }
+    else { try { ws && ws.close(); } catch(_) {} ws = null; if (window.MuxWorkspace && window.MuxWorkspace.repaint) window.MuxWorkspace.repaint(); else panel.classList.remove('has-tabs'); }
+  }
+  filePlaceholder = urlIn.placeholder;
+  modeBtn.addEventListener('click', function(){ setMode(!on); });
+  backBtn.addEventListener('click', function(){ send({ op: 'back' }); });
+  fwdBtn.addEventListener('click', function(){ send({ op: 'forward' }); });
+  refBtn.addEventListener('click', function(){ send({ op: 'reload' }); view.focus(); });
+  homeBtn.addEventListener('click', function(){ send({ op: 'home' }); view.focus(); });
+  // Header controls act on the browser while it is shown (capture phase: run before the file preview's handlers).
+  function nav(e){ if (!on) return; e.stopImmediatePropagation(); e.preventDefault(); delete urlIn.dataset.editing; send({ op: 'navigate', url: urlIn.value }); view.focus(); }
+  // Only an address the user is typing is protected from tab updates (focus alone is not editing).
+  urlIn.addEventListener('input', function(){ if (on) urlIn.dataset.editing = '1'; });
+  urlIn.addEventListener('blur', function(){ delete urlIn.dataset.editing; });
+  urlIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') nav(e); }, true);
+  goBtn.addEventListener('click', nav, true);
+  rldBtn.addEventListener('click', function(e){ if (!on) return; e.stopImmediatePropagation(); send({ op: 'reload' }); }, true);
+  extBtn.addEventListener('click', function(e){
+    if (!on) return; e.stopImmediatePropagation();
+    var a = tabs.find(function(t){ return t.id === activeId; }); if (a && /^https?:/.test(a.url)) window.open(a.url, '_blank', 'noopener');
+  }, true);
+  // Leaving browser mode when a file is opened in the panel (file tabs, follow, chips).
+  var _show = window.MuxPreview.show; window.MuxPreview.show = function(){ if (on) setMode(false); return _show.apply(this, arguments); };
+
+  // Input: map canvas coordinates to the page viewport.
+  function pt(e){ var r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (cv.width / r.width), y: (e.clientY - r.top) * (cv.height / r.height) }; }
+  function mods(e){ return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0); }
+  var BTN = ['left', 'middle', 'right'];
+  cv.addEventListener('mousedown', function(e){ view.focus(); var p = pt(e); send({ op: 'mouse', type: 'mousePressed', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); e.preventDefault(); });
+  cv.addEventListener('mouseup', function(e){ var p = pt(e); send({ op: 'mouse', type: 'mouseReleased', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); });
+  var lastMove = 0;
+  cv.addEventListener('mousemove', function(e){ var t = Date.now(); if (t - lastMove < 40) return; lastMove = t; var p = pt(e); send({ op: 'mouse', type: 'mouseMoved', x: p.x, y: p.y, mods: mods(e) }); });
+  cv.addEventListener('wheel', function(e){ var p = pt(e); send({ op: 'wheel', x: p.x, y: p.y, dx: e.deltaX, dy: e.deltaY }); e.preventDefault(); }, { passive: false });
+  cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  view.addEventListener('keydown', function(e){
+    if (!on) return;
+    var printable = e.key.length === 1 && !e.ctrlKey && !e.metaKey;
+    send({ op: 'key', type: printable ? 'keyDown' : 'rawKeyDown', key: e.key, code: e.code, keyCode: e.keyCode, mods: mods(e), text: printable ? e.key : (e.key === 'Enter' ? '\r' : '') });
+    e.preventDefault();
+  });
+  view.addEventListener('keyup', function(e){ if (!on) return; send({ op: 'key', type: 'keyUp', key: e.key, code: e.code, keyCode: e.keyCode, mods: mods(e) }); e.preventDefault(); });
+  view.addEventListener('paste', function(e){ var t = e.clipboardData && e.clipboardData.getData('text'); if (t) { send({ op: 'text', text: t }); e.preventDefault(); } });
+
+  // Hide the Browser button entirely when the engine has it off (or is older).
+  fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
+    if (!s || !s.enabled || s.status === 'unsupported') { modeBtn.hidden = true; }
+  }).catch(function(){ modeBtn.hidden = true; });
+
+  window.MuxBrowser = { open: function(url){ setMode(true); if (url) setTimeout(function(){ send({ op: 'open', url: url }); }, ws && ws.readyState === 1 ? 0 : 1500); },
+    close: function(){ setMode(false); }, get on(){ return on; }, tabs: function(){ return tabs.slice(); } };
+})();
+</script>
+<!-- ===== /Browser ===== -->
 <!-- ===== Sessions rail (left) + composer effort chip and context gauge ===== -->
 <style>
 @layer mux.base {
@@ -14689,6 +14907,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-cpop .info b { color: var(--text); font-weight: 600; }
   .mux-cpop .opt:disabled { opacity: .45; cursor: default; background: none; }
   .mux-cpop .opt .k { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+  #muxActions ~ .mux-cpop .opt span:first-child { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @media (max-width: 1100px) { .mux-cchip#muxActions { font-size: 0; gap: 0; } .mux-cchip#muxActions::before { content: '\22ef'; font-size: calc(14px * var(--ui-font-scale, 1)); } }
 
   /* Collapsible composer: the input and controls fold away to a slim bar (state saved per browser). */
@@ -15002,22 +15221,43 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   var mic = document.getElementById('micBtn');
   if (actions && mic) actions.insertBefore(act.wrap, mic);
   act.btn.hidden = false; act.btn.textContent = 'Actions \u25be';
-  var ACTS = [['Compact', '/compact', true], ['Undo last exchange', '/undo', true], ['Retry last message', '/retry', true],
-    ['Copy last reply', '/copy', false], ['Wipe context\u2026', '/wipe', true]];
+  // The list is the user's (Settings > Composer actions); labels and session scope come from the
+  // engine's command catalog (/api/commands), so any slash command can be an action.
+  var ACT_LABEL = { '/compact': 'Compact', '/prune': 'Prune context', '/undo': 'Undo last exchange',
+    '/retry': 'Retry last message', '/copy': 'Copy last reply', '/wipe': 'Wipe context\u2026' };
+  var CONFIRM = { '/wipe': 'Wipe the current session context? The conversation so far is dropped.' };
+  var lastInAgent = false;
+  function actionCmds(){
+    var s = window.MuxSettings ? window.MuxSettings.get() : {};
+    return Array.isArray(s.composerActions) ? s.composerActions : ['/compact', '/prune', '/undo', '/retry', '/copy'];
+  }
   function paintActions(inAgent){
+    lastInAgent = !!inAgent;
+    var cat = window.MuxCommands ? window.MuxCommands.all() : [];
     act.pop.innerHTML = '';
-    ACTS.forEach(function(a){
-      var o = document.createElement('button'); o.type = 'button'; o.className = 'opt'; o.disabled = a[2] && !inAgent;
-      o.innerHTML = '<span></span><span class="k"></span>'; o.firstChild.textContent = a[0]; o.lastChild.textContent = a[1];
-      if (o.disabled) o.title = 'Needs a running session';
+    var cmds = actionCmds();
+    if (!cmds.length) {
+      var e = document.createElement('div'); e.className = 'opt'; e.style.color = 'var(--muted)';
+      e.textContent = 'No actions \u2014 choose some in Settings'; act.pop.appendChild(e);
+    }
+    cmds.forEach(function(cmd){
+      var c = cat.find(function(x){ return x.cmd === cmd; }) || {};
+      var o = document.createElement('button'); o.type = 'button'; o.className = 'opt';
+      o.disabled = c.scope === 'session' && !inAgent;
+      // Catalog descriptions can be long ("... (/compact [steering])"): keep the part before any bracket.
+      var label = ACT_LABEL[cmd] || String(c.desc || '').split(/\s[([]/)[0].replace(/[;.:,]\s.*$/, '') || cmd;
+      o.innerHTML = '<span></span><span class="k"></span>'; o.firstChild.textContent = label; o.lastChild.textContent = cmd;
+      o.title = o.disabled ? 'Needs a running session' : (c.desc || cmd);
       o.addEventListener('click', function(){
         closeAll();
-        if (a[1] === '/wipe' && !window.confirm('Wipe the current session context? The conversation so far is dropped.')) return;
-        send(a[1]); setTimeout(poll, 1200);
+        if (CONFIRM[cmd] && !window.confirm(CONFIRM[cmd])) return;
+        send(cmd); setTimeout(poll, 1200);
       });
       act.pop.appendChild(o);
     });
   }
+  window.addEventListener('mux:settings', function(){ paintActions(lastInAgent); });
+  window.addEventListener('mux:commands', function(){ paintActions(lastInAgent); });
   paintActions(false);
 
   // ── Composer: collapse to a slim bar ──

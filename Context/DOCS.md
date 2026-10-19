@@ -157,6 +157,8 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 "serve": {
   "editable": false,
   "configExposed": false,
+  "fileEvents": true,
+  "browser": { "enabled": true, "playwright": true, "headless": true, "homePage": "https://duckduckgo.com", "profileDir": "" },
   "auth": { "enabled": false, "token": "", "scheme": "bearer" },
   "editor": { "autoFetch": true, "version": "" }
 }
@@ -166,6 +168,13 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 |-----|---------|---------|
 | `configExposed` | `false` | When true, the native config-editor endpoints (`GET`/`PUT /api/config-files/{config\|swarm}`) are enabled, letting the web app read and edit `Config.json` / `Swarm.json` in the browser (Monaco). Server-side validates JSON before writing (a parse error returns 422, file untouched). Independent of `editable`. |
 | `editable` | `false` | When true, IDE write endpoints (`POST /api/save`, `POST /api/fs`) are enabled for the **sandbox** root only. Sessions stay read-only. When false they return `403`. |
+| `fileEvents` | `true` | When true, files created, modified, renamed or deleted while a tool call runs (any tool: file tools, REPL, shell, MCP servers) are reported as `file_changed` events `{path, change, tool}` on the serve/stdio stream. They never reach the model. Watched: workspace, sandbox, `filesystem.allowedPaths` (skips `.git`, `bin`, `obj`, `node_modules`, `.venv`, temp files; max 50 per tool call). The web UI's Follow agent mode uses them. False disables the watchers and the event. |
+| `browser.enabled` | `true` | Built-in browser in the preview panel (globe button): tabs, address bar, back/forward/reload, live view with mouse/keyboard input. A pinned Chrome for Testing build (~200 MB, SHA-256 checked) is downloaded from Google on first use into `Runtime/browser/<version>`; Mux does not ship it. Runs with a loopback-only DevTools port; the panel talks to it through `/api/browser` + `/api/browser/ws` (behind `serve.auth`). |
+| `browser.playwright` | `true` | The built-in `Playwright` MCP server attaches to this browser (`--cdp-endpoint`; launch-only flags such as `--browser`/`--executable-path`/`--user-data-dir`/`--headless` are dropped), so you can watch and take over the agent's tabs. Only while `browser.enabled`. |
+| `browser.headless` | `true` | False also opens a real browser window (desktop sessions), still mirrored in the panel. |
+| *(identity)* | automatic | The browser presents the User-Agent and client hints of a Chromium browser installed on this machine (Chrome, Edge, Brave, Chromium; first found), else of the bundled version, instead of `HeadlessChrome`. `GET /api/browser` reports the identity in use. |
+| `browser.homePage` | `"https://duckduckgo.com"` | Address new tabs (and the Home button) open. A bare host such as `example.com` becomes https; empty = blank page. |
+| `browser.profileDir` | `""` | Profile directory (cookies, logins). Empty = `Sessions/BrowserProfile`. |
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |
 | `auth.scheme` | `"bearer"` | Auth scheme. |

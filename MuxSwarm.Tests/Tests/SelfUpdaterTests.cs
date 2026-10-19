@@ -79,4 +79,30 @@ public class SelfUpdaterTests
             System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
             System.Runtime.InteropServices.OSPlatform.OSX) ? "osx-" : "linux-"), name);
     }
+
+    [Fact]
+    public void ApplyStagedBinary_Swaps_EvenWhenThePreviousOldIsStillInUse()
+    {
+        // An older instance still running from the previous swap keeps .old locked (Windows).
+        var bin = OperatingSystem.IsWindows() ? "MuxSwarm.exe" : "MuxSwarm";
+        var dir = Directory.CreateTempSubdirectory("mux-selfupdate-").FullName;
+        try
+        {
+            var live = Path.Combine(dir, bin);
+            File.WriteAllText(live, "current");
+            File.WriteAllText(live + ".new", "staged");
+            File.WriteAllText(live + ".old", "previous");
+            using (new FileStream(live + ".old", FileMode.Open, FileAccess.Read, FileShare.None))
+                SelfUpdater.ApplyStagedBinary(dir);
+
+            Assert.Equal("staged", File.ReadAllText(live));
+            Assert.False(File.Exists(live + ".new"));
+            Assert.Contains(Directory.GetFiles(dir, bin + ".old*"), f => File.ReadAllText(f) == "current");
+
+            SelfUpdater.ApplyStagedBinary(dir);   // next boot: nothing staged, leftovers collected
+            Assert.Empty(Directory.GetFiles(dir, bin + ".old*"));
+            Assert.Equal("staged", File.ReadAllText(live));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
 }

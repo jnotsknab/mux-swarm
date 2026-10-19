@@ -99,6 +99,8 @@ internal sealed class ShellJob
         _proc = Process.Start(psi);
         if (_proc is null) { MarkFailed("failed to start process"); return; }
         _status = "running";
+        // Background jobs outlive their tool call: keep file_changed reporting armed until the process exits.
+        var fileScope = FileChangeTracker.Shared?.BeginToolCall("execute_command_async");
 
         Pump(_proc.StandardOutput, _out, $"ShellOut:{_id}", isStdout: true);
         Pump(_proc.StandardError, _err, $"ShellErr:{_id}", isStdout: false);
@@ -118,6 +120,7 @@ internal sealed class ShellJob
                 }
             }
             catch { lock (_lock) { _status = "failed"; _processExited = true; Signal_NoLock(output: false); } }
+            finally { fileScope?.Dispose(); }
         }) { IsBackground = true, Name = $"ShellWait:{_id}" }.Start();
     }
 
