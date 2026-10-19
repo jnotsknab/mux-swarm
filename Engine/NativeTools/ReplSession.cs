@@ -142,6 +142,11 @@ internal sealed class ReplSession : IDisposable
             _doneTcs = done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
+        // A job still running after the 2s quick window outlives its tool call: keep file_changed
+        // reporting armed until the job ends (done/error/dead/killed all complete this TCS).
+        if (FileChangeTracker.Shared?.BeginToolCall("repl_shell_exec") is { } fileScope)
+            _ = done.Task.ContinueWith(_ => fileScope.Dispose(), TaskScheduler.Default);
+
         // Worker exec() runs arbitrary model code - normalize to LF so multi-line constructs tokenize
         // identically regardless of how the host delivered the string.
         WriteWorker(new Dictionary<string, object?> { ["cmd"] = "execute", ["code"] = code.Replace("\r\n", "\n").Replace("\r", "\n") });

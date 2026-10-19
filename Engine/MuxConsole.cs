@@ -1898,6 +1898,17 @@ public static partial class MuxConsole
     /// <summary>Stdio-ONLY tool_call event (no TUI render, no hook enqueue) - used by the
     /// orchestrator's invocation site where rendering + hooks are already handled separately.
     /// Headless drivers (SDK / dynamic workflows) rely on this for tool counting.</summary>
+    /// <summary>
+    /// <c>file_changed</c> (stdio/serve only): a file under a watched root was created, modified,
+    /// renamed or deleted while a tool call ran. Fields: <c>path</c> (full path), <c>change</c>
+    /// (<c>created|modified|renamed|deleted</c>), <c>tool</c> (the most recent running tool, when known).
+    /// </summary>
+    public static void EmitFileChanged(string path, string change, string? tool)
+    {
+        if (!StdioMode) return;
+        WithConsole(() => EmitJson("file_changed", D(("path", path), ("change", change), ("tool", tool))), clearIndicator: false);
+    }
+
     public static void EmitToolCallStdio(string agent, string tool)
     {
         if (!StdioMode) return;

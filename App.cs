@@ -423,6 +423,14 @@ internal class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
+        // file_changed events for the web UI / stdio clients (never the model). ACP has its own edit locations.
+        if (MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents)
+        {
+            FileChangeTracker.Shared = new FileChangeTracker(MuxConsole.EmitFileChanged);
+            FileChangeTracker.Shared.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
+                .Concat(Config.Filesystem.AllowedPaths ?? []));
+        }
+
         if (parsed.TelemetryPort is int telemetryDashPort)
         {
             try { MuxConsole.WriteSuccess(await Engine.Telemetry.TelemetryServer.StartAsync(telemetryDashPort)); }
@@ -2757,6 +2765,16 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                 // interceptor matches, InvokeAsync falls straight through to the same call.
                 if (Config.Extensions.Enabled)
                     c.FunctionInvoker = Engine.Extensions.ToolInterceptor.InvokeAsync;
+                // Arm the file-change watchers while the tool runs (file_changed events; null = off).
+                if (FileChangeTracker.Shared is { } fct)
+                {
+                    var inner = c.FunctionInvoker;
+                    c.FunctionInvoker = async (ctx, ct) =>
+                    {
+                        using var _ = fct.BeginToolCall(ctx.Function.Name);
+                        return inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
+                    };
+                }
             })
             // INSIDE function-invocation (lead single-agent only): splice a user's mid-turn steer
             // ("by the way ...", Ctrl+N) into the live message list on the next model round-trip, so
