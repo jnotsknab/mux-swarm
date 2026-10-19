@@ -110,8 +110,11 @@ internal static class BrowserRelay
             }
 
             var first = (await BrowserHost.PagesAsync()).FirstOrDefault();
-            var firstId = first.ValueKind == JsonValueKind.Undefined ? await NewTab("about:blank") : first.GetProperty("id").GetString();
+            var firstId = first.ValueKind == JsonValueKind.Undefined ? await NewTab(BrowserHost.HomeUrl) : first.GetProperty("id").GetString();
             await Attach(firstId!);
+            // The browser starts on about:blank; that first tab opens the home page instead.
+            if (first.ValueKind != JsonValueKind.Undefined && first.GetProperty("url").GetString() == "about:blank" && page != null)
+                await page.CallAsync("Page.navigate", new JsonObject { ["url"] = BrowserHost.HomeUrl });
             await Send(new { type = "status", status = "ready" });
 
             var buf = new byte[64 * 1024];
@@ -122,7 +125,10 @@ internal static class BrowserRelay
                 while (!res.EndOfMessage);
                 JsonNode? m; try { m = JsonNode.Parse(sb.ToString()); } catch { continue; }
                 var op = m?["op"]?.GetValue<string>();
-                try { await Handle(op, m!); } catch (Exception ex) { await Send(new { type = "error", message = ex.Message }); }
+                // One failed input/navigation op is reported quietly (the panel shows a short notice);
+                // only a broken browser (no session) replaces the view with an error.
+                try { await Handle(op, m!); }
+                catch (Exception ex) { await Send(new { type = page == null ? "error" : "notice", op, message = (ex.InnerException ?? ex).Message }); }
             }
 
             async Task Handle(string? op, JsonNode m)
@@ -132,7 +138,7 @@ internal static class BrowserRelay
                 switch (op)
                 {
                     case "tabs": await SendTabs(page?.TargetId); break;
-                    case "open": { var id = await NewTab(string.IsNullOrWhiteSpace(S("url")) ? "about:blank" : S("url")); if (id != null) await Attach(id); break; }
+                    case "open": { var id = await NewTab(string.IsNullOrWhiteSpace(S("url")) ? BrowserHost.HomeUrl : NormalizeUrl(S("url"))); if (id != null) await Attach(id); break; }
                     case "activate": await Attach(S("id")); break;
                     case "close":
                     {
@@ -140,14 +146,16 @@ internal static class BrowserRelay
                         await http.GetAsync($"http://127.0.0.1:{port}/json/close/{Uri.EscapeDataString(S("id"))}");
                         await Task.Delay(150);
                         var rest = await BrowserHost.PagesAsync();
-                        if (rest.Count == 0) await Attach((await NewTab("about:blank"))!);
+                        if (rest.Count == 0) await Attach((await NewTab(BrowserHost.HomeUrl))!);
                         else if (page?.TargetId == S("id")) await Attach(rest[0].GetProperty("id").GetString()!);
                         else await SendTabs(page?.TargetId);
                         break;
                     }
                     case "navigate": if (page != null) await page.CallAsync("Page.navigate", new JsonObject { ["url"] = NormalizeUrl(S("url")) }); break;
                     case "back": case "forward":
-                        if (page != null) await page.CallAsync("Runtime.evaluate", new JsonObject { ["expression"] = op == "back" ? "history.back()" : "history.forward()" }); break;
+                        if (page != null && await HistoryEntryAsync(page, op == "back" ? -1 : 1) is { } entry)
+                            await page.CallAsync("Page.navigateToHistoryEntry", new JsonObject { ["entryId"] = entry }); break;
+                    case "home": if (page != null) await page.CallAsync("Page.navigate", new JsonObject { ["url"] = BrowserHost.HomeUrl }); break;
                     case "reload": if (page != null) await page.CallAsync("Page.reload"); break;
                     case "resize":
                         w = Math.Clamp((int)D("w"), 320, 3840); h = Math.Clamp((int)D("h"), 240, 2160);
@@ -162,11 +170,7 @@ internal static class BrowserRelay
                         if (page != null) await page.CallAsync("Input.dispatchMouseEvent", new JsonObject
                         { ["type"] = "mouseWheel", ["x"] = D("x"), ["y"] = D("y"), ["deltaX"] = D("dx"), ["deltaY"] = D("dy") }); break;
                     case "key":
-                        if (page != null) await page.CallAsync("Input.dispatchKeyEvent", new JsonObject
-                        {
-                            ["type"] = S("type"), ["key"] = S("key"), ["code"] = S("code"), ["windowsVirtualKeyCode"] = (int)D("keyCode"),
-                            ["modifiers"] = (int)D("mods"), ["text"] = S("text").Length > 0 ? S("text") : null,
-                        }); break;
+                        if (page != null) await page.CallAsync("Input.dispatchKeyEvent", KeyParams(S("type"), S("key"), S("code"), (int)D("keyCode"), (int)D("mods"), S("text"))); break;
                     case "text": if (page != null) await page.CallAsync("Input.insertText", new JsonObject { ["text"] = S("text") }); break;
                 }
             }
@@ -178,6 +182,26 @@ internal static class BrowserRelay
             cts.Cancel();
             if (page != null) { try { await page.CallAsync("Page.stopScreencast"); } catch { } await page.DisposeAsync(); }
         }
+    }
+
+    /// <summary>
+    /// <c>Input.dispatchKeyEvent</c> params. DevTools rejects a null string field ("Invalid
+    /// parameters"), so <c>text</c> is only included for keys that produce text.
+    /// </summary>
+    internal static JsonObject KeyParams(string type, string key, string code, int keyCode, int mods, string text)
+    {
+        var p = new JsonObject { ["type"] = type, ["key"] = key, ["code"] = code, ["windowsVirtualKeyCode"] = keyCode, ["modifiers"] = mods };
+        if (!string.IsNullOrEmpty(text) && type != "keyUp") { p["text"] = text; p["unmodifiedText"] = text; }
+        return p;
+    }
+
+    /// <summary>History entry id <paramref name="delta"/> steps from the current one, or null at either end.</summary>
+    private static async Task<int?> HistoryEntryAsync(CdpPage page, int delta)
+    {
+        var h = await page.CallAsync("Page.getNavigationHistory");
+        var i = (h?["currentIndex"]?.GetValue<int>() ?? 0) + delta;
+        var entries = h?["entries"] as JsonArray;
+        return entries is not null && i >= 0 && i < entries.Count ? entries[i]?["id"]?.GetValue<int>() : null;
     }
 
     /// <summary>Bare host or path -&gt; https URL; keeps explicit schemes (http, https, about, file, data).</summary>
@@ -226,7 +250,8 @@ internal sealed class CdpPage : IAsyncDisposable
         try { await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _cts.Token); } finally { _send.Release(); }
         var done = await Task.WhenAny(tcs.Task, Task.Delay(5000));
         _pending.TryRemove(id, out _);
-        return done == tcs.Task ? tcs.Task.Result : throw new TimeoutException(method + " timed out");
+        if (done != tcs.Task) throw new TimeoutException(method + " timed out");
+        return await tcs.Task;   // await (not .Result) so a DevTools error surfaces as itself, not an AggregateException
     }
 
     private async Task ReadLoop()
