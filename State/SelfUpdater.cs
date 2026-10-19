@@ -275,32 +275,35 @@ public static class SelfUpdater
     /// On startup: if a staged <c>MuxSwarm.new</c> exists next to the running binary, swap it in
     /// (rename current -> <c>.old</c>, staged -> live) and clean any prior <c>.old</c>. The running
     /// process keeps using the already-loaded old image; the swap takes effect for the NEXT launch,
-    /// so a relaunch is triggered right after staging. This call also garbage-collects a leftover
-    /// <c>.old</c> from a completed swap. Best-effort; never throws.
+    /// so a relaunch is triggered right after staging. This call also garbage-collects leftover
+    /// <c>.old</c> files from completed swaps. Best-effort; never throws.
     /// </summary>
-    public static void ApplyStagedBinaryIfPresent()
+    public static void ApplyStagedBinaryIfPresent() => ApplyStagedBinary(PlatformContext.BaseDirectory);
+
+    /// <summary>
+    /// Swap <c>&lt;binary&gt;.new</c> into place in <paramref name="installDir"/>. An older instance that
+    /// is still running can keep the previous <c>.old</c> locked; the live binary is then parked under
+    /// a unique <c>.old-&lt;id&gt;</c> name so the swap still happens (collected on a later boot).
+    /// </summary>
+    internal static void ApplyStagedBinary(string installDir)
     {
         try
         {
-            var installDir = PlatformContext.BaseDirectory;
             var live = Path.Combine(installDir, BinaryName);
             var staged = live + ".new";
             var old = live + ".old";
 
-            // GC a completed swap's leftover.
-            if (File.Exists(old))
+            // GC completed swaps' leftovers; locked ones are retried next boot.
+            foreach (var leftover in Directory.GetFiles(installDir, BinaryName + ".old*"))
             {
-                try { File.Delete(old); } catch { /* still locked; try next boot */ }
+                try { File.Delete(leftover); } catch { /* still in use */ }
             }
 
             if (!File.Exists(staged)) return;
 
             // rename-aside the live exe, then move the staged one into place.
             if (File.Exists(live))
-            {
-                try { if (File.Exists(old)) File.Delete(old); } catch { }
-                File.Move(live, old);
-            }
+                File.Move(live, File.Exists(old) ? $"{old}-{Guid.NewGuid():N}" : old);
             File.Move(staged, live);
             MuxConsole.WriteInfo("Applied staged update binary.");
         }
