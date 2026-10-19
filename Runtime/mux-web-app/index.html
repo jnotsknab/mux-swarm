@@ -14787,10 +14787,27 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function pt(e){ var r = cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * (cv.width / r.width), y: (e.clientY - r.top) * (cv.height / r.height) }; }
   function mods(e){ return (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0); }
   var BTN = ['left', 'middle', 'right'];
-  cv.addEventListener('mousedown', function(e){ view.focus(); var p = pt(e); send({ op: 'mouse', type: 'mousePressed', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); e.preventDefault(); });
-  cv.addEventListener('mouseup', function(e){ var p = pt(e); send({ op: 'mouse', type: 'mouseReleased', x: p.x, y: p.y, button: BTN[e.button] || 'left', clicks: e.detail || 1, mods: mods(e) }); });
+  // A drag (scrollbar thumb, slider, text selection) needs the held buttons on every move, and the
+  // release must reach the page even when the pointer leaves the view: capture the pointer while down.
+  function held(e){ return (e.buttons & 1) ? 'left' : (e.buttons & 2) ? 'right' : (e.buttons & 4) ? 'middle' : ''; }
+  cv.addEventListener('pointerdown', function(e){
+    if (e.pointerType !== 'mouse') return;
+    view.focus(); try { cv.setPointerCapture(e.pointerId); } catch(_) {}
+    var p = pt(e); send({ op: 'mouse', type: 'mousePressed', x: p.x, y: p.y, button: BTN[e.button] || 'left', buttons: e.buttons, clicks: e.detail || 1, mods: mods(e) });
+    e.preventDefault();
+  });
+  cv.addEventListener('pointerup', function(e){
+    if (e.pointerType !== 'mouse') return;
+    var p = pt(e); send({ op: 'mouse', type: 'mouseReleased', x: p.x, y: p.y, button: BTN[e.button] || 'left', buttons: e.buttons, clicks: e.detail || 1, mods: mods(e) });
+    try { cv.releasePointerCapture(e.pointerId); } catch(_) {}
+  });
   var lastMove = 0;
-  cv.addEventListener('mousemove', function(e){ var t = Date.now(); if (t - lastMove < 40) return; lastMove = t; var p = pt(e); send({ op: 'mouse', type: 'mouseMoved', x: p.x, y: p.y, mods: mods(e) }); });
+  cv.addEventListener('pointermove', function(e){
+    if (e.pointerType !== 'mouse') return;
+    // Hover moves are throttled; while a button is held every move goes through so drags track the cursor.
+    var t = Date.now(); if (!e.buttons && t - lastMove < 40) return; lastMove = t;
+    var p = pt(e); send({ op: 'mouse', type: 'mouseMoved', x: p.x, y: p.y, button: held(e), buttons: e.buttons, mods: mods(e) });
+  });
   cv.addEventListener('wheel', function(e){ var p = pt(e); send({ op: 'wheel', x: p.x, y: p.y, dx: e.deltaX, dy: e.deltaY }); e.preventDefault(); }, { passive: false });
   cv.addEventListener('contextmenu', function(e){ e.preventDefault(); });
   view.addEventListener('keydown', function(e){

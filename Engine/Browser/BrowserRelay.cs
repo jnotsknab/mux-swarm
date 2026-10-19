@@ -163,7 +163,9 @@ internal static class BrowserRelay
                     case "mouse":
                         if (page != null) await page.CallAsync("Input.dispatchMouseEvent", new JsonObject
                         {
-                            ["type"] = S("type"), ["x"] = D("x"), ["y"] = D("y"), ["button"] = string.IsNullOrEmpty(S("button")) ? "none" : S("button"),
+                            ["type"] = S("type"), ["x"] = Math.Clamp(D("x"), 0, w - 1), ["y"] = Math.Clamp(D("y"), 0, h - 1),
+                            ["button"] = string.IsNullOrEmpty(S("button")) ? "none" : S("button"),
+                            ["buttons"] = (int)D("buttons"),   // held buttons: without it a move is a hover, not a drag
                             ["clickCount"] = (int)D("clicks"), ["modifiers"] = (int)D("mods"),
                         }); break;
                     case "wheel":
