@@ -72,6 +72,7 @@ internal static class BrowserHost
     {
         enabled = App.Config.Serve.Browser.Enabled,
         status = Platform() is null ? "unsupported" : _status,
+        identity = new { brand = BrowserIdentity.Current.Brand, version = BrowserIdentity.Current.Version, source = BrowserIdentity.Current.Source },
         installed = Platform() is { } p && File.Exists(ExePath(p)),
         version = Version,
         downloaded = _got, total = _total,
@@ -123,7 +124,10 @@ internal static class BrowserHost
         {
             $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1",
             $"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
-            "--disable-features=Translate", "--window-size=1280,800", "about:blank",
+            "--disable-features=Translate", "--window-size=1280,800",
+            // Present as the user's installed browser (see BrowserIdentity), not "HeadlessChrome".
+            $"--user-agent={BrowserIdentity.Current.UserAgent}", $"--lang={AcceptLanguage.Split(',')[0]}",
+            "about:blank",
         };
         if (headless) args.Insert(0, "--headless=new");
         // Linux containers often run as root, where Chrome refuses to start sandboxed.
@@ -149,6 +153,18 @@ internal static class BrowserHost
         }
         outp.Add("--cdp-endpoint"); outp.Add(cdp);
         return outp.ToArray();
+    }
+
+    /// <summary>Language list from the OS UI culture, e.g. <c>en-US,en</c> (Chrome adds the q-weights itself).</summary>
+    internal static string AcceptLanguage
+    {
+        get
+        {
+            var c = System.Globalization.CultureInfo.CurrentUICulture;
+            var name = string.IsNullOrEmpty(c.Name) ? "en-US" : c.Name;
+            var lang = name.Split('-')[0];
+            return lang == name ? name : $"{name},{lang}";
+        }
     }
 
     /// <summary>Stop the browser (engine shutdown).</summary>
