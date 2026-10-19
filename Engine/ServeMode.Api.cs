@@ -32,7 +32,7 @@ namespace MuxSwarm.Engine;
 ///   DELETE /api/daemon/{id}          remove a trigger (persisted)
 ///   POST /api/workflows              { name, goal, mode } -> launch a workflow run
 ///   GET  /api/workflows/preflight    dynamic-mode readiness (python + SDK)
-///   GET /api/status                  authoritative session mode / in-session flag
+///   GET /api/status                  authoritative session mode / in-session flag / active agent + model
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 ///   GET /api/themes                  extension themes mapped to the web UI's CSS variables (+ web block CSS/fonts/variants)
 ///   GET /ext/{name}/{**path}         static CSS/font/image assets from an enabled extension's web folder
@@ -1575,12 +1575,15 @@ public static partial class ServeMode
         var tokens = SingleAgentOrchestrator.SessionTokens;
         var threshold = SingleAgentOrchestrator.AutoCompactThreshold;
         double pct = threshold > 0 ? (double)tokens / threshold * 100.0 : 0;
+        var (agent, model) = ActiveSingleAgent(App.SwarmConfig);
 
         await WriteJson(context, 200, new
         {
             mode,
             inSession,
             provider = App.ActiveProvider?.Name,
+            agent,
+            model,
             tokens,
             tokenThreshold = threshold,
             tokenPct = Math.Round(pct, 1),
@@ -1591,6 +1594,21 @@ public static partial class ServeMode
             psub = App.ParallelSubAgentsMode,
             effort = MuxConsole.CurrentEffort,
         });
+    }
+
+    /// <summary>
+    /// The agent single-agent mode runs (a /swap or POST /api/agent choice, else Swarm.json's
+    /// <c>singleAgent</c>) and the model it resolves to, matching the session's own lookup:
+    /// the same-named <c>agents[]</c> entry first, then <c>singleAgent.model</c>.
+    /// </summary>
+    internal static (string? Agent, string? Model) ActiveSingleAgent(SwarmConfig? config)
+    {
+        var name = SingleAgentOrchestrator.AgentDef?.Name ?? config?.SingleAgent?.Name;
+        if (string.IsNullOrEmpty(name)) return (null, null);
+        var model = config?.Agents?.FirstOrDefault(a => a.Name != null &&
+                        a.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Model
+                    ?? config?.SingleAgent?.Model;
+        return (name, string.IsNullOrEmpty(model) ? null : model);
     }
 
     // B5e -- GET /api/commands

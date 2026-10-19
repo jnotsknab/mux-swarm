@@ -5578,6 +5578,8 @@ const icons = {
       _modelSlots.find(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase());
     if (active && active.model) {
       best = active.model;
+    } else if (_activeAgentName && _activeAgentModel) {
+      best = _activeAgentModel;   // singleAgent is not in /api/agents; /api/status names its model
     } else {
       const counts = new Map();
       for (const s of _modelSlots) {
@@ -5590,9 +5592,16 @@ const icons = {
     nameEl.title = (_activeAgentName ? _activeAgentName + ' \u2014 ' : '') + (best || 'No model configured');
   }
 
-  // Which agent single-agent mode is currently bound to. Set by a successful
-  // /api/agent swap; used only to headline the button.
+  // Which agent single-agent mode is bound to, and its model. Seeded and kept current by
+  // /api/status (the engine's view), and set at once by a successful /api/agent swap.
   let _activeAgentName = null;
+  let _activeAgentModel = null;
+  function setActiveAgent(name, model) {
+    if (!name || (name === _activeAgentName && (model || null) === _activeAgentModel)) return;
+    _activeAgentName = name;
+    _activeAgentModel = model || null;
+    refreshModelButton();
+  }
 
   // Trim vendor prefixes/date suffixes so the composer button stays compact.
   function shortModelName(m) {
@@ -5629,8 +5638,11 @@ const icons = {
     document.body.appendChild(menu);
     positionModelMenu(menu, btn);
 
-    const slots = await loadModelSlots(true);
+    let slots = await loadModelSlots(true);
     if (!modelMenuEl()) return;   // closed while loading
+    // The default single agent lives outside agents[]; list it so the active row shows.
+    if (_activeAgentName && !slots.some(s => s && s.name && s.name.toLowerCase() === _activeAgentName.toLowerCase()))
+      slots = [{ name: _activeAgentName, model: _activeAgentModel }].concat(slots);
     if (!slots.length) {
       menu.innerHTML = '<div class="model-menu-loading">No agents configured.</div>';
       return;
@@ -5698,8 +5710,7 @@ const icons = {
       });
       const data = await r.json().catch(() => null);
       if (!r.ok) throw new Error((data && data.error) || ('HTTP ' + r.status));
-      _activeAgentName = (data && data.agent) || name;
-      refreshModelButton();
+      setActiveAgent((data && data.agent) || name, slot.model);
       closeModelMenu();
       routePill(pillFromText('Active agent: ' + _activeAgentName, 'event-success'));
     } catch (e) {
@@ -5745,6 +5756,7 @@ const icons = {
         slot.model = v;
         const cached = _modelSlots.find(s => s && s.name === name);
         if (cached) cached.model = v;
+        if (_activeAgentName && name.toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = v;
         refreshModelButton();
         closeModelMenu();
         routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
@@ -5859,6 +5871,7 @@ const icons = {
           plan: !!st.plan, ultra: !!st.ultra, giga: !!st.giga,
           sub: !!st.sub, psub: !!st.psub,
         };
+        setActiveAgent(st.agent, st.model);
       }
     } catch (_) {}
     return _sessStatus;
