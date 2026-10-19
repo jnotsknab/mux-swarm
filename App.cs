@@ -2423,6 +2423,15 @@ internal class App
                 var command = ResolveConfigValue(serverConfig.Command ?? "", baseDir);
                 var args = serverConfig.Args?.Select(a => ResolveConfigValue(a, baseDir)).ToArray() ?? Array.Empty<string>();
 
+                // The built-in Playwright server drives the panel's browser so the user can watch it.
+                if (name == "Playwright" && config.Serve.Browser is { Enabled: true, Playwright: true } && Engine.Browser.BrowserHost.Platform() != null)
+                {
+                    // Playwright connects on its first browser tool call; the invoker starts (and on first
+                    // use downloads) the browser on that reserved port just before the call runs.
+                    args = Engine.Browser.BrowserHost.PlaywrightArgs(args, $"http://127.0.0.1:{Engine.Browser.BrowserHost.ReservedPort}");
+                    Engine.Browser.BrowserHost.SharedWithPlaywright = true;
+                }
+
                 if (name == "Filesystem" && config.Filesystem?.AllowedPaths?.Count > 0)
                 {
                     args = args
@@ -2703,6 +2712,21 @@ internal class App
                     c.FunctionInvoker = async (ctx, ct) =>
                     {
                         using var _ = fct.BeginToolCall(ctx.Function.Name);
+                        return inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
+                    };
+                }
+                // Built-in browser: start it (downloading on first use) before the first Playwright call.
+                // MCP servers may connect after this client is built, so the routing flag is read per call.
+                if (Config.Serve.Browser is { Enabled: true, Playwright: true })
+                {
+                    var inner = c.FunctionInvoker;
+                    c.FunctionInvoker = async (ctx, ct) =>
+                    {
+                        if (Engine.Browser.BrowserHost.SharedWithPlaywright && ctx.Function.Name.StartsWith("Playwright_", StringComparison.OrdinalIgnoreCase))
+                        {
+                            try { await Engine.Browser.BrowserHost.EnsureRunningAsync(ct); }
+                            catch (Exception ex) { return $"[browser] The built-in browser could not start: {ex.Message}"; }
+                        }
                         return inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
                     };
                 }

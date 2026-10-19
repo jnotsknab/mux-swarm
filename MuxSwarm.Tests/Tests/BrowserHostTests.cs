@@ -1,0 +1,76 @@
+﻿using MuxSwarm.Engine;
+using MuxSwarm.Engine.Browser;
+using Xunit;
+
+namespace MuxSwarm.Tests.Tests;
+
+/// <summary>Built-in browser: platform map, launch flags, Playwright routing, URL handling, web panel wiring.</summary>
+public class BrowserHostTests
+{
+    private static string RepoRoot()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d != null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) return d.FullName;
+        throw new DirectoryNotFoundException("MuxSwarm.csproj not found above the test output");
+    }
+
+    [Fact]
+    public void EveryPublishedPlatform_HasAPinnedChecksum()
+    {
+        foreach (var p in new[] { "win64", "mac-arm64", "mac-x64", "linux64", "linux-arm64" })
+            Assert.Matches("^[0-9A-F]{64}$", BrowserHost.Sha256[p]);
+        Assert.NotNull(BrowserHost.Platform());   // every CI/dev host we run on is covered
+    }
+
+    [Fact]
+    public void LaunchArgs_AreLoopbackOnly_WithAPersistentProfile()
+    {
+        var a = BrowserHost.LaunchArgs(9333, "/p");
+        Assert.Contains("--remote-debugging-address=127.0.0.1", a);
+        Assert.Contains("--remote-debugging-port=9333", a);
+        Assert.Contains("--user-data-dir=/p", a);
+        Assert.Contains("--headless=new", a);
+        Assert.DoesNotContain("--headless=new", BrowserHost.LaunchArgs(9333, "/p", headless: false));
+    }
+
+    [Fact]
+    public void PlaywrightArgs_DropOwnBrowserFlags_AndAttachOverCdp()
+    {
+        var args = new[] { "-y", "@playwright/mcp@latest", "--browser", "chrome", "--executable-path", "C:/c.exe",
+            "--user-data-dir=C:/prof", "--headless", "--no-sandbox", "--caps", "core,pdf", "--output-dir", "C:/out" };
+        var outp = BrowserHost.PlaywrightArgs(args, "http://127.0.0.1:9333");
+        Assert.Equal(new[] { "-y", "@playwright/mcp@latest", "--caps", "core,pdf", "--output-dir", "C:/out",
+            "--cdp-endpoint", "http://127.0.0.1:9333" }, outp);
+    }
+
+    [Theory]
+    [InlineData("example.com", "https://example.com")]
+    [InlineData("http://localhost:3000", "http://localhost:3000")]
+    [InlineData("localhost:5173", "http://localhost:5173")]
+    [InlineData("example.com:8443/x", "https://example.com:8443/x")]
+    [InlineData("about:blank", "about:blank")]
+    [InlineData("mux swarm docs", "https://duckduckgo.com/?q=mux%20swarm%20docs")]
+    [InlineData("", "about:blank")]
+    public void NormalizeUrl(string input, string expected) => Assert.Equal(expected, BrowserRelay.NormalizeUrl(input));
+
+    [Fact]
+    public void Config_DefaultsOn_AndCanBeDisabled()
+    {
+        var d = new ServeConfig().Browser;
+        Assert.True(d.Enabled); Assert.True(d.Playwright); Assert.True(d.Headless);
+        var off = System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"browser\":{\"enabled\":false}}")!;
+        Assert.False(off.Browser.Enabled);
+    }
+
+    [Fact]
+    public void Panel_HasTheBrowserMode_AndNoReaderOrPopout()
+    {
+        var html = File.ReadAllText(Path.Combine(RepoRoot(), "Runtime", "mux-web-app", "index.html"));
+        Assert.Contains("btn('muxBrowserMode', 'Browser: the built-in browser the agent uses'", html);
+        Assert.Contains("/api/browser/ws", html);
+        Assert.DoesNotContain("muxPreviewReader", html);
+        Assert.DoesNotContain("muxPreviewPopout", html);
+        Assert.DoesNotContain("r.jina.ai", html);
+        Assert.Contains(".mux-preview-btn[hidden] { display: none; }", html);   // .mux-preview-btn sets display:flex
+    }
+}
