@@ -14724,21 +14724,22 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         img.onload = function(){ if (cv.width !== img.width || cv.height !== img.height) { cv.width = img.width; cv.height = img.height; } ctx.drawImage(img, 0, 0); say(''); };
         img.src = 'data:image/jpeg;base64,' + m.data;
       } else if (m.type === 'tabs') { tabs = m.tabs || []; activeId = m.active; paintTabs(); }
-      else if (m.type === 'status' && m.status === 'ready') { say(''); }
+      else if (m.type === 'status' && m.status === 'ready') { ready = true; say(''); }
       else if (m.type === 'error') { say('Browser error: ' + (m.message || 'unknown').replace(/</g, '&lt;')); }
     };
-    ws.onclose = function(){ ws = null; if (on) say('Browser disconnected. <button type="button" class="mux-settings-btn" id="muxBvRetry">Reconnect</button>'); var r = document.getElementById('muxBvRetry'); if (r) r.onclick = connect; };
+    ws.onclose = function(){ ws = null; ready = false; if (on) say('Browser disconnected. <button type="button" class="mux-settings-btn" id="muxBvRetry">Reconnect</button>'); var r = document.getElementById('muxBvRetry'); if (r) r.onclick = connect; };
     pollDownload();
   }
+  var ready = false;
   function pollDownload(){
     fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
-      if (!s || !on) return;
+      if (!s || !on || ready) return;
       if (s.status === 'unsupported') { say('The built-in browser is not available on this platform.'); return; }
       if (s.status === 'downloading') {
         var pct = s.total ? Math.round(s.downloaded * 100 / s.total) : 0;
         say('Downloading the browser (Chrome for Testing ' + s.version + ', one time)\u2026<progress max="100" value="' + pct + '"></progress>' + pct + '%');
         setTimeout(pollDownload, 700);
-      } else if (s.status === 'starting') setTimeout(pollDownload, 500);
+      } else if (s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);   // idle: the socket has not kicked it off yet
       else if (s.status === 'error') say('The browser could not start: ' + String(s.error || '').replace(/</g, '&lt;'));
     }).catch(function(){});
   }

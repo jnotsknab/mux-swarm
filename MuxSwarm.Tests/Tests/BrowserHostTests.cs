@@ -71,6 +71,7 @@ public class BrowserHostTests
         Assert.DoesNotContain("muxPreviewReader", html);
         Assert.DoesNotContain("muxPreviewPopout", html);
         Assert.DoesNotContain("r.jina.ai", html);
-        Assert.Contains(".mux-preview-btn[hidden] { display: none; }", html);   // .mux-preview-btn sets display:flex
+        Assert.Contains(".mux-preview-btn[hidden] { display: none; }", html);
+        Assert.Contains("s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);", html);   // keep polling until the download starts   // .mux-preview-btn sets display:flex
     }
 }
