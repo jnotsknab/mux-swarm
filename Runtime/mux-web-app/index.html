@@ -5349,6 +5349,8 @@ const icons = {
   // Node-graph panel lives in a separate <script> block; give it the same send()
   // path the composer uses so a static workflow dispatches as a normal goal.
   try { window.MuxSend = (t) => send(t); } catch(_) {}
+  // Command catalog (engine /api/commands + client-only commands) for add-ons such as the Actions menu.
+  try { window.MuxCommands = { all: () => SLASH_COMMANDS.map(c => Object.assign({}, c)) }; } catch(_) {}
 
   function inlineMd(s) {
     // 1. Extract inline code spans FIRST so nothing inside backticks gets
@@ -6428,11 +6430,12 @@ const icons = {
       // DISPLAY: rebuild the palette pool from the server catalog + client-only extras.
       const serverRows = items
         .filter(c => c && c.cmd)
-        .map(c => ({ cmd: c.cmd, desc: c.desc || '' }));
+        .map(c => ({ cmd: c.cmd, desc: c.desc || '', scope: c.scope || '' }));
       if (serverRows.length) {
         const seen = new Set(serverRows.map(r => r.cmd.toLowerCase()));
         const extras = CLIENT_ONLY_DISPLAY.filter(r => !seen.has(r.cmd.toLowerCase()));
         SLASH_COMMANDS = [...serverRows, ...extras];
+        try { window.dispatchEvent(new CustomEvent('mux:commands')); } catch (_) {}
         // If the palette is open (and not on a /skill sub-query), refresh it live.
         if (paletteOpen && typeof input !== 'undefined' && input && !/^\/skill\b/i.test(input.value)) {
           paletteItems = buildPalette(input.value);
@@ -8933,6 +8936,20 @@ const icons = {
   }
   .mux-settings details > .mux-row:first-of-type,
   .mux-settings details[open] > summary + .mux-row { border-top: 0; }
+  .mux-actpick { padding: 4px 0 10px; }
+  .mux-actpick-chosen { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 8px; }
+  .mux-actpick-item { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--border); border-radius: var(--radius, 4px); }
+  .mux-actpick-item code, .mux-actpick-add code { font-family: var(--font-mono); font-size: calc(12px * var(--ui-font-scale, 1)); color: var(--text); }
+  .mux-actpick-btn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 3px; }
+  .mux-actpick-btn:hover:not(:disabled) { color: var(--text); background: rgba(var(--mux-tint-rgb, 128,128,128), .08); }
+  .mux-actpick-btn:disabled { opacity: .3; cursor: default; }
+  .mux-actpick-search { width: 100%; box-sizing: border-box; padding: 6px 8px; background: var(--bg-input); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius, 4px); font: inherit; outline: none; }
+  .mux-actpick-list { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; margin-top: 4px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-actpick-list::-webkit-scrollbar { width: 8px; } .mux-actpick-list::-webkit-scrollbar-track { background: transparent; }
+  .mux-actpick-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; } .mux-actpick-list::-webkit-scrollbar-button { display: none; }
+  .mux-actpick-add { display: flex; gap: 10px; align-items: baseline; text-align: left; border: 0; background: none; color: var(--text); padding: 5px 8px; cursor: pointer; border-radius: 3px; font: inherit; }
+  .mux-actpick-add:hover { background: rgba(var(--mux-tint-rgb, 128,128,128), .06); }
+  .mux-actpick-add .desc { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mux-row > div:first-child { flex: 1; min-width: 0; }
   .mux-row .lbl { color: var(--text, #e4e4e7); font-weight: 500; }
   .mux-row .desc {
@@ -9489,6 +9506,7 @@ const icons = {
     showCharCounter: true,
     showMic: true,
     showUpload: true,
+    composerActions: ['/compact', '/prune', '/undo', '/retry', '/copy'],
     showPreviewFab: true,
     lockPreviewFab: false,
     sendOnEnter: 'enter',
@@ -9648,6 +9666,7 @@ const icons = {
     loadGoogleFont(state.fontSerif);
     // Let the code editor re-evaluate its theme when settings change.
     try { window.MuxEditor && window.MuxEditor.refreshTheme && window.MuxEditor.refreshTheme(); } catch(_) {}
+    try { window.dispatchEvent(new CustomEvent('mux:settings')); } catch(_) {}
   }
 
   function renderUI(){
@@ -9915,6 +9934,54 @@ const icons = {
         [{label:'Enter', value:'enter'}, {label:'Ctrl+Enter', value:'ctrl'}],
         'Enter: send (Shift+Enter newline). Ctrl/Cmd+Enter: send only with modifier.'),
     ]);
+    // Composer Actions menu: pick from the engine's command catalog (same list as the / palette).
+    function actionsPicker(){
+      const box = document.createElement('div'); box.className = 'mux-actpick';
+      const head = document.createElement('div'); head.className = 'mux-row';
+      head.innerHTML = '<div style="flex:1"><div class="lbl">Actions menu</div><div class="desc">Commands in the composer\'s Actions menu, in this order. Session-only commands are disabled outside a session.</div></div>';
+      const reset = document.createElement('button'); reset.className = 'mux-settings-btn'; reset.textContent = 'Reset';
+      reset.addEventListener('click', () => { state.composerActions = DEFAULTS.composerActions.slice(); saveState(state); apply(); paint(); });
+      head.appendChild(reset); box.appendChild(head);
+      const chosen = document.createElement('div'); chosen.className = 'mux-actpick-chosen'; box.appendChild(chosen);
+      const search = document.createElement('input'); search.type = 'search'; search.className = 'mux-actpick-search';
+      search.placeholder = 'Add a command\u2026 (type to filter)'; box.appendChild(search);
+      const list = document.createElement('div'); list.className = 'mux-actpick-list'; box.appendChild(list);
+      const cur = () => Array.isArray(state.composerActions) ? state.composerActions : DEFAULTS.composerActions.slice();
+      const set = (a) => { state.composerActions = a; saveState(state); apply(); paint(); };
+      function paint(){
+        const a = cur();
+        chosen.innerHTML = '';
+        if (!a.length) { const e = document.createElement('div'); e.className = 'desc'; e.textContent = 'No actions; the menu shows a hint.'; chosen.appendChild(e); }
+        a.forEach((cmd, i) => {
+          const r = document.createElement('div'); r.className = 'mux-actpick-item';
+          const n = document.createElement('code'); n.textContent = cmd; r.appendChild(n);
+          const sp = document.createElement('span'); sp.style.flex = '1'; r.appendChild(sp);
+          [['\u2191', i > 0, () => { const b = a.slice(); [b[i-1], b[i]] = [b[i], b[i-1]]; set(b); }, 'Move up'],
+           ['\u2193', i < a.length - 1, () => { const b = a.slice(); [b[i+1], b[i]] = [b[i], b[i+1]]; set(b); }, 'Move down'],
+           ['\u2715', true, () => set(a.filter((_, k) => k !== i)), 'Remove']].forEach(([t, ok, fn, title]) => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'mux-actpick-btn'; b.textContent = t;
+            b.title = title; b.setAttribute('aria-label', title + ' ' + cmd); b.disabled = !ok; b.addEventListener('click', fn); r.appendChild(b);
+          });
+          chosen.appendChild(r);
+        });
+        const q = search.value.trim().toLowerCase();
+        const all = window.MuxCommands ? window.MuxCommands.all() : [];
+        list.innerHTML = '';
+        all.filter(c => c.cmd && !a.includes(c.cmd) && (!q || c.cmd.toLowerCase().includes(q) || (c.desc || '').toLowerCase().includes(q)))
+          .slice(0, q ? 40 : 12).forEach(c => {
+            const b = document.createElement('button'); b.type = 'button'; b.className = 'mux-actpick-add';
+            b.innerHTML = '<code></code><span class="desc"></span>';
+            b.firstChild.textContent = '+ ' + c.cmd; b.lastChild.textContent = c.desc || '';
+            b.addEventListener('click', () => { set(a.concat([c.cmd])); search.value = ''; paint(); });
+            list.appendChild(b);
+          });
+      }
+      search.addEventListener('input', paint);
+      window.addEventListener('mux:commands', paint);
+      paint();
+      return box;
+    }
+    section('Composer actions', [actionsPicker()]);
     section('Command Palette', [
       toggleRow('cmdPaletteEnabled', 'Enable slash command hints',
         'Show the floating command palette when typing / at the start of the input.'),
@@ -14732,6 +14799,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-cpop .info b { color: var(--text); font-weight: 600; }
   .mux-cpop .opt:disabled { opacity: .45; cursor: default; background: none; }
   .mux-cpop .opt .k { color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1)); }
+  #muxActions ~ .mux-cpop .opt span:first-child { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   @media (max-width: 1100px) { .mux-cchip#muxActions { font-size: 0; gap: 0; } .mux-cchip#muxActions::before { content: '\22ef'; font-size: calc(14px * var(--ui-font-scale, 1)); } }
 
   /* Collapsible composer: the input and controls fold away to a slim bar (state saved per browser). */
@@ -15045,22 +15113,43 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   var mic = document.getElementById('micBtn');
   if (actions && mic) actions.insertBefore(act.wrap, mic);
   act.btn.hidden = false; act.btn.textContent = 'Actions \u25be';
-  var ACTS = [['Compact', '/compact', true], ['Undo last exchange', '/undo', true], ['Retry last message', '/retry', true],
-    ['Copy last reply', '/copy', false], ['Wipe context\u2026', '/wipe', true]];
+  // The list is the user's (Settings > Composer actions); labels and session scope come from the
+  // engine's command catalog (/api/commands), so any slash command can be an action.
+  var ACT_LABEL = { '/compact': 'Compact', '/prune': 'Prune context', '/undo': 'Undo last exchange',
+    '/retry': 'Retry last message', '/copy': 'Copy last reply', '/wipe': 'Wipe context\u2026' };
+  var CONFIRM = { '/wipe': 'Wipe the current session context? The conversation so far is dropped.' };
+  var lastInAgent = false;
+  function actionCmds(){
+    var s = window.MuxSettings ? window.MuxSettings.get() : {};
+    return Array.isArray(s.composerActions) ? s.composerActions : ['/compact', '/prune', '/undo', '/retry', '/copy'];
+  }
   function paintActions(inAgent){
+    lastInAgent = !!inAgent;
+    var cat = window.MuxCommands ? window.MuxCommands.all() : [];
     act.pop.innerHTML = '';
-    ACTS.forEach(function(a){
-      var o = document.createElement('button'); o.type = 'button'; o.className = 'opt'; o.disabled = a[2] && !inAgent;
-      o.innerHTML = '<span></span><span class="k"></span>'; o.firstChild.textContent = a[0]; o.lastChild.textContent = a[1];
-      if (o.disabled) o.title = 'Needs a running session';
+    var cmds = actionCmds();
+    if (!cmds.length) {
+      var e = document.createElement('div'); e.className = 'opt'; e.style.color = 'var(--muted)';
+      e.textContent = 'No actions \u2014 choose some in Settings'; act.pop.appendChild(e);
+    }
+    cmds.forEach(function(cmd){
+      var c = cat.find(function(x){ return x.cmd === cmd; }) || {};
+      var o = document.createElement('button'); o.type = 'button'; o.className = 'opt';
+      o.disabled = c.scope === 'session' && !inAgent;
+      // Catalog descriptions can be long ("... (/compact [steering])"): keep the part before any bracket.
+      var label = ACT_LABEL[cmd] || String(c.desc || '').split(/\s[([]/)[0].replace(/[;.:,]\s.*$/, '') || cmd;
+      o.innerHTML = '<span></span><span class="k"></span>'; o.firstChild.textContent = label; o.lastChild.textContent = cmd;
+      o.title = o.disabled ? 'Needs a running session' : (c.desc || cmd);
       o.addEventListener('click', function(){
         closeAll();
-        if (a[1] === '/wipe' && !window.confirm('Wipe the current session context? The conversation so far is dropped.')) return;
-        send(a[1]); setTimeout(poll, 1200);
+        if (CONFIRM[cmd] && !window.confirm(CONFIRM[cmd])) return;
+        send(cmd); setTimeout(poll, 1200);
       });
       act.pop.appendChild(o);
     });
   }
+  window.addEventListener('mux:settings', function(){ paintActions(lastInAgent); });
+  window.addEventListener('mux:commands', function(){ paintActions(lastInAgent); });
   paintActions(false);
 
   // ── Composer: collapse to a slim bar ──
