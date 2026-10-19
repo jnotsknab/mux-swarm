@@ -155,6 +155,9 @@ internal static class BrowserHost
         return outp.ToArray();
     }
 
+    /// <summary>Address new tabs open on (<c>serve.browser.homePage</c>; blank = <c>about:blank</c>).</summary>
+    internal static string HomeUrl => BrowserRelay.NormalizeUrl(App.Config.Serve.Browser.HomePage);
+
     /// <summary>Language list from the OS UI culture, e.g. <c>en-US,en</c> (Chrome adds the q-weights itself).</summary>
     internal static string AcceptLanguage
     {

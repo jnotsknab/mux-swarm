@@ -523,6 +523,11 @@ public class ServeBrowserConfig
     [JsonPropertyName("headless")]
     public bool Headless { get; set; } = true;
 
+    /// <summary>Address new tabs open on: a URL or a bare host (<c>example.com</c> becomes https).
+    /// Empty = a blank page.</summary>
+    [JsonPropertyName("homePage")]
+    public string HomePage { get; set; } = "https://duckduckgo.com";
+
     /// <summary>Profile directory (cookies, logins). Empty = <c>Sessions/BrowserProfile</c>.</summary>
     [JsonPropertyName("profileDir")]
     public string ProfileDir { get; set; } = "";

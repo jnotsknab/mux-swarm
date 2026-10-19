@@ -14648,6 +14648,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     color: var(--muted); background: var(--bg); font-size: calc(13px * var(--ui-font-scale, 1)); text-align: center; padding: 20px; }
   .mux-bv .mux-bv-msg[hidden] { display: none; }
   .mux-bv progress { width: 240px; accent-color: var(--accent); }
+  .mux-bv .mux-bv-note { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 80%; padding: 6px 12px;
+    border-radius: var(--radius, 4px); background: var(--mux-surface-solid, var(--bg-card)); color: var(--muted); border: 1px solid var(--border);
+    font-size: calc(12px * var(--ui-font-scale, 1)); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mux-bv .mux-bv-note[hidden] { display: none; }
   .mux-ws-tab.mux-bt .ic { opacity: .7; }
   .mux-ws-tab.mux-bt-new { min-width: 0; padding: 4px 8px; }
   .mux-preview-btn[hidden] { display: none; }
@@ -14662,7 +14666,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   var strip = document.getElementById('muxWsTabs');
   function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
   var ICON = { globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/>',
-    back: '<polyline points="15 18 9 12 15 6"/>', fwd: '<polyline points="9 18 15 12 9 6"/>' };
+    back: '<polyline points="15 18 9 12 15 6"/>', fwd: '<polyline points="9 18 15 12 9 6"/>',
+    reload: '<path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/>',
+    home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>' };
   function btn(id, title, svg, before){
     var b = document.createElement('button'); b.className = 'mux-preview-btn'; b.id = id; b.title = title; b.type = 'button';
     b.setAttribute('aria-label', title);
@@ -14671,7 +14677,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   }
   var modeBtn = btn('muxBrowserMode', 'Browser: the built-in browser the agent uses', ICON.globe, urlIn);
   var backBtn = btn('muxBrowserBack', 'Back', ICON.back, urlIn), fwdBtn = btn('muxBrowserFwd', 'Forward', ICON.fwd, urlIn);
-  backBtn.hidden = fwdBtn.hidden = true;
+  var refBtn = btn('muxBrowserReload', 'Refresh', ICON.reload, urlIn), homeBtn = btn('muxBrowserHome', 'Home page', ICON.home, urlIn);
+  var NAV = [backBtn, fwdBtn, refBtn, homeBtn];
+  NAV.forEach(function(b){ b.hidden = true; });
   var view = document.createElement('div'); view.className = 'mux-bv'; view.tabIndex = 0;
   var cv = document.createElement('canvas'); view.appendChild(cv);
   var msg = document.createElement('div'); msg.className = 'mux-bv-msg'; view.appendChild(msg);
@@ -14679,6 +14687,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   var ctx = cv.getContext('2d');
   var ws = null, on = false, tabs = [], activeId = null, vw = 1280, vh = 800, filePlaceholder = '';
   function say(html){ msg.innerHTML = html; msg.hidden = !html; }
+  // A failed op (navigation refused, history end, ...) shows briefly over the page instead of covering it.
+  var noteEl = document.createElement('div'); noteEl.className = 'mux-bv-note'; noteEl.hidden = true; view.appendChild(noteEl);
+  function note(t){ noteEl.textContent = t || ''; noteEl.hidden = !t; clearTimeout(note.t); note.t = setTimeout(function(){ noteEl.hidden = true; }, 2500); }
 
   function send(o){ if (ws && ws.readyState === 1) ws.send(JSON.stringify(o)); }
   function paintTabs(){
@@ -14694,10 +14705,10 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       strip.appendChild(b);
     });
     var n = document.createElement('button'); n.type = 'button'; n.className = 'mux-ws-tab mux-bt-new'; n.textContent = '+'; n.title = 'New tab';
-    n.addEventListener('click', function(){ send({ op: 'open', url: 'about:blank' }); setTimeout(function(){ urlIn.focus(); urlIn.select(); }, 50); });
+    n.addEventListener('click', function(){ send({ op: 'open', url: '' }); setTimeout(function(){ urlIn.focus(); urlIn.select(); }, 50); });
     strip.appendChild(n);
     var a = tabs.find(function(t){ return t.id === activeId; });
-    if (a && document.activeElement !== urlIn) urlIn.value = a.url === 'about:blank' ? '' : (a.url || '');
+    if (a && !(document.activeElement === urlIn && urlIn.dataset.editing)) urlIn.value = a.url === 'about:blank' ? '' : (a.url || '');
   }
   function size(){
     var r = view.getBoundingClientRect(); if (!r.width || !r.height) return;
@@ -14723,6 +14734,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
         img.src = 'data:image/jpeg;base64,' + m.data;
       } else if (m.type === 'tabs') { tabs = m.tabs || []; activeId = m.active; paintTabs(); }
       else if (m.type === 'status' && m.status === 'ready') { ready = true; say(''); }
+      else if (m.type === 'notice') { note(m.message); }
       else if (m.type === 'error') { say('Browser error: ' + (m.message || 'unknown').replace(/</g, '&lt;')); }
     };
     ws.onclose = function(){ ws = null; ready = false; if (on) say('Browser disconnected. <button type="button" class="mux-settings-btn" id="muxBvRetry">Reconnect</button>'); var r = document.getElementById('muxBvRetry'); if (r) r.onclick = connect; };
@@ -14744,7 +14756,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function setMode(v){
     on = !!v;
     panel.classList.toggle('mux-browsing', on); modeBtn.classList.toggle('on', on);
-    backBtn.hidden = fwdBtn.hidden = !on;
+    NAV.forEach(function(b){ b.hidden = !on; });
+    if (rldBtn) rldBtn.hidden = on;   // the browser has its own refresh next to back/forward
     urlIn.placeholder = on ? 'Search or enter an address' : filePlaceholder;
     if (on) { window.MuxPreview.open(); connect(); paintTabs(); setTimeout(function(){ view.focus(); }, 0); }
     else { try { ws && ws.close(); } catch(_) {} ws = null; if (window.MuxWorkspace && window.MuxWorkspace.repaint) window.MuxWorkspace.repaint(); else panel.classList.remove('has-tabs'); }
@@ -14753,8 +14766,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   modeBtn.addEventListener('click', function(){ setMode(!on); });
   backBtn.addEventListener('click', function(){ send({ op: 'back' }); });
   fwdBtn.addEventListener('click', function(){ send({ op: 'forward' }); });
+  refBtn.addEventListener('click', function(){ send({ op: 'reload' }); view.focus(); });
+  homeBtn.addEventListener('click', function(){ send({ op: 'home' }); view.focus(); });
   // Header controls act on the browser while it is shown (capture phase: run before the file preview's handlers).
-  function nav(e){ if (!on) return; e.stopImmediatePropagation(); e.preventDefault(); send({ op: 'navigate', url: urlIn.value }); view.focus(); }
+  function nav(e){ if (!on) return; e.stopImmediatePropagation(); e.preventDefault(); delete urlIn.dataset.editing; send({ op: 'navigate', url: urlIn.value }); view.focus(); }
+  // Only an address the user is typing is protected from tab updates (focus alone is not editing).
+  urlIn.addEventListener('input', function(){ if (on) urlIn.dataset.editing = '1'; });
+  urlIn.addEventListener('blur', function(){ delete urlIn.dataset.editing; });
   urlIn.addEventListener('keydown', function(e){ if (e.key === 'Enter') nav(e); }, true);
   goBtn.addEventListener('click', nav, true);
   rldBtn.addEventListener('click', function(e){ if (!on) return; e.stopImmediatePropagation(); send({ op: 'reload' }); }, true);
