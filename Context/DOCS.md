@@ -172,6 +172,7 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 | `browser.enabled` | `true` | Built-in browser in the preview panel (globe button): tabs, address bar, back/forward/reload, live view with mouse/keyboard input. A pinned Chrome for Testing build (~200 MB, SHA-256 checked) is downloaded from Google on first use into `Runtime/browser/<version>`; Mux does not ship it. Runs with a loopback-only DevTools port; the panel talks to it through `/api/browser` + `/api/browser/ws` (behind `serve.auth`). |
 | `browser.playwright` | `true` | The built-in `Playwright` MCP server attaches to this browser (`--cdp-endpoint`; launch-only flags such as `--browser`/`--executable-path`/`--user-data-dir`/`--headless` are dropped), so you can watch and take over the agent's tabs. Only while `browser.enabled`. |
 | `browser.headless` | `true` | False also opens a real browser window (desktop sessions), still mirrored in the panel. |
+| *(identity)* | automatic | The browser presents the User-Agent and client hints of a Chromium browser installed on this machine (Chrome, Edge, Brave, Chromium; first found), else of the bundled version, instead of `HeadlessChrome`. `GET /api/browser` reports the identity in use. |
 | `browser.profileDir` | `""` | Profile directory (cookies, logins). Empty = `Sessions/BrowserProfile`. |
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |

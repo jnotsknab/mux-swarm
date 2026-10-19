@@ -34,6 +34,35 @@ public class BrowserHostTests
     }
 
     [Fact]
+    public void Identity_LooksLikeARegularBrowser_NotHeadless()
+    {
+        var id = new BrowserIdentity("Google Chrome", "155.0.8059.80", "test");
+        Assert.Matches(@"^Mozilla/5\.0 \(.+\) AppleWebKit/537\.36 \(KHTML, like Gecko\) Chrome/155\.0\.0\.0 Safari/537\.36$", id.UserAgent);
+        Assert.DoesNotContain("Headless", id.UserAgent);
+        var meta = id.OverrideParams("en-US,en;q=0.9")["userAgentMetadata"]!;
+        Assert.Equal("Google Chrome", meta["brands"]![0]!["brand"]!.GetValue<string>());
+        Assert.Equal("155", meta["brands"]![0]!["version"]!.GetValue<string>());
+        Assert.Equal("155.0.8059.80", meta["fullVersionList"]![0]!["version"]!.GetValue<string>());
+        Assert.EndsWith(" Edg/155.0.0.0", new BrowserIdentity("Microsoft Edge", "155.0.4283.62", "t").UserAgent);
+        Assert.Equal(2, ((System.Text.Json.Nodes.JsonArray)new BrowserIdentity("Chromium", "155.0.1.2", "t").OverrideParams("en")["userAgentMetadata"]!["brands"]!).Count);
+    }
+
+    [Fact]
+    public void AcceptLanguage_IsAPlainList_ChromeAddsWeights()
+    {
+        Assert.DoesNotContain(";q=", BrowserHost.AcceptLanguage);
+        Assert.Matches(@"^[a-z]{2,3}(-[A-Za-z0-9]+)*(,[a-z]{2,3})?$", BrowserHost.AcceptLanguage);
+    }
+
+    [Fact]
+    public void Identity_FallsBackToTheBundledVersion()
+    {
+        Assert.NotNull(BrowserIdentity.Current);   // detected or computed, never null
+        Assert.DoesNotContain(BrowserHost.LaunchArgs(1, "/p"), a => a.Contains("HeadlessChrome"));
+        Assert.Contains(BrowserHost.LaunchArgs(1, "/p"), a => a.StartsWith("--user-agent=Mozilla/5.0"));
+    }
+
+    [Fact]
     public void PlaywrightArgs_DropOwnBrowserFlags_AndAttachOverCdp()
     {
         var args = new[] { "-y", "@playwright/mcp@latest", "--browser", "chrome", "--executable-path", "C:/c.exe",
@@ -72,6 +101,9 @@ public class BrowserHostTests
         Assert.DoesNotContain("muxPreviewPopout", html);
         Assert.DoesNotContain("r.jina.ai", html);
         Assert.Contains(".mux-preview-btn[hidden] { display: none; }", html);
-        Assert.Contains("s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);", html);   // keep polling until the download starts   // .mux-preview-btn sets display:flex
+        Assert.Contains("s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);", html);
+        var relay = File.ReadAllText(Path.Combine(RepoRoot(), "Engine", "Browser", "BrowserRelay.cs"));
+        Assert.Contains("await pg.CallAsync(\"Page.bringToFront\");", relay);       // background tabs never paint
+        Assert.Contains("\"Page.captureScreenshot\"", relay);                        // static page: send one picture now   // keep polling until the download starts   // .mux-preview-btn sets display:flex
     }
 }
