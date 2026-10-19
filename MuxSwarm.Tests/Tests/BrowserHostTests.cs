@@ -127,6 +127,9 @@ public class BrowserHostTests
         Assert.Contains("await pg.CallAsync(\"Page.bringToFront\");", relay);       // background tabs never paint
         Assert.Contains("\"Page.captureScreenshot\"", relay);                        // static page: send one picture now
         Assert.DoesNotContain("tcs.Task.Result", relay);                              // no AggregateException-wrapped errors
+        Assert.Contains("[\"buttons\"] = (int)D(\"buttons\"),", relay);                 // held buttons: a move is a drag, not a hover
+        Assert.Contains("try { cv.setPointerCapture(e.pointerId); } catch(_) {}", html);   // release reaches the page outside the view
+        Assert.Contains("buttons: e.buttons, mods: mods(e) });", html);
         Assert.Contains("btn('muxBrowserReload', 'Refresh'", html);
         Assert.Contains("btn('muxBrowserHome', 'Home page'", html);
         Assert.Contains("send({ op: 'open', url: '' })", html);                        // new tab = home page   // keep polling until the download starts   // .mux-preview-btn sets display:flex
