@@ -158,7 +158,7 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
   "editable": false,
   "configExposed": false,
   "fileEvents": true,
-  "browser": { "enabled": true, "playwright": true, "headless": true, "profileDir": "" },
+  "browser": { "enabled": true, "playwright": true, "headless": true, "homePage": "https://duckduckgo.com", "profileDir": "" },
   "auth": { "enabled": false, "token": "", "scheme": "bearer" },
   "editor": { "autoFetch": true, "version": "" }
 }
@@ -173,6 +173,7 @@ runtime **zero-auth-by-design** behind an nginx perimeter.
 | `browser.playwright` | `true` | The built-in `Playwright` MCP server attaches to this browser (`--cdp-endpoint`; launch-only flags such as `--browser`/`--executable-path`/`--user-data-dir`/`--headless` are dropped), so you can watch and take over the agent's tabs. Only while `browser.enabled`. |
 | `browser.headless` | `true` | False also opens a real browser window (desktop sessions), still mirrored in the panel. |
 | *(identity)* | automatic | The browser presents the User-Agent and client hints of a Chromium browser installed on this machine (Chrome, Edge, Brave, Chromium; first found), else of the bundled version, instead of `HeadlessChrome`. `GET /api/browser` reports the identity in use. |
+| `browser.homePage` | `"https://duckduckgo.com"` | Address new tabs (and the Home button) open. A bare host such as `example.com` becomes https; empty = blank page. |
 | `browser.profileDir` | `""` | Profile directory (cookies, logins). Empty = `Sessions/BrowserProfile`. |
 | `auth.enabled` | `false` | Master switch for app-level bearer auth. When false, behaves exactly as before (open). |
 | `auth.token` | `""` | Literal token, or an env-var reference: `{VAR}`, `${VAR}`, or `$VAR` (resolved at startup). |

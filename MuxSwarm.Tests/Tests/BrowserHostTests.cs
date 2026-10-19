@@ -48,6 +48,27 @@ public class BrowserHostTests
     }
 
     [Fact]
+    public void KeyParams_OmitTextForNonTextKeys()
+    {
+        // DevTools rejects "text": null with "Invalid parameters" (every Backspace/Shift/Ctrl/keyUp).
+        var shift = BrowserRelay.KeyParams("rawKeyDown", "Shift", "ShiftLeft", 16, 8, "");
+        Assert.False(shift.ContainsKey("text"));
+        Assert.False(BrowserRelay.KeyParams("keyUp", "a", "KeyA", 65, 0, "a").ContainsKey("text"));
+        var a = BrowserRelay.KeyParams("keyDown", "a", "KeyA", 65, 0, "a");
+        Assert.Equal("a", a["text"]!.GetValue<string>());
+        Assert.Equal(65, a["windowsVirtualKeyCode"]!.GetValue<int>());
+        foreach (var kv in shift) Assert.NotNull(kv.Value);
+    }
+
+    [Fact]
+    public void HomePage_DefaultsToASearchPage_AndBlankMeansBlank()
+    {
+        Assert.Equal("https://duckduckgo.com", new ServeBrowserConfig().HomePage);
+        Assert.Equal("about:blank", BrowserRelay.NormalizeUrl(""));
+        Assert.Equal("https://example.com", BrowserRelay.NormalizeUrl("example.com"));
+    }
+
+    [Fact]
     public void AcceptLanguage_IsAPlainList_ChromeAddsWeights()
     {
         Assert.DoesNotContain(";q=", BrowserHost.AcceptLanguage);
@@ -104,6 +125,10 @@ public class BrowserHostTests
         Assert.Contains("s.status === 'starting' || s.status === 'idle') setTimeout(pollDownload, 500);", html);
         var relay = File.ReadAllText(Path.Combine(RepoRoot(), "Engine", "Browser", "BrowserRelay.cs"));
         Assert.Contains("await pg.CallAsync(\"Page.bringToFront\");", relay);       // background tabs never paint
-        Assert.Contains("\"Page.captureScreenshot\"", relay);                        // static page: send one picture now   // keep polling until the download starts   // .mux-preview-btn sets display:flex
+        Assert.Contains("\"Page.captureScreenshot\"", relay);                        // static page: send one picture now
+        Assert.DoesNotContain("tcs.Task.Result", relay);                              // no AggregateException-wrapped errors
+        Assert.Contains("btn('muxBrowserReload', 'Refresh'", html);
+        Assert.Contains("btn('muxBrowserHome', 'Home page'", html);
+        Assert.Contains("send({ op: 'open', url: '' })", html);                        // new tab = home page   // keep polling until the download starts   // .mux-preview-btn sets display:flex
     }
 }
