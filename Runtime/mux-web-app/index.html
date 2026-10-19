@@ -5480,10 +5480,14 @@ const icons = {
     const block = document.createElement('div');
     block.className = 'prompt-block';
     block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Confirm?")}</div>`;
-    const respond = (val) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${val}</div></div>`; };
+    const respond = (val, shown) => { sendRaw(val); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${shown || val}</div></div>`; };
     const y = document.createElement('button'); y.textContent = 'Yes'; y.addEventListener('click', () => respond('y'));
     const n = document.createElement('button'); n.textContent = 'No'; n.addEventListener('click', () => respond('n'));
     block.appendChild(y); block.appendChild(n);
+    if (ev.bailout) {
+      const c = document.createElement('button'); c.textContent = 'Cancel'; c.addEventListener('click', () => respond('cancel', 'cancelled'));
+      block.appendChild(c);
+    }
     output.appendChild(block); scrollToBottom(true);
   }
 
@@ -5491,8 +5495,16 @@ const icons = {
     const block = document.createElement('div');
     block.className = 'prompt-block';
     block.innerHTML = `<div class="prompt-text">${renderMarkdown(ev.prompt || "Select:")}</div>`;
-    const choices = ev.choices || [];
+    let choices = ev.choices || [];
     const selected = new Set();
+    const done = (shown) => { block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(shown)}</div></div>`; };
+    // Bailout prompts (ask_user) end with "enter custom" + "cancel" rows. They are not options: the
+    // engine reads "=text" as a custom answer and "cancel" as a cancel, never their index.
+    let bail = null;
+    if (ev.bailout && choices.length >= 2) {
+      bail = choices.slice(-2);
+      choices = choices.slice(0, -2);
+    }
     choices.forEach((choice, i) => {
       const btn = document.createElement('button');
       btn.textContent = `${i + 1}. ${choice}`;
@@ -5502,18 +5514,38 @@ const icons = {
           else { selected.add(i + 1); btn.style.borderColor = 'var(--accent)'; btn.style.background = 'rgba(var(--accent-rgb),0.1)'; }
         });
       } else {
-        btn.addEventListener('click', () => { sendRaw(String(i + 1)); block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${esc(choice)}</div></div>`; });
+        btn.addEventListener('click', () => { sendRaw(String(i + 1)); done(choice); });
       }
       block.appendChild(btn);
     });
     if (multi) {
       const s = document.createElement('button'); s.textContent = 'Submit'; s.style.marginTop = '6px';
       s.addEventListener('click', () => {
-        const val = Array.from(selected).sort().join(',');
-        sendRaw(val || '1');
-        block.innerHTML = `<div class="prompt-text" style="color:var(--muted)">${renderMarkdown(ev.prompt || "")}<div style="margin-top:8px;color:var(--text)">→ ${Array.from(selected).sort().map(i => choices[i-1]).join(", ")}</div></div>`;
+        const picked = Array.from(selected).sort((a, b) => a - b);
+        if (!picked.length) { sendRaw(bail ? 'cancel' : '1'); done(bail ? 'cancelled' : choices[0]); return; }
+        sendRaw(picked.join(','));
+        done(picked.map(i => choices[i-1]).join(", "));
       });
       block.appendChild(document.createElement('br')); block.appendChild(s);
+    }
+    if (bail) {
+      const row = document.createElement('div'); row.className = 'prompt-bail'; row.style.marginTop = '6px';
+      const custom = document.createElement('button'); custom.textContent = bail[0];
+      custom.addEventListener('click', () => {
+        row.innerHTML = '';
+        const inp = document.createElement('textarea');
+        inp.rows = 1; inp.placeholder = 'Type your answer';
+        inp.style.cssText = 'width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--font-mono);font-size:12px;outline:none;resize:none;';
+        const go = document.createElement('button'); go.textContent = 'Submit'; go.style.marginTop = '6px';
+        const submit = () => { const v = inp.value.trim(); if (!v) return; sendRaw('=' + v); done(v); };
+        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
+        go.addEventListener('click', submit);
+        row.appendChild(inp); row.appendChild(go); inp.focus();
+      });
+      const cancel = document.createElement('button'); cancel.textContent = bail[1];
+      cancel.addEventListener('click', () => { sendRaw('cancel'); done('cancelled'); });
+      row.appendChild(custom); row.appendChild(cancel);
+      block.appendChild(row);
     }
     output.appendChild(block); scrollToBottom(true);
   }
