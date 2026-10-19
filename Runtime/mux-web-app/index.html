@@ -2654,7 +2654,9 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     --mux-font-prose: var(--font-serif);
     --mux-prose-size: calc(16.5px * var(--ui-font-scale, 1));
     --mux-prose-leading: 1.7;
-    --mux-content-max: 760px;
+    /* Fluid reading column: 760px on small windows, ~62% of the viewport on wide ones, capped so
+       prose lines stay readable (the cap follows the UI font scale). */
+    --mux-content-max: clamp(760px, 62vw, calc(1180px * var(--ui-font-scale, 1)));
     --radius: 3px;
     --mux-radius: 0px;
     --mux-bubble-bg: var(--bg-card);
