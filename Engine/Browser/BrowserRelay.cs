@@ -65,23 +65,40 @@ internal static class BrowserRelay
             }
             async Task Attach(string id)
             {
-                if (page != null) await page.DisposeAsync();
+                var prev = page; page = null;
+                if (prev != null)
+                {
+                    prev.OnEvent = null;
+                    try { await prev.CallAsync("Page.stopScreencast"); } catch { }
+                    await prev.DisposeAsync();
+                }
                 var pages = await BrowserHost.PagesAsync();
                 var t = pages.FirstOrDefault(p => p.GetProperty("id").GetString() == id);
-                if (t.ValueKind == JsonValueKind.Undefined) return;
-                page = await CdpPage.ConnectAsync(t.GetProperty("webSocketDebuggerUrl").GetString()!, cts.Token);
-                page.OnEvent = async (method, prm) =>
+                if (t.ValueKind == JsonValueKind.Undefined) { await SendTabs(null); return; }
+                var pg = await CdpPage.ConnectAsync(t.GetProperty("webSocketDebuggerUrl").GetString()!, cts.Token);
+                pg.OnEvent = async (method, prm) =>
                 {
                     if (method == "Page.screencastFrame")
                     {
                         await Send(new { type = "frame", data = prm?["data"]?.GetValue<string>() });
-                        _ = page.CallAsync("Page.screencastFrameAck", new JsonObject { ["sessionId"] = prm?["sessionId"]?.GetValue<int>() ?? 0 });
+                        _ = pg.CallAsync("Page.screencastFrameAck", new JsonObject { ["sessionId"] = prm?["sessionId"]?.GetValue<int>() ?? 0 });
                     }
                     else if (method is "Page.frameNavigated" or "Page.loadEventFired") await SendTabs(id);
                 };
-                await page.CallAsync("Page.enable");
-                await page.CallAsync("Emulation.setDeviceMetricsOverride", new JsonObject { ["width"] = w, ["height"] = h, ["deviceScaleFactor"] = 1, ["mobile"] = false });
-                await page.CallAsync("Page.startScreencast", new JsonObject { ["format"] = "jpeg", ["quality"] = 70, ["maxWidth"] = w, ["maxHeight"] = h, ["everyNthFrame"] = 1 });
+                page = pg;
+                await pg.CallAsync("Page.enable");
+                await pg.CallAsync("Emulation.setUserAgentOverride", BrowserIdentity.Current.OverrideParams(BrowserHost.AcceptLanguage));
+                // Headless Chrome only paints the foreground tab: a background tab never sends a frame.
+                await pg.CallAsync("Page.bringToFront");
+                await pg.CallAsync("Emulation.setDeviceMetricsOverride", new JsonObject { ["width"] = w, ["height"] = h, ["deviceScaleFactor"] = 1, ["mobile"] = false });
+                await pg.CallAsync("Page.startScreencast", new JsonObject { ["format"] = "jpeg", ["quality"] = 70, ["maxWidth"] = w, ["maxHeight"] = h, ["everyNthFrame"] = 1 });
+                // The screencast only sends frames on change; a static page needs one picture now.
+                try
+                {
+                    var shot = await pg.CallAsync("Page.captureScreenshot", new JsonObject { ["format"] = "jpeg", ["quality"] = 70 });
+                    if (shot?["data"]?.GetValue<string>() is { } d) await Send(new { type = "frame", data = d });
+                }
+                catch { }
                 await SendTabs(id);
             }
             async Task<string?> NewTab(string url)
@@ -207,7 +224,7 @@ internal sealed class CdpPage : IAsyncDisposable
         var bytes = Encoding.UTF8.GetBytes(msg.ToJsonString());
         await _send.WaitAsync();
         try { await _ws.SendAsync(bytes, WebSocketMessageType.Text, true, _cts.Token); } finally { _send.Release(); }
-        var done = await Task.WhenAny(tcs.Task, Task.Delay(15000));
+        var done = await Task.WhenAny(tcs.Task, Task.Delay(5000));
         _pending.TryRemove(id, out _);
         return done == tcs.Task ? tcs.Task.Result : throw new TimeoutException(method + " timed out");
     }
