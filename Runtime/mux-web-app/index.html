@@ -5290,9 +5290,9 @@ const icons = {
       if (hm) {
         if (inList) { result.push('</div>'); inList = false; }
         let lvl = hm[1].length;
-        // Sizes step down but every level stays >= 15px so headings dominate
-        // the 14px body-bold run-in labels. h4 uses the accent colour.
-        let sizes  = ['20px','17px','16px','15px','14px','14px'];
+        // Relative to the block's text size, so headings follow the font-size setting with the
+        // body; levels step down but h1-h3 stay above body text. h4 uses the accent colour.
+        let sizes  = ['1.3em','1.15em','1.05em','1em','0.92em','0.92em'];
         let colors = ['var(--blue)','var(--blue)','var(--blue)','var(--accent)','var(--muted)','var(--muted)'];
         let extra  = (lvl >= 5) ? ';text-transform:uppercase;letter-spacing:0.05em' : '';
         result.push('<div style="font-weight:700;font-size:' + sizes[lvl-1] + ';color:' + colors[lvl-1] + ';margin:10px 0 4px' + extra + '">' + inlineMd(hm[2]) + '</div>');
@@ -5331,7 +5331,7 @@ const icons = {
         let isHeader = i + 1 < lines.length && lines[i+1].trim().match(/^\|[\s\-:|]+\|$/);
         let tag = isHeader ? 'strong' : 'span';
         let isKV = cells.length === 2;
-        let html = '<div style="overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;"><div style="display:grid;grid-template-columns:repeat(' + cells.length + ', minmax(150px, 1fr));gap:16px;padding:6px 12px;font-size:13px;border-bottom:1px solid ' + (isHeader ? 'var(--blue)' : 'var(--border)') + ';' + (isHeader ? 'background:var(--bg-input);' : '') + '">';
+        let html = '<div style="overflow-x:auto;max-width:100%;-webkit-overflow-scrolling:touch;"><div style="display:grid;grid-template-columns:repeat(' + cells.length + ', minmax(150px, 1fr));gap:16px;padding:6px 12px;font-size:0.92em;border-bottom:1px solid ' + (isHeader ? 'var(--blue)' : 'var(--border)') + ';' + (isHeader ? 'background:var(--bg-input);' : '') + '">';
         cells.forEach((c, idx) => {
           let style;
           if (isHeader) {
