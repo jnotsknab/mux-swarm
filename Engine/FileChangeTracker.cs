@@ -128,7 +128,7 @@ internal sealed class FileChangeTracker
         foreach (var s in new[] { sessionsDir, Path.Combine(baseDir, "Sessions") })
             if (!string.IsNullOrWhiteSpace(s))
             {
-                yield return Path.Combine(s, "BrowserProfile");
+                foreach (var p in Browser.BrowserHost.ProfileNames) yield return Path.Combine(s, p);
                 yield return Path.Combine(s, "PlaywrightChromeProfile");
             }
         if (!string.IsNullOrWhiteSpace(chromaPath)) yield return chromaPath;

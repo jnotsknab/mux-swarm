@@ -8,8 +8,9 @@ using System.Text.Json;
 namespace MuxSwarm.Engine.Browser;
 
 /// <summary>
-/// The built-in browser: a pinned Chrome for Testing build fetched on first use into
-/// <c>Runtime/browser/&lt;version&gt;</c> (SHA-256 checked), launched headless with a persistent
+/// The built-in browser: by default a pinned Chrome for Testing build fetched on first use into
+/// <c>Runtime/browser/&lt;version&gt;</c> (SHA-256 checked), or an installed Chromium browser picked
+/// with <c>serve.browser.engine</c>; launched headless with a persistent
 /// profile and a loopback-only DevTools port. Shared by the web UI's Browser tab (screencast via
 /// <see cref="BrowserRelay"/>) and the built-in Playwright MCP server (<c>--cdp-endpoint</c>).
 /// Chrome for Testing is distributed by Google and downloaded from Google's bucket at runtime; Mux
@@ -56,6 +57,43 @@ internal static class BrowserHost
 
     internal static string InstallDir => Path.Combine(PlatformContext.BaseDirectory, "Runtime", "browser", Version);
 
+    /// <summary>Values of <c>serve.browser.engine</c>: <c>managed</c> = the Chrome for Testing download.</summary>
+    internal static readonly string[] Engines = { "managed", "auto", "chrome", "edge", "brave", "chromium" };
+
+    /// <summary>
+    /// The installed browser <paramref name="engine"/> selects (<c>auto</c> = first found), or null for
+    /// <c>managed</c> / <c>auto</c> with nothing installed. Throws when a named browser is not installed
+    /// or the value is unknown.
+    /// </summary>
+    internal static (string Engine, string Exe, BrowserIdentity Identity)? ResolveInstalled(string? engine)
+    {
+        var e = string.IsNullOrWhiteSpace(engine) ? "managed" : engine.Trim().ToLowerInvariant();
+        if (!Engines.Contains(e)) throw new ArgumentException($"serve.browser.engine '{engine}' is not one of: {string.Join(", ", Engines)}.");
+        if (e == "managed") return null;
+        foreach (var b in BrowserIdentity.Installed())
+            if (e == "auto" || b.Engine == e) return b;
+        if (e == "auto") return null;
+        throw new InvalidOperationException($"serve.browser.engine is '{e}' but that browser is not installed. Install it or use \"managed\".");
+    }
+
+    /// <summary>
+    /// True when the browser can be offered on this host: a named installed browser (if it is missing,
+    /// starting it reports why), or a managed build for this platform, or (<c>auto</c>) any installed one.
+    /// </summary>
+    internal static bool CanRun(string? engine)
+    {
+        var e = string.IsNullOrWhiteSpace(engine) ? "managed" : engine.Trim().ToLowerInvariant();
+        return e is not ("managed" or "auto") || Platform() != null || (e == "auto" && BrowserIdentity.Installed().Any());
+    }
+
+    /// <summary>Default profile folder: <c>Sessions/BrowserProfile</c> for the managed build, <c>BrowserProfile-&lt;engine&gt;</c>
+    /// for an installed browser (profiles are not portable across browsers or versions).</summary>
+    internal static string DefaultProfile(string sessionsDir, string? engine) =>
+        Path.Combine(sessionsDir, engine is null or "managed" ? "BrowserProfile" : "BrowserProfile-" + engine);
+
+    /// <summary>Every default profile folder name (managed + one per installed-browser engine).</summary>
+    internal static IEnumerable<string> ProfileNames => Engines.Where(e => e != "auto").Select(e => Path.GetFileName(DefaultProfile("", e)));
+
     /// <summary>Chrome executable inside the extracted archive for <paramref name="platform"/>.</summary>
     internal static string ExePath(string platform) => platform switch
     {
@@ -71,7 +109,8 @@ internal static class BrowserHost
     internal static object Status() => new
     {
         enabled = App.Config.Serve.Browser.Enabled,
-        status = Platform() is null ? "unsupported" : _status,
+        engine = App.Config.Serve.Browser.Engine,
+        status = CanRun(App.Config.Serve.Browser.Engine) ? _status : "unsupported",
         identity = new { brand = BrowserIdentity.Current.Brand, version = BrowserIdentity.Current.Version, source = BrowserIdentity.Current.Source },
         installed = Platform() is { } p && File.Exists(ExePath(p)),
         version = Version,
@@ -86,14 +125,20 @@ internal static class BrowserHost
         try
         {
             if (_proc is { HasExited: false } && _port > 0) return _port;
-            var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform.");
-            var exe = ExePath(platform);
             _error = null;
-            if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
+            var installed = ResolveInstalled(App.Config.Serve.Browser.Engine);
+            string exe;
+            if (installed is { } b) exe = b.Exe;
+            else
+            {
+                var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform; set serve.browser.engine to an installed browser.");
+                exe = ExePath(platform);
+                if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
+            }
             _status = "starting";
             _port = ReservedPort;
             var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
-                ? Path.Combine(PlatformContext.SessionsDirectory, "BrowserProfile") : App.Config.Serve.Browser.ProfileDir;
+                ? DefaultProfile(PlatformContext.SessionsDirectory, installed?.Engine) : App.Config.Serve.Browser.ProfileDir;
             Directory.CreateDirectory(profile);
             var psi = new ProcessStartInfo(exe)
             {
