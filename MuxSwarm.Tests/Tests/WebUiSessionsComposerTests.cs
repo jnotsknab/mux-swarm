@@ -46,6 +46,16 @@ public class WebUiSessionsComposerTests
     }
 
     [Fact]
+    public void Viewer_StacksItsHeaderOnPhones()
+    {
+        // Side by side, four buttons left the title 80px at 390px and the header was 434px tall.
+        Assert.Contains(".mux-sv-head { position: relative; flex-direction: column; align-items: stretch;", Html);
+        Assert.Contains("-webkit-line-clamp: 2; line-clamp: 2;", Html);
+        Assert.Contains(".mux-sv-acts [data-act=\"close\"] { position: absolute;", Html);
+        Assert.Contains("sv.querySelector('.t').addEventListener('click', function(){ this.classList.toggle('full'); });", Html);
+    }
+
+    [Fact]
     public void Rail_ListsSavedSessionsOnly()
     {
         // The generic folder listing showed browser profiles / tool output as sessions.

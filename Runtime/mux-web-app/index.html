@@ -14661,6 +14661,22 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     font-size: calc(11px * var(--ui-font-scale, 1)); letter-spacing: .06em; text-transform: uppercase; }
   .mux-replay-div::before, .mux-replay-div::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
   @media (max-width: 900px) { body.mux-rail-open .mux-sv { left: 0; } }
+  /* Phones: stack the viewer header (title full width, then meta, then actions) instead of
+     squeezing the title into the space left of four buttons. Close stays top-right. */
+  @media (max-width: 640px) {
+    .mux-sv-head { position: relative; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 14px; }
+    .mux-sv-ttl { padding-right: 40px; }
+    .mux-sv-ttl .t { font-size: calc(16px * var(--ui-font-scale, 1)); display: -webkit-box; -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; cursor: pointer; }
+    .mux-sv-ttl .t.full { display: block; -webkit-line-clamp: unset; line-clamp: none; }
+    .mux-sv-ttl .m { gap: 2px 10px; }
+    .mux-sv-ttl .m > span:last-child:not(:first-child) { font-family: var(--font-mono, monospace); font-size: .92em; }
+    .mux-sv-ttl .m > span + span::before { content: '\00b7'; margin-right: 10px; opacity: .6; }
+    .mux-sv-acts { flex-wrap: wrap; }
+    .mux-sv-acts .mux-sess-btn { min-height: 32px; padding: 0 12px; }
+    .mux-sv-acts [data-act="close"] { position: absolute; top: 8px; right: 10px; min-width: 32px; padding: 0; }
+    .mux-sv-body { padding: 10px 14px 48px; }
+  }
   @media (max-width: 900px) {
     body.mux-rail-open .app { margin-left: 0; }
     body.mux-rail-open .input-area { --composer-left-inset: 0px; }
@@ -14904,6 +14920,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     '<div class="mux-sv-body"></div>';
   document.body.appendChild(sv);
   var svBody = sv.querySelector('.mux-sv-body');
+  sv.querySelector('.t').addEventListener('click', function(){ this.classList.toggle('full'); });   // phones: clamped title expands on tap
   // Mark the viewed row in place (no list rebuild, so a double-click still lands on the same row).
   function markViewing(){ list.querySelectorAll('.mux-rail-row').forEach(function(r){ r.classList.toggle('viewing', r.dataset.session === viewing); }); }
   function closeView(){ sv.hidden = true; viewing = ''; markViewing(); }
@@ -14912,7 +14929,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     viewing = n; markViewing();
     var hdr = document.querySelector('[data-mux="header"]');
     if (hdr) sv.style.setProperty('--mux-sv-top', Math.round(hdr.getBoundingClientRect().bottom) + 'px');
-    sv.querySelector('.t').textContent = title || n;
+    var tEl = sv.querySelector('.t'); tEl.textContent = title || n; tEl.title = title || n; tEl.classList.remove('full');
     sv.querySelector('.m').textContent = SV.date(n);
     svBody.innerHTML = '<div class="loading">Loading session\u2026</div>';
     sv.hidden = false;
