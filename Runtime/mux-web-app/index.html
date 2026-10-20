@@ -1654,7 +1654,15 @@ body.hide-all-pills .event-group { display: none !important; }
 }
 /* Focus: outline only (the border takes the accent); the resting shadow does not change. */
 .input-area:focus-within { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
-.input-area .btn-group { align-self: flex-end; }
+.input-area .btn-group { align-self: flex-end; flex-wrap: wrap; justify-content: flex-end; min-width: 0; max-width: 100%; }
+/* Narrow composer (docked panel, side rail): stack the input above the controls instead of
+   squeezing the text box to nothing beside them. */
+.input-area { min-width: min(320px, calc(100vw - 16px)); }
+@media (min-width: 641px) {
+  body.mux-ws-docked .input-area, body.mux-rail-open.mux-ws-docked .input-area { flex-direction: column; align-items: stretch; }
+  body.mux-ws-docked .input-area .btn-group { align-self: stretch; justify-content: flex-start; }
+  body.mux-ws-docked .input-area .send-btn { margin-left: auto; }
+}
 
 /* ── Session / mode selector ── (mirrors the model selector; abstracts the
    /agent /swarm /pswarm /stateless session starters + /plan /ultra /giga /sub
@@ -2682,12 +2690,19 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
   html[data-mux-style="broadsheet"] [data-mux="composer"] {
     left: 50%; right: auto; transform: translateX(-50%);
     width: min(calc(var(--mux-content-max) + 160px), calc(100% - 48px - var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)));
+    /* The side rail and docked panel can squeeze the column to nothing; keep a usable composer. */
+    min-width: min(320px, calc(100vw - 16px));
     margin-left: calc((var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)) / 2);
     backdrop-filter: none; -webkit-backdrop-filter: none;
     /* Stacked: the textarea gets the full width, the pickers and actions sit on a row below (Send right). */
     flex-direction: column; align-items: stretch; gap: 6px;
   }
-  html[data-mux-style="broadsheet"] .input-area .btn-group { align-self: stretch; }
+  /* Controls stay inside the box: they wrap to a second line instead of spilling past the edge,
+     and the pickers give up width first (their labels truncate). */
+  html[data-mux-style="broadsheet"] .input-area .btn-group { align-self: stretch; flex-wrap: wrap; min-width: 0; row-gap: 6px; }
+  html[data-mux-style="broadsheet"] .input-area :is(.session-btn, .model-btn) { flex: 0 1 auto; min-width: 72px; }
+  html[data-mux-style="broadsheet"] .input-area .btn-group > * { flex-shrink: 0; }
+  html[data-mux-style="broadsheet"] .input-area .btn-group > :is(.session-btn, .model-btn) { flex-shrink: 1; }
   html[data-mux-style="broadsheet"] .input-area .send-btn { margin-left: auto; }
   html[data-mux-style="broadsheet"] .output { padding-bottom: 140px; }
   /* Chrome that hard-codes the mono stack reads in the UI font too; code, diffs and tool output stay mono. */
@@ -14517,13 +14532,16 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 @layer mux.base {
   .mux-preview-panel.docked {
     top: 0 !important; right: 0 !important; left: auto !important; bottom: 0 !important;
-    width: var(--mux-workspace-width, 44vw) !important; height: 100vh !important; max-width: 80vw;
+    /* Never wider than what leaves the chat column ~420px (and the side rail) beside it. */
+    width: var(--mux-ws-dock, var(--mux-workspace-width, 44vw)) !important; height: 100vh !important; max-width: 80vw;
     border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; box-shadow: none;
   }
   .mux-preview-panel.docked .mux-preview-resize { display: none; }
   .mux-preview-panel.docked .mux-preview-header { cursor: default; }
-  body.mux-ws-docked .app { margin-right: var(--mux-workspace-width, 44vw); }
-  body.mux-ws-docked .input-area { --composer-right-inset: var(--mux-workspace-width, 44vw); }
+  body.mux-ws-docked { --mux-ws-dock: max(320px, min(var(--mux-workspace-width, 44vw), calc(100vw - var(--mux-rail-dock, 0px) - 420px), 80vw)); }
+  body.mux-ws-docked.mux-rail-open { --mux-rail-dock: var(--mux-rail-width, 300px); }
+  body.mux-ws-docked .app { margin-right: var(--mux-ws-dock); }
+  body.mux-ws-docked .input-area { --composer-right-inset: var(--mux-ws-dock); }
   .mux-ws-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; display: none; z-index: 2; }
   .mux-preview-panel.docked .mux-ws-edge { display: block; }
   .mux-ws-tabs { display: none; gap: 2px; padding: 4px 6px 0; border-bottom: 1px solid var(--border); background: var(--bg-card);
