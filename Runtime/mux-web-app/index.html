@@ -14956,6 +14956,45 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   body.mux-composer-collapsed .input-area > :is(.input-wrapper, .btn-group) { max-height: 0; opacity: 0; overflow: hidden; pointer-events: none; }
   body.mux-composer-collapsed .mux-cbar { display: flex; animation: mux-cbar-in .18s ease; }
   html body.mux-composer-collapsed .output { padding-bottom: 64px; }
+
+  /* Phones (<=640px), both styles: two planned rows instead of whatever wraps.
+     Row 1: mode + model pickers share the width (labels truncate only when they must).
+     Row 2: collapse, effort, gauge, Actions, mic, attach, then Send on the right.
+     Every control is 36px tall; popups open within the viewport, not off its left edge. */
+  @media (max-width: 640px) {
+    html .input-area .btn-group { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start;
+      align-self: stretch; width: 100%; gap: 6px; row-gap: 6px; }
+    html .input-area .btn-group > * { order: 2; flex: 0 0 auto; }
+    html .input-area .btn-group > :is(.session-btn, .model-btn) { order: 1; flex: 1 1 calc(50% - 3px); min-width: 0; max-width: none;
+      height: 36px; min-height: 36px; padding: 0 10px; justify-content: space-between; }
+    html .input-area .btn-group > :is(.session-btn, .model-btn) > span:not(.session-btn-dot) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    html .input-area :is(.mic-btn, .upload-btn) { width: 36px; height: 36px; }
+    html .input-area .send-btn { order: 3; margin-left: auto; height: 36px; }
+    html .input-area .mux-ccollapse { width: 36px; height: 36px; }
+    html .input-area .mux-cchip { height: 36px; padding: 0 10px; }
+    /* Chips are inside a positioned wrapper; let their menus anchor to the composer instead. */
+    html .input-area .btn-group > span:has(> .mux-cchip) { position: static !important; }
+    html .input-area .mux-cpop { left: 0; right: 0; bottom: calc(100% + 8px); top: auto; min-width: 0; max-height: 50vh; overflow-y: auto; }
+  }
+  /* Phone widths: effort shows its short label and the gauge only its ring (the % is in its menu),
+     so row 2 (collapse ... Send) stays one line down to 320px. */
+  @media (max-width: 430px) {
+    html .input-area .mux-cchip#muxEffort { font-size: 0; gap: 0; }
+    html .input-area .mux-cchip#muxEffort::before { content: attr(data-short); font-size: calc(12px * var(--ui-font-scale, 1)); }
+    #muxGauge > span:last-child { display: none; }
+    html .input-area .btn-group { gap: 4px; }
+  }
+  @media (max-width: 360px) {
+    html .input-area :is(.mic-btn, .upload-btn, .mux-ccollapse) { width: 32px; height: 32px; }
+    html .input-area .mux-cchip { height: 32px; padding: 0 8px; }
+    html .input-area .send-btn { height: 32px; padding: 0 12px; }
+    html .input-area .btn-group > :is(.session-btn, .model-btn) { flex-basis: calc(50% - 2px); }
+  }
+  @media (max-width: 340px) {
+    html .input-area :is(.mic-btn, .upload-btn, .mux-ccollapse) { width: 28px; height: 32px; }
+    html .input-area .btn-group { gap: 3px; }
+    html .input-area .send-btn { padding: 0 10px; }
+  }
   @keyframes mux-cbar-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: reduce) {
     .input-area, .input-area > :is(.input-wrapper, .btn-group) { transition: none; }
