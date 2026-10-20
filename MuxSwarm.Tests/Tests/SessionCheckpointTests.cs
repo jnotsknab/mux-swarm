@@ -221,6 +221,49 @@ public class SessionCheckpointTests : IDisposable
     }
 
     [Fact]
+    public void SessionDirs_ListOnlyRealSessions_NewestFirst()
+    {
+        // Browser profiles and Playwright output land in Sessions (built-in browser default, users'
+        // --user-data-dir / --output-dir); they were listed and offered for /resume.
+        foreach (var n in new[] { "PlaywrightChromeProfile", "PlaywrightMcpOutput", "BrowserProfile-chrome", "2026-01-03_00-00-00" })
+            Directory.CreateDirectory(Path.Combine(_root, n));
+        File.WriteAllText(Path.Combine(_root, "PlaywrightChromeProfile", "Local State.json"), "{}");
+        foreach (var n in new[] { "2026-01-01_00-00-00", "2026-01-02_00-00-00" })
+        {
+            Directory.CreateDirectory(Path.Combine(_root, n));
+            File.WriteAllText(Path.Combine(_root, n, "agent_session.json"), "{}");
+        }
+        var swarm = Path.Combine(_root, "2026-01-04_00-00-00");
+        Directory.CreateDirectory(swarm);
+        foreach (var f in new[] { "orchestrator_session.json", "codeagent_session.json", "webagent_session.json" })
+            File.WriteAllText(Path.Combine(swarm, f), "{}");
+
+        Assert.Equal(new[] { "2026-01-04_00-00-00", "2026-01-02_00-00-00", "2026-01-01_00-00-00" },
+            Common.SessionDirs(_root).Select(Path.GetFileName));
+        Assert.True(Common.IsResumableSession(Path.Combine(_root, "2026-01-01_00-00-00")));
+        Assert.False(Common.IsResumableSession(swarm));                                   // swarm: not /resume-able
+        Assert.False(Common.IsResumableSession(Path.Combine(_root, "PlaywrightChromeProfile")));
+        Assert.False(Common.IsResumableSession(Path.Combine(_root, "2026-01-03_00-00-00")));   // checkpoint, no file yet
+        Assert.Empty(Common.SessionDirs(Path.Combine(_root, "missing")));
+    }
+
+    [Fact]
+    public void EverySessionListing_UsesTheSessionFileRule()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) d = d.Parent;
+        string Src(params string[] p) => File.ReadAllText(Path.Combine(new[] { d!.FullName }.Concat(p).ToArray()));
+        foreach (var f in new[] { Src("Engine", "CliCmdUtils.cs"), Src("Engine", "MuxConsole.cs"), Src("Engine", "SessionSummarizer.cs") })
+        {
+            Assert.DoesNotContain("Directory.GetDirectories(sessionsDir)", f);
+            Assert.DoesNotContain("Directory.GetDirectories(sessionsPath)", f);
+        }
+        var api = Src("Engine", "ServeMode.Api.cs");
+        Assert.Contains(".Where(d => Common.HasSessionFile(d.FullName))", api);     // GET /api/sessions
+        Assert.Contains("var resumable = Common.IsResumableSession(dir);", api);    // GET /api/sessions/{id}
+    }
+
+    [Fact]
     public void PruneOldSessions_CountsSessions_NotBareDirectories()
     {
         // Retention 2 must keep the 2 newest REAL sessions. Checkpoint-created (empty) dirs and
