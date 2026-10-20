@@ -14762,7 +14762,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function pollDownload(){
     fetch(apiUrl('/api/browser')).then(function(r){ return r.ok ? r.json() : null; }).then(function(s){
       if (!s || !on || ready) return;
-      if (s.status === 'unsupported') { say('The built-in browser is not available on this platform.'); return; }
+      if (s.status === 'unsupported') { say('No managed browser build for this platform. Set serve.browser.engine to an installed Chrome, Edge, Brave or Chromium.'); return; }
       if (s.status === 'downloading') {
         var pct = s.total ? Math.round(s.downloaded * 100 / s.total) : 0;
         say('Downloading the browser (Chrome for Testing ' + s.version + ', one time)\u2026<progress max="100" value="' + pct + '"></progress>' + pct + '%');

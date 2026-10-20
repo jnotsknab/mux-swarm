@@ -113,6 +113,48 @@ public class BrowserHostTests
     }
 
     [Fact]
+    public void Engine_DefaultsToManaged_AndManagedNeverUsesAnInstalledBrowser()
+    {
+        Assert.Equal("managed", new ServeBrowserConfig().Engine);
+        Assert.Null(BrowserHost.ResolveInstalled("managed"));
+        Assert.Null(BrowserHost.ResolveInstalled(null));
+        Assert.Null(BrowserHost.ResolveInstalled(""));
+        Assert.Equal("edge", System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"browser\":{\"engine\":\"edge\"}}")!.Browser.Engine);
+    }
+
+    [Fact]
+    public void Engine_UnknownValue_IsAnError_NamingTheChoices()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => BrowserHost.ResolveInstalled("firefox"));
+        Assert.Contains("managed, auto, chrome, edge, brave, chromium", ex.Message);
+    }
+
+    [Fact]
+    public void Engine_NamedBrowser_ResolvesToThatInstall_OrSaysItIsMissing()
+    {
+        var installed = BrowserIdentity.Installed().ToList();
+        foreach (var e in new[] { "chrome", "edge", "brave", "chromium" })
+        {
+            var hit = installed.FirstOrDefault(i => i.Engine == e);
+            if (hit.Exe != null) Assert.Equal(hit.Exe, BrowserHost.ResolveInstalled(e)!.Value.Exe);
+            else Assert.Contains("not installed", Assert.Throws<InvalidOperationException>(() => BrowserHost.ResolveInstalled(e)).Message);
+        }
+        var auto = BrowserHost.ResolveInstalled("auto");
+        Assert.Equal(installed.FirstOrDefault().Exe, auto?.Exe);   // first found, or managed when none
+        Assert.True(BrowserHost.CanRun("chrome"));                 // named: offered; a missing one errors on start
+    }
+
+    [Fact]
+    public void Engine_InstalledBrowsers_GetTheirOwnProfile_AndFollowSkipsThemAll()
+    {
+        Assert.Equal(Path.Combine("S", "BrowserProfile"), BrowserHost.DefaultProfile("S", null));
+        Assert.Equal(Path.Combine("S", "BrowserProfile-brave"), BrowserHost.DefaultProfile("S", "brave"));
+        var own = FileChangeTracker.OwnStateDirs("/base", "/sess", null, null).ToList();
+        foreach (var n in new[] { "BrowserProfile", "BrowserProfile-chrome", "BrowserProfile-edge", "BrowserProfile-brave", "BrowserProfile-chromium" })
+            Assert.Contains(Path.Combine("/sess", n), own);
+    }
+
+    [Fact]
     public void Panel_HasTheBrowserMode_AndNoReaderOrPopout()
     {
         var html = File.ReadAllText(Path.Combine(RepoRoot(), "Runtime", "mux-web-app", "index.html"));
