@@ -89,13 +89,14 @@ internal static class BrowserHost
         return e is not ("managed" or "auto") || Platform() != null || (e == "auto" && BrowserIdentity.Installed().Any());
     }
 
-    /// <summary>Default profile folder: <c>Sessions/BrowserProfile</c> for the managed build, <c>BrowserProfile-&lt;engine&gt;</c>
-    /// for an installed browser (profiles are not portable across browsers or versions).</summary>
-    internal static string DefaultProfile(string sessionsDir, string? engine) =>
-        Path.Combine(sessionsDir, engine is null or "managed" ? "BrowserProfile" : "BrowserProfile-" + engine);
+    /// <summary>Root of the default browser profiles: <c>&lt;install&gt;/BrowserProfiles</c>, outside
+    /// <c>Sessions</c> so profiles are never mistaken for saved sessions.</summary>
+    internal static string ProfilesRoot => Path.Combine(PlatformContext.BaseDirectory, "BrowserProfiles");
 
-    /// <summary>Every default profile folder name (managed + one per installed-browser engine).</summary>
-    internal static IEnumerable<string> ProfileNames => Engines.Where(e => e != "auto").Select(e => Path.GetFileName(DefaultProfile("", e)));
+    /// <summary>Default profile folder for <paramref name="engine"/>: <c>&lt;root&gt;/managed</c> or <c>&lt;root&gt;/&lt;engine&gt;</c>
+    /// (one per browser: profiles are not portable across browsers or versions).</summary>
+    internal static string DefaultProfile(string root, string? engine) =>
+        Path.Combine(root, engine is null or "auto" ? "managed" : engine);
 
     /// <summary>Chrome executable inside the extracted archive for <paramref name="platform"/>.</summary>
     internal static string ExePath(string platform) => platform switch
@@ -141,7 +142,7 @@ internal static class BrowserHost
             _status = "starting";
             _port = ReservedPort;
             var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
-                ? DefaultProfile(PlatformContext.SessionsDirectory, installed?.Engine) : App.Config.Serve.Browser.ProfileDir;
+                ? DefaultProfile(ProfilesRoot, installed?.Engine) : App.Config.Serve.Browser.ProfileDir;
             Directory.CreateDirectory(profile);
             var psi = new ProcessStartInfo(exe)
             {
