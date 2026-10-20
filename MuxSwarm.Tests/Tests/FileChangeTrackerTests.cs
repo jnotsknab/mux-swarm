@@ -57,6 +57,28 @@ public class FileChangeTrackerTests : IDisposable
     }
 
     [Fact]
+    public void MuxOwnState_IsNotReported_EvenInsideAWatchedRoot()
+    {
+        // Telemetry traces, REPL worker files, the browser profile and the graph file are written by
+        // Mux itself during tool calls; they used to steal Follow mode on every call.
+        var tele = Directory.CreateDirectory(Path.Combine(_root, "Telemetry")).FullName;
+        var kg = Path.Combine(_root, "memory.jsonl");
+        _t.Exclude(FileChangeTracker.OwnStateDirs(_root, null, kg, null));
+        var own = Path.Combine(tele, "traces-20261020.jsonl");
+        var mine = Path.Combine(_root, "notes.md");
+        using (_t.BeginToolCall("repl_shell_exec"))
+        {
+            File.WriteAllText(own, "{}");
+            File.WriteAllText(kg, "{}");
+            File.WriteAllText(mine, "# notes");
+        }
+        Assert.True(WaitFor(e => e.Path == mine));
+        Thread.Sleep(300);
+        Assert.DoesNotContain(_events, e => e.Path == own || e.Path == kg);
+        Assert.False(_t.IsExcluded(Path.Combine(_root, "memory.jsonl.bak")));   // exact file, not a prefix
+    }
+
+    [Fact]
     public void WriteOutsideAnyToolCall_IsNotReported()
     {
         File.WriteAllText(Path.Combine(_root, "user-edit.md"), "mine");
@@ -93,7 +115,47 @@ public class FileChangeTrackerTests : IDisposable
     [InlineData("/w/src/notes.md.mux-tmp-1961a22b", true)]
     [InlineData("/w/src/app.cs", false)]
     [InlineData("/w/build.md", false)]   // a FILE named like an ignored dir is still reported
+    [InlineData("/w/report.md", false)]
     public void IsIgnored(string path, bool expected) => Assert.Equal(expected, FileChangeTracker.IsIgnored(path));
+
+    [Theory]
+    [InlineData("C:/Temp/mux-herdr-hook.log", "*.log", true)]
+    [InlineData("/w/app.lock", "*.lock", true)]
+    [InlineData("/w/report.md", "*.log", false)]
+    [InlineData("/w/docs/generated/a/b.html", "docs/generated/**", true)]
+    [InlineData("/w/src/docs/generated/x.md", "docs/generated/**", true)]   // path tail, any depth
+    [InlineData("/w/docs/manual.md", "docs/generated/**", false)]
+    [InlineData("/w/out/x.md", "out/*", true)]
+    [InlineData("/w/out/sub/x.md", "out/*", false)]                       // * stays in one folder
+    [InlineData("C:\\w\\notes\\draft-1.md", "draft-?.md", true)]
+    [InlineData("/w/a.LOG", "*.log", true)]
+    public void IgnoreGlobs(string path, string pattern, bool expected)
+    {
+        if (OperatingSystem.IsLinux() && path.EndsWith(".LOG")) expected = false;   // case-sensitive file systems
+        Assert.Equal(expected, FileChangeTracker.MatchesAny(path, FileChangeTracker.Globs(new[] { pattern })));
+    }
+
+    [Fact]
+    public void IgnoreList_ReplacesTheDefaults()
+    {
+        Assert.Equal(new[] { "*.log", "*.lock" }, new ServeConfig().FileEventsIgnore);
+        var cfg = System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"fileEventsIgnore\": [\"*.tmp.md\"]}")!;
+        Assert.Equal(new[] { "*.tmp.md" }, cfg.FileEventsIgnore);
+        Assert.Empty(System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"fileEventsIgnore\": []}")!.FileEventsIgnore);
+    }
+
+    [Fact]
+    public void IgnoreList_IsAppliedToEvents_AndEmptyFollowsLogs()
+    {
+        _t.Ignore(new[] { "*.md" });   // replaces *.log / *.lock: logs are followed again
+        using (_t.BeginToolCall("repl_shell_exec"))
+        {
+            File.WriteAllText(Path.Combine(_root, "skip.md"), "x");
+            File.WriteAllText(Path.Combine(_root, "run.log"), "x");
+        }
+        Assert.True(WaitFor(e => e.Path.EndsWith("run.log")));
+        Assert.DoesNotContain(_events, e => e.Path.EndsWith("skip.md"));
+    }
 
     [Fact]
     public void ConfigDefaultsOn_AndCanBeDisabled()

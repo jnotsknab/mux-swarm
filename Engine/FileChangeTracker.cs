@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace MuxSwarm.Engine;
 
@@ -31,7 +32,11 @@ internal sealed class FileChangeTracker
     /// <summary>Engine-wide tracker, started by serve/stdio when <c>serve.fileEvents</c> is on.</summary>
     internal static FileChangeTracker? Shared;
 
+    /// <summary>User ignore patterns (<c>serve.fileEventsIgnore</c>); defaults to logs and lock files.</summary>
+    private List<Glob> _ignore = Globs(new ServeConfig().FileEventsIgnore);
+
     private readonly Action<string, string, string?> _emit;   // (path, change, tool)
+    private readonly List<string> _excluded = new();
     private readonly List<FileSystemWatcher> _watchers = new();
     private readonly ConcurrentDictionary<string, DateTime> _recent = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _gate = new();
@@ -42,8 +47,104 @@ internal sealed class FileChangeTracker
 
     internal FileChangeTracker(Action<string, string, string?> emit) => _emit = emit;
 
+    /// <summary>Replace the ignore patterns (<c>serve.fileEventsIgnore</c>). Null keeps the defaults.</summary>
+    internal void Ignore(IEnumerable<string>? patterns) { if (patterns != null) _ignore = Globs(patterns); }
+
+    /// <summary>A compiled ignore pattern; <see cref="WholePath"/> = match the path's tail, else the file name.</summary>
+    internal sealed record Glob(Regex Rx, bool WholePath);
+
+    /// <summary>
+    /// Compile ignore globs. A pattern without <c>/</c> matches the file name (<c>*.log</c>); one with
+    /// <c>/</c> matches the end of the path (<c>docs/generated/**</c>). <c>*</c> and <c>?</c> stay inside
+    /// one path segment, <c>**</c> crosses them. Case-insensitive on Windows and macOS.
+    /// </summary>
+    internal static List<Glob> Globs(IEnumerable<string> patterns)
+    {
+        var opts = RegexOptions.CultureInvariant | (OperatingSystem.IsLinux() ? RegexOptions.None : RegexOptions.IgnoreCase);
+        var list = new List<Glob>();
+        foreach (var raw in patterns)
+        {
+            var p = (raw ?? "").Trim().Replace('\\', '/').TrimStart('/');
+            if (p.Length == 0) continue;
+            var body = Regex.Escape(p).Replace(@"\*\*", "\u0001").Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]").Replace("\u0001", ".*");
+            bool whole = p.Contains('/');
+            list.Add(new Glob(new Regex((whole ? "(^|/)" : "^") + body + "$", opts), whole));
+        }
+        return list;
+    }
+
+    /// <summary>True when <paramref name="path"/> matches one of <paramref name="globs"/> (see <see cref="Globs"/>).</summary>
+    internal static bool MatchesAny(string path, IReadOnlyList<Glob> globs)
+    {
+        var norm = path.Replace('\\', '/');
+        var name = norm[(norm.LastIndexOf('/') + 1)..];
+        foreach (var g in globs)
+            if (g.Rx.IsMatch(g.WholePath ? norm : name)) return true;
+        return false;
+    }
+
     /// <summary>Directories actually watched (existing, de-duplicated, nested roots dropped).</summary>
     internal IReadOnlyList<string> Roots => _watchers.Select(w => w.Path).ToList();
+
+    /// <summary>
+    /// Never report anything under <paramref name="dirs"/>: Mux's own state (telemetry, REPL worker,
+    /// browser profile, ...), which changes during tool calls without the agent writing it.
+    /// </summary>
+    internal void Exclude(IEnumerable<string?> paths)
+    {
+        foreach (var d in paths)
+        {
+            if (string.IsNullOrWhiteSpace(d)) continue;
+            try
+            {
+                var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(d));
+                // Folders match as a prefix; a path with an extension (the graph file) matches exactly.
+                _excluded.Add(Path.HasExtension(full) && !Directory.Exists(full) ? full : full + Path.DirectorySeparatorChar);
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// Mux's own state folders: telemetry, REPL workers, delegation journals, the built-in
+    /// browser (binary + profile), downloaded runtimes, the memory stores. Under the install folder
+    /// and the per-user data folder (they differ for builds run from another directory).
+    /// </summary>
+    internal static IEnumerable<string> OwnStateDirs(string baseDir, string? sessionsDir, string? kgPath, string? chromaPath)
+    {
+        var local = OperatingSystem.IsWindows()
+            ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+        foreach (var root in new[] { baseDir, Path.Combine(local, "Mux-Swarm") })
+        {
+            yield return Path.Combine(root, "Telemetry");
+            yield return Path.Combine(root, "repl");
+            yield return Path.Combine(root, "delegations");
+            yield return Path.Combine(root, "Runtime", "browser");
+            yield return Path.Combine(root, "Runtime", "whisper");
+            yield return Path.Combine(root, "cliproxy");
+            yield return Path.Combine(root, "Backups");
+            yield return Path.Combine(root, "BrowserProfiles");   // built-in browser profiles
+        }
+        foreach (var s in new[] { sessionsDir, Path.Combine(baseDir, "Sessions") })
+            if (!string.IsNullOrWhiteSpace(s))
+                yield return Path.Combine(s, "PlaywrightChromeProfile");
+        if (!string.IsNullOrWhiteSpace(chromaPath)) yield return chromaPath;
+        // The graph file only (its folder may be the user's sandbox, the setup default).
+        if (!string.IsNullOrWhiteSpace(kgPath)) yield return kgPath;
+    }
+
+    /// <summary>True when <paramref name="fullPath"/> is inside an excluded directory.</summary>
+    internal bool IsExcluded(string fullPath)
+    {
+        var cmp = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        foreach (var d in _excluded)
+        {
+            bool dir = d.EndsWith(Path.DirectorySeparatorChar);
+            if (dir ? fullPath.StartsWith(d, cmp) || (fullPath + Path.DirectorySeparatorChar).Equals(d, cmp) : fullPath.Equals(d, cmp)) return true;
+        }
+        return false;
+    }
 
     /// <summary>Watch <paramref name="roots"/> recursively. Missing roots and roots the OS refuses are skipped.</summary>
     internal void Start(IEnumerable<string?> roots)
@@ -100,7 +201,7 @@ internal sealed class FileChangeTracker
             if (_emitted >= MaxEventsPerCall) return;
             tool = _tool;
         }
-        if (IsIgnored(fullPath)) return;
+        if (IsIgnored(fullPath) || MatchesAny(fullPath, _ignore) || IsExcluded(fullPath)) return;
         if (change is "created" or "modified" && Directory.Exists(fullPath)) return;   // folder metadata churn
 
         var now = DateTime.UtcNow;

@@ -113,6 +113,51 @@ public class BrowserHostTests
     }
 
     [Fact]
+    public void Engine_DefaultsToAuto_AndManagedNeverUsesAnInstalledBrowser()
+    {
+        Assert.Equal("auto", new ServeBrowserConfig().Engine);
+        Assert.Null(BrowserHost.ResolveInstalled("managed"));
+        var first = BrowserIdentity.Installed().FirstOrDefault().Exe;    // unset = auto: first installed, else managed
+        Assert.Equal(first, BrowserHost.ResolveInstalled(null)?.Exe);
+        Assert.Equal(first, BrowserHost.ResolveInstalled("")?.Exe);
+        Assert.Equal("edge", System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"browser\":{\"engine\":\"edge\"}}")!.Browser.Engine);
+    }
+
+    [Fact]
+    public void Engine_UnknownValue_IsAnError_NamingTheChoices()
+    {
+        var ex = Assert.Throws<ArgumentException>(() => BrowserHost.ResolveInstalled("firefox"));
+        Assert.Contains("managed, auto, chrome, edge, brave, chromium", ex.Message);
+    }
+
+    [Fact]
+    public void Engine_NamedBrowser_ResolvesToThatInstall_OrSaysItIsMissing()
+    {
+        var installed = BrowserIdentity.Installed().ToList();
+        foreach (var e in new[] { "chrome", "edge", "brave", "chromium" })
+        {
+            var hit = installed.FirstOrDefault(i => i.Engine == e);
+            if (hit.Exe != null) Assert.Equal(hit.Exe, BrowserHost.ResolveInstalled(e)!.Value.Exe);
+            else Assert.Contains("not installed", Assert.Throws<InvalidOperationException>(() => BrowserHost.ResolveInstalled(e)).Message);
+        }
+        var auto = BrowserHost.ResolveInstalled("auto");
+        Assert.Equal(installed.FirstOrDefault().Exe, auto?.Exe);   // first found, or managed when none
+        Assert.True(BrowserHost.CanRun("chrome"));                 // named: offered; a missing one errors on start
+    }
+
+    [Fact]
+    public void Engine_Profiles_LiveOutsideSessions_OnePerBrowser_AndFollowSkipsThem()
+    {
+        // Profiles in Sessions were listed (and offered for /resume) as sessions.
+        Assert.Equal(Path.Combine(PlatformContext.BaseDirectory, "BrowserProfiles"), BrowserHost.ProfilesRoot);
+        Assert.False(BrowserHost.ProfilesRoot.StartsWith(PlatformContext.SessionsDirectory, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(Path.Combine("R", "managed"), BrowserHost.DefaultProfile("R", null));
+        Assert.Equal(Path.Combine("R", "managed"), BrowserHost.DefaultProfile("R", "managed"));
+        Assert.Equal(Path.Combine("R", "brave"), BrowserHost.DefaultProfile("R", "brave"));
+        Assert.Contains(Path.Combine("/base", "BrowserProfiles"), FileChangeTracker.OwnStateDirs("/base", "/sess", null, null));
+    }
+
+    [Fact]
     public void Panel_HasTheBrowserMode_AndNoReaderOrPopout()
     {
         var html = File.ReadAllText(Path.Combine(RepoRoot(), "Runtime", "mux-web-app", "index.html"));
@@ -127,6 +172,9 @@ public class BrowserHostTests
         Assert.Contains("await pg.CallAsync(\"Page.bringToFront\");", relay);       // background tabs never paint
         Assert.Contains("\"Page.captureScreenshot\"", relay);                        // static page: send one picture now
         Assert.DoesNotContain("tcs.Task.Result", relay);                              // no AggregateException-wrapped errors
+        Assert.Contains("[\"buttons\"] = (int)D(\"buttons\"),", relay);                 // held buttons: a move is a drag, not a hover
+        Assert.Contains("try { cv.setPointerCapture(e.pointerId); } catch(_) {}", html);   // release reaches the page outside the view
+        Assert.Contains("buttons: e.buttons, mods: mods(e) });", html);
         Assert.Contains("btn('muxBrowserReload', 'Refresh'", html);
         Assert.Contains("btn('muxBrowserHome', 'Home page'", html);
         Assert.Contains("send({ op: 'open', url: '' })", html);                        // new tab = home page   // keep polling until the download starts   // .mux-preview-btn sets display:flex

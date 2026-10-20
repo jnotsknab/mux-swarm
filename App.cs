@@ -427,6 +427,9 @@ internal class App
         if (MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents)
         {
             FileChangeTracker.Shared = new FileChangeTracker(MuxConsole.EmitFileChanged);
+            FileChangeTracker.Shared.Ignore(Config.Serve.FileEventsIgnore);
+            FileChangeTracker.Shared.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
+                Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
             FileChangeTracker.Shared.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
                 .Concat(Config.Filesystem.AllowedPaths ?? []));
         }
@@ -2424,7 +2427,7 @@ internal class App
                 var args = serverConfig.Args?.Select(a => ResolveConfigValue(a, baseDir)).ToArray() ?? Array.Empty<string>();
 
                 // The built-in Playwright server drives the panel's browser so the user can watch it.
-                if (name == "Playwright" && config.Serve.Browser is { Enabled: true, Playwright: true } && Engine.Browser.BrowserHost.Platform() != null)
+                if (name == "Playwright" && config.Serve.Browser is { Enabled: true, Playwright: true } && Engine.Browser.BrowserHost.CanRun(config.Serve.Browser.Engine))
                 {
                     // Playwright connects on its first browser tool call; the invoker starts (and on first
                     // use downloads) the browser on that reserved port just before the call runs.
