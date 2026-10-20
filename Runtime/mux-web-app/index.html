@@ -583,31 +583,53 @@ body.header-collapsed .header-toggle svg { transform: rotate(180deg); }
 .sidebar-content:hover::-webkit-scrollbar-thumb { background: rgba(var(--muted-rgb), 0.4); }
 
 .file-list { font-size: calc(12px * var(--ui-font-scale, 1)); }
+/* Sandbox file viewer: same look as the Skills / Tools catalog (shared search head, mono names,
+   hairline rows, square hover); icons and colors come from theme tokens. */
 .file-item {
-  display: flex; align-items: center; gap: 6px; padding: 6px 8px;
-  border-radius: 3px; cursor: pointer; transition: background 0.1s;
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-bottom: 1px solid rgba(127,127,127,0.10);
+  cursor: pointer; transition: background 0.1s;
+  font-family: var(--font-mono, monospace); color: var(--text);
 }
-.file-item:hover { background: rgba(var(--accent-rgb), 0.08); }
-.file-item.dir { color: var(--blue); }
-.file-item.file { color: var(--text); }
-.file-item .icon { font-size: calc(10px * var(--ui-font-scale, 1)); width: 14px; text-align: center; }
-.file-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-item .size { color: var(--muted); font-size: calc(10px * var(--ui-font-scale, 1)); }
+.file-item:hover { background: rgba(var(--mux-tint-rgb), 0.025); }
+.file-item.dir .name { font-weight: 600; }
+.file-item .icon { flex: 0 0 auto; width: 14px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.file-item.dir .icon { color: var(--accent); }
+.file-item .icon svg { width: 14px; height: 14px; }
+.file-item .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-item .size { flex: 0 0 auto; color: var(--muted); font-family: var(--font-mono, monospace); font-size: calc(10.5px * var(--ui-font-scale, 1)); }
+/* Trailing slot (folder chevron / file download) has one width so sizes line up on every row. */
+.file-item .go, .file-item .dl-btn { flex: 0 0 22px; width: 22px; justify-content: center; }
+.file-item .go { display: flex; color: var(--muted); opacity: 0.6; }
+.file-item .go svg { width: 12px; height: 12px; }
+.file-item:hover .go { opacity: 1; color: var(--accent); }
 
 .file-item .dl-btn {
   color: var(--muted); background: none; border: none; font-size: calc(11px * var(--ui-font-scale, 1));
-  cursor: pointer; padding: 2px 4px; opacity: 0; transition: opacity 0.1s, color 0.1s;
+  cursor: pointer; padding: 2px 0; opacity: 0; transition: opacity 0.1s, color 0.1s;
 }
-.file-item:hover .dl-btn { opacity: 1; }
+.file-item:hover .dl-btn, .file-item .dl-btn:focus-visible { opacity: 1; }
 .file-item .dl-btn:hover { color: var(--accent); }
 
+/* Breadcrumb: back button styled like the panel close button, then clickable path segments. */
 .file-path {
-  padding: 6px 8px; color: var(--muted); font-size: calc(11px * var(--ui-font-scale, 1));
-  border-bottom: 1px solid var(--border); margin-bottom: 4px;
-  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; color: var(--muted); font-family: var(--font-mono, monospace);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 6px; min-width: 0;
 }
-.file-path .back-btn { background: none; border: none; color: var(--accent); cursor: pointer; font-size: calc(12px * var(--ui-font-scale, 1)); padding: 2px; }
-.file-path .back-btn:hover { color: var(--text); }
+.file-path .back-btn {
+  flex: 0 0 auto; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--muted); cursor: pointer; padding: 2px 7px; line-height: 1; font: inherit;
+}
+.file-path .back-btn:hover { color: var(--text); border-color: var(--accent); }
+.file-path .crumbs { display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.file-path .crumb { background: none; border: 0; padding: 0; font: inherit; color: var(--muted); cursor: pointer; }
+.file-path .crumb:hover { color: var(--accent); }
+.file-path .crumb.cur { color: var(--text); cursor: default; }
+.file-path .sep { opacity: 0.5; }
+/* The viewer bleeds to the panel edges like the catalog (its own padding lives on the rows). */
+.sidebar-content:has(> .mux-cat-root.mux-files) { padding: 0; }
 
 .loading { padding: 20px; text-align: center; color: var(--muted); }
 .error-msg { padding: 10px; color: var(--red); font-size: calc(12px * var(--ui-font-scale, 1)); }
@@ -3095,7 +3117,8 @@ const icons = {
   hourglass: `<svg data-icon="hourglass" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/></svg>`,
   stop: `<svg data-icon="square" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/></svg>`,
   copy: `<svg data-icon="copy" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
-  chevronDown: `<svg data-icon="chevron-down" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`
+  chevronDown: `<svg data-icon="chevron-down" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>`,
+  chevronRight: `<svg data-icon="chevron-right" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`
 };
 
 
@@ -7111,10 +7134,21 @@ const icons = {
       const data = await resp.json();
       if (data.error) { sidebarContent.innerHTML = `<div class="error-msg">${esc(data.error)}</div>`; return; }
       currentPath = data.path || '';
-      let html = '<div class="mux-find-bar"><input id="sbxFindInput" type="search" placeholder="Find files\u2026" autocomplete="off" spellcheck="false" /></div><div id="sbxBrowse">';
+      const count = (data.items || []).length;
+      let html = '<div class="mux-cat-root mux-files"><div class="mux-cat-head mux-find-bar">'
+        + '<input id="sbxFindInput" class="mux-cat-search" type="search" placeholder="Find files\u2026" aria-label="Find files" autocomplete="off" spellcheck="false" />'
+        + '<span class="mux-cat-count" title="Items in this folder">' + count + '</span></div><div class="mux-cat-body"><div id="sbxBrowse">';
       if (currentPath) {
-        const parent = currentPath.split(/[\\/]/).slice(0,-1).join('/');
-        html += `<div class="file-path"><button class="back-btn" data-path="${esc(parent)}">←</button><span>${esc(currentPath)}</span></div>`;
+        const parts = currentPath.split(/[\\/]/).filter(Boolean);
+        const parent = parts.slice(0, -1).join('/');
+        let crumbs = `<button type="button" class="crumb" data-path="">${esc((document.querySelector('.sidebar-tab[data-tab="' + currentTab + '"]') || {}).textContent || currentTab)}</button>`;
+        parts.forEach((p, i) => {
+          const at = parts.slice(0, i + 1).join('/');
+          crumbs += `<span class="sep">\u203a</span>` + (i === parts.length - 1
+            ? `<span class="crumb cur">${esc(p)}</span>`
+            : `<button type="button" class="crumb" data-path="${esc(at)}">${esc(p)}</button>`);
+        });
+        html += `<div class="file-path"><button type="button" class="back-btn" data-path="${esc(parent)}" title="Up one folder" aria-label="Up one folder">\u2190</button><span class="crumbs">${crumbs}</span></div>`;
       }
       if (data.items?.length) {
         html += '<div class="file-list">';
@@ -7124,14 +7158,14 @@ const icons = {
               <span class="icon" style="display:flex;align-items:center">${item.isDir ? icons.folder : icons.file}</span>
               <span class="name">${esc(item.name)}</span>
               ${item.size ? `<span class="size">${formatSize(item.size)}</span>` : ''}
-              ${!item.isDir ? `<button class="dl-btn" data-dl="${esc(item.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : ''}
+              ${!item.isDir ? `<button class="dl-btn" data-dl="${esc(item.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : `<span class="go">${icons.chevronRight}</span>`}
             </div>
             
           </div>`;
         }
         html += '</div>';
       } else if (!currentPath) { html += '<div class="loading">Empty</div>'; }
-      html += '</div><div id="sbxFindResults" style="display:none"></div>';
+      html += '</div><div id="sbxFindResults" style="display:none"></div></div></div>';
       sidebarContent.innerHTML = html;
       sbxBindFind();
 
@@ -7157,7 +7191,7 @@ const icons = {
           }
         });
       });
-      sidebarContent.querySelector('.back-btn')?.addEventListener('click', (e) => loadFileList(e.target.dataset.path));
+      sidebarContent.querySelectorAll('.file-path [data-path]').forEach(b => b.addEventListener('click', () => loadFileList(b.dataset.path)));
     } catch (err) { sidebarContent.innerHTML = `<div class="error-msg">Error: ${esc(err.message)}</div>`; }
   }
 
@@ -7239,7 +7273,7 @@ const icons = {
           <span class="icon" style="display:flex;align-items:center">${e.isDir ? icons.folder : icons.file}</span>
           <span class="name">${esc(e.name)}${dir ? `<span class="mux-find-path">${esc(dir)}</span>` : ''}</span>
           ${e.size ? `<span class="size">${formatSize(e.size)}</span>` : ''}
-          ${!e.isDir ? `<button class="dl-btn" data-dl="${esc(e.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : ''}
+          ${!e.isDir ? `<button class="dl-btn" data-dl="${esc(e.path)}" title="Download" style="display:flex;align-items:center;pointer-events:auto"><span style="pointer-events:none;display:flex">${icons.download}</span></button>` : `<span class="go">${icons.chevronRight}</span>`}
         </div>
       </div>`;
     }
@@ -7289,9 +7323,6 @@ const icons = {
   (function injectSbxFindCss() {
     if (document.getElementById('muxSbxFindCss')) return;
     const css = [
-      '.mux-find-bar { padding: 8px 10px; border-bottom: 1px solid var(--border, #27272a); }',
-      '.mux-find-bar input { width: 100%; box-sizing: border-box; background: var(--mux-inset-bg); color: var(--text); border: 1px solid var(--border, #27272a); border-radius: 6px; padding: 5px 9px; font-size: calc(12px * var(--ui-font-scale, 1)); outline: none; }',
-      '.mux-find-bar input:focus { border-color: var(--accent, #64b4dc); box-shadow: 0 0 0 2px rgba(var(--accent-rgb),0.15); }',
       '.mux-find-status { padding: 6px 12px 4px; font-size: calc(10px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); text-transform: uppercase; letter-spacing: 0.04em; }',
       '.mux-find-hit .name { display: flex; flex-direction: column; gap: 1px; min-width: 0; overflow: hidden; }',
       '.mux-find-path { font-size: calc(9px * var(--ui-font-scale, 1)); color: var(--muted, #71717a); font-family: var(--font-mono, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }'
