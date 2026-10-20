@@ -8,8 +8,8 @@ namespace MuxSwarm.Engine.Browser;
 /// <summary>
 /// The identity the built-in browser presents (User-Agent + client hints), so sites treat it like
 /// the user's normal browser instead of a headless test build. Taken from a Chromium browser
-/// installed on this machine (Chrome, Edge, Brave, Chromium; first found), else computed from the
-/// bundled version. Headless Chrome reports "HeadlessChrome" and a "Chromium"-only brand list,
+/// installed on this machine (the one <c>serve.browser.engine</c> runs, else the first found), else
+/// computed from the managed version. Headless Chrome reports "HeadlessChrome" and a "Chromium"-only brand list,
 /// which is what bot checks flag; the override replaces both on every tab.
 /// </summary>
 internal sealed record BrowserIdentity(string Brand, string Version, string Source)
@@ -70,58 +70,70 @@ internal sealed record BrowserIdentity(string Brand, string Version, string Sour
 
     private static BrowserIdentity? _cached;
 
-    /// <summary>Identity for this machine (cached for the engine run).</summary>
-    internal static BrowserIdentity Current => _cached ??= Detect() ?? new BrowserIdentity("Google Chrome", BrowserHost.Version, "computed");
+    /// <summary>
+    /// Identity for this run (cached): the browser <c>serve.browser.engine</c> launches when it is an
+    /// installed one, else the first installed Chromium browser, else computed from the managed version.
+    /// </summary>
+    internal static BrowserIdentity Current => _cached ??= Selected() ?? Detect() ?? new BrowserIdentity("Google Chrome", BrowserHost.Version, "computed");
 
-    /// <summary>First installed Chromium browser with a readable version, or null.</summary>
-    internal static BrowserIdentity? Detect()
+    private static BrowserIdentity? Selected()
     {
-        foreach (var (brand, path) in Candidates())
-        {
-            try { if (VersionOf(path) is { } v) return new BrowserIdentity(brand, v, path); }
-            catch { /* unreadable; try the next */ }
-        }
-        return null;
+        try { return BrowserHost.ResolveInstalled(App.Config.Serve.Browser.Engine)?.Identity; }
+        catch { return null; }   // misconfigured engine: starting the browser reports it
     }
 
-    private static IEnumerable<(string Brand, string Path)> Candidates()
+    /// <summary>First installed Chromium browser with a readable version, or null.</summary>
+    internal static BrowserIdentity? Detect() => Installed().Select(i => i.Identity).FirstOrDefault();
+
+    /// <summary>Installed Chromium browsers with a readable version, in preference order (Chrome, Edge, Brave, Chromium).</summary>
+    internal static IEnumerable<(string Engine, string Exe, BrowserIdentity Identity)> Installed()
+    {
+        foreach (var (engine, brand, exe) in Candidates())
+        {
+            string? v = null;
+            try { v = VersionOf(exe); } catch { /* unreadable; try the next */ }
+            if (v != null) yield return (engine, exe, new BrowserIdentity(brand, v, exe));
+        }
+    }
+
+    private static IEnumerable<(string Engine, string Brand, string Exe)> Candidates()
     {
         if (OperatingSystem.IsWindows())
         {
             var pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
             var pf86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
             var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            foreach (var root in new[] { pf, pf86, local })
-            {
-                yield return ("Google Chrome", Path.Combine(root, "Google", "Chrome", "Application", "chrome.exe"));
-                yield return ("Microsoft Edge", Path.Combine(root, "Microsoft", "Edge", "Application", "msedge.exe"));
-                yield return ("Brave", Path.Combine(root, "BraveSoftware", "Brave-Browser", "Application", "brave.exe"));
-            }
+            foreach (var (engine, brand, rel) in new[] { ("chrome", "Google Chrome", @"Google\Chrome\Application\chrome.exe"),
+                         ("edge", "Microsoft Edge", @"Microsoft\Edge\Application\msedge.exe"), ("brave", "Brave", @"BraveSoftware\Brave-Browser\Application\brave.exe"),
+                         ("chromium", "Chromium", @"Chromium\Application\chrome.exe") })
+                foreach (var root in new[] { pf, pf86, local })
+                    yield return (engine, brand, Path.Combine(root, rel));
         }
         else if (OperatingSystem.IsMacOS())
         {
-            yield return ("Google Chrome", "/Applications/Google Chrome.app/Contents/Info.plist");
-            yield return ("Microsoft Edge", "/Applications/Microsoft Edge.app/Contents/Info.plist");
-            yield return ("Brave", "/Applications/Brave Browser.app/Contents/Info.plist");
-            yield return ("Chromium", "/Applications/Chromium.app/Contents/Info.plist");
+            yield return ("chrome", "Google Chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+            yield return ("edge", "Microsoft Edge", "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge");
+            yield return ("brave", "Brave", "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser");
+            yield return ("chromium", "Chromium", "/Applications/Chromium.app/Contents/MacOS/Chromium");
         }
         else
         {
-            foreach (var (brand, bin) in new[] { ("Google Chrome", "google-chrome"), ("Google Chrome", "google-chrome-stable"),
-                         ("Microsoft Edge", "microsoft-edge"), ("Brave", "brave-browser"), ("Chromium", "chromium"), ("Chromium", "chromium-browser") })
+            foreach (var (engine, brand, bin) in new[] { ("chrome", "Google Chrome", "google-chrome"), ("chrome", "Google Chrome", "google-chrome-stable"),
+                         ("edge", "Microsoft Edge", "microsoft-edge"), ("brave", "Brave", "brave-browser"), ("chromium", "Chromium", "chromium"), ("chromium", "Chromium", "chromium-browser") })
                 foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':', StringSplitOptions.RemoveEmptyEntries))
-                    yield return (brand, Path.Combine(dir, bin));
+                    yield return (engine, brand, Path.Combine(dir, bin));
         }
     }
 
-    /// <summary>Version of the browser at <paramref name="path"/>: file version (Windows), Info.plist (macOS), --version (Linux).</summary>
+    /// <summary>Version of the browser at <paramref name="path"/>: file version (Windows), the app's Info.plist (macOS), --version (Linux).</summary>
     internal static string? VersionOf(string path)
     {
         if (!File.Exists(path)) return null;
         string? raw;
         if (OperatingSystem.IsWindows()) raw = FileVersionInfo.GetVersionInfo(path).ProductVersion;
-        else if (path.EndsWith(".plist", StringComparison.Ordinal))
-            raw = Regex.Match(File.ReadAllText(path), @"<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>").Groups[1].Value;
+        else if (OperatingSystem.IsMacOS())   // <App>.app/Contents/MacOS/<exe> -> <App>.app/Contents/Info.plist
+            raw = Regex.Match(File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(path)!)!, "Info.plist")),
+                @"<key>CFBundleShortVersionString</key>\s*<string>([^<]+)</string>").Groups[1].Value;
         else
         {
             using var p = Process.Start(new ProcessStartInfo(path, "--version") { RedirectStandardOutput = true, RedirectStandardInput = true, RedirectStandardError = true, UseShellExecute = false });
