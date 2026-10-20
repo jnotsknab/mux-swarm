@@ -532,7 +532,7 @@ public class ServeBrowserConfig
     /// Which browser runs: <c>auto</c> (default) = the first installed Chrome, Edge, Brave or Chromium,
     /// else managed; <c>managed</c> = a pinned Chrome for Testing build Mux downloads on first use;
     /// <c>chrome</c> | <c>edge</c> | <c>brave</c> | <c>chromium</c> = that installed browser (error if
-    /// missing). Installed browsers get their own profile (<c>Sessions/BrowserProfile-&lt;engine&gt;</c>).
+    /// missing). Each browser gets its own profile (<c>BrowserProfiles/&lt;engine&gt;</c>, managed = <c>BrowserProfiles/managed</c>).
     /// </summary>
     [JsonPropertyName("engine")]
     public string Engine { get; set; } = Browser.BrowserHost.DefaultEngine;
@@ -547,7 +547,7 @@ public class ServeBrowserConfig
     [JsonPropertyName("homePage")]
     public string HomePage { get; set; } = "https://duckduckgo.com";
 
-    /// <summary>Profile directory (cookies, logins). Empty = <c>Sessions/BrowserProfile</c>.</summary>
+    /// <summary>Profile directory (cookies, logins). Empty = <c>BrowserProfiles/&lt;engine&gt;</c> under the install folder.</summary>
     [JsonPropertyName("profileDir")]
     public string ProfileDir { get; set; } = "";
 }

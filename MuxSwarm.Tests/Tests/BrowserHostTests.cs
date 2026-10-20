@@ -146,13 +146,15 @@ public class BrowserHostTests
     }
 
     [Fact]
-    public void Engine_InstalledBrowsers_GetTheirOwnProfile_AndFollowSkipsThemAll()
+    public void Engine_Profiles_LiveOutsideSessions_OnePerBrowser_AndFollowSkipsThem()
     {
-        Assert.Equal(Path.Combine("S", "BrowserProfile"), BrowserHost.DefaultProfile("S", null));
-        Assert.Equal(Path.Combine("S", "BrowserProfile-brave"), BrowserHost.DefaultProfile("S", "brave"));
-        var own = FileChangeTracker.OwnStateDirs("/base", "/sess", null, null).ToList();
-        foreach (var n in new[] { "BrowserProfile", "BrowserProfile-chrome", "BrowserProfile-edge", "BrowserProfile-brave", "BrowserProfile-chromium" })
-            Assert.Contains(Path.Combine("/sess", n), own);
+        // Profiles in Sessions were listed (and offered for /resume) as sessions.
+        Assert.Equal(Path.Combine(PlatformContext.BaseDirectory, "BrowserProfiles"), BrowserHost.ProfilesRoot);
+        Assert.False(BrowserHost.ProfilesRoot.StartsWith(PlatformContext.SessionsDirectory, StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(Path.Combine("R", "managed"), BrowserHost.DefaultProfile("R", null));
+        Assert.Equal(Path.Combine("R", "managed"), BrowserHost.DefaultProfile("R", "managed"));
+        Assert.Equal(Path.Combine("R", "brave"), BrowserHost.DefaultProfile("R", "brave"));
+        Assert.Contains(Path.Combine("/base", "BrowserProfiles"), FileChangeTracker.OwnStateDirs("/base", "/sess", null, null));
     }
 
     [Fact]
