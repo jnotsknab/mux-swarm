@@ -595,6 +595,30 @@ public static class Common
         catch { return false; }
     }
 
+    /// <summary>
+    /// Saved session directories under <paramref name="sessionsDir"/>, newest name first. Only folders
+    /// holding a <c>*_session.json</c> count: browser profiles, tool output and other folders that
+    /// tools or users put in the sessions directory are never listed or resumed as sessions.
+    /// </summary>
+    public static List<string> SessionDirs(string sessionsDir)
+    {
+        try
+        {
+            return Directory.GetDirectories(sessionsDir)
+                .Where(HasSessionFile)
+                .OrderByDescending(d => d, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch { return new List<string>(); }
+    }
+
+    /// <summary>True when <paramref name="dir"/> is a saved single-agent session (resumable with /resume).</summary>
+    public static bool IsResumableSession(string dir)
+    {
+        try { return HasSessionFile(dir) && Directory.GetFiles(dir, "*.json").Length <= 2; }
+        catch { return false; }
+    }
+
     public static void PruneOldSessions(string sessionDir, uint retention)
     {
         // Retention counts real SESSIONS, not bare directories. A session dir is only a candidate
