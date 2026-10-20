@@ -113,12 +113,13 @@ public class BrowserHostTests
     }
 
     [Fact]
-    public void Engine_DefaultsToManaged_AndManagedNeverUsesAnInstalledBrowser()
+    public void Engine_DefaultsToAuto_AndManagedNeverUsesAnInstalledBrowser()
     {
-        Assert.Equal("managed", new ServeBrowserConfig().Engine);
+        Assert.Equal("auto", new ServeBrowserConfig().Engine);
         Assert.Null(BrowserHost.ResolveInstalled("managed"));
-        Assert.Null(BrowserHost.ResolveInstalled(null));
-        Assert.Null(BrowserHost.ResolveInstalled(""));
+        var first = BrowserIdentity.Installed().FirstOrDefault().Exe;    // unset = auto: first installed, else managed
+        Assert.Equal(first, BrowserHost.ResolveInstalled(null)?.Exe);
+        Assert.Equal(first, BrowserHost.ResolveInstalled("")?.Exe);
         Assert.Equal("edge", System.Text.Json.JsonSerializer.Deserialize<ServeConfig>("{\"browser\":{\"engine\":\"edge\"}}")!.Browser.Engine);
     }
 
