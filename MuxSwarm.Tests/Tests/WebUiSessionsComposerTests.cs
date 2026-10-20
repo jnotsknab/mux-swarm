@@ -46,6 +46,14 @@ public class WebUiSessionsComposerTests
     }
 
     [Fact]
+    public void Rail_ListsSavedSessionsOnly()
+    {
+        // The generic folder listing showed browser profiles / tool output as sessions.
+        Assert.Contains("fetch(apiUrl('/api/sessions')).then(", Html);
+        Assert.DoesNotContain("fetch('/api/list/sessions')", Html);
+    }
+
+    [Fact]
     public void Resume_RedrawsTheSavedConversation()
     {
         Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); replay(w[1]); }", Html);
