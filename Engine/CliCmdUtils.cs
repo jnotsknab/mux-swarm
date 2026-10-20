@@ -690,9 +690,7 @@ public static class CliCmdUtils
         {
             string sessionsDir = PlatformContext.SessionsDirectory;
             if (!Directory.Exists(sessionsDir)) return outList;
-            foreach (var d in Directory.GetDirectories(sessionsDir)
-                         .Where(d => Directory.GetFiles(d, "*.json").Length <= 2)
-                         .OrderByDescending(d => d))
+            foreach (var d in Common.SessionDirs(sessionsDir).Where(Common.IsResumableSession))
             {
                 var id = Path.GetFileName(d);
                 string preview = "";
@@ -752,10 +750,7 @@ public static class CliCmdUtils
             return null;
         }
 
-        List<string> sessionDirs = Directory.GetDirectories(sessionsDir)
-            .Where(d => Directory.GetFiles(d, "*.json").Length <= 2)
-            .OrderByDescending(d => d)
-            .ToList();
+        List<string> sessionDirs = Common.SessionDirs(sessionsDir).Where(Common.IsResumableSession).ToList();
 
         if (sessionDirs.Count == 0)
         {
@@ -874,7 +869,7 @@ public static class CliCmdUtils
         var sessionsDir = PlatformContext.SessionsDirectory;
 
         var sessionCount = Directory.Exists(sessionsDir)
-            ? Directory.GetDirectories(sessionsDir).Length
+            ? Common.SessionDirs(sessionsDir).Count
             : 0;
 
         var toolCount = mcpTools?.Count ?? 0;
@@ -937,9 +932,7 @@ public static class CliCmdUtils
             return;
         }
 
-        var sessionDirs = Directory.GetDirectories(sessionsDir)
-            .OrderByDescending(d => d)
-            .ToList();
+        var sessionDirs = Common.SessionDirs(sessionsDir);
 
         if (sessionDirs.Count == 0)
         {
@@ -1249,7 +1242,7 @@ public static class CliCmdUtils
 
         if (!string.IsNullOrEmpty(sessionId))
         {
-            var target = Directory.GetDirectories(sessionsDir)
+            var target = Common.SessionDirs(sessionsDir)
                 .FirstOrDefault(d => Path.GetFileName(d)
                     .Equals(sessionId, StringComparison.OrdinalIgnoreCase));
 
@@ -1264,9 +1257,7 @@ public static class CliCmdUtils
         }
         else
         {
-            sessionDirs = Directory.GetDirectories(sessionsDir)
-                .OrderByDescending(d => d)
-                .ToList();
+            sessionDirs = Common.SessionDirs(sessionsDir);
         }
 
         if (sessionDirs.Count == 0)

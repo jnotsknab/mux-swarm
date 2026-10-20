@@ -46,9 +46,7 @@ public static class SessionSummarizer
         // checkpoint creates a session directory as soon as the user submits, so without this
         // filter the CURRENT in-progress session would occupy a slot and push a real prior
         // session out of the orientation context.
-        var sessionDirs = Directory.GetDirectories(sessionsPath)
-            .Where(Common.HasSessionFile)
-            .OrderByDescending(d => d)
+        var sessionDirs = Common.SessionDirs(sessionsPath)
             .Take(count)
             .ToList();
 

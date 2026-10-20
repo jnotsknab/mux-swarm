@@ -748,7 +748,7 @@ public static partial class MuxConsole
         {
             string sessionsPath = PlatformContext.SessionsDirectory;
             if (!Directory.Exists(sessionsPath)) return sessions;
-            foreach (var dir in Directory.GetDirectories(sessionsPath).OrderByDescending(d => d).Take(5))
+            foreach (var dir in Common.SessionDirs(sessionsPath).Take(5))
             {
                 string ts = Path.GetFileName(dir);
                 var files = Directory.GetFiles(dir, "*_session.json", SearchOption.AllDirectories);
