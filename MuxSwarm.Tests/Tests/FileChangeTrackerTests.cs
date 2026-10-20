@@ -57,6 +57,28 @@ public class FileChangeTrackerTests : IDisposable
     }
 
     [Fact]
+    public void MuxOwnState_IsNotReported_EvenInsideAWatchedRoot()
+    {
+        // Telemetry traces, REPL worker files, the browser profile and the graph file are written by
+        // Mux itself during tool calls; they used to steal Follow mode on every call.
+        var tele = Directory.CreateDirectory(Path.Combine(_root, "Telemetry")).FullName;
+        var kg = Path.Combine(_root, "memory.jsonl");
+        _t.Exclude(FileChangeTracker.OwnStateDirs(_root, null, kg, null));
+        var own = Path.Combine(tele, "traces-20261020.jsonl");
+        var mine = Path.Combine(_root, "notes.md");
+        using (_t.BeginToolCall("repl_shell_exec"))
+        {
+            File.WriteAllText(own, "{}");
+            File.WriteAllText(kg, "{}");
+            File.WriteAllText(mine, "# notes");
+        }
+        Assert.True(WaitFor(e => e.Path == mine));
+        Thread.Sleep(300);
+        Assert.DoesNotContain(_events, e => e.Path == own || e.Path == kg);
+        Assert.False(_t.IsExcluded(Path.Combine(_root, "memory.jsonl.bak")));   // exact file, not a prefix
+    }
+
+    [Fact]
     public void WriteOutsideAnyToolCall_IsNotReported()
     {
         File.WriteAllText(Path.Combine(_root, "user-edit.md"), "mine");
@@ -93,6 +115,9 @@ public class FileChangeTrackerTests : IDisposable
     [InlineData("/w/src/notes.md.mux-tmp-1961a22b", true)]
     [InlineData("/w/src/app.cs", false)]
     [InlineData("/w/build.md", false)]   // a FILE named like an ignored dir is still reported
+    [InlineData("C:/Temp/mux-herdr-hook.log", true)]   // append-only logs (hooks, services) are never followed
+    [InlineData("/w/app.lock", true)]
+    [InlineData("/w/report.md", false)]
     public void IsIgnored(string path, bool expected) => Assert.Equal(expected, FileChangeTracker.IsIgnored(path));
 
     [Fact]
