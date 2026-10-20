@@ -60,6 +60,9 @@ internal static class BrowserHost
     /// <summary>Values of <c>serve.browser.engine</c>: <c>managed</c> = the Chrome for Testing download.</summary>
     internal static readonly string[] Engines = { "managed", "auto", "chrome", "edge", "brave", "chromium" };
 
+    /// <summary>Engine used when <c>serve.browser.engine</c> is unset or empty: an installed browser, else managed.</summary>
+    internal const string DefaultEngine = "auto";
+
     /// <summary>
     /// The installed browser <paramref name="engine"/> selects (<c>auto</c> = first found), or null for
     /// <c>managed</c> / <c>auto</c> with nothing installed. Throws when a named browser is not installed
@@ -67,7 +70,7 @@ internal static class BrowserHost
     /// </summary>
     internal static (string Engine, string Exe, BrowserIdentity Identity)? ResolveInstalled(string? engine)
     {
-        var e = string.IsNullOrWhiteSpace(engine) ? "managed" : engine.Trim().ToLowerInvariant();
+        var e = string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine.Trim().ToLowerInvariant();
         if (!Engines.Contains(e)) throw new ArgumentException($"serve.browser.engine '{engine}' is not one of: {string.Join(", ", Engines)}.");
         if (e == "managed") return null;
         foreach (var b in BrowserIdentity.Installed())
@@ -82,7 +85,7 @@ internal static class BrowserHost
     /// </summary>
     internal static bool CanRun(string? engine)
     {
-        var e = string.IsNullOrWhiteSpace(engine) ? "managed" : engine.Trim().ToLowerInvariant();
+        var e = string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine.Trim().ToLowerInvariant();
         return e is not ("managed" or "auto") || Platform() != null || (e == "auto" && BrowserIdentity.Installed().Any());
     }
 

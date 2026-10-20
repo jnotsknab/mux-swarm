@@ -529,13 +529,13 @@ public class ServeBrowserConfig
     public bool Playwright { get; set; } = true;
 
     /// <summary>
-    /// Which browser runs: <c>managed</c> (default) = a pinned Chrome for Testing build Mux downloads on
-    /// first use; <c>auto</c> = the first installed Chrome, Edge, Brave or Chromium, else managed;
+    /// Which browser runs: <c>auto</c> (default) = the first installed Chrome, Edge, Brave or Chromium,
+    /// else managed; <c>managed</c> = a pinned Chrome for Testing build Mux downloads on first use;
     /// <c>chrome</c> | <c>edge</c> | <c>brave</c> | <c>chromium</c> = that installed browser (error if
     /// missing). Installed browsers get their own profile (<c>Sessions/BrowserProfile-&lt;engine&gt;</c>).
     /// </summary>
     [JsonPropertyName("engine")]
-    public string Engine { get; set; } = "managed";
+    public string Engine { get; set; } = Browser.BrowserHost.DefaultEngine;
 
     /// <summary>When true (default), the browser runs headless and is only seen in the panel. False opens
     /// a real browser window too (desktop sessions only), still mirrored in the panel.</summary>
