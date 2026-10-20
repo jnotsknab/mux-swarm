@@ -14802,8 +14802,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function load(){
     if (Date.now() - loaded < 15000) { render(); return; }
     loaded = Date.now();
-    fetch('/api/list/sessions').then(function(r){ return r.json(); }).then(function(d){
-      items = (d.items || []).filter(function(i){ return i.isDir; }).map(function(i){ return i.name; }).sort().reverse();
+    // /api/sessions lists saved sessions only (not browser profiles or other folders in Sessions).
+    fetch(apiUrl('/api/sessions')).then(function(r){ return r.json(); }).then(function(d){
+      items = (d.items || []).map(function(i){ return i.name; }).sort().reverse();
       render();
       // Titles: first user line, fetched once per session (cached), newest first, a few at a time.
       var todo = items.filter(function(n){ return !titles.has(n); }).slice(0, 40);
