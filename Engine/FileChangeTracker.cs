@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 
 namespace MuxSwarm.Engine;
 
@@ -31,8 +32,8 @@ internal sealed class FileChangeTracker
     /// <summary>Engine-wide tracker, started by serve/stdio when <c>serve.fileEvents</c> is on.</summary>
     internal static FileChangeTracker? Shared;
 
-    /// <summary>Append-only logs (hooks, tools, services) change on their own schedule; following them is noise.</summary>
-    internal static readonly HashSet<string> IgnoredExtensions = new(StringComparer.OrdinalIgnoreCase) { ".log", ".lock" };
+    /// <summary>User ignore patterns (<c>serve.fileEventsIgnore</c>); defaults to logs and lock files.</summary>
+    private List<Glob> _ignore = Globs(new ServeConfig().FileEventsIgnore);
 
     private readonly Action<string, string, string?> _emit;   // (path, change, tool)
     private readonly List<string> _excluded = new();
@@ -45,6 +46,42 @@ internal sealed class FileChangeTracker
     private int _emitted;
 
     internal FileChangeTracker(Action<string, string, string?> emit) => _emit = emit;
+
+    /// <summary>Replace the ignore patterns (<c>serve.fileEventsIgnore</c>). Null keeps the defaults.</summary>
+    internal void Ignore(IEnumerable<string>? patterns) { if (patterns != null) _ignore = Globs(patterns); }
+
+    /// <summary>A compiled ignore pattern; <see cref="WholePath"/> = match the path's tail, else the file name.</summary>
+    internal sealed record Glob(Regex Rx, bool WholePath);
+
+    /// <summary>
+    /// Compile ignore globs. A pattern without <c>/</c> matches the file name (<c>*.log</c>); one with
+    /// <c>/</c> matches the end of the path (<c>docs/generated/**</c>). <c>*</c> and <c>?</c> stay inside
+    /// one path segment, <c>**</c> crosses them. Case-insensitive on Windows and macOS.
+    /// </summary>
+    internal static List<Glob> Globs(IEnumerable<string> patterns)
+    {
+        var opts = RegexOptions.CultureInvariant | (OperatingSystem.IsLinux() ? RegexOptions.None : RegexOptions.IgnoreCase);
+        var list = new List<Glob>();
+        foreach (var raw in patterns)
+        {
+            var p = (raw ?? "").Trim().Replace('\\', '/').TrimStart('/');
+            if (p.Length == 0) continue;
+            var body = Regex.Escape(p).Replace(@"\*\*", "\u0001").Replace(@"\*", "[^/]*").Replace(@"\?", "[^/]").Replace("\u0001", ".*");
+            bool whole = p.Contains('/');
+            list.Add(new Glob(new Regex((whole ? "(^|/)" : "^") + body + "$", opts), whole));
+        }
+        return list;
+    }
+
+    /// <summary>True when <paramref name="path"/> matches one of <paramref name="globs"/> (see <see cref="Globs"/>).</summary>
+    internal static bool MatchesAny(string path, IReadOnlyList<Glob> globs)
+    {
+        var norm = path.Replace('\\', '/');
+        var name = norm[(norm.LastIndexOf('/') + 1)..];
+        foreach (var g in globs)
+            if (g.Rx.IsMatch(g.WholePath ? norm : name)) return true;
+        return false;
+    }
 
     /// <summary>Directories actually watched (existing, de-duplicated, nested roots dropped).</summary>
     internal IReadOnlyList<string> Roots => _watchers.Select(w => w.Path).ToList();
@@ -166,7 +203,7 @@ internal sealed class FileChangeTracker
             if (_emitted >= MaxEventsPerCall) return;
             tool = _tool;
         }
-        if (IsIgnored(fullPath) || IsExcluded(fullPath)) return;
+        if (IsIgnored(fullPath) || MatchesAny(fullPath, _ignore) || IsExcluded(fullPath)) return;
         if (change is "created" or "modified" && Directory.Exists(fullPath)) return;   // folder metadata churn
 
         var now = DateTime.UtcNow;
@@ -192,7 +229,6 @@ internal sealed class FileChangeTracker
                || name.EndsWith('~') || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
                || name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase)
                || name.Contains(".mux-tmp-", StringComparison.Ordinal)   // Mux's own atomic-write temp
-               || IgnoredExtensions.Contains(Path.GetExtension(name))
                || name.Equals(".DS_Store", StringComparison.Ordinal);
     }
 

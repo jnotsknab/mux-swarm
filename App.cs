@@ -427,6 +427,7 @@ internal class App
         if (MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents)
         {
             FileChangeTracker.Shared = new FileChangeTracker(MuxConsole.EmitFileChanged);
+            FileChangeTracker.Shared.Ignore(Config.Serve.FileEventsIgnore);
             FileChangeTracker.Shared.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
                 Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
             FileChangeTracker.Shared.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }

@@ -495,6 +495,16 @@ public class ServeConfig
     [JsonPropertyName("fileEvents")]
     public bool FileEvents { get; set; } = true;
 
+    /// <summary>
+    /// Files never reported as <c>file_changed</c> (so Follow skips them). Glob patterns: no <c>/</c> =
+    /// match the file name (<c>*.log</c>), with <c>/</c> = match the end of the path
+    /// (<c>docs/generated/**</c>); <c>**</c> crosses folders. Setting it replaces the defaults
+    /// (<c>*.log</c>, <c>*.lock</c>); <c>[]</c> follows everything. Build/VCS folders, editor temp
+    /// files and Mux's own state are always skipped.
+    /// </summary>
+    [JsonPropertyName("fileEventsIgnore")]
+    public List<string> FileEventsIgnore { get; set; } = ["*.log", "*.lock"];
+
     /// <summary>Optional app-level auth for the serve layer. Default disabled.</summary>
     [JsonPropertyName("auth")]
     public ServeAuthConfig Auth { get; set; } = new();
