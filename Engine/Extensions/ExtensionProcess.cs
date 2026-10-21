@@ -237,7 +237,8 @@ internal sealed class ExtensionProcess : IDisposable
                 if (line.Length == 0) continue;
                 try
                 {
-                    using var doc = JsonDocument.Parse(line);
+                    // Panel trees nest up to ExtensionPanels.MaxDepth boxes (2 JSON levels each) inside the envelope.
+                    using var doc = JsonDocument.Parse(line, new JsonDocumentOptions { MaxDepth = 128 });
                     if (!_rpc.TryComplete(doc.RootElement)) OnMessage(doc.RootElement);
                 }
                 catch (JsonException) { AddStderr("[stdout, not JSON] " + line); }
@@ -310,6 +311,7 @@ internal sealed class ExtensionProcess : IDisposable
         _outbox.Writer.TryComplete();
         _rpc.CancelAll();
         if (ExtensionFooter.Clear(Name)) MuxConsole.TuiRepaintSoon();
+        ExtensionPanels.CloseAll(Name);
         int? code = null;
         try { if (_process.WaitForExit(1000)) code = _process.ExitCode; } catch (InvalidOperationException) { }
         AddStderr($"[exited{(code is { } c ? $" with code {c}" : "")}]");
@@ -320,6 +322,7 @@ internal sealed class ExtensionProcess : IDisposable
     {
         IsRunning = false;
         if (ExtensionFooter.Clear(Name)) MuxConsole.TuiRepaintSoon();
+        ExtensionPanels.CloseAll(Name);
         _outbox.Writer.TryComplete();
         _rpc.CancelAll();
         try

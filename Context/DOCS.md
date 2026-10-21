@@ -1347,6 +1347,9 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 | `session/info` | none | `{ mode, inSession, agent, model, sessionId, cwd, surface, muxVersion, context: { tokens, window, percent } }` |
 | `ui/toast` | `{ text }` | `{}`: a short notice (TUI: above the footer for 4s; web: a toast; classic: an info line) |
 | `ui/log` | `{ text }` | `{}`: a muted line in the transcript; the model does not read it |
+| `ui/open` | `{ id, title?, view }` | `{}`: opens (or replaces) panel `id` (see Extension panels) |
+| `ui/update` | `{ id, view }` | `{}`: replaces the tree of open panel `id` |
+| `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
 | `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
 | `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
 
@@ -1363,6 +1366,48 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
   `/ultra`, `/giga`, `/tools`, `/skills`, `/sessions`, `/model`, `/limits`, `/doctor`, `/review`,
   `/clear`, `/shortcuts`. Anything else (trust, sandbox, config, providers, sharing, exit) is refused.
 - Errors: `-32601` unknown method, `-32602` invalid params, `1` refused (the message says why).
+
+### Extension panels
+
+A trusted process can open full-screen panels that Mux draws from an element tree the process sends
+(`ui/open`, above). Mux renders the cached tree on every paint and never calls the process to draw;
+send `ui/update` with a new tree whenever its content changes. Panels are shown in the TUI from the idle
+prompt (while the draft is empty; one at a time, oldest first). Where nothing can draw them (classic
+renderer, `--stdio`, ACP) `ui/open` returns an error, so fall back to `ui/log` or command output.
+
+```jsonc
+{ "jsonrpc": "2.0", "id": 7, "method": "ui/open", "params": { "id": "notes", "title": "Notes", "view":
+  { "type": "box", "children": [
+      { "type": "input", "key": "new", "placeholder": "add a note" },
+      { "type": "list", "key": "notes", "items": [ { "value": "1", "label": "buy milk", "detail": "today" } ] },
+      { "type": "box", "dir": "row", "gap": 2, "children": [
+          { "type": "button", "key": "clear", "label": "Clear", "hotkey": "c" },
+          { "type": "progress", "value": 0.5, "label": "synced" } ] } ] } } }
+```
+
+| Element | Props |
+|---|---|
+| `box` | `dir` (`col` default, `row` = children side by side), `gap` (0-8), `border` (`none`, `single`, `round`), `children` |
+| `text` | `text` (may contain newlines), `color`, `bold`, `dim` |
+| `button` | `key` (required), `label`, `hotkey` (one letter or digit) |
+| `input` | `key` (required), `placeholder`, `value` |
+| `list` | `key` (required), `items` (`[{ value, label?, detail? }]`), `selected` (an item value) |
+| `markdown` | `text` (rendered like agent replies) |
+| `code` | `text` (monospace, no wrapping changes) |
+| `progress` | `value` (0-1), `label` |
+
+- `color` is a theme role: `text`, `muted`, `accent`, `success`, `warning`, `error`, `info`.
+- Keys: letters, digits, `-`, `_` (max 64), unique within a tree. Panel ids follow the same rule; at
+  most 8 open panels per extension.
+- Unknown elements or props, a bad value, more than 2,000 elements, 100,000 characters of text or 32
+  nested elements fail the request with an error naming the problem; the panel keeps its last tree.
+- User actions arrive as notifications `ui/event` `{ id, key, type, value }`: `press` (button),
+  `submit` (input; `value` = the text, the field then clears), `select` (list; `value` = the item value),
+  `close` (the user pressed Esc; `key` is null). A panel the extension closes sends no `close` event.
+- Keys: Tab / Shift+Tab or Up/Down move focus (Up/Down move inside a focused list), Enter
+  activates, a button's hotkey presses it (outside an input), PgUp/PgDn and the wheel scroll, Esc closes.
+  Mouse clicks press buttons and select list rows. Typed text, focus and list position survive `ui/update`.
+- Panels close when the process exits or is stopped (`/refresh`).
 
 ### Extension footer chips
 

@@ -90,7 +90,7 @@ public sealed class ExtensionHostApiTests : IDisposable
         Assert.Equal("swarm", info.GetProperty("mode").GetString());
         Assert.True(info.GetProperty("inSession").GetBoolean());
         Assert.True(info.GetProperty("context").TryGetProperty("percent", out _));
-        Assert.Equal(-32601, ExtensionHostApi.Handle("x", "ui/open", default).Code);
+        Assert.Equal(-32601, ExtensionHostApi.Handle("x", "ui/nope", default).Code);
         Assert.Equal(-32602, ExtensionHostApi.Handle("x", "ui/toast", P("{}")).Code);
     }
 
