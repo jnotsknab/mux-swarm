@@ -1372,8 +1372,12 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 A trusted process can open full-screen panels that Mux draws from an element tree the process sends
 (`ui/open`, above). Mux renders the cached tree on every paint and never calls the process to draw;
 send `ui/update` with a new tree whenever its content changes. Panels are shown in the TUI from the idle
-prompt (while the draft is empty; one at a time, oldest first). Where nothing can draw them (classic
+prompt (while the draft is empty; one at a time, oldest first) and in the web UI (`--serve`, and the
+desktop app) as a drawer on the right with a tab per open panel. Where nothing can draw them (classic
 renderer, `--stdio`, ACP) `ui/open` returns an error, so fall back to `ui/log` or command output.
+Web clients get `ext_panel` events (`op`: `open` | `update` | `close`, plus `extension`, `id`, `title`,
+`view`), `GET /api/ext/panels` lists the open ones and `POST /api/ext/panels/event`
+(`{ extension, id, key, type, value }`) delivers a user action.
 
 ```jsonc
 { "jsonrpc": "2.0", "id": 7, "method": "ui/open", "params": { "id": "notes", "title": "Notes", "view":
