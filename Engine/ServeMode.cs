@@ -83,6 +83,7 @@ public static partial class ServeMode
         Console.SetOut(new BroadcastWriter(originalOut));
 
         MuxConsole.InputOverride = new WsChannelReader(_inputChannel.Reader);
+        WirePanels();
 
         var wwwroot = ResolveWwwroot();
 
@@ -255,7 +256,9 @@ public static partial class ServeMode
 
                     // No hook event here: the orchestrator that consumes this line emits user_input
                     // (with the real agent) for goals, and command_executed for slash commands.
-                    await _inputChannel.Writer.WriteAsync(msg);
+                    // An immediate extension command runs now, even mid-turn, instead of waiting in the queue.
+                    if (!Extensions.ExtensionCommands.TryRunImmediate(msg))
+                        await _inputChannel.Writer.WriteAsync(msg);
 
                     BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = msg }));
 
@@ -663,6 +666,16 @@ public static partial class ServeMode
         if (!IsServing) return;
         try { BroadcastLine(JsonSerializer.Serialize(payload, _jsonOpts)); }
         catch { /* serialization must never break the agent loop */ }
+    }
+
+    /// <summary>
+    /// Queue <paramref name="line"/> as web input (an extension's prompt/submit or command/run) and
+    /// echo it to every client as <c>user_input</c>, like a line a client sent.
+    /// </summary>
+    internal static void InjectInput(string line)
+    {
+        if (!_inputChannel.Writer.TryWrite(line)) return;
+        BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = line }));
     }
 
     /// <summary>Classify an extension as an image for the attachment event.</summary>

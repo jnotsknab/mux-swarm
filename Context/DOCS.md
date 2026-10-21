@@ -1486,8 +1486,9 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
-- Messages from the process that are not responses are notifications Mux understands:
-  `footer/set` and `command/output` (below). Others are ignored.
+- Messages from the process that are not responses are notifications Mux understands
+  (`footer/set`, `command/output`, below) or requests to Mux (Extension host API, below). Other
+  notifications are ignored.
 
 ### Extension commands
 
@@ -1496,7 +1497,8 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
 
 ```jsonc
 // extension.json
-"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 } ]
+"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 },
+              { "name": "board", "description": "Open the board", "immediate": true } ]
 ```
 
 - `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
@@ -1505,10 +1507,104 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
   running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
 - While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
   Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
-- Reply `result`: `{ "output": "...", "prompt": "..." }`, both optional. `output` is shown to you;
-  `prompt` is sent to the agent as if you typed it (at the menu, where there is no agent, it is shown).
+- Reply `result`: `{ "output": "...", "prompt": "...", "open": { "id", "title", "view" } }`, all optional;
+  `{}` shows nothing. `output` is shown to you; `prompt` is sent to the agent as if you typed it (at the
+  menu, where there is no agent, it is shown); `open` opens a panel exactly like `ui/open` (below).
   A JSON-RPC `error` is shown as a warning.
+- `immediate: true` runs the command at once even while the agent is working: in the TUI type it in the
+  steer box (Ctrl+N), on the web or `--stdio` just send it. `command/run` then also carries
+  `immediate: true`. It never starts a turn itself (a returned `prompt` is queued as the next input) and
+  only its `timeoutSeconds` ends it (Esc keeps cancelling the turn). Default `false`: a command typed
+  mid-turn waits for the turn to end.
 - `/share` guests cannot run extension commands.
+
+### Extension host API
+
+A trusted process can also send requests TO Mux (with an `id`; Mux replies with the same id, `result`
+or a JSON-RPC `error`). Requests are answered while a command, tool or event is in progress too.
+
+| Method | Params | Result |
+|---|---|---|
+| `session/info` | none | `{ mode, inSession, agent, model, sessionId, cwd, surface, muxVersion, context: { tokens, window, percent } }` |
+| `ui/toast` | `{ text }` | `{}`: a short notice (TUI: above the footer for 4s; web: a toast; classic: an info line) |
+| `ui/log` | `{ text }` | `{}`: a muted line in the transcript; the model does not read it |
+| `ui/open` | `{ id, title?, view, placement?, columns?, rows? }` | `{}`: opens (or replaces) panel `id` (see Extension panels) |
+| `ui/update` | `{ id, view }` | `{}`: replaces the tree of open panel `id` |
+| `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
+| `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
+| `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
+
+- `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
+  (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- `prompt/submit` and `command/run` queue the line as input: it runs when the session is idle (after the
+  current turn), and in the TUI only while your draft is empty. The transcript shows
+  `sent by extension <name>`. Not available in the classic renderer or over ACP.
+- `prompt/submit` needs a running session (`/agent`, `/swarm`, `/pswarm`), max 64,000 characters, and
+  cannot start with `/` (use `command/run`) or `!`.
+- `command/run` takes one line: any extension command, or one of these built-ins: `/compact`,
+  `/prune`, `/handoff`, `/tokens`, `/context`, `/cost`, `/diff`, `/status`, `/help`, `/retry`, `/undo`,
+  `/redo`, `/effort`, `/max`, `/tag`, `/theme`, `/verbose`, `/subagentview`, `/daemonview`, `/plan`,
+  `/ultra`, `/giga`, `/tools`, `/skills`, `/sessions`, `/model`, `/limits`, `/doctor`, `/review`,
+  `/clear`, `/shortcuts`. Anything else (trust, sandbox, config, providers, sharing, exit) is refused.
+- Errors: `-32601` unknown method, `-32602` invalid params, `1` refused (the message says why).
+
+### Extension panels
+
+A trusted process can open full-screen panels that Mux draws from an element tree the process sends
+(`ui/open`, above). Mux renders the cached tree on every paint and never calls the process to draw;
+send `ui/update` with a new tree whenever its content changes. Panels are shown in the TUI from the idle
+prompt (while the draft is empty; one at a time, oldest first) and in the web UI (`--serve`, and the
+desktop app) as a drawer on the right with a tab per open panel. Where nothing can draw them (classic
+renderer, `--stdio`, ACP) `ui/open` returns an error, so fall back to `ui/log` or command output.
+Web clients get `ext_panel` events (`op`: `open` | `update` | `close`, plus `extension`, `id`, `title`,
+`view`), `GET /api/ext/panels` lists the open ones and `POST /api/ext/panels/event`
+(`{ extension, id, key, type, value }`) delivers a user action.
+
+```jsonc
+{ "jsonrpc": "2.0", "id": 7, "method": "ui/open", "params": { "id": "notes", "title": "Notes", "view":
+  { "type": "box", "children": [
+      { "type": "input", "key": "new", "placeholder": "add a note" },
+      { "type": "list", "key": "notes", "items": [ { "value": "1", "label": "buy milk", "detail": "today" } ] },
+      { "type": "box", "dir": "row", "gap": 2, "children": [
+          { "type": "button", "key": "clear", "label": "Clear", "hotkey": "c" },
+          { "type": "progress", "value": 0.5, "label": "synced" } ] } ] } } }
+```
+
+| Element | Props |
+|---|---|
+| `box` | `dir` (`col` default, `row` = children side by side), `gap` (0-8), `border` (`none`, `single`, `round`), `children` |
+| `text` | `text` (may contain newlines), `color`, `bold`, `dim` |
+| `button` | `key` (required), `label`, `hotkey` (one letter or digit) |
+| `input` | `key` (required), `placeholder`, `value` |
+| `list` | `key` (required), `items` (`[{ value, label?, detail? }]`), `selected` (an item value) |
+| `markdown` | `text` (rendered like agent replies) |
+| `code` | `text` (monospace, no wrapping changes) |
+| `progress` | `value` (0-1), `label` |
+
+- `color` is a theme role: `text`, `muted`, `accent`, `success`, `warning`, `error`, `info`.
+- Keys: letters, digits, `-`, `_` (max 64), unique within a tree. Panel ids follow the same rule; at
+  most 8 open panels per extension.
+- Unknown elements or props, a bad value, more than 2,000 elements, 100,000 characters of text or 32
+  nested elements fail the request with an error naming the problem; the panel keeps its last tree.
+- User actions arrive as notifications `ui/event` `{ id, key, type, value }`: `press` (button),
+  `submit` (input; `value` = the text, the field then clears), `select` (list; `value` = the item value),
+  `close` (the user pressed Esc; `key` is null). A panel the extension closes sends no `close` event.
+- Keys: Tab / Shift+Tab or Up/Down move focus (Up/Down move inside a focused list), Enter
+  activates, a button's hotkey presses it (outside an input), PgUp/PgDn and the wheel scroll, Esc closes.
+  Mouse clicks press buttons and select list rows. Typed text, focus and list position survive `ui/update`.
+- Panels close when the process exits or is stopped (`/refresh`).
+- `placement` (default `screen`): `screen` = the full-screen view above; `side` = docked to the right of the
+  transcript (`columns` wide, default 48, at most 45% of the terminal and always leaving 60 columns for the
+  transcript); `band` = a strip above the prompt (`rows` tall, default 6, at most a third of the screen);
+  `auto` = `side` from 144 terminal columns, else `band`. Docked panels stay up while you type and while
+  the agent works, and redraw on every `ui/update`. Side panes need the frame renderer (`renderEngine:
+  frame`); the inline renderer and narrow terminals show them as a band. Several docked panels share the
+  spot with a tab per panel. In the web UI `side` docks the drawer beside the chat (it overlays on phones),
+  `band` is a strip above the composer, and `auto` picks `side` from 1100px wide. Web events carry `placement`.
+- Docked panels never take keys on their own: F6 moves the keyboard into them (F6 / Shift+F6 cycle, past
+  the last one returns to the prompt), and so does clicking a control. While focused, keys work as in the
+  full-screen view; Esc returns to the prompt and the panel stays open (no `close` event). This works at
+  the idle prompt and mid-turn (Esc then does not cancel the turn).
 
 ### Extension footer chips
 

@@ -93,6 +93,9 @@ public sealed class StdinCancelMonitor : IDisposable
         return _lineQueue.Take(cancellationToken);
     }
 
+    /// <summary>Queue <paramref name="line"/> as if it had been read from stdin (extension input).</summary>
+    internal void Inject(string line) => _lineQueue.Add(line);
+
     /// <summary>
     /// Try to read a line without blocking. Returns null if nothing queued.
     /// </summary>
@@ -151,6 +154,7 @@ public sealed class StdinCancelMonitor : IDisposable
                     continue; // Don't queue __CANCEL__ as user input
                 }
 
+                if (Extensions.ExtensionCommands.TryRunImmediate(line)) continue;   // runs now, even mid-turn
                 _lineQueue.Add(line);
             }
         }

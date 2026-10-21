@@ -69,6 +69,9 @@ public sealed class EscapeKeyListener : IDisposable
     /// under ConsoleLock on this listener thread.</summary>
     internal static Action<Tui.ConsoleInputPump.InputEvent>? OnMouseEvent { get; set; }
 
+    /// <summary>Mid-turn key hook for docked extension panels (F6 focus; keys while one is focused). True = consumed.</summary>
+    internal static Func<ConsoleKeyInfo, bool>? OnDockKey { get; set; }
+
     private EscapeKeyListener(CancellationTokenSource listenerCts)
     {
         _listenerCts = listenerCts;
@@ -236,6 +239,13 @@ public sealed class EscapeKeyListener : IDisposable
                             int revoked = Share.ShareHost.RevokeAllTyping();
                             MuxConsole.WriteMuted(revoked > 0 ? "Guest typing revoked." : "No guest can type.");
                             continue;
+                        }
+                        // Docked extension panel focus (F6) owns the keyboard, Esc included (it hands focus back).
+                        if (OnDockKey is { } dock)
+                        {
+                            bool used = false;
+                            try { used = dock(key); } catch { /* panels are best-effort */ }
+                            if (used) continue;
                         }
                         bool cancelKey = key.Key == ConsoleKey.Escape
                             || (key.Key == ConsoleKey.Q && !key.Modifiers.HasFlag(ConsoleModifiers.Alt)

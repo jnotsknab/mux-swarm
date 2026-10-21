@@ -2086,6 +2086,7 @@ public static class CliCmdUtils
             ("Slash command (process)", Extensions.ExtensionScaffold.Parts.Command),
             ("Agent tool (process)", Extensions.ExtensionScaffold.Parts.Tool),
             ("Tool interceptor (process)", Extensions.ExtensionScaffold.Parts.Intercept),
+            ("Panel + command that opens it (process)", Extensions.ExtensionScaffold.Parts.Panel),
         };
         var picked = MuxConsole.MultiSelect("What should it include?", choices.Select(c => c.Label));
         var parts = choices.Where(c => picked.Contains(c.Label)).Aggregate(Extensions.ExtensionScaffold.Parts.None, (a, c) => a | c.Part);
@@ -2131,7 +2132,7 @@ public static class CliCmdUtils
         - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
         - Read these two sections of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full FIRST (grep for the
           headings, then read to the next '## '): '## Extensions' (every manifest key, built-in theme names, footer
-          ids, limits, the JSON-RPC protocol both ways, trust, sandbox) and '## Event Hooks' (the table of every
+          ids, limits, the JSON-RPC protocol both ways incl. the host API and panel elements, trust, sandbox) and '## Event Hooks' (the table of every
           event name and the fields it carries). Use only what they document; if you need something they do not
           cover, say so instead of guessing.
         - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).{(process ? ProcessRules : "")}

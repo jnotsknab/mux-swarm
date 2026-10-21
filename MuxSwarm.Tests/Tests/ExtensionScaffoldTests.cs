@@ -19,7 +19,8 @@ public sealed class ExtensionScaffoldTests : IDisposable
     public void Scaffold_WritesAnExtensionThatLoadsClean()
     {
         var all = ExtensionScaffold.Parts.Theme | ExtensionScaffold.Parts.Cosmetics | ExtensionScaffold.Parts.FooterChip
-                  | ExtensionScaffold.Parts.Command | ExtensionScaffold.Parts.Tool | ExtensionScaffold.Parts.Intercept;
+                  | ExtensionScaffold.Parts.Command | ExtensionScaffold.Parts.Tool | ExtensionScaffold.Parts.Intercept
+                  | ExtensionScaffold.Parts.Panel;
         var dir = ExtensionScaffold.Scaffold(_root, "My-Ext", "Does things", all, out var error);
         Assert.NotNull(dir);
         Assert.Equal("", error);
@@ -31,7 +32,8 @@ public sealed class ExtensionScaffoldTests : IDisposable
         Assert.Equal("my-ext", ext.Name);
         Assert.Equal("Does things", ext.Description);
         Assert.Equal(["my-ext"], ext.Themes);
-        Assert.Equal(["/my-ext"], ext.Commands.Select(c => c.Cmd));
+        Assert.Equal(["/my-ext", "/my-ext-panel"], ext.Commands.Select(c => c.Cmd));
+        Assert.True(ext.Commands[1].Immediate);
         Assert.Equal("hello", Assert.Single(ext.Tools).Name);
         Assert.Single(ext.Intercepts);
         Assert.NotNull(ext.Process);
@@ -73,7 +75,7 @@ public sealed class ExtensionScaffoldTests : IDisposable
     [Fact]
     public void ScaffoldedProcess_SpeaksTheProtocol()
     {
-        var dir = ExtensionScaffold.Scaffold(_root, "proto", null, ExtensionScaffold.Parts.Command | ExtensionScaffold.Parts.Tool, out _)!;
+        var dir = ExtensionScaffold.Scaffold(_root, "proto", null, ExtensionScaffold.Parts.Command | ExtensionScaffold.Parts.Tool | ExtensionScaffold.Parts.Panel, out _)!;
         string py = OperatingSystem.IsWindows() ? "python" : "python3";
         var psi = new System.Diagnostics.ProcessStartInfo(py) { ArgumentList = { "-u", "main.py" }, WorkingDirectory = dir,
             RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false,
@@ -85,6 +87,9 @@ public sealed class ExtensionScaffoldTests : IDisposable
             """{"jsonrpc":"2.0","id":1,"method":"command/run","params":{"name":"proto","args":"\u263d"}}""",
             """{"jsonrpc":"2.0","id":2,"method":"tool/call","params":{"name":"hello","arguments":{"who":"J"}}}""",
             """{"jsonrpc":"2.0","id":3,"method":"tool/after","params":{"tool":"t","result":"r"}}""",
+            """{"jsonrpc":"2.0","id":4,"method":"command/run","params":{"name":"proto-panel","args":""}}""",
+            """{"jsonrpc":"2.0","method":"ui/event","params":{"id":"main","key":"click","type":"press"}}""",
+            """{"jsonrpc":"2.0","id":"upd","result":{}}""",
         }) p.StandardInput.WriteLine(line);
         p.StandardInput.Close();
         var output = p.StandardOutput.ReadToEnd();
@@ -94,6 +99,13 @@ public sealed class ExtensionScaffoldTests : IDisposable
         Assert.Contains("\"id\": 1, \"result\": {\"output\": \"hello from proto", output);
         Assert.Contains("\"content\": \"hello J\"", output);
         Assert.Contains("\"id\": 3, \"result\": {}", output);
+        // The panel command replies with a tree that validates, and a click pushes ui/update.
+        var open = output.Split('\n').Select(l => l.Trim()).First(l => l.Contains("\"id\": 4"));
+        var view = System.Text.Json.JsonDocument.Parse(open).RootElement.GetProperty("result").GetProperty("open").GetProperty("view");
+        Assert.Null(ExtensionPanels.Parse(view, out _));
+        Assert.Contains("\"method\": \"ui/update\"", output);
+        Assert.Contains("1 clicks", output);
+        Assert.DoesNotContain("unknown method", output);   // the reply to our own request was skipped
     }
 
     [Fact]

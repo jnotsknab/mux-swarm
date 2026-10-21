@@ -6,7 +6,8 @@ namespace MuxSwarm.Engine.Extensions;
 /// Slash commands served by extension processes. <c>/name args</c> sends a <c>command/run</c>
 /// request to the owning process; while it runs, <c>command/output</c> notifications are shown live
 /// and Esc cancels (Mux sends <c>$/cancelRequest</c>). The reply may carry <c>output</c> (shown to the
-/// user) and <c>prompt</c> (sent to the agent as if the user typed it). Built-in names are never taken.
+/// user), <c>prompt</c> (sent to the agent as if the user typed it) and <c>open</c> (a panel, as
+/// <c>ui/open</c>). Built-in names are never taken. <c>immediate</c> commands also run mid-turn.
 /// </summary>
 internal static class ExtensionCommands
 {
@@ -72,6 +73,34 @@ internal static class ExtensionCommands
         return Interpret(cmd, reply, cancelled: cts.IsCancellationRequested, running: proc.IsRunning);
     }
 
+    /// <summary>
+    /// If <paramref name="line"/> invokes an <c>immediate</c> command, start it in the background and
+    /// return true (the caller drops the line instead of queuing it). Its output shows as usual, a
+    /// returned prompt is queued as the next input, and Esc never waits on it (only its timeout ends it).
+    /// </summary>
+    internal static bool TryRunImmediate(string? line)
+    {
+        if (Match(line) is not { Immediate: true } cmd) return false;
+        _ = Task.Run(async () =>
+        {
+            var proc = ExtensionHost.Running.FirstOrDefault(p => p.Name == cmd.Extension);
+            if (proc is not { IsRunning: true })
+            {
+                MuxConsole.WriteWarning($"{cmd.Cmd}: extension '{cmd.Extension}' is not running (see /extensions).");
+                return;
+            }
+            var trimmed = line!.Trim();
+            string args = trimmed.Length > cmd.Cmd.Length ? trimmed[cmd.Cmd.Length..].Trim() : "";
+            var reply = await proc.RequestAsync("command/run",
+                new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode, immediate = true },
+                TimeSpan.FromSeconds(cmd.TimeoutSeconds));
+            if (Interpret(cmd, reply, cancelled: false, running: proc.IsRunning).Prompt is { } prompt
+                && ExtensionHostApi.Inject(cmd.Extension, prompt) is { } why)
+                MuxConsole.WriteWarning($"{cmd.Cmd}: prompt not sent ({why}).");
+        });
+        return true;
+    }
+
     /// <summary>Turn a <c>command/run</c> response into output + an optional prompt. Pure, for tests.</summary>
     internal static Outcome Interpret(ExtensionRegistry.ExtensionCommand cmd, JsonElement reply, bool cancelled, bool running)
     {
@@ -90,6 +119,15 @@ internal static class ExtensionCommands
         if (!reply.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object) return new(true, null);
         if (result.TryGetProperty("output", out var output) && output.ValueKind == JsonValueKind.String && output.GetString() is { Length: > 0 } text)
             MuxConsole.WritePanel(cmd.Cmd, text);
+        // "open": { id, title?, view } = ui/open in the same reply (saves a round trip).
+        if (result.TryGetProperty("open", out var open) && open.ValueKind == JsonValueKind.Object)
+        {
+            string? Str(string k) => open.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+            var view = open.TryGetProperty("view", out var v) ? v : default;
+            int? Int(string k) => open.TryGetProperty(k, out var n) && n.TryGetInt32(out var i) ? i : null;
+            if (ExtensionPanels.Open(cmd.Extension, Str("id") ?? "", Str("title"), view, Str("placement"), Int("columns"), Int("rows")) is { } err)
+                MuxConsole.WriteWarning($"{cmd.Cmd}: panel not opened: {err}");
+        }
         string? prompt = result.TryGetProperty("prompt", out var p) && p.ValueKind == JsonValueKind.String
             && !string.IsNullOrWhiteSpace(p.GetString()) ? p.GetString() : null;
         return new(true, prompt);

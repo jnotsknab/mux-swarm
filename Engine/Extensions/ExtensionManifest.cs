@@ -153,6 +153,14 @@ internal sealed class ExtensionCommandSpec
     /// <summary>Seconds to wait for the reply (default 60, max 3600). Esc cancels earlier.</summary>
     [JsonPropertyName("timeoutSeconds")]
     public int? TimeoutSeconds { get; set; }
+
+    /// <summary>
+    /// Run at once even while the agent is working (default false: a command typed mid-turn waits
+    /// for the turn). Typed mid-turn via the steer box (Ctrl+N) in the TUI, or sent from the web /
+    /// stdio composer. Never starts a turn itself; a returned <c>prompt</c> is queued.
+    /// </summary>
+    [JsonPropertyName("immediate")]
+    public bool? Immediate { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
