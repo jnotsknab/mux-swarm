@@ -63,6 +63,16 @@ internal sealed class ExtensionPanelView
 
     private ExtensionPanels.Node? Focused => _focusables.Count == 0 ? null : _focusables[_focus];
 
+    /// <summary>
+    /// Entering a docked panel: start on its first button or list so hotkeys work (an input would swallow
+    /// them); an input only when the panel has nothing else. Tab still reaches every control.
+    /// </summary>
+    internal void FocusForEntry()
+    {
+        int i = _focusables.FindIndex(n => n.Type != "input");
+        _focus = i >= 0 ? i : 0;
+    }
+
     /// <summary>Handle a key. <paramref name="page"/> = rows scrolled by PgUp/PgDn.</summary>
     internal Outcome Handle(ConsoleKeyInfo k, int page)
     {

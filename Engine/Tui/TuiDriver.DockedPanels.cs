@@ -120,6 +120,7 @@ internal sealed partial class TuiDriver
         int i = _dockFocus is { } f ? docked.IndexOf(f) : -1;
         int next = back ? (i < 0 ? docked.Count - 1 : i - 1) : i + 1;
         _dockFocus = next >= 0 && next < docked.Count ? docked[next] : null;
+        if (_dockFocus is { } nf && ExtensionPanels.Get(nf.Item1, nf.Item2) is { } np) DockView(np).FocusForEntry();
         return true;
     }
 
