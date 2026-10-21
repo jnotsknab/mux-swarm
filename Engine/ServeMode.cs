@@ -669,6 +669,16 @@ public static partial class ServeMode
         catch { /* serialization must never break the agent loop */ }
     }
 
+    /// <summary>
+    /// Queue <paramref name="line"/> as web input (an extension's prompt/submit or command/run) and
+    /// echo it to every client as <c>user_input</c>, like a line a client sent.
+    /// </summary>
+    internal static void InjectInput(string line)
+    {
+        if (!_inputChannel.Writer.TryWrite(line)) return;
+        BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = line }));
+    }
+
     /// <summary>Classify an extension as an image for the attachment event.</summary>
     private static bool IsImageExt(string ext) => ext.ToLowerInvariant() switch
     {

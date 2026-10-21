@@ -248,14 +248,22 @@ internal sealed class ExtensionProcess : IDisposable
     }
 
     /// <summary>
-    /// A message from the process that is not a response: notifications <c>footer/set</c>
-    /// <c>{ id, text }</c> (empty text removes the chip) and <c>command/output</c> <c>{ text }</c>.
-    /// Anything else is ignored. Requests from the process (with an id) are not supported yet.
+    /// A message from the process that is not a response. Requests (with an <c>id</c>) go to
+    /// <see cref="ExtensionHostApi"/> off the reader thread and are answered through the outbox.
+    /// Notifications: <c>footer/set</c> <c>{ id, text }</c> (empty text removes the chip) and
+    /// <c>command/output</c> <c>{ text }</c>. Anything else is ignored.
     /// </summary>
     private void OnMessage(JsonElement msg)
     {
         if (msg.ValueKind != JsonValueKind.Object || !msg.TryGetProperty("method", out var m) || m.ValueKind != JsonValueKind.String) return;
         msg.TryGetProperty("params", out var p);
+        if (msg.TryGetProperty("id", out var reqId))
+        {
+            // Never handled on the stdout reader: a handler may wait on the console lock.
+            var (id, method, args) = (reqId.Clone(), m.GetString()!, p.ValueKind == JsonValueKind.Undefined ? default : p.Clone());
+            _ = Task.Run(() => Respond(id, ExtensionHostApi.Handle(Name, method, args)));
+            return;
+        }
         string? Str(string key) => p.ValueKind == JsonValueKind.Object && p.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         switch (m.GetString())
         {
@@ -266,6 +274,15 @@ internal sealed class ExtensionProcess : IDisposable
                 if (Str("text") is { Length: > 0 } text) CommandOutput?.Invoke(text);
                 break;
         }
+    }
+
+    // Answer a request from the process with the same id (result or JSON-RPC error).
+    private void Respond(JsonElement id, ExtensionHostApi.Reply reply)
+    {
+        var msg = new Dictionary<string, object?> { ["jsonrpc"] = "2.0", ["id"] = id };
+        if (reply.Error is null) msg["result"] = reply.Result ?? new { };
+        else msg["error"] = new { code = reply.Code, message = reply.Error };
+        _outbox.Writer.TryWrite(JsonSerializer.Serialize(msg, JsonOpts));
     }
 
     private async Task ReadStderrAsync()

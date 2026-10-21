@@ -861,6 +861,7 @@ public static partial class MuxConsole
     /// <summary>Set/clear the active-session id badge shown in the docked footer.</summary>
     public static void SetTuiSessionId(string? sessionId)
     {
+        CurrentSessionId = sessionId;
         if (!TuiActive) return;
         lock (ConsoleLock) { _driver!.SetSessionId(sessionId); }
     }
