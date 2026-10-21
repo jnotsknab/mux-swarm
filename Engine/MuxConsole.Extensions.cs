@@ -39,6 +39,14 @@ public static partial class MuxConsole
         return false;
     }
 
+    /// <summary>
+    /// Why extension panels cannot show right now, or null when they can: the TUI (shown from the
+    /// idle prompt) with keyboard input.
+    /// </summary>
+    internal static string? PanelsUnavailable() =>
+        ViaDriver && InputOverride == Console.In && ConsoleInputPump.Current is { Disposed: false } ? null
+            : $"panels are not available on this surface ({Surface})";
+
     /// <summary>Drop queued extension input (tests, teardown).</summary>
     internal static void ClearInjected() { while (_injected.TryDequeue(out _)) { } }
 

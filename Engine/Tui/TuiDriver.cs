@@ -3307,6 +3307,7 @@ internal sealed partial class TuiDriver
                         // Share guests allowed to type feed the draft from their own queue (never the pump).
                         if (DrainRemoteInput() is { } remoteLine) return remoteLine;
                         if (TakeInjectedLine() is { } injected) return injected;
+                        if (RunOpenPanels(pump)) { Repaint(); continue; }
                         if (Voice.VoiceSession.IsActive)
                         {
                             // /voice on: poll so the loop services transcript injects, voice-driven

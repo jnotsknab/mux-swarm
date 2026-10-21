@@ -1,5 +1,6 @@
 using System.Text.Json;
 using MuxSwarm.Engine.Extensions;
+using MuxSwarm.Engine.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
@@ -94,5 +95,145 @@ public sealed class ExtensionPanelsTests : IDisposable
         ExtensionPanels.Surface = () => "panels are not available on this surface (classic)";
         Assert.Contains("classic", ExtensionHostApi.Handle("x", "ui/open", J("""{ "id": "a", "view": { "type": "text" } }""")).Error);
         Assert.Empty(ExtensionPanels.All());
+    }
+
+    private ExtensionPanelView View()
+    {
+        Assert.Null(ExtensionPanels.Open("notes", "main", "Notes", J(Notes)));
+        return new ExtensionPanelView(ExtensionPanels.Get("notes", "main")!);
+    }
+
+    private static ConsoleKeyInfo K(ConsoleKey k, char c = '\0', bool shift = false) => new(c, k, shift, false, false);
+
+    [Fact]
+    public void View_Renders_ThemedRows_AndFocusMovesInTreeOrder()
+    {
+        var v = View();
+        var plain = v.Render(70, 20).Select(TuiMarkup.Plain).ToList();
+        Assert.Contains(plain, r => r.Contains("NOTES") && r.Contains("notes"));
+        Assert.Contains(plain, r => r.Contains("buy milk") && r.Contains("today"));
+        Assert.Contains(plain, r => r.Contains("c: Clear"));
+        Assert.Contains(plain, r => r.Contains(" 50%") && r.Contains("half"));
+        Assert.Equal(20, plain.Count);
+
+        Assert.Equal("new", v.FocusedKey);
+        v.Handle(K(ConsoleKey.Tab), 5);
+        Assert.Equal("notes", v.FocusedKey);
+        v.Handle(K(ConsoleKey.Tab), 5);
+        Assert.Equal("clear", v.FocusedKey);
+        v.Handle(K(ConsoleKey.Tab, shift: true), 5);
+        Assert.Equal("notes", v.FocusedKey);
+    }
+
+    [Fact]
+    public void View_Keys_ProduceEvents_InputSubmit_ListSelect_Hotkey_Esc()
+    {
+        var v = View();
+        foreach (char c in "hi c") v.Handle(K(ConsoleKey.NoName, c), 5);   // 'c' types: the input has focus
+        var submit = v.Handle(K(ConsoleKey.Enter), 5);
+        Assert.Equal(("new", "submit", "hi c"), (submit.Key, submit.Type, submit.Value));
+
+        v.Handle(K(ConsoleKey.Tab), 5);
+        v.Handle(K(ConsoleKey.DownArrow), 5);   // inside the list: moves the row, not the focus
+        var select = v.Handle(K(ConsoleKey.Enter), 5);
+        Assert.Equal(("notes", "select", "2"), (select.Key, select.Type, select.Value));
+
+        var hot = v.Handle(K(ConsoleKey.C, 'c'), 5);   // outside an input the hotkey presses Clear
+        Assert.Equal(("clear", "press"), (hot.Key, hot.Type));
+        Assert.True(v.Handle(K(ConsoleKey.Escape), 5).Close);
+    }
+
+    [Fact]
+    public void View_Clicks_HitTheControlsTheyDrew()
+    {
+        var v = View();
+        var hits = new MouseHitMap();
+        var rows = v.Render(70, 20, hits).Select(TuiMarkup.Plain).ToList();
+        int milk = rows.FindIndex(r => r.Contains("ship it")) + 1;   // 1-based screen row
+        int col = rows[milk - 1].IndexOf("ship it", StringComparison.Ordinal) + 1;
+        Assert.True(hits.TryHit(milk, col, out var hit, out _, out _));
+        var (index, row) = ExtensionPanelView.DecodeHit(hit.Payload);
+        var o = v.Click(index, row);
+        Assert.Equal(("notes", "select", "2"), (o.Key, o.Type, o.Value));
+
+        int btn = rows.FindIndex(r => r.Contains("c: Clear")) + 1;
+        Assert.True(hits.TryHit(btn, rows[btn - 1].IndexOf("Clear", StringComparison.Ordinal) + 1, out hit, out _, out _));
+        Assert.Equal("press", v.Click(ExtensionPanelView.DecodeHit(hit.Payload).Index).Type);
+    }
+
+    [Fact]
+    public void View_Update_KeepsFocusAndTypedText_AndCloseByUserNotifies()
+    {
+        var v = View();
+        v.Handle(K(ConsoleKey.NoName, 'x'), 5);
+        v.Handle(K(ConsoleKey.Tab), 5);
+        ExtensionPanels.Update("notes", "main", J(Notes.Replace("ship it", "shipped")));
+        v.Update(ExtensionPanels.Get("notes", "main")!);
+        Assert.Equal("notes", v.FocusedKey);
+        Assert.Contains(v.Render(70, 20).Select(TuiMarkup.Plain), r => r.Contains("shipped"));
+        Assert.Contains(v.Render(70, 20).Select(TuiMarkup.Plain), r => r.Contains("\u203a x"));
+
+        ExtensionPanels.Close("notes", "main", byUser: true);
+        var (ext, method, json) = Assert.Single(_sent);
+        Assert.Equal(("notes", "ui/event"), (ext, method));
+        Assert.Contains("\"type\":\"close\"", json);
+    }
+
+    private sealed class Terminal : ITuiTerminal
+    {
+        private readonly System.Text.StringBuilder _out = new();
+        public int Width => 80;
+        public int Height => 24;
+        public void Write(string text) { lock (_out) _out.Append(text); }
+        public void Flush() { }
+        internal string Plain() { lock (_out) return System.Text.RegularExpressions.Regex.Replace(_out.ToString(), "\u001b\\[[0-9;?]*[A-Za-z]", ""); }
+    }
+
+    // The idle prompt shows an open panel, routes keys to it as ui/event, then returns to the prompt.
+    [Fact]
+    public async Task IdlePrompt_ShowsOpenPanel_SendsEvents_AndReturnsOnEsc()
+    {
+        var term = new Terminal();
+        using var pump = ConsoleInputPump.CreateUnstartedForTest();
+        var driver = new TuiDriver(term, frameEngine: false);
+        Assert.Null(ExtensionPanels.Open("notes", "main", "Notes", J(Notes)));
+        var read = Task.Run(() => driver.ReadLineCore(pump));
+        try
+        {
+            for (int i = 0; i < 50 && !term.Plain().Contains("NOTES"); i++) await Task.Delay(50);
+            Assert.Contains("buy milk", term.Plain());
+            foreach (char c in "ok") pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.NoName, c)));
+            pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.Enter, '\r')));
+            pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.Escape)));
+            for (int i = 0; i < 50 && ExtensionPanels.All().Count > 0; i++) await Task.Delay(50);
+            Assert.Empty(ExtensionPanels.All());
+            lock (_sent)
+            {
+                Assert.Contains(_sent, s => s.Json.Contains("\"type\":\"submit\"") && s.Json.Contains("\"value\":\"ok\""));
+                Assert.Contains(_sent, s => s.Json.Contains("\"type\":\"close\""));
+            }
+            // Back at the prompt: typing reaches the editor again.
+            foreach (char c in "hi") pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.NoName, c)));
+            pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.Enter, '\r')));
+            Assert.Equal("hi", await read.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        finally
+        {
+            pump.Dispose();
+            try { await read.WaitAsync(TimeSpan.FromSeconds(3)); } catch { }
+            driver.Shutdown();
+        }
+    }
+
+    [Fact]
+    public void View_SmallTerminal_AndLongContentScrolls()
+    {
+        var v = View();
+        Assert.Contains("Resize", string.Join("\n", v.Render(20, 5).Select(TuiMarkup.Plain)));
+        ExtensionPanels.Update("notes", "main", J("""{ "type": "text", "text": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nlast line" }"""));
+        v.Update(ExtensionPanels.Get("notes", "main")!);
+        Assert.DoesNotContain(v.Render(60, 10).Select(TuiMarkup.Plain), r => r.Contains("last line"));
+        v.Handle(K(ConsoleKey.PageDown), 50);
+        Assert.Contains(v.Render(60, 10).Select(TuiMarkup.Plain), r => r.Contains("last line"));
     }
 }
