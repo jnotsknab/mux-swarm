@@ -45,11 +45,24 @@ internal static class ExtensionPanels
     /// <summary>One <c>list</c> row: <c>value</c> is sent back on select.</summary>
     internal sealed record Item(string Value, string Label, string? Detail);
 
-    /// <summary>An open panel. <paramref name="View"/> is the tree as the process sent it (for the web).</summary>
-    internal sealed record Panel(string Extension, string Id, string Title, Node Root, JsonElement View, int Version);
+    /// <summary>Where a panel shows: full screen, docked beside the transcript, a band above the prompt, or auto.</summary>
+    internal static readonly string[] Placements = ["screen", "side", "band", "auto"];
+
+    /// <summary>
+    /// An open panel. <paramref name="View"/> is the tree as the process sent it (for the web).
+    /// <paramref name="Placement"/> is one of <see cref="Placements"/>; <paramref name="Columns"/> /
+    /// <paramref name="Rows"/> are optional size hints for side / band.
+    /// </summary>
+    internal sealed record Panel(string Extension, string Id, string Title, Node Root, JsonElement View, int Version,
+        string Placement = "screen", int? Columns = null, int? Rows = null);
 
     private static readonly object Gate = new();
     private static readonly Dictionary<(string Ext, string Id), Panel> Open_ = new();
+
+    private static int _generation;
+
+    /// <summary>Bumped on every open, update and close, so renderers can poll for changes cheaply.</summary>
+    internal static int Generation => Volatile.Read(ref _generation);
 
     /// <summary>Raised (on the caller's thread) after a panel opens or its tree changes.</summary>
     internal static event Action<Panel>? Changed;
@@ -76,9 +89,12 @@ internal static class ExtensionPanels
     private static int _version;
 
     /// <summary>Open (or re-open with a new tree) a panel. Returns null on success, else the error.</summary>
-    internal static string? Open(string ext, string id, string? title, JsonElement view)
+    internal static string? Open(string ext, string id, string? title, JsonElement view,
+        string? placement = null, int? columns = null, int? rows = null)
     {
         if (!IsValidId(id)) return "params.id must be 1-64 letters, digits, '-' or '_'";
+        placement ??= "screen";
+        if (!Placements.Contains(placement)) return $"params.placement must be one of {string.Join(", ", Placements)}";
         if (Surface() is { } why) return why;
         if (Parse(view, out var root) is { } error) return error;
         Panel panel;
@@ -86,9 +102,11 @@ internal static class ExtensionPanels
         {
             if (!Open_.ContainsKey((ext, id)) && Open_.Keys.Count(k => k.Ext == ext) >= MaxPanelsPerExtension)
                 return $"at most {MaxPanelsPerExtension} open panels per extension";
-            panel = new Panel(ext, id, Clean(title, 80) is { Length: > 0 } t ? t : id, root!, view.Clone(), Interlocked.Increment(ref _version));
+            panel = new Panel(ext, id, Clean(title, 80) is { Length: > 0 } t ? t : id, root!, view.Clone(), Interlocked.Increment(ref _version),
+                placement, columns is { } c ? Math.Clamp(c, 20, 200) : null, rows is { } r ? Math.Clamp(r, 1, 100) : null);
             Open_[(ext, id)] = panel;
         }
+        Interlocked.Increment(ref _generation);
         Changed?.Invoke(panel);
         return null;
     }
@@ -104,6 +122,7 @@ internal static class ExtensionPanels
             panel = old with { Root = root!, View = view.Clone(), Version = Interlocked.Increment(ref _version) };
             Open_[(ext, id)] = panel;
         }
+        Interlocked.Increment(ref _generation);
         Changed?.Invoke(panel);
         return null;
     }
@@ -115,6 +134,7 @@ internal static class ExtensionPanels
     internal static bool Close(string ext, string id, bool byUser)
     {
         lock (Gate) if (!Open_.Remove((ext, id))) return false;
+        Interlocked.Increment(ref _generation);
         Closed?.Invoke(ext, id);
         if (byUser) SendEvent(ext, id, null, "close", null);
         return true;
