@@ -1291,7 +1291,9 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
             choices: null);
         if (res is null || res.Cancelled || string.IsNullOrWhiteSpace(res.Text)) return null;
         string trace = TuiMarkup.TruncatePlain(res.Text!.Replace("\r", " ").Replace("\n", " "), 60);
-        CommitToDriver($"  [{TC.Dim}]\u21b3 steer \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
+        // An immediate extension command typed here runs instead of steering (the caller dispatches it).
+        string kind = Extensions.ExtensionCommands.Match(res.Text) is { Immediate: true } ? "ran" : "steer";
+        CommitToDriver($"  [{TC.Dim}]\u21b3 {kind} \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
         return res.Text;
     }
 
