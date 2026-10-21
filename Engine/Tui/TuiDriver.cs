@@ -364,6 +364,8 @@ internal sealed partial class TuiDriver
     /// <summary>Request an input-area repaint on the next voice poll tick (thread-safe).</summary>
     public void VoiceRepaintSoon() { _voiceDirty = true; }
 
+    private int _panelGeneration;
+
     // Extension toast (ui/toast): one muted line above the footer rule until it expires.
     private string? _toast;
     private DateTime _toastUntil;
@@ -700,7 +702,7 @@ internal sealed partial class TuiDriver
     // so a full-width rule/panel row can never soft-wrap when re-wrapped in ComposeFrameRows (the
     // stranded "-" fragment / split-card bug), and the reserved column holds the tiny passive
     // scroll-position marker while paging. Inline mode keeps the true terminal width - byte-identical to before.
-    public int Width => _engineFrame ? Math.Max(20, _term.Width - 1) : Math.Max(20, _term.Width);
+    public int Width => _engineFrame ? Math.Max(20, _term.Width - 1 - _sideCols) : Math.Max(20, _term.Width);
 
     /// <summary>Visible terminal height (rows), floored so panel-bounding math stays sane on
     /// tiny/again-unavailable terminals.</summary>
@@ -2183,6 +2185,11 @@ internal sealed partial class TuiDriver
         if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
             lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
 
+        // Docked extension panels placed as a band (or side panels where no side pane fits).
+        var band = BuildBand(width);
+        _bandLine = band.Count > 0 ? lines.Count : -1;   // the tab row; body row r is line _bandLine + 1 + r
+        lines.AddRange(band);
+
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         int footerStart = lines.Count;
         lines.Add(TuiComponents.FullRule(width));
@@ -2354,6 +2361,9 @@ internal sealed partial class TuiDriver
     internal List<string> ComposeFrameRows()
     {
         int h = Math.Max(1, _term.Height);
+        // Docked side pane: the transcript and live band lay out narrower; the pane fills the right columns.
+        int sideCols = _engineFrame ? SidePaneColumns() : 0;
+        if (sideCols != _sideCols) { _sideCols = sideCols; InvalidateFrameRowCounts(); }
         // Layout and wrap BOTH use the driver's Width, which in frame mode is already (cols - 1)
         // with the last physical column reserved for independently addressed scrollbar chrome. Using one width for component layout AND the wrap
         // pass is what keeps full-width rules/panels to exactly one physical row each (the earlier
@@ -2414,6 +2424,8 @@ internal sealed partial class TuiDriver
         }
 
         var rows = new List<string>(h);
+        _dockHits.RemoveAll(hh => hh.Row >= 0);   // side hits are rebuilt with the pane
+        _sideRows = _sideCols > 0 ? BuildSidePane(_sideCols, h) : [];
         // Anchor transcript content to the BOTTOM of the pane (directly above the live band), so
         // short startup/early-session content sits just over the input box instead of being stranded
         // at the top with a large empty gap below it. Unused rows are inserted ABOVE the transcript;
@@ -2441,7 +2453,7 @@ internal sealed partial class TuiDriver
         // room minus the scrollbar columns; payload carries the pane top so the release handler
         // can map physical rows back into the row snapshot.
         if (transcriptRoom > 0)
-            hits.Add(new HitRegion(1, 1, transcriptRoom, Math.Max(1, _term.Width - 2), MouseTargetKind.ExpandedPanel, 0));
+            hits.Add(new HitRegion(1, 1, transcriptRoom, Math.Max(1, _term.Width - 2 - _sideCols), MouseTargetKind.ExpandedPanel, 0));
         {
             int railLeft = Math.Max(1, _term.Width - 1);
             int railWidth = _term.Width - railLeft + 1;
@@ -2527,6 +2539,7 @@ internal sealed partial class TuiDriver
                     wrapW, MouseTargetKind.TranscriptEntry, e));
             }
         }
+        AddDockHits(hits, wrapW + 1, r => MapLiveLine(_bandLine >= 0 ? _bandLine + 1 + r : -1, out int t, out _) ? (true, t) : (false, 0));
         _frameHits = hits;
         // Selection support: remember THIS frame's rows + pane bounds (same publish cadence as
         // the map). The overlay pass below reads the live drag state; the copy on release reads
@@ -2558,6 +2571,13 @@ internal sealed partial class TuiDriver
                 rows[chipTop - 1] = "  " + Ansi.Invert + " " + _copyStatus + " " + Ansi.Reset;
             else _copyStatus = "";
         }
+        // Side pane: append its cells after each row's transcript/live content (padded to the layout width).
+        if (_sideRows.Count > 0)
+            for (int r = 0; r < rows.Count && r < _sideRows.Count; r++)
+            {
+                int pad = Math.Max(0, wrapW - TuiMarkup.Width(TuiMarkup.StripAnsi(rows[r])));
+                rows[r] = rows[r] + Ansi.Reset + new string(' ', pad) + TuiMarkup.ToAnsi(_sideRows[r]);
+            }
         return rows;
     }
 
@@ -2684,6 +2704,8 @@ internal sealed partial class TuiDriver
                 Repaint();
             }
         }
+        // A docked extension panel opened, changed or closed: repaint (the pane reads the registry on paint).
+        if (Extensions.ExtensionPanels.Generation != _panelGeneration) { _panelGeneration = Extensions.ExtensionPanels.Generation; Repaint(); }
         // An extension toast just expired: one repaint removes it.
         if (_toast is not null && DateTime.UtcNow >= _toastUntil) { _toast = null; Repaint(); }
         // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
@@ -3036,6 +3058,11 @@ internal sealed partial class TuiDriver
                     Repaint();
                 break;
 
+            case MouseTargetKind.DockedPanel:
+                // Click on a docked extension panel control: focus that panel and activate (works mid-turn).
+                ClickDocked(captured, ev.Col - captured.Left);
+                break;
+
             case MouseTargetKind.TranscriptEntry:
                 // Click = the NAV Enter alias: toggle the entry's expanded panel in place. Works
                 // MID-TURN too - it is the Ctrl+E alias, which already acts during streaming.
@@ -3362,6 +3389,8 @@ internal sealed partial class TuiDriver
                         }
                         case ConsoleInputPump.EventKind.InferredPaste:
                             ApplyInferredPaste(ev.PasteText ?? ""); Repaint(); continue;
+                        case ConsoleInputPump.EventKind.Paste when DockFocused:
+                            HandleDockPaste(ev.PasteText ?? ""); Repaint(); continue;
                         case ConsoleInputPump.EventKind.Paste:
                         {
                             string pasted = ev.PasteText ?? string.Empty;
@@ -3475,6 +3504,9 @@ internal sealed partial class TuiDriver
 
                 // Ctrl+] while sharing: take typing away from every guest (host hotkey, never text).
                 if (TryRevokeGuestTyping(key)) { Repaint(); continue; }
+                // Docked extension panels: F6 moves the keyboard into them; while focused they get every key.
+                if (key.Key == ConsoleKey.F6 && CycleDockFocus(key.Modifiers.HasFlag(ConsoleModifiers.Shift))) { Repaint(); continue; }
+                if (HandleDockKey(key)) { Repaint(); continue; }
 
                 // Uncertain legacy input may only stage a draft. An explicit non-newline chord sends;
                 // a delayed pasted newline cannot silently dispatch a paragraph.

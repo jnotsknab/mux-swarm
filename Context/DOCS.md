@@ -1526,7 +1526,7 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 | `session/info` | none | `{ mode, inSession, agent, model, sessionId, cwd, surface, muxVersion, context: { tokens, window, percent } }` |
 | `ui/toast` | `{ text }` | `{}`: a short notice (TUI: above the footer for 4s; web: a toast; classic: an info line) |
 | `ui/log` | `{ text }` | `{}`: a muted line in the transcript; the model does not read it |
-| `ui/open` | `{ id, title?, view }` | `{}`: opens (or replaces) panel `id` (see Extension panels) |
+| `ui/open` | `{ id, title?, view, placement?, columns?, rows? }` | `{}`: opens (or replaces) panel `id` (see Extension panels) |
 | `ui/update` | `{ id, view }` | `{}`: replaces the tree of open panel `id` |
 | `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
 | `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
@@ -1591,6 +1591,18 @@ Web clients get `ext_panel` events (`op`: `open` | `update` | `close`, plus `ext
   activates, a button's hotkey presses it (outside an input), PgUp/PgDn and the wheel scroll, Esc closes.
   Mouse clicks press buttons and select list rows. Typed text, focus and list position survive `ui/update`.
 - Panels close when the process exits or is stopped (`/refresh`).
+- `placement` (default `screen`): `screen` = the full-screen view above; `side` = docked to the right of the
+  transcript (`columns` wide, default 48, at most 45% of the terminal and always leaving 60 columns for the
+  transcript); `band` = a strip above the prompt (`rows` tall, default 6, at most a third of the screen);
+  `auto` = `side` from 144 terminal columns, else `band`. Docked panels stay up while you type and while
+  the agent works, and redraw on every `ui/update`. Side panes need the frame renderer (`renderEngine:
+  frame`); the inline renderer and narrow terminals show them as a band. Several docked panels share the
+  spot with a tab per panel. In the web UI `side` docks the drawer beside the chat (it overlays on phones),
+  `band` is a strip above the composer, and `auto` picks `side` from 1100px wide. Web events carry `placement`.
+- Docked panels never take keys on their own: F6 moves the keyboard into them (F6 / Shift+F6 cycle, past
+  the last one returns to the prompt), and so does clicking a control. While focused, keys work as in the
+  full-screen view; Esc returns to the prompt and the panel stays open (no `close` event). This works at
+  the idle prompt and mid-turn (Esc then does not cancel the turn).
 
 ### Extension footer chips
 

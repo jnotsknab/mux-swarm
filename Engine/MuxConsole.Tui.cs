@@ -699,6 +699,11 @@ public static partial class MuxConsole
                     lock (ConsoleLock) { lane = _driver!.RouteMouseMidTurn(ev); }
                     if (lane is not null) TuiEnterAgentView();
                 };
+                EscapeKeyListener.OnDockKey = key =>
+                {
+                    if (!ViaDriver) return false;
+                    lock (ConsoleLock) return _driver!.TryDockKeyMidTurn(key);
+                };
             }
             catch
             {
@@ -706,6 +711,7 @@ public static partial class MuxConsole
                 _driver = null;
                 EscapeKeyListener.OnWheelScroll = null;
                 EscapeKeyListener.OnMouseEvent = null;
+                EscapeKeyListener.OnDockKey = null;
             }
         }
     }

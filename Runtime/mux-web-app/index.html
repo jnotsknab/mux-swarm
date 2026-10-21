@@ -15470,6 +15470,16 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 <!-- ===== /Sessions rail ===== -->
 <!-- ===== Extension panels (ui/open): element trees an extension pushes, drawn as a right-side drawer ===== -->
 <style>
+/* Unlayered on purpose: the global reset (*{margin:0}) is unlayered and would beat a layered margin. */
+body.mux-xp-docked { --mux-xp-dock: min(440px, 45vw); }
+body.mux-xp-docked .app { margin-right: var(--mux-xp-dock); }
+body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
+@media (max-width: 900px) {
+  body.mux-xp-docked .app { margin-right: 0; }
+  body.mux-xp-docked .input-area { --composer-right-inset: 0px; }
+}
+</style>
+<style>
 @layer mux.base {
   /* Same layer as the preview FAB and later in the DOM, so the drawer covers it; the preview panel (9999) stays above. */
   .mux-xp { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); z-index: 9998; display: none; flex-direction: column;
@@ -15524,18 +15534,46 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-xp-prog .bar i { display: block; height: 100%; background: var(--accent); }
   .mux-xp-prog span { color: var(--muted); font-variant-numeric: tabular-nums; }
   @media (max-width: 640px) { .mux-xp { width: 100vw; border-left: none; } }
+  /* placement "side": docked (pushes the chat left on wide screens); "band": a strip above the composer. */
+  .mux-xp.docked { box-shadow: none; z-index: 50; width: var(--mux-xp-dock, 440px); }
+  .mux-xp.docked .mux-xp-x { display: none; }
+  .mux-xp-band { position: fixed; left: 50%; transform: translateX(calc(-50% + (var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)) / 2));
+    bottom: var(--mux-xp-band-bottom, 120px); width: min(var(--mux-content-max, 820px), calc(100vw - 48px - var(--composer-left-inset, 0px) - var(--composer-right-inset, 0px)));
+    max-height: 32vh; display: none; flex-direction: column; z-index: 40; background: var(--mux-surface-solid, var(--bg-card)); border: 1px solid var(--border);
+    border-radius: var(--radius, 8px); color: var(--text); font-family: var(--font-sans, inherit); font-size: calc(13px * var(--ui-font-scale, 1)); }
+  .mux-xp-band.open { display: flex; }
+  .mux-xp-band .mux-xp-head { padding: 4px 8px; }
+  .mux-xp-band .mux-xp-body { padding: 8px 12px; }
+  @media (max-width: 900px) {
+    .mux-xp.docked { box-shadow: -12px 0 32px rgba(0,0,0,.35); z-index: 9998; }
+    .mux-xp.docked .mux-xp-x { display: inline; }
+  }
 }
 </style>
 <script>
 (function(){
   function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
-  var panels = new Map();   // "ext/id" -> { extension, id, title, version, view, inputs, sel }
-  var active = null;
-  var root = document.createElement('aside'); root.className = 'mux-xp'; root.setAttribute('aria-label', 'Extension panel');
-  root.innerHTML = '<div class="mux-xp-head"><div class="mux-xp-tabs" role="tablist"></div>' +
-    '<button type="button" class="mux-xp-x" title="Close panel (Esc)" aria-label="Close panel">\u00d7</button></div><div class="mux-xp-body" tabindex="-1"></div>';
-  document.body.appendChild(root);
-  var tabsEl = root.querySelector('.mux-xp-tabs'), body = root.querySelector('.mux-xp-body');
+  var panels = new Map();   // "ext/id" -> { extension, id, title, version, view, placement, inputs, sel }
+  // One surface per placement: "drawer" (screen + side; side docks on wide screens) and "band".
+  function surface(cls, label){
+    var root = document.createElement('aside'); root.className = cls; root.setAttribute('aria-label', label);
+    root.innerHTML = '<div class="mux-xp-head"><div class="mux-xp-tabs" role="tablist"></div>' +
+      '<button type="button" class="mux-xp-x" title="Close panel (Esc)" aria-label="Close panel">\u00d7</button></div><div class="mux-xp-body" tabindex="-1"></div>';
+    document.body.appendChild(root);
+    var s = { root: root, tabs: root.querySelector('.mux-xp-tabs'), body: root.querySelector('.mux-xp-body'), active: null };
+    root.querySelector('.mux-xp-x').addEventListener('click', function(){ if (s.active) close(s.active, true); });
+    root.addEventListener('keydown', function(e){
+      if (e.key === 'Escape') { e.preventDefault(); var p = panels.get(s.active);
+        if (p && p.placement !== 'screen' && !root.classList.contains('mux-xp-overlay')) { document.activeElement && document.activeElement.blur(); return; }
+        if (s.active) close(s.active, true); return; }
+      var t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+      var b = s.body.querySelector('.mux-xp-btn[data-hotkey="' + CSS.escape(e.key.toLowerCase()) + '"]');
+      if (b) { e.preventDefault(); b.click(); }
+    });
+    return s;
+  }
+  var drawer = surface('mux-xp', 'Extension panel'), band = surface('mux-xp-band', 'Extension band');
+  function where(p){ return p.placement === 'band' || (p.placement === 'auto' && window.innerWidth < 1100) ? band : drawer; }
   function k(p){ return p.extension + '/' + p.id; }
   function send(p, ev){
     fetch(apiUrl('/api/ext/panels/event'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -15584,56 +15622,62 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
           var row = el('button', 'mux-xp-item' + (it.value === sel ? ' sel' : '')); row.type = 'button'; row.dataset.key = n.key + ':' + it.value;
           row.setAttribute('role', 'option'); row.appendChild(el('span', null, it.label || it.value));
           if (it.detail) row.appendChild(el('small', null, it.detail));
-          row.addEventListener('click', function(){ p.sel[n.key] = it.value; send(p, { key: n.key, type: 'select', value: it.value }); render(); });
+          row.addEventListener('click', function(){ p.sel[n.key] = it.value; send(p, { key: n.key, type: 'select', value: it.value }); renderAll(); });
           e.appendChild(row);
         });
         return e;
     }
     return el('div', 'mux-xp-text c-error', 'unknown element ' + t);
   }
-  function render(){
-    tabsEl.innerHTML = '';
-    if (!panels.size) { root.classList.remove('open'); active = null; return; }
-    if (!active || !panels.has(active)) active = Array.from(panels.keys())[0];
-    panels.forEach(function(p, key){
-      var b = el('button', 'mux-xp-tab' + (key === active ? ' on' : ''), p.title || p.id); b.type = 'button'; b.setAttribute('role', 'tab');
+  function renderSurface(s){
+    var mine = Array.from(panels.entries()).filter(function(x){ return where(x[1]) === s; });
+    s.tabs.innerHTML = '';
+    if (!mine.length) { s.root.classList.remove('open'); s.active = null; return false; }
+    if (!s.active || !mine.some(function(x){ return x[0] === s.active; })) s.active = mine[mine.length - 1][0];
+    mine.forEach(function(x){
+      var key = x[0], p = x[1];
+      var b = el('button', 'mux-xp-tab' + (key === s.active ? ' on' : ''), p.title || p.id); b.type = 'button'; b.setAttribute('role', 'tab');
       b.appendChild(el('small', null, p.extension));
-      b.addEventListener('click', function(){ active = key; render(); body.focus(); });   // the tab strip is rebuilt: keep keys in the drawer
-      tabsEl.appendChild(b);
+      b.addEventListener('click', function(){ s.active = key; renderAll(); s.body.focus(); });   // the tab strip is rebuilt: keep keys in the panel
+      s.tabs.appendChild(b);
     });
-    var p = panels.get(active);
+    var p = panels.get(s.active);
     // Keep focus (and the caret) on the same control across a re-render (ui/update).
-    var f = document.activeElement, fkey = f && root.contains(f) && f.dataset ? f.dataset.key : null, caret = f && f.selectionStart;
-    var top = body.scrollTop;
-    body.innerHTML = ''; body.appendChild(build(p, p.view));
-    body.scrollTop = top;
-    var inDrawer = f && root.contains(f);
-    if (inDrawer && !fkey) body.focus();   // focus was on a node this render replaced
-    if (fkey) { var again = body.querySelector('[data-key="' + CSS.escape(fkey) + '"]'); if (again) { again.focus(); if (caret != null && again.setSelectionRange) try { again.setSelectionRange(caret, caret); } catch(_) {} } }
-    root.classList.add('open');
+    var f = document.activeElement, inside = f && s.root.contains(f), fkey = inside && f.dataset ? f.dataset.key : null, caret = f && f.selectionStart;
+    var top = s.body.scrollTop;
+    s.body.innerHTML = ''; s.body.appendChild(build(p, p.view));
+    s.body.scrollTop = top;
+    if (inside && !fkey) s.body.focus();
+    if (fkey) { var again = s.body.querySelector('[data-key="' + CSS.escape(fkey) + '"]'); if (again) { again.focus(); if (caret != null && again.setSelectionRange) try { again.setSelectionRange(caret, caret); } catch(_) {} } }
+    s.root.classList.add('open');
+    return p;
+  }
+  function renderAll(){
+    var dp = renderSurface(drawer); renderSurface(band);
+    // A side panel docks (pushes the chat) unless a full-screen one is showing in the drawer.
+    var docked = !!dp && dp.placement !== 'screen';
+    drawer.root.classList.toggle('docked', docked);
+    drawer.root.classList.toggle('mux-xp-overlay', !docked);
+    document.body.classList.toggle('mux-xp-docked', docked);
+    var ia = document.querySelector('.input-area');
+    if (ia) document.documentElement.style.setProperty('--mux-xp-band-bottom', (window.innerHeight - ia.getBoundingClientRect().top + 8) + 'px');
   }
   function upsert(m){
     var key = k(m), old = panels.get(key);
-    panels.set(key, { extension: m.extension, id: m.id, title: m.title, version: m.version, view: m.view,
+    panels.set(key, { extension: m.extension, id: m.id, title: m.title, version: m.version, view: m.view, placement: m.placement || 'screen',
       inputs: old ? old.inputs : {}, sel: old ? old.sel : {} });
-    if (!old) active = key;
-    render();
+    if (!old) where(panels.get(key)).active = key;
+    renderAll();
   }
   function close(key, tell){
     var p = panels.get(key); if (!p) return;
-    panels.delete(key); if (tell) send(p, { type: 'close' }); render();
+    panels.delete(key); if (tell) send(p, { type: 'close' }); renderAll();
   }
-  root.querySelector('.mux-xp-x').addEventListener('click', function(){ if (active) close(active, true); });
-  root.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') { e.preventDefault(); if (active) close(active, true); return; }
-    var t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
-    var b = body.querySelector('.mux-xp-btn[data-hotkey="' + CSS.escape(e.key.toLowerCase()) + '"]');
-    if (b) { e.preventDefault(); b.click(); }
-  });
+  window.addEventListener('resize', function(){ if (panels.size) renderAll(); });
   window.MuxExtPanels = {
     /** An ext_panel event from the engine (op = open | update | close). */
     event: function(m){ if (!m || !m.extension || !m.id) return; if (m.op === 'close') close(k(m), false); else upsert(m); },
-    list: function(){ return Array.from(panels.values()).map(function(p){ return { extension: p.extension, id: p.id, title: p.title }; }); },
+    list: function(){ return Array.from(panels.values()).map(function(p){ return { extension: p.extension, id: p.id, title: p.title, placement: p.placement }; }); },
   };
   fetch(apiUrl('/api/ext/panels')).then(function(r){ return r.ok ? r.json() : []; })
     .then(function(list){ (list || []).forEach(function(m){ if (!panels.has(k(m))) upsert(m); }); }).catch(function(){});

@@ -14,7 +14,7 @@ internal sealed partial class TuiDriver
     {
         if (!_inInput || !_editor.IsEmpty || PastePending || _editor.IsSearching) return false;
         bool ran = false;
-        while (ExtensionPanels.All().FirstOrDefault() is { } panel && !pump.Disposed && !_shuttingDown)
+        while (ExtensionPanels.All().FirstOrDefault(p => DockedPlacement(p) == "screen") is { } panel && !pump.Disposed && !_shuttingDown)
         {
             if (!RunExtensionPanel(panel, pump)) break;
             ran = true;

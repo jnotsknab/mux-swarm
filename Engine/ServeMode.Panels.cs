@@ -21,7 +21,7 @@ public static partial class ServeMode
         ExtensionPanels.Changed += p => EmitEvent(new
         {
             type = "ext_panel", op = opened.TryAdd((p.Extension, p.Id), 0) ? "open" : "update",
-            extension = p.Extension, id = p.Id, title = p.Title, version = p.Version, view = p.View,
+            extension = p.Extension, id = p.Id, title = p.Title, version = p.Version, view = p.View, placement = p.Placement,
         });
         ExtensionPanels.Closed += (ext, id) =>
         {
@@ -32,7 +32,7 @@ public static partial class ServeMode
 
     // GET /api/ext/panels -> the open panels (for a page that loads after they opened).
     private static Task HandleExtPanels(HttpContext context) =>
-        WriteJson(context, 200, ExtensionPanels.All().Select(p => new { extension = p.Extension, id = p.Id, title = p.Title, version = p.Version, view = p.View }));
+        WriteJson(context, 200, ExtensionPanels.All().Select(p => new { extension = p.Extension, id = p.Id, title = p.Title, version = p.Version, view = p.View, placement = p.Placement }));
 
     // POST /api/ext/panels/event { extension, id, key?, type, value? } -> forwards a user action as ui/event.
     private static async Task HandleExtPanelEvent(HttpContext context)

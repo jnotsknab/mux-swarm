@@ -63,6 +63,16 @@ internal sealed class ExtensionPanelView
 
     private ExtensionPanels.Node? Focused => _focusables.Count == 0 ? null : _focusables[_focus];
 
+    /// <summary>
+    /// Entering a docked panel: start on its first button or list so hotkeys work (an input would swallow
+    /// them); an input only when the panel has nothing else. Tab still reaches every control.
+    /// </summary>
+    internal void FocusForEntry()
+    {
+        int i = _focusables.FindIndex(n => n.Type != "input");
+        _focus = i >= 0 ? i : 0;
+    }
+
     /// <summary>Handle a key. <paramref name="page"/> = rows scrolled by PgUp/PgDn.</summary>
     internal Outcome Handle(ConsoleKeyInfo k, int page)
     {
@@ -153,7 +163,7 @@ internal sealed class ExtensionPanelView
         w = Math.Max(1, w);
         var rows = new List<string>();
         int fi = n.Focusable ? _focusables.IndexOf(n) : -1;
-        bool focused = fi >= 0 && fi == _focus;
+        bool focused = ShowFocus && fi >= 0 && fi == _focus;
         switch (n.Type)
         {
             case "text":
@@ -268,6 +278,44 @@ internal sealed class ExtensionPanelView
         return rows;
     }
 
+    /// <summary>When false, no control is drawn as focused (a docked panel the keyboard is not in).</summary>
+    internal bool ShowFocus { get; set; } = true;
+
+    /// <summary>
+    /// The scrolled body (no header/footer) in at most <paramref name="room"/> rows of <paramref name="width"/>,
+    /// keeping the focused control in view. <paramref name="hits"/> gets (row 0-based, col 1-based, width,
+    /// payload) per visible control; decode the payload with <see cref="DecodeHit"/>.
+    /// </summary>
+    internal List<string> RenderBody(int width, int room, List<(int Row, int Col, int Width, int Payload)> hits)
+    {
+        room = Math.Max(1, room);
+        var bodyHits = new List<(int Row, int Col, int Width, int Index, int ItemRow)>();
+        var body = Layout(_panel.Root, Math.Max(1, width - 2), bodyHits, 2).Select(r => " " + r).ToList();
+        var fh = bodyHits.Where(h => h.Index == _focus).Select(h => h.Row).DefaultIfEmpty(-1);
+        int focusTop = fh.Min(), focusBottom = fh.Max();
+        if (ShowFocus && _focusables.Count > 0 && focusTop >= 0)
+        {
+            var f = Focused!;
+            if (f.Type == "list") focusTop = focusBottom = bodyHits.First(h => h.Index == _focus && h.ItemRow == _listSel[f.Key!]).Row;
+            if (focusTop < _scroll) _scroll = focusTop;
+            if (focusBottom >= _scroll + room) _scroll = focusBottom - room + 1;
+        }
+        _scroll = Math.Clamp(_scroll, 0, Math.Max(0, body.Count - room));
+        BodyRows = body.Count;
+        foreach (var h in bodyHits)
+        {
+            int r = h.Row - _scroll;
+            if (r >= 0 && r < room) hits.Add((r, h.Col, h.Width, h.Index * 4096 + (h.ItemRow + 1)));
+        }
+        return body.Skip(_scroll).Take(room).ToList();
+    }
+
+    /// <summary>Total body rows at the last <see cref="RenderBody"/> (for the scroll position label).</summary>
+    internal int BodyRows { get; private set; }
+
+    /// <summary>First visible body row (0-based) at the last render.</summary>
+    internal int ScrollTop => _scroll;
+
     /// <summary>Render the panel at <paramref name="width"/> x <paramref name="height"/>, registering click targets.</summary>
     internal List<string> Render(int width, int height, MouseHitMap? hits = null)
     {
@@ -278,38 +326,19 @@ internal sealed class ExtensionPanelView
             return new[] { "Esc: close", $"Resize to {MinWidth}x{MinHeight} for this panel." }
                 .Concat(Enumerable.Repeat("", height)).Take(height).Select(Clip).ToList();
 
-        var header = new List<string>
+        var rows = new List<string>
         {
             $"[{TuiComponents.Accent} bold] {Esc(_panel.Title.ToUpperInvariant())}[/] [{TuiComponents.Muted}]{Esc(_panel.Extension)}[/]",
             TuiComponents.FullRule(width),
         };
-        int room = height - header.Count - 2;
-        var bodyHits = new List<(int Row, int Col, int Width, int Index, int ItemRow)>();
-        var body = Layout(_panel.Root, width - 2, bodyHits, 2).Select(r => " " + r).ToList();
-
-        // Keep the focused control (its first hit row) in view.
-        var fh = bodyHits.Where(h => h.Index == _focus).Select(h => h.Row).DefaultIfEmpty(-1);
-        int focusTop = fh.Min(), focusBottom = fh.Max();
-        if (_focusables.Count > 0 && focusTop >= 0)
-        {
-            var f = Focused!;
-            if (f.Type == "list") focusTop = focusBottom = bodyHits.First(h => h.Index == _focus && h.ItemRow == _listSel[f.Key!]).Row;
-            if (focusTop < _scroll) _scroll = focusTop;
-            if (focusBottom >= _scroll + room) _scroll = focusBottom - room + 1;
-        }
-        _scroll = Math.Clamp(_scroll, 0, Math.Max(0, body.Count - room));
-
-        var rows = new List<string>(header);
-        rows.AddRange(body.Skip(_scroll).Take(room));
+        int headerRows = rows.Count, room = height - headerRows - 2;
+        var bodyHits = new List<(int Row, int Col, int Width, int Payload)>();
+        rows.AddRange(RenderBody(width, room, bodyHits));
         foreach (var h in bodyHits)
-        {
-            int screen = h.Row - _scroll;
-            if (screen < 0 || screen >= room) continue;
-            hits?.Add(new HitRegion(header.Count + screen + 1, h.Col, 1, h.Width, MouseTargetKind.PromptModalOption, h.Index * 4096 + (h.ItemRow + 1)));
-        }
+            hits?.Add(new HitRegion(headerRows + h.Row + 1, h.Col, 1, h.Width, MouseTargetKind.PromptModalOption, h.Payload));
         while (rows.Count < height - 2) rows.Add("");
         rows.Add(TuiComponents.FullRule(width));
-        string more = body.Count > room ? $" \u00b7 {_scroll + 1}-{Math.Min(body.Count, _scroll + room)}/{body.Count}" : "";
+        string more = BodyRows > room ? $" \u00b7 {_scroll + 1}-{Math.Min(BodyRows, _scroll + room)}/{BodyRows}" : "";
         rows.Add($"[{TuiComponents.Muted}] Tab/\u2191\u2193 focus \u00b7 Enter activate \u00b7 PgUp/PgDn scroll \u00b7 Esc close{more}[/]");
         return rows.Take(height).Select(Clip).ToList();
     }
