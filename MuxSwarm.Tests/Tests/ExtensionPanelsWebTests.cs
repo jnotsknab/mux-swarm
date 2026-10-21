@@ -49,6 +49,7 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         var p = Assert.Single(JsonDocument.Parse(body).RootElement.EnumerateArray());
         Assert.Equal("notes", p.GetProperty("extension").GetString());
         Assert.Equal("hi", p.GetProperty("view").GetProperty("text").GetString());
+        Assert.Equal("screen", p.GetProperty("placement").GetString());
     }
 
     [Fact]
@@ -79,8 +80,13 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         Assert.Contains("case 'ext_panel':", html);
         int start = html.IndexOf("<!-- ===== Extension panels", StringComparison.Ordinal);
         var block = html[start..html.IndexOf("<!-- ===== /Extension panels", StringComparison.Ordinal)];
+        // The side-dock push must be unlayered: the unlayered global reset would beat a layered margin.
+        Assert.StartsWith("body.mux-xp-docked .app {", block[block.IndexOf("body.mux-xp-docked .app", StringComparison.Ordinal)..]);
+        Assert.True(block.IndexOf("body.mux-xp-docked .app", StringComparison.Ordinal) < block.IndexOf("@layer", StringComparison.Ordinal));
         Assert.All(ExtensionPanels.Types, t => Assert.Contains($"case '{t}':", block));
         Assert.All(ExtensionPanels.Colors.Where(c => c != "text"), c => Assert.Contains($".c-{c}", block));
         Assert.DoesNotContain("innerHTML = n.", block);   // extension text is never parsed as HTML
+        Assert.Contains("mux-xp-band", block);              // placement band
+        Assert.Contains("body.mux-xp-docked .app", block);  // placement side pushes the chat
     }
 }
