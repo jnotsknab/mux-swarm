@@ -137,6 +137,26 @@ public sealed class ExtensionPanelsDockedTests : IDisposable
     }
 
     [Fact]
+    public void EnteringADockedPanel_StartsOnAButton_SoHotkeysWorkAfterTyping()
+    {
+        ExtensionPanels.Open("x", "side", null, J("""{ "type": "box", "children": [ { "type": "input", "key": "q" }, { "type": "button", "key": "go", "label": "Go", "hotkey": "g" } ] }"""), "side");
+        var d = Frame(160, 24, out _);
+        d.ComposeFrameRows();
+        d.CycleDockFocus(false);
+        d.HandleDockKey(K(ConsoleKey.Tab, shift: true));   // to the input, type + submit
+        foreach (char c in "hi") d.HandleDockKey(K(ConsoleKey.NoName, c));
+        d.HandleDockKey(K(ConsoleKey.Enter, '\r'));
+        d.HandleDockKey(K(ConsoleKey.Escape));
+        d.CycleDockFocus(false);                          // back in: the button, not the input
+        d.HandleDockKey(K(ConsoleKey.G, 'g'));
+        lock (_sent)
+        {
+            Assert.Contains(_sent, s => s.Contains("\"type\":\"submit\"") && s.Contains("\"value\":\"hi\""));
+            Assert.Contains(_sent, s => s.Contains("\"key\":\"go\"") && s.Contains("\"type\":\"press\""));
+        }
+    }
+
+    [Fact]
     public void SideClicks_HitTheDockedControls()
     {
         ExtensionPanels.Open("x", "side", null, J(Tree), "side", columns: 40);
