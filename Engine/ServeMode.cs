@@ -253,7 +253,9 @@ public static partial class ServeMode
                     if (string.IsNullOrEmpty(msg))
                         continue;
 
-                    await _inputChannel.Writer.WriteAsync(msg);
+                    // An immediate extension command runs now, even mid-turn, instead of waiting in the queue.
+                    if (!Extensions.ExtensionCommands.TryRunImmediate(msg))
+                        await _inputChannel.Writer.WriteAsync(msg);
                     HookWorker.Enqueue(new HookEvent
                     {
                         Event = "user_input",

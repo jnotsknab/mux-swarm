@@ -1323,7 +1323,8 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
 
 ```jsonc
 // extension.json
-"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 } ]
+"commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 },
+              { "name": "board", "description": "Open the board", "immediate": true } ]
 ```
 
 - `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
@@ -1332,9 +1333,15 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
   running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
 - While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
   Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
-- Reply `result`: `{ "output": "...", "prompt": "..." }`, both optional. `output` is shown to you;
-  `prompt` is sent to the agent as if you typed it (at the menu, where there is no agent, it is shown).
+- Reply `result`: `{ "output": "...", "prompt": "...", "open": { "id", "title", "view" } }`, all optional;
+  `{}` shows nothing. `output` is shown to you; `prompt` is sent to the agent as if you typed it (at the
+  menu, where there is no agent, it is shown); `open` opens a panel exactly like `ui/open` (below).
   A JSON-RPC `error` is shown as a warning.
+- `immediate: true` runs the command at once even while the agent is working: in the TUI type it in the
+  steer box (Ctrl+N), on the web or `--stdio` just send it. `command/run` then also carries
+  `immediate: true`. It never starts a turn itself (a returned `prompt` is queued as the next input) and
+  only its `timeoutSeconds` ends it (Esc keeps cancelling the turn). Default `false`: a command typed
+  mid-turn waits for the turn to end.
 - `/share` guests cannot run extension commands.
 
 ### Extension host API

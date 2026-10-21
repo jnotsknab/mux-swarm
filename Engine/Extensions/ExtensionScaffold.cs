@@ -13,10 +13,10 @@ internal static class ExtensionScaffold
 {
     /// <summary>Parts the <c>/extensions new</c> scaffold can include.</summary>
     [Flags]
-    internal enum Parts { None = 0, Theme = 1, Cosmetics = 2, FooterChip = 4, Command = 8, Tool = 16, Intercept = 32 }
+    internal enum Parts { None = 0, Theme = 1, Cosmetics = 2, FooterChip = 4, Command = 8, Tool = 16, Intercept = 32, Panel = 64 }
 
     /// <summary>Parts that need a process (and trust) to work.</summary>
-    internal const Parts ProcessParts = Parts.FooterChip | Parts.Command | Parts.Tool | Parts.Intercept;
+    internal const Parts ProcessParts = Parts.FooterChip | Parts.Command | Parts.Tool | Parts.Intercept | Parts.Panel;
 
     /// <summary>
     /// Write a new extension folder <c>root/name</c>: an <c>extension.json</c> with the chosen
@@ -44,8 +44,12 @@ internal static class ExtensionScaffold
             m["process"] = new JsonObject { ["command"] = PlatformContext.IsWindows ? "python" : "python3", ["args"] = new JsonArray("-u", "main.py") };
             m["events"] = new JsonArray("turn_end");
         }
+        var commands = new JsonArray();
         if (parts.HasFlag(Parts.Command))
-            m["commands"] = new JsonArray(new JsonObject { ["name"] = CommandName(name), ["description"] = $"Say hello from {name}" });
+            commands.Add(new JsonObject { ["name"] = CommandName(name), ["description"] = $"Say hello from {name}" });
+        if (parts.HasFlag(Parts.Panel))   // main.py answers this one with a panel ("open" in the reply)
+            commands.Add(new JsonObject { ["name"] = PanelCommand(name), ["description"] = $"Open the {name} panel", ["immediate"] = true });
+        if (commands.Count > 0) m["commands"] = commands;
         if (parts.HasFlag(Parts.Tool))
             m["tools"] = new JsonArray(new JsonObject
             {
@@ -61,6 +65,13 @@ internal static class ExtensionScaffold
         return dir;
     }
 
+
+    // "<command>-panel", cut to the 32-char command limit.
+    private static string PanelCommand(string name)
+    {
+        var cmd = CommandName(name) + "-panel";
+        return cmd.Length <= 32 ? cmd : cmd[..32];
+    }
 
     // The extension name when it is a usable command word, else "ext-<name>".
     private static string CommandName(string name)
@@ -102,6 +113,16 @@ internal static class ExtensionScaffold
 
         turns = 0
         cancelled = set()   # request ids Mux cancelled ($/cancelRequest: the user pressed Esc)
+        clicks = 0
+
+
+        def panel_view():
+            # Element tree Mux draws (TUI alt-screen view, web drawer). See "### Extension panels" in DOCS.md.
+            return {"type": "box", "gap": 1, "children": [
+                {"type": "text", "text": f"{turns} turns, {clicks} clicks", "bold": True, "color": "accent"},
+                {"type": "input", "key": "say", "placeholder": "type and press Enter"},
+                {"type": "button", "key": "click", "label": "Click me", "hotkey": "k"},
+            ]}
 
         for line in sys.stdin:
             msg = json.loads(line)
@@ -119,15 +140,25 @@ internal static class ExtensionScaffold
                         notify("footer/set", {"id": "status", "text": f"{turns} turns"})
                 elif method == "$/cancelRequest":
                     cancelled.add(params.get("id"))
+                elif method == "ui/event":            # { id, key, type: press|submit|select|close, value }
+                    if params.get("type") == "press":
+                        clicks += 1
+                    elif params.get("type") == "submit":
+                        send({"jsonrpc": "2.0", "id": "toast", "method": "ui/toast", "params": {"text": f"you said {params.get('value')!r}"}})
+                    if params.get("type") != "close":
+                        send({"jsonrpc": "2.0", "id": "upd", "method": "ui/update", "params": {"id": "main", "view": panel_view()}})
                 continue
 
             # --- replies to our own requests (an id but no method) ---
             if method is None:
                 continue
 
+
             # --- requests (reply with the same id) ---
             msg_id = msg["id"]
-            if method == "command/run":               # { name, args, cwd, mode }
+            if method == "command/run" and params.get("name", "").endswith("-panel"):
+                reply(msg_id, {"open": {"id": "main", "title": name, "view": panel_view()}})   # = ui/open
+            elif method == "command/run":             # { name, args, cwd, mode }
                 notify("command/output", {"text": "working..."})        # streamed progress line
                 reply(msg_id, {"output": f"hello from {name} (args: {params.get('args')!r})"})
                 # add "prompt": "..." to the result to send a message to the agent as the next turn

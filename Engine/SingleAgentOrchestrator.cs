@@ -2024,7 +2024,12 @@ public static class SingleAgentOrchestrator
             onExpand: () => MuxConsole.TuiExpandLatestInline(),
             onView: () => MuxConsole.TuiEnterViewMode(),
             onAgents: () => MuxConsole.TuiEnterAgentView(),
-            onSteer: () => { var s = MuxConsole.TuiSteerCompose(); if (s is not null) EnqueueSteer(s); });
+            onSteer: () =>
+            {
+                var s = MuxConsole.TuiSteerCompose();
+                // An immediate extension command typed in the steer box runs now instead of steering.
+                if (s is not null && !Extensions.ExtensionCommands.TryRunImmediate(s)) EnqueueSteer(s);
+            });
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
