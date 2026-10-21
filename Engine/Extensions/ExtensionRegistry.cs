@@ -48,7 +48,7 @@ internal static partial class ExtensionRegistry
     }
 
     /// <summary>A validated extension slash command: <c>/{Name}</c>, owned by <paramref name="Extension"/>.</summary>
-    internal sealed record ExtensionCommand(string Extension, string Name, string Description, int TimeoutSeconds)
+    internal sealed record ExtensionCommand(string Extension, string Name, string Description, int TimeoutSeconds, bool Immediate = false)
     {
         /// <summary>The command as typed, e.g. <c>/standup</c>.</summary>
         internal string Cmd => "/" + Name;
@@ -310,7 +310,7 @@ internal static partial class ExtensionRegistry
                 if (takenCommands.TryGetValue(cname, out var owner)) { conflicts.Add(new Conflict($"command /{cname}", owner, name)); continue; }
                 takenCommands[cname] = name;
                 int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
-                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout));
+                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout, c.Immediate == true));
             }
             var web = manifest.Web is { } wm ? ExtensionWeb.Build(name, dir, wm, problems) : null;
             foreach (var wt in web?.Themes ?? []) Claim($"web theme '{wt.Id}'");

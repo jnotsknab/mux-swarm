@@ -4107,6 +4107,8 @@ const icons = {
         routePill(pillFromText(ev.message, 'event-info'));
         break;
       case 'debug':   routePill(pillFromText(ev.message, 'event-debug')); break;
+      case 'ext_panel': if (window.MuxExtPanels) window.MuxExtPanels.event(ev); break;
+      case 'ext_toast': if (typeof showToast === 'function') showToast((ev.extension ? ev.extension + ': ' : '') + (ev.text || ''), 'info'); break;
 
       case 'user_input': {
         try { resetSubRoster(); } catch (_) {}
@@ -15466,6 +15468,178 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 })();
 </script>
 <!-- ===== /Sessions rail ===== -->
+<!-- ===== Extension panels (ui/open): element trees an extension pushes, drawn as a right-side drawer ===== -->
+<style>
+@layer mux.base {
+  /* Same layer as the preview FAB and later in the DOM, so the drawer covers it; the preview panel (9999) stays above. */
+  .mux-xp { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); z-index: 9998; display: none; flex-direction: column;
+    background: var(--mux-surface-solid, var(--bg)); border-left: 1px solid var(--border); box-shadow: -12px 0 32px rgba(0,0,0,.35);
+    color: var(--text); font-family: var(--font-sans, inherit); font-size: calc(13px * var(--ui-font-scale, 1)); }
+  .mux-xp.open { display: flex; }
+  .mux-xp-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .mux-xp-tabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .mux-xp-tab { border: 1px solid transparent; background: transparent; color: var(--muted); padding: 4px 10px; border-radius: var(--radius, 6px);
+    font: inherit; cursor: pointer; white-space: nowrap; }
+  .mux-xp-tab.on { color: var(--text); border-color: var(--border); background: var(--bg-input); }
+  .mux-xp-tab small { color: var(--muted); margin-left: 6px; font-size: .85em; }
+  .mux-xp-x { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 2px 6px; }
+  .mux-xp-x:hover { color: var(--text); }
+  .mux-xp-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 14px; outline: none;
+    scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-xp-body::-webkit-scrollbar { width: 8px; height: 8px; }
+  .mux-xp-body::-webkit-scrollbar-track { background: transparent; }
+  .mux-xp-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .mux-xp-body::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+  .mux-xp-body::-webkit-scrollbar-button { display: none; }
+  .mux-xp-box { display: flex; flex-direction: column; min-width: 0; }
+  .mux-xp-box[data-dir="row"] { flex-direction: row; align-items: flex-start; }
+  .mux-xp-box[data-dir="row"] > * { flex: 1 1 0; min-width: 0; }
+  .mux-xp-box[data-border="single"], .mux-xp-box[data-border="round"] { border: 1px solid var(--border); padding: 8px 10px; }
+  .mux-xp-box[data-border="round"] { border-radius: 10px; }
+  .mux-xp-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+  .mux-xp-text.b { font-weight: 600; } .mux-xp-text.d { opacity: .65; }
+  .c-muted { color: var(--muted); } .c-accent { color: var(--accent); } .c-success { color: var(--green); }
+  .c-warning { color: var(--amber); } .c-error { color: var(--red); } .c-info { color: var(--blue); }
+  .mux-xp-btn { align-self: flex-start; border: 1px solid var(--accent); background: transparent; color: var(--accent); font: inherit;
+    padding: 5px 12px; border-radius: var(--radius, 6px); cursor: pointer; }
+  .mux-xp-btn:hover, .mux-xp-btn:focus-visible { background: rgba(var(--accent-rgb), .14); outline: none; }
+  .mux-xp-btn kbd { font-family: var(--font-mono, monospace); font-size: .78em; margin-right: 7px; padding: 0 5px; border: 1px solid currentColor;
+    border-radius: 3px; opacity: .7; }
+  .mux-xp-in { display: flex; }
+  .mux-xp-in input { flex: 1; min-width: 0; background: var(--bg-input); color: var(--text); border: 1px solid var(--border);
+    border-radius: var(--radius, 6px); padding: 6px 9px; font: inherit; }
+  .mux-xp-in input:focus { outline: none; border-color: var(--accent); }
+  .mux-xp-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--radius, 6px); overflow: hidden; }
+  .mux-xp-item { display: flex; gap: 10px; align-items: baseline; text-align: left; border: none; border-top: 1px solid var(--border);
+    background: transparent; color: var(--text); font: inherit; padding: 6px 10px; cursor: pointer; }
+  .mux-xp-item:first-child { border-top: none; }
+  .mux-xp-item:hover, .mux-xp-item:focus-visible { background: rgba(var(--accent-rgb), .10); outline: none; }
+  .mux-xp-item.sel { background: rgba(var(--accent-rgb), .16); }
+  .mux-xp-item small { color: var(--muted); margin-left: auto; }
+  .mux-xp-empty { color: var(--muted); padding: 6px 10px; }
+  .mux-xp-code { margin: 0; padding: 8px 10px; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius, 6px);
+    font-family: var(--font-mono, monospace); font-size: .92em; overflow: auto; white-space: pre; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .mux-xp-prog { display: flex; align-items: center; gap: 8px; }
+  .mux-xp-prog .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--bg-input); overflow: hidden; }
+  .mux-xp-prog .bar i { display: block; height: 100%; background: var(--accent); }
+  .mux-xp-prog span { color: var(--muted); font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { .mux-xp { width: 100vw; border-left: none; } }
+}
+</style>
+<script>
+(function(){
+  function apiUrl(p){ return (window.MuxAuth && window.MuxAuth.url) ? window.MuxAuth.url(p) : p; }
+  var panels = new Map();   // "ext/id" -> { extension, id, title, version, view, inputs, sel }
+  var active = null;
+  var root = document.createElement('aside'); root.className = 'mux-xp'; root.setAttribute('aria-label', 'Extension panel');
+  root.innerHTML = '<div class="mux-xp-head"><div class="mux-xp-tabs" role="tablist"></div>' +
+    '<button type="button" class="mux-xp-x" title="Close panel (Esc)" aria-label="Close panel">\u00d7</button></div><div class="mux-xp-body" tabindex="-1"></div>';
+  document.body.appendChild(root);
+  var tabsEl = root.querySelector('.mux-xp-tabs'), body = root.querySelector('.mux-xp-body');
+  function k(p){ return p.extension + '/' + p.id; }
+  function send(p, ev){
+    fetch(apiUrl('/api/ext/panels/event'), { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(Object.assign({ extension: p.extension, id: p.id }, ev)) }).catch(function(){});
+  }
+  function el(tag, cls, text){ var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+  function build(p, n){
+    var t = n && n.type, e;
+    switch (t) {
+      case 'box':
+        e = el('div', 'mux-xp-box'); e.dataset.dir = n.dir === 'row' ? 'row' : 'col'; e.dataset.border = n.border || 'none';
+        e.style.gap = ((n.gap | 0) * 6 + 6) + 'px';
+        (n.children || []).forEach(function(c){ e.appendChild(build(p, c)); });
+        return e;
+      case 'text':
+        e = el('div', 'mux-xp-text' + (n.bold ? ' b' : '') + (n.dim ? ' d' : '') + (n.color && n.color !== 'text' ? ' c-' + n.color : ''), n.text || '');
+        return e;
+      case 'markdown':
+        e = el('div', 'mux-xp-md');
+        if (window.renderMarkdown) e.innerHTML = window.renderMarkdown(String(n.text || '')); else e.textContent = n.text || '';
+        return e;
+      case 'code': e = el('pre', 'mux-xp-code'); e.appendChild(el('code', null, n.text || '')); return e;
+      case 'progress':
+        var v = Math.max(0, Math.min(1, +n.value || 0));
+        e = el('div', 'mux-xp-prog'); var bar = el('div', 'bar'), fill = el('i'); fill.style.width = (v * 100) + '%'; bar.appendChild(fill);
+        e.appendChild(bar); e.appendChild(el('span', null, Math.round(v * 100) + '%')); if (n.label) e.appendChild(el('span', null, n.label));
+        return e;
+      case 'button':
+        e = el('button', 'mux-xp-btn'); e.type = 'button'; e.dataset.key = n.key;
+        if (n.hotkey) { e.dataset.hotkey = String(n.hotkey).toLowerCase(); e.appendChild(el('kbd', null, String(n.hotkey).toLowerCase())); }
+        e.appendChild(document.createTextNode(n.label || n.key));
+        e.addEventListener('click', function(){ send(p, { key: n.key, type: 'press' }); });
+        return e;
+      case 'input':
+        e = el('form', 'mux-xp-in'); var inp = el('input'); inp.dataset.key = n.key; inp.placeholder = n.placeholder || '';
+        inp.value = n.key in p.inputs ? p.inputs[n.key] : (n.value || '');
+        inp.addEventListener('input', function(){ p.inputs[n.key] = inp.value; });
+        e.addEventListener('submit', function(ev){ ev.preventDefault(); var val = inp.value; inp.value = ''; p.inputs[n.key] = ''; send(p, { key: n.key, type: 'submit', value: val }); });
+        e.appendChild(inp);
+        return e;
+      case 'list':
+        e = el('div', 'mux-xp-list'); e.setAttribute('role', 'listbox');
+        var items = n.items || [], sel = n.key in p.sel ? p.sel[n.key] : n.selected;
+        if (!items.length) e.appendChild(el('div', 'mux-xp-empty', '(empty)'));
+        items.forEach(function(it){
+          var row = el('button', 'mux-xp-item' + (it.value === sel ? ' sel' : '')); row.type = 'button'; row.dataset.key = n.key + ':' + it.value;
+          row.setAttribute('role', 'option'); row.appendChild(el('span', null, it.label || it.value));
+          if (it.detail) row.appendChild(el('small', null, it.detail));
+          row.addEventListener('click', function(){ p.sel[n.key] = it.value; send(p, { key: n.key, type: 'select', value: it.value }); render(); });
+          e.appendChild(row);
+        });
+        return e;
+    }
+    return el('div', 'mux-xp-text c-error', 'unknown element ' + t);
+  }
+  function render(){
+    tabsEl.innerHTML = '';
+    if (!panels.size) { root.classList.remove('open'); active = null; return; }
+    if (!active || !panels.has(active)) active = Array.from(panels.keys())[0];
+    panels.forEach(function(p, key){
+      var b = el('button', 'mux-xp-tab' + (key === active ? ' on' : ''), p.title || p.id); b.type = 'button'; b.setAttribute('role', 'tab');
+      b.appendChild(el('small', null, p.extension));
+      b.addEventListener('click', function(){ active = key; render(); body.focus(); });   // the tab strip is rebuilt: keep keys in the drawer
+      tabsEl.appendChild(b);
+    });
+    var p = panels.get(active);
+    // Keep focus (and the caret) on the same control across a re-render (ui/update).
+    var f = document.activeElement, fkey = f && root.contains(f) && f.dataset ? f.dataset.key : null, caret = f && f.selectionStart;
+    var top = body.scrollTop;
+    body.innerHTML = ''; body.appendChild(build(p, p.view));
+    body.scrollTop = top;
+    var inDrawer = f && root.contains(f);
+    if (inDrawer && !fkey) body.focus();   // focus was on a node this render replaced
+    if (fkey) { var again = body.querySelector('[data-key="' + CSS.escape(fkey) + '"]'); if (again) { again.focus(); if (caret != null && again.setSelectionRange) try { again.setSelectionRange(caret, caret); } catch(_) {} } }
+    root.classList.add('open');
+  }
+  function upsert(m){
+    var key = k(m), old = panels.get(key);
+    panels.set(key, { extension: m.extension, id: m.id, title: m.title, version: m.version, view: m.view,
+      inputs: old ? old.inputs : {}, sel: old ? old.sel : {} });
+    if (!old) active = key;
+    render();
+  }
+  function close(key, tell){
+    var p = panels.get(key); if (!p) return;
+    panels.delete(key); if (tell) send(p, { type: 'close' }); render();
+  }
+  root.querySelector('.mux-xp-x').addEventListener('click', function(){ if (active) close(active, true); });
+  root.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') { e.preventDefault(); if (active) close(active, true); return; }
+    var t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
+    var b = body.querySelector('.mux-xp-btn[data-hotkey="' + CSS.escape(e.key.toLowerCase()) + '"]');
+    if (b) { e.preventDefault(); b.click(); }
+  });
+  window.MuxExtPanels = {
+    /** An ext_panel event from the engine (op = open | update | close). */
+    event: function(m){ if (!m || !m.extension || !m.id) return; if (m.op === 'close') close(k(m), false); else upsert(m); },
+    list: function(){ return Array.from(panels.values()).map(function(p){ return { extension: p.extension, id: p.id, title: p.title }; }); },
+  };
+  fetch(apiUrl('/api/ext/panels')).then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(list){ (list || []).forEach(function(m){ if (!panels.has(k(m))) upsert(m); }); }).catch(function(){});
+})();
+</script>
+<!-- ===== /Extension panels ===== -->
 <!-- ===== Desktop host bridge (window.muxHost, see docs/desktop.md) ===== -->
 <style>
 @layer mux.base {

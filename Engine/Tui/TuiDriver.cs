@@ -364,6 +364,35 @@ internal sealed partial class TuiDriver
     /// <summary>Request an input-area repaint on the next voice poll tick (thread-safe).</summary>
     public void VoiceRepaintSoon() { _voiceDirty = true; }
 
+    // Extension toast (ui/toast): one muted line above the footer rule until it expires.
+    private string? _toast;
+    private DateTime _toastUntil;
+
+    /// <summary>Show <paramref name="text"/> above the footer for a few seconds (caller holds the console lock).</summary>
+    public void ShowToast(string text)
+    {
+        _toast = text;
+        _toastUntil = DateTime.UtcNow.AddSeconds(4);
+        Repaint();
+    }
+
+    /// <summary>
+    /// A line an extension queued (prompt/submit, command/run), submitted like a typed line, or null.
+    /// Only taken while the draft is empty, so it never replaces what the user is typing.
+    /// </summary>
+    private string? TakeInjectedLine()
+    {
+        if (!_inInput || !_editor.IsEmpty || PastePending || _editor.IsSearching) return null;
+        if (!MuxConsole.TryTakeInjected(out var ext, out var line)) return null;
+        _inInput = false;
+        _frameScroll = 0;
+        _userScrolled = false;
+        _pendingGap = false;
+        if (!TuiCommands.OpensInteractivePrompt(line)) CommitLayout(width => TuiComponents.UserEcho(line, width));
+        CommitLine($"  [{TuiComponents.Muted}]\u21b3 sent by extension {Spectre.Console.Markup.Escape(ext)}[/]");
+        return line;
+    }
+
     // In-memory transcript retained so vim NAV mode can scroll back through committed history.
     // The live region writes finished lines straight into native scrollback (which we cannot
     // read back), so we mirror them here as ENTRIES. Most entries are a single plain markup
@@ -2151,6 +2180,9 @@ internal sealed partial class TuiDriver
                 bd.Total, bd.Done, bd.InProgress, bd.Blocked, bd.Failed, bd.Rows,
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
+        if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
+            lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
+
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         int footerStart = lines.Count;
         lines.Add(TuiComponents.FullRule(width));
@@ -2652,6 +2684,8 @@ internal sealed partial class TuiDriver
                 Repaint();
             }
         }
+        // An extension toast just expired: one repaint removes it.
+        if (_toast is not null && DateTime.UtcNow >= _toastUntil) { _toast = null; Repaint(); }
         // Mode-pulse animation: this ~100ms poll is the only steady heartbeat at an idle
         // prompt, so it drives the short post-activation breathe of the ultra/giga chip.
         // Repaints ONLY inside the pulse window (plus one settle paint when it closes);
@@ -3276,6 +3310,8 @@ internal sealed partial class TuiDriver
                     {
                         // Share guests allowed to type feed the draft from their own queue (never the pump).
                         if (DrainRemoteInput() is { } remoteLine) return remoteLine;
+                        if (TakeInjectedLine() is { } injected) return injected;
+                        if (RunOpenPanels(pump)) { Repaint(); continue; }
                         if (Voice.VoiceSession.IsActive)
                         {
                             // /voice on: poll so the loop services transcript injects, voice-driven
