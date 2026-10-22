@@ -130,9 +130,10 @@ internal static partial class ExtensionRegistry
     /// repeatedly (startup and <c>/refresh</c>); when disabled it clears everything it published.
     /// Never throws: per-extension failures become <see cref="Result.Problems"/>.
     /// </summary>
-    internal static Result Load(ExtensionsConfig? cfg)
+    internal static Result Load(ExtensionsConfig? cfg, TuiManifest? userStyle = null)
     {
         Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg), cfg.Disabled) : Empty;
+        if (userStyle is not null) Loaded = WithUserStyle(Loaded, userStyle);
         Theme.SetExtensionThemes(Loaded.Themes);
         var c = Loaded.Cosmetics;
         ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips, c.Timing);
@@ -143,6 +144,19 @@ internal static partial class ExtensionRegistry
         Tui.RegionStyle.Set(Loaded.TuiStyles);
         ExtensionCommands.Set(Loaded.Extensions.SelectMany(e => e.Commands));
         return Loaded;
+    }
+
+    /// <summary>Name used for the user's <c>console.tui</c> styles in problems and conflicts.</summary>
+    internal const string UserStyleOwner = "console.tui";
+
+    // console.tui wins over every extension per property (the web's mux.user beats mux.ext the same way).
+    private static Result WithUserStyle(Result loaded, TuiManifest user)
+    {
+        var problems = new List<string>(loaded.Problems);
+        if (BuildTuiStyles(user, problems, UserStyleOwner) is not { } mine) return loaded with { Problems = problems };
+        var styles = new Dictionary<string, string>(loaded.TuiStyles ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
+        foreach (var (k, v) in mine) styles[k] = v;
+        return loaded with { Problems = problems, TuiStyles = styles };
     }
 
     /// <summary>The install folder followed by <see cref="ExtensionsConfig.Dirs"/>, resolved and de-duplicated.</summary>
