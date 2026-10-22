@@ -445,7 +445,7 @@ internal sealed partial class TuiDriver
     // + content generation and reused until any of those move. Invalidated alongside the
     // row-count cache (width/style/expansion changes).
     private List<string>? _frameWindowCache;
-    private (int W, int Room, int Scroll, int Count, long Seq, bool Md) _frameWindowKey;
+    private (int W, int Room, int Scroll, int Count, long Seq, bool Md, (Theme, bool, int, MarkdownStyle) Style) _frameWindowKey;
 
     // Rendered physical rows per Entry, so scrolling, commits while scrolled back and row counting
     // slice cached rows instead of re-wrapping history (a scroll step used to re-render every entry
@@ -455,10 +455,12 @@ internal sealed partial class TuiDriver
     // Entries whose row count was subtracted from the cached total by an expand/collapse and is
     // re-added on the next GetFrameTotalRows, so a toggle inside NAV never renders the frame card.
     private readonly HashSet<Entry> _frameRowCountDirty = new();
-    private (int W, bool Md, Theme Theme, bool Bg) _frameRowCacheKey;
+    private (int W, bool Md, Theme Theme, bool Bg, int Region, MarkdownStyle Markdown) _frameRowCacheKey;
 
-    /// <summary>Styling the cached rows were rendered with (colours only; never geometry).</summary>
-    private static (Theme Theme, bool Bg) RowStyle => (Theme.Active, TuiComponents.ContentBackgrounds);
+    /// <summary>Styling the cached rows were rendered with (colours and glyphs; never geometry). Region and
+    /// markdown styles change on extension load / /layout, so they are part of the key.</summary>
+    private static (Theme Theme, bool Bg, int Region, MarkdownStyle Markdown) RowStyle
+        => (Theme.Active, TuiComponents.ContentBackgrounds, RegionStyle.Version, MarkdownStyle.Active);
 
     private void AddTranscriptEntry(Entry entry)
     {
@@ -2006,8 +2008,8 @@ internal sealed partial class TuiDriver
             // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
             // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
             string r = string.IsNullOrWhiteSpace(raw)
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
-                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]";
             CommitMirrored(Lane(new[] { r }));
             return;
         }
@@ -2022,7 +2024,7 @@ internal sealed partial class TuiDriver
             if (_streamBlockDotPending)
             {
                 _streamBlockDotPending = false;
-                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
+                built = TuiComponents.AnswerLead + built;
             }
             else
             {
@@ -2103,13 +2105,13 @@ internal sealed partial class TuiDriver
             // the plain 2-col indent; blanks stay bare.
             string t = _streamTail.ToString();
             string previewBody = _streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(t)}[/]"
                 : TuiMarkdown.ToMarkup(t);
             string preview;
             if (string.IsNullOrWhiteSpace(t))
                 preview = previewBody;
             else if (!_streamReasoning && _streamBlockDotPending)
-                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+                preview = TuiComponents.AnswerLead + previewBody;
             else
                 preview = StreamIndent + previewBody;
             lines.Add(preview);
@@ -2240,7 +2242,7 @@ internal sealed partial class TuiDriver
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
-            lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
+            lines.Add(TuiComponents.Toast(toast, width));
 
         // Docked extension panels placed as a band (or side panels where no side pane fits).
         var band = BuildBand(width);
@@ -2460,7 +2462,7 @@ internal sealed partial class TuiDriver
             // marker at the top after the first PgUp).
             int maxScroll = Math.Max(0, totalRows - transcriptRoom);
             if (_frameScroll > maxScroll) _frameScroll = maxScroll;
-            var windowKey = (wrapW, transcriptRoom, _frameScroll, _transcript.Count, _transcriptSequence, _cardMarkdown);
+            var windowKey = (wrapW, transcriptRoom, _frameScroll, _transcript.Count, _transcriptSequence, _cardMarkdown, RowStyle);
             if (_frameWindowCache is not null && _frameWindowKey == windowKey)
             {
                 // Unchanged window (typing at the prompt only mutates the live band): reuse the
@@ -2663,8 +2665,8 @@ internal sealed partial class TuiDriver
     private List<string> RenderEntryRows(Entry ent, int wrapW)
     {
         // Cached per entry (see _frameRowCache); callers copy or count the list, never mutate it.
-        var (theme, bg) = RowStyle;
-        var key = (wrapW, _cardMarkdown, theme, bg);
+        var (theme, bg, region, markdown) = RowStyle;
+        var key = (wrapW, _cardMarkdown, theme, bg, region, markdown);
         if (_frameRowCacheKey != key) { _frameRowCache.Clear(); _frameRowCacheKey = key; }
         if (_frameRowCache.TryGetValue(ent, out var hit) && hit.Expanded == ent.Expanded) return hit.Rows;
         var rows = RenderEntryRowsUncached(ent, wrapW);

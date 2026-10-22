@@ -130,7 +130,7 @@ internal sealed partial class TuiDriver
     private string DividerCell(int row) =>
         _frameScrollBar.Visible && row < _frameScrollBar.TrackRows && !_resizingDock
             ? _frameScrollBar.Cell(row)
-            : TuiMarkup.ToAnsi($"[{(_resizingDock ? TuiComponents.Accent : TuiComponents.Muted)}]\u2502[/]");
+            : TuiMarkup.ToAnsi($"[{RegionStyle.Color(_resizingDock ? "divider.activeFg" : "divider.fg")}]{RegionStyle.Glyph("divider.glyph")}[/]");
 
     /// <summary>Band rows (markup) above the footer rule, or none. Records hit rows relative to the band.</summary>
     private List<string> BuildBand(int width)

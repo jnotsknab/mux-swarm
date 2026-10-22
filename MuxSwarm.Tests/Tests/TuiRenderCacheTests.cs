@@ -151,6 +151,27 @@ public class TuiRenderCacheTests
         return written[..written.LastIndexOf(Ansi.AutoWrapOn, StringComparison.Ordinal)];
     }
 
+    /// <summary>An extension / layout reload (RegionStyle.Set) bumps RegionStyle.Version, which must
+    /// drop cached rows, or the transcript would keep stale glyphs after /refresh.</summary>
+    [Fact]
+    public void RegionStyleReload_InvalidatesCachedRows()
+    {
+        var term = new Terminal();
+        var d = new TuiDriver(term, frameEngine: true);
+        var calls = CommitCounted(d, 3);
+        Compose(d);
+        int before = calls.Count;
+        Compose(d);
+        Assert.Equal(before, calls.Count);                 // cache hit
+        try
+        {
+            RegionStyle.Set(null);                         // same content, new version
+            Compose(d);
+            Assert.True(calls.Count > before);             // re-rendered after the reload
+        }
+        finally { RegionStyle.Set(null); }
+    }
+
     [Fact]
     public void NavOpenClose_WithoutExpansion_KeepsTheFrameRowCache()
     {
