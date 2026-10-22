@@ -2328,8 +2328,9 @@ internal sealed partial class TuiDriver
         // list (the "cut-off prompt" artifact).
         if (_suspended || _shuttingDown) return;
         var rows = ComposeFrameRows();
-        var gutter = Enumerable.Range(0, rows.Count).Select(_frameScrollBar.Cell).ToList();
-        _frame.Present(rows, gutter);
+        // With a side pane the gutter is the divider between transcript and pane (scrollbar on the transcript's edge).
+        var gutter = Enumerable.Range(0, rows.Count).Select(r => _sideCols > 0 ? DividerCell(r) : _frameScrollBar.Cell(r)).ToList();
+        _frame.Present(rows, gutter, _sideCols > 0 ? Width + 1 : null);
     }
 
     /// <summary>
@@ -2455,8 +2456,9 @@ internal sealed partial class TuiDriver
         if (transcriptRoom > 0)
             hits.Add(new HitRegion(1, 1, transcriptRoom, Math.Max(1, _term.Width - 2 - _sideCols), MouseTargetKind.ExpandedPanel, 0));
         {
-            int railLeft = Math.Max(1, _term.Width - 1);
-            int railWidth = _term.Width - railLeft + 1;
+            int railEdge = _sideCols > 0 ? wrapW + 1 : _term.Width;   // the gutter column (the divider with a side pane)
+            int railLeft = Math.Max(1, railEdge - 1);
+            int railWidth = railEdge - railLeft + 1;
             hits.Add(new HitRegion(1, railLeft, transcriptRoom, railWidth, MouseTargetKind.ScrollBarRail, 0));
             hits.Add(new HitRegion(_frameScrollBar.Top + 1, railLeft, _frameScrollBar.Length, railWidth, MouseTargetKind.ScrollBarThumb, 0));
         }
@@ -2539,7 +2541,7 @@ internal sealed partial class TuiDriver
                     wrapW, MouseTargetKind.TranscriptEntry, e));
             }
         }
-        AddDockHits(hits, wrapW + 1, r => MapLiveLine(_bandLine >= 0 ? _bandLine + 1 + r : -1, out int t, out _) ? (true, t) : (false, 0));
+        AddDockHits(hits, wrapW + 2, h, r => MapLiveLine(_bandLine >= 0 ? _bandLine + 1 + r : -1, out int t, out _) ? (true, t) : (false, 0));
         _frameHits = hits;
         // Selection support: remember THIS frame's rows + pane bounds (same publish cadence as
         // the map). The overlay pass below reads the live drag state; the copy on release reads
@@ -2575,8 +2577,10 @@ internal sealed partial class TuiDriver
         if (_sideRows.Count > 0)
             for (int r = 0; r < rows.Count && r < _sideRows.Count; r++)
             {
+                // Pad to the transcript edge, then jump to the pane's column (absolute, so a mis-measured glyph in
+                // the transcript cannot shift the pane); the divider column between is the renderer's gutter.
                 int pad = Math.Max(0, wrapW - TuiMarkup.Width(TuiMarkup.StripAnsi(rows[r])));
-                rows[r] = rows[r] + Ansi.Reset + new string(' ', pad) + TuiMarkup.ToAnsi(_sideRows[r]);
+                rows[r] = rows[r] + Ansi.Reset + new string(' ', pad) + $"\u001b[{wrapW + 2}G" + TuiMarkup.ToAnsi(_sideRows[r]);
             }
         return rows;
     }
@@ -2977,10 +2981,15 @@ internal sealed partial class TuiDriver
         _dragSelecting = false;
         _dragAnchorRow = _dragLastRow = ev.Row;
         var hits = _frameHits;
-        if (hits is null || !hits.TryHit(ev.Row, ev.Col, out var hit, out int localRow, out _)) return;
+        bool found = hits is not null && hits.TryHit(ev.Row, ev.Col, out _, out _, out _);
+        HitRegion hit = default; int localRow = 0;
+        if (found) hits!.TryHit(ev.Row, ev.Col, out hit, out localRow, out _);
+        UnfocusDockOnPress(found ? hit.Kind : null);   // click away from a docked panel = back to the prompt
+        if (!found) return;
         _mouseCapture = hit;
         _mouseCaptured = true;
         _mouseGrabOffset = hit.Kind == MouseTargetKind.ScrollBarThumb ? localRow : 0;
+        if (hit.Kind == MouseTargetKind.DockSash) BeginSash(hit, ev.Row);
     }
 
     private void OnMouseDrag(MouseEvent ev)
@@ -2989,6 +2998,7 @@ internal sealed partial class TuiDriver
         // Drag routes ONLY to the capture target. The thumb tracks vertical position wherever the
         // pointer drifts (standard scrollbar behavior).
         if (_mouseCapture.Kind == MouseTargetKind.ScrollBarThumb) { if (DragThumbTo(ev.Row)) Repaint(); return; }
+        if (_mouseCapture.Kind == MouseTargetKind.DockSash) { if (DragSash(_mouseCapture, ev.Row, ev.Col)) Repaint(); return; }
         // Transcript pane targets (backdrop, cards, lanes): vertical motion converts the gesture
         // into a LINE SELECTION - crossing a row boundary is the motion-vs-click discriminator,
         // so a wobbly click never selects and a real drag never mis-fires a click. Works MID-TURN
@@ -3015,6 +3025,7 @@ internal sealed partial class TuiDriver
         if (!_engineFrame || !_mouseCaptured) return;
         var captured = _mouseCapture;
         _mouseCaptured = false;
+        if (captured.Kind == MouseTargetKind.DockSash) { EndSash(); return; }
         // Drag-selection release: copy the selected rows' visible text and END the gesture -
         // it never falls through to click routing (the motion already disambiguated intent).
         if (_dragSelecting)
@@ -3060,7 +3071,7 @@ internal sealed partial class TuiDriver
 
             case MouseTargetKind.DockedPanel:
                 // Click on a docked extension panel control: focus that panel and activate (works mid-turn).
-                ClickDocked(captured, ev.Col - captured.Left);
+                ClickDocked(captured);
                 break;
 
             case MouseTargetKind.TranscriptEntry:

@@ -254,7 +254,7 @@ internal sealed class ExtensionPanelView
                 {
                     foreach (var kid in n.Kids)
                     {
-                        if (body.Count > 0) for (int g = 0; g < n.Gap; g++) body.Add("");
+                        if (body.Count > 0 && !Compact) for (int g = 0; g < n.Gap; g++) body.Add("");
                         var kidHits = new List<(int, int, int, int, int)>();
                         var kidRows = Layout(kid, inner, kidHits, innerCol);
                         int baseRow = body.Count + (border ? 1 : 0);
@@ -277,6 +277,9 @@ internal sealed class ExtensionPanelView
         }
         return rows;
     }
+
+    /// <summary>When true, column boxes drop their blank gap rows (a docked band, where rows are scarce).</summary>
+    internal bool Compact { get; set; }
 
     /// <summary>When false, no control is drawn as focused (a docked panel the keyboard is not in).</summary>
     internal bool ShowFocus { get; set; } = true;
