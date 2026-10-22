@@ -28,7 +28,7 @@ internal static class TuiComponents
     public static string DiffDel => Theme.Active.Error;
     public const string Border  = "#3A3A3A";
     // Calm "working" cyan for the thinking/spinner line (NOT Warn - orange reads as an error).
-    public const string Think    = "#7AA2C0";
+    public static string Think => RegionStyle.Color("thinking.fg");
     // Dim blue fill for the cached portion of the context meter (vs the bright live portion).
     public const string CacheFill = "#3E5A6E";
     // Elevated "card" body fill (GitHub-dark canvas-subtle feel) so tool/diff panels read as a
@@ -133,12 +133,20 @@ internal static class TuiComponents
 
     /// <summary>Fully-styled pulsing dot in <paramref name="colorRole"/>: a fixed-width breathing dot
     /// (dim/normal/bold cycle) for the live lane head. <paramref name="frame"/> is safe for any int.</summary>
-    public static string PulsingDot(int frame, string colorRole)
+    public static string PulsingDot(int frame, string colorRole, string? glyph = null)
     {
         string deco = PulseDecos[((frame % PulseDecos.Length) + PulseDecos.Length) % PulseDecos.Length];
         string style = string.IsNullOrEmpty(deco) ? colorRole : $"{colorRole} {deco}";
-        return $"[{style}]{PulseGlyph}[/]";
+        return $"[{style}]{glyph ?? PulseGlyph}[/]";
     }
+
+    // Tool-card style lookups (toolCard region). Card backgrounds stay gated by ContentBackgrounds.
+    private static string CardDot => RegionStyle.Glyph("toolCard.dot");
+    private static string CardOk => $"[{RegionStyle.Color("toolCard.okFg")}]{RegionStyle.Glyph("toolCard.ok")}[/]";
+    private static string CardErr => $"[{RegionStyle.Color("toolCard.errorFg")}]{RegionStyle.Glyph("toolCard.error")}[/]";
+    private static string CardLabel => RegionStyle.Color("toolCard.labelFg");
+    private static string CardResult => $"[{Dim}]{RegionStyle.Glyph("toolCard.result")}[/]";
+    private static string CardBand => Bg(RegionStyle.Color("toolCard.bg"));
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
     /// (U+2800..U+28FF), optionally after leading whitespace. The ThinkingIndicator composes
@@ -315,8 +323,9 @@ internal static class TuiComponents
         string hint = string.IsNullOrWhiteSpace(args)
             ? ""
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
-        string dot = frame >= 0 ? PulsingDot(frame, Warn) : $"[{Warn}]{PulseGlyph}[/]";
-        return new() { $"  {dot} [{Accent}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        string pending = RegionStyle.Color("toolCard.pendingFg");
+        string dot = frame >= 0 ? PulsingDot(frame, pending, CardDot) : $"[{pending}]{CardDot}[/]";
+        return new() { $"  {dot} [{CardLabel}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
     }
 
     /// <summary>
@@ -400,14 +409,15 @@ internal static class TuiComponents
         // Failed calls get a red glyph + a dim "failed" tag so a non-zero result never reads
         // as success (the old path always painted a green dot regardless of exit status).
         // Most-recent completed OK call (frame>=0, held live) pulses; failures + flushed lines static.
+        string okFg = RegionStyle.Color("toolCard.okFg");
         string glyph = error
-            ? $"[{Err}]\u2717[/]"
-            : (frame >= 0 ? PulsingDot(frame, Ok) : $"[{Ok}]{PulseGlyph}[/]");
-        string failTag = error ? $" [{Err}]failed[/]" : "";
+            ? CardErr
+            : (frame >= 0 ? PulsingDot(frame, okFg, CardDot) : $"[{okFg}]{CardDot}[/]");
+        string failTag = error ? $" [{RegionStyle.Color("toolCard.errorFg")}]failed[/]" : "";
         string resultPart = first.Length > 0
-            ? $"  [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}"
+            ? $"  {CardResult} [{Muted}]{Esc(first)}[/]{moreHint}"
             : "";
-        return new() { $"  {glyph} [{Accent}]{Esc(tool)}[/]{hint}{failTag}{resultPart}" };
+        return new() { $"  {glyph} [{CardLabel}]{Esc(tool)}[/]{hint}{failTag}{resultPart}" };
     }
 
     /// <summary>Collapsed one-line tool result (Claude-Code style: first line + "(+N lines)").</summary>
@@ -431,7 +441,7 @@ internal static class TuiComponents
         string first = Trunc(CollapseWs(lines[pick]), 110);
         int more = lines.Length - 1;
         string moreHint = more > 0 ? $" [{Dim}](+{more} line{(more == 1 ? "" : "s")})[/]" : "";
-        return new() { $"    [{Dim}]\u23bf[/] [{Muted}]{Esc(first)}[/]{moreHint}" };
+        return new() { $"    {CardResult} [{Muted}]{Esc(first)}[/]{moreHint}" };
     }
 
     /// <summary>
@@ -445,17 +455,17 @@ internal static class TuiComponents
         string stat = (status ?? "").Trim().ToLowerInvariant();
         string glyph = stat switch
         {
-            "success" or "complete" or "completed" or "done" => $"[{Ok}]\u2713[/]",
-            "failure" or "failed" or "error"                 => $"[{Err}]\u2717[/]",
+            "success" or "complete" or "completed" or "done" => $"[{Ok}]{RegionStyle.Glyph("delegation.done")}[/]",
+            "failure" or "failed" or "error"                 => $"[{Err}]{RegionStyle.Glyph("delegation.failed")}[/]",
             "partial"                                         => $"[{Warn}]\u2052[/]",
-            _                                                  => $"[{Muted}]\u2713[/]"
+            _                                                  => $"[{Muted}]{RegionStyle.Glyph("delegation.done")}[/]"
         };
         var bits = new List<string>();
         if (lines > 0) bits.Add($"{lines} line{(lines == 1 ? "" : "s")}");
         if (tools > 0) bits.Add($"{tools} tool{(tools == 1 ? "" : "s")}");
         bits.Add("ctrl+e expand");
         string hint = $" [{Dim}]({string.Join(", ", bits)})[/]";
-        return $"  [{tintHex}]\u25b8[/] [{Agent}]{Esc(agent)}[/] {glyph}{hint}";
+        return $"  [{tintHex}]{RegionStyle.Glyph("delegation.mark")}[/] [{Agent}]{Esc(agent)}[/] {glyph}{hint}";
     }
 
     /// <summary>
@@ -486,8 +496,8 @@ internal static class TuiComponents
     /// <summary>Expanded tool result as a bordered card with a status glyph.</summary>
     public static List<string> ToolResultPanel(string tool, string text, bool error, int width, int cap = 2000, bool expanded = false, bool markdown = false)
     {
-        string glyph = error ? $"[{Err}]\u2717[/]" : $"[{Ok}]\u2713[/]";
-        string col = error ? Err : Border;
+        string glyph = error ? CardErr : CardOk;
+        string col = error ? RegionStyle.Color("toolCard.errorFg") : RegionStyle.Color("toolCard.railFg");
         var body = (text ?? "");
         // When expanded (NAV cursor opened the card) show the FULL result - no truncation,
         // since the whole point of expanding is to read everything. Only the compact inline
@@ -498,21 +508,21 @@ internal static class TuiComponents
         // One continuous filled card: header band, body rows and footer band all share CardBg,
         // with the accent rail painted ON the fill (no unshaded gap, so blank rows can't notch the
         // right edge and the block reads as a single solid card rather than a floating rectangle).
-        string headMarkup = $"{glyph} [{Accent} on {CardBg}]{Esc(tool)}[/]";
+        string headMarkup = $"{glyph} [{CardLabel} on {CardBand}]{Esc(tool)}[/]";
         string headPlain   = $"\u2713 {tool}";   // glyph(1)+space(1)+tool; width drives the fill pad
-        var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBg, inner) };
+        var outp = new List<string> { ShadedHeader(col, headPlain, headMarkup, CardBand, inner) };
         // markdown=true renders the BODY as muted markdown (uniform with sub-agent panels): headings/
         // bold/inline-code styled but subordinate, no literal ###/**. Tool name/status stay literal.
         foreach (var raw in TrimTrailingBlankLines(body).Split('\n'))
         {
             if (markdown)
                 foreach (var w in TuiMarkup.WrapMarkup(TuiMarkdown.ToMarkup(raw), inner))
-                    outp.Add(ShadedMarkdownRow(col, w, CardBg, inner));
+                    outp.Add(ShadedMarkdownRow(col, w, CardBand, inner));
             else
                 foreach (var w in TuiMarkup.WrapPlain(raw, inner))
-                    outp.Add(ShadedRow(col, w, Text, CardBg, inner));
+                    outp.Add(ShadedRow(col, w, Text, CardBand, inner));
         }
-        outp.Add(ShadedRow(col, "", Text, CardBg, inner));
+        outp.Add(ShadedRow(col, "", Text, CardBand, inner));
         return outp;
     }
 
@@ -551,17 +561,17 @@ internal static class TuiComponents
         // Same continuous filled-card treatment as ToolResultPanel so a LIVE mid-turn expand looks
         // identical to its NAV-scrollback counterpart: rail-on-fill, every band padded to `inner`.
         string headPlain = $"{title} (live \u00b7 ctrl+e collapse)";
-        string headMarkup = $"[{Accent} on {CardBg}]{Esc(title)}[/] [{Dim} on {CardBg}](live \u00b7 ctrl+e collapse)[/]";
-        var outp = new List<string> { ShadedHeader(tint, headPlain, headMarkup, CardBg, inner) };
+        string headMarkup = $"[{CardLabel} on {CardBand}]{Esc(title)}[/] [{Dim} on {CardBand}](live \u00b7 ctrl+e collapse)[/]";
+        var outp = new List<string> { ShadedHeader(tint, headPlain, headMarkup, CardBand, inner) };
         // Top elision marker (tail-anchored views only).
         if (hidden > 0 && anchorTail)
-            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBg, inner));
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} earlier line{(hidden == 1 ? "" : "s")}", Dim, CardBand, inner));
         foreach (var w in wrapped)
-            outp.Add(markdown ? ShadedMarkdownRow(tint, w, CardBg, inner) : ShadedRow(tint, w, Text, CardBg, inner));
+            outp.Add(markdown ? ShadedMarkdownRow(tint, w, CardBand, inner) : ShadedRow(tint, w, Text, CardBand, inner));
         // Bottom elision marker (head-anchored views only) - points at Ctrl+G for the full block.
         if (hidden > 0 && !anchorTail)
-            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBg, inner));
-        outp.Add(ShadedRow(tint, "", Text, CardBg, inner));
+            outp.Add(ShadedRow(tint, $"\u2026 +{hidden} more line{(hidden == 1 ? "" : "s")} (ctrl+g for full)", Dim, CardBand, inner));
+        outp.Add(ShadedRow(tint, "", Text, CardBand, inner));
         return outp;
     }
 
@@ -595,10 +605,13 @@ internal static class TuiComponents
         int gutterCols = gw + 1 + gw + 1;
         int codeW = Math.Max(8, width - 5 - gutterCols);
 
-        string summary = $"[{DiffAdd}]+{adds}[/] [{DiffDel}]\u2212{dels}[/]";
+        string addFg = RegionStyle.Color("diff.addFg"), delFg = RegionStyle.Color("diff.delFg"), railFg = RegionStyle.Color("diff.railFg");
+        string addBg = Bg(RegionStyle.Color("diff.addBg")), delBg = Bg(RegionStyle.Color("diff.delBg"));
+        string rail = RegionStyle.Glyph("diff.rail"), gutterFg = RegionStyle.Color("diff.gutterFg");
+        string summary = $"[{addFg}]+{adds}[/] [{delFg}]\u2212{dels}[/]";
         var outp = new List<string>
         {
-            $"  [{Border}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
+            $"  [{railFg}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
         };
 
         int oldN = 0, newN = 0;
@@ -613,9 +626,9 @@ internal static class TuiComponents
             if (IsMeta(raw)) { outp.Add(MetaRow(raw, gw, gutterCols, codeW)); continue; }
 
             string fg, bg, marker, oldS, newS;
-            if (raw.StartsWith("+")) { fg = DiffAdd; bg = DiffAddBg; marker = "+"; oldS = ""; newS = newN.ToString(); newN++; }
-            else if (raw.StartsWith("-")) { fg = DiffDel; bg = DiffDelBg; marker = "-"; oldS = oldN.ToString(); newS = ""; oldN++; }
-            else { fg = DiffCtxFg; bg = CardBg; marker = " "; oldS = oldN.ToString(); newS = newN.ToString(); oldN++; newN++; }
+            if (raw.StartsWith("+")) { fg = addFg; bg = addBg; marker = "+"; oldS = ""; newS = newN.ToString(); newN++; }
+            else if (raw.StartsWith("-")) { fg = delFg; bg = delBg; marker = "-"; oldS = oldN.ToString(); newS = ""; oldN++; }
+            else { fg = RegionStyle.Color("diff.ctxFg"); bg = CardBand; marker = " "; oldS = oldN.ToString(); newS = newN.ToString(); oldN++; newN++; }
 
             string code = raw.Length > 0 ? raw[1..] : "";   // strip the +/-/space marker column
             var wrapped = TuiMarkup.WrapPlain(code, codeW);
@@ -628,14 +641,12 @@ internal static class TuiComponents
                 // the shaded cell past codeW+1 and bleed the bg past the border.
                 string cellText = mk + wrapped[wi];
                 int cellPad = Math.Max(0, codeW + 1 - TuiMarkup.Width(cellText));
-                outp.Add($"  [{Border} on {bg}]\u2502[/][{GutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
+                outp.Add($"  [{railFg} on {bg}]{rail}[/][{gutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
             }
         }
-        outp.Add($"  [{Border}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
+        outp.Add($"  [{railFg}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
         return outp;
     }
-
-    private const string DiffCtxFg = "#A0A0A0"; // diff context line (neutral grey)
 
     /// <summary>Shade one card body row: an accent rail painted ON the fill, then a full-width
     /// background band of <paramref name="content"/>. The rail-on-fill (vs a detached rail + gap)
@@ -645,7 +656,7 @@ internal static class TuiComponents
         // Pad by DISPLAY width so wide/CJK/emoji content keeps the shaded band exactly `inner` cells
         // (UTF-16 PadRight overshoots for double-width glyphs and bleeds the bg past the card edge).
         int pad = Math.Max(0, inner - TuiMarkup.Width(content));
-        return $"  [{railCol} on {bg}]\u2502[/][{fg} on {bg}] {Esc(content)}{new string(' ', pad)}[/]";
+        return $"  [{railCol} on {bg}]{RegionStyle.Glyph("toolCard.rail")}[/][{fg} on {bg}] {Esc(content)}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Body row of a shaded card carrying PRE-STYLED markdown markup (from TuiMarkdown/
@@ -655,7 +666,7 @@ internal static class TuiComponents
     private static string ShadedMarkdownRow(string railCol, string markupContent, string bg, int inner)
     {
         int pad = Math.Max(0, inner - TuiMarkup.MarkupWidth(markupContent));
-        return $"  [{railCol} on {bg}]\u2502[/][{Muted} on {bg}] {markupContent}{new string(' ', pad)}[/]";
+        return $"  [{railCol} on {bg}]{RegionStyle.Glyph("toolCard.rail")}[/][{Muted} on {bg}] {markupContent}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Header band of a shaded card: same rail-on-fill treatment, carrying pre-styled
@@ -665,7 +676,7 @@ internal static class TuiComponents
     private static string ShadedHeader(string railCol, string headerPlain, string headerMarkup, string bg, int inner)
     {
         int pad = Math.Max(0, inner - TuiMarkup.Width(headerPlain));
-        return $"  [{railCol} on {bg}]\u2502[/][on {bg}] {headerMarkup}{new string(' ', pad)}[/]";
+        return $"  [{railCol} on {bg}]{RegionStyle.Glyph("toolCard.rail")}[/][on {bg}] {headerMarkup}{new string(' ', pad)}[/]";
     }
 
     private static bool IsMeta(string s)
@@ -676,7 +687,7 @@ internal static class TuiComponents
         string blank = new string(' ', gw);
         string txt = Trunc(raw, codeW + 1);
         int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
-        return $"  [{Border} on {CardBg}]\u2502[/][{GutterFg} on {CardBg}] {blank} {blank} [/][{Muted} on {CardBg}]{Esc(txt)}{new string(' ', pad)}[/]";
+        return $"  [{RegionStyle.Color("diff.railFg")} on {CardBand}]{RegionStyle.Glyph("diff.rail")}[/][{RegionStyle.Color("diff.gutterFg")} on {CardBand}] {blank} {blank} [/][{Muted} on {CardBand}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     private static string HunkRow(string raw, int gw, int gutterCols, int codeW)
@@ -684,7 +695,8 @@ internal static class TuiComponents
         string blank = new string(' ', gw);
         string txt = Trunc(raw, codeW + 1);
         int pad = Math.Max(0, codeW + 1 - TuiMarkup.Width(txt));
-        return $"  [{Border} on {DiffHunkBg}]\u2502[/][{GutterFg} on {DiffHunkBg}] {blank} {blank} [/][{Accent} on {DiffHunkBg}]{Esc(txt)}{new string(' ', pad)}[/]";
+        string hunkBg = Bg(RegionStyle.Color("diff.hunkBg"));
+        return $"  [{RegionStyle.Color("diff.railFg")} on {hunkBg}]{RegionStyle.Glyph("diff.rail")}[/][{RegionStyle.Color("diff.gutterFg")} on {hunkBg}] {blank} {blank} [/][{Accent} on {hunkBg}]{Esc(txt)}{new string(' ', pad)}[/]";
     }
 
     /// <summary>Parse a "@@ -o,c +n,c @@" hunk header into the starting old/new line numbers.</summary>
@@ -702,20 +714,20 @@ internal static class TuiComponents
     /// <summary>One-line collapsed delegation summary: "from -> to  <short task>  (ctrl+e expand)".
     /// The full prompt is retained as expandable data by the driver, mirroring sub-agent collapse.</summary>
     public static string DelegationSummary(string from, string to, string task)
-        => $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{Accent}]\u2192 {Esc(to)}[/]  "
+        => $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{RegionStyle.Color("delegation.fg")}]{RegionStyle.Glyph("delegation.arrow")} {Esc(to)}[/]  "
          + $"[{Muted}]{Esc(Trunc(CollapseWs(task), 60))}[/]  [{Dim}](ctrl+e expand)[/]";
 
     /// <summary>Delegation rendered as a small from -> to tree.</summary>
     public static List<string> Delegation(string from, string to, string task, int truncLength) => new()
     {
-        $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{Accent}]\u2192 {Esc(to)}[/]",
-        $"    [{Dim}]\u2514[/] [{Muted}]{Esc(Trunc(CollapseWs(task), truncLength))}[/]"
+        $"  [{Agent}]{Esc(from)}[/] [{Dim}]delegates[/] [{RegionStyle.Color("delegation.fg")}]{RegionStyle.Glyph("delegation.arrow")} {Esc(to)}[/]",
+        $"    [{Dim}]{RegionStyle.Glyph("delegation.branch")}[/] [{Muted}]{Esc(Trunc(CollapseWs(task), truncLength))}[/]"
     };
 
     /// <summary>Full completion text for the non-docked TUI, where no expansion view is available.</summary>
     public static List<string> TaskComplete(string agent, string summary) => new()
     {
-        $"  [{Ok}]✓[/] [{Agent}]{Esc(agent)}[/] [{Dim}]completed[/]  [{Muted}]{Esc(summary)}[/]"
+        $"  [{Ok}]{RegionStyle.Glyph("delegation.done")}[/] [{Agent}]{Esc(agent)}[/] [{Dim}]completed[/]  [{Muted}]{Esc(summary)}[/]"
     };
 
     /// <summary>A width-bounded completion row; the caller retains the original summary when expandable.</summary>
@@ -970,14 +982,16 @@ internal static class TuiComponents
     {
         var chips = segments.Where(s => s.VisibleAt(level)).ToList();
         var extents = new List<(int Col, int Width, string Id)>();
+        string sep = RegionStyle.PlainGlyph("footer.separator");
+        int sepCols = TuiMarkup.Width(sep) + 2;   // " · " (the separator glyph between two spaces)
         int col = 2;   // leading "  "
         foreach (var chip in chips)
         {
             int w = TuiMarkup.MarkupWidth(chip.Markup);
             if (chip.BadgeId is { } id) extents.Add((col, w, id));
-            col += w + 3;   // " · " separator between chips
+            col += w + sepCols;
         }
-        return ("  " + string.Join($" [{Dim}]\u00b7[/] ", chips.Select(c => c.Markup)), extents);
+        return ("  " + string.Join($" [{RegionStyle.Color("footer.separatorFg")}]{Esc(sep)}[/] ", chips.Select(c => c.Markup)), extents);
     }
 
     /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),
@@ -987,6 +1001,15 @@ internal static class TuiComponents
     {
         int w = Math.Max(8, width);
         return $"[{Border}]{new string('\u2500', w)}[/]";
+    }
+
+    /// <summary>The rule above the footer and above the compose box (<c>footer.rule</c>/<c>ruleFg</c>), or
+    /// null when <c>footer.ruleShow</c> is off.</summary>
+    public static string? FooterRule(int width)
+    {
+        if (!RegionStyle.Flag("footer.ruleShow")) return null;
+        int w = Math.Max(8, width);
+        return $"[{RegionStyle.Color("footer.ruleFg")}]{Esc(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("footer.rule"), w)))}[/]";
     }
 
     /// <summary>
@@ -1015,7 +1038,7 @@ internal static class TuiComponents
 
     /// <summary>The input row shown in the live region while awaiting/editing input.</summary>
     public static string InputRow(string buffer)
-        => $"  [{Accent}]\u203a[/] {(string.IsNullOrEmpty(buffer) ? $"[{Dim}]type a message, or / for commands\u2026[/]" : Esc(buffer))}";
+        => $"  [{RegionStyle.Color("input.promptFg")}]{RegionStyle.Glyph("input.prompt")}[/] {(string.IsNullOrEmpty(buffer) ? $"[{RegionStyle.Color("input.placeholderFg")}]{RegionStyle.Glyph("input.placeholder")}[/]" : Esc(buffer))}";
 
     /// <summary>
     /// Input row with a synthetic block cursor at <paramref name="cursor"/>. The real
@@ -1035,7 +1058,7 @@ internal static class TuiComponents
     /// count and the (segment, offset, length) of the buffer chunk the row shows. Reported by
     /// <see cref="InputRowsWithCursor"/> so mouse click-to-position maps a (row, column) back to
     /// a buffer offset with the exact math that painted the row.</summary>
-    public readonly record struct InputRowMeta(int LeadCols, int Seg, int Pos, int Take);
+    public readonly record struct InputRowMeta(int LeadCols, int Seg, int Pos, int Take, bool Caret = false);
 
     public static List<string> InputRowsWithCursor(string buffer, int cursor, int width = 0, bool highlight = false)
         => InputRowsWithCursor(buffer, cursor, width, highlight, null);
@@ -1045,7 +1068,8 @@ internal static class TuiComponents
     public static List<string> InputRowsWithCursor(string buffer, int cursor, int width, bool highlight, List<InputRowMeta>? meta)
     {
         meta?.Clear();
-        const string cur = "#E0E0E0";
+        string cur = $"{RegionStyle.Color("input.cursorFg")} on {RegionStyle.Color("input.cursorBg")}";
+        string fgIn = RegionStyle.Color("input.fg");
         // When highlight is on, every input row is wrapped in a shaded band (InputBg) spanning the
         // full width so the compose field reads as a contained region. Applied as a final pass over
         // the rows so the cursor/markup math below is unchanged (highlight=false is byte-identical).
@@ -1064,13 +1088,13 @@ internal static class TuiComponents
                 // Fill the rest of the row with the faint shade: rail(1) + " " + body + pad == width.
                 int pad = Math.Max(0, width - vis);
                 string body = r.StartsWith("  ") ? r.Substring(2) : r;
-                outp.Add($"[{Accent}]\u2502[/][on {InputBg}] {body}{new string(' ', pad)}[/]");
+                outp.Add($"[{RegionStyle.Color("input.railFg")}]{RegionStyle.Glyph("input.rail")}[/][on {InputBg}] {body}{new string(' ', pad)}[/]");
             }
             return outp;
         }
-        string prompt = VoicePromptGlyph() ?? $"[{Accent}]\u203a[/]";
+        string prompt = VoicePromptGlyph() ?? $"[{RegionStyle.Color("input.promptFg")}]{RegionStyle.Glyph("input.prompt")}[/]";
         // Continuation gutter for wrapped/multiline rows - dim vertical bar aligned under the prompt.
-        string contGutter = $"[{Dim}]\u2502[/]";
+        string contGutter = $"[{RegionStyle.Color("input.continuationFg")}]{RegionStyle.Glyph("input.continuation")}[/]";
         string promptLead = $"  {prompt} ";
         string contLead   = $"  {contGutter} ";
         // Visible column cost of each lead ("  " + glyph + " "). Used to size the wrap width so a
@@ -1080,10 +1104,11 @@ internal static class TuiComponents
 
         if (string.IsNullOrEmpty(buffer))
         {
-            meta?.Add(new InputRowMeta(promptLeadCols, 0, 0, 0));
+            meta?.Add(new InputRowMeta(promptLeadCols, 0, 0, 0, Caret: true));
+            string placeholder = RegionStyle.Glyph("input.placeholder");
             return Shade(new List<string>
             {
-                $"{promptLead}[black on {cur}] [/][{Dim}]type a message, or / for commands\u2026[/]"
+                $"{promptLead}[{cur}] [/]" + (placeholder.Length > 0 ? $"[{RegionStyle.Color("input.placeholderFg")}]{placeholder}[/]" : "")
             });
         }
 
@@ -1118,34 +1143,33 @@ internal static class TuiComponents
                 int cap = width > 0 ? Math.Max(1, width - leadCols) : int.MaxValue;
                 int take = Math.Min(cap, seg.Length - pos);
                 string chunk = seg.Substring(pos, take);
-                meta?.Add(new InputRowMeta(leadCols, s, pos, take));
-
                 // Does the cursor fall on this visual chunk? A cursor sitting exactly at the chunk's
                 // trailing boundary belongs here only when it is also the segment end (append spot);
                 // otherwise it rolls to the start of the next wrapped row.
-                if (s == cursorLine && cursorCol >= pos &&
+                if (cursorVRow < 0 && s == cursorLine && cursorCol >= pos &&
                     (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length)))
                 {
                     cursorVRow = rows.Count;
                     cursorVCol = cursorCol - pos;
                 }
+                meta?.Add(new InputRowMeta(leadCols, s, pos, take, Caret: cursorVRow == rows.Count));
 
                 if (cursorVRow == rows.Count)
                 {
                     int col = Math.Clamp(cursorVCol, 0, chunk.Length);
                     string before = Esc(chunk[..col]);
                     if (col >= chunk.Length)
-                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}] [/]");
+                        rows.Add($"{lead}[{fgIn}]{before}[/][{cur}] [/]");
                     else
                     {
                         string at = Esc(chunk[col].ToString());
                         string after = Esc(chunk[(col + 1)..]);
-                        rows.Add($"{lead}[{Text}]{before}[/][black on {cur}]{at}[/][{Text}]{after}[/]");
+                        rows.Add($"{lead}[{fgIn}]{before}[/][{cur}]{at}[/][{fgIn}]{after}[/]");
                     }
                 }
                 else
                 {
-                    rows.Add($"{lead}[{Text}]{Esc(chunk)}[/]");
+                    rows.Add($"{lead}[{fgIn}]{Esc(chunk)}[/]");
                 }
 
                 pos += take;

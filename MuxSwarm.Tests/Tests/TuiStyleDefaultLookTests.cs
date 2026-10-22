@@ -113,4 +113,56 @@ public class TuiStyleDefaultLookTests
         Assert.Contains("weighing options", output);
         Assert.Equal("C9538AB6650E3114", Hash(output));
     }
+
+    /// <summary>Every region T2 styles: tool cards, diff, delegation, thinking, footer + rules, compose box.</summary>
+    internal static string RenderCards()
+    {
+        var priorTheme = Theme.Active;
+        var sb = new StringBuilder();
+        void Add(IEnumerable<string> lines) { foreach (var l in lines) sb.Append(TuiMarkup.ToAnsi(l)).Append('\n'); }
+        try
+        {
+            Theme.Set(Theme.Default);
+            Add(TuiComponents.ToolCall("Filesystem_read_text_file", "{\"path\":\"a.txt\"}"));
+            Add(TuiComponents.ToolCall("Filesystem_read_text_file", null, 2));
+            Add(TuiComponents.ToolCallResultMerged("shell", "ls", "Command: ls\nfile1\nfile2", false, true));
+            Add(TuiComponents.ToolCallResultMerged("shell", "ls", "STDERR: boom", true, false, 1));
+            Add(TuiComponents.ToolCallResultMerged("shell", null, "ok", false, false, 3));
+            Add(TuiComponents.ToolResultCompact("Job ID: 1\nCommand: dir\nmore"));
+            Add(TuiComponents.ToolResultPanel("read", "line one\n# Head\n**bold**", false, 60));
+            Add(TuiComponents.ToolResultPanel("read", "failed hard", true, 60, markdown: true));
+            Add(TuiComponents.BoundedLivePanel("Worker", "a\nb\nc\nd", "#7FB3D5", 60, 2, anchorTail: true, markdown: true));
+            Add(TuiComponents.BoundedLivePanel("Result", "a\nb\nc\nd", "#7FB3D5", 60, 2, anchorTail: false));
+            Add(TuiComponents.Diff("file.cs", "--- a\n+++ b\n@@ -1,2 +1,2 @@\n-old\n+new\n same", 70));
+            Add([TuiComponents.DelegationSummary("Lead", "Worker", "do the thing")]);
+            Add(TuiComponents.Delegation("Lead", "Worker", "do the thing", 40));
+            Add(TuiComponents.TaskComplete("Task", "all good"));
+            foreach (var st in new[] { "success", "failed", "partial", null })
+                Add([TuiComponents.SubAgentCollapsed("Worker", st, 3, 2, "#7FB3D5")]);
+            Add(TuiComponents.SubAgentActivity([("Worker", "building", "#7FB3D5")], 1));
+            Add([TuiComponents.ThinkingLine("Pondering", 0), TuiComponents.ThinkingLine("\u2836 Thinking", 0)]);
+            Add([TuiComponents.Footer(1200, 200_000, plan: true, ultra: false, psub: true, effort: "high", modeCycleHint: true,
+                cached: 300, sysTokens: 50, toolTokens: 70, toolCalls: 4, model: "provider/claude-x", width: 160)]);
+            Add([TuiComponents.Footer(1200, 200_000, false, false, false, width: 40)]);
+            var badges = new List<(int Col, int Width, string Id)>();
+            TuiComponents.Footer(5, 100, false, false, false, false, "low", false, 0, 0, 0, null, false, null, null, 0, "m1", 120, -1, null, badges);
+            sb.Append(string.Join(",", badges)).Append('\n');
+            var driver = new TuiDriver(new Terminal(), frameEngine: true);
+            Add(driver.BuildLiveFrame(79).Where(l => l.Contains('\u2500')));
+            Add(TuiComponents.InputRowsWithCursor("", 0, 50));
+            Add(TuiComponents.InputRowsWithCursor("hello\nsecond line that wraps around the edge", 8, 30, highlight: true));
+            Add(TuiComponents.InputRowsWithCursor("tail", 4, 40));
+            Add([TuiComponents.InputRow(""), TuiComponents.InputRow("typed")]);
+        }
+        finally { Theme.Set(priorTheme); }
+        return sb.ToString();
+    }
+
+    [Fact]
+    public void NoExtensionStyles_CardsFooterAndInputUnchanged()
+    {
+        string output = RenderCards();
+        Assert.Contains("diff", output);
+        Assert.Equal("6C50EBF1B6D3DEAF", Hash(output));
+    }
 }

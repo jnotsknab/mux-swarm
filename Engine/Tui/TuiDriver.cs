@@ -2188,7 +2188,7 @@ internal sealed partial class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         int footerStart = lines.Count;
-        lines.Add(TuiComponents.FullRule(width));
+        if (TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
         // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
         // short post-activation window; -1 renders the chip static and schedules nothing extra.
         int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
@@ -2213,7 +2213,7 @@ internal sealed partial class TuiDriver
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
-            lines.Add(TuiComponents.FullRule(width));
+            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
             // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
             // replaces the normal input row; accepting/cancelling restores the input row.
             if (_editor.IsSearching)

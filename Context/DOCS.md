@@ -1270,6 +1270,16 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   - `reasoning`: `fg`, `italic` (true/false). Also applies in the classic console.
   - `toast`: `mark` (`◆`), `markFg`, `fg`.
   - `divider` (side-pane divider): `glyph`, `fg`, `activeFg` (while dragging). `scrollbar`: `thumb`, `track`, `thumbFg`, `trackFg`.
+  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`),
+    `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`, `bg` (card fill; off with content backgrounds off).
+  - `diff`: `rail`, `railFg`, `addFg`, `delFg`, `ctxFg`, `addBg`, `delBg`, `hunkBg`, `gutterFg`.
+  - `delegation` (delegations, sub-agent rows): `arrow` (`→`), `branch` (`└`), `mark` (`▸`), `done`, `failed`, `fg`.
+  - `thinking` (the working line and live sub-agent status): `fg`. Frames and quips stay in `thinking` at the top level.
+  - `footer`: `separator` (1-3 cells, between chips; clickable chips stay aligned), `separatorFg`, `rule` (the lines above
+    the footer and the compose box), `ruleFg`, `ruleShow` (false hides both lines).
+  - `input` (compose box): `prompt` (1-2 cells), `promptFg`, `continuation`, `continuationFg`, `placeholder` (text, max
+    60 cells, may be empty), `placeholderFg`, `fg`, `cursorFg`, `cursorBg`, `rail`, `railFg` (the rail shown with
+    `inputHighlight`).
   Every key is checked: an unknown region or property, a wrong type, a colour the TUI cannot draw or a glyph of
   the wrong width skips that extension's whole `tui` block (the error is listed in `/extensions`; the rest of the
   extension still loads). Several extensions merge per property in name order (later wins; each overridden

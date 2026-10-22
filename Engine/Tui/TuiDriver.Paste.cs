@@ -142,7 +142,7 @@ internal sealed partial class TuiDriver
         int statusRows = _pasteStatus is null ? 0 : 1;
         int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;
         int maxInput = Math.Max(1, Math.Min(Math.Min(6, Height / 3), availableRows - statusRows - minCardRows));
-        int caret = input.FindIndex(r => r.Contains("[black on #E0E0E0]", StringComparison.Ordinal));
+        int caret = _composeMeta.FindIndex(m => m.Caret);
         int start = Math.Clamp(caret - maxInput + 1, 0, Math.Max(0, input.Count - maxInput));
         int cardBudget = Math.Max(0, Math.Min(10, availableRows - Math.Min(input.Count, maxInput) - statusRows));
         lines.AddRange(_editor.Attachments.Render(_editor.Buffer, width, cardBudget));
