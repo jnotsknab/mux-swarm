@@ -13,7 +13,7 @@ namespace MuxSwarm.Engine.Tui;
 internal static class RegionStyle
 {
     /// <summary>What a property holds: a colour, a glyph of bounded terminal width, or an on/off flag.</summary>
-    internal enum Kind { Color, Glyph, Flag }
+    internal enum Kind { Color, Glyph, Flag, Lines }
 
     /// <summary>One styleable property: its kind, built-in value and (glyphs) allowed width in cells.</summary>
     internal sealed record Prop(Kind Kind, string Default, int MinCells = 1, int MaxCells = 1);
@@ -22,6 +22,7 @@ internal static class RegionStyle
     private static Prop G(string d, int max = 1) => new(Kind.Glyph, d, 1, max);
     private static Prop T(string d, int min, int max) => new(Kind.Glyph, d, min, max);   // free text of bounded width
     private static Prop F(bool d) => new(Kind.Flag, d ? "true" : "false");
+    private static Prop A() => new(Kind.Lines, "", 0, 80);   // 1-12 text lines, each at most 80 cells; "" = built-in
 
     /// <summary>Every styleable property, keyed <c>region.name</c> (case-insensitive).</summary>
     internal static readonly IReadOnlyDictionary<string, Prop> Props = new Dictionary<string, Prop>(StringComparer.OrdinalIgnoreCase)
@@ -48,7 +49,32 @@ internal static class RegionStyle
         ["input.prompt"] = G("\u203a", 2), ["input.promptFg"] = C("accent"), ["input.continuation"] = G("\u2502"), ["input.continuationFg"] = C("#5A5A5A"),
         ["input.placeholder"] = T("type a message, or / for commands\u2026", 0, 60), ["input.placeholderFg"] = C("#5A5A5A"),
         ["input.fg"] = C("text"), ["input.cursorFg"] = C("black"), ["input.cursorBg"] = C("#E0E0E0"), ["input.rail"] = G("\u2502"), ["input.railFg"] = C("accent"),
+        ["diff.corner"] = G("\u256d"), ["diff.end"] = G("\u2570"), ["diff.line"] = G("\u2500"),
+        ["palette.selected"] = G("\u203a"), ["palette.selectedFg"] = C("accent"), ["palette.itemFg"] = C("text"), ["palette.titleMark"] = G("\u2503"),
+        ["palette.titleFg"] = C("accent"), ["palette.up"] = G("\u2191"), ["palette.down"] = G("\u2193"),
+        ["modal.title"] = G("\u25b8"), ["modal.titleFg"] = C("accent"), ["modal.selected"] = G("\u203a"), ["modal.selectedFg"] = C("accent"),
+        ["modal.checked"] = G("\u25c9"), ["modal.checkedFg"] = C("success"), ["modal.unchecked"] = G("\u25cb"),
+        ["panel.rule"] = G("\u2500"), ["panel.ruleFg"] = C("#3A3A3A"), ["panel.tabFg"] = C("muted"), ["panel.tabActiveFg"] = C("accent"),
+        ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
+        ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
     };
+
+    /// <summary>The <c>glyphs: "ascii"</c> set: plain-ASCII replacements for every built-in glyph, for terminals
+    /// or fonts without box drawing. Applied under an extension's own region keys.</summary>
+    internal static readonly IReadOnlyDictionary<string, string> AsciiGlyphs = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["notice.okMark"] = "+", ["header.mark"] = "|", ["userMessage.bar"] = "|", ["agentHeader.mark"] = ">", ["agentHeader.rule"] = "-",
+        ["answer.lead"] = "*", ["toast.mark"] = "*", ["divider.glyph"] = "|", ["scrollbar.thumb"] = "#", ["scrollbar.track"] = "|",
+        ["toolCard.dot"] = "*", ["toolCard.ok"] = "+", ["toolCard.error"] = "x", ["toolCard.result"] = "-", ["toolCard.rail"] = "|",
+        ["diff.rail"] = "|", ["diff.corner"] = "+", ["diff.end"] = "+", ["diff.line"] = "-",
+        ["delegation.arrow"] = ">", ["delegation.branch"] = "`", ["delegation.mark"] = ">", ["delegation.done"] = "+", ["delegation.failed"] = "x",
+        ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
+        ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
+        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-",
+    };
+
+    /// <summary>Glyph set names for <c>tui.glyphs</c>.</summary>
+    internal static readonly IReadOnlyList<string> GlyphSets = ["unicode", "ascii"];
 
     /// <summary>Region names that have at least one property.</summary>
     internal static IEnumerable<string> Regions => Props.Keys.Select(k => k[..k.IndexOf('.')]).Distinct();
@@ -106,6 +132,9 @@ internal static class RegionStyle
     /// <summary>The flag value for <paramref name="key"/>.</summary>
     internal static bool Flag(string key) => Raw(key) == "true";
 
+    /// <summary>The text lines for <paramref name="key"/> (plain, unescaped); empty = use the built-in content.</summary>
+    internal static string[] Lines(string key) => Raw(key) is { Length: > 0 } v ? v.Split('\n') : [];
+
     /// <summary>
     /// True when <paramref name="value"/> is a colour BOTH renderers draw: <c>#RRGGBB</c>, <c>default</c>,
     /// or a name the TUI markup resolver knows that Spectre also parses (<c>grey</c>, <c>white</c>, ...).
@@ -135,6 +164,15 @@ internal static class RegionStyle
             case Kind.Flag:
                 if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False)) return $"'{key}' must be true or false";
                 normalized = value.ValueKind == JsonValueKind.True ? "true" : "false";
+                return null;
+            case Kind.Lines:
+                if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() is 0 or > 12
+                    || value.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String))
+                    return $"'{key}' must be a list of 1-12 strings";
+                var lines = value.EnumerateArray().Select(e => e.GetString()!).ToList();
+                if (lines.Any(l => l.Any(char.IsControl) || TuiMarkup.Width(l) > prop.MaxCells))
+                    return $"'{key}' lines must be at most {prop.MaxCells} terminal cells without control characters";
+                normalized = string.Join('\n', lines);
                 return null;
             case Kind.Color:
                 var c = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim() : "";
