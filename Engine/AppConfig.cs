@@ -407,6 +407,14 @@ public class ConsoleConfig
     public bool BracketedPaste { get; set; } = true;
 
     /// <summary>
+    /// When true, <c>/resume</c> typed inside a live session asks "End this session and run it there?"
+    /// before switching (the prompt every other main-menu-only command shows). Default false: /resume
+    /// switches straight away (the current session is already saved after every turn).
+    /// </summary>
+    [JsonPropertyName("confirmResume")]
+    public bool ConfirmResume { get; set; }
+
+    /// <summary>
     /// Mouse reporting preset for the frame render engine (Hermes-style): <c>off</c> = no mouse
     /// reporting (terminal selection/native behavior untouched); <c>wheel</c> = SGR reporting
     /// enabled, wheel events drive viewport scrollback (press/release/drag are parsed and

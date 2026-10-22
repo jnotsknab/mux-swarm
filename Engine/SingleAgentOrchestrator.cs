@@ -2897,9 +2897,7 @@ public static class SingleAgentOrchestrator
                     // live session, where it does NOT work. Offer to end the session and run it at
                     // the top-level menu. If they decline, stay in the session (treat as no-op).
                     string cmdName = metaCmd.Split(' ', 2)[0];
-                    bool end = MuxConsole.Confirm(
-                        $"'{cmdName}' only runs at the main menu. End this session and run it there?", false);
-                    if (end)
+                    if (MetaCommandDispatch.ConfirmEndSession(cmdName))
                     {
                         PendingReplCommand = metaCmd;
                         quitSession = true;

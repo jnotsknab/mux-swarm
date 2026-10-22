@@ -294,6 +294,7 @@ TUI rendering preferences.
 | `inputHighlight` | `true` | Syntax highlight for the input line. |
 | `cardMarkdown` | `true` | Render markdown inside cards. |
 | `bracketedPaste` | `true` | Enable bracketed-paste handling for multi-line input. |
+| `confirmResume` | `false` | Ask before `/resume` ends the current session (off = switch straight away). |
 
 ---
 
