@@ -1518,7 +1518,7 @@ public class TuiDriverTests
         Assert.True(TuiCommands.TakesArgument("/skill"));
         Assert.True(TuiCommands.TakesArgument("/resume"));
         Assert.True(TuiCommands.TakesArgument("/setmodel"));
-        Assert.False(TuiCommands.TakesArgument("/agent"));
+        Assert.True(TuiCommands.TakesArgument("/agent"));   // "/agent <name>" picks the lead
         Assert.False(TuiCommands.TakesArgument("/swarm"));
         Assert.False(TuiCommands.TakesArgument("/plan"));
     }

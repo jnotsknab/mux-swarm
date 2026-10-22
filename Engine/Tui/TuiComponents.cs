@@ -1171,6 +1171,36 @@ internal static class TuiComponents
         return rows;
     }
 
+    /// <summary>Agent names best-matching <paramref name="filter"/> (<see cref="AgentMatch"/>), best first.</summary>
+    public static List<string> RankAgents(string? filter, IReadOnlyList<(string Name, string Desc)> agents)
+        => AgentMatch.Rank(filter, agents.Select(a => a.Name));
+
+    /// <summary>Docked "/agent &lt;name&gt;" completion list: best matches first, one row per agent.</summary>
+    public static List<string> AgentsPreview(string? filter, IReadOnlyList<(string Name, string Desc)> agents, int width, int selected = -1)
+    {
+        var rows = new List<string>();
+        if (agents.Count == 0) { rows.Add($"    [{Dim}]no agents configured[/]"); return rows; }
+        var names = RankAgents(filter, agents);
+        rows.Add($"  [{Accent}]\u2503[/] [{Accent}]agents[/] [{Dim}]({names.Count})[/]");
+        if (names.Count == 0) { rows.Add($"    [{Dim}]no agent matches '{Esc((filter ?? "").Trim())}'[/]"); return rows; }
+        var descOf = agents.GroupBy(a => a.Name).ToDictionary(g => g.Key, g => g.First().Desc, StringComparer.Ordinal);
+        int nameW = names.Max(n => n.Length);
+        int descBudget = Math.Max(16, Math.Max(8, width) - 6 - nameW - 2);
+        int start = WindowStart(names.Count, selected);
+        int end = Math.Min(names.Count, start + PreviewWindow);
+        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
+        for (int i = start; i < end; i++)
+        {
+            string name = names[i];
+            string oneLine = Trunc(CollapseWs(descOf.GetValueOrDefault(name) ?? ""), descBudget);
+            rows.Add(i == selected
+                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(name.PadRight(nameW))}[/]  [{Text}]{Esc(oneLine)}[/]"
+                : $"    [{Agent}]{Esc(name.PadRight(nameW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
+        }
+        if (end < names.Count) rows.Add($"    [{Dim}]\u2193 {names.Count - end} more[/]");
+        return rows;
+    }
+
     /// <summary>Compatibility projection for callers with name/description-only tool metadata.</summary>
     public static List<string> RankTools(string? filter, IReadOnlyList<(string Name, string Desc)> tools)
         => ToolCatalog.Rank(filter, tools.Select(t => new ToolCatalog.Entry(t.Name, t.Desc, "Runtime", "Local")).ToArray())

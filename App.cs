@@ -661,6 +661,13 @@ internal class App
                 continue;
             }
 
+            // "/agent <name>": choose the best-matching lead, then start the session like bare /agent.
+            if (userInput.StartsWith("/agent ", StringComparison.OrdinalIgnoreCase) && userInput.Trim().Contains(' '))
+            {
+                if (!CliCmdUtils.SelectLeadAgent(userInput.Trim()[6..].Trim())) continue;
+                userInput = "/agent";
+            }
+
             switch (userInput)
             {
                 case "/help":

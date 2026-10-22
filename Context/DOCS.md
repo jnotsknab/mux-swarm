@@ -796,7 +796,8 @@ Flags can be combined. Common stacks:
 ```
 /swarm          Multi-agent orchestrated loop
 /pswarm         Parallel concurrent dispatch
-/agent          Single-agent conversation
+/agent          Single-agent conversation; /agent <name> starts it with that lead (Tab completes the
+                name, and a partial or misspelled name picks the closest agent, e.g. /agent code -> CodeAgent)
 /stateless      Stateless single-agent (no session persistence)
 /sub, /psub     Enable sub-agent / parallel sub-agent delegation in the single-agent loop
 /plan           Toggle plan mode (agent presents a plan + asks approval before executing)

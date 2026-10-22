@@ -190,7 +190,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/tools", "/skill", "/skills", "/installskill", "/resume", "/agent", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da", "/join", "/share kick", "/share control",
         "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom", "/proxy",
