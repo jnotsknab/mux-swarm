@@ -148,7 +148,7 @@ internal static class ModelSwitch
             string effort = c.Effort is { } e ? $" \u00b7 effort {e}" : "";
             MuxConsole.WriteSuccess(c.IsLead && leadNote is not null
                 ? $"{c.Label} now on {c.Model}{effort} - {leadNote}."
-                : $"{c.Label} set to {c.Model}{effort} (saved; used from its next run).");
+                : $"{c.Label} set to {c.Model}{effort} (saved; used from its next {(leadNote is null ? "run" : "task")}).");
         }
     }
 }
