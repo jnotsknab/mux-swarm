@@ -873,7 +873,8 @@ Flags can be combined. Common stacks:
 
 ### Session lifecycle
 ```
-/resume         Resume a previous single-agent session
+/resume         Resume a previous single-agent session (inside a session it switches straight away;
+                set console.confirmResume true to be asked first)
 /sessions       List saved sessions with type + agent count
 /history        Browse past sessions full-screen (fuzzy find, open, scroll, search)
 /attach [id]    Re-enter a session parked via /detach (no id = pick from list)
