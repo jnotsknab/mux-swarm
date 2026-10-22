@@ -1012,6 +1012,10 @@ internal class App
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
+                case var smCmd when smCmd.StartsWith("/setmodel ", StringComparison.OrdinalIgnoreCase):
+                    // "/setmodel [agent] <model>" at the menu: save it; nothing is live, so it applies next run.
+                    ModelSwitch.Report(await ModelSwitch.RunAsync(smCmd, null, SingleAgentOrchestrator.AgentDef?.Name), leadNote: null);
+                    break;
                 case "/plan":
                     ShouldPlan = !ShouldPlan;
                     if (ShouldPlan)

@@ -132,7 +132,7 @@ internal static class TuiCommands
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
-        new("/setmodel",     "Browse provider models and save model/effort", Scope.ReplOnly),
+        new("/setmodel",     "Pick a model/effort; in a session it switches live (/setmodel [agent] <model>)", Scope.Both),
         new("/set",          "Search/edit settings in a native view (F4 Apply), or /set key value", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
         new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons; default buttons)", Scope.ReplOnly),

@@ -371,14 +371,16 @@ public static class CliCmdUtils
     /// <exception cref="InvalidOperationException">
     /// Thrown when the swarm configuration file cannot be deserialized.
     /// </exception>
-    public static void HandleModelSwap()
+    /// <param name="inSession">True from a live session: the caller reports the change and applies it
+    /// live, so the picker does not print its "applies on the next run" note.</param>
+    public static void HandleModelSwap(bool inSession = false)
     {
         if (MuxConsole.TuiDriverActive)
         {
             try
             {
                 var snapshot = ModelSelectionStore.Load(PlatformContext.SwarmPath);
-                if (MuxConsole.TryModelPicker(snapshot)) return;
+                if (MuxConsole.TryModelPicker(snapshot, quiet: inSession)) return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
             {
@@ -452,7 +454,7 @@ public static class CliCmdUtils
 
         File.WriteAllText(PlatformContext.SwarmPath, JsonSerializer.Serialize(config, CfgSerialOpts));
 
-        MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
+        if (!inSession) MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
     }
 
     public static void HandleProviderSwap()

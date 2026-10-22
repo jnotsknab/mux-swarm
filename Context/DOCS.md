@@ -872,7 +872,13 @@ Flags can be combined. Common stacks:
 ### Config & models
 ```
 /model          View model assignments
-/setmodel       Change the model for any agent / orchestrator / compaction agent
+/setmodel       Change the model for any agent / orchestrator / compaction agent (saved to Swarm.json).
+                In a session (/agent, /stateless, /swarm, /pswarm, ultra, giga; not teams) it switches live:
+                /setmodel <model> moves the agent you are talking to onto <model> with the session kept
+                as-is (same id and file, every message and tool call); /setmodel <agent> <model> retargets
+                any slot (name matched like /agent); bare /setmodel opens the picker. Changed specialists
+                are rebuilt for their next delegation. If the provider reports a smaller context window
+                than the session uses, it compacts first. Swarm modes apply it from the next goal.
 /swap           Swap the active single-agent
 /newagent, /editagent, /delagent  Create / edit / remove a swarm agent
 /provider       View or switch the active LLM provider
