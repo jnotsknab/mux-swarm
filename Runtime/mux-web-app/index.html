@@ -4808,7 +4808,8 @@ const icons = {
       /Context:\s*[\d,]+\s*\/\s*[\d,]+\s*tokens/i.test(t) ||
       /Ready for next input/i.test(t) ||
       /Compacted:/i.test(t) ||
-      /tokens remain/i.test(t)
+      /tokens remain/i.test(t) ||
+      / now on \S+ - | model \u2192 /.test(t)   // a live model switch (/setmodel or the model menu)
     );
   }
   // Route a status pill: standalone when important, else into the cluster.
