@@ -18,8 +18,10 @@ internal static class AgentMatch
         int at = n.IndexOf(q, StringComparison.Ordinal);
         if (at >= 0) return 200 + at;
         if (Subsequence(n, q) is var span and >= 0) return 300 + span;
-        int d = Distance(n, q);
-        return d <= Math.Max(1, q.Length / 3) ? 400 + d : -1;
+        // Typos: compare with and without the "agent" suffix ("muxagnet" is one swap from "muxagent").
+        string fn = name.Trim().ToLowerInvariant(), fq = query.Trim().ToLowerInvariant();
+        int d = Math.Min(Distance(n, q), Distance(fn, fq));
+        return d <= Math.Max(1, Math.Min(q.Length, fq.Length) / 3) ? 400 + d : -1;
     }
 
     /// <summary>Names matching <paramref name="query"/>, best first (ties keep the given order).</summary>
