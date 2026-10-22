@@ -26,7 +26,7 @@ internal readonly record struct FrameScrollBar(int TrackRows, int Top, int Lengt
         if (!Visible || row < 0 || row >= TrackRows) return " ";
         bool thumb = row >= Top && row < Top + Length;
         return TuiMarkup.ToAnsi(thumb
-            ? $"[{TuiComponents.Accent}]█[/]"
-            : $"[{TuiComponents.Muted}]│[/]");
+            ? $"[{RegionStyle.Color("scrollbar.thumbFg")}]{RegionStyle.Glyph("scrollbar.thumb")}[/]"
+            : $"[{RegionStyle.Color("scrollbar.trackFg")}]{RegionStyle.Glyph("scrollbar.track")}[/]");
     }
 }

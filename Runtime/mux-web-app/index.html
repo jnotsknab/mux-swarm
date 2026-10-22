@@ -4531,6 +4531,15 @@ const icons = {
         break;
       }
 
+      // /setmodel or the model menu switched a running session's agent: keep the button in step.
+      case 'model_changed': {
+        const slot = _modelSlots.find(s => s && ev.agent && String(s.name).toLowerCase() === String(ev.agent).toLowerCase());
+        if (slot) slot.model = ev.model;
+        if (_activeAgentName && ev.agent && String(ev.agent).toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = ev.model;
+        refreshModelButton();
+        break;
+      }
+
       // Batch6: /wipe cleared the live session context. Mirror Claude /clear by
       // clearing the transcript view (reuses the screen-clear with undo toast).
       case 'session_wiped':
@@ -4799,7 +4808,8 @@ const icons = {
       /Context:\s*[\d,]+\s*\/\s*[\d,]+\s*tokens/i.test(t) ||
       /Ready for next input/i.test(t) ||
       /Compacted:/i.test(t) ||
-      /tokens remain/i.test(t)
+      /tokens remain/i.test(t) ||
+      / now on \S+ - | model \u2192 /.test(t)   // a live model switch (/setmodel or the model menu)
     );
   }
   // Route a status pill: standalone when important, else into the cluster.
@@ -5835,7 +5845,9 @@ const icons = {
         if (_activeAgentName && name.toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = v;
         refreshModelButton();
         closeModelMenu();
-        routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
+        // live = a session is running: the engine switches it before its next turn and says so
+        // (model_changed); otherwise the change is saved for the next run.
+        routePill(pillFromText(name + ' model \u2192 ' + v + (data && data.live ? ' (switching the live session)' : ' (saved)'), 'event-success'));
       } catch (e) {
         if (!modelMenuEl()) return;
         mmStatus(menu, 'Could not set model: ' + (e.message || e), 'is-error');
@@ -6232,7 +6244,9 @@ const icons = {
     // agent session, transparently /qc first (with optional warning).
     // Anything that isn't /qc, /compact, /skill, or a screen-clear counts.
     let _suppressUserCmdEcho = false;
-    if (activeSessionMode && firstTok.startsWith('/') && !IN_SESSION_SAFE_CMDS.has(firstTok)) {
+    // /resume goes straight to the engine, which switches sessions itself (and asks first only when
+    // console.confirmResume is on), so the web never ends the session on its own for it.
+    if (activeSessionMode && firstTok.startsWith('/') && !IN_SESSION_SAFE_CMDS.has(firstTok) && firstTok !== '/resume') {
       const settings = _muxGetSettings();
       const warn = settings.warnSessionSwitch !== false; // default true
       if (warn) {
@@ -6524,6 +6538,21 @@ const icons = {
   }
 
   function buildPalette(query) {
+    // ── /agent <name> sub-completion (lead agents from /api/agents; the engine picks the best match) ──
+    const agentMatch = query.match(/^\/agent\s+(.*)$/i);
+    if (agentMatch) {
+      const sub = (agentMatch[1] || '').trim();
+      if (!_modelSlots.length) {
+        loadModelSlots(false).then(() => { if (paletteOpen && /^\/agent\s/i.test(input.value)) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); } });
+        return [{ cmd: '/agent ' + sub, desc: 'Loading agents\u2026 (Enter picks the closest match)' }];
+      }
+      const scored = _modelSlots
+        .filter(s => s && s.name)
+        .map(s => ({ cmd: '/agent ' + s.name, desc: s.role || '', score: fuzzyScore(sub.replace(/agent$/i, ''), s.name) }))
+        .filter(s => s.score >= 0)
+        .sort((a, b) => b.score - a.score);
+      return scored.length ? scored : [{ cmd: '/agent ' + sub, desc: 'No exact match \u2014 Enter picks the closest agent' }];
+    }
     // ── /skill <name> sub-completion ──
     // Match '/skill', '/skill ', or '/skill <partial>' and offer cached skills.
     const skillMatch = query.match(/^\/skill(?:\s+(.*))?$/i);

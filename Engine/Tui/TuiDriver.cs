@@ -416,6 +416,17 @@ internal sealed partial class TuiDriver
 
     private readonly List<Entry> _transcript = new();
     private long _transcriptSequence;
+    // Ctrl+L / /clear watermark: entries at or below this sequence stay retained (NAV, Ctrl+G) but are
+    // no longer drawn in the transcript viewport or reflowed back into it.
+    private long _clearedThroughSequence;
+
+    /// <summary>Index of the first transcript entry drawn in the viewport (entries before it were cleared).</summary>
+    private int VisibleStart()
+    {
+        int i = _transcript.Count;
+        while (i > 0 && _transcript[i - 1].Sequence > _clearedThroughSequence) i--;
+        return i;
+    }
     private long _promptContextAfterSequence;
 
     // Exact wrapped-row metrics for the frame scroll marker. Counts are cached per Entry at the
@@ -469,8 +480,9 @@ internal sealed partial class TuiDriver
 
         _frameRowCountCache.Clear();
         int total = 0;
-        foreach (var entry in _transcript)
+        for (int e = VisibleStart(); e < _transcript.Count; e++)
         {
+            var entry = _transcript[e];
             int count = RenderEntryRows(entry, wrapWidth).Count;
             _frameRowCountCache[entry] = count;
             total += count;
@@ -587,6 +599,13 @@ internal sealed partial class TuiDriver
     /// <summary>Set the skills catalog backing the live "/skill" autocomplete preview.</summary>
     public void SetSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)
         => _skills = skills ?? Array.Empty<(string, string)>();
+
+    /// <summary>Lead agents (name, description) for the live "/agent &lt;name&gt;" completion.</summary>
+    private IReadOnlyList<(string Name, string Desc)> _agents = Array.Empty<(string, string)>();
+
+    /// <summary>Set the agents catalog backing the live "/agent &lt;name&gt;" completion.</summary>
+    public void SetAgentsCatalog(IReadOnlyList<(string Name, string Desc)> agents)
+        => _agents = agents ?? Array.Empty<(string, string)>();
 
     /// <summary>Resumable sessions catalog for the live "/resume" autocomplete preview.</summary>
     private IReadOnlyList<(string Id, string Preview, string? Tag)> _sessions = Array.Empty<(string, string, string?)>();
@@ -1949,8 +1968,8 @@ internal sealed partial class TuiDriver
             // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
             // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
             string r = string.IsNullOrWhiteSpace(raw)
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
-                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]";
             CommitMirrored(Lane(new[] { r }));
             return;
         }
@@ -1965,7 +1984,7 @@ internal sealed partial class TuiDriver
             if (_streamBlockDotPending)
             {
                 _streamBlockDotPending = false;
-                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
+                built = TuiComponents.AnswerLead + built;
             }
             else
             {
@@ -2046,13 +2065,13 @@ internal sealed partial class TuiDriver
             // the plain 2-col indent; blanks stay bare.
             string t = _streamTail.ToString();
             string previewBody = _streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(t)}[/]"
                 : TuiMarkdown.ToMarkup(t);
             string preview;
             if (string.IsNullOrWhiteSpace(t))
                 preview = previewBody;
             else if (!_streamReasoning && _streamBlockDotPending)
-                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+                preview = TuiComponents.AnswerLead + previewBody;
             else
                 preview = StreamIndent + previewBody;
             lines.Add(preview);
@@ -2183,7 +2202,7 @@ internal sealed partial class TuiDriver
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
-            lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
+            lines.Add(TuiComponents.Toast(toast, width));
 
         // Docked extension panels placed as a band (or side panels where no side pane fits).
         var band = BuildBand(width);
@@ -2192,7 +2211,7 @@ internal sealed partial class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         int footerStart = lines.Count;
-        lines.Add(TuiComponents.FullRule(width));
+        if (TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
         // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
         // short post-activation window; -1 renders the chip static and schedules nothing extra.
         int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
@@ -2217,7 +2236,7 @@ internal sealed partial class TuiDriver
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
-            lines.Add(TuiComponents.FullRule(width));
+            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
             // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
             // replaces the normal input row; accepting/cancelling restores the input row.
             if (_editor.IsSearching)
@@ -2236,6 +2255,8 @@ internal sealed partial class TuiDriver
                 lines.AddRange(TuiComponents.SkillsPreview(_editor.SkillsFilter, _skills, width, _paletteSel));
             else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
                 lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
+            else if (!_editor.Attachments.Focused && _editor.IsAgentFilter)
+                lines.AddRange(TuiComponents.AgentsPreview(_editor.AgentFilter, _agents, width, _paletteSel));
             else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
             {
                 if (_paletteSel != _resumeMarqueeSel) { _resumeMarqueeSel = _paletteSel; _resumeMarqueeOffset = 0; _resumeMarqueeTick = 0; }
@@ -2328,8 +2349,9 @@ internal sealed partial class TuiDriver
         // list (the "cut-off prompt" artifact).
         if (_suspended || _shuttingDown) return;
         var rows = ComposeFrameRows();
-        var gutter = Enumerable.Range(0, rows.Count).Select(_frameScrollBar.Cell).ToList();
-        _frame.Present(rows, gutter);
+        // With a side pane the gutter is the divider between transcript and pane (scrollbar on the transcript's edge).
+        var gutter = Enumerable.Range(0, rows.Count).Select(r => _sideCols > 0 ? DividerCell(r) : _frameScrollBar.Cell(r)).ToList();
+        _frame.Present(rows, gutter, _sideCols > 0 ? Width + 1 : null);
     }
 
     /// <summary>
@@ -2412,7 +2434,8 @@ internal sealed partial class TuiDriver
             else
             {
                 int want = transcriptRoom + Math.Max(0, _frameScroll);
-                for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
+                int first = VisibleStart();
+                for (int e = _transcript.Count - 1; e >= first && transcriptRows.Count < want; e--)
                     transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
                 int skipTail = Math.Max(0, _frameScroll);
                 int end = transcriptRows.Count - skipTail;
@@ -2455,8 +2478,9 @@ internal sealed partial class TuiDriver
         if (transcriptRoom > 0)
             hits.Add(new HitRegion(1, 1, transcriptRoom, Math.Max(1, _term.Width - 2 - _sideCols), MouseTargetKind.ExpandedPanel, 0));
         {
-            int railLeft = Math.Max(1, _term.Width - 1);
-            int railWidth = _term.Width - railLeft + 1;
+            int railEdge = _sideCols > 0 ? wrapW + 1 : _term.Width;   // the gutter column (the divider with a side pane)
+            int railLeft = Math.Max(1, railEdge - 1);
+            int railWidth = railEdge - railLeft + 1;
             hits.Add(new HitRegion(1, railLeft, transcriptRoom, railWidth, MouseTargetKind.ScrollBarRail, 0));
             hits.Add(new HitRegion(_frameScrollBar.Top + 1, railLeft, _frameScrollBar.Length, railWidth, MouseTargetKind.ScrollBarThumb, 0));
         }
@@ -2520,7 +2544,8 @@ internal sealed partial class TuiDriver
             int transcriptTopPhys = 1 + (transcriptRoom - transcriptRows.Count);
             int skipTail = Math.Max(0, _frameScroll);
             int cursor = transcriptRows.Count + skipTail;   // rows below the current entry (window-relative bottom)
-            for (int e = _transcript.Count - 1; e >= 0 && cursor > 0; e--)
+            int firstHit = VisibleStart();
+            for (int e = _transcript.Count - 1; e >= firstHit && cursor > 0; e--)
             {
                 var entry = _transcript[e];
                 // GetFrameTotalRows(wrapW) above populated the per-entry count cache at this
@@ -2539,7 +2564,7 @@ internal sealed partial class TuiDriver
                     wrapW, MouseTargetKind.TranscriptEntry, e));
             }
         }
-        AddDockHits(hits, wrapW + 1, r => MapLiveLine(_bandLine >= 0 ? _bandLine + 1 + r : -1, out int t, out _) ? (true, t) : (false, 0));
+        AddDockHits(hits, wrapW + 2, h, r => MapLiveLine(_bandLine >= 0 ? _bandLine + 1 + r : -1, out int t, out _) ? (true, t) : (false, 0));
         _frameHits = hits;
         // Selection support: remember THIS frame's rows + pane bounds (same publish cadence as
         // the map). The overlay pass below reads the live drag state; the copy on release reads
@@ -2575,8 +2600,10 @@ internal sealed partial class TuiDriver
         if (_sideRows.Count > 0)
             for (int r = 0; r < rows.Count && r < _sideRows.Count; r++)
             {
+                // Pad to the transcript edge, then jump to the pane's column (absolute, so a mis-measured glyph in
+                // the transcript cannot shift the pane); the divider column between is the renderer's gutter.
                 int pad = Math.Max(0, wrapW - TuiMarkup.Width(TuiMarkup.StripAnsi(rows[r])));
-                rows[r] = rows[r] + Ansi.Reset + new string(' ', pad) + TuiMarkup.ToAnsi(_sideRows[r]);
+                rows[r] = rows[r] + Ansi.Reset + new string(' ', pad) + $"\u001b[{wrapW + 2}G" + TuiMarkup.ToAnsi(_sideRows[r]);
             }
         return rows;
     }
@@ -2654,7 +2681,8 @@ internal sealed partial class TuiDriver
         // band uses - so the reflowed transcript is real ANSI, not literal "[#RRGGBB]" markup tokens.
         // (TuiMarkup.WrapMarkup returns MARKUP slices for NAV, which re-parses them; writing those
         // straight to the terminal printed the raw tags and bloated every row's width.)
-        for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
+        int first = VisibleStart();
+        for (int e = _transcript.Count - 1; e >= first && rows.Count < room; e--)
             rows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
         if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
         return rows;
@@ -2739,6 +2767,28 @@ internal sealed partial class TuiDriver
         _lastSeenWidth = _term.Width;
         _lastSeenHeight = _term.Height;
         ForcePaint();
+    }
+
+    /// <summary>
+    /// Clear the screen (Ctrl+L, /clear): everything committed so far leaves the viewport and only the
+    /// live band (footer, input) is repainted; new output starts on a clean screen. The transcript is
+    /// kept, so Ctrl+G / NAV still browses the full history. Never cancels the turn.
+    /// </summary>
+    public void ClearScreen()
+    {
+        if (_shuttingDown || _navActive) return;
+        FlushTableBuffer();
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        _clearedThroughSequence = _transcriptSequence;
+        _promptContextAfterSequence = _transcriptSequence;   // a prompt replay must not bring them back either
+        _frameScroll = 0;
+        _userScrolled = false;
+        InvalidateFrameRowCounts();
+        _lastSeenWidth = _term.Width;
+        _lastSeenHeight = _term.Height;
+        if (_engineFrame) { _frame.Invalidate(); PresentFrame(); }
+        else _region.ForceRepaint();
     }
 
     // --- bracketed paste -----------------------------------------------------
@@ -2977,10 +3027,15 @@ internal sealed partial class TuiDriver
         _dragSelecting = false;
         _dragAnchorRow = _dragLastRow = ev.Row;
         var hits = _frameHits;
-        if (hits is null || !hits.TryHit(ev.Row, ev.Col, out var hit, out int localRow, out _)) return;
+        bool found = hits is not null && hits.TryHit(ev.Row, ev.Col, out _, out _, out _);
+        HitRegion hit = default; int localRow = 0;
+        if (found) hits!.TryHit(ev.Row, ev.Col, out hit, out localRow, out _);
+        UnfocusDockOnPress(found ? hit.Kind : null);   // click away from a docked panel = back to the prompt
+        if (!found) return;
         _mouseCapture = hit;
         _mouseCaptured = true;
         _mouseGrabOffset = hit.Kind == MouseTargetKind.ScrollBarThumb ? localRow : 0;
+        if (hit.Kind == MouseTargetKind.DockSash) BeginSash(hit, ev.Row);
     }
 
     private void OnMouseDrag(MouseEvent ev)
@@ -2989,6 +3044,7 @@ internal sealed partial class TuiDriver
         // Drag routes ONLY to the capture target. The thumb tracks vertical position wherever the
         // pointer drifts (standard scrollbar behavior).
         if (_mouseCapture.Kind == MouseTargetKind.ScrollBarThumb) { if (DragThumbTo(ev.Row)) Repaint(); return; }
+        if (_mouseCapture.Kind == MouseTargetKind.DockSash) { if (DragSash(_mouseCapture, ev.Row, ev.Col)) Repaint(); return; }
         // Transcript pane targets (backdrop, cards, lanes): vertical motion converts the gesture
         // into a LINE SELECTION - crossing a row boundary is the motion-vs-click discriminator,
         // so a wobbly click never selects and a real drag never mis-fires a click. Works MID-TURN
@@ -3015,6 +3071,7 @@ internal sealed partial class TuiDriver
         if (!_engineFrame || !_mouseCaptured) return;
         var captured = _mouseCapture;
         _mouseCaptured = false;
+        if (captured.Kind == MouseTargetKind.DockSash) { EndSash(); return; }
         // Drag-selection release: copy the selected rows' visible text and END the gesture -
         // it never falls through to click routing (the motion already disambiguated intent).
         if (_dragSelecting)
@@ -3060,7 +3117,7 @@ internal sealed partial class TuiDriver
 
             case MouseTargetKind.DockedPanel:
                 // Click on a docked extension panel control: focus that panel and activate (works mid-turn).
-                ClickDocked(captured, ev.Col - captured.Left);
+                ClickDocked(captured);
                 break;
 
             case MouseTargetKind.TranscriptEntry:
@@ -3644,11 +3701,10 @@ internal sealed partial class TuiDriver
                     continue;
                 }
 
-                // Ctrl+L at the prompt: clear any resize/redraw artifacts and repaint the live
-                // region from scratch. Does not cancel or submit.
+                // Ctrl+L at the prompt: clear the screen (history stays in Ctrl+G). Does not cancel or submit.
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
                 {
-                    ForceRedraw();
+                    ClearScreen();
                     continue;
                 }
 
@@ -3847,7 +3903,7 @@ internal sealed partial class TuiDriver
     /// <summary>True when an autocomplete preview is currently open (and thus arrow keys
     /// should drive its selection rather than command history).</summary>
     private bool PaletteOpen => _inInput && (_editor.IsAtFilter || _editor.IsSkillsFilter
-        || _editor.IsToolsFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
+        || _editor.IsToolsFilter || _editor.IsAgentFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
 
     /// <summary>The ranked candidate list backing the currently open preview (empty if none).</summary>
     private IReadOnlyList<string> PaletteCandidates()
@@ -3855,6 +3911,7 @@ internal sealed partial class TuiDriver
         if (_editor.IsAtFilter)    return TuiComponents.RankFiles(_editor.AtFilter, _files);
         if (_editor.IsSkillsFilter) return TuiComponents.RankSkills(_editor.SkillsFilter, _skills);
         if (_editor.IsToolsFilter)  return ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
+        if (_editor.IsAgentFilter)  return TuiComponents.RankAgents(_editor.AgentFilter, _agents);
         if (_editor.IsResumeFilter) return TuiComponents.RankSessions(_editor.ResumeFilter, _sessions);
         if (_editor.IsSlashFilter)  return TuiComponents.RankCommands(_editor.SlashFilter, _paletteEntries).Select(e => e.Cmd).ToList();
         return Array.Empty<string>();
@@ -3909,6 +3966,13 @@ internal sealed partial class TuiDriver
             var candidates = ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
             var pick = Pick(candidates, sel);
             if (pick is not null) _editor.SetBuffer($"/tools {pick}");
+            return;
+        }
+        // /agent <filter>: complete to "/agent <name>" (the best match when nothing is highlighted).
+        if (_editor.IsAgentFilter)
+        {
+            var pick = Pick(TuiComponents.RankAgents(_editor.AgentFilter, _agents), sel);
+            if (pick is not null) _editor.SetBuffer($"/agent {pick}");
             return;
         }
         // /resume <filter>: complete to "/resume <id>".

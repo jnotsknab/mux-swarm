@@ -276,13 +276,8 @@ public static class CliCmdUtils
     /// running session; the existing session-to-menu confirmation remains required.</remarks>
     public static void HandleAgentSwap()
     {
-        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
-        var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
-
-        var allDefs = defaultDef != null
-            ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
-            : agentDefs;
-        var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
+        var distinctDefs = LeadAgentChoices();
+        var defaultDef = distinctDefs.FirstOrDefault();
         if (distinctDefs.Count == 0)
         {
             MuxConsole.WriteWarning("No lead agents available to select.");
@@ -309,6 +304,36 @@ public static class CliCmdUtils
         if (matched is null) return; // Picker cancel never falls through to another prompt or a switch.
         SingleAgentOrchestrator.AgentDef = matched;
         MuxConsole.WriteSuccess($"Lead agent set to {matched.Name} for the next /agent session.");
+    }
+
+    /// <summary>Agents that can lead an /agent session: the configured default lead first, then every
+    /// Swarm.json agent, one entry per name.</summary>
+    internal static List<Common.AgentDefinition> LeadAgentChoices()
+    {
+        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
+        var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
+        var allDefs = defaultDef != null
+            ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
+            : agentDefs;
+        return allDefs.DistinctBy(a => a.Name).ToList();
+    }
+
+    /// <summary>
+    /// <c>/agent &lt;name&gt;</c>: pick the lead whose name matches best (<see cref="AgentMatch"/>) and say
+    /// which one, or list the agents when nothing is close. Returns false when no agent was chosen.
+    /// </summary>
+    internal static bool SelectLeadAgent(string query)
+    {
+        var defs = LeadAgentChoices();
+        var name = AgentMatch.Best(query, defs.Select(d => d.Name));
+        if (name is null)
+        {
+            MuxConsole.WriteWarning($"No agent matches '{query}'. Agents: {string.Join(", ", defs.Select(d => d.Name))}");
+            return false;
+        }
+        SingleAgentOrchestrator.AgentDef = defs.First(d => d.Name == name);
+        if (!name.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase)) MuxConsole.WriteMuted($"\u2192 {name}");
+        return true;
     }
 
     public static void HandleMaxP()
@@ -346,14 +371,16 @@ public static class CliCmdUtils
     /// <exception cref="InvalidOperationException">
     /// Thrown when the swarm configuration file cannot be deserialized.
     /// </exception>
-    public static void HandleModelSwap()
+    /// <param name="inSession">True from a live session: the caller reports the change and applies it
+    /// live, so the picker does not print its "applies on the next run" note.</param>
+    public static void HandleModelSwap(bool inSession = false)
     {
         if (MuxConsole.TuiDriverActive)
         {
             try
             {
                 var snapshot = ModelSelectionStore.Load(PlatformContext.SwarmPath);
-                if (MuxConsole.TryModelPicker(snapshot)) return;
+                if (MuxConsole.TryModelPicker(snapshot, quiet: inSession)) return;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException)
             {
@@ -429,7 +456,7 @@ public static class CliCmdUtils
         if (selected.CurrentModel != modelId)
             State.HookWorker.Emit("model_changed", selected.Label, summary: modelId, data: [("from", selected.CurrentModel), ("to", modelId)]);
 
-        MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
+        if (!inSession) MuxConsole.WriteSuccess($"Updated {selected.Label} model to: {modelId}");
     }
 
     public static void HandleProviderSwap()
@@ -2132,7 +2159,7 @@ public static class CliCmdUtils
         - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
         - Read these two sections of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full FIRST (grep for the
           headings, then read to the next '## '): '## Extensions' (every manifest key, built-in theme names, footer
-          ids, limits, the JSON-RPC protocol both ways incl. the host API and panel elements, trust, sandbox) and '## Event Hooks' (the table of every
+          ids, TUI region styles (tui), limits, the JSON-RPC protocol both ways incl. the host API and panel elements, trust, sandbox) and '## Event Hooks' (the table of every
           event name and the fields it carries). Use only what they document; if you need something they do not
           cover, say so instead of guessing.
         - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).{(process ? ProcessRules : "")}

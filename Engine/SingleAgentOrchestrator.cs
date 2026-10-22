@@ -862,12 +862,13 @@ public static class SingleAgentOrchestrator
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
-        Common.AgentDefinition? agentDef = null)
+        Common.AgentDefinition? agentDef = null,
+        Func<string, IChatClient>? leadClientFactory = null)
     {
         string outcome = "complete";
         try
         {
-            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef);
+            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef, leadClientFactory: leadClientFactory);
             if (cancellationToken.IsCancellationRequested) outcome = "interrupted";
         }
         catch (OperationCanceledException) { outcome = "interrupted"; throw; }
@@ -902,8 +903,12 @@ public static class SingleAgentOrchestrator
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
-        Common.AgentDefinition? agentDef = null)
+        Common.AgentDefinition? agentDef = null,
+        Func<string, IChatClient>? leadClientFactory = null)
     {
+        // Builds the lead's client for a model switch (/setmodel in the session); same kind as `client`.
+        leadClientFactory ??= chatClientFactory ?? (m => App.CreateChatClient(m));
+
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
         // avoid a redundant double-header. Stdio/serve emit their own structured events.
@@ -1047,7 +1052,7 @@ public static class SingleAgentOrchestrator
 
                 if (!MuxConsole.TuiActive)
                     MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string firstInput = MuxConsole.ReadInput(cancellationToken) ?? "";
+                string firstInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken)) ?? "";
 
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1058,6 +1063,23 @@ public static class SingleAgentOrchestrator
                 }
 
                 HookWorker.CommandExecuted(firstInput, "agent", singleAgentDef?.Name);
+                // /setmodel before the first message: the agent is built after this loop, so it just
+                // needs the new client (and the effort is read from Swarm.json when the agent is built).
+                if (ModelSwitch.IsCommand(firstInput))
+                {
+                    var firstChanges = await ModelSwitch.RunAsync(firstInput, Models, singleAgentDef?.Name);
+                    if (firstChanges.FirstOrDefault(c => c.IsLead) is { } firstLead)
+                    {
+                        client = leadClientFactory(firstLead.Model);
+                        resolvedModelId = firstLead.Model;
+                        MuxConsole.SetTuiModel(resolvedModelId);
+                        ServeMode.EmitEvent(new { type = "model_changed", agent = singleAgentDef?.Name, model = resolvedModelId });
+                    }
+                    await ModelSwitch.RebuildSpecialistsAsync(MultiAgentOrchestrator.Specialists, firstChanges, chatClientFactory);
+                    ModelSwitch.Report(firstChanges, "this session");
+                    continue;
+                }
+
                 var firstDisp = await MetaCommandDispatch.TryHandleAsync(
                     firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
@@ -1936,6 +1958,40 @@ public static class SingleAgentOrchestrator
             _pendingReseed = conversationHistory.Count > 0;
         }
 
+        // /setmodel in a session: save the choice, then put the same agent (prompt, tools, options) on the
+        // new model and move the live session onto it unchanged - same session id and file. Specialists
+        // (and team members) whose slot changed are rebuilt with their history for their next task.
+        async Task SwitchModelAsync(string line)
+        {
+            var changes = await ModelSwitch.RunAsync(line, Models, singleAgentDef.Name);
+            var lead = changes.FirstOrDefault(c => c.IsLead);
+            if (lead is not null)
+            {
+                client = leadClientFactory(lead.Model);
+                ModelSwitch.ApplyEffort(agentChatOptions, lead.Effort);
+                var next = ModelSwitch.Rebuild(agent, client, agentChatOptions);
+                session = await ModelSwitch.MoveSessionAsync(agent, session, next);
+                agent = next;
+                resolvedModelId = lead.Model;
+                MuxConsole.SetTuiModel(resolvedModelId);
+                MuxConsole.SetTuiEffort(ReasoningEffortControl.GetLabel(agentChatOptions));
+                ServeMode.EmitEvent(new { type = "model_changed", agent = singleAgentDef.Name, model = resolvedModelId });
+                await CompactIfOverWindowAsync();
+            }
+            await ModelSwitch.RebuildSpecialistsAsync(MultiAgentOrchestrator.Specialists, changes, chatClientFactory);
+            ModelSwitch.Report(changes, persistSession ? "same session, history kept" : "this session");
+        }
+
+        // After a switch: when the provider reports the new model's context window and the session no longer
+        // fits it, compact now rather than fail the next turn.
+        async Task CompactIfOverWindowAsync()
+        {
+            var window = await ProviderModelCatalog.LoadContextLengthAsync(App.ActiveProvider, resolvedModelId, cancellationToken);
+            if (window.Tokens is not int max || _sessionTokens <= max) return;
+            MuxConsole.WriteInfo($"~{_sessionTokens:N0} tokens is over {resolvedModelId}'s {max:N0}-token window. Compacting...");
+            await TryCompactAsync();
+        }
+
         // Batch6: /undo -- drop the last user+assistant exchange, rebuild the session.
         async Task<bool> TryUndoAsync()
         {
@@ -2728,7 +2784,7 @@ public static class SingleAgentOrchestrator
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            string? nextInput = MuxConsole.ReadInput(cancellationToken);
+            string? nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
             cancellationToken.ThrowIfCancellationRequested();
 
             if (IsQuitCommand(nextInput))
@@ -2853,6 +2909,10 @@ public static class SingleAgentOrchestrator
                 else if (metaCmd.Equals("/review", StringComparison.OrdinalIgnoreCase))
                 {
                     await HandleReviewAsync(client, compactionChatOptions, cancellationToken);
+                }
+                else if (ModelSwitch.IsCommand(metaCmd))
+                {
+                    await SwitchModelAsync(metaCmd);
                 }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {
@@ -3003,6 +3063,12 @@ public static class SingleAgentOrchestrator
                     CliCmdUtils.HandleWorkflowsCommand(
                         metaCmd.Length > "/workflows".Length ? metaCmd.Substring("/workflows".Length).Trim() : "");
                 }
+                else if (metaCmd.Equals("/clear", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Clear the screen in place (Scope.Both; must precede the IsReplOnly fallthrough).
+                    if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
+                    else if (!MuxConsole.StdioMode) Console.Clear();
+                }
                 else if (metaCmd.Equals("/update", StringComparison.OrdinalIgnoreCase))
                 {
                     // Process-level self-update (Scope.Both), identical to the menu path: pull the
@@ -3080,9 +3146,7 @@ public static class SingleAgentOrchestrator
                     // live session, where it does NOT work. Offer to end the session and run it at
                     // the top-level menu. If they decline, stay in the session (treat as no-op).
                     string cmdName = metaCmd.Split(' ', 2)[0];
-                    bool end = MuxConsole.Confirm(
-                        $"'{cmdName}' only runs at the main menu. End this session and run it there?", false);
-                    if (end)
+                    if (MetaCommandDispatch.ConfirmEndSession(cmdName))
                     {
                         PendingReplCommand = metaCmd;
                         quitSession = true;
@@ -3104,7 +3168,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                nextInput = MuxConsole.ReadInput(cancellationToken);
+                nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (IsQuitCommand(nextInput))

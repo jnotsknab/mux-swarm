@@ -291,6 +291,15 @@ public class ConsoleConfig
     public string Theme { get; set; } = "default";
 
     /// <summary>
+    /// Your own per-region TUI styles: the same schema as an extension's <c>tui</c> block
+    /// (<c>{ "glyphs": "ascii", "regions": { "notice": { "okMark": "+" } } }</c>). Applied over every
+    /// extension's styles (yours win per property) and works with extensions off. Null = none.
+    /// Re-read on <c>/refresh</c> and <c>/extensions reload</c>. Ignored in stdio/serve mode.
+    /// </summary>
+    [JsonPropertyName("tui")]
+    public Extensions.TuiManifest? Tui { get; set; }
+
+    /// <summary>
     /// Tool-output verbosity in the TUI renderer. <c>"compact"</c> (default) collapses
     /// each tool result to a one-line summary (Claude-Code style); errors and diffs still
     /// expand. <c>"full"</c> renders the full bordered result panel. Toggled at runtime by
@@ -419,6 +428,14 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("bracketedPaste")]
     public bool BracketedPaste { get; set; } = true;
+
+    /// <summary>
+    /// When true, <c>/resume</c> typed inside a live session asks "End this session and run it there?"
+    /// before switching (the prompt every other main-menu-only command shows). Default false: /resume
+    /// switches straight away (the current session is already saved after every turn).
+    /// </summary>
+    [JsonPropertyName("confirmResume")]
+    public bool ConfirmResume { get; set; }
 
     /// <summary>
     /// Mouse reporting preset for the frame render engine (Hermes-style): <c>off</c> = no mouse

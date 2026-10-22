@@ -167,7 +167,7 @@ public sealed class ExtensionPanelsDockedTests : IDisposable
         int col = rows[row - 1].IndexOf("g: Go", StringComparison.Ordinal) + 1;
         Assert.True(hits.TryHit(row, col, out var hit, out _, out _));
         Assert.Equal(MouseTargetKind.DockedPanel, hit.Kind);
-        typeof(TuiDriver).GetMethod("ClickDocked", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(d, [hit, 0]);
+        typeof(TuiDriver).GetMethod("ClickDocked", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(d, [hit]);
         Assert.True(d.DockFocused);
         lock (_sent) Assert.Contains(_sent, s => s.Contains("\"type\":\"press\""));
         // The transcript backdrop stops at the pane: a click in the pane never starts a transcript selection.
@@ -187,5 +187,129 @@ public sealed class ExtensionPanelsDockedTests : IDisposable
         var rows = d.ComposeFrameRows().Select(Plain).ToList();
         Assert.Equal(119, d.Width);
         Assert.Contains(rows, r => r.Contains("Auto") && r.Contains("F6 focus"));
+    }
+
+    // Drive the real press/drag/release sinks (same path the mouse handler dispatches to).
+    private static void Mouse(TuiDriver d, MouseEventKind kind, int row, int col) =>
+        typeof(TuiDriver).GetMethod(kind switch { MouseEventKind.Press => "OnMousePress", MouseEventKind.Drag => "OnMouseDrag", _ => "OnMouseRelease" },
+            BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(d, [new MouseEvent(kind, 0, row, col, 0)]);
+
+    private static void Click(TuiDriver d, int row, int col) { Mouse(d, MouseEventKind.Press, row, col); Mouse(d, MouseEventKind.Release, row, col); }
+
+    private static MouseHitMap Hits(TuiDriver d) => d.FrameHitMap!;
+
+    [Fact]
+    public void SidePane_TheScrollbarIsTheDivider_OnTheTranscriptEdge()
+    {
+        ExtensionPanels.Open("x", "side", "Usage", J(Tree), "side", columns: 40);
+        var d = Frame(150, 24, out _);
+        for (int i = 0; i < 80; i++) d.CommitLine("history " + i);   // overflow: the scrollbar shows
+        var rows = d.ComposeFrameRows().Select(Plain).ToList();
+        int edge = d.Width + 1;                                      // 110: between transcript (1-109) and pane (111-150)
+        Assert.Equal(110, edge);
+        Assert.All(rows, r => Assert.DoesNotContain('\u2502', r[..Math.Min(r.Length, 150)].Skip(110)));   // no rule drawn inside the pane any more
+        // The rail regions sit on the divider, not on the screen's last column.
+        Assert.True(Hits(d).TryHit(3, edge, out var rail, out _, out _));
+        Assert.True(rail.Kind is MouseTargetKind.ScrollBarRail or MouseTargetKind.ScrollBarThumb, rail.Kind.ToString());
+        Assert.True(Hits(d).TryHit(3, 150, out var right, out _, out _));
+        Assert.Equal(MouseTargetKind.DockedPanel, right.Kind);
+        // The pane starts right of the divider.
+        Assert.Contains(rows, r => r.IndexOf("Usage", StringComparison.Ordinal) is >= 110 and < 115);
+    }
+
+    [Fact]
+    public void FramePresent_PutsTheGutterAtTheRequestedColumn()
+    {
+        var out_ = new System.Text.StringBuilder();
+        var term = new RecTerm(80, 3, out_);
+        var fr = new FrameRenderer(term);
+        fr.Present(["a", "b", "c"], ["|", "|", "|"], 50);
+        Assert.Contains("\u001b[1;50H", out_.ToString());
+        Assert.DoesNotContain("\u001b[1;80H", out_.ToString());
+        out_.Clear();
+        fr.Present(["a", "b", "c"], ["|", "|", "|"]);               // moving the gutter forces a full redraw at the last column
+        Assert.Contains("\u001b[1;80H", out_.ToString());
+    }
+
+    private sealed class RecTerm(int w, int h, System.Text.StringBuilder sink) : ITuiTerminal
+    {
+        public int Width { get; set; } = w;
+        public int Height { get; set; } = h;
+        public void Write(string text) => sink.Append(text);
+        public void Flush() { }
+    }
+
+    [Fact]
+    public void Clicks_FocusAPanelAnywhere_SwitchTabs_AndClickAwayReturnsToThePrompt()
+    {
+        ExtensionPanels.Open("x", "one", "One", J(Tree), "side", columns: 40);
+        ExtensionPanels.Open("x", "two", "Two", J(Tree), "side", columns: 40);
+        var d = Frame(150, 24, out _);
+        var rows = d.ComposeFrameRows().Select(Plain).ToList();
+        // A click on blank pane space focuses the panel (no Esc / F6 needed) without pressing anything.
+        Click(d, 20, 140);
+        Assert.True(d.DockFocused);
+        lock (_sent) Assert.Empty(_sent);
+        // A click on the other tab switches the pane to it.
+        int tabCol = rows[0].IndexOf("Two", StringComparison.Ordinal) + 1;
+        Click(d, 1, tabCol);
+        rows = d.ComposeFrameRows().Select(Plain).ToList();
+        Assert.Contains("Two", rows[0]);
+        Assert.Equal(("x", "two"), typeof(TuiDriver).GetField("_dockFocus", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(d));
+        // A click on the transcript gives the keyboard back to the prompt; the panels stay open.
+        Click(d, 5, 10);
+        Assert.False(d.DockFocused);
+        Assert.Equal(2, ExtensionPanels.All().Count);
+    }
+
+    [Fact]
+    public void DraggingTheDivider_ResizesTheSidePane_WithinLimits()
+    {
+        ExtensionPanels.Open("x", "side", null, J(Tree), "side", columns: 40);
+        var d = Frame(150, 24, out _);
+        d.ComposeFrameRows();
+        int edge = d.Width + 1;
+        Mouse(d, MouseEventKind.Press, 22, edge);                   // below the (absent) scrollbar track: the sash
+        Mouse(d, MouseEventKind.Drag, 22, edge - 20);
+        d.ComposeFrameRows();
+        Assert.Equal(150 - 1 - 60, d.Width);                        // pane 60 wide
+        Mouse(d, MouseEventKind.Drag, 22, 5);                       // clamped: the transcript keeps 60 columns, pane <= 45%
+        d.ComposeFrameRows();
+        Assert.Equal(150 - 1 - 67, d.Width);
+        Mouse(d, MouseEventKind.Drag, 22, 149);                     // and the pane keeps a minimum width
+        Mouse(d, MouseEventKind.Release, 22, 149);
+        d.ComposeFrameRows();
+        Assert.Equal(150 - 1 - 24, d.Width);
+    }
+
+    [Fact]
+    public void Band_HasARuleOnTop_NoGapRows_AndDraggingTheRuleResizesIt()
+    {
+        const string Gappy = """{ "type": "box", "gap": 1, "children": [ { "type": "text", "text": "line A" }, { "type": "text", "text": "line B" }, { "type": "text", "text": "line C" } ] }""";
+        ExtensionPanels.Open("x", "b", "Live", J(Gappy), "band", rows: 3);
+        var d = Frame(100, 40, out _);
+        var rows = d.ComposeFrameRows().Select(Plain).ToList();
+        int tab = rows.FindIndex(r => r.Contains("Live") && r.Contains("F6 focus"));
+        Assert.StartsWith("\u2500\u2500", rows[tab]);                // the tab row is a rule: a clear top edge
+        Assert.EndsWith("\u2500", rows[tab].TrimEnd());
+        Assert.Contains("line A", rows[tab + 1]);
+        Assert.Contains("line B", rows[tab + 2]);                    // gap rows dropped in a band
+        Assert.Contains("line C", rows[tab + 3]);
+        // Drag the rule up two rows: the band grows by two.
+        Mouse(d, MouseEventKind.Press, tab + 1, 60);
+        Mouse(d, MouseEventKind.Drag, tab - 1, 60);
+        Mouse(d, MouseEventKind.Release, tab - 1, 60);
+        var before = rows.Count(r => Regex.IsMatch(r, "line [ABC]"));
+        Assert.Equal(3, before);
+        ExtensionPanels.Update("x", "b", J("""{ "type": "box", "children": [ { "type": "text", "text": "l1\nl2\nl3\nl4\nl5\nl6\nl7" } ] }"""));
+        rows = d.ComposeFrameRows().Select(Plain).ToList();
+        Assert.Equal(5, rows.Count(r => r.Trim() is ['l', >= '1' and <= '7']));
+        // Dragging down shrinks from the rows on screen (not the panel's ask): one row down = one row less.
+        tab = rows.FindIndex(r => r.Contains("Live") && r.Contains("F6 focus"));
+        Mouse(d, MouseEventKind.Press, tab + 1, 60);
+        Mouse(d, MouseEventKind.Drag, tab + 2, 60);
+        Mouse(d, MouseEventKind.Release, tab + 2, 60);
+        rows = d.ComposeFrameRows().Select(Plain).ToList();
+        Assert.Equal(4, rows.Count(r => r.Trim() is ['l', >= '1' and <= '7']));
     }
 }

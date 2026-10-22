@@ -622,6 +622,15 @@ public static partial class MuxConsole
             }
 
             AnsiConsole.WriteLine();
+            if (!RegionStyle.Flag("splash.show"))
+            {
+                // splash.show false: one quiet version line instead of the banner card (both renderers).
+                string line = SplashTitleMarkup(version, debugTag);
+                FrameSplashFactory = _ => new List<string> { line, "" };
+                AnsiConsole.MarkupLine(line);
+                AnsiConsole.WriteLine();
+                return;
+            }
 
             // One random curated line per launch (quote / fact / tip / nudge / tagline). Both the
             // Spectre and frame layouts render the SAME pick, computed once here.
@@ -698,16 +707,22 @@ public static partial class MuxConsole
         string version, string debugTag, string splashLabel, string splashText, bool includeHelp,
         bool spectreHyperlink = true)
     {
-        int muxW = SplashMuxArt.Max(l => l.Length);
         var lines = new List<string>();
         if (includeHelp) lines.Add($"[{C.Prompt}]/agent to start[/] [{C.Muted}]· Type /help for commands[/]");
-        for (int i = 0; i < SplashMuxArt.Length; i++)
+        string artFg = RegionStyle.Color("splash.artFg");
+        if (RegionStyle.Lines("splash.art") is { Length: > 0 } custom)
+            foreach (var line in custom) lines.Add($"[{artFg}]{Esc(line)}[/]");
+        else
         {
-            string muxLine = SplashMuxArt[i].PadRight(muxW + 4);
-            string botLine = i < SplashBotArt.Length ? SplashBotArt[i] : "";
-            lines.Add($"[{C.Banner}]{Esc(muxLine)}[/][{C.Success}]{Esc(botLine)}[/]");
+            int muxW = SplashMuxArt.Max(l => l.Length);
+            for (int i = 0; i < SplashMuxArt.Length; i++)
+            {
+                string muxLine = SplashMuxArt[i].PadRight(muxW + 4);
+                string botLine = i < SplashBotArt.Length ? SplashBotArt[i] : "";
+                lines.Add($"[{artFg}]{Esc(muxLine)}[/][{RegionStyle.Color("splash.accentFg")}]{Esc(botLine)}[/]");
+            }
+            foreach (var line in SplashSwarmArt) lines.Add($"[{artFg}]{Esc(line)}[/]");
         }
-        foreach (var line in SplashSwarmArt) lines.Add($"[{C.Banner}]{Esc(line)}[/]");
         lines.Add("");
         lines.Add($"[{C.Step}]v{Esc(version)}[/]"
             + (string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")
@@ -1148,9 +1163,7 @@ public static partial class MuxConsole
                 // distinct from the final answer (parity with the classic renderer below).
                 TuiStreamChunk(text, reasoning: muted);
             else if (muted)
-                AnsiConsole.Markup(muted
-                    ? $"[grey italic]{Esc(text)}[/]"
-                    : Esc(text));
+                AnsiConsole.Markup($"[{Tui.TuiComponents.ReasoningStyle}]{Esc(text)}[/]");
             else
                 AnsiConsole.Markup(Esc(text));
         }, clearIndicator: false);
@@ -1262,8 +1275,9 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("success", message); return; }
-            if (TuiCommit($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]");
+            string line = $"  [{RegionStyle.Color("notice.ok")}]{RegionStyle.Glyph("notice.okMark")}[/] [{C.Prompt}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1272,8 +1286,10 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("warning", message); return; }
-            if (TuiCommit($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]");
+            string warn = RegionStyle.Color("notice.warn");
+            string line = $"  [{warn}]{RegionStyle.Glyph("notice.warnMark")}[/] [{warn}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1282,8 +1298,10 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("error", message); return; }
-            if (TuiCommit($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]");
+            string err = RegionStyle.Color("notice.error");
+            string line = $"  [{err}]{RegionStyle.Glyph("notice.errorMark")}[/] [{err}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1292,8 +1310,9 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("info", message); return; }
-            if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
+            string line = $"  [{RegionStyle.Color("notice.info")}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 

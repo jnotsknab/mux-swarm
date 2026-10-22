@@ -303,7 +303,8 @@ internal sealed class LiveRegion
     /// <summary>True for the single-glyph list/quote markers the markdown renderer emits.</summary>
     private static bool IsMarkerGlyph(char c) =>
         c is '\u25cf' or '\u2022' or '\u2610' or '\u2713' or '\u2502'
-        || (MarkdownStyle.Active.Bullet.Length == 1 && c == MarkdownStyle.Active.Bullet[0]);
+        || (MarkdownStyle.Active.Bullet.Length == 1 && c == MarkdownStyle.Active.Bullet[0])
+        || (RegionStyle.PlainGlyph("answer.lead") is { Length: 1 } lead && c == lead[0]);
 
     /// <summary>Split a run into alternating space / non-space chunks, preserving both.</summary>
     private static IEnumerable<string> SplitKeepingSpaces(string s)

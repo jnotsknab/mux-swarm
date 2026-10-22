@@ -23,6 +23,11 @@ internal sealed partial class TuiDriver
     private List<(int Row, int Col, int Width, int Payload, string Ext, string Id)> _dockHits = new();
     private int _bandLine = -1;                     // live-band line index of the first band row
     private List<string> _sideRows = new();
+    private int? _sideWidth, _bandHeight;           // user-dragged sizes (this session), else the panel's ask
+    private bool _resizingDock;                     // a sash drag is in progress (the divider/rule shows it)
+    private List<(int Col, int Width, string Ext, string Id)> _bandTabs = new(), _sideTabs = new();
+    private (int Rows, string Ext, string Id) _bandBody;   // band body height + its panel (click-to-focus backdrop)
+    private int _sashPressRow, _sashPressRoom;      // band drag origin
 
     /// <summary>Where <paramref name="p"/> shows at this terminal size: screen, side or band.</summary>
     internal string DockedPlacement(ExtensionPanels.Panel p)
@@ -54,28 +59,54 @@ internal sealed partial class TuiDriver
     {
         var side = Docked("side");
         if (side.Count == 0) return 0;
-        int want = side.Max(p => p.Columns ?? 48);
-        int cap = Math.Min((int)(_term.Width * MaxSideShare), _term.Width - 1 - MinTranscriptColumns);
-        return Math.Max(0, Math.Min(want, cap));
+        int want = _sideWidth ?? side.Max(p => p.Columns ?? 48);
+        return Math.Clamp(want, Math.Min(MinSideColumns, SideCap()), SideCap());
     }
 
-    // Header row of a docked area: a tab per panel (the focused/first one highlighted).
-    private string DockTabs(List<ExtensionPanels.Panel> panels, (string, string) active, bool focused)
+    private const int MinSideColumns = 24;
+    private int SideCap() => Math.Max(0, Math.Min((int)(_term.Width * MaxSideShare), _term.Width - 1 - MinTranscriptColumns));
+
+    /// <summary>Band body rows: the dragged height (up to half the screen), else the panel's ask (default 6, up to a quarter).</summary>
+    private int BandRoom(ExtensionPanels.Panel p) => _bandHeight is { } dragged
+        ? Math.Clamp(dragged, 1, Math.Max(1, Height / 2))
+        : Math.Clamp(p.Rows ?? 6, 1, Math.Max(1, Height / 4));
+
+    // Header row of a docked area: a tab per panel (the focused/first one highlighted). Tab extents
+    // (1-based col, width) go to <paramref name="tabs"/> so a click can switch panels. With a
+    // <paramref name="rule"/> width the row is a rule (tabs set in it) that separates the band from the transcript.
+    private string DockTabs(List<ExtensionPanels.Panel> panels, (string, string) active, bool focused,
+        List<(int Col, int Width, string Ext, string Id)> tabs, int rule = 0)
     {
-        var parts = panels.Select(p =>
+        tabs.Clear();
+        string m = RegionStyle.Color("panel.tabFg"), ruleFg = _resizingDock ? RegionStyle.Color("divider.activeFg") : m;
+        string ruleGlyph = RegionStyle.PlainGlyph("panel.rule");
+        string RuleRun(int n) => Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(ruleGlyph, Math.Max(0, n))));
+        var sb = new System.Text.StringBuilder(rule > 0 ? $"[{ruleFg}]{RuleRun(2)}[/]" : " ");
+        int col = rule > 0 ? 3 : 2;
+        foreach (var p in panels)
         {
             bool on = (p.Extension, p.Id) == active;
             string title = Spectre.Console.Markup.Escape(p.Title);
-            return on ? $"[{(focused ? "black on " + TuiComponents.Accent : TuiComponents.Accent + " bold")}] {title} [/]" : $"[{TuiComponents.Muted}] {title} [/]";
-        });
+            string onStyle = focused ? $"{RegionStyle.Color("panel.focusFg")} on {RegionStyle.Color("panel.focusBg")}" : RegionStyle.Color("panel.tabActiveFg") + " bold";
+            sb.Append(on ? $"[{onStyle}] {title} [/]" : $"[{m}] {title} [/]");
+            int w = TuiMarkup.Width(p.Title) + 2;
+            tabs.Add((col, w, p.Extension, p.Id));
+            col += w;
+        }
         string hint = focused ? "Esc back \u00b7 F6 next" : "F6 focus";
-        return string.Join("", parts) + $" [{TuiComponents.Muted}]{hint}[/]";
+        sb.Append($" [{m}]{hint}[/] ");
+        if (rule > 0)
+            sb.Append($"[{ruleFg}]{RuleRun(rule - (col - 1) - TuiMarkup.Width(hint) - 2)}[/]");
+        return sb.ToString();
     }
 
     private (string, string) ActiveDock(List<ExtensionPanels.Panel> panels) =>
         _dockFocus is { } f && panels.Any(p => (p.Extension, p.Id) == f) ? f : (panels[0].Extension, panels[0].Id);
 
-    /// <summary>Side pane rows (markup, <paramref name="height"/> rows of <paramref name="width"/> incl. the left rule).</summary>
+    /// <summary>
+    /// Side pane rows (markup, <paramref name="height"/> rows of <paramref name="width"/>). The divider to its
+    /// left is not part of the pane: it is the frame's gutter column, shared with the transcript scrollbar.
+    /// </summary>
     private List<string> BuildSidePane(int width, int height)
     {
         var rows = new List<string>(height);
@@ -83,31 +114,42 @@ internal sealed partial class TuiDriver
         if (panels.Count == 0 || width < 4) return rows;
         var active = ActiveDock(panels);
         var panel = panels.First(p => (p.Extension, p.Id) == active);
-        string bar = $"[{TuiComponents.Muted}]\u2502[/]";
-        int inner = width - 1;
-        rows.Add(bar + TuiMarkup.TruncateMarkup(DockTabs(panels, active, _dockFocus == active), inner, ""));
-        rows.Add(bar + $"[{TuiComponents.Muted}]{new string('\u2500', inner)}[/]");
+        int inner = width - 1;   // keep the screen's last column blank: a right margin, and safe from the row's EL clear
+        rows.Add(TuiMarkup.TruncateMarkup(DockTabs(panels, active, _dockFocus == active, _sideTabs), inner, ""));
+        rows.Add($"[{RegionStyle.Color("panel.tabFg")}]{Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("panel.rule"), inner)))}[/]");
         var hits = new List<(int Row, int Col, int Width, int Payload)>();
-        var body = DockView(panel).RenderBody(inner, height - rows.Count, hits);
+        var view = DockView(panel);
+        view.Compact = false;
+        var body = view.RenderBody(inner, height - rows.Count, hits);
         int top = rows.Count;
-        foreach (var b in body) rows.Add(bar + TuiMarkup.TruncateMarkup(b, inner, ""));
-        foreach (var h in hits) _dockHits.Add((top + h.Row, 1 + h.Col, h.Width, h.Payload, panel.Extension, panel.Id));
-        while (rows.Count < height) rows.Add(bar);
+        foreach (var b in body) rows.Add(TuiMarkup.TruncateMarkup(b, inner, ""));
+        foreach (var h in hits) _dockHits.Add((top + h.Row, h.Col, h.Width, h.Payload, panel.Extension, panel.Id));
+        while (rows.Count < height) rows.Add("");
         return rows;
     }
+
+    /// <summary>Divider cell for a frame row when a side pane is open: the transcript scrollbar where it has
+    /// a track, else a plain rule (accent while being dragged).</summary>
+    private string DividerCell(int row) =>
+        _frameScrollBar.Visible && row < _frameScrollBar.TrackRows && !_resizingDock
+            ? _frameScrollBar.Cell(row)
+            : TuiMarkup.ToAnsi($"[{RegionStyle.Color(_resizingDock ? "divider.activeFg" : "divider.fg")}]{RegionStyle.Glyph("divider.glyph")}[/]");
 
     /// <summary>Band rows (markup) above the footer rule, or none. Records hit rows relative to the band.</summary>
     private List<string> BuildBand(int width)
     {
         _dockHits.RemoveAll(h => h.Row < 0);   // band hits are rebuilt every paint (inline paints too)
+        _bandTabs.Clear(); _bandBody = default;
         var panels = Docked("band");
         if (panels.Count == 0) return [];
         var active = ActiveDock(panels);
         var panel = panels.First(p => (p.Extension, p.Id) == active);
-        int room = Math.Clamp(panel.Rows ?? 6, 1, Math.Max(1, Height / 3));
-        var rows = new List<string> { TuiMarkup.TruncateMarkup(DockTabs(panels, active, _dockFocus == active), width, "") };
+        var rows = new List<string> { TuiMarkup.TruncateMarkup(DockTabs(panels, active, _dockFocus == active, _bandTabs, width), width, "") };
         var hits = new List<(int Row, int Col, int Width, int Payload)>();
-        rows.AddRange(DockView(panel).RenderBody(width, room, hits).Select(b => TuiMarkup.TruncateMarkup(b, width, "")));
+        var view = DockView(panel);
+        view.Compact = true;   // a strip above the prompt: no blank spacer rows between items
+        rows.AddRange(view.RenderBody(width, BandRoom(panel), hits).Select(b => TuiMarkup.TruncateMarkup(b, width, "")));
+        _bandBody = (rows.Count - 1, panel.Extension, panel.Id);
         foreach (var h in hits) _dockHits.Add((-(1 + h.Row) - 1, h.Col, h.Width, h.Payload, panel.Extension, panel.Id));   // negative = band-relative
         return rows;
     }
@@ -162,20 +204,86 @@ internal sealed partial class TuiDriver
         return true;
     }
 
-    /// <summary>A click on a docked control (hit payload from <see cref="MouseTargetKind.DockedPanel"/>): focus + activate.</summary>
-    private void ClickDocked(HitRegion hit, int localCol)
+    /// <summary>
+    /// A click on a docked panel (<see cref="MouseTargetKind.DockedPanel"/>, or its tab): focus that panel, and
+    /// activate the control under the pointer. Payload -1 = the panel backdrop or a tab (focus only).
+    /// </summary>
+    private void ClickDocked(HitRegion hit)
     {
         if (hit.Tag is not { } tag || tag.Split('\u001f') is not [var ext, var id] || ExtensionPanels.Get(ext, id) is not { } p) return;
+        bool entering = _dockFocus != (ext, id);
         _dockFocus = (ext, id);
+        var view = DockView(p);
+        if (hit.Payload < 0) { if (entering) view.FocusForEntry(); Repaint(); return; }
         var (index, row) = ExtensionPanelView.DecodeHit(hit.Payload);
-        var o = DockView(p).Click(index, row);
+        var o = view.Click(index, row);
         if (o.IsEvent) ExtensionPanels.SendEvent(p.Extension, p.Id, o.Key, o.Type!, o.Value);
         Repaint();
     }
 
-    /// <summary>Register the docked hit regions for this frame: side rows map 1:1; band rows via the live-band mapper.</summary>
-    private void AddDockHits(MouseHitMap hits, int sideLeft, Func<int, (bool Ok, int Top)> bandRow)
+    private static bool IsDockTarget(MouseTargetKind k) => k is MouseTargetKind.DockedPanel or MouseTargetKind.DockSash;
+
+    /// <summary>A press outside every docked panel hands the keyboard back to the prompt (the click-away
+    /// equivalent of Esc). Scrollbar presses keep focus where it is.</summary>
+    private void UnfocusDockOnPress(MouseTargetKind? kind)
     {
+        if (_dockFocus is null || kind is { } k && (IsDockTarget(k) || k is MouseTargetKind.ScrollBarRail or MouseTargetKind.ScrollBarThumb)) return;
+        _dockFocus = null;
+        Repaint();
+    }
+
+    /// <summary>Start a sash drag (payload 0 = side divider, 1 = band rule).</summary>
+    private void BeginSash(HitRegion hit, int row)
+    {
+        _resizingDock = true;
+        _sashPressRow = row;
+        _sashPressRoom = _bandBody.Rows;   // the rows actually shown (content may be shorter than the room)
+        Repaint();
+    }
+
+    /// <summary>Sash drag: the side divider follows the pointer column; the band rule follows the pointer row
+    /// (up = taller). Sizes hold for the session and are clamped so the transcript keeps its minimum.</summary>
+    private bool DragSash(HitRegion hit, int row, int col)
+    {
+        if (hit.Payload == 0)
+        {
+            int want = Math.Clamp(_term.Width - col, Math.Min(MinSideColumns, SideCap()), SideCap());
+            if (want == _sideWidth) return false;
+            _sideWidth = want;
+            return true;
+        }
+        int rows = Math.Clamp(_sashPressRoom + (_sashPressRow - row), 1, Math.Max(1, Height / 2));
+        if (rows == _bandHeight) return false;
+        _bandHeight = rows;
+        return true;
+    }
+
+    private void EndSash() { _resizingDock = false; Repaint(); }
+
+    /// <summary>
+    /// Register the docked hit regions for this frame: side rows map 1:1 (the pane starts at <paramref name="sideLeft"/>,
+    /// the divider sits just left of it); band rows via the live-band mapper (row 0 = the band's rule row).
+    /// Order matters (later = on top): backdrop, then sash, then tabs and controls.
+    /// </summary>
+    private void AddDockHits(MouseHitMap hits, int sideLeft, int height, Func<int, (bool Ok, int Top)> bandRow)
+    {
+        if (_sideCols > 0 && Docked("side") is { Count: > 0 } side)
+        {
+            var (ext, id) = ActiveDock(side);
+            hits.Add(new HitRegion(1, sideLeft, height, _sideCols, MouseTargetKind.DockedPanel, -1, ext + "\u001f" + id));
+            // The divider (where the scrollbar has no track) and the pane's blank first column are the sash.
+            int track = _frameScrollBar.Visible ? _frameScrollBar.TrackRows : 0;
+            hits.Add(new HitRegion(1, sideLeft, height, 1, MouseTargetKind.DockSash, 0));
+            if (height > track) hits.Add(new HitRegion(1 + track, sideLeft - 1, height - track, 1, MouseTargetKind.DockSash, 0));
+            foreach (var t in _sideTabs) hits.Add(new HitRegion(1, sideLeft + t.Col - 1, 1, t.Width, MouseTargetKind.DockedPanel, -1, t.Ext + "\u001f" + t.Id));
+        }
+        if (_bandBody.Ext is not null && bandRow(-1) is (true, var ruleTop))
+        {
+            if (_bandBody.Rows > 0 && bandRow(0) is (true, var bodyTop))
+                hits.Add(new HitRegion(bodyTop, 1, _bandBody.Rows, Width, MouseTargetKind.DockedPanel, -1, _bandBody.Ext + "\u001f" + _bandBody.Id));
+            hits.Add(new HitRegion(ruleTop, 1, 1, Width, MouseTargetKind.DockSash, 1));
+            foreach (var t in _bandTabs) hits.Add(new HitRegion(ruleTop, t.Col, 1, t.Width, MouseTargetKind.DockedPanel, -1, t.Ext + "\u001f" + t.Id));
+        }
         foreach (var h in _dockHits)
         {
             string tag = h.Ext + "\u001f" + h.Id;

@@ -4,7 +4,7 @@ public static partial class MuxConsole
 {
     /// <summary>Open the docked TUI model/effort view. Cancelling is handled without a config write;
     /// false lets non-docked/classic/stdio callers retain the existing prompt flow.</summary>
-    internal static bool TryModelPicker(ModelSelectionStore.Snapshot snapshot)
+    internal static bool TryModelPicker(ModelSelectionStore.Snapshot snapshot, bool quiet = false)
     {
         if (!ViaDriver || InputOverride != Console.In) return false;
         var active = App.ActiveProvider;
@@ -24,7 +24,7 @@ public static partial class MuxConsole
                 App.SwarmConfig = ModelSelectionStore.Save(snapshot, id, model, effort);
                 saved = $"Saved {view.Slot!.Label}: {model} · effort {effort ?? "default (no override)"}. Applies on the next run.";
             });
-        if (saved is not null) WriteSuccess(saved);
+        if (saved is not null && !quiet) WriteSuccess(saved);
         return handled;
     }
 }

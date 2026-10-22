@@ -79,6 +79,12 @@ internal static class MetaCommandDispatch
                     ct);
                 return Result.Handled;
 
+            case "/clear":
+                // Session-agnostic: clear the screen in place (history stays in Ctrl+G); never ends the session.
+                if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
+                else if (!MuxConsole.StdioMode) Console.Clear();
+                return Result.Handled;
+
             case "/daemon":
             case "/da":
                 MuxSwarm.State.DaemonCommand.Run(line);
@@ -139,9 +145,7 @@ internal static class MetaCommandDispatch
             // Offer to end the session and run it at the top-level menu (the App menu consumes
             // SingleAgentOrchestrator.PendingReplCommand). Declining is a no-op (never sent to the
             // agent as text), so the user is not surprised by the slash text becoming a goal.
-            bool end = MuxConsole.Confirm(
-                $"'{cmd}' only runs at the main menu. End this session and run it there?", false);
-            if (end)
+            if (ConfirmEndSession(cmd))
             {
                 SingleAgentOrchestrator.PendingReplCommand = line;
                 return Result.QuitToMenu;
@@ -151,4 +155,13 @@ internal static class MetaCommandDispatch
 
         return Result.NotHandled;
     }
+
+    /// <summary>
+    /// Ask before ending a live session to run main-menu-only command <paramref name="cmd"/> there.
+    /// <c>/resume</c> skips the question unless <c>console.confirmResume</c> is true: switching
+    /// sessions is the whole point of typing it, and the current session is saved every turn.
+    /// </summary>
+    internal static bool ConfirmEndSession(string cmd) =>
+        (cmd.Equals("/resume", StringComparison.OrdinalIgnoreCase) && !(App.Config?.Console.ConfirmResume ?? false))
+        || MuxConsole.Confirm($"'{cmd}' only runs at the main menu. End this session and run it there?", false);
 }

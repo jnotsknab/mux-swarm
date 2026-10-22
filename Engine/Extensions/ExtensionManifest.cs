@@ -26,8 +26,8 @@ internal sealed class ExtensionManifest
     /// <summary>
     /// TUI color themes. Each entry needs a <c>name</c>, may name a built-in <c>base</c> preset
     /// (default <c>default</c>), and overrides any theme color role by its camelCase key
-    /// (<c>accent</c>, <c>success</c>, <c>cardBg</c>, ...). Values are Spectre color tokens:
-    /// <c>#RRGGBB</c>, a named color, or <c>default</c>.
+    /// (<c>accent</c>, <c>success</c>, <c>cardBg</c>, ...). Values are <c>#RRGGBB</c>, <c>default</c>, or a
+    /// colour name both renderers draw (<c>grey</c>, <c>white</c>, ...; see <see cref="Tui.RegionStyle.IsColor"/>).
     /// </summary>
     [JsonPropertyName("themes")]
     public List<Dictionary<string, string>> Themes { get; set; } = [];
@@ -106,6 +106,27 @@ internal sealed class ExtensionManifest
     /// <summary>Web UI contributions: themes with CSS, fonts and light/dark variants (see <see cref="WebManifest"/>).</summary>
     [JsonPropertyName("web")]
     public WebManifest? Web { get; set; }
+
+    /// <summary>Per-region TUI styles (colours, glyphs, show/hide). Null = built-in look.</summary>
+    [JsonPropertyName("tui")]
+    public TuiManifest? Tui { get; set; }
+}
+
+/// <summary>
+/// The <c>tui</c> block: <c>regions</c> maps a region name to its properties, e.g.
+/// <c>{ "notice": { "okMark": "+", "ok": "accent" }, "reasoning": { "italic": false } }</c>.
+/// Every key is validated; one bad key skips the whole block (the rest of the extension still loads).
+/// </summary>
+public sealed class TuiManifest
+{
+    /// <summary>Glyph set applied under the region keys: <c>unicode</c> (built-in) or <c>ascii</c> (plain ASCII for
+    /// limited terminals or fonts).</summary>
+    [JsonPropertyName("glyphs")]
+    public string? Glyphs { get; set; }
+
+    /// <summary>Region name -&gt; property name -&gt; value (colour role or colour, glyph text, or true/false).</summary>
+    [JsonPropertyName("regions")]
+    public Dictionary<string, Dictionary<string, System.Text.Json.JsonElement>>? Regions { get; set; }
 }
 
 /// <summary>

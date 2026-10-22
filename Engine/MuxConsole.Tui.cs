@@ -665,6 +665,9 @@ public static partial class MuxConsole
                 // Seed the live "/skill" autocomplete with the loaded skill catalog.
                 try { _driver.SetSkillsCatalog(SkillLoader.GetSkillMetadata().Select(sk => (sk.Name, sk.Description)).ToList()); }
                 catch { /* skills optional */ }
+                // Seed the live "/agent <name>" completion with the lead agents.
+                try { _driver.SetAgentsCatalog(CliCmdUtils.LeadAgentChoices().Select(a => (a.Name, a.Description)).ToList()); }
+                catch { /* agents optional */ }
                 // Seed the live "/resume" autocomplete with resumable sessions.
                 try { _driver.SetSessionsCatalog(CliCmdUtils.GetResumableSessions()); }
                 catch { /* sessions optional */ }
@@ -988,6 +991,10 @@ public static partial class MuxConsole
     }
 
 internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
+
+    /// <summary>Clear the screen (Ctrl+L, /clear): committed output leaves the viewport, history stays
+    /// in Ctrl+G. No-op outside the TUI. Safe from the mid-turn key listener thread.</summary>
+    internal static void TuiClearScreen() { if (ViaDriver) lock (ConsoleLock) { _driver!.ClearScreen(); } }
 
     /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
     /// viewport by net wheel notches through the driver's FrameScrollBy path + repaints. Serialized

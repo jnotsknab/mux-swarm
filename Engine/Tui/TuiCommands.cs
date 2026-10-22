@@ -140,7 +140,7 @@ internal static class TuiCommands
         new("/continuous",   "Toggle autonomous execution (/cont)", Scope.ReplOnly),
         new("/addcontext",   "Configure per-agent injected context", Scope.ReplOnly),
         new("/maxp",         "Max agents running in parallel (default 4)", Scope.ReplOnly),
-        new("/setmodel",     "Browse provider models and save model/effort", Scope.ReplOnly),
+        new("/setmodel",     "Pick a model/effort; in a session it switches live (/setmodel [agent] <model>)", Scope.Both),
         new("/set",          "Search/edit settings in a native view (F4 Apply), or /set key value", Scope.ReplOnly),
         new("/showreasoning","Show/hide streamed reasoning (full|summary|none)", Scope.ReplOnly),
         new("/mouse",        "Mouse preset for the frame engine (off|wheel|buttons; default buttons)", Scope.ReplOnly),
@@ -184,7 +184,7 @@ internal static class TuiCommands
         new("/installskill", "Install an agent skill: by name (anthropics/obra/dotnet/...), owner/repo, owner/repo/path, or a GitHub URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
-        new("/clear",        "Clear the screen", Scope.ReplOnly),
+        new("/clear",        "Clear the screen (history stays in Ctrl+G)", Scope.Both),
         new("/status",       "View full system status", Scope.ReplOnly),
         new("/help",         "Full command reference", Scope.ReplOnly),
         new("/shortcuts",    "Show keyboard shortcuts (/keys)", Scope.ReplOnly),
@@ -198,7 +198,7 @@ internal static class TuiCommands
     /// </summary>
     private static readonly HashSet<string> ArgTaking = new(StringComparer.OrdinalIgnoreCase)
     {
-        "/tools", "/skill", "/skills", "/installskill", "/resume", "/setmodel", "/swap", "/provider", "/maxp",
+        "/tools", "/skill", "/skills", "/installskill", "/resume", "/agent", "/setmodel", "/swap", "/provider", "/maxp",
         "/workflow", "/report", "/addcontext", "/set", "/newagent", "/createhook", "/hooks", "/editagent", "/delagent",
         "/tag", "/showreasoning", "/workspace", "/teams", "/kanban", "/background", "/bg", "/daemon", "/da", "/join", "/share kick", "/share control",
         "/compact", "/prune", "/handoff", "/heal", "/reflect", "/mouse", "/effort", "/effort custom", "/proxy",
@@ -350,14 +350,14 @@ internal static class TuiCommands
         new("Ctrl+C",      "Cancel the current input line", "prompt"),
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
-        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
+        new("Ctrl+L",      "Clear the screen (history stays in Ctrl+G)", "prompt"),
         new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
-        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),
+        new("Ctrl+L",      "Clear the screen (does not cancel; history stays in Ctrl+G)", "turn"),
 
         // --- transcript / expand view (NAV overlay) ---
         new("j / k",       "Move cursor down / up one line", "view"),

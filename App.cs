@@ -638,6 +638,10 @@ internal class App
             if (pendingFromSession is null) MuxConsole.ResetTuiTurnClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
+            // A wake line from the web model menu that arrived after its session ended: nothing to apply
+            // (Swarm.json already has the change), never a command.
+            if (userInput == ModelSwitch.WakeLine) { ModelSwitch.ClearQueued(); continue; }
+
             if (string.IsNullOrEmpty(userInput))
                 continue;
 
@@ -673,6 +677,13 @@ internal class App
             {
                 MuxConsole.WriteMuted(menuPruneError ?? "/prune needs an idle lead session after its first turn. Launch /agent or a team lead; delegated sessions are unchanged.");
                 continue;
+            }
+
+            // "/agent <name>": choose the best-matching lead, then start the session like bare /agent.
+            if (userInput.StartsWith("/agent ", StringComparison.OrdinalIgnoreCase) && userInput.Trim().Contains(' '))
+            {
+                if (!CliCmdUtils.SelectLeadAgent(userInput.Trim()[6..].Trim())) continue;
+                userInput = "/agent";
             }
 
             switch (userInput)
@@ -1019,6 +1030,10 @@ internal class App
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
                     break;
+                case var smCmd when smCmd.StartsWith("/setmodel ", StringComparison.OrdinalIgnoreCase):
+                    // "/setmodel [agent] <model>" at the menu: save it; nothing is live, so it applies next run.
+                    ModelSwitch.Report(await ModelSwitch.RunAsync(smCmd, null, SingleAgentOrchestrator.AgentDef?.Name), leadNote: null);
+                    break;
                 case "/plan":
                     ShouldPlan = !ShouldPlan;
                     if (ShouldPlan)
@@ -1177,9 +1192,9 @@ internal class App
                 case "/clear":
                     // In TUI mode a raw Console.Clear() wipes the terminal out from under the
                     // live region, desyncing its frame model and stranding ghost rows. Route
-                    // through the driver's managed clear+repaint (the Ctrl+L path); fall back to
-                    // a raw clear only in classic/stdio where there is no live region.
-                    if (MuxConsole.IsTui) MuxConsole.TuiForceRedraw();
+                    // through the driver's managed clear (the Ctrl+L path); fall back to a raw
+                    // clear only in classic/stdio where there is no live region.
+                    if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
                     else Console.Clear();
                     break;
 
@@ -2258,7 +2273,7 @@ internal class App
     /// </summary>
     internal static void LoadExtensions(bool announce, bool quiet = false)
     {
-        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
+        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions, Config.Console.Tui);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
         var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
         var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();

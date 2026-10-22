@@ -125,7 +125,7 @@ public sealed class ExtensionScaffoldTests : IDisposable
         // The session consumes it before reading the first input (once), so the brief is turn one.
         var src = File.ReadAllText(Path.Combine(SourceRoot(), "Engine", "SingleAgentOrchestrator.cs"));
         int take = src.IndexOf("Interlocked.Exchange(ref PendingOpeningGoal, null)", StringComparison.Ordinal);
-        Assert.True(take > 0 && take < src.IndexOf("string firstInput = MuxConsole.ReadInput(cancellationToken)", StringComparison.Ordinal));
+        Assert.True(take > 0 && take < src.IndexOf("string firstInput = ", StringComparison.Ordinal));
     }
 
     // Every event name the code emits, and every built-in theme name, must be documented in DOCS.md,
