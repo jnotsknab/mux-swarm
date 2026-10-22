@@ -1249,10 +1249,18 @@ chrome before you pick. The choice persists to `config.json`:
 ```
 
 The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
-configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
-per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
-Exception: rendered markdown tables use the theme - header text = `mdHeading`, grid lines = the
-`border` role (default `#3A3A3A`, so the default theme is unchanged).
+configs are byte-identical. Card, input, diff and code backgrounds are theme roles (`cardBg`, `inputBg`,
+`diffAddBg`, `diffDelBg`, `diffHunkBg`, `codeBg`, `inlineCodeBg`); badge tints and the per-agent lane colors
+stay fixed. Rendered markdown tables use `mdHeading` for header text and the `border` role (default
+`#3A3A3A`) for grid lines.
+
+Your own per-region styles go in `console.tui`, with the same schema as an extension's `tui` block (see the
+**tui** key under Extensions). They apply over every extension (yours win per property) and also work with
+extensions off; problems are shown at startup and in `/extensions`:
+
+```jsonc
+"console": { "theme": "nord", "tui": { "glyphs": "ascii", "regions": { "input": { "placeholder": "" } } } }
+```
 
 Extensions can add more themes (see ## Extensions); they appear in `/theme`, the picker and setup.
 
@@ -1287,7 +1295,8 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   catppuccin-macchiato catppuccin-latte nord tokyo-night tokyo-storm rose-pine rose-dawn kanagawa
   everforest one-dark monokai ayu-mirage synthwave`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
-  diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
+  diffHunkBg codeBg inlineCodeBg border`. Values are `#RRGGBB`, `default`, or one of the names the TUI draws:
+  `black white red green yellow blue grey` (other Spectre names such as `purple` are rejected).
 - **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
   emoji or ZWJ sequences, e.g. `["-", "\\", "|", "/"]` or `["[=  ]", "[ = ]", "[  =]"]`). Narrower frames
   are padded to the widest so the line does not jitter. Replaces the built-in braille spinner on the main
@@ -1317,6 +1326,175 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
+- **tui**: per-region styles for the TUI, the terminal counterpart of the web `styles` CSS. `regions` maps a
+  region to its properties:
+  ```jsonc
+  "tui": { "regions": {
+    "notice":    { "okMark": "+", "ok": "accent" },
+    "reasoning": { "fg": "#8A8A8A", "italic": false },
+    "header":    { "show": false }
+  } }
+  ```
+  Colour values are a theme role (`accent`, `muted`, `text`, `success`, `cardBg`, ... any role listed under
+  **themes**, plus `text` = body text; roles follow `/theme`) or a literal `#RRGGBB`, `default`, `black`, `white`,
+  `red`, `green`, `yellow`, `blue`, `grey`. Glyphs must fit their width (1 cell unless noted). Regions and properties:
+  - `notice` (the `✓ ! x` status lines): `okMark` `warnMark` `errorMark` (1-2 cells), `ok` `warn` `error` `info` colours.
+  - `header` (session card): `mark` (1-2 cells, `┃`), `accent`, `show`.
+  - `userMessage` (your echoed message): `bar` (`▎`), `barFg`, `fg`.
+  - `agentHeader` (`▸ Agent ───`): `mark` (1-2 cells), `rule` (repeated), `fg`, `ruleFg`.
+  - `answer`: `lead` (the `●` before each answer block), `leadFg`.
+  - `reasoning`: `fg`, `italic` (true/false). Also applies in the classic console.
+  - `toast`: `mark` (`◆`), `markFg`, `fg`.
+  - `divider` (side-pane divider): `glyph`, `fg`, `activeFg` (while dragging). `scrollbar`: `thumb`, `track`, `thumbFg`, `trackFg`.
+  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`),
+    `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`, `bg` (card fill; off with content backgrounds off).
+  - `diff`: `rail`, `railFg`, `addFg`, `delFg`, `ctxFg`, `addBg`, `delBg`, `hunkBg`, `gutterFg`.
+  - `delegation` (delegations, sub-agent rows): `arrow` (`→`), `branch` (`└`), `mark` (`▸`), `done`, `failed`, `fg`.
+  - `thinking` (the working line and live sub-agent status): `fg`. Frames and quips stay in `thinking` at the top level.
+  - `footer`: `separator` (1-3 cells, between chips; clickable chips stay aligned), `separatorFg`, `rule` (the lines above
+    the footer and the compose box), `ruleFg`, `ruleShow` (false hides both lines).
+  - `input` (compose box): `prompt` (1-2 cells), `promptFg`, `continuation`, `continuationFg`, `placeholder` (text, max
+    60 cells, may be empty), `placeholderFg`, `fg`, `cursorFg`, `cursorBg`, `rail`, `railFg` (the rail shown with
+    `inputHighlight`).
+  - `diff` also: `corner` (`╭`), `end` (`╰`), `line` (`─`) for the card's top and bottom border.
+  - `palette` (slash palette and the `/skill`, `/resume`, `/agent`, `@` and tools completions): `selected` (`›`),
+    `selectedFg`, `itemFg`, `titleMark` (`┃`), `titleFg`, `up` / `down` (the `↑ N more` markers).
+  - `modal` (ask_user / confirm / select / text prompts): `title` (`▸`), `titleFg`, `selected`, `selectedFg`,
+    `checked` (`◉`), `checkedFg`, `unchecked` (`○`).
+  - `panel` (rules under picker and panel headers, docked panel tabs): `rule`, `ruleFg`, `tabFg`, `tabActiveFg`,
+    `focusFg` / `focusBg` (the focused tab).
+  - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
+    replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
+  `"glyphs": "ascii"` (next to `regions`) swaps every built-in glyph for plain ASCII (`+ * > | - #`) for terminals or
+  fonts without box drawing; region keys still override single glyphs on top. Default `unicode`.
+  Your own `console.tui` in config.json (same schema, see TUI color themes) wins over every extension.
+  A complete example that restyles every region (save as `Extensions/ember/extension.json`):
+  ```json
+  {
+    "name": "ember",
+    "version": "0.1.0",
+    "description": "Warm theme that restyles every TUI region (demo)",
+    "themes": [
+      {
+        "name": "ember",
+        "base": "gruvbox",
+        "accent": "#FF8C42",
+        "banner": "#FF8C42",
+        "agent": "#F4C27A"
+      }
+    ],
+    "tui": {
+      "regions": {
+        "notice": {
+          "okMark": "✔",
+          "warnMark": "▲",
+          "errorMark": "✖",
+          "info": "muted"
+        },
+        "header": {
+          "mark": "◆",
+          "accent": "accent"
+        },
+        "userMessage": {
+          "bar": "┃",
+          "barFg": "#FF8C42"
+        },
+        "agentHeader": {
+          "mark": "◆",
+          "rule": "┄",
+          "fg": "agent",
+          "ruleFg": "border"
+        },
+        "answer": {
+          "lead": "•",
+          "leadFg": "accent"
+        },
+        "reasoning": {
+          "fg": "#8A7F72",
+          "italic": true
+        },
+        "toast": {
+          "mark": "◆",
+          "markFg": "accent"
+        },
+        "divider": {
+          "glyph": "┃",
+          "activeFg": "#FF8C42"
+        },
+        "scrollbar": {
+          "thumb": "┃",
+          "track": "│",
+          "thumbFg": "#FF8C42"
+        },
+        "toolCard": {
+          "dot": "◆",
+          "ok": "✔",
+          "error": "✖",
+          "result": "╰",
+          "rail": "┃",
+          "labelFg": "#F4C27A",
+          "railFg": "#5C4A3A"
+        },
+        "diff": {
+          "rail": "┃",
+          "corner": "┏",
+          "end": "┗",
+          "line": "━"
+        },
+        "delegation": {
+          "arrow": "↪",
+          "mark": "◆",
+          "done": "✔"
+        },
+        "thinking": {
+          "fg": "#FFB86B"
+        },
+        "footer": {
+          "separator": "│",
+          "separatorFg": "#5C4A3A",
+          "rule": "━",
+          "ruleFg": "#5C4A3A"
+        },
+        "input": {
+          "prompt": "▸",
+          "promptFg": "#FF8C42",
+          "continuation": "┃",
+          "placeholder": "what are we building?",
+          "cursorBg": "#FF8C42"
+        },
+        "palette": {
+          "selected": "▸",
+          "titleMark": "◆",
+          "selectedFg": "#FF8C42"
+        },
+        "modal": {
+          "title": "◆",
+          "selected": "▸",
+          "checked": "◆",
+          "unchecked": "◇"
+        },
+        "panel": {
+          "rule": "━",
+          "ruleFg": "#5C4A3A",
+          "focusBg": "#FF8C42"
+        },
+        "splash": {
+          "art": [
+            "  ▄▄▄ ▄   ▄ ▄▄▄  ▄▄▄ ▄▄▄",
+            "  █▄▄ █▀▄▀█ █▄▄█ █▄▄ █▄▄▀",
+            "  █▄▄ █   █ █▄▄█ █▄▄ █  █",
+            "  ember  -  a warm Mux"
+          ],
+          "artFg": "#FF8C42"
+        }
+      }
+    }
+  }
+  ```
+  Every key is checked: an unknown region or property, a wrong type, a colour the TUI cannot draw or a glyph of
+  the wrong width skips that extension's whole `tui` block (the error is listed in `/extensions`; the rest of the
+  extension still loads). Several extensions merge per property in name order (later wins; each overridden
+  region shows as a conflict). Restyling applies to new output, like `/theme`. `--stdio`, `--serve` and ACP ignore it.
 - `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
   disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
   recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.

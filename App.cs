@@ -2273,7 +2273,7 @@ internal class App
     /// </summary>
     internal static void LoadExtensions(bool announce, bool quiet = false)
     {
-        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions);
+        var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions, Config.Console.Tui);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
         var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
         var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();

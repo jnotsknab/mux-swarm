@@ -2159,7 +2159,7 @@ public static class CliCmdUtils
         - Manifest: {Path.Combine(dir, Extensions.ExtensionRegistry.ManifestFileName)}{(process ? $"\n- Process: {Path.Combine(dir, "main.py")}" : "")}
         - Read these two sections of {Path.Combine(PlatformContext.ContextDirectory, "DOCS.md")} in full FIRST (grep for the
           headings, then read to the next '## '): '## Extensions' (every manifest key, built-in theme names, footer
-          ids, limits, the JSON-RPC protocol both ways incl. the host API and panel elements, trust, sandbox) and '## Event Hooks' (the table of every
+          ids, TUI region styles (tui), limits, the JSON-RPC protocol both ways incl. the host API and panel elements, trust, sandbox) and '## Event Hooks' (the table of every
           event name and the fields it carries). Use only what they document; if you need something they do not
           cover, say so instead of guessing.
         - Edit only files inside that folder; do not edit config.json (the user trusts/enables in /extensions).{(process ? ProcessRules : "")}

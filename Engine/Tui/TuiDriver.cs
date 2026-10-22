@@ -1956,8 +1956,8 @@ internal sealed partial class TuiDriver
             // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
             // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
             string r = string.IsNullOrWhiteSpace(raw)
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
-                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]";
             CommitMirrored(Lane(new[] { r }));
             return;
         }
@@ -1972,7 +1972,7 @@ internal sealed partial class TuiDriver
             if (_streamBlockDotPending)
             {
                 _streamBlockDotPending = false;
-                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
+                built = TuiComponents.AnswerLead + built;
             }
             else
             {
@@ -2053,13 +2053,13 @@ internal sealed partial class TuiDriver
             // the plain 2-col indent; blanks stay bare.
             string t = _streamTail.ToString();
             string previewBody = _streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(t)}[/]"
                 : TuiMarkdown.ToMarkup(t);
             string preview;
             if (string.IsNullOrWhiteSpace(t))
                 preview = previewBody;
             else if (!_streamReasoning && _streamBlockDotPending)
-                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+                preview = TuiComponents.AnswerLead + previewBody;
             else
                 preview = StreamIndent + previewBody;
             lines.Add(preview);
@@ -2190,7 +2190,7 @@ internal sealed partial class TuiDriver
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
-            lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
+            lines.Add(TuiComponents.Toast(toast, width));
 
         // Docked extension panels placed as a band (or side panels where no side pane fits).
         var band = BuildBand(width);
@@ -2199,7 +2199,7 @@ internal sealed partial class TuiDriver
 
         // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         int footerStart = lines.Count;
-        lines.Add(TuiComponents.FullRule(width));
+        if (TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
         // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
         // short post-activation window; -1 renders the chip static and schedules nothing extra.
         int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
@@ -2224,7 +2224,7 @@ internal sealed partial class TuiDriver
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it.
-            lines.Add(TuiComponents.FullRule(width));
+            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
             // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
             // replaces the normal input row; accepting/cancelling restores the input row.
             if (_editor.IsSearching)

@@ -291,6 +291,15 @@ public class ConsoleConfig
     public string Theme { get; set; } = "default";
 
     /// <summary>
+    /// Your own per-region TUI styles: the same schema as an extension's <c>tui</c> block
+    /// (<c>{ "glyphs": "ascii", "regions": { "notice": { "okMark": "+" } } }</c>). Applied over every
+    /// extension's styles (yours win per property) and works with extensions off. Null = none.
+    /// Re-read on <c>/refresh</c> and <c>/extensions reload</c>. Ignored in stdio/serve mode.
+    /// </summary>
+    [JsonPropertyName("tui")]
+    public Extensions.TuiManifest? Tui { get; set; }
+
+    /// <summary>
     /// Tool-output verbosity in the TUI renderer. <c>"compact"</c> (default) collapses
     /// each tool result to a one-line summary (Claude-Code style); errors and diffs still
     /// expand. <c>"full"</c> renders the full bordered result panel. Toggled at runtime by
