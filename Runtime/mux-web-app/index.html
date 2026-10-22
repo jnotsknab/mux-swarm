@@ -4535,6 +4535,7 @@ const icons = {
       case 'model_changed': {
         const slot = _modelSlots.find(s => s && ev.agent && String(s.name).toLowerCase() === String(ev.agent).toLowerCase());
         if (slot) slot.model = ev.model;
+        if (_activeAgentName && ev.agent && String(ev.agent).toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = ev.model;
         refreshModelButton();
         break;
       }
