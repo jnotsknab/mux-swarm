@@ -79,6 +79,12 @@ internal static class MetaCommandDispatch
                     ct);
                 return Result.Handled;
 
+            case "/clear":
+                // Session-agnostic: clear the screen in place (history stays in Ctrl+G); never ends the session.
+                if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
+                else if (!MuxConsole.StdioMode) Console.Clear();
+                return Result.Handled;
+
             case "/daemon":
             case "/da":
                 MuxSwarm.State.DaemonCommand.Run(line);

@@ -992,6 +992,10 @@ public static partial class MuxConsole
 
 internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
+    /// <summary>Clear the screen (Ctrl+L, /clear): committed output leaves the viewport, history stays
+    /// in Ctrl+G. No-op outside the TUI. Safe from the mid-turn key listener thread.</summary>
+    internal static void TuiClearScreen() { if (ViaDriver) lock (ConsoleLock) { _driver!.ClearScreen(); } }
+
     /// <summary>Mid-turn wheel scroll routed from the EscapeKeyListener thread: steps the frame
     /// viewport by net wheel notches through the driver's FrameScrollBy path + repaints. Serialized
     /// under ConsoleLock exactly like the streaming writers, so it cannot race a mid-frame present.</summary>

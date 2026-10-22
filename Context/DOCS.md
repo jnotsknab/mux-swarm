@@ -941,7 +941,7 @@ Flags can be combined. Common stacks:
 /help           Full command reference
 /verbose, /sav  Toggle full-vs-collapsed tool output / sub-agent output
 /shortcuts      Show keyboard shortcuts (alias /keys)
-/clear          Clear terminal
+/clear          Clear the screen; also inside a session and with Ctrl+L (history stays in Ctrl+G)
 /exit           Exit runtime
 ```
 

@@ -282,11 +282,11 @@ public sealed class EscapeKeyListener : IDisposable
                             try { onExpand(); } catch { /* expansion is best-effort */ }
                             continue;
                         }
-                        // Ctrl+L: clear resize/redraw artifacts and repaint mid-turn without
-                        // cancelling. Routes through the driver (no-op outside the TUI).
+                        // Ctrl+L: clear the screen mid-turn without cancelling. Routes through the
+                        // driver (no-op outside the TUI).
                         if (ctrl && key.Key == ConsoleKey.L)
                         {
-                            try { MuxConsole.TuiForceRedraw(); } catch { /* redraw is best-effort */ }
+                            try { MuxConsole.TuiClearScreen(); } catch { /* clear is best-effort */ }
                             continue;
                         }
                         // Ctrl+T: toggle the team TaskBoard strip mid-turn (v0.12.0 M2) without

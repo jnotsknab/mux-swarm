@@ -1192,9 +1192,9 @@ internal class App
                 case "/clear":
                     // In TUI mode a raw Console.Clear() wipes the terminal out from under the
                     // live region, desyncing its frame model and stranding ghost rows. Route
-                    // through the driver's managed clear+repaint (the Ctrl+L path); fall back to
-                    // a raw clear only in classic/stdio where there is no live region.
-                    if (MuxConsole.IsTui) MuxConsole.TuiForceRedraw();
+                    // through the driver's managed clear (the Ctrl+L path); fall back to a raw
+                    // clear only in classic/stdio where there is no live region.
+                    if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
                     else Console.Clear();
                     break;
 
