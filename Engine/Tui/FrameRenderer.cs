@@ -25,6 +25,7 @@ internal sealed class FrameRenderer
     private List<string>? _lastRows;   // last-presented physical rows (ANSI); null forces a full redraw
     private List<string>? _lastGutter; // chrome is independent of text width and row wrapping
     private int _lastCols = -1;        // terminal width at last present; a change forces full invalidation
+    private int _lastGutterCol = -1;   // physical column of the gutter at last present; a move forces a full redraw
     private bool _entered;             // true once the alternate screen has been entered
 
     /// <summary>Configured input-framing mode, reasserted whenever this renderer takes screen ownership.</summary>
@@ -40,10 +41,13 @@ internal sealed class FrameRenderer
     /// Output envelope and emitted as a single write+flush so the user never sees a half-paint.
     /// Optional <paramref name="rightGutter"/> cells are addressed at the physical last column,
     /// independently of the content width estimate, and must have the same height as the rows.
+    /// <paramref name="gutterColumn"/> (1-based) moves that column left, e.g. to sit between the content and a
+    /// side pane drawn in the same rows; null = the last column.
     /// </summary>
-    public void Present(IReadOnlyList<string> rows, IReadOnlyList<string>? rightGutter = null)
+    public void Present(IReadOnlyList<string> rows, IReadOnlyList<string>? rightGutter = null, int? gutterColumn = null)
     {
         int columns = Math.Max(1, _term.Width);
+        int gutterCol = Math.Clamp(gutterColumn ?? columns, 1, columns);
         if (rightGutter is not null && rightGutter.Count != rows.Count)
             throw new ArgumentException("Gutter and content must have identical height.", nameof(rightGutter));
         var sb = new StringBuilder(4096);
@@ -65,7 +69,8 @@ internal sealed class FrameRenderer
 
         bool full = _lastRows is null
             || _lastRows.Count != rows.Count
-            || _lastCols != columns;
+            || _lastCols != columns
+            || _lastGutterCol != gutterCol;
 
         if (full)
         {
@@ -81,7 +86,7 @@ internal sealed class FrameRenderer
             for (int i = 0; i < rows.Count; i++)
             {
                 WriteRowInto(sb, i, rows[i], columns, hasGutter: rightGutter is not null);
-                WriteGutterInto(sb, i, columns, rightGutter);
+                WriteGutterInto(sb, i, gutterCol, rightGutter);
             }
         }
         else
@@ -99,7 +104,7 @@ internal sealed class FrameRenderer
                 // A row rewrite clears its suffix, including the chrome. Reapply the cell even if
                 // its semantic state is unchanged. Removing a gutter explicitly blanks old cells.
                 if ((changed && rightGutter is not null) || cell != previous)
-                    sb.Append(Ansi.MoveTo(i + 1, columns)).Append(Ansi.Reset).Append(cell).Append(Ansi.Reset);
+                    sb.Append(Ansi.MoveTo(i + 1, gutterCol)).Append(Ansi.Reset).Append(cell).Append(Ansi.Reset);
             }
         }
         sb.Append(Ansi.EndSyncOutput);
@@ -112,6 +117,7 @@ internal sealed class FrameRenderer
             _lastRows = new List<string>(rows);
             _lastGutter = rightGutter is null ? null : new List<string>(rightGutter);
             _lastCols = columns;
+            _lastGutterCol = gutterCol;
         }
         catch
         {

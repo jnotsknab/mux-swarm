@@ -1421,16 +1421,21 @@ Web clients get `ext_panel` events (`op`: `open` | `update` | `close`, plus `ext
 - Panels close when the process exits or is stopped (`/refresh`).
 - `placement` (default `screen`): `screen` = the full-screen view above; `side` = docked to the right of the
   transcript (`columns` wide, default 48, at most 45% of the terminal and always leaving 60 columns for the
-  transcript); `band` = a strip above the prompt (`rows` tall, default 6, at most a third of the screen);
+  transcript); `band` = a strip above the prompt (`rows` tall, default 6, at most a quarter of the screen;
+  a `col` box's `gap` rows are dropped there);
   `auto` = `side` from 144 terminal columns, else `band`. Docked panels stay up while you type and while
   the agent works, and redraw on every `ui/update`. Side panes need the frame renderer (`renderEngine:
   frame`); the inline renderer and narrow terminals show them as a band. Several docked panels share the
   spot with a tab per panel. In the web UI `side` docks the drawer beside the chat (it overlays on phones),
   `band` is a strip above the composer, and `auto` picks `side` from 1100px wide. Web events carry `placement`.
 - Docked panels never take keys on their own: F6 moves the keyboard into them (F6 / Shift+F6 cycle, past
-  the last one returns to the prompt), and so does clicking a control. While focused, keys work as in the
-  full-screen view; Esc returns to the prompt and the panel stays open (no `close` event). This works at
+  the last one returns to the prompt), and so does clicking anywhere in a panel or on its tab (a tab click
+  also switches to that panel). While focused, keys work as in the full-screen view; Esc, or a click
+  outside the panel, returns to the prompt and the panel stays open (no `close` event). This works at
   the idle prompt and mid-turn (Esc then does not cancel the turn).
+- In the TUI the side pane's divider is also the transcript scrollbar. Drag the divider (or the pane's first
+  column) to resize the pane, and drag a band's top rule to resize the band (up to half the screen); the
+  sizes hold for the session.
 
 ### Extension footer chips
 
