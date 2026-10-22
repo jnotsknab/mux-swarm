@@ -147,6 +147,14 @@ internal sealed class LineEditor
         }
     }
 
+    /// <summary>True when the buffer is "/agent " + a name filter (bare "/agent" keeps the command palette).</summary>
+    public bool IsAgentFilter =>
+        !Attachments.HidesCursor(_cursor) && _buf.Length > 0 && _buf[0] == '/'
+        && Buffer.StartsWith("/agent ", StringComparison.OrdinalIgnoreCase) && !Buffer.Contains('\n');
+
+    /// <summary>The text after "/agent " (the name filter), or "" when none yet.</summary>
+    public string AgentFilter => IsAgentFilter ? Buffer[7..] : "";
+
     /// <summary>True when the buffer is a "/tools" command (optionally + space + filter),
     /// used to swap the slash palette for a live, scrollable tools catalog.</summary>
     public bool IsToolsFilter

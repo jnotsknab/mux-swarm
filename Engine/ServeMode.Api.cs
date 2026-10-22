@@ -879,13 +879,7 @@ public static partial class ServeMode
             return;
         }
 
-        var defs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
-        var current = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
-        var all = (current != null
-                ? new[] { current }.Concat(defs.Where(a => !a.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)))
-                : defs)
-            .DistinctBy(a => a.Name)
-            .ToList();
+        var all = CliCmdUtils.LeadAgentChoices();
 
         var matched = all.FirstOrDefault(a => a.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
         if (matched == null)

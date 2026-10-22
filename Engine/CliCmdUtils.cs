@@ -276,13 +276,8 @@ public static class CliCmdUtils
     /// running session; the existing session-to-menu confirmation remains required.</remarks>
     public static void HandleAgentSwap()
     {
-        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
-        var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
-
-        var allDefs = defaultDef != null
-            ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
-            : agentDefs;
-        var distinctDefs = allDefs.DistinctBy(a => a.Name).ToList();
+        var distinctDefs = LeadAgentChoices();
+        var defaultDef = distinctDefs.FirstOrDefault();
         if (distinctDefs.Count == 0)
         {
             MuxConsole.WriteWarning("No lead agents available to select.");
@@ -309,6 +304,36 @@ public static class CliCmdUtils
         if (matched is null) return; // Picker cancel never falls through to another prompt or a switch.
         SingleAgentOrchestrator.AgentDef = matched;
         MuxConsole.WriteSuccess($"Lead agent set to {matched.Name} for the next /agent session.");
+    }
+
+    /// <summary>Agents that can lead an /agent session: the configured default lead first, then every
+    /// Swarm.json agent, one entry per name.</summary>
+    internal static List<Common.AgentDefinition> LeadAgentChoices()
+    {
+        var agentDefs = Common.GetAgentDefinitions(PlatformContext.SwarmPath, logLoaded: false);
+        var defaultDef = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
+        var allDefs = defaultDef != null
+            ? new[] { defaultDef }.Concat(agentDefs.Where(a => !a.Name.Equals(defaultDef.Name, StringComparison.OrdinalIgnoreCase)))
+            : agentDefs;
+        return allDefs.DistinctBy(a => a.Name).ToList();
+    }
+
+    /// <summary>
+    /// <c>/agent &lt;name&gt;</c>: pick the lead whose name matches best (<see cref="AgentMatch"/>) and say
+    /// which one, or list the agents when nothing is close. Returns false when no agent was chosen.
+    /// </summary>
+    internal static bool SelectLeadAgent(string query)
+    {
+        var defs = LeadAgentChoices();
+        var name = AgentMatch.Best(query, defs.Select(d => d.Name));
+        if (name is null)
+        {
+            MuxConsole.WriteWarning($"No agent matches '{query}'. Agents: {string.Join(", ", defs.Select(d => d.Name))}");
+            return false;
+        }
+        SingleAgentOrchestrator.AgentDef = defs.First(d => d.Name == name);
+        if (!name.Equals(query.Trim(), StringComparison.OrdinalIgnoreCase)) MuxConsole.WriteMuted($"\u2192 {name}");
+        return true;
     }
 
     public static void HandleMaxP()

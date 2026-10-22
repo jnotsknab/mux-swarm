@@ -665,6 +665,9 @@ public static partial class MuxConsole
                 // Seed the live "/skill" autocomplete with the loaded skill catalog.
                 try { _driver.SetSkillsCatalog(SkillLoader.GetSkillMetadata().Select(sk => (sk.Name, sk.Description)).ToList()); }
                 catch { /* skills optional */ }
+                // Seed the live "/agent <name>" completion with the lead agents.
+                try { _driver.SetAgentsCatalog(CliCmdUtils.LeadAgentChoices().Select(a => (a.Name, a.Description)).ToList()); }
+                catch { /* agents optional */ }
                 // Seed the live "/resume" autocomplete with resumable sessions.
                 try { _driver.SetSessionsCatalog(CliCmdUtils.GetResumableSessions()); }
                 catch { /* sessions optional */ }
