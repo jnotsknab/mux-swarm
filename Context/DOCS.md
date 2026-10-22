@@ -1219,7 +1219,8 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   catppuccin-macchiato catppuccin-latte nord tokyo-night tokyo-storm rose-pine rose-dawn kanagawa
   everforest one-dark monokai ayu-mirage synthwave`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
-  diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
+  diffHunkBg codeBg inlineCodeBg border`. Values are `#RRGGBB`, `default`, or one of the names the TUI draws:
+  `black white red green yellow blue grey` (other Spectre names such as `purple` are rejected).
 - **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
   emoji or ZWJ sequences, e.g. `["-", "\\", "|", "/"]` or `["[=  ]", "[ = ]", "[  =]"]`). Narrower frames
   are padded to the widest so the line does not jitter. Replaces the built-in braille spinner on the main
@@ -1249,6 +1250,30 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
+- **tui**: per-region styles for the TUI, the terminal counterpart of the web `styles` CSS. `regions` maps a
+  region to its properties:
+  ```jsonc
+  "tui": { "regions": {
+    "notice":    { "okMark": "+", "ok": "accent" },
+    "reasoning": { "fg": "#8A8A8A", "italic": false },
+    "header":    { "show": false }
+  } }
+  ```
+  Colour values are a theme role (`accent`, `muted`, `text`, `success`, `cardBg`, ... any role listed under
+  **themes**, plus `text` = body text; roles follow `/theme`) or a literal `#RRGGBB`, `default`, `black`, `white`,
+  `red`, `green`, `yellow`, `blue`, `grey`. Glyphs must fit their width (1 cell unless noted). Regions and properties:
+  - `notice` (the `✓ ! x` status lines): `okMark` `warnMark` `errorMark` (1-2 cells), `ok` `warn` `error` `info` colours.
+  - `header` (session card): `mark` (1-2 cells, `┃`), `accent`, `show`.
+  - `userMessage` (your echoed message): `bar` (`▎`), `barFg`, `fg`.
+  - `agentHeader` (`▸ Agent ───`): `mark` (1-2 cells), `rule` (repeated), `fg`, `ruleFg`.
+  - `answer`: `lead` (the `●` before each answer block), `leadFg`.
+  - `reasoning`: `fg`, `italic` (true/false). Also applies in the classic console.
+  - `toast`: `mark` (`◆`), `markFg`, `fg`.
+  - `divider` (side-pane divider): `glyph`, `fg`, `activeFg` (while dragging). `scrollbar`: `thumb`, `track`, `thumbFg`, `trackFg`.
+  Every key is checked: an unknown region or property, a wrong type, a colour the TUI cannot draw or a glyph of
+  the wrong width skips that extension's whole `tui` block (the error is listed in `/extensions`; the rest of the
+  extension still loads). Several extensions merge per property in name order (later wins; each overridden
+  region shows as a conflict). Restyling applies to new output, like `/theme`. `--stdio`, `--serve` and ACP ignore it.
 - `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
   disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
   recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.

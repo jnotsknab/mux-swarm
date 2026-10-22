@@ -26,8 +26,8 @@ internal sealed class ExtensionManifest
     /// <summary>
     /// TUI color themes. Each entry needs a <c>name</c>, may name a built-in <c>base</c> preset
     /// (default <c>default</c>), and overrides any theme color role by its camelCase key
-    /// (<c>accent</c>, <c>success</c>, <c>cardBg</c>, ...). Values are Spectre color tokens:
-    /// <c>#RRGGBB</c>, a named color, or <c>default</c>.
+    /// (<c>accent</c>, <c>success</c>, <c>cardBg</c>, ...). Values are <c>#RRGGBB</c>, <c>default</c>, or a
+    /// colour name both renderers draw (<c>grey</c>, <c>white</c>, ...; see <see cref="Tui.RegionStyle.IsColor"/>).
     /// </summary>
     [JsonPropertyName("themes")]
     public List<Dictionary<string, string>> Themes { get; set; } = [];
@@ -102,6 +102,22 @@ internal sealed class ExtensionManifest
     /// <summary>The whole thinking-indicator animation (frames, speed, quips). Null = built-in.</summary>
     [JsonPropertyName("thinking")]
     public ThinkingManifest? Thinking { get; set; }
+
+    /// <summary>Per-region TUI styles (colours, glyphs, show/hide). Null = built-in look.</summary>
+    [JsonPropertyName("tui")]
+    public TuiManifest? Tui { get; set; }
+}
+
+/// <summary>
+/// The <c>tui</c> block: <c>regions</c> maps a region name to its properties, e.g.
+/// <c>{ "notice": { "okMark": "+", "ok": "accent" }, "reasoning": { "italic": false } }</c>.
+/// Every key is validated; one bad key skips the whole block (the rest of the extension still loads).
+/// </summary>
+internal sealed class TuiManifest
+{
+    /// <summary>Region name -&gt; property name -&gt; value (colour role or colour, glyph text, or true/false).</summary>
+    [JsonPropertyName("regions")]
+    public Dictionary<string, Dictionary<string, System.Text.Json.JsonElement>>? Regions { get; set; }
 }
 
 /// <summary>

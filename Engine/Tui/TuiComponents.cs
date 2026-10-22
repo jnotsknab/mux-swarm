@@ -95,10 +95,10 @@ internal static class TuiComponents
         string display = ComposeAttachments.SafeText((line ?? "").Replace("\r\n", "\n").Replace('\r', '\n'));
         foreach (string body in TuiMarkup.WrapPlain(display, Math.Max(1, w - prefixWidth)))
         {
-            string prefix = prefixWidth == 0 ? "" : rows.Count == 1 ? $"[{Accent}]\u258e[/] " : "  ";
+            string prefix = prefixWidth == 0 ? "" : rows.Count == 1 ? $"[{RegionStyle.Color("userMessage.barFg")}]{RegionStyle.Glyph("userMessage.bar")}[/] " : "  ";
             // A one-column viewport cannot represent a wide grapheme; clip only that display row.
             string fitted = TuiMarkup.Width(body) <= w - prefixWidth ? body : Trunc(body, w - prefixWidth);
-            rows.Add($"{prefix}[{Text}]{Esc(fitted)}[/]");
+            rows.Add($"{prefix}[{RegionStyle.Color("userMessage.fg")}]{Esc(fitted)}[/]");
         }
         return rows;
     }
@@ -206,6 +206,17 @@ internal static class TuiComponents
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
+    /// <summary>Markup tag body for streamed reasoning text (<c>reasoning.fg</c> + <c>reasoning.italic</c>).</summary>
+    public static string ReasoningStyle =>
+        RegionStyle.Flag("reasoning.italic") ? RegionStyle.Color("reasoning.fg") + " italic" : RegionStyle.Color("reasoning.fg");
+
+    /// <summary>The answer block's lead marker in place of the 2-col indent ("  ● "), per <c>answer.lead</c>.</summary>
+    public static string AnswerLead => $"  [{RegionStyle.Color("answer.leadFg")}]{RegionStyle.Glyph("answer.lead")}[/] ";
+
+    /// <summary>The toast row: mark + truncated text, per the <c>toast</c> region.</summary>
+    public static string Toast(string text, int width) =>
+        $"  [{RegionStyle.Color("toast.markFg")}]{RegionStyle.Glyph("toast.mark")}[/] [{RegionStyle.Color("toast.fg")}]{Esc(TuiMarkup.TruncatePlain(text, Math.Max(1, width - 4)))}[/]";
+
     private static string CollapseWs(string s)
         => string.IsNullOrEmpty(s) ? "" : System.Text.RegularExpressions.Regex.Replace(s.Trim(), @"\s+", " ");
 
@@ -261,9 +272,12 @@ internal static class TuiComponents
         return norm;
     }
 
-    /// <summary>Session header card (committed once when an interactive TUI loop starts).</summary>
+    /// <summary>Session header card (committed once when an interactive TUI loop starts); empty when the
+    /// <c>header.show</c> style is off.</summary>
     public static List<string> SessionHeader(string agent, string model, string provider, int toolCount = 0)
     {
+        if (!RegionStyle.Flag("header.show")) return new();
+        string accent = RegionStyle.Color("header.accent");
         // Trailing tool-count badge (folded in from the old standalone "N tools available"
         // line): a dim "N tools" chip on the session header row. Hidden when count <= 0.
         string toolsBadge = toolCount > 0
@@ -272,7 +286,7 @@ internal static class TuiComponents
         return new()
         {
             "",
-            $"  [{Accent}]\u2503[/] [{Accent}]session[/]  [{Dim}]\u00b7[/]  [{Agent}]{Esc(agent)}[/]  [{Dim}]\u00b7[/]  [{Text}]{Esc(model)}[/]  [{Dim}]\u00b7[/]  [{Muted}]{Esc(provider)}[/]{toolsBadge}"
+            $"  [{accent}]{RegionStyle.Glyph("header.mark")}[/] [{accent}]session[/]  [{Dim}]\u00b7[/]  [{Agent}]{Esc(agent)}[/]  [{Dim}]\u00b7[/]  [{Text}]{Esc(model)}[/]  [{Dim}]\u00b7[/]  [{Muted}]{Esc(provider)}[/]{toolsBadge}"
         };
     }
 
@@ -281,10 +295,12 @@ internal static class TuiComponents
     {
         int w = Math.Max(1, width);
         string indent = w >= 4 ? "  " : "";
-        string label = Trunc($"\u25b8 {CollapseWs(ComposeAttachments.SafeText(agent ?? ""))}", w - indent.Length);
+        string label = Trunc($"{RegionStyle.PlainGlyph("agentHeader.mark")} {CollapseWs(ComposeAttachments.SafeText(agent ?? ""))}", w - indent.Length);
         int remaining = Math.Max(0, w - indent.Length - TuiMarkup.Width(label));
-        string rule = remaining > 0 ? $" [{Border}]{new string('\u2500', remaining - 1)}[/]" : "";
-        return new() { "", $"{indent}[{Agent}]{Esc(label)}[/]{rule}" };
+        string rule = remaining > 0
+            ? $" [{RegionStyle.Color("agentHeader.ruleFg")}]{Esc(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("agentHeader.rule"), remaining - 1)))}[/]"
+            : "";
+        return new() { "", $"{indent}[{RegionStyle.Color("agentHeader.fg")}]{Esc(label)}[/]{rule}" };
     }
 
     /// <summary>Tool-call line: a running glyph, a human ACTION label (verb-derived from the tool
@@ -728,9 +744,25 @@ internal static class TuiComponents
     // Rendered-chrome vocabulary for clipboard classification: leading gutter/indent bars, tree
     // branch glyphs, and status/spinner dots that the TUI paints AROUND content. Content text
     // (including table cell separators mid-row) is never touched.
-    private static readonly System.Text.RegularExpressions.Regex LeadingChrome =
-        new("^\\s{0,12}(?:[\u2502\u2503\u2514\u251c\u25b8\u221f\u258c\u258d\u258e\u258f]\\s+)*(?:[\u2713\u2717\u25cf\u25d0\u25d1\u25d2\u25d3\u25cb\u203a\u00b7]\\s+)?",
-            System.Text.RegularExpressions.RegexOptions.Compiled);
+    // Glyphs restyled through RegionStyle join the built-in sets, so custom bars/marks are stripped too.
+    private sealed record ChromeRx(int Version, System.Text.RegularExpressions.Regex Rx);
+    private static volatile ChromeRx? _leadingChrome;
+    private static System.Text.RegularExpressions.Regex LeadingChrome
+    {
+        get
+        {
+            if (_leadingChrome is { } cached && cached.Version == RegionStyle.Version) return cached.Rx;
+            static string Alt(IEnumerable<string> glyphs) =>
+                string.Concat(glyphs.Distinct().Select(g => "|" + System.Text.RegularExpressions.Regex.Escape(g)));
+            string bars = Alt(RegionStyle.LeadGlyphs("userMessage.bar", "header.mark", "agentHeader.mark"));
+            string marks = Alt(RegionStyle.LeadGlyphs("notice.okMark", "notice.warnMark", "notice.errorMark", "answer.lead", "toast.mark"));
+            var rx = new System.Text.RegularExpressions.Regex(
+                $"^\\s{{0,12}}(?:(?:[\u2502\u2503\u2514\u251c\u25b8\u221f\u258c\u258d\u258e\u258f]{bars})\\s+)*(?:(?:[\u2713\u2717\u25cf\u25d0\u25d1\u25d2\u25d3\u25cb\u203a\u00b7]{marks})\\s+)?",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+            _leadingChrome = new ChromeRx(RegionStyle.Version, rx);
+            return rx;
+        }
+    }
     private static readonly System.Text.RegularExpressions.Regex TrailingHint =
         new("\\s*\\((?:\\+\\d+ lines?, )?ctrl\\+e[^)]*\\)\\s*$",
             System.Text.RegularExpressions.RegexOptions.Compiled);

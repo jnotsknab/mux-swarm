@@ -1148,9 +1148,7 @@ public static partial class MuxConsole
                 // distinct from the final answer (parity with the classic renderer below).
                 TuiStreamChunk(text, reasoning: muted);
             else if (muted)
-                AnsiConsole.Markup(muted
-                    ? $"[grey italic]{Esc(text)}[/]"
-                    : Esc(text));
+                AnsiConsole.Markup($"[{Tui.TuiComponents.ReasoningStyle}]{Esc(text)}[/]");
             else
                 AnsiConsole.Markup(Esc(text));
         }, clearIndicator: false);
@@ -1262,8 +1260,9 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("success", message); return; }
-            if (TuiCommit($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Success}]✓[/] [{C.Prompt}]{Esc(message)}[/]");
+            string line = $"  [{RegionStyle.Color("notice.ok")}]{RegionStyle.Glyph("notice.okMark")}[/] [{C.Prompt}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1272,8 +1271,10 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("warning", message); return; }
-            if (TuiCommit($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Warning}]![/] [{C.Warning}]{Esc(message)}[/]");
+            string warn = RegionStyle.Color("notice.warn");
+            string line = $"  [{warn}]{RegionStyle.Glyph("notice.warnMark")}[/] [{warn}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1282,8 +1283,10 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("error", message); return; }
-            if (TuiCommit($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Error}]x[/] [{C.Error}]{Esc(message)}[/]");
+            string err = RegionStyle.Color("notice.error");
+            string line = $"  [{err}]{RegionStyle.Glyph("notice.errorMark")}[/] [{err}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 
@@ -1292,8 +1295,9 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("info", message); return; }
-            if (TuiCommit($"  [{C.Info}]{Esc(message)}[/]")) return;
-            AnsiConsole.MarkupLine($"  [{C.Info}]{Esc(message)}[/]");
+            string line = $"  [{RegionStyle.Color("notice.info")}]{Esc(message)}[/]";
+            if (TuiCommit(line)) return;
+            AnsiConsole.MarkupLine(line);
         });
     }
 

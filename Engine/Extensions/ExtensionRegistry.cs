@@ -40,6 +40,9 @@ internal static partial class ExtensionRegistry
         /// <summary>True when this extension's markdown style is the one applied.</summary>
         internal bool Markdown { get; init; }
 
+        /// <summary>TUI regions this extension styles (its valid <c>tui</c> block), in name order.</summary>
+        internal IReadOnlyList<string> TuiRegions { get; init; } = [];
+
         /// <summary>Validated slash commands the process serves.</summary>
         internal IReadOnlyList<ExtensionCommand> Commands { get; init; } = [];
     }
@@ -106,6 +109,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Markdown glyph style; null = built-in.</summary>
         internal Tui.MarkdownStyle? Markdown { get; init; }
+
+        /// <summary>Merged per-region TUI styles (<c>region.property</c> -&gt; value); null = built-in look.</summary>
+        internal IReadOnlyDictionary<string, string>? TuiStyles { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -134,6 +140,7 @@ internal static partial class ExtensionRegistry
         SplashMessages.SetExtensionLines(c.Splash);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
         Tui.MarkdownStyle.Set(Loaded.Markdown);
+        Tui.RegionStyle.Set(Loaded.TuiStyles);
         ExtensionCommands.Set(Loaded.Extensions.SelectMany(e => e.Commands));
         return Loaded;
     }
@@ -208,6 +215,8 @@ internal static partial class ExtensionRegistry
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         IReadOnlyList<string>? footer = null;
         Tui.MarkdownStyle? markdown = null;
+        var styles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var styleOwners = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);   // region.property -> extension
         var takenCommands = new Dictionary<string, string>(StringComparer.Ordinal);   // command -> owning extension
         var conflicts = new List<Conflict>();
         var owners = new Dictionary<string, string>(StringComparer.Ordinal);          // slot -> extension that set it
@@ -297,6 +306,21 @@ internal static partial class ExtensionRegistry
                 markdown = style;
                 hasMarkdown = true;
             }
+            var tuiRegions = new List<string>();
+            if (manifest.Tui is { } tui && BuildTuiStyles(tui, problems, name) is { } mineStyles)
+            {
+                // Later names win per property; one conflict per region and loser.
+                foreach (var (key, value) in mineStyles)
+                {
+                    var region = key[..key.IndexOf('.')];
+                    if (styleOwners.TryGetValue(key, out var prior)
+                        && !conflicts.Any(c => c.What == $"tui region '{region}'" && c.Winner == name && c.Loser == prior))
+                        conflicts.Add(new Conflict($"tui region '{region}'", name, prior));
+                    styleOwners[key] = name;
+                    styles[key] = value;
+                    if (!tuiRegions.Contains(region)) tuiRegions.Add(region);
+                }
+            }
             var commands = new List<ExtensionCommand>();
             foreach (var c in manifest.Commands ?? [])
             {
@@ -312,6 +336,7 @@ internal static partial class ExtensionRegistry
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
                 Markdown = hasMarkdown,
+                TuiRegions = tuiRegions,
                 Commands = commands,
                 Overrides = overrides,
                 Footer = hasFooter,
@@ -325,7 +350,31 @@ internal static partial class ExtensionRegistry
         return new Result(extensions, themes, problems)
         {
             Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown, Conflicts = conflicts, Disabled = skipped,
+            TuiStyles = styles.Count == 0 ? null : styles,
         };
+    }
+
+    /// <summary>
+    /// Validate a <c>tui</c> block into <c>region.property</c> -&gt; value. Any bad key reports every problem
+    /// and skips the whole block (null), so a half-applied style never shows.
+    /// </summary>
+    internal static Dictionary<string, string>? BuildTuiStyles(TuiManifest tui, List<string> problems, string extension)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var errors = new List<string>();
+        foreach (var (region, props) in tui.Regions ?? [])
+            foreach (var (prop, value) in props ?? [])
+            {
+                var key = $"{region.Trim()}.{prop.Trim()}";
+                if (Tui.RegionStyle.Validate(key, value, out var normalized) is { } err) errors.Add(err);
+                else result[Tui.RegionStyle.Props.Keys.First(k => k.Equals(key, StringComparison.OrdinalIgnoreCase))] = normalized;
+            }
+        if (errors.Count > 0)
+        {
+            foreach (var e in errors) problems.Add($"{extension}: tui {e}; tui block skipped.");
+            return null;
+        }
+        return result.Count == 0 ? null : result;
     }
 
     /// <summary>
@@ -439,7 +488,7 @@ internal static partial class ExtensionRegistry
             if (key.Equals("name", StringComparison.OrdinalIgnoreCase) || key.Equals("base", StringComparison.OrdinalIgnoreCase)) continue;
             if (!ThemeRoles.TryGetValue(key, out var prop)) { error = $"theme '{name}': unknown color role '{key}'."; return null; }
             var color = value?.Trim() ?? "";
-            if (!IsColor(color)) { error = $"theme '{name}': '{color}' is not a valid color for '{key}'."; return null; }
+            if (!Tui.RegionStyle.IsColor(color)) { error = $"theme '{name}': '{color}' is not a valid color for '{key}'."; return null; }
             prop.SetValue(theme, color);
         }
         error = "";
@@ -516,9 +565,4 @@ internal static partial class ExtensionRegistry
         return s.Length <= max ? s : s[..max];
     }
 
-    // A single Spectre color token (hex, named color or "default"); rejects styles and markup.
-    private static bool IsColor(string value) =>
-        value.Length is > 0 and <= 32
-        && value.All(c => char.IsAsciiLetterOrDigit(c) || c == '#' || c == '_')
-        && Spectre.Console.Style.TryParse(value, out _);
 }

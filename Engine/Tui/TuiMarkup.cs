@@ -154,6 +154,13 @@ internal static class TuiMarkup
         return style;
     }
 
+    /// <summary>True when <paramref name="token"/> is a colour this renderer draws (<c>#RRGGBB</c>, a known name) or <c>default</c>.</summary>
+    internal static bool IsColorToken(string token)
+    {
+        var t = token.Trim().ToLowerInvariant();
+        return t == "default" || ResolveColor(t) is not null;
+    }
+
     private static (byte, byte, byte)? ResolveColor(string token)
     {
         if (token.StartsWith('#') && (token.Length == 7))

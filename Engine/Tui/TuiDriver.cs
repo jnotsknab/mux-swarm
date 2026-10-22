@@ -1947,8 +1947,8 @@ internal sealed partial class TuiDriver
             // Indent reasoning to the same col-2 text margin as the turn header / output dot so the
             // whole agent block reads as one aligned column (no flush-left stagger). Blanks stay bare.
             string r = string.IsNullOrWhiteSpace(raw)
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]"
-                : StreamIndent + $"[grey italic]{Spectre.Console.Markup.Escape(raw)}[/]";
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]"
+                : StreamIndent + $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(raw)}[/]";
             CommitMirrored(Lane(new[] { r }));
             return;
         }
@@ -1963,7 +1963,7 @@ internal sealed partial class TuiDriver
             if (_streamBlockDotPending)
             {
                 _streamBlockDotPending = false;
-                built = $"  [{TuiComponents.Muted}]\u25cf[/] " + built;
+                built = TuiComponents.AnswerLead + built;
             }
             else
             {
@@ -2042,13 +2042,13 @@ internal sealed partial class TuiDriver
             // the plain 2-col indent; blanks stay bare.
             string t = _streamTail.ToString();
             string previewBody = _streamReasoning
-                ? $"[grey italic]{Spectre.Console.Markup.Escape(t)}[/]"
+                ? $"[{TuiComponents.ReasoningStyle}]{Spectre.Console.Markup.Escape(t)}[/]"
                 : TuiMarkdown.ToMarkup(t);
             string preview;
             if (string.IsNullOrWhiteSpace(t))
                 preview = previewBody;
             else if (!_streamReasoning && _streamBlockDotPending)
-                preview = $"  [{TuiComponents.Muted}]\u25cf[/] " + previewBody;
+                preview = TuiComponents.AnswerLead + previewBody;
             else
                 preview = StreamIndent + previewBody;
             lines.Add(preview);
@@ -2179,7 +2179,7 @@ internal sealed partial class TuiDriver
                 maxRows: TaskBoardWindow, offset: _taskBoardOffset));
 
         if (_toast is { } toast && DateTime.UtcNow < _toastUntil)
-            lines.Add($"  [{TuiComponents.Accent}]\u25c6[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(TuiMarkup.TruncatePlain(toast, Math.Max(1, width - 4)))}[/]");
+            lines.Add(TuiComponents.Toast(toast, width));
 
         // Docked extension panels placed as a band (or side panels where no side pane fits).
         var band = BuildBand(width);
