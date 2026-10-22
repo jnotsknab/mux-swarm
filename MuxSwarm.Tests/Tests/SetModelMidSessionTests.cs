@@ -130,6 +130,8 @@ public sealed class SetModelMidSessionTests : IDisposable
             ["CodeAgent"] = (code, await code.CreateSessionAsync(), def),
             ["WebAgent"] = (web, await web.CreateSessionAsync(), def),
         };
+        var codeSession = specialists["CodeAgent"].Session;
+        codeSession.SetInMemoryChatHistory(new List<ChatMessage> { new(ChatRole.User, "member task"), new(ChatRole.Assistant, "member reply") });
         var built = new List<string>();
         await ModelSwitch.RebuildSpecialistsAsync(specialists,
             [new ModelSwitch.Change("agents/0", "CodeAgent", "code-b", "max", false)], m => { built.Add(m); return new Recorder(m); });
@@ -139,6 +141,45 @@ public sealed class SetModelMidSessionTests : IDisposable
         var o = (ChatClientAgentOptions)specialists["CodeAgent"].Agent.GetService(typeof(ChatClientAgentOptions))!;
         Assert.Equal("CODE", o.ChatOptions!.Instructions);
         Assert.Equal("max", ReasoningEffortControl.GetLabel(o.ChatOptions));
+        // Team members keep their history across the switch.
+        Assert.True(specialists["CodeAgent"].Session.TryGetInMemoryChatHistory(out var kept));
+        Assert.Equal(["member task", "member reply"], kept!.Select(m => m.Text));
+    }
+
+    [Fact]
+    public void Queue_IsHandedOutBeforeInput_AndWakeLinesNeverSurface()
+    {
+        ModelSwitch.ClearQueued();
+        var reads = new Queue<string?>(["typed"]);
+        Assert.Equal("typed", ModelSwitch.NextInput(() => reads.Dequeue()));
+        ModelSwitch.Queue("CodeAgent", "code-q");
+        Assert.Equal("/setmodel CodeAgent code-q", ModelSwitch.NextInput(() => throw new InvalidOperationException("must not read")));
+        // A wake line with nothing queued (applied already) is skipped; the real input comes through.
+        reads = new Queue<string?>([ModelSwitch.WakeLine, "hello"]);
+        Assert.Equal("hello", ModelSwitch.NextInput(() => reads.Dequeue()));
+        // A wake line that arrives with a queued switch hands out the switch.
+        reads = new Queue<string?>([ModelSwitch.WakeLine]);
+        ModelSwitch.Queue("MuxAgent", "m2");
+        Assert.Equal("/setmodel MuxAgent m2", ModelSwitch.NextInput(() => reads.Dequeue()));
+        ModelSwitch.ClearQueued();
+    }
+
+    [Fact]
+    public async Task ExplicitTarget_AlreadySaved_StillCountsAsAChange()
+    {
+        // The web menu saves first, then queues the live switch: Swarm.json already has the model.
+        await ModelSwitch.RunAsync("/setmodel code code-z", null, "MuxAgent", _file);
+        var again = Assert.Single(await ModelSwitch.RunAsync("/setmodel CodeAgent code-z", null, "CodeAgent", _file));
+        Assert.True(again.IsLead);
+        Assert.Equal("code-z", again.Model);
+    }
+
+    [Fact]
+    public void SlotLabel_SharedByTheSingleAgentAndAnAgent_PicksTheAgentEntryWithAModel()
+    {
+        File.WriteAllText(_file, """{ "singleAgent": { "name": "MuxAgent", "model": "s" }, "agents": [ { "name": "MuxAgent", "model": "a" } ] }""");
+        var snap = ModelSelectionStore.Load(_file);
+        Assert.Equal("agents/0", ModelSwitch.BySlotLabel(snap, "muxagent")!.Id);
     }
 
     [Fact]
@@ -182,7 +223,10 @@ public sealed class SetModelMidSessionTests : IDisposable
             App.McpTools = new List<ModelContextProtocol.Client.McpClientTool>();
             AutoInject.Current = AutoInject.Mode.None; App.GigaMode = false;
             SingleAgentOrchestrator.AgentDef = new Common.AgentDefinition("MuxAgent", "test", "unused", false, _ => Array.Empty<AITool>());
-            MuxConsole.InputOverride = new StringReader("first\n/setmodel model-b\nsecond\n/qc\n");
+            MuxConsole.InputOverride = new StringReader("first\n/setmodel model-b\nsecond\n" + ModelSwitch.WakeLine + "\nthird\n/qc\n");
+            ModelSwitch.ClearQueued();
+            OnRead = n => { if (n == 3) ModelSwitch.Queue("MuxAgent", "model-c"); };   // the web menu, after "second"
+            MuxConsole.InputOverride = new CountingReader(MuxConsole.InputOverride, n => OnRead?.Invoke(n));
             await SingleAgentOrchestrator.ChatAgentAsync(Factory("model-a"), CancellationToken.None, maxIterations: 1,
                 systemPromptOverride: "SYS", chatClientFactory: Factory, persistSession: false, leadClientFactory: Factory)
                 .WaitAsync(TimeSpan.FromSeconds(20));
@@ -196,6 +240,18 @@ public sealed class SetModelMidSessionTests : IDisposable
         var b = clients["model-b"];
         Assert.Equal(["first", "reply from model-a", "second"], b.Messages!.Where(m => m.Role != ChatRole.System).Select(m => m.Text));
         Assert.Contains("SYS", b.Options!.Instructions);
-        Assert.Equal("model-b", Swarm().GetProperty("singleAgent").GetProperty("model").GetString());
+        // The queued (web menu) switch was applied before "third", which ran on model-c with the whole history.
+        Assert.Equal(["first", "reply from model-a", "second", "reply from model-b", "third"],
+            clients["model-c"].Messages!.Where(m => m.Role != ChatRole.System).Select(m => m.Text));
+        Assert.Equal("model-c", Swarm().GetProperty("singleAgent").GetProperty("model").GetString());
+    }
+
+    private static Action<int>? OnRead;
+
+    // Counts ReadLine calls so a test can act between session inputs.
+    private sealed class CountingReader(TextReader inner, Action<int> onRead) : TextReader
+    {
+        private int _n;
+        public override string? ReadLine() { onRead(++_n); return inner.ReadLine(); }
     }
 }

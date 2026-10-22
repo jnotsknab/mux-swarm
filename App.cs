@@ -626,6 +626,10 @@ internal class App
             if (pendingFromSession is null) MuxConsole.ResetTuiTurnClock();
             string? userInput = pendingFromSession ?? MuxConsole.ReadInput();
 
+            // A wake line from the web model menu that arrived after its session ended: nothing to apply
+            // (Swarm.json already has the change), never a command.
+            if (userInput == ModelSwitch.WakeLine) { ModelSwitch.ClearQueued(); continue; }
+
             if (string.IsNullOrEmpty(userInput))
                 continue;
 

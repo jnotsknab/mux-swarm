@@ -220,4 +220,12 @@ empty list with HTTP 200 as before, preserving clients’ manual-entry fallback.
 TUI and web use the same discovery service: active endpoint only, configured bearer/custom headers,
 10-second deadline, no redirect-following, and bounded response size. An unrelated running sidecar
 is no longer preferred over the selected provider. Provider errors do not expose response bodies or
-credentials. This change does not modify `POST /api/model` or add effort controls to the web UI.
+credentials.
+
+### Set a model (`POST /api/model`)
+
+Body `{ "slot": "<label>", "model": "<id>" }` (labels as in the `/setmodel` picker: `CompactionAgent`, the
+singleAgent name, `Orchestrator`, each agent name). Saves the slot's model to Swarm.json (other fields and the
+slot's effort are kept). When a session is running, the session switches to it live before its next turn
+(right away at an idle prompt, after the current turn otherwise; swarm modes from the next goal), keeping the
+session, and emits `{ "type": "model_changed", "agent", "model" }`. Response `{ slot, model, previous, live }`.

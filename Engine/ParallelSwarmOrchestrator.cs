@@ -674,7 +674,7 @@ public static class ParallelSwarmOrchestrator
             else
             {
                 if (!prodMode) MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string? input = MuxConsole.ReadInput();
+                string? input = ModelSwitch.NextInput(() => MuxConsole.ReadInput());
 
                 if (string.IsNullOrEmpty(input) ||
                     input.Trim().Equals("/qm", StringComparison.OrdinalIgnoreCase) ||
@@ -698,6 +698,7 @@ public static class ParallelSwarmOrchestrator
                         orchestratorAgent = ModelSwitch.Rebuild(orchestratorAgent, chatClientFactory(lead.Model), effort: lead.Effort);
                         _orchestratorModelId = lead.Model;
                         MuxConsole.SetTuiModel(_orchestratorModelId);
+                        ServeMode.EmitEvent(new { type = "model_changed", agent = "Orchestrator", model = _orchestratorModelId });
                     }
                     await ModelSwitch.RebuildSpecialistsAsync(specialists, changes, chatClientFactory);
                     ModelSwitch.Report(changes, "from the next goal");

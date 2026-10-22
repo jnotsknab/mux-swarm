@@ -770,28 +770,10 @@ public static partial class ServeMode
         });
     }
 
-    // The set of assignable model slots in Swarm.json, in the same order and with the
-    // same labels the interactive /setmodel picker uses, so the web UI and the REPL
-    // always agree on what "CodeAgent" or "Orchestrator" means.
-    private static List<(string Label, string? Model, Action<string> Set)> ModelSlots(SwarmConfig config)
-    {
-        var slots = new List<(string, string?, Action<string>)>();
-        if (config.CompactionAgent != null)
-            slots.Add(("CompactionAgent", config.CompactionAgent.Model, v => config.CompactionAgent.Model = v));
-        if (config.SingleAgent != null)
-            slots.Add((config.SingleAgent.Name.Length > 0 ? config.SingleAgent.Name : "SingleAgent",
-                       config.SingleAgent.Model, v => config.SingleAgent.Model = v));
-        if (config.Orchestrator != null)
-            slots.Add(("Orchestrator", config.Orchestrator.Model, v => config.Orchestrator.Model = v));
-        foreach (var agent in config.Agents)
-            slots.Add((agent.Name, agent.Model, v => agent.Model = v));
-        return slots;
-    }
-
     // POST /api/model   body: { slot, model }
-    // Non-interactive equivalent of /setmodel. Reads Swarm.json, assigns the model to
-    // the named slot, persists, and refreshes the in-memory config. Exists so the web
-    // UI never has to puppet the two-prompt REPL flow over the agent input stream.
+    // Saves the slot's model to Swarm.json (targeted edit; other fields and the effort are kept) and, when a
+    // session is running, queues the same live switch /setmodel does in the session: the session applies it
+    // before its next turn (right away at an idle prompt). Response: { slot, model, previous, live }.
     private static async Task HandleSetModel(HttpContext context)
     {
         string slot, model;
@@ -813,46 +795,36 @@ public static partial class ServeMode
             return;
         }
 
-        SwarmConfig config;
+        ModelSelectionStore.Slot? target;
+        string? previous;
         try
         {
-            config = JsonSerializer.Deserialize<SwarmConfig>(await File.ReadAllTextAsync(PlatformContext.SwarmPath, context.RequestAborted))
-                     ?? throw new JsonException("null config");
+            var snapshot = ModelSelectionStore.Load(PlatformContext.SwarmPath);
+            target = ModelSwitch.BySlotLabel(snapshot, slot.Trim());
+            if (target is null)
+            {
+                await WriteJson(context, 404, new { error = $"No such slot: {slot}", slots = snapshot.Slots.Select(x => x.Label).ToList() });
+                return;
+            }
+            previous = target.Model;
+            App.SwarmConfig = ModelSelectionStore.Save(snapshot, target.Id, model, target.Effort);
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or ArgumentException)
         {
-            await WriteJson(context, 500, new { error = "Could not read Swarm.json: " + ex.Message });
+            await WriteJson(context, 500, new { error = "Could not update Swarm.json: " + ex.Message });
             return;
         }
 
-        var slots = ModelSlots(config);
-        var idx = slots.FindIndex(s => s.Label.Equals(slot.Trim(), StringComparison.OrdinalIgnoreCase));
-        if (idx < 0)
+        bool live = !string.Equals(ActiveMode, "interactive", StringComparison.OrdinalIgnoreCase);
+        if (live)
         {
-            await WriteJson(context, 404, new { error = $"No such slot: {slot}", slots = slots.Select(s => s.Label).ToList() });
-            return;
+            ModelSwitch.Queue(target.Label, model.Trim());
+            // Idle session: wake its input read so it applies now. During a turn, no wake (a prompt inside the
+            // turn would read it); the queue is taken at the next input read, right after the turn.
+            if (StdinCancelMonitor.Instance?.ActiveTurnToken is not { CanBeCanceled: true })
+                await _inputChannel.Writer.WriteAsync(ModelSwitch.WakeLine);
         }
-
-        var target = slots[idx];
-        var previous = target.Model;
-        target.Set(model.Trim());
-
-        try
-        {
-            await File.WriteAllTextAsync(PlatformContext.SwarmPath,
-                JsonSerializer.Serialize(config, Setup.Setup.CfgSerialOpts), context.RequestAborted);
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            await WriteJson(context, 500, new { error = "Could not write Swarm.json: " + ex.Message });
-            return;
-        }
-
-        // Keep the live config in step with what was just persisted, so the change
-        // applies to the next turn without a /refresh.
-        App.SwarmConfig = config;
-
-        await WriteJson(context, 200, new { slot = target.Label, model = model.Trim(), previous });
+        await WriteJson(context, 200, new { slot = target.Label, model = model.Trim(), previous, live });
     }
 
     // POST /api/agent   body: { name }
