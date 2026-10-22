@@ -21,7 +21,7 @@ internal class App
 {
     /// <summary>Product version string surfaced by <c>--version</c>, the splash, <c>/api/health</c> and the updater.
     /// A const so it can be read before <see cref="App"/> (and its config-loading static state) is touched.</summary>
-    public const string Version = "0.16.0-nightly.20261021";
+    public const string Version = "0.16.0-nightly.20261022";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
