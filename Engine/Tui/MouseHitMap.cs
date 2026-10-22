@@ -20,7 +20,8 @@ internal enum MouseTargetKind
     JobRow,
     WorkflowRow,
     NavRow,
-    DockedPanel,            // payload: ExtensionPanelView hit payload; tag: extension + U+001F + panel id
+    DockedPanel,            // payload: ExtensionPanelView hit payload (-1 = backdrop/tab: focus only); tag: extension + U+001F + panel id
+    DockSash,               // payload: 0 = side-pane divider (drag = width), 1 = band rule (drag = height)
 }
 
 /// <summary>One rectangular hit region in PHYSICAL terminal cells: <paramref name="Top"/> /
