@@ -21,6 +21,8 @@ public class AgentCompleteTests
     [InlineData("coed", "CodeAgent")]             // typo (edit distance)
     [InlineData("brwoser", "BrowserAgent")]       // transposition
     [InlineData("pentets agent", "PentestAgent")]
+    [InlineData("muxagnet", "MuxAgent")]          // typo across the "agent" suffix
+    [InlineData("codeagnet", "CodeAgent")]
     public void Best_PicksTheClosestAgent(string query, string expected) =>
         Assert.Equal(expected, AgentMatch.Best(query, Names));
 
