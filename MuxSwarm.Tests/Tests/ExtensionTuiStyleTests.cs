@@ -248,4 +248,51 @@ public sealed class ExtensionTuiStyleTests : IDisposable
         AddExtension("bad", "{ \"tui\": { \"regions\": " + regions + " } }");
         Assert.Contains(expected, Assert.Single(LoadEnabled().Problems));
     }
+
+    private static TuiManifest User(string json) =>
+        System.Text.Json.JsonSerializer.Deserialize<TuiManifest>(json, MuxSwarm.Setup.Setup.CfgSerialOpts)!;
+
+    [Fact]
+    public void ConsoleTui_WinsOverExtensions_AndWorksWithExtensionsOff()
+    {
+        AddExtension("ext", """{ "tui": { "regions": { "notice": { "okMark": "+", "warnMark": "?" } } } }""");
+        var user = User("""{ "regions": { "notice": { "okMark": "*" }, "toast": { "mark": "#" } } }""");
+        ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] }, user);
+        Assert.Equal("*", RegionStyle.PlainGlyph("notice.okMark"));   // user beats the extension
+        Assert.Equal("?", RegionStyle.PlainGlyph("notice.warnMark"));  // extension keys the user did not set stay
+        Assert.Equal("#", RegionStyle.PlainGlyph("toast.mark"));
+
+        ExtensionRegistry.Load(new ExtensionsConfig { Enabled = false }, user);
+        Assert.Equal("*", RegionStyle.PlainGlyph("notice.okMark"));
+        Assert.Equal("!", RegionStyle.PlainGlyph("notice.warnMark"));
+
+        var bad = ExtensionRegistry.Load(new ExtensionsConfig { Enabled = false }, User("""{ "regions": { "notice": { "okMark": 1 } } }"""));
+        Assert.Contains("console.tui: tui 'notice.okMark'", Assert.Single(bad.Problems));
+        Assert.Equal("\u2713", RegionStyle.PlainGlyph("notice.okMark"));
+    }
+
+    [Fact]
+    public void ConsoleConfig_RoundTripsTheTuiBlock()
+    {
+        var cfg = System.Text.Json.JsonSerializer.Deserialize<ConsoleConfig>(
+            """{ "theme": "nord", "tui": { "glyphs": "ascii", "regions": { "footer": { "separator": "|" } } } }""", MuxSwarm.Setup.Setup.CfgSerialOpts)!;
+        Assert.Equal("ascii", cfg.Tui!.Glyphs);
+        string json = System.Text.Json.JsonSerializer.Serialize(cfg, MuxSwarm.Setup.Setup.CfgSerialOpts);
+        Assert.Contains("\"separator\": \"|\"", json);
+        Assert.DoesNotContain("\"tui\"", System.Text.Json.JsonSerializer.Serialize(new ConsoleConfig(), MuxSwarm.Setup.Setup.CfgSerialOpts));
+    }
+
+    // The ember demo from DOCS.md (## Extensions, tui): every region restyled, loads without problems.
+    private const string Ember = """{"name": "ember", "version": "0.1.0", "description": "Warm theme that restyles every TUI region (demo)", "themes": [{"name": "ember", "base": "gruvbox", "accent": "#FF8C42", "banner": "#FF8C42", "agent": "#F4C27A"}], "tui": {"regions": {"notice": {"okMark": "\u2714", "warnMark": "\u25b2", "errorMark": "\u2716", "info": "muted"}, "header": {"mark": "\u25c6", "accent": "accent"}, "userMessage": {"bar": "\u2503", "barFg": "#FF8C42"}, "agentHeader": {"mark": "\u25c6", "rule": "\u2504", "fg": "agent", "ruleFg": "border"}, "answer": {"lead": "\u2022", "leadFg": "accent"}, "reasoning": {"fg": "#8A7F72", "italic": true}, "toast": {"mark": "\u25c6", "markFg": "accent"}, "divider": {"glyph": "\u2503", "activeFg": "#FF8C42"}, "scrollbar": {"thumb": "\u2503", "track": "\u2502", "thumbFg": "#FF8C42"}, "toolCard": {"dot": "\u25c6", "ok": "\u2714", "error": "\u2716", "result": "\u2570", "rail": "\u2503", "labelFg": "#F4C27A", "railFg": "#5C4A3A"}, "diff": {"rail": "\u2503", "corner": "\u250f", "end": "\u2517", "line": "\u2501"}, "delegation": {"arrow": "\u21aa", "mark": "\u25c6", "done": "\u2714"}, "thinking": {"fg": "#FFB86B"}, "footer": {"separator": "\u2502", "separatorFg": "#5C4A3A", "rule": "\u2501", "ruleFg": "#5C4A3A"}, "input": {"prompt": "\u25b8", "promptFg": "#FF8C42", "continuation": "\u2503", "placeholder": "what are we building?", "cursorBg": "#FF8C42"}, "palette": {"selected": "\u25b8", "titleMark": "\u25c6", "selectedFg": "#FF8C42"}, "modal": {"title": "\u25c6", "selected": "\u25b8", "checked": "\u25c6", "unchecked": "\u25c7"}, "panel": {"rule": "\u2501", "ruleFg": "#5C4A3A", "focusBg": "#FF8C42"}, "splash": {"art": ["  \u2584\u2584\u2584 \u2584   \u2584 \u2584\u2584\u2584  \u2584\u2584\u2584 \u2584\u2584\u2584", "  \u2588\u2584\u2584 \u2588\u2580\u2584\u2580\u2588 \u2588\u2584\u2584\u2588 \u2588\u2584\u2584 \u2588\u2584\u2584\u2580", "  \u2588\u2584\u2584 \u2588   \u2588 \u2588\u2584\u2584\u2588 \u2588\u2584\u2584 \u2588  \u2588", "  ember  -  a warm Mux"], "artFg": "#FF8C42"}}}}""";
+
+    [Fact]
+    public void EmberDemo_StylesEveryRegion_WithoutProblems()
+    {
+        AddExtension("ember", Ember);
+        var result = LoadEnabled();
+        Assert.Empty(result.Problems);
+        var regions = Assert.Single(result.Extensions).TuiRegions;
+        Assert.Equal(RegionStyle.Regions.Order(), regions.Order());
+        Assert.Contains("[#FF8C42]", TuiComponents.InputRowsWithCursor("", 0, 40)[0]);
+    }
 }

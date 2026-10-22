@@ -1181,10 +1181,18 @@ chrome before you pick. The choice persists to `config.json`:
 ```
 
 The `default` theme (or any unknown/absent value) reproduces the exact pre-theme palette, so legacy
-configs are byte-identical. Structural shades (panel/card backgrounds, borders, badge tints, the
-per-agent lane colors) are intentionally fixed UI semantics and are not re-tinted by the theme.
-Exception: rendered markdown tables use the theme - header text = `mdHeading`, grid lines = the
-`border` role (default `#3A3A3A`, so the default theme is unchanged).
+configs are byte-identical. Card, input, diff and code backgrounds are theme roles (`cardBg`, `inputBg`,
+`diffAddBg`, `diffDelBg`, `diffHunkBg`, `codeBg`, `inlineCodeBg`); badge tints and the per-agent lane colors
+stay fixed. Rendered markdown tables use `mdHeading` for header text and the `border` role (default
+`#3A3A3A`) for grid lines.
+
+Your own per-region styles go in `console.tui`, with the same schema as an extension's `tui` block (see the
+**tui** key under Extensions). They apply over every extension (yours win per property) and also work with
+extensions off; problems are shown at startup and in `/extensions`:
+
+```jsonc
+"console": { "theme": "nord", "tui": { "glyphs": "ascii", "regions": { "input": { "placeholder": "" } } } }
+```
 
 Extensions can add more themes (see ## Extensions); they appear in `/theme`, the picker and setup.
 
@@ -1291,6 +1299,130 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
   `"glyphs": "ascii"` (next to `regions`) swaps every built-in glyph for plain ASCII (`+ * > | - #`) for terminals or
   fonts without box drawing; region keys still override single glyphs on top. Default `unicode`.
+  Your own `console.tui` in config.json (same schema, see TUI color themes) wins over every extension.
+  A complete example that restyles every region (save as `Extensions/ember/extension.json`):
+  ```json
+  {
+    "name": "ember",
+    "version": "0.1.0",
+    "description": "Warm theme that restyles every TUI region (demo)",
+    "themes": [
+      {
+        "name": "ember",
+        "base": "gruvbox",
+        "accent": "#FF8C42",
+        "banner": "#FF8C42",
+        "agent": "#F4C27A"
+      }
+    ],
+    "tui": {
+      "regions": {
+        "notice": {
+          "okMark": "✔",
+          "warnMark": "▲",
+          "errorMark": "✖",
+          "info": "muted"
+        },
+        "header": {
+          "mark": "◆",
+          "accent": "accent"
+        },
+        "userMessage": {
+          "bar": "┃",
+          "barFg": "#FF8C42"
+        },
+        "agentHeader": {
+          "mark": "◆",
+          "rule": "┄",
+          "fg": "agent",
+          "ruleFg": "border"
+        },
+        "answer": {
+          "lead": "•",
+          "leadFg": "accent"
+        },
+        "reasoning": {
+          "fg": "#8A7F72",
+          "italic": true
+        },
+        "toast": {
+          "mark": "◆",
+          "markFg": "accent"
+        },
+        "divider": {
+          "glyph": "┃",
+          "activeFg": "#FF8C42"
+        },
+        "scrollbar": {
+          "thumb": "┃",
+          "track": "│",
+          "thumbFg": "#FF8C42"
+        },
+        "toolCard": {
+          "dot": "◆",
+          "ok": "✔",
+          "error": "✖",
+          "result": "╰",
+          "rail": "┃",
+          "labelFg": "#F4C27A",
+          "railFg": "#5C4A3A"
+        },
+        "diff": {
+          "rail": "┃",
+          "corner": "┏",
+          "end": "┗",
+          "line": "━"
+        },
+        "delegation": {
+          "arrow": "↪",
+          "mark": "◆",
+          "done": "✔"
+        },
+        "thinking": {
+          "fg": "#FFB86B"
+        },
+        "footer": {
+          "separator": "│",
+          "separatorFg": "#5C4A3A",
+          "rule": "━",
+          "ruleFg": "#5C4A3A"
+        },
+        "input": {
+          "prompt": "▸",
+          "promptFg": "#FF8C42",
+          "continuation": "┃",
+          "placeholder": "what are we building?",
+          "cursorBg": "#FF8C42"
+        },
+        "palette": {
+          "selected": "▸",
+          "titleMark": "◆",
+          "selectedFg": "#FF8C42"
+        },
+        "modal": {
+          "title": "◆",
+          "selected": "▸",
+          "checked": "◆",
+          "unchecked": "◇"
+        },
+        "panel": {
+          "rule": "━",
+          "ruleFg": "#5C4A3A",
+          "focusBg": "#FF8C42"
+        },
+        "splash": {
+          "art": [
+            "  ▄▄▄ ▄   ▄ ▄▄▄  ▄▄▄ ▄▄▄",
+            "  █▄▄ █▀▄▀█ █▄▄█ █▄▄ █▄▄▀",
+            "  █▄▄ █   █ █▄▄█ █▄▄ █  █",
+            "  ember  -  a warm Mux"
+          ],
+          "artFg": "#FF8C42"
+        }
+      }
+    }
+  }
+  ```
   Every key is checked: an unknown region or property, a wrong type, a colour the TUI cannot draw or a glyph of
   the wrong width skips that extension's whole `tui` block (the error is listed in `/extensions`; the rest of the
   extension still loads). Several extensions merge per property in name order (later wins; each overridden
