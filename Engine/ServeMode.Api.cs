@@ -928,13 +928,7 @@ public static partial class ServeMode
             return;
         }
 
-        var defs = Common.GetAgentDefinitions(PlatformContext.SwarmPath);
-        var current = SingleAgentOrchestrator.GetCurrSingleAgentDef(fromCfg: true);
-        var all = (current != null
-                ? new[] { current }.Concat(defs.Where(a => !a.Name.Equals(current.Name, StringComparison.OrdinalIgnoreCase)))
-                : defs)
-            .DistinctBy(a => a.Name)
-            .ToList();
+        var all = CliCmdUtils.LeadAgentChoices();
 
         var matched = all.FirstOrDefault(a => a.Name.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
         if (matched == null)
@@ -1628,7 +1622,7 @@ public static partial class ServeMode
     {
         // Project the SINGLE canonical TUI catalog (TuiCommands.All) so the web app, the
         // /shortcuts command, and the Help.cs reference can never drift apart. inSessionSafe
-        // maps to SessionOnly scope: the command is handled by the in-session loop itself and
+        // maps to SessionOnly or Both scope: the command is handled by the in-session loop itself and
         // does NOT imply quitting the current agent session (everything else triggers a /qc).
         var items = Tui.TuiCommands.All
             .GroupBy(e => e.Cmd, StringComparer.OrdinalIgnoreCase)
@@ -1638,7 +1632,7 @@ public static partial class ServeMode
                 cmd = e.Cmd,
                 desc = e.Desc,
                 scope = e.Scope == Tui.TuiCommands.Scope.SessionOnly ? "session" : "repl",
-                inSessionSafe = e.Scope == Tui.TuiCommands.Scope.SessionOnly,
+                inSessionSafe = e.Scope is Tui.TuiCommands.Scope.SessionOnly or Tui.TuiCommands.Scope.Both,
             })
             .ToList();
         // Extension commands run in a session or at the menu without leaving the session.

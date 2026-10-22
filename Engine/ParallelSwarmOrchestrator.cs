@@ -651,7 +651,7 @@ public static class ParallelSwarmOrchestrator
         if (App.UltraMode)
             UltraReasoning.Apply(orchChatOptions);
 
-        var orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
+        AIAgent orchestratorAgent = orchestratorClient.AsAIAgent(new ChatClientAgentOptions
         {
             Name = "Orchestrator",
             ChatOptions = orchChatOptions
@@ -732,6 +732,22 @@ public static class ParallelSwarmOrchestrator
                 // a confirmed REPL command checkpoints to PendingReplCommand and ends the loop so
                 // the top-level menu runs it. Non-meta input falls through as a goal.
                 HookWorker.CommandExecuted(input, "pswarm", "Orchestrator");
+                // /setmodel between goals: rebuild the orchestrator (each goal starts a fresh session) and
+                // any changed specialist on the new model; Swarm.json is updated either way.
+                if (ModelSwitch.IsCommand(input))
+                {
+                    var changes = await ModelSwitch.RunAsync(input, agentModels, leadName: null);
+                    if (changes.FirstOrDefault(c => c.IsLead) is { } lead)
+                    {
+                        orchestratorAgent = ModelSwitch.Rebuild(orchestratorAgent, chatClientFactory(lead.Model), effort: lead.Effort);
+                        _orchestratorModelId = lead.Model;
+                        MuxConsole.SetTuiModel(_orchestratorModelId);
+                    }
+                    await ModelSwitch.RebuildSpecialistsAsync(specialists, changes, chatClientFactory);
+                    ModelSwitch.Report(changes, "from the next goal");
+                    continue;
+                }
+
                 var disp = await MetaCommandDispatch.TryHandleAsync(
                     input, chatClientFactory, agentModels, cancellationToken, toolsCatalog);
                 if (disp == MetaCommandDispatch.Result.QuitToMenu) break;

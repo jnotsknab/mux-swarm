@@ -588,6 +588,13 @@ internal sealed partial class TuiDriver
     public void SetSkillsCatalog(IReadOnlyList<(string Name, string Desc)> skills)
         => _skills = skills ?? Array.Empty<(string, string)>();
 
+    /// <summary>Lead agents (name, description) for the live "/agent &lt;name&gt;" completion.</summary>
+    private IReadOnlyList<(string Name, string Desc)> _agents = Array.Empty<(string, string)>();
+
+    /// <summary>Set the agents catalog backing the live "/agent &lt;name&gt;" completion.</summary>
+    public void SetAgentsCatalog(IReadOnlyList<(string Name, string Desc)> agents)
+        => _agents = agents ?? Array.Empty<(string, string)>();
+
     /// <summary>Resumable sessions catalog for the live "/resume" autocomplete preview.</summary>
     private IReadOnlyList<(string Id, string Preview, string? Tag)> _sessions = Array.Empty<(string, string, string?)>();
 
@@ -2236,6 +2243,8 @@ internal sealed partial class TuiDriver
                 lines.AddRange(TuiComponents.SkillsPreview(_editor.SkillsFilter, _skills, width, _paletteSel));
             else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
                 lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
+            else if (!_editor.Attachments.Focused && _editor.IsAgentFilter)
+                lines.AddRange(TuiComponents.AgentsPreview(_editor.AgentFilter, _agents, width, _paletteSel));
             else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
             {
                 if (_paletteSel != _resumeMarqueeSel) { _resumeMarqueeSel = _paletteSel; _resumeMarqueeOffset = 0; _resumeMarqueeTick = 0; }
@@ -3858,7 +3867,7 @@ internal sealed partial class TuiDriver
     /// <summary>True when an autocomplete preview is currently open (and thus arrow keys
     /// should drive its selection rather than command history).</summary>
     private bool PaletteOpen => _inInput && (_editor.IsAtFilter || _editor.IsSkillsFilter
-        || _editor.IsToolsFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
+        || _editor.IsToolsFilter || _editor.IsAgentFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
 
     /// <summary>The ranked candidate list backing the currently open preview (empty if none).</summary>
     private IReadOnlyList<string> PaletteCandidates()
@@ -3866,6 +3875,7 @@ internal sealed partial class TuiDriver
         if (_editor.IsAtFilter)    return TuiComponents.RankFiles(_editor.AtFilter, _files);
         if (_editor.IsSkillsFilter) return TuiComponents.RankSkills(_editor.SkillsFilter, _skills);
         if (_editor.IsToolsFilter)  return ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
+        if (_editor.IsAgentFilter)  return TuiComponents.RankAgents(_editor.AgentFilter, _agents);
         if (_editor.IsResumeFilter) return TuiComponents.RankSessions(_editor.ResumeFilter, _sessions);
         if (_editor.IsSlashFilter)  return TuiComponents.RankCommands(_editor.SlashFilter, _paletteEntries).Select(e => e.Cmd).ToList();
         return Array.Empty<string>();
@@ -3920,6 +3930,13 @@ internal sealed partial class TuiDriver
             var candidates = ToolCatalog.Rank(_editor.ToolsFilter, CurrentTools.Entries).Select(t => t.Name).ToList();
             var pick = Pick(candidates, sel);
             if (pick is not null) _editor.SetBuffer($"/tools {pick}");
+            return;
+        }
+        // /agent <filter>: complete to "/agent <name>" (the best match when nothing is highlighted).
+        if (_editor.IsAgentFilter)
+        {
+            var pick = Pick(TuiComponents.RankAgents(_editor.AgentFilter, _agents), sel);
+            if (pick is not null) _editor.SetBuffer($"/agent {pick}");
             return;
         }
         // /resume <filter>: complete to "/resume <id>".

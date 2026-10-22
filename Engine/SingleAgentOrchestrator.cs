@@ -862,12 +862,13 @@ public static class SingleAgentOrchestrator
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
-        Common.AgentDefinition? agentDef = null)
+        Common.AgentDefinition? agentDef = null,
+        Func<string, IChatClient>? leadClientFactory = null)
     {
         string outcome = "complete";
         try
         {
-            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef);
+            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef, leadClientFactory: leadClientFactory);
             if (cancellationToken.IsCancellationRequested) outcome = "interrupted";
         }
         catch (OperationCanceledException) { outcome = "interrupted"; throw; }
@@ -902,8 +903,12 @@ public static class SingleAgentOrchestrator
         bool allowParallelSubAgents = false,
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
-        Common.AgentDefinition? agentDef = null)
+        Common.AgentDefinition? agentDef = null,
+        Func<string, IChatClient>? leadClientFactory = null)
     {
+        // Builds the lead's client for a model switch (/setmodel in the session); same kind as `client`.
+        leadClientFactory ??= chatClientFactory ?? (m => App.CreateChatClient(m));
+
         // The classic line renderer shows a titled banner + help line. In the live TUI the
         // session header card (below) plays that role, so the banner/rule are suppressed to
         // avoid a redundant double-header. Stdio/serve emit their own structured events.
@@ -1058,6 +1063,22 @@ public static class SingleAgentOrchestrator
                 }
 
                 HookWorker.CommandExecuted(firstInput, "agent", singleAgentDef?.Name);
+                // /setmodel before the first message: the agent is built after this loop, so it just
+                // needs the new client (and the effort is read from Swarm.json when the agent is built).
+                if (ModelSwitch.IsCommand(firstInput) && teamScope is null)
+                {
+                    var firstChanges = await ModelSwitch.RunAsync(firstInput, Models, singleAgentDef?.Name);
+                    if (firstChanges.FirstOrDefault(c => c.IsLead) is { } firstLead)
+                    {
+                        client = leadClientFactory(firstLead.Model);
+                        resolvedModelId = firstLead.Model;
+                        MuxConsole.SetTuiModel(resolvedModelId);
+                    }
+                    await ModelSwitch.RebuildSpecialistsAsync(MultiAgentOrchestrator.Specialists, firstChanges, chatClientFactory);
+                    ModelSwitch.Report(firstChanges, "this session");
+                    continue;
+                }
+
                 var firstDisp = await MetaCommandDispatch.TryHandleAsync(
                     firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
                 if (firstDisp == MetaCommandDispatch.Result.QuitToMenu) return;
@@ -1934,6 +1955,40 @@ public static class SingleAgentOrchestrator
             session = await agent.CreateSessionAsync();
             _sessionTokens = (uint)Common.EstimateTokenCount(conversationHistory);
             _pendingReseed = conversationHistory.Count > 0;
+        }
+
+        // /setmodel in a session: save the choice, then put the same agent (prompt, tools, options) on the
+        // new model and move the live session onto it unchanged - same session id and file. Specialists
+        // whose slot changed are rebuilt for their next delegation. Teams keep the menu behavior.
+        async Task SwitchModelAsync(string line)
+        {
+            var changes = await ModelSwitch.RunAsync(line, Models, singleAgentDef.Name);
+            var lead = changes.FirstOrDefault(c => c.IsLead);
+            if (lead is not null)
+            {
+                client = leadClientFactory(lead.Model);
+                ModelSwitch.ApplyEffort(agentChatOptions, lead.Effort);
+                var next = ModelSwitch.Rebuild(agent, client, agentChatOptions);
+                session = await ModelSwitch.MoveSessionAsync(agent, session, next);
+                agent = next;
+                resolvedModelId = lead.Model;
+                MuxConsole.SetTuiModel(resolvedModelId);
+                MuxConsole.SetTuiEffort(ReasoningEffortControl.GetLabel(agentChatOptions));
+                ServeMode.EmitEvent(new { type = "model_changed", agent = singleAgentDef.Name, model = resolvedModelId });
+                await CompactIfOverWindowAsync();
+            }
+            await ModelSwitch.RebuildSpecialistsAsync(MultiAgentOrchestrator.Specialists, changes, chatClientFactory);
+            ModelSwitch.Report(changes, persistSession ? "same session, history kept" : "this session");
+        }
+
+        // After a switch: when the provider reports the new model's context window and the session no longer
+        // fits it, compact now rather than fail the next turn.
+        async Task CompactIfOverWindowAsync()
+        {
+            var window = await ProviderModelCatalog.LoadContextLengthAsync(App.ActiveProvider, resolvedModelId, cancellationToken);
+            if (window.Tokens is not int max || _sessionTokens <= max) return;
+            MuxConsole.WriteInfo($"~{_sessionTokens:N0} tokens is over {resolvedModelId}'s {max:N0}-token window. Compacting...");
+            await TryCompactAsync();
         }
 
         // Batch6: /undo -- drop the last user+assistant exchange, rebuild the session.
@@ -2853,6 +2908,10 @@ public static class SingleAgentOrchestrator
                 else if (metaCmd.Equals("/review", StringComparison.OrdinalIgnoreCase))
                 {
                     await HandleReviewAsync(client, compactionChatOptions, cancellationToken);
+                }
+                else if (ModelSwitch.IsCommand(metaCmd) && teamScope is null)
+                {
+                    await SwitchModelAsync(metaCmd);
                 }
                 else if (metaCmd.Equals("/wipe", StringComparison.OrdinalIgnoreCase))
                 {

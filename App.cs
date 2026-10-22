@@ -675,6 +675,13 @@ internal class App
                 continue;
             }
 
+            // "/agent <name>": choose the best-matching lead, then start the session like bare /agent.
+            if (userInput.StartsWith("/agent ", StringComparison.OrdinalIgnoreCase) && userInput.Trim().Contains(' '))
+            {
+                if (!CliCmdUtils.SelectLeadAgent(userInput.Trim()[6..].Trim())) continue;
+                userInput = "/agent";
+            }
+
             switch (userInput)
             {
                 case "/help":
@@ -1018,6 +1025,10 @@ internal class App
                     break;
                 case "/setmodel":
                     CliCmdUtils.HandleModelSwap();
+                    break;
+                case var smCmd when smCmd.StartsWith("/setmodel ", StringComparison.OrdinalIgnoreCase):
+                    // "/setmodel [agent] <model>" at the menu: save it; nothing is live, so it applies next run.
+                    ModelSwitch.Report(await ModelSwitch.RunAsync(smCmd, null, SingleAgentOrchestrator.AgentDef?.Name), leadNote: null);
                     break;
                 case "/plan":
                     ShouldPlan = !ShouldPlan;
