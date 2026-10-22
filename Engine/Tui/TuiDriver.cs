@@ -384,6 +384,17 @@ internal sealed partial class TuiDriver
 
     private readonly List<Entry> _transcript = new();
     private long _transcriptSequence;
+    // Ctrl+L / /clear watermark: entries at or below this sequence stay retained (NAV, Ctrl+G) but are
+    // no longer drawn in the transcript viewport or reflowed back into it.
+    private long _clearedThroughSequence;
+
+    /// <summary>Index of the first transcript entry drawn in the viewport (entries before it were cleared).</summary>
+    private int VisibleStart()
+    {
+        int i = _transcript.Count;
+        while (i > 0 && _transcript[i - 1].Sequence > _clearedThroughSequence) i--;
+        return i;
+    }
     private long _promptContextAfterSequence;
 
     // Exact wrapped-row metrics for the frame scroll marker. Counts are cached per Entry at the
@@ -437,8 +448,9 @@ internal sealed partial class TuiDriver
 
         _frameRowCountCache.Clear();
         int total = 0;
-        foreach (var entry in _transcript)
+        for (int e = VisibleStart(); e < _transcript.Count; e++)
         {
+            var entry = _transcript[e];
             int count = RenderEntryRows(entry, wrapWidth).Count;
             _frameRowCountCache[entry] = count;
             total += count;
@@ -2364,7 +2376,8 @@ internal sealed partial class TuiDriver
             else
             {
                 int want = transcriptRoom + Math.Max(0, _frameScroll);
-                for (int e = _transcript.Count - 1; e >= 0 && transcriptRows.Count < want; e--)
+                int first = VisibleStart();
+                for (int e = _transcript.Count - 1; e >= first && transcriptRows.Count < want; e--)
                     transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
                 int skipTail = Math.Max(0, _frameScroll);
                 int end = transcriptRows.Count - skipTail;
@@ -2470,7 +2483,8 @@ internal sealed partial class TuiDriver
             int transcriptTopPhys = 1 + (transcriptRoom - transcriptRows.Count);
             int skipTail = Math.Max(0, _frameScroll);
             int cursor = transcriptRows.Count + skipTail;   // rows below the current entry (window-relative bottom)
-            for (int e = _transcript.Count - 1; e >= 0 && cursor > 0; e--)
+            int firstHit = VisibleStart();
+            for (int e = _transcript.Count - 1; e >= firstHit && cursor > 0; e--)
             {
                 var entry = _transcript[e];
                 // GetFrameTotalRows(wrapW) above populated the per-entry count cache at this
@@ -2596,7 +2610,8 @@ internal sealed partial class TuiDriver
         // band uses - so the reflowed transcript is real ANSI, not literal "[#RRGGBB]" markup tokens.
         // (TuiMarkup.WrapMarkup returns MARKUP slices for NAV, which re-parses them; writing those
         // straight to the terminal printed the raw tags and bloated every row's width.)
-        for (int e = _transcript.Count - 1; e >= 0 && rows.Count < room; e--)
+        int first = VisibleStart();
+        for (int e = _transcript.Count - 1; e >= first && rows.Count < room; e--)
             rows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
         if (rows.Count > room) rows = rows.GetRange(rows.Count - room, room);
         return rows;
@@ -2677,6 +2692,28 @@ internal sealed partial class TuiDriver
         _lastSeenWidth = _term.Width;
         _lastSeenHeight = _term.Height;
         ForcePaint();
+    }
+
+    /// <summary>
+    /// Clear the screen (Ctrl+L, /clear): everything committed so far leaves the viewport and only the
+    /// live band (footer, input) is repainted; new output starts on a clean screen. The transcript is
+    /// kept, so Ctrl+G / NAV still browses the full history. Never cancels the turn.
+    /// </summary>
+    public void ClearScreen()
+    {
+        if (_shuttingDown || _navActive) return;
+        FlushTableBuffer();
+        FlushSettlingResult();
+        FlushPendingToolCall();
+        _clearedThroughSequence = _transcriptSequence;
+        _promptContextAfterSequence = _transcriptSequence;   // a prompt replay must not bring them back either
+        _frameScroll = 0;
+        _userScrolled = false;
+        InvalidateFrameRowCounts();
+        _lastSeenWidth = _term.Width;
+        _lastSeenHeight = _term.Height;
+        if (_engineFrame) { _frame.Invalidate(); PresentFrame(); }
+        else _region.ForceRepaint();
     }
 
     // --- bracketed paste -----------------------------------------------------
@@ -3570,11 +3607,10 @@ internal sealed partial class TuiDriver
                     continue;
                 }
 
-                // Ctrl+L at the prompt: clear any resize/redraw artifacts and repaint the live
-                // region from scratch. Does not cancel or submit.
+                // Ctrl+L at the prompt: clear the screen (history stays in Ctrl+G). Does not cancel or submit.
                 if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
                 {
-                    ForceRedraw();
+                    ClearScreen();
                     continue;
                 }
 

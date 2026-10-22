@@ -2844,6 +2844,12 @@ public static class SingleAgentOrchestrator
                     CliCmdUtils.HandleWorkflowsCommand(
                         metaCmd.Length > "/workflows".Length ? metaCmd.Substring("/workflows".Length).Trim() : "");
                 }
+                else if (metaCmd.Equals("/clear", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Clear the screen in place (Scope.Both; must precede the IsReplOnly fallthrough).
+                    if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
+                    else if (!MuxConsole.StdioMode) Console.Clear();
+                }
                 else if (metaCmd.Equals("/update", StringComparison.OrdinalIgnoreCase))
                 {
                     // Process-level self-update (Scope.Both), identical to the menu path: pull the

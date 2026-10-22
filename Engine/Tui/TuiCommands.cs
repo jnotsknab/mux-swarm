@@ -176,7 +176,7 @@ internal static class TuiCommands
         new("/installskill", "Install an agent skill: by name (anthropics/obra/dotnet/...), owner/repo, owner/repo/path, or a GitHub URL", Scope.ReplOnly),
         new("/refresh",      "Full refresh: config, MCP servers, skills", Scope.ReplOnly),
         new("/report",       "Generate a session audit report", Scope.ReplOnly),
-        new("/clear",        "Clear the screen", Scope.ReplOnly),
+        new("/clear",        "Clear the screen (history stays in Ctrl+G)", Scope.Both),
         new("/status",       "View full system status", Scope.ReplOnly),
         new("/help",         "Full command reference", Scope.ReplOnly),
         new("/shortcuts",    "Show keyboard shortcuts (/keys)", Scope.ReplOnly),
@@ -331,14 +331,14 @@ internal static class TuiCommands
         new("Ctrl+C",      "Cancel the current input line", "prompt"),
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
         new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
-        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint", "prompt"),
+        new("Ctrl+L",      "Clear the screen (history stays in Ctrl+G)", "prompt"),
         new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
 
         // --- during an agent turn (mid-stream) ---
         new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn"),
         new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
         new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
-        new("Ctrl+L",      "Clear resize/redraw artifacts and repaint (does not cancel)", "turn"),
+        new("Ctrl+L",      "Clear the screen (does not cancel; history stays in Ctrl+G)", "turn"),
 
         // --- transcript / expand view (NAV overlay) ---
         new("j / k",       "Move cursor down / up one line", "view"),
