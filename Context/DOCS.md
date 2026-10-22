@@ -1280,6 +1280,17 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   - `input` (compose box): `prompt` (1-2 cells), `promptFg`, `continuation`, `continuationFg`, `placeholder` (text, max
     60 cells, may be empty), `placeholderFg`, `fg`, `cursorFg`, `cursorBg`, `rail`, `railFg` (the rail shown with
     `inputHighlight`).
+  - `diff` also: `corner` (`╭`), `end` (`╰`), `line` (`─`) for the card's top and bottom border.
+  - `palette` (slash palette and the `/skill`, `/resume`, `/agent`, `@` and tools completions): `selected` (`›`),
+    `selectedFg`, `itemFg`, `titleMark` (`┃`), `titleFg`, `up` / `down` (the `↑ N more` markers).
+  - `modal` (ask_user / confirm / select / text prompts): `title` (`▸`), `titleFg`, `selected`, `selectedFg`,
+    `checked` (`◉`), `checkedFg`, `unchecked` (`○`).
+  - `panel` (rules under picker and panel headers, docked panel tabs): `rule`, `ruleFg`, `tabFg`, `tabActiveFg`,
+    `focusFg` / `focusBg` (the focused tab).
+  - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
+    replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
+  `"glyphs": "ascii"` (next to `regions`) swaps every built-in glyph for plain ASCII (`+ * > | - #`) for terminals or
+  fonts without box drawing; region keys still override single glyphs on top. Default `unicode`.
   Every key is checked: an unknown region or property, a wrong type, a colour the TUI cannot draw or a glyph of
   the wrong width skips that extension's whole `tui` block (the error is listed in `/extensions`; the rest of the
   extension still loads). Several extensions merge per property in name order (later wins; each overridden

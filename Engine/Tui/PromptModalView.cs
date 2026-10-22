@@ -123,7 +123,7 @@ internal sealed class PromptModalView
         int startIdx = Math.Max(0, end - visN);
 
         string scrollHint = maxScroll > 0 ? $" [{TuiComponents.Dim}]\u00b7 pgup/pgdn scroll[/]" : "";
-        rows.Add($"  [{TuiComponents.Accent}]\u25b8 input requested[/]{scrollHint}");
+        rows.Add($"  [{RegionStyle.Color("modal.titleFg")}]{RegionStyle.Glyph("modal.title")} input requested[/]{scrollHint}");
         if (startIdx > 0) rows.Add($"    [{TuiComponents.Dim}]\u2191 {startIdx} earlier line(s)[/]");
         for (int i = startIdx; i < end; i++) rows.Add("    " + body[i]);
         if (end < body.Count) rows.Add($"    [{TuiComponents.Dim}]\u2193 {body.Count - end} more line(s)[/]");
@@ -134,7 +134,7 @@ internal sealed class PromptModalView
             string shown = _secret ? new string('\u2022', _input.Length) : Esc(InputText);
             string hint = _input.Length == 0 && !string.IsNullOrEmpty(_default)
                 ? $" [{TuiComponents.Dim}](default: {Esc(_default!)})[/]" : "";
-            rows.Add($"  [{TuiComponents.Accent}]\u203a[/] {shown}[black on #E0E0E0] [/]{hint}");
+            rows.Add($"  [{RegionStyle.Color("modal.selectedFg")}]{RegionStyle.Glyph("modal.selected")}[/] {shown}[{RegionStyle.Color("input.cursorFg")} on {RegionStyle.Color("input.cursorBg")}] [/]{hint}");
             rows.Add($"  [{TuiComponents.Dim}]enter submit \u00b7 esc cancel[/]");
         }
         else
@@ -146,9 +146,11 @@ internal sealed class PromptModalView
             for (int i = off; i < Math.Min(off + winN, _choices.Count); i++)
             {
                 bool isSel = i == _sel;
-                string chev = isSel ? $"[{TuiComponents.Accent}]\u203a[/]" : " ";
+                string chev = isSel ? $"[{RegionStyle.Color("modal.selectedFg")}]{RegionStyle.Glyph("modal.selected")}[/]" : " ";
                 string box = _kind == Kind.MultiSelect
-                    ? (_checked.Contains(i) ? $"[{TuiComponents.Ok}]\u25c9[/] " : $"[{TuiComponents.Dim}]\u25cb[/] ")
+                    ? (_checked.Contains(i)
+                        ? $"[{RegionStyle.Color("modal.checkedFg")}]{RegionStyle.Glyph("modal.checked")}[/] "
+                        : $"[{TuiComponents.Dim}]{RegionStyle.Glyph("modal.unchecked")}[/] ")
                     : "";
                 optionRows?.Add((rows.Count, i));
                 rows.Add($"  {chev} {box}[{(isSel ? TuiComponents.Text : TuiComponents.Muted)}]{Esc(_choices[i])}[/]");

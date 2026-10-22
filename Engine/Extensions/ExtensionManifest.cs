@@ -115,6 +115,11 @@ internal sealed class ExtensionManifest
 /// </summary>
 internal sealed class TuiManifest
 {
+    /// <summary>Glyph set applied under the region keys: <c>unicode</c> (built-in) or <c>ascii</c> (plain ASCII for
+    /// limited terminals or fonts).</summary>
+    [JsonPropertyName("glyphs")]
+    public string? Glyphs { get; set; }
+
     /// <summary>Region name -&gt; property name -&gt; value (colour role or colour, glyph text, or true/false).</summary>
     [JsonPropertyName("regions")]
     public Dictionary<string, Dictionary<string, System.Text.Json.JsonElement>>? Regions { get; set; }

@@ -187,4 +187,65 @@ public sealed class ExtensionTuiStyleTests : IDisposable
         Assert.Equal(0, meta.FindIndex(m => m.Caret));
         Assert.DoesNotContain("#E0E0E0", string.Join("", rows));
     }
+
+    [Fact]
+    public void AsciiGlyphSet_ReplacesBoxDrawing_AndRegionKeysWinOverIt()
+    {
+        AddExtension("plain", """{ "tui": { "glyphs": "ascii", "regions": { "notice": { "okMark": "OK" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        Assert.Equal("OK", RegionStyle.PlainGlyph("notice.okMark"));
+        Assert.Equal("--------", Plain(TuiComponents.FullRule(8)));
+        string all = string.Join("\n", new[]
+        {
+            Plain(TuiComponents.TurnHeader("Agent", 20)[1]), Plain(TuiComponents.UserEcho("hi")[1]),
+            string.Join("\n", TuiComponents.Diff("f", "@@ -1 +1 @@\n-a\n+b", 30).Skip(1).Select(Plain)),   // header keeps its "·" text separator
+            string.Join("\n", TuiComponents.ToolResultPanel("t", "x", false, 30).Select(Plain)),
+            string.Join("\n", TuiComponents.SlashPalette("/", [("/a", "x"), ("/b", "y")], 0).Select(Plain)),
+            string.Join("\n", TuiComponents.InputRowsWithCursor("one\ntwo", 0, 30).Select(Plain)),
+        });
+        Assert.All(all.Replace("\u2212", "-"), c => Assert.True(c < 128, $"non-ASCII '{c}' (U+{(int)c:X4})"));
+
+        AddExtension("zz-bad", """{ "tui": { "glyphs": "nerd" } }""");
+        Assert.Contains(LoadEnabled().Problems, p => p.Contains("glyphs 'nerd' is not one of unicode, ascii"));
+    }
+
+    [Fact]
+    public void Palette_Modal_PanelTabs_AndSplash_TakeTheirStyles()
+    {
+        AddExtension("lists", """
+            { "tui": { "regions": {
+                "palette": { "selected": ">", "titleMark": "#", "down": "v" },
+                "modal": { "title": "?", "selected": ">", "checked": "x", "unchecked": "-" },
+                "panel": { "rule": "=", "focusBg": "#00FF00" },
+                "splash": { "art": ["  MY TOOL", "  v1"], "artFg": "#ABCDEF" } } } }
+            """);
+        Assert.Empty(LoadEnabled().Problems);
+        var rows = TuiComponents.SkillsPreview("", Enumerable.Range(0, 14).Select(i => ($"s{i:00}", "d")).ToList(), 60, 0).Select(Plain).ToList();
+        Assert.StartsWith("  # skills", rows[0]);
+        Assert.StartsWith("  > s00", rows[1]);
+        Assert.StartsWith("    v ", rows[^1]);
+        var modal = new PromptModalView();
+        modal.Open(PromptModalView.Kind.MultiSelect, "Pick", ["a", "b"], null, false);
+        modal.ToggleChecked();
+        var m = modal.Render(40, 20).Select(Plain).ToList();
+        Assert.StartsWith("  ? input requested", m[0]);
+        Assert.Contains("  > x a", m);
+        Assert.Contains("    - b", m);
+        Assert.Equal("==========", Plain(TuiComponents.FullRule(10)));
+        var splash = Engine.MuxConsole.BuildFrameSplashLines("1.0", "", "", "hi", 120);
+        Assert.Contains(splash, l => Plain(l).Contains("MY TOOL"));
+        Assert.DoesNotContain(splash, l => Plain(l).Contains("\u2588\u2588\u2588"));
+        Assert.Contains(splash, l => l.Contains("[#ABCDEF]MY[/]"));
+    }
+
+    [Theory]
+    [InlineData("""{ "splash": { "art": "one line" } }""", "'splash.art' must be a list of 1-12 strings")]
+    [InlineData("""{ "splash": { "art": [] } }""", "'splash.art' must be a list of 1-12 strings")]
+    [InlineData("""{ "footer": { "separator": "\u2502\u2502\u2502\u2502" } }""", "'footer.separator' must be 1-3 terminal cells wide (got 4)")]
+    [InlineData("""{ "input": { "placeholder": 3 } }""", "'input.placeholder' must be a string")]
+    public void T3Values_AreValidated(string regions, string expected)
+    {
+        AddExtension("bad", "{ \"tui\": { \"regions\": " + regions + " } }");
+        Assert.Contains(expected, Assert.Single(LoadEnabled().Problems));
+    }
 }

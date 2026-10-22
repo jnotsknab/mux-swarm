@@ -214,6 +214,9 @@ internal static class TuiComponents
 
     private static string Esc(string s) => Spectre.Console.Markup.Escape(s ?? "");
 
+    // Selected-row chevron of the slash palette and the completion previews (palette region).
+    private static string PaletteSel => $"[{RegionStyle.Color("palette.selectedFg")}]{RegionStyle.Glyph("palette.selected")}[/]";
+
     /// <summary>Markup tag body for streamed reasoning text (<c>reasoning.fg</c> + <c>reasoning.italic</c>).</summary>
     public static string ReasoningStyle =>
         RegionStyle.Flag("reasoning.italic") ? RegionStyle.Color("reasoning.fg") + " italic" : RegionStyle.Color("reasoning.fg");
@@ -611,7 +614,7 @@ internal static class TuiComponents
         string summary = $"[{addFg}]+{adds}[/] [{delFg}]\u2212{dels}[/]";
         var outp = new List<string>
         {
-            $"  [{railFg}]\u256d\u2500[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
+            $"  [{railFg}]{RegionStyle.Glyph("diff.corner")}{RegionStyle.Glyph("diff.line")}[/] [{Accent}]diff[/] [{Dim}]\u00b7 {Esc(Trunc(title, 40))}[/]  {summary}"
         };
 
         int oldN = 0, newN = 0;
@@ -644,7 +647,7 @@ internal static class TuiComponents
                 outp.Add($"  [{railFg} on {bg}]{rail}[/][{gutterFg} on {bg}] {gOld} {gNew} [/][{fg} on {bg}]{Esc(cellText)}{new string(' ', cellPad)}[/]");
             }
         }
-        outp.Add($"  [{railFg}]\u2570{new string('\u2500', gutterCols + codeW + 2)}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
+        outp.Add($"  [{railFg}]{RegionStyle.Glyph("diff.end")}{Esc(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("diff.line"), gutterCols + codeW + 2)))}[/]");  // +2 so the border spans the full shaded body width (prev +1 was one cell short -> bg read as bleeding past)
         return outp;
     }
 
@@ -1000,7 +1003,7 @@ internal static class TuiComponents
     public static string FullRule(int width)
     {
         int w = Math.Max(8, width);
-        return $"[{Border}]{new string('\u2500', w)}[/]";
+        return $"[{RegionStyle.Color("panel.ruleFg")}]{Esc(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("panel.rule"), w)))}[/]";
     }
 
     /// <summary>The rule above the footer and above the compose box (<c>footer.rule</c>/<c>ruleFg</c>), or
@@ -1228,15 +1231,15 @@ internal static class TuiComponents
 
         int start = WindowStart(ranked.Count, selected);
         int end = Math.Min(ranked.Count, start + PreviewWindow);
-        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
+        if (start > 0) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.up")} {start} more[/]");
         for (int i = start; i < end; i++)
         {
             var (cmd, desc) = ranked[i];
             rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(cmd),-14}[/] [{Text}]{Esc(desc)}[/]"
+                ? $"  {PaletteSel} [{RegionStyle.Color("palette.itemFg")}]{Esc(cmd),-14}[/] [{Text}]{Esc(desc)}[/]"
                 : $"    [{Accent}]{Esc(cmd),-14}[/] [{Muted}]{Esc(desc)}[/]");
         }
-        if (end < ranked.Count) rows.Add($"    [{Dim}]\u2193 {ranked.Count - end} more[/]");
+        if (end < ranked.Count) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.down")} {ranked.Count - end} more[/]");
         return rows;
     }
 
@@ -1270,7 +1273,7 @@ internal static class TuiComponents
         var names = RankSkills(filter, skills);
         var descOf = skills.ToDictionary(s => s.Name, s => s.Desc, StringComparer.Ordinal);
 
-        rows.Add($"  [{Accent}]\u2503[/] [{Accent}]skills[/] [{Dim}]({names.Count})[/]");
+        rows.Add($"  [{RegionStyle.Color("palette.titleFg")}]{RegionStyle.Glyph("palette.titleMark")}[/] [{RegionStyle.Color("palette.titleFg")}]skills[/] [{Dim}]({names.Count})[/]");
         if (names.Count == 0)
         {
             rows.Add($"    [{Dim}]no skills match '{Esc(f)}'[/]");
@@ -1281,16 +1284,16 @@ internal static class TuiComponents
         int descBudget = Math.Max(16, Math.Max(8, width) - 6 - nameW - 2);
         int start = WindowStart(names.Count, selected);
         int end = Math.Min(names.Count, start + PreviewWindow);
-        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
+        if (start > 0) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.up")} {start} more[/]");
         for (int i = start; i < end; i++)
         {
             string name = names[i];
             string oneLine = Trunc(CollapseWs(descOf.GetValueOrDefault(name) ?? ""), descBudget);
             rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(name.PadRight(nameW))}[/]  [{Text}]{Esc(oneLine)}[/]"
+                ? $"  {PaletteSel} [{RegionStyle.Color("palette.itemFg")}]{Esc(name.PadRight(nameW))}[/]  [{Text}]{Esc(oneLine)}[/]"
                 : $"    [{Agent}]{Esc(name.PadRight(nameW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
         }
-        if (end < names.Count) rows.Add($"    [{Dim}]\u2193 {names.Count - end} more[/]");
+        if (end < names.Count) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.down")} {names.Count - end} more[/]");
         return rows;
     }
 
@@ -1327,14 +1330,14 @@ internal static class TuiComponents
             for (int i = start; i < end; i++)
             {
                 var tool = matches[i];
-                string prefix = i == selected ? "› " : "  ";
+                string prefix = i == selected ? RegionStyle.PlainGlyph("palette.selected") + " " : "  ";
                 string label = $"{tool.Kind} · {tool.Group}";
                 int groupWidth = Math.Min(24, Math.Max(8, width / 3));
                 string group = TuiMarkup.TruncatePlain(label, groupWidth);
                 group += new string(' ', Math.Max(0, groupWidth - TuiMarkup.Width(group)));
                 rows.Add(width < 60
-                    ? $"  [{(i == selected ? Accent : Dim)}]{prefix}[/][{(i == selected ? Text : Agent)}]{Esc(tool.Name)}[/]"
-                    : $"  [{(i == selected ? Accent : Dim)}]{prefix}{Esc(group)}[/] [{(i == selected ? Text : Agent)}]{Esc(tool.Name)}[/]");
+                    ? $"  [{(i == selected ? RegionStyle.Color("palette.selectedFg") : Dim)}]{Esc(prefix)}[/][{(i == selected ? RegionStyle.Color("palette.itemFg") : Agent)}]{Esc(tool.Name)}[/]"
+                    : $"  [{(i == selected ? RegionStyle.Color("palette.selectedFg") : Dim)}]{Esc(prefix)}{Esc(group)}[/] [{(i == selected ? RegionStyle.Color("palette.itemFg") : Agent)}]{Esc(tool.Name)}[/]");
             }
             rows.Add($"    [{Dim}]{start + 1}-{end}/{matches.Count} · ↑↓ select · Tab/Enter choose[/]");
             if (selected >= 0)
@@ -1413,7 +1416,7 @@ internal static class TuiComponents
         var prevOf = sessions.ToDictionary(se => se.Id, se => se.Preview, StringComparer.Ordinal);
         var tagOf = sessions.ToDictionary(se => se.Id, se => se.Tag, StringComparer.Ordinal);
 
-        rows.Add($"  [{Accent}]\u2503[/] [{Accent}]resume[/] [{Dim}]({ids.Count})[/]");
+        rows.Add($"  [{RegionStyle.Color("palette.titleFg")}]{RegionStyle.Glyph("palette.titleMark")}[/] [{RegionStyle.Color("palette.titleFg")}]resume[/] [{Dim}]({ids.Count})[/]");
         if (ids.Count == 0)
         {
             rows.Add($"    [{Dim}]no sessions match '{Esc(f)}'[/]");
@@ -1428,7 +1431,7 @@ internal static class TuiComponents
         int prevBudget = Math.Max(16, Math.Max(8, width) - 6 - idW - 2);
         int start = WindowStart(ids.Count, selected);
         int end = Math.Min(ids.Count, start + PreviewWindow);
-        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
+        if (start > 0) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.up")} {start} more[/]");
         for (int i = start; i < end; i++)
         {
             string id = ids[i];
@@ -1439,10 +1442,10 @@ internal static class TuiComponents
                 ? Marquee(full, prevBudget, marqueeOffset)
                 : Trunc(full, prevBudget);
             rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(primary.PadRight(idW))}[/]  [{Text}]{Esc(oneLine)}[/]"
+                ? $"  {PaletteSel} [{RegionStyle.Color("palette.itemFg")}]{Esc(primary.PadRight(idW))}[/]  [{Text}]{Esc(oneLine)}[/]"
                 : $"    [{Agent}]{Esc(primary.PadRight(idW))}[/]  [{Muted}]{Esc(oneLine)}[/]");
         }
-        if (end < ids.Count) rows.Add($"    [{Dim}]\u2193 {ids.Count - end} more[/]");
+        if (end < ids.Count) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.down")} {ids.Count - end} more[/]");
         return rows;
     }
 
@@ -1482,7 +1485,7 @@ internal static class TuiComponents
 
         var matches = RankFiles(filter, files);
         string hint = installDirHint ? $" [{Warn}](install dir - use --workspace)[/]" : "";
-        rows.Add($"  [{Accent}]\u2503[/] [{Accent}]files[/] [{Dim}](@{Esc(f)})[/]{hint}");
+        rows.Add($"  [{RegionStyle.Color("palette.titleFg")}]{RegionStyle.Glyph("palette.titleMark")}[/] [{RegionStyle.Color("palette.titleFg")}]files[/] [{Dim}](@{Esc(f)})[/]{hint}");
         if (matches.Count == 0)
         {
             rows.Add($"    [{Dim}]no files match '@{Esc(f)}'[/]");
@@ -1492,14 +1495,14 @@ internal static class TuiComponents
         int budget = Math.Max(16, Math.Max(8, width) - 6);
         int start = WindowStart(matches.Count, selected);
         int end = Math.Min(matches.Count, start + PreviewWindow);
-        if (start > 0) rows.Add($"    [{Dim}]\u2191 {start} more[/]");
+        if (start > 0) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.up")} {start} more[/]");
         for (int i = start; i < end; i++)
         {
             rows.Add(i == selected
-                ? $"  [{Accent}]\u203a[/] [{Text}]{Esc(Trunc(matches[i], budget))}[/]"
+                ? $"  {PaletteSel} [{RegionStyle.Color("palette.itemFg")}]{Esc(Trunc(matches[i], budget))}[/]"
                 : $"    [{Agent}]{Esc(Trunc(matches[i], budget))}[/]");
         }
-        if (end < matches.Count) rows.Add($"    [{Dim}]\u2193 {matches.Count - end} more[/]");
+        if (end < matches.Count) rows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.down")} {matches.Count - end} more[/]");
         return rows;
     }
 
@@ -1569,7 +1572,7 @@ internal static class TuiComponents
         int maxOffset = System.Math.Max(0, rows.Count - maxRows);
         offset = System.Math.Clamp(offset, 0, maxOffset);
         if (offset > 0)
-            outRows.Add($"    [{Dim}]\u2191 {offset} above[/]");
+            outRows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.up")} {offset} above[/]");
         int shown = System.Math.Min(maxRows, rows.Count - offset);
         for (int i = 0; i < shown; i++)
         {
@@ -1598,7 +1601,7 @@ internal static class TuiComponents
         }
         int below = rows.Count - offset - shown;
         if (below > 0)
-            outRows.Add($"    [{Dim}]\u2193 +{below} more[/]");
+            outRows.Add($"    [{Dim}]{RegionStyle.Glyph("palette.down")} +{below} more[/]");
         return outRows;
     }
 }

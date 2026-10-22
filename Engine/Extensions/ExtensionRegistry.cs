@@ -362,6 +362,11 @@ internal static partial class ExtensionRegistry
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var errors = new List<string>();
+        var set = tui.Glyphs?.Trim().ToLowerInvariant();
+        if (set is not null && !Tui.RegionStyle.GlyphSets.Contains(set))
+            errors.Add($"glyphs '{tui.Glyphs}' is not one of {string.Join(", ", Tui.RegionStyle.GlyphSets)}");
+        else if (set == "ascii")
+            foreach (var (k, v) in Tui.RegionStyle.AsciiGlyphs) result[k] = v;
         foreach (var (region, props) in tui.Regions ?? [])
             foreach (var (prop, value) in props ?? [])
             {
