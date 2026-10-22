@@ -20,6 +20,7 @@ internal static class RegionStyle
 
     private static Prop C(string d) => new(Kind.Color, d);
     private static Prop G(string d, int max = 1) => new(Kind.Glyph, d, 1, max);
+    private static Prop T(string d, int min, int max) => new(Kind.Glyph, d, min, max);   // free text of bounded width
     private static Prop F(bool d) => new(Kind.Flag, d ? "true" : "false");
 
     /// <summary>Every styleable property, keyed <c>region.name</c> (case-insensitive).</summary>
@@ -35,6 +36,18 @@ internal static class RegionStyle
         ["toast.mark"] = G("\u25c6"), ["toast.markFg"] = C("accent"), ["toast.fg"] = C("muted"),
         ["divider.glyph"] = G("\u2502"), ["divider.fg"] = C("muted"), ["divider.activeFg"] = C("accent"),
         ["scrollbar.thumb"] = G("\u2588"), ["scrollbar.track"] = G("\u2502"), ["scrollbar.thumbFg"] = C("accent"), ["scrollbar.trackFg"] = C("muted"),
+        ["toolCard.dot"] = G("\u25cf"), ["toolCard.ok"] = G("\u2713"), ["toolCard.error"] = G("\u2717"), ["toolCard.result"] = G("\u23bf"),
+        ["toolCard.rail"] = G("\u2502"), ["toolCard.pendingFg"] = C("warning"), ["toolCard.okFg"] = C("success"), ["toolCard.errorFg"] = C("error"),
+        ["toolCard.labelFg"] = C("accent"), ["toolCard.railFg"] = C("#3A3A3A"), ["toolCard.bg"] = C("cardBg"),
+        ["diff.rail"] = G("\u2502"), ["diff.railFg"] = C("#3A3A3A"), ["diff.addFg"] = C("success"), ["diff.delFg"] = C("error"), ["diff.ctxFg"] = C("#A0A0A0"),
+        ["diff.addBg"] = C("diffAddBg"), ["diff.delBg"] = C("diffDelBg"), ["diff.hunkBg"] = C("diffHunkBg"), ["diff.gutterFg"] = C("#5A6675"),
+        ["delegation.arrow"] = G("\u2192"), ["delegation.branch"] = G("\u2514"), ["delegation.mark"] = G("\u25b8"), ["delegation.fg"] = C("accent"),
+        ["delegation.done"] = G("\u2713"), ["delegation.failed"] = G("\u2717"),
+        ["thinking.fg"] = C("#7AA2C0"),
+        ["footer.separator"] = G("\u00b7", 3), ["footer.separatorFg"] = C("#5A5A5A"), ["footer.rule"] = G("\u2500"), ["footer.ruleFg"] = C("#3A3A3A"), ["footer.ruleShow"] = F(true),
+        ["input.prompt"] = G("\u203a", 2), ["input.promptFg"] = C("accent"), ["input.continuation"] = G("\u2502"), ["input.continuationFg"] = C("#5A5A5A"),
+        ["input.placeholder"] = T("type a message, or / for commands\u2026", 0, 60), ["input.placeholderFg"] = C("#5A5A5A"),
+        ["input.fg"] = C("text"), ["input.cursorFg"] = C("black"), ["input.cursorBg"] = C("#E0E0E0"), ["input.rail"] = G("\u2502"), ["input.railFg"] = C("accent"),
     };
 
     /// <summary>Region names that have at least one property.</summary>
@@ -130,7 +143,9 @@ internal static class RegionStyle
                 return $"'{key}' must be a theme role ({string.Join(" ", RoleNames)}), #RRGGBB, default, or a basic colour name";
             default:
                 var g = value.ValueKind == JsonValueKind.String ? value.GetString()! : null;
-                if (g is null || g.Length is 0 or > 16 || g.Any(char.IsControl)) return $"'{key}' must be a short string without control characters";
+                int maxLen = Math.Max(16, prop.MaxCells * 2);
+                if (g is null || (g.Length == 0 && prop.MinCells > 0) || g.Length > maxLen || g.Any(char.IsControl))
+                    return $"'{key}' must be a string of at most {maxLen} characters without control characters";
                 int w = TuiMarkup.Width(g);
                 if (w < prop.MinCells || w > prop.MaxCells)
                     return $"'{key}' must be {(prop.MinCells == prop.MaxCells ? $"{prop.MinCells}" : $"{prop.MinCells}-{prop.MaxCells}")} terminal cell{(prop.MaxCells == 1 ? "" : "s")} wide (got {w})";

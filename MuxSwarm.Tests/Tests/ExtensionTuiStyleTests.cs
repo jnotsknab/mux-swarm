@@ -130,4 +130,61 @@ public sealed class ExtensionTuiStyleTests : IDisposable
         ExtensionRegistry.Load(null);
         Assert.Equal("\u2605 done", TuiComponents.ClipboardText("  \u2605 done"));
     }
+
+    [Fact]
+    public void Cards_Footer_Input_TakeTheirRegionStyles()
+    {
+        AddExtension("cards", """
+            { "tui": { "regions": {
+                "toolCard": { "dot": "+", "ok": "Y", "error": "N", "result": ">", "rail": "|", "labelFg": "#112233" },
+                "diff": { "rail": ":", "addFg": "#00FF00" },
+                "delegation": { "arrow": ">", "branch": "`", "mark": "*" },
+                "thinking": { "fg": "#445566" },
+                "footer": { "separator": "//", "ruleShow": false },
+                "input": { "prompt": ">>", "continuation": ":", "placeholder": "say it", "cursorBg": "#FF0000" } } } }
+            """);
+        Assert.Empty(LoadEnabled().Problems);
+        Assert.StartsWith("  + Reading", Plain(TuiComponents.ToolCall("Filesystem_read_text_file", null)[0]));
+        Assert.Contains("[#112233]", TuiComponents.ToolCall("Filesystem_read_text_file", null)[0]);
+        Assert.StartsWith("  N shell", Plain(TuiComponents.ToolCallResultMerged("shell", null, "boom", true, false)[0]));
+        Assert.Contains("  > ok", Plain(TuiComponents.ToolCallResultMerged("shell", null, "ok", false, false)[0]));
+        Assert.StartsWith("  | Y read", Plain(TuiComponents.ToolResultPanel("read", "x", false, 40)[0]));
+        Assert.All(TuiComponents.Diff("f", "@@ -1 +1 @@\n-a\n+b", 40).Skip(1).SkipLast(1), r => Assert.StartsWith("  :", Plain(r)));
+        Assert.Contains("[#00FF00", string.Join("", TuiComponents.Diff("f", "@@ -1 +1 @@\n+b", 40)));
+        Assert.Contains("> Worker", Plain(TuiComponents.DelegationSummary("Lead", "Worker", "t")));
+        Assert.StartsWith("    ` t", Plain(TuiComponents.Delegation("Lead", "Worker", "t", 10)[1]));
+        Assert.StartsWith("  * Worker", Plain(TuiComponents.SubAgentCollapsed("Worker", null, 0, 0, "#123456")));
+        Assert.Contains("[#445566 italic]", TuiComponents.ThinkingLine("Pondering", 0));
+        Assert.Null(TuiComponents.FooterRule(40));
+
+        // A 2-cell separator moves the clickable badge columns with it.
+        var badges = new List<(int Col, int Width, string Id)>();
+        string line = TuiComponents.Footer(5, 100, false, false, false, false, "low", false, 0, 0, 0, null, false, null, null, 0, "m1", 120, -1, null, badges);
+        string plain = Plain(line);
+        Assert.Contains(" // ", plain);
+        foreach (var (col, w, id) in badges)
+            Assert.Equal(id == TuiComponents.BadgeModel ? "m1" : "\u25d0 low", plain.Substring(col, w));
+
+        var meta = new List<TuiComponents.InputRowMeta>();
+        var rows = TuiComponents.InputRowsWithCursor("", 0, 40, false, meta);
+        Assert.Equal("  >>  say it", Plain(rows[0]));
+        Assert.Equal(5, meta[0].LeadCols);
+        Assert.Contains("on #FF0000", rows[0]);
+        rows = TuiComponents.InputRowsWithCursor("first\nsecond", 9, 40, false, meta);
+        Assert.StartsWith("  : sec", Plain(rows[1]));
+        Assert.Equal([false, true], meta.Select(m => m.Caret));
+    }
+
+    [Fact]
+    public void ComposeCaretRow_IsFoundFromMetadata_WhateverTheCursorColour()
+    {
+        // The compose scroller used to search for the literal "[black on #E0E0E0]" cursor markup.
+        AddExtension("cursor", """{ "tui": { "regions": { "input": { "cursorFg": "white", "cursorBg": "#123456" } } } }""");
+        LoadEnabled();
+        var meta = new List<TuiComponents.InputRowMeta>();
+        var rows = TuiComponents.InputRowsWithCursor(string.Join("\n", Enumerable.Range(0, 12).Select(i => "line" + i)), 3, 40, false, meta);
+        Assert.Equal(12, rows.Count);
+        Assert.Equal(0, meta.FindIndex(m => m.Caret));
+        Assert.DoesNotContain("#E0E0E0", string.Join("", rows));
+    }
 }
