@@ -1052,7 +1052,7 @@ public static class SingleAgentOrchestrator
 
                 if (!MuxConsole.TuiActive)
                     MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
-                string firstInput = MuxConsole.ReadInput(cancellationToken) ?? "";
+                string firstInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken)) ?? "";
 
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -1065,7 +1065,7 @@ public static class SingleAgentOrchestrator
                 HookWorker.CommandExecuted(firstInput, "agent", singleAgentDef?.Name);
                 // /setmodel before the first message: the agent is built after this loop, so it just
                 // needs the new client (and the effort is read from Swarm.json when the agent is built).
-                if (ModelSwitch.IsCommand(firstInput) && teamScope is null)
+                if (ModelSwitch.IsCommand(firstInput))
                 {
                     var firstChanges = await ModelSwitch.RunAsync(firstInput, Models, singleAgentDef?.Name);
                     if (firstChanges.FirstOrDefault(c => c.IsLead) is { } firstLead)
@@ -1073,6 +1073,7 @@ public static class SingleAgentOrchestrator
                         client = leadClientFactory(firstLead.Model);
                         resolvedModelId = firstLead.Model;
                         MuxConsole.SetTuiModel(resolvedModelId);
+                        ServeMode.EmitEvent(new { type = "model_changed", agent = singleAgentDef?.Name, model = resolvedModelId });
                     }
                     await ModelSwitch.RebuildSpecialistsAsync(MultiAgentOrchestrator.Specialists, firstChanges, chatClientFactory);
                     ModelSwitch.Report(firstChanges, "this session");
@@ -1959,7 +1960,7 @@ public static class SingleAgentOrchestrator
 
         // /setmodel in a session: save the choice, then put the same agent (prompt, tools, options) on the
         // new model and move the live session onto it unchanged - same session id and file. Specialists
-        // whose slot changed are rebuilt for their next delegation. Teams keep the menu behavior.
+        // (and team members) whose slot changed are rebuilt with their history for their next task.
         async Task SwitchModelAsync(string line)
         {
             var changes = await ModelSwitch.RunAsync(line, Models, singleAgentDef.Name);
@@ -2783,7 +2784,7 @@ public static class SingleAgentOrchestrator
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            string? nextInput = MuxConsole.ReadInput(cancellationToken);
+            string? nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
             cancellationToken.ThrowIfCancellationRequested();
 
             if (IsQuitCommand(nextInput))
@@ -2909,7 +2910,7 @@ public static class SingleAgentOrchestrator
                 {
                     await HandleReviewAsync(client, compactionChatOptions, cancellationToken);
                 }
-                else if (ModelSwitch.IsCommand(metaCmd) && teamScope is null)
+                else if (ModelSwitch.IsCommand(metaCmd))
                 {
                     await SwitchModelAsync(metaCmd);
                 }
@@ -3161,7 +3162,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                nextInput = MuxConsole.ReadInput(cancellationToken);
+                nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (IsQuitCommand(nextInput))

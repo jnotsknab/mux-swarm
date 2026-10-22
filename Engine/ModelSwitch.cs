@@ -5,7 +5,7 @@ using Microsoft.Extensions.AI;
 namespace MuxSwarm.Engine;
 
 /// <summary>
-/// <c>/setmodel</c> inside a live session (/agent, /stateless, /swarm, /pswarm, ultra, giga; not teams).
+/// <c>/setmodel</c> inside a live session (/agent, /stateless, /teams, /swarm, /pswarm, ultra, giga).
 /// Saves the choice to Swarm.json like the menu command, then the caller rebuilds its lead on the new
 /// model with the session carried over unchanged, and changed specialists are rebuilt here. Forms:
 /// <c>/setmodel</c> (picker), <c>/setmodel &lt;model&gt;</c> (the agent you are talking to),
@@ -16,6 +16,36 @@ internal static class ModelSwitch
     /// <summary>One saved slot change. <paramref name="Effort"/> is set only when the effort changed;
     /// <paramref name="IsLead"/> = the slot the caller's lead runs on.</summary>
     internal sealed record Change(string Id, string Label, string Model, string? Effort, bool IsLead);
+
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> Pending = new();
+
+    /// <summary>
+    /// Queue a switch from outside the session loop (the web model menu, POST /api/model with a live
+    /// session). The session applies it before its next turn: right away at an idle prompt, after the
+    /// current turn otherwise. Swarm modes apply it before the next goal.
+    /// </summary>
+    internal static void Queue(string slotLabel, string model) => Pending.Enqueue($"/setmodel {slotLabel} {model}");
+
+    /// <summary>Take the next queued switch (a <c>/setmodel &lt;slot&gt; &lt;model&gt;</c> line), or null.</summary>
+    internal static string? TakeQueued() => Pending.TryDequeue(out var line) ? line : null;
+
+    /// <summary>Drop queued switches (a session ended before applying them; Swarm.json already has them).</summary>
+    internal static void ClearQueued() => Pending.Clear();
+
+    /// <summary>Input line the serve API writes to wake an idle session so it applies a queued switch now.</summary>
+    internal const string WakeLine = "\u0000mux:model-switch";
+
+    /// <summary>
+    /// Read the next session input, handing out queued switches first. A <see cref="WakeLine"/> is never
+    /// returned: it only wakes the read so a queued switch is applied without waiting for the user.
+    /// </summary>
+    internal static string? NextInput(Func<string?> read)
+    {
+        if (TakeQueued() is { } queued) return queued;
+        var line = read();
+        while (line == WakeLine) line = TakeQueued() ?? read();
+        return line;
+    }
 
     /// <summary>True for <c>/setmodel</c> with or without arguments.</summary>
     internal static bool IsCommand(string? line)
@@ -36,6 +66,7 @@ internal static class ModelSwitch
         var before = ModelSelectionStore.Load(swarmPath);
         string leadId = LeadSlotId(before, leadName);
         var args = line.Trim()["/setmodel".Length..].Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+        ModelSelectionStore.Slot? target = null;
         try
         {
             if (args.Length == 0) CliCmdUtils.HandleModelSwap(inSession: true);
@@ -48,13 +79,14 @@ internal static class ModelSwitch
             {
                 var slot = args.Length == 1
                     ? before.Slots.FirstOrDefault(s => s.Id == leadId)
-                    : AgentMatch.Best(args[0], before.Slots.Select(s => s.Label)) is { } label ? before.Slots.First(s => s.Label == label) : null;
+                    : AgentMatch.Best(args[0], before.Slots.Select(s => s.Label)) is { } label ? BySlotLabel(before, label) : null;
                 if (slot is null)
                 {
                     MuxConsole.WriteWarning($"No agent matches '{args[0]}'. Slots: {string.Join(", ", before.Slots.Select(s => s.Label))}");
                     return [];
                 }
                 App.SwarmConfig = ModelSelectionStore.Save(before, slot.Id, args[^1], slot.Effort);
+                target = slot;
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException)
@@ -69,6 +101,10 @@ internal static class ModelSwitch
             .Select(a => new Change(a.Id, a.Label, a.Model!,
                 before.Slots.FirstOrDefault(b => b.Id == a.Id)?.Effort == a.Effort ? null : a.Effort, a.Id == leadId))
             .ToList();
+        // An explicit target always counts, even when Swarm.json already had that model (the web menu saves
+        // first and queues the live switch; Swarm.json may also have been edited by hand).
+        if (target is not null && !changes.Any(c => c.Id == target.Id))
+            changes.Add(new Change(target.Id, target.Label, args[^1].Trim(), null, target.Id == leadId));
         if (changes.Count > 0 && args.Length == 0)
             App.SwarmConfig = JsonSerializer.Deserialize<SwarmConfig>(File.ReadAllText(swarmPath)) ?? App.SwarmConfig;
         if (agentModels is not null)
@@ -86,6 +122,15 @@ internal static class ModelSwitch
         leadName is null ? config?.Orchestrator?.Model
         : config?.Agents?.FirstOrDefault(a => a.Name?.Equals(leadName, StringComparison.OrdinalIgnoreCase) == true)?.Model is { Length: > 0 } m
             ? m : config?.SingleAgent?.Model;
+
+    /// <summary>The slot named <paramref name="label"/>. When the singleAgent and an agents entry share a name, the
+    /// agents entry with a model wins, as it does when a session resolves its model.</summary>
+    internal static ModelSelectionStore.Slot? BySlotLabel(ModelSelectionStore.Snapshot s, string label)
+    {
+        var named = s.Slots.Where(x => x.Label.Equals(label, StringComparison.OrdinalIgnoreCase)).ToList();
+        return named.FirstOrDefault(x => x.Id.StartsWith("agents/", StringComparison.Ordinal) && !string.IsNullOrEmpty(x.Model))
+            ?? named.FirstOrDefault();
+    }
 
     /// <summary>Slot id the lead runs on (mirrors how a session resolves its model).</summary>
     internal static string LeadSlotId(ModelSelectionStore.Snapshot s, string? leadName) =>
@@ -121,9 +166,9 @@ internal static class ModelSwitch
         await to.DeserializeSessionAsync(await from.SerializeSessionAsync(session));
 
     /// <summary>
-    /// Rebuild the specialists whose slot changed on the new model, keeping their instructions, tools and
-    /// options. Their history is per delegation, so each gets a fresh session. Background jobs already
-    /// running keep the agent they started with.
+    /// Rebuild the specialists whose slot changed on the new model, keeping their instructions, tools,
+    /// options and session (team members keep history between tasks; delegations clear it themselves).
+    /// Tasks already running keep the agent they started with.
     /// </summary>
     internal static async Task RebuildSpecialistsAsync(
         IDictionary<string, (AIAgent Agent, AgentSession Session, Common.AgentDefinition Def)> specialists,
@@ -134,7 +179,7 @@ internal static class ModelSwitch
         {
             if (!specialists.TryGetValue(c.Label, out var s)) continue;
             var agent = Rebuild(s.Agent, clientFactory(c.Model), effort: c.Effort);
-            specialists[c.Label] = (agent, await agent.CreateSessionAsync(), s.Def);
+            specialists[c.Label] = (agent, await MoveSessionAsync(s.Agent, s.Session, agent), s.Def);
         }
     }
 

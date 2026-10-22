@@ -4531,6 +4531,14 @@ const icons = {
         break;
       }
 
+      // /setmodel or the model menu switched a running session's agent: keep the button in step.
+      case 'model_changed': {
+        const slot = _modelSlots.find(s => s && ev.agent && String(s.name).toLowerCase() === String(ev.agent).toLowerCase());
+        if (slot) slot.model = ev.model;
+        refreshModelButton();
+        break;
+      }
+
       // Batch6: /wipe cleared the live session context. Mirror Claude /clear by
       // clearing the transcript view (reuses the screen-clear with undo toast).
       case 'session_wiped':
@@ -5835,7 +5843,9 @@ const icons = {
         if (_activeAgentName && name.toLowerCase() === _activeAgentName.toLowerCase()) _activeAgentModel = v;
         refreshModelButton();
         closeModelMenu();
-        routePill(pillFromText(name + ' model \u2192 ' + v, 'event-success'));
+        // live = a session is running: the engine switches it before its next turn and says so
+        // (model_changed); otherwise the change is saved for the next run.
+        routePill(pillFromText(name + ' model \u2192 ' + v + (data && data.live ? ' (switching the live session)' : ' (saved)'), 'event-success'));
       } catch (e) {
         if (!modelMenuEl()) return;
         mmStatus(menu, 'Could not set model: ' + (e.message || e), 'is-error');
