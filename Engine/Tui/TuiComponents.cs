@@ -277,6 +277,8 @@ internal static class TuiComponents
 
     /// <summary>Normalize CRLF and strip trailing blank lines so bordered cards (diff/result)
     /// don't render a stack of empty interior rows before their closing border.</summary>
+    private static int MarkupWidthOf(string markup) => TuiMarkup.MarkupWidth(markup);
+
     private static string TrimTrailingBlankLines(string s)
     {
         var norm = (s ?? "").Replace("\r\n", "\n").TrimEnd('\n');
@@ -289,6 +291,29 @@ internal static class TuiComponents
     {
         if (!RegionStyle.Flag("header.show")) return new();
         string accent = RegionStyle.Color("header.accent");
+        if (RegionStyle.PlainGlyph("header.template") is { Length: > 0 } template)
+        {
+            // Placeholders filled with escaped values; the rest of the template is plain text in the accent colour.
+            string text = Esc(template)
+                .Replace("{agent}", $"[/][{Agent}]{Esc(agent)}[/][{accent}]")
+                .Replace("{model}", $"[/][{Text}]{Esc(model)}[/][{accent}]")
+                .Replace("{provider}", $"[/][{Muted}]{Esc(provider)}[/][{accent}]")
+                .Replace("{tools}", toolCount > 0 ? $"{toolCount} tool{(toolCount == 1 ? "" : "s")}" : "");
+            string row = $"[{accent}]{text}[/]";
+            if (RegionStyle.Choice("header.frame") == "box")
+            {
+                int inner = MarkupWidthOf(row) + 2;
+                string b = RegionStyle.Color("header.accent");
+                return new()
+                {
+                    "",
+                    $"  [{b}]\u256d{new string('\u2500', inner)}\u256e[/]",
+                    $"  [{b}]\u2502[/] {row} [{b}]\u2502[/]",
+                    $"  [{b}]\u2570{new string('\u2500', inner)}\u256f[/]",
+                };
+            }
+            return new() { "", $"  [{accent}]{RegionStyle.Glyph("header.mark")}[/] {row}" };
+        }
         // Trailing tool-count badge (folded in from the old standalone "N tools available"
         // line): a dim "N tools" chip on the session header row. Hidden when count <= 0.
         string toolsBadge = toolCount > 0
@@ -328,7 +353,28 @@ internal static class TuiComponents
             : $" [{Dim}]({Esc(Trunc(CollapseWs(args!), 56))})[/]";
         string pending = RegionStyle.Color("toolCard.pendingFg");
         string dot = frame >= 0 ? PulsingDot(frame, pending, CardDot) : $"[{pending}]{CardDot}[/]";
-        return new() { $"  {dot} [{CardLabel}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}" };
+        return ToolLine(dot, $"[{CardLabel}]{Esc(ToolActionLabel.Describe(tool))}[/]{hint}");
+    }
+
+    /// <summary>
+    /// A tool line in the <c>toolCard.style</c> layout: <c>bullet</c> (stock "  ● label"), <c>gutter</c> (one
+    /// prefix glyph, then the status glyph: "┊ ● label") or <c>box</c> (the line framed in a one-row card
+    /// "╭ ● label ╮"-style with side rails). <paramref name="body"/> is the markup after the status glyph.
+    /// </summary>
+    private static List<string> ToolLine(string glyph, string body)
+    {
+        switch (RegionStyle.Choice("toolCard.style"))
+        {
+            case "gutter":
+                return new() { $"  [{RegionStyle.Color("toolCard.railFg")}]{RegionStyle.Glyph("toolCard.gutter")}[/] {glyph} {body}" };
+            case "box":
+            {
+                string rail = RegionStyle.Color("toolCard.railFg");
+                return new() { $"  [{rail}]{RegionStyle.Glyph("toolCard.boxLeft")}[/] {glyph} {body} [{rail}]{RegionStyle.Glyph("toolCard.boxRight")}[/]" };
+            }
+            default:
+                return new() { $"  {glyph} {body}" };
+        }
     }
 
     /// <summary>
@@ -420,7 +466,7 @@ internal static class TuiComponents
         string resultPart = first.Length > 0
             ? $"  {CardResult} [{Muted}]{Esc(first)}[/]{moreHint}"
             : "";
-        return new() { $"  {glyph} [{CardLabel}]{Esc(tool)}[/]{hint}{failTag}{resultPart}" };
+        return ToolLine(glyph, $"[{CardLabel}]{Esc(tool)}[/]{hint}{failTag}{resultPart}");
     }
 
     /// <summary>Collapsed one-line tool result (Claude-Code style: first line + "(+N lines)").</summary>

@@ -166,4 +166,21 @@ public sealed class ExtensionHostApiTests : IDisposable
             driver.Shutdown();
         }
     }
+
+    [Fact]
+    public void StatusSet_SetsAndClearsAFooterChip()
+    {
+        try
+        {
+            var set = JsonSerializer.SerializeToElement(ExtensionHostApi.Handle("meter", "status/set", P("""{"key":"build","text":"green"}""")).Result);
+            Assert.True(set.GetProperty("changed").GetBoolean());
+            Assert.Contains(("meter.build", "green"), ExtensionFooter.Snapshot());
+            var again = JsonSerializer.SerializeToElement(ExtensionHostApi.Handle("meter", "status/set", P("""{"key":"build","text":"green"}""")).Result);
+            Assert.False(again.GetProperty("changed").GetBoolean());
+            ExtensionHostApi.Handle("meter", "status/set", P("""{"key":"build"}"""));
+            Assert.DoesNotContain(ExtensionFooter.Snapshot(), c => c.Id == "meter.build");
+            Assert.Equal(-32602, ExtensionHostApi.Handle("meter", "status/set", P("""{"key":"Bad Key"}""")).Code);
+        }
+        finally { ExtensionFooter.Clear("meter"); }
+    }
 }

@@ -1537,6 +1537,7 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 | `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
 | `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
 | `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
+| `status/set` | `{ key, text? }` | `{ changed }`: keyed status text in the footer (chip `<name>.<key>`; empty text removes it). Same as the `footer/set` notification, with an answer |
 
 - `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
   (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
