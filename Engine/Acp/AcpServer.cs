@@ -148,8 +148,7 @@ public sealed class AcpServer
             _reader?.CloseSession();
             MuxConsole.AcpSink = null;
             AskUserHandler = null;
-            foreach (var key in _pendingOutbound.Keys)   // client gone: release waiting requests
-                if (_pendingOutbound.TryRemove(key, out var t)) t.TrySetResult(default);
+            _outbound.CancelAll();   // client gone: release waiting requests
             try { if (_sessionTask is not null) await _sessionTask; } catch { /* session teardown best-effort */ }
         }
     }
@@ -213,8 +212,7 @@ public sealed class AcpServer
                     _cancelRequested = true;
                     // The client should answer open permission prompts with "cancelled"; release
                     // them here too so an ask_user can never outlive its cancelled turn.
-                    foreach (var key in _pendingOutbound.Keys)
-                        if (_pendingOutbound.TryRemove(key, out var pending)) pending.TrySetResult(default);
+                    _outbound.CancelAll();
                     StdinCancelMonitor.Instance?.FireCancel();
                     break;            // notification: no response
 
