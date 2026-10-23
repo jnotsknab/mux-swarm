@@ -1295,6 +1295,9 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     `checked` (`◉`), `checkedFg`, `unchecked` (`○`).
   - `panel` (rules under picker and panel headers, docked panel tabs): `rule`, `ruleFg`, `tabFg`, `tabActiveFg`,
     `focusFg` / `focusBg` (the focused tab).
+  - `block` (titled command-output blocks, e.g. /status, /cost, /daemon): `rail` (`│`), `railFg`, `titleFg`.
+    Output longer than 12 rows (or the screen) opens in a scrollable full-screen panel (`panel.*` chrome;
+    j/k, PgUp/PgDn, `/` search, Esc/q close) and leaves a one-line note in the transcript.
   - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
   **Layout (shape) keys.** These change the shape of the live band, not just its colours:

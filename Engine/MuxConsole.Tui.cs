@@ -1600,6 +1600,15 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         WithConsole(() =>
         {
             var f = (filter ?? "").TrimStart('/').Trim().ToLowerInvariant();
+            if (ViaDriver)
+            {
+                // Under the driver: the same command list as a themed panel/block, never a raw Spectre table.
+                var match = ReplPaletteEntries.Where(e => f.Length == 0 || e.Cmd.ToLowerInvariant().Contains(f) || e.Desc.ToLowerInvariant().Contains(f)).ToList();
+                int w = match.Count == 0 ? 0 : match.Max(e => e.Cmd.Length);
+                var rows = match.Count == 0 ? new List<string> { $"[{TC.Dim}]no commands match '{Esc(f)}'[/]" }
+                    : match.Select(e => $"[{TC.Accent}]{Esc(e.Cmd.PadRight(w))}[/]  [{TC.Text}]{Esc(e.Desc)}[/]").ToList();
+                if (TryLongPanel("Commands", rows) || TuiCommitBlock(BlockTitle("Commands"), rows)) return;
+            }
             var table = new Table()
                 .Border(TableBorder.Rounded)
                 .BorderStyle(new Style(HexColor(TC.Border)))

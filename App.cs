@@ -540,7 +540,7 @@ internal class App
                 mcpTools: McpTools!.Cast<AITool>().ToList(),
                 agentModels: Common.LoadAgentModels());
 
-            MuxConsole.WriteInfo("[Daemon] Running in background.");
+            MuxConsole.WriteInfo("[daemon] Running in background.");
             OtelLogger.Info("Daemon enabled and initialized successfully in background");
         }
         
@@ -1145,10 +1145,8 @@ internal class App
 
                 case "/model":
                     var currentModel = LoadSingleAgentModel();
-                    MuxConsole.WriteInfo($"Selected lead model: {currentModel}");
-                    var models = Common.LoadAgentModels();
-                    foreach (var kvp in models)
-                        MuxConsole.WriteInfo($"  {kvp.Key} -> {kvp.Value}");
+                    MuxConsole.WriteSummaryTable($"Models (lead: {currentModel})",
+                        Common.LoadAgentModels().Select(kvp => (kvp.Key, kvp.Value)));
                     break;
 
                 case "/dbg":
@@ -1275,6 +1273,14 @@ internal class App
                     break;
 
                 case "/config":
+                {
+                    // Bare /config lists the settings (TuiConfigCommands.Handle); it used to fall into /workspace.
+                    var res = TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) MuxConsole.WritePanel("Config", res.Message);
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
                 case var wsCmd when wsCmd == "/workspace" || wsCmd.StartsWith("/workspace ", StringComparison.Ordinal):
                 {
                     // Runtime mirror of the --workspace CLI arg: with no path, report the current
@@ -1484,14 +1490,13 @@ internal class App
                         {
                             var status = MuxSwarm.State.HookWorker.Enabled ? "ON" : "OFF";
                             var sb = new System.Text.StringBuilder();
-                            sb.AppendLine($"Hooks: {status}  ({MuxSwarm.State.HookWorker.Count} configured)");
                             foreach (var h in MuxSwarm.State.HookWorker.Loaded)
-                                sb.AppendLine($"  - {h.Id}: on {h.When.Event}" +
+                                sb.AppendLine($"{h.Id}: on {h.When.Event}" +
                                     (h.When.Agent is not null ? $" [agent={h.When.Agent}]" : "") +
                                     (h.When.Tool is not null ? $" [tool={h.When.Tool}]" : "") +
                                     $"  ({h.Mode})");
-                            sb.Append("Usage: /hooks on|off|create");
-                            MuxConsole.WriteInfo(sb.ToString().TrimEnd());
+                            sb.AppendLine().Append("Usage: /hooks on|off|create");
+                            MuxConsole.WritePanel($"Hooks: {status} ({MuxSwarm.State.HookWorker.Count} configured)", sb.ToString());
                             break;
                         }
                     }

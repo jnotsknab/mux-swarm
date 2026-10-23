@@ -1455,19 +1455,42 @@ public static partial class MuxConsole
     ///     ⎿ line
     ///     ⎿ line
     /// </summary>
-    private static bool TuiCommitBlock(string headerMarkup, IEnumerable<string> detailMarkupLines)
+    private static bool TuiCommitBlock(string headerMarkup, IEnumerable<string> detailMarkupLines, string? title = null)
     {
         if (!ViaDriver) return false;
+        var detail = detailMarkupLines as IReadOnlyList<string> ?? detailMarkupLines.ToList();
+        // Long output reads better in a full-screen panel than as a wall in the transcript.
+        if (title is not null && TryLongPanel(title, detail)) return true;
         // A single continuous accent rail runs down the whole block - the rail IS the grouping,
         // so no per-row bullet is needed. Header sits on the rail; a rail-only spacer separates it
         // from the body; each detail row is the rail + one uniform space + the (already-trimmed)
         // content. Callers must NOT pre-indent or bracket their rows; the rail provides structure.
-        string rail = $"  [{C.Step}]\u2502[/]";
+        string rail = $"  [{RegionStyle.Color("block.railFg")}]{RegionStyle.Glyph("block.rail")}[/]";
         var lines = new List<string> { "", $"{rail} {headerMarkup}", rail };
-        foreach (var d in detailMarkupLines)
+        foreach (var d in detail)
             lines.Add($"{rail} {d}");
         lines.Add("");
         CommitLinesToDriver(lines);
+        return true;
+    }
+
+    private static string BlockTitle(string title) => $"[{RegionStyle.Color("block.titleFg")}]{Esc(title)}[/]";
+
+    /// <summary>Rows above which command output opens a full-screen panel instead of an inline block.</summary>
+    internal const int LongOutputRows = 12;
+
+    /// <summary>
+    /// Show long command output (more than <see cref="LongOutputRows"/> rows, or taller than the screen leaves
+    /// room for) in a scrollable full-screen panel, leaving a one-line note in the transcript. False when the
+    /// output is short or no panel can open (the caller then prints inline).
+    /// </summary>
+    internal static bool TryLongPanel(string title, IReadOnlyList<string> markupLines)
+    {
+        if (!ViaDriver || InputOverride != Console.In) return false;
+        int rows = markupLines.Count;
+        if (rows <= LongOutputRows && rows <= Math.Max(4, _driver!.Height - 8)) return false;
+        if (!_driver!.RunTextPanel(new Tui.TextPanelView(title, markupLines))) return false;
+        TuiCommit($"  [{RegionStyle.Color("block.railFg")}]{RegionStyle.Glyph("block.rail")}[/] [{RegionStyle.Color("block.titleFg")}]{Esc(title)}[/] [{C.Muted}]({rows} lines, viewed in a panel)[/]");
         return true;
     }
 
@@ -1887,7 +1910,7 @@ public static partial class MuxConsole
                 int keyW = rowList.Count == 0 ? 0 : rowList.Max(r => (r.Key ?? "").Length);
                 var detail = rowList.Select(r =>
                     $"[{C.Info}]{Esc((r.Key ?? "").PadRight(keyW))}[/]  [{C.Prompt}]{Esc(r.Value ?? "")}[/]");
-                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+                if (TuiCommitBlock(BlockTitle(title), detail, title)) return;
             }
 
             var table = new Table()
@@ -1921,9 +1944,9 @@ public static partial class MuxConsole
             // an indented detail row (Claude-Code feel). Falls back to a Spectre panel in classic.
             if (ViaDriver)
             {
-                var detail = (content ?? "").Replace("\r\n", "\n").Split('\n')
+                var detail = (content ?? "").Replace("\r\n", "\n").TrimEnd('\n').Split('\n')
                     .Select(l => $"[{C.Prompt}]{Esc(l.TrimEnd())}[/]");
-                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+                if (TuiCommitBlock(BlockTitle(title), detail, title)) return;
             }
 
             AnsiConsole.Write(new Panel($"[{C.Prompt}]{Esc(content)}[/]")
@@ -1956,7 +1979,7 @@ public static partial class MuxConsole
             if (ViaDriver)
             {
                 var detail = rendered.Select(m => $"  {m}");
-                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", detail)) return;
+                if (TuiCommitBlock(BlockTitle(title), detail, title)) return;
             }
 
             AnsiConsole.Write(new Panel(string.Join("\n", rendered))
@@ -1983,7 +2006,7 @@ public static partial class MuxConsole
             }
             if (ViaDriver)
             {
-                if (TuiCommitBlock($"[{C.Step}]{Esc(title)}[/]", lines)) return;
+                if (TuiCommitBlock(BlockTitle(title), lines, title)) return;
             }
             AnsiConsole.Write(new Panel(string.Join("\n", lines))
                 .Header($"[{C.Step}]{Esc(title)}[/]")
@@ -2321,9 +2344,10 @@ public static partial class MuxConsole
         // so the two references read as one family instead of a single-color text wall.
         if (ViaDriver)
         {
+            var helpRows = (helpText ?? "").Replace("\r\n", "\n").Split('\n').Select(raw => HelpLineMarkup(raw.TrimEnd())).ToList();
+            if (TryLongPanel("Mux-Swarm \u2014 Command Reference", helpRows)) return;
             var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Mux-Swarm \u2014 Command Reference[/]" };
-            foreach (var raw in (helpText ?? "").Replace("\r\n", "\n").Split('\n'))
-                lines.Add(HelpLineMarkup(raw.TrimEnd()));
+            lines.AddRange(helpRows);
             lines.Add("");
             CommitLinesToDriver(lines);
             return;
@@ -2416,16 +2440,19 @@ public static partial class MuxConsole
         // Live driver: borderless block committed into native scrollback.
         if (ViaDriver)
         {
-            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Keyboard Shortcuts[/]" };
+            var keyRows = new List<string>();
             foreach (var ctx in order)
             {
-                lines.Add("");
-                lines.Add($"  [{C.Step}]{Esc(ContextTitle(ctx))}[/]");
+                if (keyRows.Count > 0) keyRows.Add("");
+                keyRows.Add($"  [{C.Step}]{Esc(ContextTitle(ctx))}[/]");
                 foreach (var k in Tui.TuiCommands.Keys)
                     if (k.Context == ctx)
-                        lines.Add($"    [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
+                        keyRows.Add($"    [{C.Prompt}]{Esc(k.Keys.PadRight(14))}[/][{C.Muted}]{Esc(k.Desc)}[/]");
             }
-            if (!mouseLive) { lines.Add(""); lines.Add($"  [{C.Muted}]{Esc(mouseHint)}[/]"); }
+            if (!mouseLive) { keyRows.Add(""); keyRows.Add($"  [{C.Muted}]{Esc(mouseHint)}[/]"); }
+            if (TryLongPanel("Keyboard Shortcuts", keyRows)) return;
+            var lines = new List<string> { "", $"  [{C.Step}]\u2503[/] [{C.Step}]Keyboard Shortcuts[/]", "" };
+            lines.AddRange(keyRows);
             lines.Add("");
             CommitLinesToDriver(lines);
             return;
