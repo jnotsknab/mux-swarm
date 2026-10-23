@@ -83,9 +83,10 @@ public static class AcpProtocol
                     ["audio"] = false,
                     ["embeddedContext"] = true
                 },
-                // Session lifecycle: resume (no-replay restore) + close. Each '{}' = supported.
+                // Session lifecycle: list (history), resume (no-replay restore) + close. Each '{}' = supported.
                 ["sessionCapabilities"] = new Dictionary<string, object?>
                 {
+                    ["list"] = new Dictionary<string, object?>(),
                     ["resume"] = new Dictionary<string, object?>(),
                     ["close"] = new Dictionary<string, object?>()
                 },

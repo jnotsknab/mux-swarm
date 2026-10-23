@@ -1727,6 +1727,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
                         shouldPlan: ShouldPlan,
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         resumedSession: resume?.Data,
+                        // New ACP sessions pass Dir too: it fixes the Sessions folder name to the ACP session id.
                         resumedSessionDir: resume?.Dir,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
