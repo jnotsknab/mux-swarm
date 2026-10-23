@@ -157,4 +157,37 @@ public class InlineInputParityTests
             driver.Shutdown();
         }
     }
+
+    /// <summary>Enter on an empty or blank box sends nothing (callers treat "" as quit); the next real line submits.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task EmptyEnter_SendsNothing_NextLineSubmits(bool frame)
+    {
+        var terminal = new Terminal();
+        var driver = new TuiDriver(terminal, frameEngine: frame);
+        using var supplied = ConsoleInputPump.CreateUnstartedForTest(mouseTracking: frame);
+        var pump = driver.InitializeInput(true, "off", (_, _, _) => supplied);
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        terminal.OnFlush = () => ready.TrySetResult();
+        var read = Task.Run(() => driver.ReadLineCore(pump));
+        try
+        {
+            await ready.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            foreach (char c in "\r  \rok\r")
+            {
+                pump.FeedRawKey(new ConsoleKeyInfo(c, c == '\r' ? ConsoleKey.Enter : ConsoleKey.NoName, false, false, false));
+                await Task.Delay(80);
+                pump.FlushAssemblerTimeout();
+            }
+            Assert.Equal("ok", await read.WaitAsync(TimeSpan.FromSeconds(3)));
+        }
+        finally
+        {
+            terminal.OnFlush = null;
+            pump.Dispose();
+            if (!read.IsCompleted) await read.WaitAsync(TimeSpan.FromSeconds(3));
+            driver.Shutdown();
+        }
+    }
 }

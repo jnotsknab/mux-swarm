@@ -574,10 +574,19 @@ public class PasteComposeTests
         try
         {
             var read = Task.Run(() => driver.ReadLineCore(pump));
-            if (!cancel) { await Task.Delay(80); Assert.False(read.IsCompleted); }
-            else { Assert.Equal("", await read.WaitAsync(TimeSpan.FromSeconds(3))); }
+            await Task.Delay(80);
+            Assert.False(read.IsCompleted);   // pending clipboard waits; after a cancel, an empty Enter sends nothing
             release.SetResult(new(Image: Png));
+            if (cancel)
+            {
+                // The late clipboard result must not attach to the next draft.
+                await Task.Delay(80);
+                pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(Key(ConsoleKey.O, 'o')));
+                pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(Key(ConsoleKey.K, 'k')));
+                pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(Key(ConsoleKey.Enter, '\r')));
+            }
             string? submitted = await read.WaitAsync(TimeSpan.FromSeconds(3));
+            if (cancel) Assert.Equal("ok", submitted);
             Assert.Equal(cancel ? 0 : 2, writes);
             if (!cancel)
             {
