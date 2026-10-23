@@ -224,7 +224,7 @@ Available at the top-level REPL.
 | `/deep [off]` | Shortcut to enable (or disable) deep memory mode |
 | `/taskgraph on\|off\|status` | Auto task decomposition onto the task board (config block is `decompose`) |
 | `/theme [name]` | Switch the TUI theme (21 presets; bare `/theme` opens a live-preview picker) |
-| `/sessions` | List all saved sessions with type and agent count |
+| `/sessions` | Alias of `/history`; outside the TUI, lists saved sessions with type and agent count |
 | `/setup` | Run initial setup / reconfigure |
 | `/reloadskills` | Refresh the skills directory for mid-process changes |
 | `/installskill <name\|owner/repo\|owner/repo/path\|URL>` | Install a skill from the curated registry or GitHub |

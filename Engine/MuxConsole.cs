@@ -802,7 +802,7 @@ public static partial class MuxConsole
         lines.Add("");
         lines.Add($"[{C.Muted}]────────────────────────────────[/]");
         lines.Add($"  [{C.Muted}]/resume to continue a session[/]");
-        lines.Add($"  [{C.Muted}]/sessions to view session info[/]");
+        lines.Add($"  [{C.Muted}]/history to browse sessions[/]");
         return lines;
     }
 
