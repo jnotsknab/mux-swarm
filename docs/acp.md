@@ -53,7 +53,7 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 | `authenticate` | ✅ (no-op) | No auth required; returns `{}`. |
 | `session/update` → `agent_message_chunk` | ✅ | Streamed assistant text, stable `messageId` per turn. |
 | `session/update` → `agent_thought_chunk` | ✅ | Streamed reasoning (Mux muted stream). |
-| `session/update` → `tool_call` / `tool_call_update` | ✅ | Synthesized pending→completed lifecycle; tool kind mapped; follow-along `locations` (absolute paths from args); edit-tool diffs surfaced as ACP `diff` content. |
+| `session/update` → `tool_call` / `tool_call_update` | ✅ | Announced when the tool is invoked (before it runs), keyed by the provider's tool-call id, with a readable `title` ("Read <path>", "Run: <command>"), `rawInput` (the call arguments), mapped `kind` and follow-along `locations`. Finished as `completed`, or `failed` for error results. File edits/writes carry a real `diff` block (`oldText` captured before the tool ran, `newText` read after). Calls still open when a turn ends or is cancelled are closed as `failed` before the `session/prompt` response. |
 | `session/update` → `plan` | ✅ | Mux `step` frames map to single-entry plan snapshots. |
 | `session/update` → `usage_update` | ✅ | Live session token count + context size at each turn boundary. |
 | `stopReason` | ✅ | `end_turn` on normal completion, `cancelled` on `session/cancel`. |

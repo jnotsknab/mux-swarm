@@ -2083,8 +2083,12 @@ GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-age
   `session/set_mode`, `session/resume`, model selection (both the canonical
   `configOptions` and the Zed `models` / `session/set_model` mechanisms), `logout`.
 - Streams: `agent_message_chunk`, `agent_thought_chunk` (reasoning), `tool_call` +
-  `tool_call_update` (with diffs + locations), `plan`, `usage_update`; stop reasons
-  `end_turn` / `cancelled`.
+  `tool_call_update`, `plan`, `usage_update`; stop reasons `end_turn` / `cancelled`.
+  Tool calls are announced when invoked (readable title, `rawInput`, `locations`), keyed by
+  the provider call id, finished `completed`/`failed`; edits carry a real old/new `diff`;
+  calls left open at turn end or cancel are closed as `failed` before the prompt response.
+- Stdio NDJSON: the single-agent `tool_call` event carries `callId` + `args` (JSON string)
+  and `tool_result` carries `callId` + `isError` (additive fields).
 - Filesystem + terminal execution and permission prompting deliberately stay inside Mux's
   own tool layer (not rerouted through the ACP client) - this is spec-compliant (those
   client capabilities are optional).

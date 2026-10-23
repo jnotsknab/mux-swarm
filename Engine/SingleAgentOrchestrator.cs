@@ -2379,7 +2379,7 @@ public static class SingleAgentOrchestrator
                                     // tool activity, and the tool_call hook is enqueued below -
                                     // calling WriteToolCall unconditionally would double both.
                                     if (MuxConsole.StdioMode)
-                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name);
+                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name, functionCall.CallId, functionCall.Arguments);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old
@@ -2426,8 +2426,9 @@ public static class SingleAgentOrchestrator
 
                                     HookWorker.Enqueue(HookWorker.ToolResultEvent(singleAgentDef.Name, functionResult));
 
-                                    if (resultText != null)
-                                        MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
+                                    if (resultText != null || MuxConsole.AcpSink is not null)
+                                        MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText ?? "",
+                                            callId: functionResult.CallId, isError: ContextPruner.ResultError(functionResult));
 
                                     // A tool result ALWAYS transitions back to thinking state. If a
                                     // stream was open when the result landed (e.g. a reasoning stream
