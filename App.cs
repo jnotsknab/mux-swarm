@@ -833,7 +833,7 @@ internal class App
                     var agentHandle = InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
                     agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateLeadChatClient(singleAgentModel),
+                        client: CreateAgentLeadClient(singleAgentModel),
                         agentCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -848,7 +848,7 @@ internal class App
                         interactiveHandle: agentHandle,
                         // A /setmodel switch rebuilds the lead with this; keep the steer (Ctrl+N) and
                         // mid-turn reflection wrappers the launch client has.
-                        leadClientFactory: modelId => CreateLeadChatClient(modelId)
+                        leadClientFactory: modelId => CreateAgentLeadClient(modelId)
                     );
                     await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -1017,7 +1017,7 @@ internal class App
                         ServeMode.ActiveMode = "agent";
                         try {
                         await SingleAgentOrchestrator.ChatAgentAsync(
-                            client: CreateLeadChatClient(resumeModel),
+                            client: CreateAgentLeadClient(resumeModel),
                             resumeCts.Token,
                             maxIterations: 3,
                             mcpTools: McpTools,
@@ -1031,7 +1031,7 @@ internal class App
                             resumedSessionDir: resumeData.Value.sessionDir,
                             allowSubAgents: AllowSubagents,
                             allowParallelSubAgents: AllowParallelSubAgents,
-                            leadClientFactory: modelId => CreateLeadChatClient(modelId)
+                            leadClientFactory: modelId => CreateAgentLeadClient(modelId)
                         );
                         } finally { ServeMode.ActiveMode = "interactive"; }
                     }
@@ -2699,11 +2699,11 @@ internal class App
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
         => CreateChatClient(modelId, chatOptions, wrapMidTurnReflection: false, reflectionAgentName: null);
 
-    /// <summary>The /agent lead's client: <see cref="CreateChatClient(string, ChatOptions?, bool, string?)"/> with the
-    /// mid-turn steer and reflection wrappers. Used at launch and when a model switch rebuilds the lead.</summary>
-    internal static IChatClient CreateLeadChatClient(string modelId)
+    /// <summary>The /agent (and /resume) lead's client: mid-turn steer (Ctrl+N), reflection and /insight wrappers.
+    /// Used at launch and when a model switch rebuilds the lead.</summary>
+    internal static IChatClient CreateAgentLeadClient(string modelId)
         => CreateChatClient(modelId, null, wrapMidTurnReflection: true,
-            reflectionAgentName: SingleAgentOrchestrator.AgentDef?.Name ?? "Agent");
+            reflectionAgentName: SingleAgentOrchestrator.AgentDef?.Name ?? "Agent", insight: true);
 
     /// <summary>
     /// Chat client for a lead single-agent session other than /agent (/teams lead, stateless, resume, ACP,
