@@ -120,7 +120,7 @@ internal sealed class ThemePickerView
 
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] THEMES[/] [{TuiComponents.Muted}]({_matches.Count}/{_themes.Count})[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] THEMES[/] [{TuiComponents.Muted}]({_matches.Count}/{_themes.Count})[/]", width),
             $"[{TuiComponents.Accent}] Search: {Esc(_query)}\u258f[/]",
             TuiComponents.FullRule(width),
         };
@@ -141,12 +141,13 @@ internal sealed class ThemePickerView
                 bool cur = mi == _index;
                 bool active = string.Equals(th.Name, Theme.Active.Name, StringComparison.OrdinalIgnoreCase);
                 hits?.Add(new HitRegion(rows.Count + 1, 1, 1, listW, MouseTargetKind.PickerItem, mi));
-                string marker = cur ? $"[{TuiComponents.Accent}]\u203a[/]" : " ";
+                string marker = cur ? TuiComponents.PanelMarker($"[{TuiComponents.Accent}]\u203a[/]") : " ";
                 string dot = $"[{th.Accent}]\u25cf[/]";
                 string name = cur
                     ? $"[{TuiComponents.Text} bold]{Esc(th.Name)}[/]"
                     : $"[{TuiComponents.Muted}]{Esc(th.Name)}[/]";
                 left = $"{marker} {dot} {name}{(active ? $" [{TuiComponents.Ok}]\u2713[/]" : "")}";
+                if (cur) left = TuiComponents.PanelSelectedRow(left, listW);
             }
             else if (mi == _matches.Count && _matches.Count == 0)
                 left = $"[{TuiComponents.Muted}] No matches. Ctrl+U clears.[/]";
@@ -159,8 +160,8 @@ internal sealed class ThemePickerView
         }
 
         while (rows.Count < height - 2) rows.Add("");
-        rows.Add($"[{TuiComponents.Accent}] Enter apply \u00b7 \u2191\u2193/PgUp/PgDn navigate \u00b7 type to search[/]");
-        rows.Add($"[{TuiComponents.Muted}] Ctrl+U clear \u00b7 Esc/Ctrl+Q cancel[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] Enter apply \u00b7 \u2191\u2193/PgUp/PgDn navigate \u00b7 type to search[/]", width));
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] Ctrl+U clear \u00b7 Esc/Ctrl+Q cancel[/]", width));
         return rows.Select(Clip).ToList();
     }
 }

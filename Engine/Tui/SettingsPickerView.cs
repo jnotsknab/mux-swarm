@@ -207,7 +207,7 @@ internal sealed class SettingsPickerView
                 .Concat(Enumerable.Repeat("", height)).Take(height).Select(Clip).ToList();
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] SETTINGS · /set[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] SETTINGS · /set[/]", width),
             $"[{(Editing ? TuiComponents.Muted : TuiComponents.Accent)}] Search: {Esc(Editing ? Query : VisibleEditor(_search, Math.Max(1, width - 11)))}[/]",
             TuiComponents.FullRule(width)
         };
@@ -217,7 +217,8 @@ internal sealed class SettingsPickerView
         {
             var item = _settings[_matches[i]];
             if (!Editing) hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
-            rows.Add($"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? "›" : " ")} {Esc(item.Name)}[/]");
+            string row = $"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? TuiComponents.PanelMarker("›") : " ")} {Esc(item.Name)}[/]";
+            rows.Add(i == _index ? TuiComponents.PanelSelectedRow(row, width) : row);
         }
         if (_matches.Count == 0) rows.Add($"[{TuiComponents.Muted}] No matches. Ctrl+U clears search.[/]");
         while (rows.Count < height - 8) rows.Add("");
@@ -231,8 +232,8 @@ internal sealed class SettingsPickerView
         rows.Add($"[{(Editing ? TuiComponents.Accent : TuiComponents.Muted)}] Draft: {Esc(Editing ? draft : "Enter to edit")}[/]");
         rows.Add($"[{TuiComponents.Warn}] {Esc(Message)}[/]");
         rows.Add($"[{TuiComponents.Muted}] {_matches.Count}/{_settings.Length} settings · {(Editing ? "↑↓ cycle choices; type replaces; arrows edit" : "↑↓/PgUp/PgDn/Home/End select")}[/]");
-        rows.Add($"[{TuiComponents.Accent}] F4 Apply · Enter/Tab {(Editing ? "discard draft, search" : "edit selected")}[/]");
-        rows.Add($"[{TuiComponents.Muted}] Ctrl+U clear · Esc/Ctrl+Q cancel · No automatic /refresh[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] F4 Apply · Enter/Tab {(Editing ? "discard draft, search" : "edit selected")}[/]", width));
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] Ctrl+U clear · Esc/Ctrl+Q cancel · No automatic /refresh[/]", width));
         return rows.Select(Clip).ToList();
     }
 }

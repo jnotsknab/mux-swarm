@@ -31,8 +31,10 @@ internal sealed partial class TuiDriver
         {
             while (!cancellationToken.IsCancellationRequested && !pump.Disposed && !_shuttingDown)
             {
-                int width = Math.Max(1, _term.Width - 1), height = Math.Max(1, _term.Height);
-                var rows = view.Render(width, height, hits).Select(TuiMarkup.ToAnsi).ToList();
+                int outerW = Math.Max(1, _term.Width - 1), outerH = Math.Max(1, _term.Height);
+                var (width, height) = ViewFrame.Inner(outerW, outerH);
+                ViewFrame.Prepare(hits, outerW, outerH);
+                var rows = ViewFrame.Wrap(view.Render(width, height, hits), outerW, outerH).Select(TuiMarkup.ToAnsi).ToList();
                 lock (MuxConsole.ConsoleLock) presenter.Present(rows);
                 if (!pump.TryTake(out var ev, 100)) continue;
                 if (ev.Kind == ConsoleInputPump.EventKind.Key &&
@@ -41,7 +43,7 @@ internal sealed partial class TuiDriver
                 // Both the last presented frame and current geometry must show a real choice.
                 // A grow/resize while waiting cannot turn Enter on a warning into a blind selection.
                 if (width < AgentPickerView.MinWidth || height < AgentPickerView.MinHeight
-                    || _term.Width - 1 != width || _term.Height != height) continue;
+                    || _term.Width - 1 != outerW || _term.Height != outerH) continue;
                 if (ev.Kind is ConsoleInputPump.EventKind.Paste or ConsoleInputPump.EventKind.InferredPaste)
                 {
                     if (ev.PasteText is { } text) view.Paste(text);

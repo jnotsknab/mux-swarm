@@ -1382,6 +1382,17 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     puts model and effort at the right edge (a single `|` stays plain text). Clickable chips follow their text.
   - `header.template`: the session card text with `{agent}`, `{model}`, `{provider}`, `{tools}`; `header.frame:
     box` draws a rounded card around it.
+  - `splash.frame`: `rounded` (default), `square`, `double`, `thick`, `ascii`, `none`; `splash.borderFg`;
+    `splash.padY` 0-2 (default 1); `splash.align`: `left` (default) or `center` (the panel hugs its content and
+    is centered); `splash.columns`: `all` (logo, getting-started, recent; default), `logo`, `logo,recent`,
+    `logo,getting-started`, `getting-started,logo`, `recent,logo` (choose and order the wide-screen columns;
+    a single column keeps the compact one-panel look at any width).
+  - Full-screen views (`/extensions`, the model/settings/agent/theme pickers, history, extension panels opened
+    full screen): `panel.header` `plain` (default) / `strip` (filled with `panel.headerBg`) / `rule` (title set in a
+    `panel.rule` run), `panel.headerAlign` `left`/`center`; `panel.selectedStyle` `chevron` (default) / `bar`
+    (`panel.bar`) / `fill` (`panel.selectedBg` behind the row); `panel.hints` `plain`/`strip` (`panel.hintBg`);
+    `panel.frame` `none` (default) / `rounded` / `square` / `double` / `thick` / `ascii` (`panel.frameFg`) draws a box
+    around the whole view (skipped below 24x8). Clicks keep working in every style.
   - `toolCard.style`: `bullet` (default), `gutter` (one prefix glyph per tool line, `toolCard.gutter`, default `┊`)
     or `box` (side rails `toolCard.boxLeft`/`boxRight`).
   Example, an editor-style box with the status line in its border:

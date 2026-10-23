@@ -62,7 +62,14 @@ internal static class RegionStyle
         ["modal.checked"] = G("\u25c9"), ["modal.checkedFg"] = C("success"), ["modal.unchecked"] = G("\u25cb"),
         ["panel.rule"] = G("\u2500"), ["panel.ruleFg"] = C("#3A3A3A"), ["panel.tabFg"] = C("muted"), ["panel.tabActiveFg"] = C("accent"),
         ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
+        ["panel.header"] = O("plain", "strip", "rule"), ["panel.headerAlign"] = O("left", "center"), ["panel.headerBg"] = C("cardBg"),
+        ["panel.selectedStyle"] = O("chevron", "bar", "fill"), ["panel.bar"] = G("\u258c"), ["panel.selectedBg"] = C("cardBg"),
+        ["panel.hints"] = O("plain", "strip"), ["panel.hintBg"] = C("cardBg"),
+        ["panel.frame"] = O("none", "rounded", "square", "double", "thick", "ascii"), ["panel.frameFg"] = C("border"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
+        ["splash.frame"] = O("rounded", "square", "double", "thick", "ascii", "none"), ["splash.borderFg"] = C("muted"),
+        ["splash.align"] = O("left", "center"), ["splash.padY"] = N(1, 0, 2),
+        ["splash.columns"] = O("all", "logo", "logo,recent", "logo,getting-started", "getting-started,logo", "recent,logo"),
         // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
         ["footer.position"] = O("above", "below", "hidden", "border"),
         ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
@@ -87,7 +94,7 @@ internal static class RegionStyle
         ["delegation.arrow"] = ">", ["delegation.branch"] = "`", ["delegation.mark"] = ">", ["delegation.done"] = "+", ["delegation.failed"] = "x",
         ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
         ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
-        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-",
+        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-", ["panel.bar"] = "|",
     };
 
     /// <summary>Glyph set names for <c>tui.glyphs</c>.</summary>
