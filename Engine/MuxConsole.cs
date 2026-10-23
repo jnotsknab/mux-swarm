@@ -635,7 +635,7 @@ public static partial class MuxConsole
             // One random curated line per launch (quote / fact / tip / nudge / tagline). Both the
             // Spectre and frame layouts render the SAME pick, computed once here.
             var (splashLabel, splashText) = SplashMessages.Pick();
-            var recentSessions = AnsiConsole.Profile.Width >= 180
+            var recentSessions = AnsiConsole.Profile.Width >= 180 || SplashLayout().Any(r => r.Contains("recent"))
                 ? LoadSplashRecentSessions()
                 : new List<SplashSession>();
             FrameSplashFactory = terminalWidth => BuildFrameSplashLines(
@@ -708,7 +708,28 @@ public static partial class MuxConsole
         bool spectreHyperlink = true)
     {
         var lines = new List<string>();
-        if (includeHelp) lines.Add($"[{C.Prompt}]/agent to start[/] [{C.Muted}]· Type /help for commands[/]");
+        if (includeHelp) lines.Add(SplashHintMarkup);
+        lines.AddRange(SplashArtMarkup());
+        lines.Add("");
+        lines.Add(SplashVersionMarkup(version, debugTag) + $"  [{C.Muted}]·[/]  {SplashMessageMarkup(splashLabel, splashText)}");
+        string repo = spectreHyperlink
+            ? $"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]"
+            : SplashLinkMarkup;
+        lines.Add(repo);
+        return lines;
+    }
+
+    private static string SplashHintMarkup => $"[{C.Prompt}]/agent to start[/] [{C.Muted}]· Type /help for commands[/]";
+    private static string SplashLinkMarkup => $"[{C.Muted}]Check Out The Repo Here![/]";
+
+    private static string SplashVersionMarkup(string version, string debugTag)
+        => $"[{C.Step}]v{Esc(version)}[/]"
+            + (string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]");
+
+    /// <summary>The logo art: <c>splash.art</c> when set, else the MUX + robot + SWARM wordmark.</summary>
+    private static List<string> SplashArtMarkup()
+    {
+        var lines = new List<string>();
         string artFg = RegionStyle.Color("splash.artFg");
         if (RegionStyle.Lines("splash.art") is { Length: > 0 } custom)
             foreach (var line in custom) lines.Add($"[{artFg}]{Esc(line)}[/]");
@@ -723,38 +744,73 @@ public static partial class MuxConsole
             }
             foreach (var line in SplashSwarmArt) lines.Add($"[{artFg}]{Esc(line)}[/]");
         }
-        lines.Add("");
-        lines.Add($"[{C.Step}]v{Esc(version)}[/]"
-            + (string.IsNullOrEmpty(debugTag) ? "" : $"  [{C.Warning}]{Esc("[debug: " + debugTag + "]")}[/]")
-            + $"  [{C.Muted}]·[/]  {SplashMessageMarkup(splashLabel, splashText)}");
-        string repo = spectreHyperlink
-            ? $"[{C.Muted}][link=https://github.com/jnotsknab/mux-swarm]Check Out The Repo Here![/][/]"
-            : $"[{C.Muted}]Check Out The Repo Here![/]";
-        lines.Add(repo);
         return lines;
     }
 
-    private static List<string> BuildSplashGettingStartedMarkup() => new()
+    /// <summary>A section title in the <c>splash.headings</c> style. <c>plain</c> is the stock look: the title,
+    /// then (when <paramref name="underline"/> &gt; 0) a muted rule that many cells long. <paramref name="width"/>
+    /// is the column width the rule/strip styles fill (-1 = just fit the title).</summary>
+    private static List<string> SplashHeading(string title, int width, int underline)
     {
-        $"[{C.Step}]Getting Started[/]",
-        $"[{C.Muted}]Start here, then enter your task[/]",
-        $"[{C.Muted}]────────────────────────────────────────────[/]",
-        $"  [{C.Prompt}]/agent[/]       [{C.Muted}]Main agentic interface[/]",
-        $"  [{C.Muted}]One lead; specialists when enabled[/]",
-        "",
-        $"[{C.Step}]Specialized execution[/]",
-        $"  [{C.Prompt}]/swarm[/]       [{C.Muted}]Serial specialists[/]",
-        $"  [{C.Prompt}]/pswarm[/]      [{C.Muted}]Concurrent batches[/]",
-        $"  [{C.Prompt}]/workflow[/]    [{C.Muted}]Repeatable execution[/]",
-        $"  [{C.Prompt}]/stateless[/]   [{C.Muted}]One-off agentic task[/]",
-        $"  [{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your profile[/]",
-        $"  [{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]",
-        "",
-        $"[{C.Muted}]────────────────────────────────────────────[/]",
-        $"[{C.Step}]Quick Tips[/]",
-        $"  [{C.Muted}]/qc or /qm to exit an active session[/]",
-        $"  [{C.Muted}]/status to view current config[/]",
-    };
+        string fg = RegionStyle.Color("splash.headingFg");
+        string frame = RegionStyle.Choice("splash.frame");
+        string g = frame == "none" ? RegionStyle.PlainGlyph("panel.rule") : Tui.ComposeShape.Borders[frame][4];
+        int fill = Math.Max(0, Math.Max(width, TuiMarkup.Width(title) + 4) - TuiMarkup.Width(title));
+        return RegionStyle.Choice("splash.headings") switch
+        {
+            "none" => [],
+            "rule" => [$"[{RegionStyle.Color("splash.borderFg")}]{Esc(g + g)}[/] [{fg}]{Esc(title)}[/] "
+                + $"[{RegionStyle.Color("splash.borderFg")}]{Esc(string.Concat(Enumerable.Repeat(g, Math.Max(0, fill - 4))))}[/]"],
+            "strip" => [$"[{fg} on {RegionStyle.Color("splash.headingBg")}] {Esc(title)}{new string(' ', Math.Max(0, fill - 1))}[/]"],
+            _ => underline > 0
+                ? [$"[{fg}]{Esc(title)}[/]", $"[{C.Muted}]{new string('\u2500', underline)}[/]"]
+                : [$"[{fg}]{Esc(title)}[/]"],
+        };
+    }
+
+    /// <summary>A list row: two spaces, or the one-cell <c>splash.bullet</c> and a space (same width).</summary>
+    private static string SplashItem(string markup)
+    {
+        string b = RegionStyle.PlainGlyph("splash.bullet");
+        return (b.Length == 0 ? "  " : $"[{RegionStyle.Color("splash.bulletFg")}]{Esc(b)}[/] ") + markup;
+    }
+
+    private static List<string> SplashCommandItems(bool withAgent) =>
+    [
+        .. withAgent ? [SplashItem($"[{C.Prompt}]/agent[/]       [{C.Muted}]Main agentic interface[/]")] : Array.Empty<string>(),
+        SplashItem($"[{C.Prompt}]/swarm[/]       [{C.Muted}]Serial specialists[/]"),
+        SplashItem($"[{C.Prompt}]/pswarm[/]      [{C.Muted}]Concurrent batches[/]"),
+        SplashItem($"[{C.Prompt}]/workflow[/]    [{C.Muted}]Repeatable execution[/]"),
+        SplashItem($"[{C.Prompt}]/stateless[/]   [{C.Muted}]One-off agentic task[/]"),
+        SplashItem($"[{C.Prompt}]/onboard[/]     [{C.Muted}]Set up your profile[/]"),
+        SplashItem($"[{C.Prompt}]/help[/]        [{C.Muted}]Full command reference[/]"),
+    ];
+
+    private static List<string> SplashTipItems() =>
+    [
+        SplashItem($"[{C.Muted}]/qc or /qm to exit an active session[/]"),
+        SplashItem($"[{C.Muted}]/status to view current config[/]"),
+    ];
+
+    private static List<string> BuildSplashGettingStartedMarkup(int width = -1)
+    {
+        // The stock look (plain headings) keeps its decorative rules; other heading styles draw their own.
+        bool plain = RegionStyle.Choice("splash.headings") == "plain";
+        string rule = $"[{C.Muted}]────────────────────────────────────────────[/]";
+        var lines = SplashHeading("Getting Started", width, 0);
+        lines.Add($"[{C.Muted}]Start here, then enter your task[/]");
+        if (plain) lines.Add(rule);
+        lines.Add(SplashItem($"[{C.Prompt}]/agent[/]       [{C.Muted}]Main agentic interface[/]"));
+        lines.Add($"  [{C.Muted}]One lead; specialists when enabled[/]");
+        lines.Add("");
+        lines.AddRange(SplashHeading("Specialized execution", width, 0));
+        lines.AddRange(SplashCommandItems(withAgent: false));
+        lines.Add("");
+        if (plain) lines.Add(rule);
+        lines.AddRange(SplashHeading("Quick Tips", width, 0));
+        lines.AddRange(SplashTipItems());
+        return lines;
+    }
 
     private static List<SplashSession> LoadSplashRecentSessions()
     {
@@ -763,7 +819,7 @@ public static partial class MuxConsole
         {
             string sessionsPath = PlatformContext.SessionsDirectory;
             if (!Directory.Exists(sessionsPath)) return sessions;
-            foreach (var dir in Directory.GetDirectories(sessionsPath).OrderByDescending(d => d).Take(5))
+            foreach (var dir in Directory.GetDirectories(sessionsPath).OrderByDescending(d => d).Take(Math.Max(5, RegionStyle.Number("splash.recentCount"))))
             {
                 string ts = Path.GetFileName(dir);
                 var files = Directory.GetFiles(dir, "*_session.json", SearchOption.AllDirectories);
@@ -799,25 +855,25 @@ public static partial class MuxConsole
         return System.Text.RegularExpressions.Regex.Replace(inert, @"\s+", " ").Trim();
     }
 
-    private static List<string> BuildSplashRecentSessionsMarkup(IReadOnlyList<SplashSession> sessions)
+    private static List<string> BuildSplashRecentSessionsMarkup(IReadOnlyList<SplashSession> sessions, int width = -1)
     {
-        var lines = new List<string>
-        {
-            $"[{C.Step}]Recent Sessions[/]",
-            $"[{C.Muted}]────────────────────────────────[/]",
-        };
+        // splash.recentCount 0 drops the section; plain headings keep the stock underline and closing rule.
+        int count = RegionStyle.Number("splash.recentCount");
+        if (count == 0) return [];
+        bool plain = RegionStyle.Choice("splash.headings") == "plain";
+        var lines = SplashHeading("Recent Sessions", width, 32);
         if (sessions.Count == 0)
-            lines.Add($"  [{C.Muted}]No sessions yet[/]");
+            lines.Add(SplashItem($"[{C.Muted}]No sessions yet[/]"));
         else
-            foreach (var session in sessions)
+            foreach (var session in sessions.Take(count))
             {
-                lines.Add($"  [{C.Prompt}]{Esc(NormalizeSplashText(session.Id))}[/]");
+                lines.Add(SplashItem($"[{C.Prompt}]{Esc(NormalizeSplashText(session.Id))}[/]"));
                 lines.Add($"    [{C.Muted}]{Esc(NormalizeSplashText(session.Type))} · {Esc(NormalizeSplashText(session.Preview))}[/]");
             }
         lines.Add("");
-        lines.Add($"[{C.Muted}]────────────────────────────────[/]");
-        lines.Add($"  [{C.Muted}]/resume to continue a session[/]");
-        lines.Add($"  [{C.Muted}]/sessions to view session info[/]");
+        if (plain) lines.Add($"[{C.Muted}]────────────────────────────────[/]");
+        lines.Add(SplashItem($"[{C.Muted}]/resume to continue a session[/]"));
+        lines.Add(SplashItem($"[{C.Muted}]/sessions to view session info[/]"));
         return lines;
     }
 
@@ -827,6 +883,7 @@ public static partial class MuxConsole
         IReadOnlyList<SplashSession>? recentSessions = null)
     {
         int w = Math.Max(20, width - 1);
+        _splashVersion = version;
         var recent = recentSessions ?? Array.Empty<SplashSession>();
         // The frame driver reserves the final physical column; preserve the same responsive
         // thresholds as Spectre by comparing the actual terminal width, not the reduced content width.
@@ -842,6 +899,10 @@ public static partial class MuxConsole
             };
         }
 
+        // splash.layout replaces the stock arrangement with the theme's own rows of sections.
+        if (SplashLayout() is { Length: > 0 } layout)
+            return BuildLayoutSplash(layout, version, debugTag, splashLabel, splashText, w, recent);
+
         // splash.columns picks which columns the wide layout shows (and their order); "all" is the stock
         // logo / getting-started / recent set. A logo-only choice keeps the narrow single-panel look at any width.
         string columns = RegionStyle.Choice("splash.columns");
@@ -853,7 +914,9 @@ public static partial class MuxConsole
         {
             // Centered: the panel hugs its content (widest row) so there is room to center it.
             bool center = RegionStyle.Choice("splash.align") == "center";
-            int panelW = center ? Math.Min(w, brand.Max(l => Tui.TuiMarkup.MarkupWidth(l)) + 4) : w;
+            int pct = RegionStyle.Number("splash.width");
+            int panelW = pct > 0 ? Math.Clamp(w * pct / 100, 24, w)
+                : center ? Math.Min(w, brand.Max(l => Tui.TuiMarkup.MarkupWidth(l)) + 4) : w;
             var panel = BuildFramePanel(brand, panelW);
             panel.Add("");
             return AlignSplash(panel, w);
@@ -886,6 +949,116 @@ public static partial class MuxConsole
         return AlignSplash(widePanel, w);
     }
 
+    /// <summary>The <c>splash.layout</c> rows (each "a b | c": cells split by |, sections by spaces); empty = stock.</summary>
+    internal static string[] SplashLayout() => RegionStyle.Lines("splash.layout");
+
+    // The version the splash is being built for, for {version} in splash.borderTitle (the frame edge builder).
+    private static string _splashVersion = "";
+
+    private static string SplashTemplate(string text, string version)
+        => text.Replace("{version}", version, StringComparison.Ordinal)
+            .Replace("{cwd}", Environment.CurrentDirectory, StringComparison.Ordinal);
+
+    /// <summary>
+    /// splash.layout: rows of cells, each cell a stack of named sections. Cells in a row share the panel width
+    /// (each gets at least what its content needs, then the rest is spread out); a row whose cells cannot fit
+    /// side by side stacks them instead. splash.width sets the panel width as a percent of the terminal.
+    /// </summary>
+    private static List<string> BuildLayoutSplash(string[] layout, string version, string debugTag,
+        string label, string text, int w, IReadOnlyList<SplashSession> recent)
+    {
+        List<string> Section(string id, int width) => id switch
+        {
+            "logo" => BuildSplashBrandMarkup(version, debugTag, label, text, includeHelp: false, spectreHyperlink: false),
+            "art" => SplashArtMarkup(),
+            "title" => [$"[bold {RegionStyle.Color("splash.titleFg")}]{Esc(SplashTemplate(RegionStyle.PlainGlyph("splash.title") is { Length: > 0 } t ? t : "MUX-SWARM", version))}[/]"],
+            "version" => [SplashVersionMarkup(version, debugTag)],
+            "message" => [SplashMessageMarkup(label, text)],
+            "hint" => [SplashHintMarkup],
+            "link" => [SplashLinkMarkup],
+            "getting-started" => BuildSplashGettingStartedMarkup(width),
+            "commands" => [.. SplashHeading("Commands", width, 0), .. SplashCommandItems(withAgent: true)],
+            "tips" => [.. SplashHeading("Quick Tips", width, 0), .. SplashTipItems()],
+            "recent" => BuildSplashRecentSessionsMarkup(recent, width),
+            "text" => RegionStyle.Lines("splash.text").Select(l => $"[{RegionStyle.Color("splash.textFg")}]{Esc(SplashTemplate(l, version))}[/]").ToList(),
+            _ => [""],   // gap
+        };
+        bool centerContent = RegionStyle.Choice("splash.contentAlign") == "center";
+        List<string> Cell(string[] ids, int width)
+        {
+            // Each section is wrapped to the cell, then (contentAlign center) shifted as one block so art keeps its shape.
+            var lines = new List<string>();
+            foreach (var id in ids)
+            {
+                // A headed block (commands, tips, recent, getting-started) gets a blank row above it in a stack.
+                if (lines.Count > 0 && id is "getting-started" or "commands" or "tips" or "recent" && lines[^1].Length > 0) lines.Add("");
+                var block = WrapSplashColumn(Section(id, width), width);
+                int pad = centerContent && block.Count > 0 ? Math.Max(0, (width - block.Max(TuiMarkup.MarkupWidth)) / 2) : 0;
+                lines.AddRange(block.Select(l => pad == 0 || l.Length == 0 ? l : new string(' ', pad) + l));
+            }
+            return lines;
+        }
+        // Measure: art cannot wrap and list rows read badly wrapped, so a cell needs its widest such row; free
+        // text (title, message, text) wraps, needs a little and is happy at 72. Grow = takes the leftover width.
+        int artW = SplashArtMarkup().Max(TuiMarkup.MarkupWidth);
+        (int Min, int Natural, bool Grow) Measure(string[] ids)
+        {
+            int min = 1, nat = 1;
+            bool grow = false;
+            foreach (var id in ids)
+            {
+                int widest = Section(id, -1).Select(TuiMarkup.MarkupWidth).DefaultIfEmpty(0).Max();
+                bool prose = id is "title" or "message" or "text";
+                grow |= id is not ("logo" or "art");
+                int need = id is "logo" or "art" ? artW : prose ? Math.Min(widest, 24) : Math.Min(widest, 56);
+                min = Math.Max(min, need);
+                nat = Math.Max(nat, Math.Max(need, Math.Min(widest, 72)));
+            }
+            return (min, nat, grow);
+        }
+
+        var rows = layout.Select(r => r.Split('|', StringSplitOptions.TrimEntries)
+            .Select(c => c.Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToArray()).ToList();
+        const int gutter = 3;
+        int Natural(string[][] cells) => cells.Sum(c => Measure(c).Natural) + gutter * (cells.Length - 1);
+        int pct = RegionStyle.Number("splash.width");
+        int panelW = pct > 0 ? Math.Clamp(w * pct / 100, 24, w)
+            : RegionStyle.Choice("splash.align") == "center" ? Math.Min(w, rows.Max(Natural) + 4) : w;
+        int inner = Math.Max(8, panelW - 4);
+
+        bool rule = RegionStyle.Choice("splash.divider") == "rule";
+        string frameName = RegionStyle.Choice("splash.frame");
+        string ruleGlyph = frameName == "none" ? RegionStyle.PlainGlyph("panel.rule") : Tui.ComposeShape.Borders[frameName][4];
+        string between = rule ? $"[{RegionStyle.Color("splash.borderFg")}]{Esc(string.Concat(Enumerable.Repeat(ruleGlyph, inner)))}[/]" : "";
+        var body = new List<string>();
+        void Row(string[][] cells)
+        {
+            var m = cells.Select(Measure).ToArray();
+            int avail = inner - gutter * (cells.Length - 1);
+            if (cells.Length > 1 && m.Sum(x => x.Min) > avail)
+            {
+                foreach (var c in cells) Row([c]);   // too narrow for side by side: stack the cells
+                return;
+            }
+            if (body.Count > 0) body.Add(between);
+            // Each cell gets its minimum, then its natural width as room allows; what is left goes to the
+            // cells that hold text (art-only cells stay as wide as the art), evenly.
+            var widths = m.Select(x => x.Min).ToArray();
+            int spare = avail - widths.Sum(), want = m.Sum(x => x.Natural - x.Min);
+            for (int i = 0; i < widths.Length; i++)
+                widths[i] += want >= spare ? (want == 0 ? 0 : spare * (m[i].Natural - m[i].Min) / want) : m[i].Natural - m[i].Min;
+            var growers = Enumerable.Range(0, widths.Length).Where(i => m[i].Grow).DefaultIfEmpty(widths.Length - 1).ToArray();
+            for (int k = 0, left = avail - widths.Sum(); k < growers.Length; k++)
+                widths[growers[k]] += left / growers.Length + (k < left % growers.Length ? 1 : 0);
+            if (cells.Length == 1) { body.AddRange(Cell(cells[0], inner)); return; }
+            body.AddRange(ComposeFrameSplashColumns(cells.Select((c, i) => (Cell(c, widths[i]), widths[i])).ToList(), rule));
+        }
+        foreach (var r in rows) Row(r);
+        var panel = BuildFramePanel(body, panelW);
+        panel.Add("");
+        return AlignSplash(panel, w);
+    }
+
     /// <summary>splash.align center: shift the whole block right by one shared left pad, so the art does not shear.</summary>
     private static List<string> AlignSplash(List<string> rows, int width)
     {
@@ -895,11 +1068,11 @@ public static partial class MuxConsole
         return pad == 0 ? rows : rows.Select(r => r.Length == 0 ? r : new string(' ', pad) + r).ToList();
     }
 
-    private static List<string> ComposeFrameSplashColumns(IReadOnlyList<(List<string> Lines, int Width)> columns)
+    private static List<string> ComposeFrameSplashColumns(IReadOnlyList<(List<string> Lines, int Width)> columns, bool rule = true)
     {
         var wrapped = columns.Select(c => WrapSplashColumn(c.Lines, c.Width)).ToList();
         int count = wrapped.Max(w => w.Count);
-        string divider = SplashBorder(5);
+        string divider = rule ? SplashBorder(5) : " ";
         var rows = new List<string>(count);
         for (int i = 0; i < count; i++)
             rows.Add(string.Join($" {divider} ", columns.Select((c, k) => PadMarkup(i < wrapped[k].Count ? wrapped[k][i] : "", c.Width))));
@@ -934,13 +1107,18 @@ public static partial class MuxConsole
         int padY = RegionStyle.Number("splash.padY");
         bool framed = RegionStyle.Choice("splash.frame") != "none";
         string side = framed ? SplashBorder(5) : " ";
-        string Edge(int left, int right)
+        string Edge(int left, int right, string title = "")
         {
             var g = Tui.ComposeShape.Borders[RegionStyle.Choice("splash.frame")];
-            return $"[{RegionStyle.Color("splash.borderFg")}]{Esc(g[left] + string.Concat(Enumerable.Repeat(g[4], inner + 2)) + g[right])}[/]";
+            string fg = RegionStyle.Color("splash.borderFg");
+            // splash.borderTitle: "╭─ title ────╮" (dropped when it does not fit).
+            if (title.Length > 0 && TuiMarkup.Width(title) + 4 <= inner + 2)
+                return $"[{fg}]{Esc(g[left] + g[4])}[/] [{RegionStyle.Color("splash.titleFg")}]{Esc(title)}[/] "
+                    + $"[{fg}]{Esc(string.Concat(Enumerable.Repeat(g[4], inner + 2 - TuiMarkup.Width(title) - 3)) + g[right])}[/]";
+            return $"[{fg}]{Esc(g[left] + string.Concat(Enumerable.Repeat(g[4], inner + 2)) + g[right])}[/]";
         }
         var rows = new List<string>(body.Count + 4);
-        if (framed) rows.Add(Edge(0, 1));
+        if (framed) rows.Add(Edge(0, 1, SplashTemplate(RegionStyle.PlainGlyph("splash.borderTitle"), _splashVersion)));
         for (int p = 0; p < padY; p++) rows.Add($"{side} {new string(' ', inner)} {side}");
         foreach (var line in body)
             foreach (var wrapped in Tui.TuiMarkup.WrapMarkup(line, inner))

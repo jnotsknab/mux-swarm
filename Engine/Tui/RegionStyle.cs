@@ -13,7 +13,7 @@ namespace MuxSwarm.Engine.Tui;
 internal static class RegionStyle
 {
     /// <summary>What a property holds: a colour, a glyph of bounded terminal width, or an on/off flag.</summary>
-    internal enum Kind { Color, Glyph, Flag, Lines, Choice, Number }
+    internal enum Kind { Color, Glyph, Flag, Lines, Choice, Number, Layout }
 
     /// <summary>One styleable property: its kind, built-in value, (glyphs) allowed width in cells or (numbers)
     /// allowed range, and (choices) the allowed values.</summary>
@@ -70,6 +70,11 @@ internal static class RegionStyle
         ["splash.frame"] = O("rounded", "square", "double", "thick", "ascii", "none"), ["splash.borderFg"] = C("muted"),
         ["splash.align"] = O("left", "center"), ["splash.padY"] = N(1, 0, 2),
         ["splash.columns"] = O("all", "logo", "logo,recent", "logo,getting-started", "getting-started,logo", "recent,logo"),
+        ["splash.layout"] = new(Kind.Layout, ""), ["splash.width"] = N(0, 0, 100), ["splash.contentAlign"] = O("left", "center"),
+        ["splash.divider"] = O("rule", "gap"), ["splash.title"] = T("", 0, 60), ["splash.titleFg"] = C("banner"),
+        ["splash.borderTitle"] = T("", 0, 60), ["splash.text"] = A(), ["splash.textFg"] = C("muted"), ["splash.recentCount"] = N(5, 0, 10),
+        ["splash.headings"] = O("plain", "rule", "strip", "none"), ["splash.headingFg"] = C("step"), ["splash.headingBg"] = C("cardBg"),
+        ["splash.bullet"] = T("", 0, 1), ["splash.bulletFg"] = C("muted"),
         // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
         ["footer.position"] = O("above", "below", "hidden", "border"),
         ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
@@ -96,6 +101,10 @@ internal static class RegionStyle
         ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
         ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-", ["panel.bar"] = "|",
     };
+
+    /// <summary>Section names a <c>splash.layout</c> row may place (see the splash docs in DOCS.md).</summary>
+    internal static readonly string[] SplashSections =
+        ["logo", "art", "title", "version", "message", "hint", "link", "getting-started", "commands", "tips", "recent", "text", "gap"];
 
     /// <summary>Glyph set names for <c>tui.glyphs</c>.</summary>
     internal static readonly IReadOnlyList<string> GlyphSets = ["unicode", "ascii"];
@@ -204,6 +213,8 @@ internal static class RegionStyle
                     return $"'{key}' lines must be at most {prop.MaxCells} terminal cells without control characters";
                 normalized = string.Join('\n', lines);
                 return null;
+            case Kind.Layout:
+                return ValidateLayout(key, value, out normalized);
             case Kind.Choice:
                 var choice = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim().ToLowerInvariant() : "";
                 if (!prop.Choices!.Contains(choice)) return $"'{key}' must be one of {string.Join(", ", prop.Choices!)}";
@@ -230,5 +241,33 @@ internal static class RegionStyle
                 normalized = g;
                 return null;
         }
+    }
+
+    // splash.layout: 1-8 row strings; a row holds 1-3 cells split by '|', a cell 1-8 section names split by
+    // spaces or '+'. Normalized to "a b | c" rows joined by newlines.
+    private static string? ValidateLayout(string key, JsonElement value, out string normalized)
+    {
+        normalized = "";
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() is 0 or > 8
+            || value.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String))
+            return $"'{key}' must be a list of 1-8 row strings";
+        var rows = new List<string>();
+        foreach (var row in value.EnumerateArray())
+        {
+            var cells = row.GetString()!.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (cells.Length is 0 or > 3) return $"'{key}' rows must hold 1-3 cells split by |";
+            var norm = new List<string>();
+            foreach (var cell in cells)
+            {
+                var ids = cell.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries).Select(s => s.ToLowerInvariant()).ToArray();
+                if (ids.Length > 8) return $"'{key}' cells hold at most 8 sections";
+                if (ids.FirstOrDefault(i => !SplashSections.Contains(i)) is { } bad)
+                    return $"'{key}': unknown section '{bad}' (one of {string.Join(", ", SplashSections)})";
+                norm.Add(string.Join(' ', ids));
+            }
+            rows.Add(string.Join(" | ", norm));
+        }
+        normalized = string.Join('\n', rows);
+        return null;
     }
 }
