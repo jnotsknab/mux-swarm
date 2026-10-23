@@ -1188,6 +1188,11 @@ Real `$` comes from `ModelPricing.cs` (list-price estimate, input+output) for pr
 subscription/cliproxy providers render tokens-only (flat-rate, no `$`). System-prompt and tool-schema
 rows are the one-time static estimates already shown in the footer breakdown.
 
+Token figures are SUMS of per-call usage: each model call reports its own usage, and Mux adds them
+(session + rolling, `/cost`, the `Telemetry/metrics-*.jsonl` `kind=usage` lines - one line per model
+call - and the OTel `mux.tokens.*` counters). `input` includes cached prompt tokens. `/cost`'s
+`context now` is the size of the latest request, not a sum.
+
 ## Task auto-decomposition - `task_decompose` + `/taskgraph`
 
 `task_decompose(goal)` is a lead/giga tool (and an opt-in background dispatcher) that turns a high-
