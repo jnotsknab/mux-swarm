@@ -2078,7 +2078,8 @@ agent model to a real id (e.g. `claude-opus-4-6`, `gpt-5-codex`), and chat.
 stdout is pure protocol, logs go to stderr). This lets ACP-capable editors/clients (Zed,
 GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-agent session.
 
-- Supports: `initialize`, `session/new`, `session/load` (transcript replay -> context
+- Supports: `initialize`, `session/new`, `session/list` (thread history: id = Sessions
+  folder name, absolute cwd from an `acp.muxcwd` sidecar, title, updatedAt), `session/load` (transcript replay -> context
   resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
   `session/set_mode`, `session/resume`, model selection (both the canonical
   `configOptions` and the Zed `models` / `session/set_model` mechanisms), `logout`.

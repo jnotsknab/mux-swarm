@@ -37,6 +37,8 @@ public sealed class AcpServer
     private AcpInputReader? _reader;
     private Task? _sessionTask;
     private string? _sessionId;
+    private string? _sessionCwd;     // cwd from session/new, persisted at the first prompt
+    private bool _titlePending;      // new session whose first prompt has not arrived yet
 
     // Turn-boundary state. _pendingPromptId is the JSON-RPC id of the in-flight session/prompt;
     // its response is deferred until the orchestrator re-enters ReadInput (turn complete).
@@ -187,11 +189,16 @@ public sealed class AcpServer
                     break;
 
                 case "session/new":
-                    HandleSessionNew(id);
+                    HandleSessionNew(id, prms);
                     break;
 
                 case "session/load":
                     HandleSessionLoad(id, prms);
+                    break;
+
+                case "session/list":
+                    Respond(id, ListSessions(PlatformContext.SessionsDirectory,
+                        StrProp(prms, "cwd"), StrProp(prms, "cursor"), Environment.CurrentDirectory));
                     break;
 
                 case "session/prompt":
@@ -237,10 +244,15 @@ public sealed class AcpServer
         }
     }
 
-    private void HandleSessionNew(object? id)
+    private void HandleSessionNew(object? id, JsonElement prms)
     {
-        string sid = "sess_" + Guid.NewGuid().ToString("N")[..12];
-        StartSession(sid, resume: null);
+        // The session id IS the Sessions folder name the orchestrator persists to, so
+        // session/list, session/load and session/resume all round-trip with no id mapping.
+        string sid = NewSessionId();
+        string dir = Path.Combine(PlatformContext.SessionsDirectory, sid);
+        _sessionCwd = StrProp(prms, "cwd");
+        StartSession(sid, new AcpResume(null, dir));
+        _titlePending = true;
         var result = new Dictionary<string, object?> { ["sessionId"] = sid };
         var cfg = BuildConfigOptions();
         if (cfg.Length > 0) result["configOptions"] = cfg;   // configOptions-API clients (e.g. Copilot CLI)
@@ -394,6 +406,7 @@ public sealed class AcpServer
         var reader = new AcpInputReader();
         _reader = reader;
         _sessionId = sid;
+        _titlePending = false;
         _sawFirstReadTick = false;
         _pendingPromptId = null;
         _cancelRequested = false;
@@ -484,6 +497,20 @@ public sealed class AcpServer
         _pendingPromptId = id;
         _cancelRequested = false;
         _currentMessageId = "msg_" + (++_messageCounter);
+
+        // First prompt of a new session: record its working directory beside the session file
+        // (for session/list) and give the client a title for its thread list.
+        if (_titlePending && !string.IsNullOrWhiteSpace(text))
+        {
+            _titlePending = false;
+            WriteCwdSidecar(Path.Combine(PlatformContext.SessionsDirectory, _sessionId), _sessionCwd);
+            WriteMessage(AcpProtocol.SessionUpdate(_sessionId, new Dictionary<string, object?>
+            {
+                ["sessionUpdate"] = "session_info_update",
+                ["title"] = Title(text),
+                ["updatedAt"] = DateTimeOffset.UtcNow.ToString("o")
+            }));
+        }
 
         // A blank/whitespace prompt would be treated as quit by the orchestrator; substitute a
         // no-op nudge so the turn still produces a clean end_turn.
@@ -740,6 +767,94 @@ public sealed class AcpServer
         _ => null
     };
 
-    /// <summary>Resume payload for session/load: the persisted session JSON + its directory.</summary>
-    public readonly record struct AcpResume(System.Text.Json.JsonElement Data, string Dir);
+    /// <summary>Session payload for the loop: the persisted session JSON (null for a new
+    /// session) + the Sessions directory it persists to.</summary>
+    public readonly record struct AcpResume(System.Text.Json.JsonElement? Data, string Dir);
+
+    // ----- session/list ------------------------------------------------------------------
+
+    /// <summary>Sidecar beside a session's *_session.json holding the client cwd (not *.json, so
+    /// session readers and the lead-session detector ignore it).</summary>
+    internal const string CwdFileName = "acp.muxcwd";
+    private const int ListPageSize = 50;
+
+    /// <summary>A new session id: the Sessions folder-name timestamp, suffixed if that folder exists.</summary>
+    private string NewSessionId()
+    {
+        string baseId = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+        string sid = baseId;
+        for (int n = 2; Directory.Exists(Path.Combine(PlatformContext.SessionsDirectory, sid)) || sid == _sessionId; n++)
+            sid = $"{baseId}-{n}";
+        return sid;
+    }
+
+    private static void WriteCwdSidecar(string sessionDir, string? cwd)
+    {
+        if (string.IsNullOrWhiteSpace(cwd) || !Path.IsPathFullyQualified(cwd)) return;
+        try
+        {
+            Directory.CreateDirectory(sessionDir);
+            File.WriteAllText(Path.Combine(sessionDir, CwdFileName), cwd);
+        }
+        catch (Exception ex) { Log($"cwd sidecar: {ex.Message}"); }
+    }
+
+    /// <summary>One-line thread title from a first prompt (whitespace collapsed, at most 80 chars).</summary>
+    internal static string Title(string text)
+    {
+        string t = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return t.Length > 80 ? t[..77] + "..." : t;
+    }
+
+    /// <summary>
+    /// session/list result: lead-agent sessions with a saved file, newest first, paged by an
+    /// opaque offset cursor. Each row: sessionId (folder name), absolute cwd, title (tag, else
+    /// first user message), updatedAt (RFC 3339, session file write time). Sessions without a
+    /// recorded cwd (started outside ACP) report <paramref name="cwdFilter"/> or
+    /// <paramref name="fallbackCwd"/>, so they show in every project; recorded ones are filtered.
+    /// </summary>
+    internal static object ListSessions(string sessionsDir, string? cwdFilter, string? cursor, string fallbackCwd)
+    {
+        var rows = new List<(string Id, string Cwd, string? Title, DateTime Updated)>();
+        if (Directory.Exists(sessionsDir))
+        {
+            foreach (var d in Directory.GetDirectories(sessionsDir))
+            {
+                var files = Directory.GetFiles(d, "*.json");
+                var file = files.FirstOrDefault(f => f.EndsWith("_session.json", StringComparison.OrdinalIgnoreCase));
+                if (files.Length > 2 || file is null) continue;   // swarm sessions / not saved yet
+                string? recorded = null;
+                try { recorded = File.ReadAllText(Path.Combine(d, CwdFileName)).Trim(); } catch { /* none */ }
+                if (!string.IsNullOrEmpty(recorded) && cwdFilter is not null && !SamePath(recorded, cwdFilter)) continue;
+                string cwd = !string.IsNullOrEmpty(recorded) ? recorded : cwdFilter ?? fallbackCwd;
+                string? title = SessionTags.TagLabel(d);
+                if (string.IsNullOrEmpty(title))
+                {
+                    string first = Common.GetFirstUserMessage(file, int.MaxValue);
+                    title = first == "No preview" ? null : Title(first);
+                }
+                rows.Add((Path.GetFileName(d), cwd, title, File.GetLastWriteTimeUtc(file)));
+            }
+        }
+        rows.Sort((a, b) => b.Updated.CompareTo(a.Updated));
+        int start = int.TryParse(cursor, out var c) && c > 0 ? c : 0;
+        var page = rows.Skip(start).Take(ListPageSize).Select(r => new Dictionary<string, object?>
+        {
+            ["sessionId"] = r.Id,
+            ["cwd"] = r.Cwd,
+            ["title"] = r.Title,
+            ["updatedAt"] = new DateTimeOffset(r.Updated, TimeSpan.Zero).ToString("o")
+        }).ToArray();
+        var result = new Dictionary<string, object?> { ["sessions"] = page };
+        if (start + ListPageSize < rows.Count) result["nextCursor"] = (start + ListPageSize).ToString();
+        return result;
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(a), Path.TrimEndingDirectorySeparator(b),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static string? StrProp(JsonElement e, string key) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() : null;
 }
